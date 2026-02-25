@@ -50,6 +50,16 @@ Public Class ModernTextBox
             Me.CaretCol = caretCol
         End Sub
     End Structure
+    Private Structure VisualLineInfo
+        Public LogicalLine As Integer
+        Public StartCol As Integer
+        Public Length As Integer
+        Public Sub New(logicalLine As Integer, startCol As Integer, length As Integer)
+            Me.LogicalLine = logicalLine
+            Me.StartCol = startCol
+            Me.Length = length
+        End Sub
+    End Structure
 #End Region
 #Region "─── 字段 ───"
     Private _lines As New List(Of String) From {String.Empty}
@@ -73,6 +83,9 @@ Public Class ModernTextBox
     Private _scrollThumbHover As Boolean = False
     Private _mouseDownSelecting As Boolean = False
     Private _imeComposing As Boolean = False
+    Private _visualLines As New List(Of VisualLineInfo)
+    Private _autoScrollTimer As New Timer() With {.Interval = 50}
+    Private _lastMousePos As Point = Point.Empty
 #End Region
 
 #Region "─── 属性 ───"
@@ -104,7 +117,7 @@ Public Class ModernTextBox
 
     Private 背景颜色 As Color = Color.FromArgb(36, 36, 36)
     <Category("LakeUI"), Description("背景颜色"), DefaultValue(GetType(Color), "36,36,36"), Browsable(True)>
-    Public Overrides Property BackColor As Color
+    Public Property BackColor1 As Color
         Get
             Return 背景颜色
         End Get
@@ -223,12 +236,13 @@ Public Class ModernTextBox
         End Get
         Set(value As Boolean)
             启用多行 = value
+            RebuildVisualLines()
             UpdateScrollBar()
             Invalidate()
         End Set
     End Property
 
-    Private 启用只读模式 As Boolean = False
+    Private 启用只读模式
     <Category("LakeUI"), Description("启用后阻止用户更改文本"), DefaultValue(GetType(Boolean), "False"), Browsable(True)>
     Public Property [ReadOnly] As Boolean
         Get
@@ -339,6 +353,23 @@ Public Class ModernTextBox
             SetValue(超采样倍率, value)
         End Set
     End Property
+
+    Private _wordWrap As Boolean = True
+    <Category("LakeUI"), Description("自动换行（多行模式）"), DefaultValue(GetType(Boolean), "True"), Browsable(True)>
+    Public Property WordWrap As Boolean
+        Get
+            Return _wordWrap
+        End Get
+        Set(value As Boolean)
+            If _wordWrap <> value Then
+                _wordWrap = value
+                RebuildVisualLines()
+                UpdateScrollBar()
+                EnsureCaretVisible()
+                Invalidate()
+            End If
+        End Set
+    End Property
 #End Region
 
 #Region "─── 初始化 ───"
@@ -353,14 +384,18 @@ Public Class ModernTextBox
                                               _caretVisible = Not _caretVisible
                                               Invalidate()
                                           End Sub
+        AddHandler _autoScrollTimer.Tick, AddressOf AutoScrollTick
+        RebuildVisualLines()
     End Sub
     Protected Overrides Sub OnHandleCreated(e As EventArgs)
         MyBase.OnHandleCreated(e)
         ImmAssociateContextEx(Handle, IntPtr.Zero, IACE_DEFAULT)
+        RebuildVisualLines()
         _caretBlinkTimer.Start()
     End Sub
     Protected Overrides Sub OnHandleDestroyed(e As EventArgs)
         _caretBlinkTimer.Stop()
+        _autoScrollTimer.Stop()
         MyBase.OnHandleDestroyed(e)
     End Sub
 #End Region
@@ -376,7 +411,6 @@ Public Class ModernTextBox
             boundsRect.Inflate(-half, -half)
         End If
         Dim bc As Color = If(Focused, 有焦点时边框颜色, 边框颜色)
-
         If 超采样倍率 > 1 Then
             Using bmp As New Bitmap(w * 超采样倍率, h * 超采样倍率)
                 Using g As Graphics = Graphics.FromImage(bmp)
@@ -390,7 +424,6 @@ Public Class ModernTextBox
         Else
             DrawBackground(e.Graphics, hasRadius, boundsRect, bc)
         End If
-
         DrawTextContent(e.Graphics, w, h)
         DrawScrollBar(e.Graphics, w, h)
     End Sub
@@ -413,15 +446,16 @@ Public Class ModernTextBox
     Private Sub DrawTextContent(g As Graphics, w As Integer, h As Integer)
         g.TextRenderingHint = Drawing.Text.TextRenderingHint.ClearTypeGridFit
         Dim scrollW As Integer = If(_scrollBarVisible, 滚动条宽度 + 6, 0)
-        Dim textLeft As Integer = Padding.Left
-        Dim textTop As Integer = Padding.Top
-        Dim textWidth As Integer = w - Padding.Left - Padding.Right - scrollW
-        Dim textHeight As Integer = h - Padding.Top - Padding.Bottom
+        Dim bi As Integer = 边框宽度
+        Dim textLeft As Integer = Math.Max(Padding.Left, bi)
+        Dim textTop As Integer = Math.Max(Padding.Top, bi)
+        Dim textRight As Integer = Math.Max(Padding.Right, bi)
+        Dim textBottom As Integer = Math.Max(Padding.Bottom, bi)
+        Dim textWidth As Integer = w - textLeft - textRight - scrollW
+        Dim textHeight As Integer = h - textTop - textBottom
         g.SetClip(New Rectangle(textLeft, textTop, textWidth, textHeight))
-
         Dim isSingleLine As Boolean = Not 启用多行
         Dim singleLineY As Integer = textTop + (textHeight - 行高) \ 2
-
         Dim isEmpty As Boolean = (_lines.Count = 1 AndAlso _lines(0).Length = 0)
         If isEmpty AndAlso Not String.IsNullOrEmpty(水印文本) Then
             Dim waterLineY As Integer = If(isSingleLine, singleLineY, textTop)
@@ -430,56 +464,58 @@ Public Class ModernTextBox
                 New Point(textLeft + waterAlignOff, waterLineY + (行高 - FontHeight) \ 2),
                 水印颜色, TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine)
         End If
-
         Dim visibleLines As Integer = VisibleLineCount()
-        Dim startIdx As Integer = _scrollLineOffset
-        Dim endIdx As Integer = Math.Min(_lines.Count - 1, startIdx + visibleLines + 1)
-
-        For li As Integer = startIdx To endIdx
+        Dim startVi As Integer = _scrollLineOffset
+        Dim endVi As Integer = Math.Min(_visualLines.Count - 1, startVi + visibleLines + 1)
+        For vi As Integer = startVi To endVi
+            Dim vl = _visualLines(vi)
             Dim lineY As Integer = If(isSingleLine, singleLineY,
-                textTop + (li - _scrollLineOffset) * 行高)
-            Dim lineStr As String = _lines(li)
+                textTop + (vi - _scrollLineOffset) * 行高)
+            Dim fullLineStr As String = _lines(vl.LogicalLine)
+            Dim lineStr As String = fullLineStr.Substring(vl.StartCol, vl.Length)
             If _hasSelection Then
-                DrawLineSelection(g, li, lineY, textLeft, textWidth, lineStr)
+                DrawVisualLineSelection(g, vl, lineY, textLeft, textWidth)
             End If
             If lineStr.Length > 0 Then
-                Dim alignOff As Integer = GetAlignOffsetX(lineStr, textWidth)
+                Dim wrapActive As Boolean = IsWordWrapActive()
+                Dim alignOff As Integer = If(wrapActive, 0, GetAlignOffsetX(fullLineStr, textWidth))
+                Dim scrollX As Integer = If(wrapActive, 0, _scrollXOffset)
                 Dim textY As Integer = lineY + (行高 - FontHeight) \ 2
                 TextRenderer.DrawText(g, lineStr, Font,
-                    New Point(textLeft + alignOff - _scrollXOffset, textY),
+                    New Point(textLeft + alignOff - scrollX, textY),
                     ForeColor,
                     TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine)
             End If
         Next
-
         If Focused AndAlso _caretVisible Then
             DrawCaret(g, textLeft, textTop)
         End If
         g.ResetClip()
     End Sub
 
-    Private Sub DrawLineSelection(g As Graphics, li As Integer, lineY As Integer,
-                                   textLeft As Integer, textWidth As Integer,
-                                   lineStr As String)
+    Private Sub DrawVisualLineSelection(g As Graphics, vl As VisualLineInfo, lineY As Integer, textLeft As Integer, textWidth As Integer)
         Dim minL, minC, maxL, maxC As Integer
         GetOrderedSelection(minL, minC, maxL, maxC)
+        Dim li As Integer = vl.LogicalLine
         If li < minL OrElse li > maxL Then Return
-
-        Dim startC As Integer = If(li = minL, minC, 0)
-        Dim endC As Integer = If(li = maxL, maxC, lineStr.Length)
-        If startC > lineStr.Length Then Return
-        endC = Math.Min(endC, lineStr.Length)
-        If startC >= endC AndAlso li = maxL Then Return
-
-        Dim alignOff As Integer = GetAlignOffsetX(lineStr, textWidth)
-        Dim x1 As Integer = textLeft + alignOff + MeasureWidth(lineStr.Substring(0, startC)) - _scrollXOffset
+        Dim selStart As Integer = If(li = minL, minC, 0)
+        Dim selEnd As Integer = If(li = maxL, maxC, _lines(li).Length)
+        Dim vlEnd As Integer = vl.StartCol + vl.Length
+        Dim drawStart As Integer = Math.Max(selStart, vl.StartCol)
+        Dim drawEnd As Integer = Math.Min(selEnd, vlEnd)
+        If drawStart > drawEnd Then Return
+        If drawStart = drawEnd AndAlso Not (selEnd > vlEnd OrElse li < maxL) Then Return
+        Dim wrapActive As Boolean = IsWordWrapActive()
+        Dim fullLineStr As String = _lines(li)
+        Dim alignOff As Integer = If(wrapActive, 0, GetAlignOffsetX(fullLineStr, textWidth))
+        Dim scrollX As Integer = If(wrapActive, 0, _scrollXOffset)
+        Dim x1 As Integer = textLeft + alignOff + MeasureWidth(fullLineStr.Substring(vl.StartCol, drawStart - vl.StartCol)) - scrollX
         Dim x2 As Integer
-        If li < maxL Then
-            x2 = textLeft + alignOff + MeasureWidth(lineStr) + 6 - _scrollXOffset
+        If selEnd > vlEnd OrElse li < maxL Then
+            x2 = textLeft + alignOff + MeasureWidth(fullLineStr.Substring(vl.StartCol, vl.Length)) + 6 - scrollX
         Else
-            x2 = textLeft + alignOff + MeasureWidth(lineStr.Substring(0, endC)) - _scrollXOffset
+            x2 = textLeft + alignOff + MeasureWidth(fullLineStr.Substring(vl.StartCol, drawEnd - vl.StartCol)) - scrollX
         End If
-
         If x2 <= x1 Then Return
         Using br As New SolidBrush(选区背景色)
             g.FillRectangle(br, x1, lineY, x2 - x1, 行高)
@@ -487,18 +523,23 @@ Public Class ModernTextBox
     End Sub
 
     Private Sub DrawCaret(g As Graphics, textLeft As Integer, textTop As Integer)
-        If _caretLine < _scrollLineOffset OrElse _caretLine >= _scrollLineOffset + VisibleLineCount() + 2 Then
+        Dim vi As Integer = GetVisualLineIndex(_caretLine, _caretCol)
+        If vi < _scrollLineOffset OrElse vi >= _scrollLineOffset + VisibleLineCount() + 2 Then
             Return
         End If
+        Dim vl = _visualLines(vi)
         Dim lineStr As String = _lines(_caretLine)
-        Dim alignOff As Integer = GetAlignOffsetX(lineStr, TextAreaWidth())
-        Dim cx As Integer = textLeft + alignOff + MeasureWidth(lineStr.Substring(0, _caretCol)) - _scrollXOffset
+        Dim wrapActive As Boolean = IsWordWrapActive()
+        Dim alignOff As Integer = If(wrapActive, 0, GetAlignOffsetX(lineStr, TextAreaWidth()))
+        Dim scrollX As Integer = If(wrapActive, 0, _scrollXOffset)
+        Dim cx As Integer = textLeft + alignOff + MeasureWidth(lineStr.Substring(vl.StartCol, _caretCol - vl.StartCol)) - scrollX
         Dim lineY As Integer
         If Not 启用多行 Then
-            Dim textHeight As Integer = ClientRectangle.Height - Padding.Top - Padding.Bottom
+            Dim bi2 As Integer = 边框宽度
+            Dim textHeight As Integer = ClientRectangle.Height - Math.Max(Padding.Top, bi2) - Math.Max(Padding.Bottom, bi2)
             lineY = textTop + (textHeight - 行高) \ 2
         Else
-            lineY = textTop + (_caretLine - _scrollLineOffset) * 行高
+            lineY = textTop + (vi - _scrollLineOffset) * 行高
         End If
         Dim caretH As Integer = 行高 - 2
         Dim caretY As Integer = lineY + (行高 - caretH) \ 2
@@ -511,7 +552,6 @@ Public Class ModernTextBox
         If Not _scrollBarVisible Then Return
         Dim oldSmooth = g.SmoothingMode
         g.SmoothingMode = SmoothingMode.AntiAlias
-
         Dim inset As Integer = Math.Max(边框宽度, If(边框圆角半径 > 0, 边框圆角半径 \ 2, 0))
         Dim margin As Integer = 2
         Dim sbW As Integer = 滚动条宽度
@@ -519,9 +559,8 @@ Public Class ModernTextBox
         Dim sbY As Integer = inset + margin
         Dim sbH As Integer = h - (inset + margin) * 2
         If sbH <= 0 OrElse sbW <= 0 Then Return
-
         _scrollTrackRect = New Rectangle(sbX - margin, sbY, sbW + margin * 2, sbH)
-        Dim total As Integer = _lines.Count
+        Dim total As Integer = _visualLines.Count
         Dim vis As Integer = VisibleLineCount()
         Dim maxOffset As Integer = Math.Max(0, total - vis)
         Dim thumbH As Integer = Math.Max(20, CInt(sbH * vis / Math.Max(1, total)))
@@ -530,7 +569,6 @@ Public Class ModernTextBox
             thumbY = sbY + CInt((sbH - thumbH) * _scrollLineOffset / maxOffset)
         End If
         _scrollThumbRect = New Rectangle(sbX - margin, thumbY, sbW + margin * 2, thumbH)
-
         Dim oldClip As Region = g.Clip.Clone()
         If 边框圆角半径 > 0 Then
             Dim clipRect As New RectangleF(0, 0, w - 1, h - 1)
@@ -542,7 +580,6 @@ Public Class ModernTextBox
                 g.SetClip(path, CombineMode.Replace)
             End Using
         End If
-
         If 滚动条轨道颜色.A > 0 Then
             Dim trackRadius As Integer = Math.Min(sbW \ 2, sbH \ 2)
             Using trackPath As GraphicsPath = Class1.创建圆角矩形路径(New RectangleF(sbX, sbY, sbW, sbH), trackRadius)
@@ -551,7 +588,6 @@ Public Class ModernTextBox
                 End Using
             End Using
         End If
-
         Dim thumbColor As Color = If(_scrollThumbDragging OrElse _scrollThumbHover, 滚动条悬停颜色, 滚动条颜色)
         Dim thumbRadius As Integer = Math.Min(sbW \ 2, thumbH \ 2)
         Using thumbPath As GraphicsPath = Class1.创建圆角矩形路径(New RectangleF(sbX, thumbY, sbW, thumbH), thumbRadius)
@@ -559,7 +595,6 @@ Public Class ModernTextBox
                 g.FillPath(br, thumbPath)
             End Using
         End Using
-
         g.Clip = oldClip
         g.SmoothingMode = oldSmooth
     End Sub
@@ -705,7 +740,7 @@ Public Class ModernTextBox
                     _scrollThumbDragStartOffset = _scrollLineOffset
                     Return
                 ElseIf _scrollTrackRect.Contains(e.Location) Then
-                    Dim maxOffset As Integer = Math.Max(0, _lines.Count - VisibleLineCount())
+                    Dim maxOffset As Integer = Math.Max(0, _visualLines.Count - VisibleLineCount())
                     If e.Y < _scrollThumbRect.Y Then
                         _scrollLineOffset = Math.Max(0, _scrollLineOffset - VisibleLineCount())
                     Else
@@ -731,7 +766,7 @@ Public Class ModernTextBox
         MyBase.OnMouseMove(e)
         If _scrollThumbDragging Then
             Dim trackH As Integer = _scrollTrackRect.Height
-            Dim total As Integer = _lines.Count
+            Dim total As Integer = _visualLines.Count
             Dim vis As Integer = VisibleLineCount()
             Dim maxOffset As Integer = Math.Max(0, total - vis)
             Dim thumbH As Integer = Math.Max(20, CInt(trackH * vis / Math.Max(1, total)))
@@ -753,10 +788,17 @@ Public Class ModernTextBox
             Cursor = Cursors.IBeam
         End If
         If _mouseDownSelecting AndAlso e.Button = MouseButtons.Left Then
+            _lastMousePos = e.Location
             Dim pos As Point = HitTest(e.X, e.Y)
             _caretLine = pos.Y
             _caretCol = pos.X
             _hasSelection = (_caretLine <> _selAnchorLine OrElse _caretCol <> _selAnchorCol)
+            EnsureCaretVisible()
+            If 启用多行 AndAlso (e.Y < Math.Max(Padding.Top, 边框宽度) OrElse e.Y > ClientRectangle.Height - Math.Max(Padding.Bottom, 边框宽度)) Then
+                If Not _autoScrollTimer.Enabled Then _autoScrollTimer.Start()
+            Else
+                _autoScrollTimer.Stop()
+            End If
             Invalidate()
         End If
     End Sub
@@ -764,29 +806,35 @@ Public Class ModernTextBox
         MyBase.OnMouseUp(e)
         _mouseDownSelecting = False
         _scrollThumbDragging = False
+        _autoScrollTimer.Stop()
     End Sub
     Protected Overrides Sub OnMouseWheel(e As MouseEventArgs)
         MyBase.OnMouseWheel(e)
         If Not 启用多行 Then Return
         Dim delta As Integer = -Math.Sign(e.Delta) * 3
-        Dim maxOffset As Integer = Math.Max(0, _lines.Count - VisibleLineCount())
+        Dim maxOffset As Integer = Math.Max(0, _visualLines.Count - VisibleLineCount())
         _scrollLineOffset = Math.Max(0, Math.Min(maxOffset, _scrollLineOffset + delta))
         Invalidate()
     End Sub
     Private Function HitTest(x As Integer, y As Integer) As Point
-        Dim textLeft As Integer = Padding.Left
-        Dim li As Integer
+        Dim bi As Integer = 边框宽度
+        Dim textLeft As Integer = Math.Max(Padding.Left, bi)
+        Dim vi As Integer
         If 启用多行 Then
-            Dim textTop As Integer = Padding.Top
-            li = (y - textTop) \ 行高 + _scrollLineOffset
+            Dim textTop As Integer = Math.Max(Padding.Top, bi)
+            vi = (y - textTop) \ 行高 + _scrollLineOffset
         Else
-            li = 0
+            vi = 0
         End If
-        li = Math.Max(0, Math.Min(_lines.Count - 1, li))
-        Dim lineStr As String = _lines(li)
-        Dim alignOff As Integer = GetAlignOffsetX(lineStr, TextAreaWidth())
-        Dim col As Integer = FindColFromX(lineStr, x - textLeft - alignOff + _scrollXOffset)
-        Return New Point(col, li)
+        vi = Math.Max(0, Math.Min(_visualLines.Count - 1, vi))
+        Dim vl = _visualLines(vi)
+        Dim fullLineStr As String = _lines(vl.LogicalLine)
+        Dim vlText As String = fullLineStr.Substring(vl.StartCol, vl.Length)
+        Dim wrapActive As Boolean = IsWordWrapActive()
+        Dim alignOff As Integer = If(wrapActive, 0, GetAlignOffsetX(fullLineStr, TextAreaWidth()))
+        Dim scrollX As Integer = If(wrapActive, 0, _scrollXOffset)
+        Dim colInVl As Integer = FindColFromX(vlText, x - textLeft - alignOff + scrollX)
+        Return New Point(vl.StartCol + colInVl, vl.LogicalLine)
     End Function
     Private Function FindColFromX(lineStr As String, x As Integer) As Integer
         If lineStr.Length = 0 OrElse x <= 0 Then Return 0
@@ -844,9 +892,20 @@ Public Class ModernTextBox
             End If
         End If
         If deltaLine <> 0 Then
-            Dim currentX As Integer = MeasureWidth(_lines(_caretLine).Substring(0, _caretCol))
-            _caretLine = Math.Max(0, Math.Min(_lines.Count - 1, _caretLine + deltaLine))
-            _caretCol = FindColFromX(_lines(_caretLine), currentX)
+            If IsWordWrapActive() Then
+                Dim curVi As Integer = GetVisualLineIndex(_caretLine, _caretCol)
+                Dim curVl = _visualLines(curVi)
+                Dim currentX As Integer = MeasureWidth(_lines(_caretLine).Substring(curVl.StartCol, _caretCol - curVl.StartCol))
+                Dim newVi As Integer = Math.Max(0, Math.Min(_visualLines.Count - 1, curVi + deltaLine))
+                Dim newVl = _visualLines(newVi)
+                _caretLine = newVl.LogicalLine
+                Dim vlText As String = _lines(newVl.LogicalLine).Substring(newVl.StartCol, newVl.Length)
+                _caretCol = newVl.StartCol + FindColFromX(vlText, currentX)
+            Else
+                Dim currentX As Integer = MeasureWidth(_lines(_caretLine).Substring(0, _caretCol))
+                _caretLine = Math.Max(0, Math.Min(_lines.Count - 1, _caretLine + deltaLine))
+                _caretCol = FindColFromX(_lines(_caretLine), currentX)
+            End If
         End If
         UpdateSelectionFromAnchor(extend)
         EnsureCaretVisible()
@@ -934,33 +993,38 @@ Public Class ModernTextBox
     Private Sub EnsureCaretVisible()
         ' 垂直方向
         If 启用多行 Then
+            Dim vi As Integer = GetVisualLineIndex(_caretLine, _caretCol)
             Dim vis As Integer = VisibleLineCount()
-            If _caretLine < _scrollLineOffset Then
-                _scrollLineOffset = _caretLine
-            ElseIf _caretLine >= _scrollLineOffset + vis Then
-                _scrollLineOffset = _caretLine - vis + 1
+            If vi < _scrollLineOffset Then
+                _scrollLineOffset = vi
+            ElseIf vi >= _scrollLineOffset + vis Then
+                _scrollLineOffset = vi - vis + 1
             End If
             _scrollLineOffset = Math.Max(0, _scrollLineOffset)
         End If
         UpdateScrollBar()
         ' 水平方向
-        Dim areaW As Integer = TextAreaWidth()
-        If areaW > 0 Then
-            Dim caretX As Integer = MeasureWidth(_lines(_caretLine).Substring(0, _caretCol))
-            If Not 启用多行 AndAlso 文本对齐 <> TextAlignMode.Left Then
-                Dim lineW As Integer = MeasureWidth(_lines(_caretLine))
-                If lineW < areaW Then
-                    _scrollXOffset = 0
-                    Return
+        If Not IsWordWrapActive() Then
+            Dim areaW As Integer = TextAreaWidth()
+            If areaW > 0 Then
+                Dim caretX As Integer = MeasureWidth(_lines(_caretLine).Substring(0, _caretCol))
+                If Not 启用多行 AndAlso 文本对齐 <> TextAlignMode.Left Then
+                    Dim lineW As Integer = MeasureWidth(_lines(_caretLine))
+                    If lineW < areaW Then
+                        _scrollXOffset = 0
+                        Return
+                    End If
+                End If
+
+                Dim margin As Integer = 光标线宽 + 2
+                If caretX - _scrollXOffset < 0 Then
+                    _scrollXOffset = Math.Max(0, caretX - margin)
+                ElseIf caretX - _scrollXOffset >= areaW - margin Then
+                    _scrollXOffset = caretX - areaW + margin
                 End If
             End If
-
-            Dim margin As Integer = 光标线宽 + 2
-            If caretX - _scrollXOffset < 0 Then
-                _scrollXOffset = Math.Max(0, caretX - margin)
-            ElseIf caretX - _scrollXOffset >= areaW - margin Then
-                _scrollXOffset = caretX - areaW + margin
-            End If
+        Else
+            _scrollXOffset = 0
         End If
     End Sub
 #End Region
@@ -1143,7 +1207,7 @@ Public Class ModernTextBox
             _scrollBarVisible = False
             Return
         End If
-        _scrollBarVisible = _lines.Count > VisibleLineCount()
+        _scrollBarVisible = _visualLines.Count > VisibleLineCount()
         Invalidate()
     End Sub
 #End Region
@@ -1155,14 +1219,21 @@ Public Class ModernTextBox
         If hIMC = IntPtr.Zero Then Return
         Try
             Dim lineStr As String = _lines(_caretLine)
-            Dim alignOff As Integer = GetAlignOffsetX(lineStr, TextAreaWidth())
-            Dim cx As Integer = Padding.Left + alignOff + MeasureWidth(lineStr.Substring(0, _caretCol)) - _scrollXOffset
+            Dim vi As Integer = GetVisualLineIndex(_caretLine, _caretCol)
+            Dim vl = _visualLines(vi)
+            Dim wrapActive As Boolean = IsWordWrapActive()
+            Dim bi As Integer = 边框宽度
+            Dim imeLeft As Integer = Math.Max(Padding.Left, bi)
+            Dim imeTop As Integer = Math.Max(Padding.Top, bi)
+            Dim alignOff As Integer = If(wrapActive, 0, GetAlignOffsetX(lineStr, TextAreaWidth()))
+            Dim scrollX As Integer = If(wrapActive, 0, _scrollXOffset)
+            Dim cx As Integer = imeLeft + alignOff + MeasureWidth(lineStr.Substring(vl.StartCol, _caretCol - vl.StartCol)) - scrollX
             Dim cy As Integer
             If 启用多行 Then
-                cy = Padding.Top + (_caretLine - _scrollLineOffset) * 行高 + 行高
+                cy = imeTop + (vi - _scrollLineOffset) * 行高 + 行高
             Else
-                Dim textHeight As Integer = ClientRectangle.Height - Padding.Top - Padding.Bottom
-                cy = Padding.Top + (textHeight - 行高) \ 2 + 行高
+                Dim textHeight As Integer = ClientRectangle.Height - imeTop - Math.Max(Padding.Bottom, bi)
+                cy = imeTop + (textHeight - 行高) \ 2 + 行高
             End If
             Dim cf As New COMPOSITIONFORM With {
                 .dwStyle = CFS_POINT,
@@ -1182,12 +1253,14 @@ Public Class ModernTextBox
             TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine).Width
     End Function
     Private Function VisibleLineCount() As Integer
-        Dim h As Integer = ClientRectangle.Height - Padding.Top - Padding.Bottom
+        Dim bi As Integer = 边框宽度
+        Dim h As Integer = ClientRectangle.Height - Math.Max(Padding.Top, bi) - Math.Max(Padding.Bottom, bi)
         Return Math.Max(1, h \ 行高)
     End Function
     Private Function TextAreaWidth() As Integer
         Dim scrollW As Integer = If(_scrollBarVisible, 滚动条宽度 + 6, 0)
-        Return ClientRectangle.Width - Padding.Left - Padding.Right - scrollW
+        Dim bi As Integer = 边框宽度
+        Return ClientRectangle.Width - Math.Max(Padding.Left, bi) - Math.Max(Padding.Right, bi) - scrollW
     End Function
     Private Function GetAlignOffsetX(lineStr As String, areaWidth As Integer) As Integer
         If 启用多行 OrElse 文本对齐 = TextAlignMode.Left Then Return 0
@@ -1208,7 +1281,13 @@ Public Class ModernTextBox
         If _lines.Count = 0 Then _lines.Add("")
     End Sub
     Private Sub NotifyTextChanged()
+        RebuildVisualLines()
+        Dim oldVisible As Boolean = _scrollBarVisible
         UpdateScrollBar()
+        If _scrollBarVisible <> oldVisible Then
+            RebuildVisualLines()
+            UpdateScrollBar()
+        End If
         EnsureCaretVisible()
         Invalidate()
         RaiseEvent TextChanged(Me, EventArgs.Empty)
@@ -1224,6 +1303,81 @@ Public Class ModernTextBox
             field = value
             Invalidate()
         End If
+    End Sub
+    Private Function IsWordWrapActive() As Boolean
+        Return 启用多行 AndAlso _wordWrap
+    End Function
+    Private Sub RebuildVisualLines()
+        _visualLines.Clear()
+        Dim areaW As Integer = If(IsHandleCreated, TextAreaWidth(), 0)
+        For li As Integer = 0 To _lines.Count - 1
+            Dim line As String = _lines(li)
+            If Not IsWordWrapActive() OrElse areaW <= 0 OrElse line.Length = 0 Then
+                _visualLines.Add(New VisualLineInfo(li, 0, line.Length))
+            Else
+                Dim startCol As Integer = 0
+                While startCol < line.Length
+                    Dim fitLen As Integer = FindFitLength(line, startCol, areaW)
+                    _visualLines.Add(New VisualLineInfo(li, startCol, fitLen))
+                    startCol += fitLen
+                End While
+            End If
+        Next
+        If _visualLines.Count = 0 Then
+            _visualLines.Add(New VisualLineInfo(0, 0, 0))
+        End If
+    End Sub
+    Private Function FindFitLength(line As String, startCol As Integer, maxWidth As Integer) As Integer
+        Dim remaining As Integer = line.Length - startCol
+        If remaining <= 0 Then Return 0
+        If MeasureWidth(line.Substring(startCol)) <= maxWidth Then Return remaining
+        Dim lo As Integer = 1
+        Dim hi As Integer = remaining
+        Dim best As Integer = 1
+        While lo <= hi
+            Dim mid As Integer = (lo + hi) \ 2
+            If MeasureWidth(line.Substring(startCol, mid)) <= maxWidth Then
+                best = mid
+                lo = mid + 1
+            Else
+                hi = mid - 1
+            End If
+        End While
+        Return Math.Max(1, best)
+    End Function
+    Private Function GetVisualLineIndex(logicalLine As Integer, col As Integer) As Integer
+        For i As Integer = _visualLines.Count - 1 To 0 Step -1
+            Dim vl = _visualLines(i)
+            If vl.LogicalLine = logicalLine AndAlso col >= vl.StartCol Then
+                Return i
+            End If
+        Next
+        Return 0
+    End Function
+    Private Sub AutoScrollTick(sender As Object, e As EventArgs)
+        If Not _mouseDownSelecting Then
+            _autoScrollTimer.Stop()
+            Return
+        End If
+        Dim bi As Integer = 边框宽度
+        Dim textTop As Integer = Math.Max(Padding.Top, bi)
+        Dim textBottom As Integer = ClientRectangle.Height - Math.Max(Padding.Bottom, bi)
+        Dim scrollDelta As Integer
+        If _lastMousePos.Y < textTop Then
+            scrollDelta = -1
+        ElseIf _lastMousePos.Y > textBottom Then
+            scrollDelta = 1
+        Else
+            _autoScrollTimer.Stop()
+            Return
+        End If
+        Dim maxOffset As Integer = Math.Max(0, _visualLines.Count - VisibleLineCount())
+        _scrollLineOffset = Math.Max(0, Math.Min(maxOffset, _scrollLineOffset + scrollDelta))
+        Dim pos As Point = HitTest(_lastMousePos.X, _lastMousePos.Y)
+        _caretLine = pos.Y
+        _caretCol = pos.X
+        _hasSelection = (_caretLine <> _selAnchorLine OrElse _caretCol <> _selAnchorCol)
+        Invalidate()
     End Sub
 #End Region
 
@@ -1246,11 +1400,13 @@ Public Class ModernTextBox
     End Sub
     Protected Overrides Sub OnSizeChanged(e As EventArgs)
         MyBase.OnSizeChanged(e)
+        RebuildVisualLines()
         EnsureCaretVisible()
         Invalidate()
     End Sub
     Protected Overrides Sub OnFontChanged(e As EventArgs)
         MyBase.OnFontChanged(e)
+        RebuildVisualLines()
         Invalidate()
     End Sub
     Protected Overrides Sub OnBackColorChanged(e As EventArgs)
@@ -1263,4 +1419,70 @@ Public Class ModernTextBox
     End Sub
 #End Region
 
+#Region "禁用属性"
+    <Browsable(False), EditorBrowsable(EditorBrowsableState.Never), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+    Public Shadows Property AutoScroll As Boolean
+        Get
+            Return Nothing
+        End Get
+        Set(value As Boolean)
+        End Set
+    End Property
+    <Browsable(False), EditorBrowsable(EditorBrowsableState.Never), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+    Public Shadows Property AutoScrollMargin As Size
+        Get
+            Return Nothing
+        End Get
+        Set(value As Size)
+        End Set
+    End Property
+    <Browsable(False), EditorBrowsable(EditorBrowsableState.Never), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+    Public Shadows Property AutoScrollMinSize As Size
+        Get
+            Return Nothing
+        End Get
+        Set(value As Size)
+        End Set
+    End Property
+    <Browsable(False), EditorBrowsable(EditorBrowsableState.Never), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+    Public Shadows Property AutoSize As Boolean
+        Get
+            Return Nothing
+        End Get
+        Set(value As Boolean)
+        End Set
+    End Property
+    <Browsable(False), EditorBrowsable(EditorBrowsableState.Never), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+    Public Shadows Property AutoSizeMode As AutoSizeMode
+        Get
+            Return Nothing
+        End Get
+        Set(value As AutoSizeMode)
+        End Set
+    End Property
+    <Browsable(False), EditorBrowsable(EditorBrowsableState.Never), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+    Public Shadows Property BorderStyle As BorderStyle
+        Get
+            Return Nothing
+        End Get
+        Set(value As BorderStyle)
+        End Set
+    End Property
+    <Browsable(False), EditorBrowsable(EditorBrowsableState.Never), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+    Public Shadows Property BackgroundImage As Image
+        Get
+            Return Nothing
+        End Get
+        Set(value As Image)
+        End Set
+    End Property
+    <Browsable(False), EditorBrowsable(EditorBrowsableState.Never), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+    Public Shadows Property BackgroundImageLayout As ImageLayout
+        Get
+            Return Nothing
+        End Get
+        Set(value As ImageLayout)
+        End Set
+    End Property
+#End Region
 End Class

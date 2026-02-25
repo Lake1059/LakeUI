@@ -64,11 +64,12 @@ Partial Class Form1
         ModernTextBox1.BorderRadius = 10
         ModernTextBox1.BorderSize = 2
         ModernTextBox1.CaretColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
-        ModernTextBox1.Location = New Point(156, 70)
+        ModernTextBox1.Location = New Point(246, 100)
         ModernTextBox1.MultiLine = True
         ModernTextBox1.Name = "ModernTextBox1"
         ModernTextBox1.Padding = New Padding(10)
-        ModernTextBox1.Size = New Size(255, 268)
+        ModernTextBox1.ScrollBarHoverColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
+        ModernTextBox1.Size = New Size(200, 150)
         ModernTextBox1.SuperSamplingScale = Class1.SuperSamplingScaleEnum.x2
         ModernTextBox1.TabIndex = 4
         ModernTextBox1.Text = "ModernTextBox1"
