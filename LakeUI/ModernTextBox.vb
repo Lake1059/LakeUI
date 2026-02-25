@@ -87,7 +87,6 @@ Public Class ModernTextBox
     Private _autoScrollTimer As New Timer() With {.Interval = 50}
     Private _lastMousePos As Point = Point.Empty
 #End Region
-
 #Region "─── 属性 ───"
     <Category("LakeUI"), Description("主要文本"), DefaultValue(GetType(String), ""), Browsable(True),
      DesignerSerializationVisibility(DesignerSerializationVisibility.Visible)>
@@ -371,9 +370,9 @@ Public Class ModernTextBox
         End Set
     End Property
 #End Region
-
 #Region "─── 初始化 ───"
     Public Sub New()
+        InitializeComponent()
         SetStyle(ControlStyles.OptimizedDoubleBuffer Or
                  ControlStyles.AllPaintingInWmPaint Or
                  ControlStyles.UserPaint Or
@@ -399,7 +398,6 @@ Public Class ModernTextBox
         MyBase.OnHandleDestroyed(e)
     End Sub
 #End Region
-
 #Region "─── 绘制 ───"
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
         Dim w As Integer = ClientRectangle.Width
@@ -600,7 +598,6 @@ Public Class ModernTextBox
     End Sub
 
 #End Region
-
 #Region "─── 消息处理 (WndProc) ───"
     Protected Overrides Sub WndProc(ByRef m As Message)
         Select Case m.Msg
@@ -646,7 +643,6 @@ Public Class ModernTextBox
     End Sub
 
 #End Region
-
 #Region "─── 字符输入 (WM_CHAR) ───"
     Private Sub HandleWmChar(charCode As Integer)
         Select Case charCode
@@ -681,7 +677,6 @@ Public Class ModernTextBox
         ResetCaretBlink()
     End Sub
 #End Region
-
 #Region "─── 键盘导航 (OnKeyDown) ───"
     Protected Overrides Sub OnKeyDown(e As KeyEventArgs)
         MyBase.OnKeyDown(e)
@@ -727,7 +722,6 @@ Public Class ModernTextBox
         Return True
     End Function
 #End Region
-
 #Region "─── 鼠标处理 ───"
     Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
         MyBase.OnMouseDown(e)
@@ -853,7 +847,6 @@ Public Class ModernTextBox
         Return best
     End Function
 #End Region
-
 #Region "─── 光标移动 ───"
     Private Sub MoveCaret(deltaCol As Integer, deltaLine As Integer, extend As Boolean)
         If Not extend AndAlso _hasSelection AndAlso deltaCol <> 0 AndAlso deltaLine = 0 Then
@@ -1028,7 +1021,6 @@ Public Class ModernTextBox
         End If
     End Sub
 #End Region
-
 #Region "─── 文本编辑核心 ───"
     Private Sub InsertTextCore(text As String)
         DeleteSelection()
@@ -1109,7 +1101,6 @@ Public Class ModernTextBox
         ClearSelection()
     End Sub
 #End Region
-
 #Region "─── 选区 ───"
     Private Sub SelectAll()
         _selAnchorLine = 0
@@ -1152,7 +1143,6 @@ Public Class ModernTextBox
         Return sb.ToString()
     End Function
 #End Region
-
 #Region "─── 剪贴板 ───"
     Private Sub CopySelection()
         If _hasSelection Then
@@ -1181,7 +1171,6 @@ Public Class ModernTextBox
         End Try
     End Sub
 #End Region
-
 #Region "─── 撤回 ───"
     Private Sub PushUndo()
         _undoStack.Add(New TextSnapshot(_lines, _caretLine, _caretCol))
@@ -1200,7 +1189,6 @@ Public Class ModernTextBox
         NotifyTextChanged()
     End Sub
 #End Region
-
 #Region "─── 滚动条 ───"
     Private Sub UpdateScrollBar()
         If Not 启用多行 OrElse Not IsHandleCreated Then
@@ -1211,7 +1199,6 @@ Public Class ModernTextBox
         Invalidate()
     End Sub
 #End Region
-
 #Region "─── 输入法 IME ───"
     Private Sub UpdateImeWindow()
         If Not IsHandleCreated Then Return
@@ -1245,7 +1232,6 @@ Public Class ModernTextBox
         End Try
     End Sub
 #End Region
-
 #Region "─── 辅助 ───"
     Private Function MeasureWidth(text As String) As Integer
         If String.IsNullOrEmpty(text) Then Return 0
@@ -1380,7 +1366,6 @@ Public Class ModernTextBox
         Invalidate()
     End Sub
 #End Region
-
 #Region "─── 事件 ───"
     Protected Overrides Sub OnGotFocus(e As EventArgs)
         MyBase.OnGotFocus(e)
@@ -1418,7 +1403,6 @@ Public Class ModernTextBox
         Invalidate()
     End Sub
 #End Region
-
 #Region "禁用属性"
     <Browsable(False), EditorBrowsable(EditorBrowsableState.Never), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
     Public Shadows Property AutoScroll As Boolean
