@@ -1,0 +1,35 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Title>LakeUI</Title>
+    <Authors>1059 Studio</Authors>
+    <GeneratePackageOnBuild>True</GeneratePackageOnBuild>
+    <Description>湖界 LakeUI 是专为 WinForms 设计的一套精致交互控件，主打简单易用、精致美观、高度定制、高效性能，新手强烈推荐。主要面向个人项目提供。</Description>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <AssemblyVersion>1.0</AssemblyVersion>
+    <FileVersion>1.0</FileVersion>
+    <PackageRequireLicenseAcceptance>True</PackageRequireLicenseAcceptance>
+    <PackageLicenseExpression>GPL-3.0-only</PackageLicenseExpression>
+    <Copyright>Copyright © 1059 Studio</Copyright>
+    <PackageProjectUrl>https://github.com/Lake1059/LakeUI</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/Lake1059/LakeUI</RepositoryUrl>
+    <PackAsTool>False</PackAsTool>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
+    <DebugType>embedded</DebugType>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|AnyCPU'">
+    <DebugType>embedded</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Import Include="System.Data" />
+    <Import Include="System.Drawing" />
+    <Import Include="System.Windows.Forms" />
+  </ItemGroup>
+
+</Project>

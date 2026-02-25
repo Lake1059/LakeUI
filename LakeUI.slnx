@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="LakeUI.Demo/LakeUI.Demo.vbproj" />
+  <Project Path="LakeUI/LakeUI.vbproj" />
+</Solution>
