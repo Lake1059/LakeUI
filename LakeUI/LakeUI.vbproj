@@ -7,7 +7,7 @@
     <Authors>1059 Studio</Authors>
     <GeneratePackageOnBuild>True</GeneratePackageOnBuild>
     <Description>湖界 LakeUI 是专为 WinForms 设计的一套精致交互控件，主打简单易用、精致美观、高度定制、高效性能，新手强烈推荐。主要面向个人项目提供。</Description>
-    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageReadmeFile></PackageReadmeFile>
     <AssemblyVersion>1.0</AssemblyVersion>
     <FileVersion>1.0</FileVersion>
     <PackageRequireLicenseAcceptance>True</PackageRequireLicenseAcceptance>
@@ -30,6 +30,10 @@
     <Import Include="System.Data" />
     <Import Include="System.Drawing" />
     <Import Include="System.Windows.Forms" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Service Include="{94e38dff-614b-4cbd-b67c-f211bb35ce8b}" />
   </ItemGroup>
 
 </Project>

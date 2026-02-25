@@ -96,17 +96,17 @@ Public Class ExcellentButton
         Dim 文本格式2 As TextFormatFlags = 文本格式1 Or TextFormatFlags.EndEllipsis Or TextFormatFlags.NoPadding
         If Not String.IsNullOrEmpty(次要文本) Then
             Dim 次要文本字体 As New Font(Me.Font.FontFamily, 次要文本字号, FontStyle.Regular)
-            Dim 主要文本尺寸 As Size = TextRenderer.MeasureText(g, 主要文本, Me.Font, 文本绘制区域.Size, 文本格式2)
+            Dim 主要文本尺寸 As Size = TextRenderer.MeasureText(g, MyBase.Text, Me.Font, 文本绘制区域.Size, 文本格式2)
             Dim 次要文本尺寸 As Size = TextRenderer.MeasureText(g, 次要文本, 次要文本字体, 文本绘制区域.Size, 文本格式2)
             Dim 文本极限高度 As Integer = 主要文本尺寸.Height + 主次文本间距 + 次要文本尺寸.Height
             Dim 高度起始 As Integer = 文本绘制区域.Y + (文本绘制区域.Height - 文本极限高度) \ 2
             Dim 主要文本区域 As New Rectangle(文本绘制区域.X, 高度起始, 文本绘制区域.Width, 主要文本尺寸.Height)
-            TextRenderer.DrawText(g, 主要文本, Me.Font, 主要文本区域, 文本颜色, 文本格式2)
+            TextRenderer.DrawText(g, MyBase.Text, Me.Font, 主要文本区域, 文本颜色, 文本格式2)
             Dim 次要文本区域 As New Rectangle(文本绘制区域.X, 高度起始 + 主要文本尺寸.Height + 主次文本间距, 文本绘制区域.Width, 次要文本尺寸.Height)
             TextRenderer.DrawText(g, 次要文本, 次要文本字体, 次要文本区域, 次要文本颜色, 文本格式2)
         Else
             Dim 文本格式3 As TextFormatFlags = 文本格式2 Or TextFormatFlags.VerticalCenter
-            TextRenderer.DrawText(g, 主要文本, Me.Font, 文本绘制区域, 文本颜色, 文本格式3)
+            TextRenderer.DrawText(g, MyBase.Text, Me.Font, 文本绘制区域, 文本颜色, 文本格式3)
         End If
     End Sub
 
@@ -142,18 +142,12 @@ Public Class ExcellentButton
 #End Region
 
     Private 超采样倍率 As Integer = 1
-    Public Enum SuperSamplingScaleEnum
-        OFF = 1
-        x2 = 2
-        x3 = 3
-        x4 = 4
-    End Enum
-    <Category("LakeUI"), Description("使用 SSAA 超采样抗锯齿显著改善线条观感，但会消耗额外性能；仅对图形生效，文字需要兼容第三方渲染接口所以走的是单独渲染"), DefaultValue(GetType(SuperSamplingScaleEnum), "OFF"), Browsable(True)>
-    Public Property SuperSamplingScale As SuperSamplingScaleEnum
+    <Category("LakeUI"), Description(Class1.超采样抗锯齿描述词), DefaultValue(GetType(Class1.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
+    Public Property SuperSamplingScale As Class1.SuperSamplingScaleEnum
         Get
             Return 超采样倍率
         End Get
-        Set(value As SuperSamplingScaleEnum)
+        Set(value As Class1.SuperSamplingScaleEnum)
             SetValue(超采样倍率, value)
         End Set
     End Property
@@ -227,16 +221,22 @@ Public Class ExcellentButton
         End Set
     End Property
 
-    Private 主要文本 As String = "ExButton"
-    <Category("LakeUI"), Description("主要文本"), DefaultValue(GetType(String), "ExButton"), Browsable(True)>
-    Public Property MainText As String
+    <Category("LakeUI"), Description("主要文本"), DefaultValue(GetType(String), "ExButton"), Browsable(True), DesignerSerializationVisibility(DesignerSerializationVisibility.Visible)>
+    Public Overrides Property Text As String
         Get
-            Return 主要文本
+            Return MyBase.Text
         End Get
         Set(value As String)
-            SetValue(主要文本, value)
+            If MyBase.Text = value Then Return
+            SetValue(MyBase.Text, value)
         End Set
     End Property
+    Private Function ShouldSerializeText() As Boolean
+        Return Not String.IsNullOrEmpty(Text)
+    End Function
+    Public Overrides Sub ResetText()
+        Text = String.Empty
+    End Sub
 
     Private 文本颜色 As Color = Color.Silver
     <Category("LakeUI"), Description("文本颜色"), DefaultValue(GetType(Color), "Silver"), Browsable(True)>
