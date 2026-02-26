@@ -40,13 +40,13 @@ Public Class ExcellentButton
         Dim 边框颜色缓存值 As Color = Nothing
         根据鼠标状态分配颜色(背景颜色缓存值, 渐变颜色缓存值, 边框颜色缓存值)
         If 是否有圆角 Then
-            Using path As GraphicsPath = Class1.创建圆角矩形路径(极限矩形区域, 边框圆角半径)
-                Class1.绘制圆角背景(g, path, 极限矩形区域, 背景颜色缓存值, 渐变颜色缓存值, 渐变方向)
-                Class1.绘制圆角边框(g, path, 边框颜色缓存值, 边框宽度)
+            Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(极限矩形区域, 边框圆角半径)
+                RectangleRenderer.绘制圆角背景(g, path, 极限矩形区域, 背景颜色缓存值, 渐变颜色缓存值, 渐变方向)
+                RectangleRenderer.绘制圆角边框(g, path, 边框颜色缓存值, 边框宽度)
             End Using
         Else
-            Class1.绘制矩形背景(g, 极限矩形区域, 背景颜色缓存值, 渐变颜色缓存值, 渐变方向)
-            Class1.绘制矩形边框(g, 极限矩形区域, 边框颜色缓存值, 边框宽度)
+            RectangleRenderer.绘制矩形背景(g, 极限矩形区域, 背景颜色缓存值, 渐变颜色缓存值, 渐变方向)
+            RectangleRenderer.绘制矩形边框(g, 极限矩形区域, 边框颜色缓存值, 边框宽度)
         End If
         绘制图标(g, 内容矩形区域)
     End Sub

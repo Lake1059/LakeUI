@@ -15,15 +15,16 @@
     <Authors>1059 Studio</Authors>
     <GeneratePackageOnBuild>True</GeneratePackageOnBuild>
     <Description>湖界 LakeUI 是专为 WinForms 设计的一套精致交互控件，主打简单易用、精致美观、高度定制、高效性能，新手强烈推荐。主要面向个人项目提供。</Description>
-    <PackageReadmeFile></PackageReadmeFile>
-    <AssemblyVersion>1.0</AssemblyVersion>
-    <FileVersion>1.0</FileVersion>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <AssemblyVersion>0.1</AssemblyVersion>
+    <FileVersion>0.1</FileVersion>
     <PackageRequireLicenseAcceptance>True</PackageRequireLicenseAcceptance>
     <PackageLicenseExpression>GPL-3.0-only</PackageLicenseExpression>
     <Copyright>Copyright © 1059 Studio</Copyright>
     <PackageProjectUrl>https://github.com/Lake1059/LakeUI</PackageProjectUrl>
     <RepositoryUrl>https://github.com/Lake1059/LakeUI</RepositoryUrl>
     <PackAsTool>False</PackAsTool>
+    <PackageIcon>LakeUI.png</PackageIcon>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
@@ -42,6 +43,17 @@
 
   <ItemGroup>
     <Service Include="{94e38dff-614b-4cbd-b67c-f211bb35ce8b}" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="LakeUI.png">
+      <Pack>True</Pack>
+      <PackagePath>\</PackagePath>
+    </None>
+    <None Update="README.md">
+      <Pack>True</Pack>
+      <PackagePath>\</PackagePath>
+    </None>
   </ItemGroup>
 
 </Project>

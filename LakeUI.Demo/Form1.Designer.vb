@@ -27,6 +27,7 @@ Partial Class Form1
         ExcellentButton2 = New ExcellentButton()
         ExcellentButton3 = New ExcellentButton()
         ModernTextBox1 = New ModernTextBox()
+        ModernComboBox1 = New ModernComboBox()
         SuspendLayout()
         ' 
         ' ExcellentButton1
@@ -63,14 +64,43 @@ Partial Class Form1
         ' 
         ModernTextBox1.BorderRadius = 10
         ModernTextBox1.BorderSize = 2
+        ModernTextBox1.CaretColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
         ModernTextBox1.Location = New Point(170, 48)
         ModernTextBox1.MultiLine = True
         ModernTextBox1.Name = "ModernTextBox1"
         ModernTextBox1.Padding = New Padding(10)
+        ModernTextBox1.ScrollBarHoverColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
         ModernTextBox1.Size = New Size(303, 224)
         ModernTextBox1.SuperSamplingScale = Class1.SuperSamplingScaleEnum.x2
         ModernTextBox1.TabIndex = 4
         ModernTextBox1.Text = "ModernTextBox1"
+        ' 
+        ' ModernComboBox1
+        ' 
+        ModernComboBox1.BackColor2 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernComboBox1.BorderRadius = 10
+        ModernComboBox1.BorderSize = 2
+        ModernComboBox1.CaretColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
+        ModernComboBox1.DropDownBorderRadius = 10
+        ModernComboBox1.DropDownBorderSize = 2
+        ModernComboBox1.DropDownGap = 5
+        ModernComboBox1.DropDownPadding = New Padding(10)
+        ModernComboBox1.DropDownScrollBarHoverColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
+        ModernComboBox1.HoverBackColor2 = Color.FromArgb(CByte(80), CByte(80), CByte(80))
+        ModernComboBox1.Items.Add("现代化下拉框")
+        ModernComboBox1.Items.Add("支持定制超多部件和颜色")
+        ModernComboBox1.Items.Add("灵活适应各种交互场景")
+        ModernComboBox1.Items.Add("")
+        ModernComboBox1.Items.Add("")
+        ModernComboBox1.Location = New Point(170, 298)
+        ModernComboBox1.Name = "ModernComboBox1"
+        ModernComboBox1.Padding = New Padding(15, 0, 10, 0)
+        ModernComboBox1.PressedBackColor2 = SystemColors.WindowFrame
+        ModernComboBox1.Size = New Size(303, 40)
+        ModernComboBox1.SuperSamplingScale = Class1.SuperSamplingScaleEnum.x2
+        ModernComboBox1.TabIndex = 5
+        ModernComboBox1.Text = "ModernComboBox1"
+        ModernComboBox1.WaterText = "水印文字"
         ' 
         ' Form1
         ' 
@@ -78,6 +108,7 @@ Partial Class Form1
         AutoScaleMode = AutoScaleMode.Dpi
         BackColor = Color.FromArgb(CByte(24), CByte(24), CByte(24))
         ClientSize = New Size(800, 450)
+        Controls.Add(ModernComboBox1)
         Controls.Add(ModernTextBox1)
         Controls.Add(ExcellentButton3)
         Controls.Add(ExcellentButton2)
@@ -93,5 +124,6 @@ Partial Class Form1
     Friend WithEvents ExcellentButton2 As ExcellentButton
     Friend WithEvents ExcellentButton3 As ExcellentButton
     Friend WithEvents ModernTextBox1 As ModernTextBox
+    Friend WithEvents ModernComboBox1 As ModernComboBox
 
 End Class

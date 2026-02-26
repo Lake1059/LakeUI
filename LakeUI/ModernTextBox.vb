@@ -1,45 +1,11 @@
 Imports System.ComponentModel
 Imports System.Drawing.Drawing2D
-Imports System.Runtime.InteropServices
 Imports System.Text
 
 <DefaultEvent("TextChanged")>
 Public Class ModernTextBox
     Public Shadows Event TextChanged As EventHandler
-#Region "─── Win32 / IME P/Invoke ───"
-    Private Const WM_CHAR As Integer = &H102
-    Private Const WM_IME_COMPOSITION As Integer = &H10F
-    Private Const WM_IME_STARTCOMPOSITION As Integer = &H10D
-    Private Const WM_IME_ENDCOMPOSITION As Integer = &H10E
-    Private Const WM_GETDLGCODE As Integer = &H87
-    Private Const GCS_RESULTSTR As Integer = &H800
-    Private Const CFS_POINT As Integer = &H2
-    Private Const DLGC_WANTCHARS As Integer = &H80
-    Private Const DLGC_WANTALLKEYS As Integer = &H4
-    Private Const IACE_DEFAULT As Integer = &H10
-    <DllImport("imm32.dll")>
-    Private Shared Function ImmGetContext(hWnd As IntPtr) As IntPtr
-    End Function
-    <DllImport("imm32.dll")>
-    Private Shared Function ImmReleaseContext(hWnd As IntPtr, hIMC As IntPtr) As Boolean
-    End Function
-    <DllImport("imm32.dll", EntryPoint:="ImmGetCompositionStringW")>
-    Private Shared Function ImmGetCompositionBytes(hIMC As IntPtr, dwIndex As Integer, lpBuf As Byte(), dwBufLen As Integer) As Integer
-    End Function
-    <DllImport("imm32.dll")>
-    Private Shared Function ImmSetCompositionWindow(hIMC As IntPtr, ByRef lpCompForm As COMPOSITIONFORM) As Boolean
-    End Function
-    <DllImport("imm32.dll")>
-    Private Shared Function ImmAssociateContextEx(hWnd As IntPtr, hIMC As IntPtr, dwFlags As Integer) As Boolean
-    End Function
-    <StructLayout(LayoutKind.Sequential)>
-    Private Structure COMPOSITIONFORM
-        Public dwStyle As Integer
-        Public ptCurrentPos As Point
-        Public rcArea As Rectangle
-    End Structure
-#End Region
-#Region "─── 内部数据结构 ───"
+#Region "内部数据结构"
     Private Structure TextSnapshot
         Public Lines As String()
         Public CaretLine As Integer
@@ -61,7 +27,7 @@ Public Class ModernTextBox
         End Sub
     End Structure
 #End Region
-#Region "─── 字段 ───"
+#Region "字段"
     Private _lines As New List(Of String) From {String.Empty}
     Private _caretLine As Integer = 0
     Private _caretCol As Integer = 0
@@ -75,19 +41,14 @@ Public Class ModernTextBox
     Private _scrollLineOffset As Integer = 0
     Private _scrollXOffset As Integer = 0
     Private _scrollBarVisible As Boolean = False
-    Private _scrollThumbRect As Rectangle = Rectangle.Empty
-    Private _scrollTrackRect As Rectangle = Rectangle.Empty
-    Private _scrollThumbDragging As Boolean = False
-    Private _scrollThumbDragStartY As Integer = 0
-    Private _scrollThumbDragStartOffset As Integer = 0
-    Private _scrollThumbHover As Boolean = False
+    Private _scrollBar As New ScrollBarRenderer()
     Private _mouseDownSelecting As Boolean = False
     Private _imeComposing As Boolean = False
     Private _visualLines As New List(Of VisualLineInfo)
     Private _autoScrollTimer As New Timer() With {.Interval = 50}
     Private _lastMousePos As Point = Point.Empty
 #End Region
-#Region "─── 属性 ───"
+#Region "属性"
     <Category("LakeUI"), Description("主要文本"), DefaultValue(GetType(String), ""), Browsable(True),
      DesignerSerializationVisibility(DesignerSerializationVisibility.Visible)>
     Public Overrides Property Text As String
@@ -162,7 +123,7 @@ Public Class ModernTextBox
     End Property
 
     Private 光标颜色 As Color = Color.FromArgb(220, 220, 220)
-    <Category("LakeUI"), Description("光标颜色"), DefaultValue(GetType(Color), "220,220,220"), Browsable(True)>
+    <Category("LakeUI"), Description("光标颜色"), DefaultValue(GetType(Color), "220, 220, 220"), Browsable(True)>
     Public Property CaretColor As Color
         Get
             Return 光标颜色
@@ -173,7 +134,7 @@ Public Class ModernTextBox
     End Property
 
     Private 选区背景色 As Color = Color.FromArgb(80, 80, 80)
-    <Category("LakeUI"), Description("选区背景色"), DefaultValue(GetType(Color), "80,80,80"), Browsable(True)>
+    <Category("LakeUI"), Description("选区背景色"), DefaultValue(GetType(Color), "80, 80, 80"), Browsable(True)>
     Public Property SelectionColor As Color
         Get
             Return 选区背景色
@@ -286,8 +247,8 @@ Public Class ModernTextBox
         End Set
     End Property
 
-    Private 水印颜色 As Color = Color.DarkGray
-    <Category("LakeUI"), Description("水印颜色"), DefaultValue(GetType(Color), "DarkGray"), Browsable(True)>
+    Private 水印颜色 As Color = Color.Gray
+    <Category("LakeUI"), Description("水印颜色"), DefaultValue(GetType(Color), "Gray"), Browsable(True)>
     Public Property WaterTextForeColor As Color
         Get
             Return 水印颜色
@@ -310,7 +271,7 @@ Public Class ModernTextBox
     End Property
 
     Private 滚动条颜色 As Color = Color.FromArgb(140, 140, 140)
-    <Category("LakeUI"), Description("滚动条滑块颜色"), DefaultValue(GetType(Color), "140,140,140"), Browsable(True)>
+    <Category("LakeUI"), Description("滚动条滑块颜色"), DefaultValue(GetType(Color), "140, 140, 140"), Browsable(True)>
     Public Property ScrollBarColor As Color
         Get
             Return 滚动条颜色
@@ -321,7 +282,7 @@ Public Class ModernTextBox
     End Property
 
     Private 滚动条悬停颜色 As Color = Color.FromArgb(200, 200, 200)
-    <Category("LakeUI"), Description("滚动条滑块悬停/拖拽颜色"), DefaultValue(GetType(Color), "200,200,200"), Browsable(True)>
+    <Category("LakeUI"), Description("滚动条滑块悬停/拖拽颜色"), DefaultValue(GetType(Color), "200, 200, 200"), Browsable(True)>
     Public Property ScrollBarHoverColor As Color
         Get
             Return 滚动条悬停颜色
@@ -370,7 +331,7 @@ Public Class ModernTextBox
         End Set
     End Property
 #End Region
-#Region "─── 初始化 ───"
+#Region "初始化"
     Public Sub New()
         InitializeComponent()
         SetStyle(ControlStyles.OptimizedDoubleBuffer Or
@@ -388,7 +349,7 @@ Public Class ModernTextBox
     End Sub
     Protected Overrides Sub OnHandleCreated(e As EventArgs)
         MyBase.OnHandleCreated(e)
-        ImmAssociateContextEx(Handle, IntPtr.Zero, IACE_DEFAULT)
+        ImeHelper.AssociateDefault(Handle)
         RebuildVisualLines()
         _caretBlinkTimer.Start()
     End Sub
@@ -398,7 +359,7 @@ Public Class ModernTextBox
         MyBase.OnHandleDestroyed(e)
     End Sub
 #End Region
-#Region "─── 绘制 ───"
+#Region "绘制"
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
         Dim w As Integer = ClientRectangle.Width
         Dim h As Integer = ClientRectangle.Height
@@ -431,24 +392,24 @@ Public Class ModernTextBox
         g.PixelOffsetMode = PixelOffsetMode.HighQuality
         g.InterpolationMode = InterpolationMode.HighQualityBicubic
         If hasRadius Then
-            Using path As GraphicsPath = Class1.创建圆角矩形路径(boundsRect, 边框圆角半径)
-                Class1.绘制圆角背景(g, path, boundsRect, 背景颜色, Color.Empty, Orientation.Horizontal)
-                Class1.绘制圆角边框(g, path, borderClr, 边框宽度)
+            Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(boundsRect, 边框圆角半径)
+                RectangleRenderer.绘制圆角背景(g, path, boundsRect, 背景颜色, Color.Empty, Orientation.Horizontal)
+                RectangleRenderer.绘制圆角边框(g, path, borderClr, 边框宽度)
             End Using
         Else
-            Class1.绘制矩形背景(g, boundsRect, 背景颜色, Color.Empty, Orientation.Horizontal)
-            Class1.绘制矩形边框(g, boundsRect, borderClr, 边框宽度)
+            RectangleRenderer.绘制矩形背景(g, boundsRect, 背景颜色, Color.Empty, Orientation.Horizontal)
+            RectangleRenderer.绘制矩形边框(g, boundsRect, borderClr, 边框宽度)
         End If
     End Sub
 
     Private Sub DrawTextContent(g As Graphics, w As Integer, h As Integer)
         g.TextRenderingHint = Drawing.Text.TextRenderingHint.ClearTypeGridFit
-        Dim scrollW As Integer = If(_scrollBarVisible, 滚动条宽度 + 6, 0)
         Dim bi As Integer = 边框宽度
         Dim textLeft As Integer = Math.Max(Padding.Left, bi)
         Dim textTop As Integer = Math.Max(Padding.Top, bi)
         Dim textRight As Integer = Math.Max(Padding.Right, bi)
         Dim textBottom As Integer = Math.Max(Padding.Bottom, bi)
+        Dim scrollW As Integer = If(_scrollBarVisible, _scrollBar.GetReservedWidth(w, Math.Max(textLeft, bi)), 0)
         Dim textWidth As Integer = w - textLeft - textRight - scrollW
         Dim textHeight As Integer = h - textTop - textBottom
         g.SetClip(New Rectangle(textLeft, textTop, textWidth, textHeight))
@@ -548,57 +509,14 @@ Public Class ModernTextBox
 
     Private Sub DrawScrollBar(g As Graphics, w As Integer, h As Integer)
         If Not _scrollBarVisible Then Return
-        Dim oldSmooth = g.SmoothingMode
-        g.SmoothingMode = SmoothingMode.AntiAlias
-        Dim inset As Integer = Math.Max(边框宽度, If(边框圆角半径 > 0, 边框圆角半径 \ 2, 0))
-        Dim margin As Integer = 2
-        Dim sbW As Integer = 滚动条宽度
-        Dim sbX As Integer = w - sbW - inset - margin
-        Dim sbY As Integer = inset + margin
-        Dim sbH As Integer = h - (inset + margin) * 2
-        If sbH <= 0 OrElse sbW <= 0 Then Return
-        _scrollTrackRect = New Rectangle(sbX - margin, sbY, sbW + margin * 2, sbH)
-        Dim total As Integer = _visualLines.Count
-        Dim vis As Integer = VisibleLineCount()
-        Dim maxOffset As Integer = Math.Max(0, total - vis)
-        Dim thumbH As Integer = Math.Max(20, CInt(sbH * vis / Math.Max(1, total)))
-        Dim thumbY As Integer = sbY
-        If maxOffset > 0 Then
-            thumbY = sbY + CInt((sbH - thumbH) * _scrollLineOffset / maxOffset)
-        End If
-        _scrollThumbRect = New Rectangle(sbX - margin, thumbY, sbW + margin * 2, thumbH)
-        Dim oldClip As Region = g.Clip.Clone()
-        If 边框圆角半径 > 0 Then
-            Dim clipRect As New RectangleF(0, 0, w - 1, h - 1)
-            If 边框宽度 > 0 Then
-                Dim half As Single = 边框宽度 / 2.0F
-                clipRect.Inflate(-half, -half)
-            End If
-            Using path As GraphicsPath = Class1.创建圆角矩形路径(clipRect, 边框圆角半径)
-                g.SetClip(path, CombineMode.Replace)
-            End Using
-        End If
-        If 滚动条轨道颜色.A > 0 Then
-            Dim trackRadius As Integer = Math.Min(sbW \ 2, sbH \ 2)
-            Using trackPath As GraphicsPath = Class1.创建圆角矩形路径(New RectangleF(sbX, sbY, sbW, sbH), trackRadius)
-                Using br As New SolidBrush(滚动条轨道颜色)
-                    g.FillPath(br, trackPath)
-                End Using
-            End Using
-        End If
-        Dim thumbColor As Color = If(_scrollThumbDragging OrElse _scrollThumbHover, 滚动条悬停颜色, 滚动条颜色)
-        Dim thumbRadius As Integer = Math.Min(sbW \ 2, thumbH \ 2)
-        Using thumbPath As GraphicsPath = Class1.创建圆角矩形路径(New RectangleF(sbX, thumbY, sbW, thumbH), thumbRadius)
-            Using br As New SolidBrush(thumbColor)
-                g.FillPath(br, thumbPath)
-            End Using
-        End Using
-        g.Clip = oldClip
-        g.SmoothingMode = oldSmooth
+        _scrollBar.ComputeLayout(w, h, 边框宽度, 边框圆角半径, 0, 0, 滚动条宽度,
+            _visualLines.Count, VisibleLineCount(), _scrollLineOffset)
+        _scrollBar.Draw(g, w, h, 边框宽度, 边框圆角半径, 滚动条宽度,
+            滚动条轨道颜色, 滚动条颜色, 滚动条悬停颜色)
     End Sub
 
 #End Region
-#Region "─── 消息处理 (WndProc) ───"
+#Region "消息处理 (WndProc)"
     Protected Overrides Sub WndProc(ByRef m As Message)
         Select Case m.Msg
             Case WM_GETDLGCODE
@@ -615,20 +533,10 @@ Public Class ModernTextBox
                 Dim lp As Integer = m.LParam.ToInt32()
                 UpdateImeWindow()
                 If (lp And GCS_RESULTSTR) <> 0 Then
-                    Dim hIMC As IntPtr = ImmGetContext(Handle)
-                    If hIMC <> IntPtr.Zero Then
-                        Try
-                            Dim byteLen As Integer = ImmGetCompositionBytes(hIMC, GCS_RESULTSTR, Nothing, 0)
-                            If byteLen > 0 Then
-                                Dim buf(byteLen - 1) As Byte
-                                Dim unused = ImmGetCompositionBytes(hIMC, GCS_RESULTSTR, buf, byteLen)
-                                Dim result As String = Encoding.Unicode.GetString(buf, 0, byteLen)
-                                PushUndo()
-                                InsertTextCore(result)
-                            End If
-                        Finally
-                            ImmReleaseContext(Handle, hIMC)
-                        End Try
+                    Dim result As String = ImeHelper.GetResultString(Handle)
+                    If result IsNot Nothing Then
+                        PushUndo()
+                        InsertTextCore(result)
                     End If
                 Else
                     MyBase.WndProc(m)
@@ -643,7 +551,7 @@ Public Class ModernTextBox
     End Sub
 
 #End Region
-#Region "─── 字符输入 (WM_CHAR) ───"
+#Region "字符输入 (WM_CHAR)"
     Private Sub HandleWmChar(charCode As Integer)
         Select Case charCode
             Case 1  ' Ctrl+A
@@ -677,7 +585,7 @@ Public Class ModernTextBox
         ResetCaretBlink()
     End Sub
 #End Region
-#Region "─── 键盘导航 (OnKeyDown) ───"
+#Region "键盘导航 (OnKeyDown)"
     Protected Overrides Sub OnKeyDown(e As KeyEventArgs)
         MyBase.OnKeyDown(e)
         Dim shift As Boolean = e.Shift
@@ -722,24 +630,16 @@ Public Class ModernTextBox
         Return True
     End Function
 #End Region
-#Region "─── 鼠标处理 ───"
+#Region "鼠标处理"
     Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
         MyBase.OnMouseDown(e)
         Focus()
         If e.Button = MouseButtons.Left Then
             If _scrollBarVisible Then
-                If _scrollThumbRect.Contains(e.Location) Then
-                    _scrollThumbDragging = True
-                    _scrollThumbDragStartY = e.Y
-                    _scrollThumbDragStartOffset = _scrollLineOffset
-                    Return
-                ElseIf _scrollTrackRect.Contains(e.Location) Then
-                    Dim maxOffset As Integer = Math.Max(0, _visualLines.Count - VisibleLineCount())
-                    If e.Y < _scrollThumbRect.Y Then
-                        _scrollLineOffset = Math.Max(0, _scrollLineOffset - VisibleLineCount())
-                    Else
-                        _scrollLineOffset = Math.Min(maxOffset, _scrollLineOffset + VisibleLineCount())
-                    End If
+                If _scrollBar.BeginDrag(e.Location, _scrollLineOffset) Then Return
+                Dim newOff As Integer = _scrollBar.TrackClick(e.Location, _scrollLineOffset, _visualLines.Count, VisibleLineCount())
+                If newOff <> _scrollLineOffset Then
+                    _scrollLineOffset = newOff
                     UpdateScrollBar()
                     Invalidate()
                     Return
@@ -758,26 +658,16 @@ Public Class ModernTextBox
     End Sub
     Protected Overrides Sub OnMouseMove(e As MouseEventArgs)
         MyBase.OnMouseMove(e)
-        If _scrollThumbDragging Then
-            Dim trackH As Integer = _scrollTrackRect.Height
+        If _scrollBar.IsDragging Then
             Dim total As Integer = _visualLines.Count
             Dim vis As Integer = VisibleLineCount()
-            Dim maxOffset As Integer = Math.Max(0, total - vis)
-            Dim thumbH As Integer = Math.Max(20, CInt(trackH * vis / Math.Max(1, total)))
-            Dim usableH As Integer = trackH - thumbH
-            If usableH > 0 Then
-                Dim dy As Integer = e.Y - _scrollThumbDragStartY
-                Dim newOffset As Integer = _scrollThumbDragStartOffset + CInt(dy * maxOffset / usableH)
-                _scrollLineOffset = Math.Max(0, Math.Min(maxOffset, newOffset))
-                Invalidate()
-            End If
+            _scrollLineOffset = _scrollBar.DragMove(e.Y, total, vis)
+            Invalidate()
             Return
         End If
         If _scrollBarVisible Then
-            Dim wasHover As Boolean = _scrollThumbHover
-            _scrollThumbHover = _scrollThumbRect.Contains(e.Location)
-            If _scrollThumbHover <> wasHover Then Invalidate()
-            Cursor = If(_scrollTrackRect.Contains(e.Location), Cursors.Default, Cursors.IBeam)
+            If _scrollBar.UpdateHover(e.Location) Then Invalidate()
+            Cursor = If(_scrollBar.TrackRect.Contains(e.Location), Cursors.Default, Cursors.IBeam)
         Else
             Cursor = Cursors.IBeam
         End If
@@ -799,15 +689,13 @@ Public Class ModernTextBox
     Protected Overrides Sub OnMouseUp(e As MouseEventArgs)
         MyBase.OnMouseUp(e)
         _mouseDownSelecting = False
-        _scrollThumbDragging = False
+        _scrollBar.EndDrag()
         _autoScrollTimer.Stop()
     End Sub
     Protected Overrides Sub OnMouseWheel(e As MouseEventArgs)
         MyBase.OnMouseWheel(e)
         If Not 启用多行 Then Return
-        Dim delta As Integer = -Math.Sign(e.Delta) * 3
-        Dim maxOffset As Integer = Math.Max(0, _visualLines.Count - VisibleLineCount())
-        _scrollLineOffset = Math.Max(0, Math.Min(maxOffset, _scrollLineOffset + delta))
+        _scrollLineOffset = ScrollBarRenderer.HandleWheel(e.Delta, _scrollLineOffset, _visualLines.Count, VisibleLineCount())
         Invalidate()
     End Sub
     Private Function HitTest(x As Integer, y As Integer) As Point
@@ -831,23 +719,10 @@ Public Class ModernTextBox
         Return New Point(vl.StartCol + colInVl, vl.LogicalLine)
     End Function
     Private Function FindColFromX(lineStr As String, x As Integer) As Integer
-        If lineStr.Length = 0 OrElse x <= 0 Then Return 0
-        Dim best As Integer = 0
-        Dim bestDist As Integer = Integer.MaxValue
-        For i As Integer = 0 To lineStr.Length
-            Dim cx As Integer = MeasureWidth(lineStr.Substring(0, i))
-            Dim dist As Integer = Math.Abs(x - cx)
-            If dist < bestDist Then
-                bestDist = dist
-                best = i
-            ElseIf dist > bestDist Then
-                Exit For
-            End If
-        Next
-        Return best
+        Return TextRenderHelper.FindColFromX(lineStr, x, Font, 行高)
     End Function
 #End Region
-#Region "─── 光标移动 ───"
+#Region "光标移动"
     Private Sub MoveCaret(deltaCol As Integer, deltaLine As Integer, extend As Boolean)
         If Not extend AndAlso _hasSelection AndAlso deltaCol <> 0 AndAlso deltaLine = 0 Then
             Dim minL, minC, maxL, maxC As Integer
@@ -1021,7 +896,7 @@ Public Class ModernTextBox
         End If
     End Sub
 #End Region
-#Region "─── 文本编辑核心 ───"
+#Region "文本编辑核心"
     Private Sub InsertTextCore(text As String)
         DeleteSelection()
         Dim normalized As String = text.Replace(vbCr, "")
@@ -1101,7 +976,7 @@ Public Class ModernTextBox
         ClearSelection()
     End Sub
 #End Region
-#Region "─── 选区 ───"
+#Region "选区"
     Private Sub SelectAll()
         _selAnchorLine = 0
         _selAnchorCol = 0
@@ -1143,7 +1018,7 @@ Public Class ModernTextBox
         Return sb.ToString()
     End Function
 #End Region
-#Region "─── 剪贴板 ───"
+#Region "剪贴板"
     Private Sub CopySelection()
         If _hasSelection Then
             Try
@@ -1171,7 +1046,7 @@ Public Class ModernTextBox
         End Try
     End Sub
 #End Region
-#Region "─── 撤回 ───"
+#Region "撤回"
     Private Sub PushUndo()
         _undoStack.Add(New TextSnapshot(_lines, _caretLine, _caretCol))
         If _undoStack.Count > MAX_UNDO Then
@@ -1189,7 +1064,7 @@ Public Class ModernTextBox
         NotifyTextChanged()
     End Sub
 #End Region
-#Region "─── 滚动条 ───"
+#Region "滚动条"
     Private Sub UpdateScrollBar()
         If Not 启用多行 OrElse Not IsHandleCreated Then
             _scrollBarVisible = False
@@ -1199,44 +1074,32 @@ Public Class ModernTextBox
         Invalidate()
     End Sub
 #End Region
-#Region "─── 输入法 IME ───"
+#Region "输入法 IME"
     Private Sub UpdateImeWindow()
         If Not IsHandleCreated Then Return
-        Dim hIMC As IntPtr = ImmGetContext(Handle)
-        If hIMC = IntPtr.Zero Then Return
-        Try
-            Dim lineStr As String = _lines(_caretLine)
-            Dim vi As Integer = GetVisualLineIndex(_caretLine, _caretCol)
-            Dim vl = _visualLines(vi)
-            Dim wrapActive As Boolean = IsWordWrapActive()
-            Dim bi As Integer = 边框宽度
-            Dim imeLeft As Integer = Math.Max(Padding.Left, bi)
-            Dim imeTop As Integer = Math.Max(Padding.Top, bi)
-            Dim alignOff As Integer = If(wrapActive, 0, GetAlignOffsetX(lineStr, TextAreaWidth()))
-            Dim scrollX As Integer = If(wrapActive, 0, _scrollXOffset)
-            Dim cx As Integer = imeLeft + alignOff + MeasureWidth(lineStr.Substring(vl.StartCol, _caretCol - vl.StartCol)) - scrollX
-            Dim cy As Integer
-            If 启用多行 Then
-                cy = imeTop + (vi - _scrollLineOffset) * 行高 + 行高
-            Else
-                Dim textHeight As Integer = ClientRectangle.Height - imeTop - Math.Max(Padding.Bottom, bi)
-                cy = imeTop + (textHeight - 行高) \ 2 + 行高
-            End If
-            Dim cf As New COMPOSITIONFORM With {
-                .dwStyle = CFS_POINT,
-                .ptCurrentPos = New Point(cx, cy)
-            }
-            ImmSetCompositionWindow(hIMC, cf)
-        Finally
-            ImmReleaseContext(Handle, hIMC)
-        End Try
+        Dim lineStr As String = _lines(_caretLine)
+        Dim vi As Integer = GetVisualLineIndex(_caretLine, _caretCol)
+        Dim vl = _visualLines(vi)
+        Dim wrapActive As Boolean = IsWordWrapActive()
+        Dim bi As Integer = 边框宽度
+        Dim imeLeft As Integer = Math.Max(Padding.Left, bi)
+        Dim imeTop As Integer = Math.Max(Padding.Top, bi)
+        Dim alignOff As Integer = If(wrapActive, 0, GetAlignOffsetX(lineStr, TextAreaWidth()))
+        Dim scrollX As Integer = If(wrapActive, 0, _scrollXOffset)
+        Dim cx As Integer = imeLeft + alignOff + MeasureWidth(lineStr.Substring(vl.StartCol, _caretCol - vl.StartCol)) - scrollX
+        Dim cy As Integer
+        If 启用多行 Then
+            cy = imeTop + (vi - _scrollLineOffset) * 行高 + 行高
+        Else
+            Dim textHeight As Integer = ClientRectangle.Height - imeTop - Math.Max(Padding.Bottom, bi)
+            cy = imeTop + (textHeight - 行高) \ 2 + 行高
+        End If
+        ImeHelper.SetCompositionPosition(Handle, cx, cy)
     End Sub
 #End Region
-#Region "─── 辅助 ───"
+#Region "辅助"
     Private Function MeasureWidth(text As String) As Integer
-        If String.IsNullOrEmpty(text) Then Return 0
-        Return TextRenderer.MeasureText(text, Font, New Size(32767, 行高),
-            TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine).Width
+        Return TextRenderHelper.MeasureTextWidth(text, Font, 行高)
     End Function
     Private Function VisibleLineCount() As Integer
         Dim bi As Integer = 边框宽度
@@ -1244,8 +1107,9 @@ Public Class ModernTextBox
         Return Math.Max(1, h \ 行高)
     End Function
     Private Function TextAreaWidth() As Integer
-        Dim scrollW As Integer = If(_scrollBarVisible, 滚动条宽度 + 6, 0)
         Dim bi As Integer = 边框宽度
+        Dim inset As Integer = Math.Max(Padding.Left, bi)
+        Dim scrollW As Integer = If(_scrollBarVisible, _scrollBar.GetReservedWidth(ClientRectangle.Width, inset), 0)
         Return ClientRectangle.Width - Math.Max(Padding.Left, bi) - Math.Max(Padding.Right, bi) - scrollW
     End Function
     Private Function GetAlignOffsetX(lineStr As String, areaWidth As Integer) As Integer
@@ -1366,11 +1230,11 @@ Public Class ModernTextBox
         Invalidate()
     End Sub
 #End Region
-#Region "─── 事件 ───"
+#Region "事件"
     Protected Overrides Sub OnGotFocus(e As EventArgs)
         MyBase.OnGotFocus(e)
         If IsHandleCreated Then
-            ImmAssociateContextEx(Handle, IntPtr.Zero, IACE_DEFAULT)
+            ImeHelper.AssociateDefault(Handle)
             UpdateImeWindow()
         End If
         _caretVisible = True
