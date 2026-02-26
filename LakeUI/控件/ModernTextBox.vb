@@ -370,10 +370,11 @@ Public Class ModernTextBox
             boundsRect.Inflate(-half, -half)
         End If
         Dim bc As Color = If(Focused, 有焦点时边框颜色, 边框颜色)
-        If 超采样倍率 > 1 Then
-            Using bmp As New Bitmap(w * 超采样倍率, h * 超采样倍率)
+        Dim _ssaa As Integer = If(Class1.GlobalSSAA > 1, Class1.GlobalSSAA, 超采样倍率)
+        If _ssaa > 1 Then
+            Using bmp As New Bitmap(w * _ssaa, h * _ssaa)
                 Using g As Graphics = Graphics.FromImage(bmp)
-                    g.ScaleTransform(超采样倍率, 超采样倍率)
+                    g.ScaleTransform(_ssaa, _ssaa)
                     DrawBackground(g, hasRadius, boundsRect, bc)
                 End Using
                 e.Graphics.CompositingQuality = CompositingQuality.HighQuality

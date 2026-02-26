@@ -16,10 +16,11 @@ Public Class ExcellentButton
             极限矩形区域.Y + Me.Padding.Top,
             极限矩形区域.Width - Me.Padding.Horizontal,
             极限矩形区域.Height - Me.Padding.Vertical)
-        If 超采样倍率 > 1 Then
-            Using bmp As New Bitmap(Me.Width * 超采样倍率, Me.Height * 超采样倍率)
+        Dim _ssaa As Integer = If(Class1.GlobalSSAA > 1, Class1.GlobalSSAA, 超采样倍率)
+        If _ssaa > 1 Then
+            Using bmp As New Bitmap(Me.Width * _ssaa, Me.Height * _ssaa)
                 Using g As Graphics = Graphics.FromImage(bmp)
-                    g.ScaleTransform(超采样倍率, 超采样倍率)
+                    g.ScaleTransform(_ssaa, _ssaa)
                     绘制图形内容(g, 是否有圆角, 极限矩形区域, 内容矩形区域)
                 End Using
                 e.Graphics.CompositingQuality = CompositingQuality.HighQuality

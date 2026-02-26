@@ -25,9 +25,11 @@ Partial Class Form1
         Dim resources As System.ComponentModel.ComponentResourceManager = New System.ComponentModel.ComponentResourceManager(GetType(Form1))
         ExcellentButton1 = New ExcellentButton()
         ExcellentButton2 = New ExcellentButton()
-        ExcellentButton3 = New ExcellentButton()
         ModernTextBox1 = New ModernTextBox()
         ModernComboBox1 = New ModernComboBox()
+        BooleanSwitch1 = New BooleanSwitch()
+        QuantumSwitch1 = New QuantumSwitch()
+        QuantumSwitch2 = New QuantumSwitch()
         SuspendLayout()
         ' 
         ' ExcellentButton1
@@ -51,14 +53,6 @@ Partial Class Form1
         ExcellentButton2.Size = New Size(207, 62)
         ExcellentButton2.TabIndex = 2
         ExcellentButton2.Text = "ExcellentButton2"
-        ' 
-        ' ExcellentButton3
-        ' 
-        ExcellentButton3.Location = New Point(548, 210)
-        ExcellentButton3.Name = "ExcellentButton3"
-        ExcellentButton3.Size = New Size(207, 62)
-        ExcellentButton3.TabIndex = 3
-        ExcellentButton3.Text = "ExcellentButton3"
         ' 
         ' ModernTextBox1
         ' 
@@ -102,15 +96,52 @@ Partial Class Form1
         ModernComboBox1.Text = "ModernComboBox1"
         ModernComboBox1.WaterText = "水印文字"
         ' 
+        ' BooleanSwitch1
+        ' 
+        BooleanSwitch1.AnimationFPS = 0
+        BooleanSwitch1.KnobColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
+        BooleanSwitch1.Location = New Point(548, 246)
+        BooleanSwitch1.Name = "BooleanSwitch1"
+        BooleanSwitch1.Size = New Size(75, 40)
+        BooleanSwitch1.SuperSamplingScale = Class1.SuperSamplingScaleEnum.x2
+        BooleanSwitch1.TabIndex = 6
+        ' 
+        ' QuantumSwitch1
+        ' 
+        QuantumSwitch1.AnimationFPS = 0
+        QuantumSwitch1.KnobColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
+        QuantumSwitch1.KnobColorIndeterminate = Color.FromArgb(CByte(180), CByte(180), CByte(180))
+        QuantumSwitch1.Location = New Point(548, 330)
+        QuantumSwitch1.Name = "QuantumSwitch1"
+        QuantumSwitch1.Size = New Size(100, 40)
+        QuantumSwitch1.State = QuantumSwitch.QuantumStateEnum.Superposition
+        QuantumSwitch1.SuperSamplingScale = Class1.SuperSamplingScaleEnum.x2
+        QuantumSwitch1.TabIndex = 7
+        ' 
+        ' QuantumSwitch2
+        ' 
+        QuantumSwitch2.AnimationFPS = 0
+        QuantumSwitch2.KnobColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
+        QuantumSwitch2.KnobColorIndeterminate = Color.FromArgb(CByte(180), CByte(180), CByte(180))
+        QuantumSwitch2.Location = New Point(668, 330)
+        QuantumSwitch2.Name = "QuantumSwitch2"
+        QuantumSwitch2.ObserverMode = True
+        QuantumSwitch2.Size = New Size(100, 40)
+        QuantumSwitch2.State = QuantumSwitch.QuantumStateEnum.Indeterminate
+        QuantumSwitch2.SuperSamplingScale = Class1.SuperSamplingScaleEnum.x2
+        QuantumSwitch2.TabIndex = 8
+        ' 
         ' Form1
         ' 
         AutoScaleDimensions = New SizeF(120F, 120F)
         AutoScaleMode = AutoScaleMode.Dpi
-        BackColor = Color.FromArgb(CByte(24), CByte(24), CByte(24))
-        ClientSize = New Size(800, 450)
+        BackColor = Color.FromArgb(CByte(48), CByte(48), CByte(48))
+        ClientSize = New Size(1076, 747)
+        Controls.Add(QuantumSwitch2)
+        Controls.Add(QuantumSwitch1)
+        Controls.Add(BooleanSwitch1)
         Controls.Add(ModernComboBox1)
         Controls.Add(ModernTextBox1)
-        Controls.Add(ExcellentButton3)
         Controls.Add(ExcellentButton2)
         Controls.Add(ExcellentButton1)
         Font = New Font("MiSans Medium", 10.7999992F, FontStyle.Regular, GraphicsUnit.Point, CByte(134))
@@ -122,8 +153,10 @@ Partial Class Form1
 
     Friend WithEvents ExcellentButton1 As ExcellentButton
     Friend WithEvents ExcellentButton2 As ExcellentButton
-    Friend WithEvents ExcellentButton3 As ExcellentButton
     Friend WithEvents ModernTextBox1 As ModernTextBox
     Friend WithEvents ModernComboBox1 As ModernComboBox
+    Friend WithEvents BooleanSwitch1 As BooleanSwitch
+    Friend WithEvents QuantumSwitch1 As QuantumSwitch
+    Friend WithEvents QuantumSwitch2 As QuantumSwitch
 
 End Class

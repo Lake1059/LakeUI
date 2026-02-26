@@ -629,12 +629,13 @@ Public Class ModernComboBox
                     If 鼠标按下时边框颜色 <> Color.Empty Then bc = 鼠标按下时边框颜色
             End Select
         End If
-
-        If 超采样倍率 > 1 Then
-            Using bmp As New Bitmap(w * 超采样倍率, h * 超采样倍率)
+        Dim _ssaa As Integer = If(Class1.GlobalSSAA > 1, Class1.GlobalSSAA, 超采样倍率)
+        If _ssaa > 1 Then
+            Using bmp As New Bitmap(w * _ssaa, h * _ssaa)
                 Using g As Graphics = Graphics.FromImage(bmp)
-                    g.ScaleTransform(超采样倍率, 超采样倍率)
+                    g.ScaleTransform(_ssaa, _ssaa)
                     DrawBackground(g, hasRadius, boundsRect, bc, effBg, effBg2)
+                    DrawSeparatorAndArrow(g, w, h, bc)
                 End Using
                 e.Graphics.CompositingQuality = CompositingQuality.HighQuality
                 e.Graphics.InterpolationMode = InterpolationMode.HighQualityBicubic
@@ -642,10 +643,10 @@ Public Class ModernComboBox
             End Using
         Else
             DrawBackground(e.Graphics, hasRadius, boundsRect, bc, effBg, effBg2)
+            DrawSeparatorAndArrow(e.Graphics, w, h, bc)
         End If
 
         DrawTextContent(e.Graphics, w, h)
-        DrawSeparatorAndArrow(e.Graphics, w, h, bc)
     End Sub
 
     Private Sub DrawBackground(g As Graphics, hasRadius As Boolean, boundsRect As RectangleF, borderClr As Color, bgClr As Color, bgClr2 As Color)
@@ -1265,7 +1266,8 @@ Public Class ModernComboBox
             Me.ShowInTaskbar = False
             Me.TopMost = True
             Me.DoubleBuffered = True
-            Me.BackColor = owner.下拉背景颜色
+            Me.BackColor = owner.BackColor
+            Me.AutoScaleMode = AutoScaleMode.Dpi
 
             Dim visCount As Integer = Math.Min(owner._items.Count, owner.最大下拉项数)
             Dim bw As Integer = owner.下拉边框宽度
@@ -1346,11 +1348,11 @@ Public Class ModernComboBox
             g.SmoothingMode = SmoothingMode.AntiAlias
             g.PixelOffsetMode = PixelOffsetMode.HighQuality
             g.InterpolationMode = InterpolationMode.HighQualityBicubic
-            Using br As New SolidBrush(_owner.下拉背景颜色)
-                g.FillRectangle(br, 0, 0, boundsRect.Right + boundsRect.Left + 1, boundsRect.Bottom + boundsRect.Top + 1)
-            End Using
             If radius > 0 Then
                 Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(boundsRect, radius)
+                    Using br As New SolidBrush(_owner.下拉背景颜色)
+                        g.FillPath(br, path)
+                    End Using
                     If bw > 0 Then
                         Using pen As New Pen(_owner.下拉边框颜色, bw)
                             pen.LineJoin = LineJoin.Round
@@ -1359,6 +1361,9 @@ Public Class ModernComboBox
                     End If
                 End Using
             Else
+                Using br As New SolidBrush(_owner.下拉背景颜色)
+                    g.FillRectangle(br, boundsRect.X, boundsRect.Y, boundsRect.Width, boundsRect.Height)
+                End Using
                 If bw > 0 Then
                     Using pen As New Pen(_owner.下拉边框颜色, bw)
                         g.DrawRectangle(pen, boundsRect.X, boundsRect.Y, boundsRect.Width, boundsRect.Height)
