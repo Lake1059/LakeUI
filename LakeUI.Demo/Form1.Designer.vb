@@ -23,6 +23,13 @@ Partial Class Form1
     <System.Diagnostics.DebuggerStepThrough()>
     Private Sub InitializeComponent()
         Dim resources As System.ComponentModel.ComponentResourceManager = New System.ComponentModel.ComponentResourceManager(GetType(Form1))
+        Dim TrackLabel8 As LakeUI.ExcellentTrackBar.TrackLabel = New ExcellentTrackBar.TrackLabel()
+        Dim TrackLabel9 As LakeUI.ExcellentTrackBar.TrackLabel = New ExcellentTrackBar.TrackLabel()
+        Dim TrackLabel10 As LakeUI.ExcellentTrackBar.TrackLabel = New ExcellentTrackBar.TrackLabel()
+        Dim TrackLabel11 As LakeUI.ExcellentTrackBar.TrackLabel = New ExcellentTrackBar.TrackLabel()
+        Dim TrackLabel12 As LakeUI.ExcellentTrackBar.TrackLabel = New ExcellentTrackBar.TrackLabel()
+        Dim TrackLabel13 As LakeUI.ExcellentTrackBar.TrackLabel = New ExcellentTrackBar.TrackLabel()
+        Dim TrackLabel14 As LakeUI.ExcellentTrackBar.TrackLabel = New ExcellentTrackBar.TrackLabel()
         ExcellentButton1 = New ExcellentButton()
         ExcellentButton2 = New ExcellentButton()
         ModernTextBox1 = New ModernTextBox()
@@ -30,6 +37,7 @@ Partial Class Form1
         BooleanSwitch1 = New BooleanSwitch()
         QuantumSwitch1 = New QuantumSwitch()
         QuantumSwitch2 = New QuantumSwitch()
+        ExcellentTrackBar1 = New ExcellentTrackBar()
         SuspendLayout()
         ' 
         ' ExcellentButton1
@@ -111,7 +119,7 @@ Partial Class Form1
         QuantumSwitch1.AnimationFPS = 0
         QuantumSwitch1.KnobColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
         QuantumSwitch1.KnobColorIndeterminate = Color.FromArgb(CByte(180), CByte(180), CByte(180))
-        QuantumSwitch1.Location = New Point(548, 330)
+        QuantumSwitch1.Location = New Point(655, 246)
         QuantumSwitch1.Name = "QuantumSwitch1"
         QuantumSwitch1.Size = New Size(100, 40)
         QuantumSwitch1.State = QuantumSwitch.QuantumStateEnum.Superposition
@@ -123,7 +131,7 @@ Partial Class Form1
         QuantumSwitch2.AnimationFPS = 0
         QuantumSwitch2.KnobColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
         QuantumSwitch2.KnobColorIndeterminate = Color.FromArgb(CByte(180), CByte(180), CByte(180))
-        QuantumSwitch2.Location = New Point(668, 330)
+        QuantumSwitch2.Location = New Point(655, 335)
         QuantumSwitch2.Name = "QuantumSwitch2"
         QuantumSwitch2.ObserverMode = True
         QuantumSwitch2.Size = New Size(100, 40)
@@ -131,12 +139,55 @@ Partial Class Form1
         QuantumSwitch2.SuperSamplingScale = Class1.SuperSamplingScaleEnum.x2
         QuantumSwitch2.TabIndex = 8
         ' 
+        ' ExcellentTrackBar1
+        ' 
+        ExcellentTrackBar1.AnimationDuration = 500
+        ExcellentTrackBar1.AnimationFPS = 0
+        ExcellentTrackBar1.LabelFont = New Font("MiSans Medium", 9F, FontStyle.Regular, GraphicsUnit.Point, CByte(134))
+        ExcellentTrackBar1.LabelLineLength = 20
+        TrackLabel9.Position = 1
+        TrackLabel9.Side = ExcellentTrackBar.LabelSideEnum.TopOrLeft
+        TrackLabel10.Position = 2
+        TrackLabel11.Position = 3
+        TrackLabel11.Side = ExcellentTrackBar.LabelSideEnum.TopOrLeft
+        TrackLabel12.Position = 4
+        TrackLabel13.Position = 5
+        TrackLabel13.Side = ExcellentTrackBar.LabelSideEnum.TopOrLeft
+        TrackLabel14.Position = 6
+        ExcellentTrackBar1.Labels.Add(TrackLabel8)
+        ExcellentTrackBar1.Labels.Add(TrackLabel9)
+        ExcellentTrackBar1.Labels.Add(TrackLabel10)
+        ExcellentTrackBar1.Labels.Add(TrackLabel11)
+        ExcellentTrackBar1.Labels.Add(TrackLabel12)
+        ExcellentTrackBar1.Labels.Add(TrackLabel13)
+        ExcellentTrackBar1.Labels.Add(TrackLabel14)
+        ExcellentTrackBar1.Location = New Point(111, 388)
+        ExcellentTrackBar1.Maximum = 6
+        ExcellentTrackBar1.Name = "ExcellentTrackBar1"
+        ExcellentTrackBar1.Size = New Size(500, 100)
+        ExcellentTrackBar1.StringItems.Add("veryslow")
+        ExcellentTrackBar1.StringItems.Add("slower")
+        ExcellentTrackBar1.StringItems.Add("slow")
+        ExcellentTrackBar1.StringItems.Add("medium")
+        ExcellentTrackBar1.StringItems.Add("fast")
+        ExcellentTrackBar1.StringItems.Add("faster")
+        ExcellentTrackBar1.StringItems.Add("veryfast")
+        ExcellentTrackBar1.SuperSamplingScale = Class1.SuperSamplingScaleEnum.x2
+        ExcellentTrackBar1.TabIndex = 9
+        ExcellentTrackBar1.ThumbBorderWidth = 0
+        ExcellentTrackBar1.ThumbHeight = 35
+        ExcellentTrackBar1.ThumbRadius = 5
+        ExcellentTrackBar1.ThumbTextMode = ExcellentTrackBar.ThumbTextModeEnum.StringItem
+        ExcellentTrackBar1.ThumbWidth = 120
+        ExcellentTrackBar1.UseStringItems = True
+        ' 
         ' Form1
         ' 
         AutoScaleDimensions = New SizeF(120F, 120F)
         AutoScaleMode = AutoScaleMode.Dpi
-        BackColor = Color.FromArgb(CByte(48), CByte(48), CByte(48))
+        BackColor = Color.FromArgb(CByte(24), CByte(24), CByte(24))
         ClientSize = New Size(1076, 747)
+        Controls.Add(ExcellentTrackBar1)
         Controls.Add(QuantumSwitch2)
         Controls.Add(QuantumSwitch1)
         Controls.Add(BooleanSwitch1)
@@ -158,5 +209,6 @@ Partial Class Form1
     Friend WithEvents BooleanSwitch1 As BooleanSwitch
     Friend WithEvents QuantumSwitch1 As QuantumSwitch
     Friend WithEvents QuantumSwitch2 As QuantumSwitch
+    Friend WithEvents ExcellentTrackBar1 As ExcellentTrackBar
 
 End Class

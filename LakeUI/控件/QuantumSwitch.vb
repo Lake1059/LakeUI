@@ -76,7 +76,7 @@ Public Class QuantumSwitch
         Dim 滑块直径 As Single = 极限矩形区域.Height - 滑块边距值 * 2
         Dim 滑块最小X As Single = 极限矩形区域.X + 滑块边距值
         Dim 滑块最大X As Single = 极限矩形区域.Right - 滑块边距值 - 滑块直径
-        Dim 滑块X As Single = 滑块最小X + (滑块最大X - 滑块最小X) * 动画进度
+        Dim 滑块X As Single = 滑块最小X + (滑块最大X - 滑块最小X) * 动画助手.Progress
         Dim 滑块Y As Single = 极限矩形区域.Y + 滑块边距值
         Using brush As New SolidBrush(滑块颜色)
             g.FillEllipse(brush, 滑块X, 滑块Y, 滑块直径, 滑块直径)
@@ -118,7 +118,7 @@ Public Class QuantumSwitch
     End Sub
 
     Private Function 获取当前轨道颜色() As Color
-        Dim 目标进度 As Single = 动画进度
+        Dim 目标进度 As Single = 动画助手.Progress
 
         ' 叠加态使用专用颜色
         If 内部状态 = QuantumStateEnum.Superposition Then
@@ -196,70 +196,6 @@ Public Class QuantumSwitch
     End Function
 #End Region
 
-#Region "动画"
-    Private ReadOnly 动画秒表 As New Stopwatch()
-    Private ReadOnly 动画计时器 As New System.Windows.Forms.Timer()
-    Private 动画进度 As Single = 0.0F
-    Private 动画起始进度 As Single = 0.0F
-    Private 动画目标 As Single = 0.0F
-    Private 动画中 As Boolean = False
-    Private 使用空闲驱动 As Boolean = False
-
-    Private Sub 更新动画帧(sender As Object, e As EventArgs)
-        Dim elapsed As Double = 动画秒表.Elapsed.TotalMilliseconds
-        Dim t As Single = CSng(Math.Min(elapsed / 动画时长, 1.0))
-        Dim eased As Single = 1.0F - CSng(Math.Pow(1.0 - t, 3))
-        动画进度 = 动画起始进度 + (动画目标 - 动画起始进度) * eased
-        If t >= 1.0F Then
-            动画进度 = 动画目标
-            停止动画()
-        End If
-        Me.Invalidate()
-    End Sub
-
-    Private Sub 开始动画()
-        Select Case 内部状态
-            Case QuantumStateEnum.On
-                动画目标 = 1.0F
-            Case QuantumStateEnum.Superposition
-                动画目标 = 0.5F
-            Case Else
-                动画目标 = 0.0F
-        End Select
-        If Not IsHandleCreated OrElse 动画时长 <= 0 Then
-            动画进度 = 动画目标
-            Me.Invalidate()
-        Else
-            动画起始进度 = 动画进度
-            动画秒表.Restart()
-            If Not 动画中 Then
-                动画中 = True
-                使用空闲驱动 = (动画帧率 <= 0)
-                If 使用空闲驱动 Then
-                    AddHandler Application.Idle, AddressOf 更新动画帧
-                Else
-                    动画计时器.Interval = Math.Max(1, CInt(1000.0 / 动画帧率))
-                    AddHandler 动画计时器.Tick, AddressOf 更新动画帧
-                    动画计时器.Start()
-                End If
-            End If
-        End If
-    End Sub
-
-    Private Sub 停止动画()
-        If 动画中 Then
-            动画中 = False
-            If 使用空闲驱动 Then
-                RemoveHandler Application.Idle, AddressOf 更新动画帧
-            Else
-                动画计时器.Stop()
-                RemoveHandler 动画计时器.Tick, AddressOf 更新动画帧
-            End If
-            动画秒表.Stop()
-        End If
-    End Sub
-#End Region
-
 #Region "鼠标状态"
     Private Enum MouseStateEnum
         Normal
@@ -313,6 +249,21 @@ Public Class QuantumSwitch
         End If
     End Sub
 
+    Protected Overrides Sub OnDoubleClick(e As EventArgs)
+        MyBase.OnDoubleClick(e)
+        If 内部状态 = QuantumStateEnum.Superposition Then
+            If 随机数生成器.Next(2) = 0 Then
+                State = QuantumStateEnum.Off
+            Else
+                State = QuantumStateEnum.On
+            End If
+        ElseIf 内部状态 = QuantumStateEnum.Off Then
+            State = QuantumStateEnum.On
+        Else
+            State = QuantumStateEnum.Off
+        End If
+    End Sub
+
     Protected Overrides Sub OnMouseClick(e As MouseEventArgs)
         MyBase.OnMouseClick(e)
         ' 右键：切换到叠加态（如果已经是叠加态则回到关闭）
@@ -333,6 +284,16 @@ Public Class QuantumSwitch
         End If
     End Sub
 
+    Private ReadOnly 动画助手 As New AnimationHelper(Me)
+
+    Private Function 计算状态目标进度() As Single
+        Select Case 内部状态
+            Case QuantumStateEnum.On : Return 1.0F
+            Case QuantumStateEnum.Superposition : Return 0.5F
+            Case Else : Return 0.0F
+        End Select
+    End Function
+
 #Region "属性"
     Private 内部状态 As QuantumStateEnum = QuantumStateEnum.Off
 
@@ -352,7 +313,7 @@ Public Class QuantumSwitch
             If value = QuantumStateEnum.Indeterminate Then value = QuantumStateEnum.Off
             If 内部状态 <> value Then
                 内部状态 = value
-                开始动画()
+                动画助手.AnimateTo(计算状态目标进度())
                 RaiseEvent StateChanged(Me, EventArgs.Empty)
             End If
         End Set
@@ -482,25 +443,23 @@ Public Class QuantumSwitch
         End Set
     End Property
 
-    Private 动画时长 As Integer = 300
-    <Category("LakeUI"), Description("动画时长，设为0则无动画，单位是毫秒"), DefaultValue(300), Browsable(True)>
+    <Category("LakeUI"), Description(Class1.动画时长描述词), DefaultValue(300), Browsable(True)>
     Public Property AnimationDuration As Integer
         Get
-            Return 动画时长
+            Return 动画助手.Duration
         End Get
         Set(value As Integer)
-            动画时长 = Math.Max(0, value)
+            动画助手.Duration = Math.Max(0, value)
         End Set
     End Property
 
-    Private 动画帧率 As Integer = 60
     <Category("LakeUI"), Description("动画帧率上限，设为0则不限制"), DefaultValue(60), Browsable(True)>
     Public Property AnimationFPS As Integer
         Get
-            Return 动画帧率
+            Return 动画助手.FPS
         End Get
         Set(value As Integer)
-            动画帧率 = Math.Max(0, value)
+            动画助手.FPS = Math.Max(0, value)
         End Set
     End Property
 

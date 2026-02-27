@@ -7,8 +7,7 @@ Partial Class BooleanSwitch
     Protected Overrides Sub Dispose(ByVal disposing As Boolean)
         Try
             If disposing Then
-                停止动画()
-                动画计时器.Dispose()
+                动画助手.Dispose()
                 If components IsNot Nothing Then
                     components.Dispose()
                 End If

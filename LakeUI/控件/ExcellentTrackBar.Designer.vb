@@ -1,5 +1,5 @@
 ﻿<Global.Microsoft.VisualBasic.CompilerServices.DesignerGenerated()> _
-Partial Class QuantumSwitch
+Partial Class ExcellentTrackBar
     Inherits System.Windows.Forms.UserControl
 
     'UserControl 重写释放以清理组件列表。
@@ -27,13 +27,13 @@ Partial Class QuantumSwitch
     Private Sub InitializeComponent()
         SuspendLayout()
         ' 
-        ' QuantumSwitch
+        ' HorizontalTrackBar
         ' 
         AutoScaleDimensions = New SizeF(120F, 120F)
         AutoScaleMode = AutoScaleMode.Dpi
         DoubleBuffered = True
-        Name = "QuantumSwitch"
-        Size = New Size(150, 40)
+        Name = "ExcellentTrackBar"
+        Size = New Size(200, 50)
         ResumeLayout(False)
     End Sub
 
