@@ -1,13 +1,16 @@
 ﻿<Global.Microsoft.VisualBasic.CompilerServices.DesignerGenerated()> _
-Partial Class ModernComboBox
+Partial Class UltraDetailListView
     Inherits System.Windows.Forms.UserControl
 
     'UserControl 重写释放以清理组件列表。
     <System.Diagnostics.DebuggerNonUserCode()> _
     Protected Overrides Sub Dispose(ByVal disposing As Boolean)
         Try
-            If disposing AndAlso components IsNot Nothing Then
-                components.Dispose()
+            If disposing Then
+                释放资源()
+                If components IsNot Nothing Then
+                    components.Dispose()
+                End If
             End If
         Finally
             MyBase.Dispose(disposing)
@@ -24,13 +27,12 @@ Partial Class ModernComboBox
     Private Sub InitializeComponent()
         SuspendLayout()
         ' 
-        ' ModernComboBox
+        ' MaxDetailListView
         ' 
         AutoScaleDimensions = New SizeF(120F, 120F)
         AutoScaleMode = AutoScaleMode.Dpi
         DoubleBuffered = True
-        Name = "ModernComboBox"
-        Size = New Size(200, 40)
+        Name = "MaxDetailListView"
         ResumeLayout(False)
     End Sub
 

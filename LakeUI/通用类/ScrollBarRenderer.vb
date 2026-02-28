@@ -7,13 +7,15 @@ Public Class ScrollBarRenderer
     Public ThumbRect As Rectangle = Rectangle.Empty
     Public TrackRect As Rectangle = Rectangle.Empty
     Public VisualLeft As Integer = 0
+    Public VisualTop As Integer = 0
 
     Public IsHover As Boolean = False
     Public IsDragging As Boolean = False
     Private _dragStartY As Integer = 0
+    Private _dragStartX As Integer = 0
     Private _dragStartOffset As Integer = 0
 
-    Private Const Margin As Integer = 2
+    Public Const Margin As Integer = 2
 
     Public Sub ComputeLayout(containerW As Integer, containerH As Integer,
                              borderWidth As Integer, borderRadius As Integer,
@@ -150,4 +152,126 @@ Public Class ScrollBarRenderer
         If TrackRect.IsEmpty Then Return 0
         Return containerW - inset - VisualLeft
     End Function
+
+#Region "横向滚动条"
+
+    Public Sub ComputeHorizontalLayout(containerW As Integer, containerH As Integer,
+                                       borderWidth As Integer, borderRadius As Integer,
+                                       paddingLeft As Integer, paddingRight As Integer,
+                                       scrollBarHeight As Integer,
+                                       totalContentWidth As Integer, visibleWidth As Integer,
+                                       scrollPixelOffset As Integer)
+        Dim inset As Integer = Math.Max(borderWidth, If(borderRadius > 0, borderRadius \ 2, 0))
+        Dim sbX As Integer = inset + Margin + paddingLeft
+        Dim sbY As Integer = containerH - scrollBarHeight - inset - Margin
+        Dim sbW As Integer = containerW - (inset + Margin) * 2 - paddingLeft - paddingRight
+        If sbW <= 0 OrElse scrollBarHeight <= 0 Then
+            ThumbRect = Rectangle.Empty
+            TrackRect = Rectangle.Empty
+            VisualTop = containerH
+            Return
+        End If
+
+        VisualTop = sbY
+        TrackRect = New Rectangle(sbX, sbY - Margin, sbW, scrollBarHeight + Margin * 2)
+
+        Dim maxOff As Integer = Math.Max(0, totalContentWidth - visibleWidth)
+        Dim thumbW As Integer = Math.Max(20, CInt(sbW * visibleWidth / Math.Max(1, totalContentWidth)))
+        Dim thumbX As Integer = sbX
+        If maxOff > 0 Then
+            thumbX = sbX + CInt((sbW - thumbW) * scrollPixelOffset / maxOff)
+        End If
+        ThumbRect = New Rectangle(thumbX, sbY - Margin, thumbW, scrollBarHeight + Margin * 2)
+    End Sub
+
+    Public Sub DrawHorizontal(g As Graphics, containerW As Integer, containerH As Integer,
+                              borderWidth As Integer, borderRadius As Integer,
+                              scrollBarHeight As Integer,
+                              trackColor As Color, thumbColor As Color, thumbHoverColor As Color)
+        If TrackRect.IsEmpty Then Return
+
+        Dim oldSmooth = g.SmoothingMode
+        g.SmoothingMode = SmoothingMode.AntiAlias
+
+        Dim oldClip As Region = g.Clip.Clone()
+        If borderRadius > 0 Then
+            Dim clipRect As New RectangleF(0, 0, containerW - 1, containerH - 1)
+            If borderWidth > 0 Then
+                Dim half As Single = borderWidth / 2.0F
+                clipRect.Inflate(-half, -half)
+            End If
+            Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(clipRect, borderRadius)
+                g.SetClip(path, Drawing2D.CombineMode.Replace)
+            End Using
+        End If
+
+        Dim sbW As Integer = TrackRect.Width
+        If trackColor.A > 0 Then
+            Dim trackRadius As Integer = Math.Min(scrollBarHeight \ 2, sbW \ 2)
+            Using trackPath As GraphicsPath = RectangleRenderer.创建圆角矩形路径(
+                New RectangleF(TrackRect.X, VisualTop, sbW, scrollBarHeight), trackRadius)
+                Using br As New SolidBrush(trackColor)
+                    g.FillPath(br, trackPath)
+                End Using
+            End Using
+        End If
+
+        Dim activeColor As Color = If(IsDragging OrElse IsHover, thumbHoverColor, thumbColor)
+        Dim thumbW As Integer = ThumbRect.Width
+        Dim thumbRadius As Integer = Math.Min(scrollBarHeight \ 2, thumbW \ 2)
+        Using thumbPath As GraphicsPath = RectangleRenderer.创建圆角矩形路径(
+            New RectangleF(ThumbRect.X, VisualTop, thumbW, scrollBarHeight), thumbRadius)
+            Using br As New SolidBrush(activeColor)
+                g.FillPath(br, thumbPath)
+            End Using
+        End Using
+
+        g.Clip = oldClip
+        g.SmoothingMode = oldSmooth
+    End Sub
+
+    Public Function BeginDragHorizontal(mouseLocation As Point, scrollOffset As Integer) As Boolean
+        If ThumbRect.Contains(mouseLocation) Then
+            IsDragging = True
+            _dragStartX = mouseLocation.X
+            _dragStartOffset = scrollOffset
+            Return True
+        End If
+        Return False
+    End Function
+
+    Public Function DragMoveHorizontal(mouseX As Integer, totalContentWidth As Integer, visibleWidth As Integer) As Integer
+        If Not IsDragging Then Return _dragStartOffset
+        Dim trackW As Integer = TrackRect.Width
+        Dim maxOff As Integer = Math.Max(0, totalContentWidth - visibleWidth)
+        Dim thumbW As Integer = Math.Max(20, CInt(trackW * visibleWidth / Math.Max(1, totalContentWidth)))
+        Dim usableW As Integer = trackW - thumbW
+        If usableW <= 0 Then Return _dragStartOffset
+        Dim dx As Integer = mouseX - _dragStartX
+        Dim newOff As Integer = _dragStartOffset + CInt(dx * maxOff / usableW)
+        Return Math.Max(0, Math.Min(maxOff, newOff))
+    End Function
+
+    Public Function TrackClickHorizontal(mouseLocation As Point, scrollOffset As Integer,
+                                         totalContentWidth As Integer, visibleWidth As Integer) As Integer
+        If Not TrackRect.Contains(mouseLocation) Then Return scrollOffset
+        Dim maxOff As Integer = Math.Max(0, totalContentWidth - visibleWidth)
+        Dim pageSize As Integer = Math.Max(1, visibleWidth)
+        If mouseLocation.X < ThumbRect.X Then
+            Return Math.Max(0, scrollOffset - pageSize)
+        Else
+            Return Math.Min(maxOff, scrollOffset + pageSize)
+        End If
+    End Function
+
+    Public Shared Function HandleHorizontalWheel(delta As Integer, scrollOffset As Integer,
+                                                  totalContentWidth As Integer, visibleWidth As Integer,
+                                                  Optional scrollStep As Integer = 40) As Integer
+        Dim d As Integer = -Math.Sign(delta) * scrollStep
+        Dim maxOff As Integer = Math.Max(0, totalContentWidth - visibleWidth)
+        Return Math.Max(0, Math.Min(maxOff, scrollOffset + d))
+    End Function
+
+#End Region
+
 End Class

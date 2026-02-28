@@ -501,14 +501,14 @@ Public Class ModernComboBox
         End Set
     End Property
 
-    Private 下拉间距 As Integer = -1
-    <Category("LakeUI"), Description("下拉列表与主体的垂直间距"), DefaultValue(GetType(Integer), "-1"), Browsable(True)>
+    Private 下拉间距 As Integer = 0
+    <Category("LakeUI"), Description("下拉列表与主体的垂直间距"), DefaultValue(GetType(Integer), "0"), Browsable(True)>
     Public Property DropDownGap As Integer
         Get
             Return 下拉间距
         End Get
         Set(value As Integer)
-            下拉间距 = Math.Max(0, value)
+            下拉间距 = value
         End Set
     End Property
 
@@ -572,6 +572,41 @@ Public Class ModernComboBox
     Private Sub ResetDropDownPadding()
         下拉内边距 = Padding.Empty
     End Sub
+
+    Private 下拉展开关闭动画时长 As Integer = 150
+    <Category("LakeUI"), Description("下拉列表展开/关闭动画时长（毫秒），0 = 无动画"), DefaultValue(GetType(Integer), "150"), Browsable(True)>
+    Public Property DropDownAnimationDuration As Integer
+        Get
+            Return 下拉展开关闭动画时长
+        End Get
+        Set(value As Integer)
+            If value < 0 Then value = 0
+            SetValue(下拉展开关闭动画时长, value)
+        End Set
+    End Property
+
+    Private 下拉悬停动画时长 As Integer = 200
+    <Category("LakeUI"), Description("下拉列表悬停高亮移动动画时长（毫秒），0 = 无动画"), DefaultValue(GetType(Integer), "200"), Browsable(True)>
+    Public Property DropDownHoverAnimationDuration As Integer
+        Get
+            Return 下拉悬停动画时长
+        End Get
+        Set(value As Integer)
+            If value < 0 Then value = 0
+            SetValue(下拉悬停动画时长, value)
+        End Set
+    End Property
+
+    Private 下拉动画帧率 As Integer = 60
+    <Category("LakeUI"), Description("动画帧率上限，设为0则不限制"), DefaultValue(60), Browsable(True)>
+    Public Property DropDownAnimationFPS As Integer
+        Get
+            Return 下拉动画帧率
+        End Get
+        Set(value As Integer)
+            下拉动画帧率 = Math.Max(0, value)
+        End Set
+    End Property
 #End Region
 #Region "初始化"
     Public Sub New()
@@ -1228,17 +1263,29 @@ Public Class ModernComboBox
 
         _droppedDown = True
         _dropDownForm = New DropDownListForm(Me)
-        _dropDownForm.Show()
+        _dropDownForm.ShowDropDown()
     End Sub
 
     Friend Sub CloseDropDown()
         If Not _droppedDown Then Return
-        _droppedDown = False
         If _dropDownForm IsNot Nothing Then
-            _dropDownForm.Close()
-            _dropDownForm.Dispose()
+            If _dropDownForm.正在关闭动画 Then Return
+            If 下拉展开关闭动画时长 > 0 AndAlso _dropDownForm.IsHandleCreated AndAlso Not _dropDownForm.IsDisposed Then
+                _dropDownForm.开始关闭动画()
+                Return
+            End If
+            _droppedDown = False
+            _dropDownForm.关闭并释放()
             _dropDownForm = Nothing
+        Else
+            _droppedDown = False
         End If
+        Invalidate()
+    End Sub
+
+    Friend Sub OnDropDownClosed()
+        _droppedDown = False
+        _dropDownForm = Nothing
         Invalidate()
     End Sub
 
@@ -1250,7 +1297,8 @@ Public Class ModernComboBox
     End Sub
 
     Private Class DropDownListForm
-        Inherits Form
+        Inherits PopupForm
+        Implements IMessageFilter
 
         Private _owner As ModernComboBox
         Private _hoverIndex As Integer = -1
@@ -1258,28 +1306,57 @@ Public Class ModernComboBox
         Private _scrollOffset As Integer = 0
         Private _scrollBarVisible As Boolean = False
         Private _scrollBar As New ScrollBarRenderer()
+        Private _finalHeight As Integer
+        Private _originPt As Point
+        Private _useIdle As Boolean = False
+
+        ' 展开/关闭动画
+        Private ReadOnly 展开关闭秒表 As New Stopwatch()
+        Private 展开关闭计时器 As Timer
+        Private 展开关闭动画中 As Boolean = False
+        Friend 正在关闭动画 As Boolean = False
+
+        ' 悬停动画
+        Private ReadOnly 悬停秒表 As New Stopwatch()
+        Private 悬停计时器 As Timer
+        Private 悬停动画起始Y As Single = -1
+        Private 悬停动画目标Y As Single = -1
+        Private 悬停动画当前Y As Single = -1
+        Private 悬停动画起始高度 As Single = 0
+        Private 悬停动画目标高度 As Single = 0
+        Private 悬停动画当前高度 As Single = 0
+        Private 悬停动画中 As Boolean = False
+        Private 悬停动画显示 As Boolean = False
+
+        Private Const WM_LBUTTONDOWN As Integer = &H201
+        Private Const WM_RBUTTONDOWN As Integer = &H204
+        Private Const WM_MBUTTONDOWN As Integer = &H207
+        Private Const WM_NCLBUTTONDOWN As Integer = &HA1
 
         Public Sub New(owner As ModernComboBox)
             _owner = owner
-            Me.FormBorderStyle = FormBorderStyle.None
-            Me.StartPosition = FormStartPosition.Manual
-            Me.ShowInTaskbar = False
-            Me.TopMost = True
             Me.DoubleBuffered = True
             Me.BackColor = owner.BackColor
             Me.AutoScaleMode = AutoScaleMode.Dpi
 
+            _useIdle = (owner.下拉动画帧率 <= 0)
+            If Not _useIdle Then
+                Dim interval As Integer = Math.Max(1, 1000 \ owner.下拉动画帧率)
+                展开关闭计时器 = New Timer() With {.Interval = interval}
+                悬停计时器 = New Timer() With {.Interval = interval}
+            End If
+
             Dim visCount As Integer = Math.Min(owner._items.Count, owner.最大下拉项数)
             Dim bw As Integer = owner.下拉边框宽度
             Dim pad As Padding = owner.下拉内边距
-            Dim totalH As Integer = visCount * owner.下拉项高度 + bw * 2 + pad.Top + pad.Bottom
-            Dim pt As Point = owner.PointToScreen(New Point(0, owner.Height + owner.下拉间距))
+            _finalHeight = visCount * owner.下拉项高度 + bw * 2 + pad.Top + pad.Bottom
+            _originPt = owner.PointToScreen(New Point(0, owner.Height + owner.下拉间距))
             Dim scr As Screen = Screen.FromControl(owner)
-            If pt.Y + totalH > scr.WorkingArea.Bottom Then
-                pt = owner.PointToScreen(New Point(0, -totalH - owner.下拉间距))
+            If _originPt.Y + _finalHeight > scr.WorkingArea.Bottom Then
+                _originPt = owner.PointToScreen(New Point(0, -_finalHeight - owner.下拉间距))
             End If
-            Me.Location = pt
-            Me.Size = New Size(owner.Width, totalH)
+            Me.Location = _originPt
+            Me.Size = New Size(owner.Width, _finalHeight)
 
             _scrollBarVisible = owner._items.Count > owner.最大下拉项数
             If owner._selectedIndex >= 0 Then
@@ -1288,22 +1365,113 @@ Public Class ModernComboBox
             End If
         End Sub
 
-        Protected Overrides ReadOnly Property ShowWithoutActivation As Boolean
-            Get
-                Return True
-            End Get
-        End Property
+        Friend Sub ShowDropDown()
+            Application.AddMessageFilter(Me)
+            If _owner.下拉展开关闭动画时长 > 0 Then
+                Me.Size = New Size(Me.Width, 1)
+                Me.Show()
+                展开关闭动画中 = True
+                正在关闭动画 = False
+                展开关闭秒表.Restart()
+                启动展开关闭驱动()
+            Else
+                Me.Show()
+            End If
+        End Sub
 
-        Private Const WM_MOUSEACTIVATE As Integer = &H21
-        Private Const MA_NOACTIVATE As Integer = &H3
+        Friend Sub 开始关闭动画()
+            If 正在关闭动画 Then Return
+            正在关闭动画 = True
+            展开关闭动画中 = True
+            展开关闭秒表.Restart()
+            启动展开关闭驱动()
+        End Sub
 
-        Protected Overrides Sub WndProc(ByRef m As Message)
-            If m.Msg = WM_MOUSEACTIVATE Then
-                m.Result = New IntPtr(MA_NOACTIVATE)
+        Private Sub 启动展开关闭驱动()
+            If _useIdle Then
+                AddHandler Application.Idle, AddressOf 展开关闭帧更新
+            Else
+                AddHandler 展开关闭计时器.Tick, AddressOf 展开关闭帧更新
+                展开关闭计时器.Start()
+            End If
+        End Sub
+
+        Private Sub 停止展开关闭驱动()
+            If _useIdle Then
+                RemoveHandler Application.Idle, AddressOf 展开关闭帧更新
+            Else
+                展开关闭计时器.Stop()
+                RemoveHandler 展开关闭计时器.Tick, AddressOf 展开关闭帧更新
+            End If
+        End Sub
+
+        Friend Sub 关闭并释放()
+            停止悬停动画()
+            停止展开关闭驱动()
+            If 展开关闭计时器 IsNot Nothing Then 展开关闭计时器.Dispose()
+            If 悬停计时器 IsNot Nothing Then 悬停计时器.Dispose()
+            Application.RemoveMessageFilter(Me)
+            If Not IsDisposed Then Close()
+        End Sub
+
+        Private Sub 展开关闭帧更新(sender As Object, e As EventArgs)
+            Dim duration As Integer = _owner.下拉展开关闭动画时长
+            If duration <= 0 Then
+                停止展开关闭驱动()
+                展开关闭动画中 = False
+                If 正在关闭动画 Then
+                    完成关闭()
+                Else
+                    Me.Size = New Size(Me.Width, _finalHeight)
+                End If
                 Return
             End If
-            MyBase.WndProc(m)
+
+            Dim elapsed As Double = 展开关闭秒表.Elapsed.TotalMilliseconds
+            Dim t As Single = CSng(Math.Min(elapsed / duration, 1.0))
+            Dim eased As Single = 1.0F - CSng(Math.Pow(1.0 - t, 3))
+
+            If 正在关闭动画 Then
+                Dim newH As Integer = Math.Max(1, CInt(_finalHeight * (1.0F - eased)))
+                Me.Size = New Size(Me.Width, newH)
+            Else
+                Dim newH As Integer = Math.Max(1, CInt(_finalHeight * eased))
+                Me.Size = New Size(Me.Width, newH)
+            End If
+            Invalidate()
+
+            If t >= 1.0F Then
+                停止展开关闭驱动()
+                展开关闭动画中 = False
+                If 正在关闭动画 Then
+                    完成关闭()
+                Else
+                    Me.Size = New Size(Me.Width, _finalHeight)
+                    Invalidate()
+                End If
+            End If
         End Sub
+
+        Private Sub 完成关闭()
+            正在关闭动画 = False
+            展开关闭动画中 = False
+            关闭并释放()
+            _owner.OnDropDownClosed()
+        End Sub
+
+        Public Function PreFilterMessage(ByRef m As Message) As Boolean Implements IMessageFilter.PreFilterMessage
+            Select Case m.Msg
+                Case WM_LBUTTONDOWN, WM_RBUTTONDOWN, WM_MBUTTONDOWN, WM_NCLBUTTONDOWN
+                    Dim screenPos As Point = Control.MousePosition
+                    If Not Bounds.Contains(screenPos) Then
+                        Dim ownerScreen As Rectangle = _owner.RectangleToScreen(_owner.ClientRectangle)
+                        If Not ownerScreen.Contains(screenPos) Then
+                            BeginInvoke(Sub() _owner.CloseDropDown())
+                        End If
+                    End If
+            End Select
+            Return False
+        End Function
 
         Protected Overrides Sub OnPaint(e As PaintEventArgs)
             Dim w As Integer = ClientRectangle.Width
@@ -1392,6 +1560,15 @@ Public Class ModernComboBox
                 g.SetClip(New Rectangle(inset, inset, w - inset * 2 - scrollW, h - inset * 2))
             End If
 
+            ' 绘制悬停高亮
+            If 悬停动画显示 Then
+                Dim highlightRect As New RectangleF(
+                    inset, 悬停动画当前Y, w - inset * 2 - scrollW, 悬停动画当前高度)
+                Using br As New SolidBrush(_owner.下拉悬停颜色)
+                    g.FillRectangle(br, highlightRect.X, highlightRect.Y, highlightRect.Width, highlightRect.Height)
+                End Using
+            End If
+
             For i As Integer = 0 To visCount - 1
                 Dim idx As Integer = i + _scrollOffset
                 If idx >= _owner._items.Count Then Exit For
@@ -1402,7 +1579,7 @@ Public Class ModernComboBox
                     Using br As New SolidBrush(_owner.下拉选中颜色)
                         g.FillRectangle(br, itemRect)
                     End Using
-                ElseIf idx = _hoverIndex Then
+                ElseIf idx = _hoverIndex AndAlso Not 悬停动画显示 Then
                     Using br As New SolidBrush(_owner.下拉悬停颜色)
                         g.FillRectangle(br, itemRect)
                     End Using
@@ -1423,6 +1600,91 @@ Public Class ModernComboBox
             Return idx
         End Function
 
+        Private Function GetItemRect(index As Integer) As RectangleF
+            Dim bw As Integer = _owner.下拉边框宽度
+            Dim pad As Padding = _owner.下拉内边距
+            Dim itemH As Integer = _owner.下拉项高度
+            Dim visIdx As Integer = index - _scrollOffset
+            Dim itemY As Single = bw + pad.Top + visIdx * itemH
+            Return New RectangleF(0, itemY, ClientRectangle.Width, itemH)
+        End Function
+
+        Private Sub 更新悬停动画()
+            If _hoverIndex >= 0 AndAlso _hoverIndex < _owner._items.Count Then
+                Dim rect = GetItemRect(_hoverIndex)
+                Dim targetY As Single = rect.Y
+                Dim targetH As Single = rect.Height
+
+                If _owner.下拉悬停动画时长 <= 0 OrElse Not 悬停动画显示 Then
+                    悬停动画起始Y = targetY
+                    悬停动画目标Y = targetY
+                    悬停动画当前Y = targetY
+                    悬停动画起始高度 = targetH
+                    悬停动画目标高度 = targetH
+                    悬停动画当前高度 = targetH
+                    悬停动画显示 = True
+                    停止悬停动画()
+                    Return
+                End If
+
+                悬停动画起始Y = 悬停动画当前Y
+                悬停动画目标Y = targetY
+                悬停动画起始高度 = 悬停动画当前高度
+                悬停动画目标高度 = targetH
+                悬停动画显示 = True
+                悬停秒表.Restart()
+                If Not 悬停动画中 Then
+                    悬停动画中 = True
+                    If _useIdle Then
+                        AddHandler Application.Idle, AddressOf 悬停帧更新
+                    Else
+                        AddHandler 悬停计时器.Tick, AddressOf 悬停帧更新
+                        悬停计时器.Start()
+                    End If
+                End If
+            Else
+                悬停动画显示 = False
+                停止悬停动画()
+            End If
+        End Sub
+
+        Private Sub 悬停帧更新(sender As Object, e As EventArgs)
+            Dim duration = _owner.下拉悬停动画时长
+            If duration <= 0 Then
+                悬停动画当前Y = 悬停动画目标Y
+                悬停动画当前高度 = 悬停动画目标高度
+                停止悬停动画()
+                Invalidate()
+                Return
+            End If
+
+            Dim elapsed As Double = 悬停秒表.Elapsed.TotalMilliseconds
+            Dim t As Single = CSng(Math.Min(elapsed / duration, 1.0))
+            Dim eased As Single = 1.0F - CSng(Math.Pow(1.0 - t, 3))
+            悬停动画当前Y = 悬停动画起始Y + (悬停动画目标Y - 悬停动画起始Y) * eased
+            悬停动画当前高度 = 悬停动画起始高度 + (悬停动画目标高度 - 悬停动画起始高度) * eased
+
+            If t >= 1.0F Then
+                悬停动画当前Y = 悬停动画目标Y
+                悬停动画当前高度 = 悬停动画目标高度
+                停止悬停动画()
+            End If
+            Invalidate()
+        End Sub
+
+        Private Sub 停止悬停动画()
+            If 悬停动画中 Then
+                悬停动画中 = False
+                If _useIdle Then
+                    RemoveHandler Application.Idle, AddressOf 悬停帧更新
+                Else
+                    悬停计时器.Stop()
+                    RemoveHandler 悬停计时器.Tick, AddressOf 悬停帧更新
+                End If
+                悬停秒表.Stop()
+            End If
+        End Sub
+
         Protected Overrides Sub OnMouseMove(e As MouseEventArgs)
             MyBase.OnMouseMove(e)
             If _scrollBar.IsDragging Then
@@ -1438,6 +1700,7 @@ Public Class ModernComboBox
             Dim idx As Integer = GetItemIndexAtY(e.Y)
             If idx <> _hoverIndex Then
                 _hoverIndex = idx
+                更新悬停动画()
                 Invalidate()
             End If
         End Sub
@@ -1472,6 +1735,7 @@ Public Class ModernComboBox
             MyBase.OnMouseLeave(e)
             If _hoverIndex <> -1 Then
                 _hoverIndex = -1
+                更新悬停动画()
                 Invalidate()
             End If
             If _scrollBar.ResetHover() Then Invalidate()
@@ -1484,11 +1748,6 @@ Public Class ModernComboBox
             Dim vis As Integer = Math.Min(total, _owner.最大下拉项数)
             _scrollOffset = ScrollBarRenderer.HandleWheel(e.Delta, _scrollOffset, total, vis)
             Invalidate()
-        End Sub
-
-        Protected Overrides Sub OnDeactivate(e As EventArgs)
-            MyBase.OnDeactivate(e)
-            _owner.CloseDropDown()
         End Sub
     End Class
 #End Region
@@ -1614,9 +1873,6 @@ Public Class ModernComboBox
         MyBase.OnLostFocus(e)
         _caretBlinkTimer.Stop()
         _caretVisible = False
-        If _droppedDown AndAlso (_dropDownForm Is Nothing OrElse Not _dropDownForm.Focused) Then
-            CloseDropDown()
-        End If
         Invalidate()
     End Sub
 
