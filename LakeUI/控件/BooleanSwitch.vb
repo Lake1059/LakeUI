@@ -27,6 +27,11 @@ Public Class BooleanSwitch
         Else
             绘制图形内容(e.Graphics, 极限矩形区域)
         End If
+        If Not Enabled Then
+            Using brush As New SolidBrush(Color.FromArgb(120, 0, 0, 0))
+                e.Graphics.FillRectangle(brush, 0, 0, Me.Width, Me.Height)
+            End Using
+        End If
     End Sub
 
     Private Sub 绘制图形内容(g As Graphics, 极限矩形区域 As RectangleF)
@@ -59,20 +64,27 @@ Public Class BooleanSwitch
     End Sub
 
     Private Function 获取当前轨道颜色() As Color
-        Dim offColor As Color
-        Dim onColor As Color
-        Select Case 鼠标状态
-            Case MouseStateEnum.Hover
-                offColor = If(鼠标移上时关闭轨道颜色 <> Color.Empty, 鼠标移上时关闭轨道颜色, 关闭时轨道颜色)
-                onColor = If(鼠标移上时开启轨道颜色 <> Color.Empty, 鼠标移上时开启轨道颜色, 开启时轨道颜色)
-            Case MouseStateEnum.Pressed
-                offColor = If(鼠标按下时关闭轨道颜色 <> Color.Empty, 鼠标按下时关闭轨道颜色, 关闭时轨道颜色)
-                onColor = If(鼠标按下时开启轨道颜色 <> Color.Empty, 鼠标按下时开启轨道颜色, 开启时轨道颜色)
-            Case Else
-                offColor = 关闭时轨道颜色
-                onColor = 开启时轨道颜色
-        End Select
-        Return 颜色插值(offColor, onColor, 动画助手.Progress)
+        Return 颜色插值(获取状态轨道颜色(False), 获取状态轨道颜色(True), 动画助手.Progress)
+    End Function
+
+    Private Function 获取状态轨道颜色(isOn As Boolean) As Color
+        If isOn Then
+            Select Case 鼠标状态
+                Case MouseStateEnum.Hover
+                    If 鼠标移上时开启轨道颜色 <> Color.Empty Then Return 鼠标移上时开启轨道颜色
+                Case MouseStateEnum.Pressed
+                    If 鼠标按下时开启轨道颜色 <> Color.Empty Then Return 鼠标按下时开启轨道颜色
+            End Select
+            Return 开启时轨道颜色
+        Else
+            Select Case 鼠标状态
+                Case MouseStateEnum.Hover
+                    If 鼠标移上时关闭轨道颜色 <> Color.Empty Then Return 鼠标移上时关闭轨道颜色
+                Case MouseStateEnum.Pressed
+                    If 鼠标按下时关闭轨道颜色 <> Color.Empty Then Return 鼠标按下时关闭轨道颜色
+            End Select
+            Return 关闭时轨道颜色
+        End If
     End Function
 
     Private Function 获取当前滑块颜色() As Color
@@ -117,21 +129,25 @@ Public Class BooleanSwitch
     Private 鼠标状态 As MouseStateEnum = MouseStateEnum.Normal
     Protected Overrides Sub OnMouseEnter(e As EventArgs)
         MyBase.OnMouseEnter(e)
+        If Not Enabled Then Return
         鼠标状态 = MouseStateEnum.Hover
         Me.Invalidate()
     End Sub
     Protected Overrides Sub OnMouseLeave(e As EventArgs)
         MyBase.OnMouseLeave(e)
+        If Not Enabled Then Return
         鼠标状态 = MouseStateEnum.Normal
         Me.Invalidate()
     End Sub
     Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
         MyBase.OnMouseDown(e)
+        If Not Enabled Then Return
         鼠标状态 = MouseStateEnum.Pressed
         Me.Invalidate()
     End Sub
     Protected Overrides Sub OnMouseUp(e As MouseEventArgs)
         MyBase.OnMouseUp(e)
+        If Not Enabled Then Return
         鼠标状态 = If(ClientRectangle.Contains(e.Location), MouseStateEnum.Hover, MouseStateEnum.Normal)
         Me.Invalidate()
     End Sub
@@ -143,8 +159,17 @@ Public Class BooleanSwitch
         MyBase.OnDoubleClick(e)
         Checked = Not Checked
     End Sub
+    Protected Overrides Sub OnEnabledChanged(e As EventArgs)
+        MyBase.OnEnabledChanged(e)
+        If Not Enabled Then
+            鼠标状态 = MouseStateEnum.Normal
+            动画助手.StopAnimation()
+        End If
+        Me.Invalidate()
+    End Sub
 #End Region
 
+#Region "通用"
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
@@ -153,6 +178,7 @@ Public Class BooleanSwitch
     End Sub
 
     Private ReadOnly 动画助手 As New AnimationHelper(Me)
+#End Region
 
 #Region "属性"
     Private 已选中 As Boolean = False

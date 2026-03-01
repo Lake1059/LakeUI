@@ -1,28 +1,60 @@
 ﻿Public Class ListViewDirectReDraw
 
     Private Shared ReadOnly _options As New Dictionary(Of ListView, ListViewOption)
+    Private Shared ReadOnly _handlers As New Dictionary(Of ListView, HandlerSet)
+
+    ''' <summary>
+    ''' 存储每个 ListView 绑定的事件处理委托，用于 Release 时准确解绑。
+    ''' </summary>
+    Private Class HandlerSet
+        Public DrawItem As DrawListViewItemEventHandler
+        Public DrawSubItem As DrawListViewSubItemEventHandler
+        Public DrawColumnHeader As DrawListViewColumnHeaderEventHandler
+        Public SelectedIndexChanged As EventHandler
+        Public ItemMouseHover As ListViewItemMouseHoverEventHandler
+    End Class
 
     ''' <summary>
     ''' 接管指定 ListView 的自定义绘制
     ''' </summary>
     Public Shared Sub TakeOver(WhichListView As ListView, Optional CustomOption As ListViewOption = Nothing)
+        If _handlers.ContainsKey(WhichListView) Then Release(WhichListView)
+
         If CustomOption Is Nothing Then CustomOption = New ListViewOption()
         _options(WhichListView) = CustomOption
         WhichListView.OwnerDraw = True
         WhichListView.FullRowSelect = True
         WhichListView.DoubleBuffer
 
-        AddHandler WhichListView.DrawItem, Sub(sender, e) 绘制项(sender, e)
-        AddHandler WhichListView.DrawSubItem, Sub(sender, e) 绘制子项(sender, e)
-        AddHandler WhichListView.DrawColumnHeader, Sub(sender, e) 绘制列标题(sender, e)
-        AddHandler WhichListView.SelectedIndexChanged, Sub(sender, e) sender.Invalidate(sender.ClientRectangle)
-        AddHandler WhichListView.ItemMouseHover, Sub(sender, e) sender.Invalidate(sender.ClientRectangle)
+        Dim h As New HandlerSet With {
+            .DrawItem = Sub(sender, e) 绘制项(DirectCast(sender, ListView), e),
+            .DrawSubItem = Sub(sender, e) 绘制子项(DirectCast(sender, ListView), e),
+            .DrawColumnHeader = Sub(sender, e) 绘制列标题(DirectCast(sender, ListView), e),
+            .SelectedIndexChanged = Sub(sender, e) DirectCast(sender, ListView).Invalidate(),
+            .ItemMouseHover = Sub(sender, e) DirectCast(sender, ListView).Invalidate()
+        }
+        _handlers(WhichListView) = h
+
+        AddHandler WhichListView.DrawItem, h.DrawItem
+        AddHandler WhichListView.DrawSubItem, h.DrawSubItem
+        AddHandler WhichListView.DrawColumnHeader, h.DrawColumnHeader
+        AddHandler WhichListView.SelectedIndexChanged, h.SelectedIndexChanged
+        AddHandler WhichListView.ItemMouseHover, h.ItemMouseHover
     End Sub
 
     ''' <summary>
     ''' 释放指定 ListView 的自定义绘制
     ''' </summary>
     Public Shared Sub Release(WhichListView As ListView)
+        Dim h As HandlerSet = Nothing
+        If _handlers.TryGetValue(WhichListView, h) Then
+            RemoveHandler WhichListView.DrawItem, h.DrawItem
+            RemoveHandler WhichListView.DrawSubItem, h.DrawSubItem
+            RemoveHandler WhichListView.DrawColumnHeader, h.DrawColumnHeader
+            RemoveHandler WhichListView.SelectedIndexChanged, h.SelectedIndexChanged
+            RemoveHandler WhichListView.ItemMouseHover, h.ItemMouseHover
+            _handlers.Remove(WhichListView)
+        End If
         _options.Remove(WhichListView)
         WhichListView.OwnerDraw = False
     End Sub
@@ -52,20 +84,36 @@
         Public Property TextPadding As Integer = 5
         ''' <summary>文本溢出省略符号</summary>
         Public Property EllipsisText As String = "..."
+
+        ''' <summary>获取经过 DPI 缩放后的内边距</summary>
+        Friend Function GetPadding() As Integer
+            Return TextPadding * DPI
+        End Function
+
+        ''' <summary>获取经过 DPI 缩放后的图标间距</summary>
+        Friend Function GetIconSpacing() As Integer
+            Return Math.Ceiling(2.0 * DPI)
+        End Function
     End Class
 #End Region
 
 #Region "辅助方法"
+    ''' <summary>截断文本到指定宽度，超出部分以省略号替代（二分查找）</summary>
     Private Shared Function 截断文本(原始文本 As String, font As Font, 可用宽度 As Integer, opt As ListViewOption) As String
-        Dim 文字尺寸 As Size = TextRenderer.MeasureText(原始文本, font)
-        If 文字尺寸.Width <= (可用宽度 - 3 * opt.DPI) Then Return 原始文本
+        If TextRenderer.MeasureText(原始文本, font).Width <= (可用宽度 - 3 * opt.DPI) Then Return 原始文本
         Dim 省略号宽度 As Integer = TextRenderer.MeasureText(opt.EllipsisText, font).Width
         Dim 实际可用宽度 As Integer = 可用宽度 - 省略号宽度
-        Dim result As String = 原始文本
-        While TextRenderer.MeasureText(result, font).Width > 实际可用宽度 AndAlso result.Length > 0
-            result = result.Substring(0, result.Length - 1)
+        Dim lo As Integer = 0
+        Dim hi As Integer = 原始文本.Length
+        While lo < hi
+            Dim mid As Integer = (lo + hi + 1) \ 2
+            If TextRenderer.MeasureText(原始文本.AsSpan(0, mid), font).Width <= 实际可用宽度 Then
+                lo = mid
+            Else
+                hi = mid - 1
+            End If
         End While
-        Return result & opt.EllipsisText
+        Return String.Concat(原始文本.AsSpan(0, lo), opt.EllipsisText)
     End Function
 
     Private Shared Function 获取图标(imageList As ImageList, item As ListViewItem) As Image
@@ -85,6 +133,20 @@
         End If
         Return Nothing
     End Function
+
+    ''' <summary>将图标垂直居中绘制在指定区域内</summary>
+    Private Shared Sub 绘制垂直居中图标(g As Graphics, img As Image, x As Integer, bounds As Rectangle)
+        Dim imgY As Integer = bounds.Y + (bounds.Height - img.Height) \ 2
+        g.DrawImage(img, x, imgY)
+    End Sub
+
+    ''' <summary>根据选中状态填充项背景色</summary>
+    Private Shared Sub 填充项背景(g As Graphics, bounds As Rectangle, selected As Boolean, lv As ListView, opt As ListViewOption)
+        Dim bgColor As Color = If(selected, opt.SelectedBackColor, lv.BackColor)
+        Using brush As New SolidBrush(bgColor)
+            g.FillRectangle(brush, bounds)
+        End Using
+    End Sub
 #End Region
 
 #Region "Details 视图 - 子项绘制"
@@ -97,29 +159,22 @@
             If Not e.Bounds.IntersectsWith(哪个列表视图控件.ClientRectangle) OrElse e.Bounds.Width = 0 Then Exit Sub
 
             Dim opt As ListViewOption = 获取选项(哪个列表视图控件)
-            Dim 选中 As Boolean = 哪个列表视图控件.SelectedIndices.Contains(e.ItemIndex)
-            Dim 项背景色 As Color = If(选中, opt.SelectedBackColor, 哪个列表视图控件.BackColor)
+            填充项背景(e.Graphics, e.Bounds, e.Item.Selected, 哪个列表视图控件, opt)
 
-            Using brush As New SolidBrush(项背景色)
-                e.Graphics.FillRectangle(brush, e.Bounds)
-            End Using
-
-            Dim padding As Integer = opt.TextPadding * opt.DPI
-            Dim 图标间距 As Integer = CInt(Math.Ceiling(2.0 * opt.DPI))
+            Dim padding As Integer = opt.GetPadding()
+            Dim 图标间距 As Integer = opt.GetIconSpacing()
             Dim 当前X As Integer = e.Bounds.X + padding
 
             If e.ColumnIndex = 0 Then
                 Dim stateImg As Image = 获取状态图标(哪个列表视图控件.StateImageList, e.Item)
                 If stateImg IsNot Nothing Then
-                    Dim imgY As Integer = e.Bounds.Y + (e.Bounds.Height - stateImg.Height) \ 2
-                    e.Graphics.DrawImage(stateImg, 当前X, imgY)
+                    绘制垂直居中图标(e.Graphics, stateImg, 当前X, e.Bounds)
                     当前X += stateImg.Width + 图标间距
                 End If
 
                 Dim smallImg As Image = 获取图标(哪个列表视图控件.SmallImageList, e.Item)
                 If smallImg IsNot Nothing Then
-                    Dim imgY As Integer = e.Bounds.Y + (e.Bounds.Height - smallImg.Height) \ 2
-                    e.Graphics.DrawImage(smallImg, 当前X, imgY)
+                    绘制垂直居中图标(e.Graphics, smallImg, 当前X, e.Bounds)
                     当前X += smallImg.Width + 图标间距
                 End If
             End If
@@ -132,6 +187,7 @@
             Dim 文本色 As Color = If(e.SubItem.ForeColor = 哪个列表视图控件.ForeColor, e.Item.ForeColor, e.SubItem.ForeColor)
             TextRenderer.DrawText(e.Graphics, 实际要绘制的文本.Replace("&", "&&"), e.SubItem.Font, 文本绘制区, 文本色, Color.Transparent, TextFormatFlags.Default)
         Catch ex As Exception
+            Debug.WriteLine($"[ListViewDirectReDraw] 绘制子项异常: {ex.Message}")
         End Try
     End Sub
 #End Region
@@ -160,10 +216,11 @@
                 Case HorizontalAlignment.Right : flags = flags Or TextFormatFlags.Right
             End Select
 
-            Dim padding As Integer = opt.TextPadding * opt.DPI
+            Dim padding As Integer = opt.GetPadding()
             Dim 文本区 As New Rectangle(e.Bounds.X + padding, e.Bounds.Y, e.Bounds.Width - padding * 2, e.Bounds.Height)
             TextRenderer.DrawText(e.Graphics, 哪个列表视图控件.Columns(e.ColumnIndex).Text, 哪个列表视图控件.Font, 文本区, opt.ColumnHeaderForeColor, Color.Transparent, flags)
         Catch ex As Exception
+            Debug.WriteLine($"[ListViewDirectReDraw] 绘制列标题异常: {ex.Message}")
         End Try
     End Sub
 #End Region
@@ -177,12 +234,7 @@
             If 哪个列表视图控件.View = View.Details Then Exit Sub
 
             Dim opt As ListViewOption = 获取选项(哪个列表视图控件)
-            Dim 选中 As Boolean = e.Item.Selected
-            Dim 项背景色 As Color = If(选中, opt.SelectedBackColor, 哪个列表视图控件.BackColor)
-
-            Using brush As New SolidBrush(项背景色)
-                e.Graphics.FillRectangle(brush, e.Bounds)
-            End Using
+            填充项背景(e.Graphics, e.Bounds, e.Item.Selected, 哪个列表视图控件, opt)
 
             Select Case 哪个列表视图控件.View
                 Case View.LargeIcon
@@ -193,11 +245,12 @@
                     绘制平铺模式(哪个列表视图控件, e, opt)
             End Select
         Catch ex As Exception
+            Debug.WriteLine($"[ListViewDirectReDraw] 绘制项异常: {ex.Message}")
         End Try
     End Sub
 
     Private Shared Sub 绘制大图标模式(lv As ListView, e As DrawListViewItemEventArgs, opt As ListViewOption)
-        Dim padding As Integer = opt.TextPadding * opt.DPI
+        Dim padding As Integer = opt.GetPadding()
         Dim img As Image = 获取图标(lv.LargeImageList, e.Item)
         If img IsNot Nothing Then
             Dim imgX As Integer = e.Bounds.X + (e.Bounds.Width - img.Width) \ 2
@@ -213,12 +266,11 @@
     End Sub
 
     Private Shared Sub 绘制小图标模式(lv As ListView, e As DrawListViewItemEventArgs, opt As ListViewOption)
-        Dim padding As Integer = opt.TextPadding * opt.DPI
+        Dim padding As Integer = opt.GetPadding()
         Dim img As Image = 获取图标(lv.SmallImageList, e.Item)
         Dim textX As Integer = e.Bounds.X + padding
         If img IsNot Nothing Then
-            Dim imgY As Integer = e.Bounds.Y + (e.Bounds.Height - img.Height) \ 2
-            e.Graphics.DrawImage(img, e.Bounds.X + padding, imgY)
+            绘制垂直居中图标(e.Graphics, img, e.Bounds.X + padding, e.Bounds)
             textX = e.Bounds.X + padding + img.Width + padding
         End If
         Dim 文本区 As New Rectangle(textX, e.Bounds.Y, e.Bounds.Width - (textX - e.Bounds.X), e.Bounds.Height)
@@ -227,12 +279,11 @@
     End Sub
 
     Private Shared Sub 绘制平铺模式(lv As ListView, e As DrawListViewItemEventArgs, opt As ListViewOption)
-        Dim padding As Integer = opt.TextPadding * opt.DPI
+        Dim padding As Integer = opt.GetPadding()
         Dim img As Image = 获取图标(lv.LargeImageList, e.Item)
         Dim textX As Integer = e.Bounds.X + padding
         If img IsNot Nothing Then
-            Dim imgY As Integer = e.Bounds.Y + (e.Bounds.Height - img.Height) \ 2
-            e.Graphics.DrawImage(img, e.Bounds.X + padding, imgY)
+            绘制垂直居中图标(e.Graphics, img, e.Bounds.X + padding, e.Bounds)
             textX = e.Bounds.X + padding + img.Width + padding
         End If
 

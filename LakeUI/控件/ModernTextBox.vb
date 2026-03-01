@@ -1,10 +1,12 @@
 Imports System.ComponentModel
 Imports System.Drawing.Drawing2D
+Imports System.Runtime.InteropServices
 Imports System.Text
 
 <DefaultEvent("TextChanged")>
 Public Class ModernTextBox
     Public Shadows Event TextChanged As EventHandler
+
 #Region "内部数据结构"
     Private Structure TextSnapshot
         Public Lines As String()
@@ -27,6 +29,7 @@ Public Class ModernTextBox
         End Sub
     End Structure
 #End Region
+
 #Region "字段"
     Private _lines As New List(Of String) From {String.Empty}
     Private _caretLine As Integer = 0
@@ -48,6 +51,7 @@ Public Class ModernTextBox
     Private _autoScrollTimer As New Timer() With {.Interval = 50}
     Private _lastMousePos As Point = Point.Empty
 #End Region
+
 #Region "属性"
     <Category("LakeUI"), Description("主要文本"), DefaultValue(GetType(String), ""), Browsable(True),
      DesignerSerializationVisibility(DesignerSerializationVisibility.Visible)>
@@ -202,7 +206,7 @@ Public Class ModernTextBox
         End Set
     End Property
 
-    Private 启用只读模式
+    Private 启用只读模式 As Boolean
     <Category("LakeUI"), Description("启用后阻止用户更改文本"), DefaultValue(GetType(Boolean), "False"), Browsable(True)>
     Public Property [ReadOnly] As Boolean
         Get
@@ -330,7 +334,115 @@ Public Class ModernTextBox
             End If
         End Set
     End Property
+
+    Private _maxLength As Integer = 0
+    <Category("LakeUI"), Description("最大允许字符数，0 = 无限制"), DefaultValue(0), Browsable(True)>
+    Public Property MaxLength As Integer
+        Get
+            Return _maxLength
+        End Get
+        Set(value As Integer)
+            _maxLength = Math.Max(0, value)
+        End Set
+    End Property
+
+    Private _passwordChar As Char = ChrW(0)
+    <Category("LakeUI"), Description("密码掩码字符，为空则不启用（仅单行模式）"), DefaultValue(GetType(Char), ""), Browsable(True)>
+    Public Property PasswordChar As Char
+        Get
+            Return _passwordChar
+        End Get
+        Set(value As Char)
+            _passwordChar = value
+            Invalidate()
+        End Set
+    End Property
+
+    <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+    Public Property SelectionStart As Integer
+        Get
+            Return GetAbsoluteOffset(_caretLine, _caretCol)
+        End Get
+        Set(value As Integer)
+            Dim pos = GetLineColFromAbsolute(value)
+            _caretLine = pos.Y
+            _caretCol = pos.X
+            ClearSelection()
+            EnsureCaretVisible()
+            Invalidate()
+        End Set
+    End Property
+
+    <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+    Public Property SelectionLength As Integer
+        Get
+            If Not _hasSelection Then Return 0
+            Dim s = GetAbsoluteOffset(_selAnchorLine, _selAnchorCol)
+            Dim e2 = GetAbsoluteOffset(_caretLine, _caretCol)
+            Return Math.Abs(e2 - s)
+        End Get
+        Set(value As Integer)
+            _selAnchorLine = _caretLine
+            _selAnchorCol = _caretCol
+            Dim target = GetAbsoluteOffset(_caretLine, _caretCol) + value
+            Dim pos = GetLineColFromAbsolute(target)
+            _caretLine = pos.Y
+            _caretCol = pos.X
+            _hasSelection = value <> 0
+            Invalidate()
+        End Set
+    End Property
+
+    <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+    Public Property SelectedText As String
+        Get
+            Return GetSelectedText()
+        End Get
+        Set(value As String)
+            If _hasSelection Then
+                PushUndo()
+                DeleteSelection()
+            End If
+            If Not String.IsNullOrEmpty(value) Then
+                InsertTextCore(value)
+            End If
+        End Set
+    End Property
 #End Region
+
+#Region "公共方法"
+    Public Sub Clear()
+        Text = String.Empty
+    End Sub
+    Public Sub AppendText(text As String)
+        If String.IsNullOrEmpty(text) Then Return
+        PushUndo()
+        _caretLine = _lines.Count - 1
+        _caretCol = _lines(_caretLine).Length
+        ClearSelection()
+        InsertTextCore(text)
+    End Sub
+    Public Shadows Sub [Select](start As Integer, length As Integer)
+        Dim pos = GetLineColFromAbsolute(start)
+        _selAnchorLine = pos.Y
+        _selAnchorCol = pos.X
+        Dim endPos = GetLineColFromAbsolute(start + length)
+        _caretLine = endPos.Y
+        _caretCol = endPos.X
+        _hasSelection = length <> 0
+        EnsureCaretVisible()
+        Invalidate()
+    End Sub
+    Public Sub DeselectAll()
+        ClearSelection()
+        Invalidate()
+    End Sub
+    Public Sub ScrollToCaret()
+        EnsureCaretVisible()
+        Invalidate()
+    End Sub
+#End Region
+
 #Region "初始化"
     Public Sub New()
         InitializeComponent()
@@ -359,6 +471,7 @@ Public Class ModernTextBox
         MyBase.OnHandleDestroyed(e)
     End Sub
 #End Region
+
 #Region "绘制"
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
         Dim w As Integer = ClientRectangle.Width
@@ -441,7 +554,7 @@ Public Class ModernTextBox
                 Dim alignOff As Integer = If(wrapActive, 0, GetAlignOffsetX(fullLineStr, textWidth))
                 Dim scrollX As Integer = If(wrapActive, 0, _scrollXOffset)
                 Dim textY As Integer = lineY + (行高 - FontHeight) \ 2
-                TextRenderer.DrawText(g, lineStr, Font,
+                TextRenderer.DrawText(g, GetDisplayText(lineStr), Font,
                     New Point(textLeft + alignOff - scrollX, textY),
                     ForeColor,
                     TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine)
@@ -517,6 +630,7 @@ Public Class ModernTextBox
     End Sub
 
 #End Region
+
 #Region "消息处理 (WndProc)"
     Protected Overrides Sub WndProc(ByRef m As Message)
         Select Case m.Msg
@@ -552,17 +666,18 @@ Public Class ModernTextBox
     End Sub
 
 #End Region
+
 #Region "字符输入 (WM_CHAR)"
     Private Sub HandleWmChar(charCode As Integer)
         Select Case charCode
             Case 1  ' Ctrl+A
                 SelectAll()
             Case 3  ' Ctrl+C
-                CopySelection()
+                If _passwordChar = vbNullChar OrElse 启用多行 Then CopySelection()
             Case 22 ' Ctrl+V
                 PasteText()
             Case 24 ' Ctrl+X
-                CutSelection()
+                If _passwordChar = vbNullChar OrElse 启用多行 Then CutSelection()
             Case 26 ' Ctrl+Z
                 Undo()
             Case 8  ' Backspace
@@ -586,6 +701,7 @@ Public Class ModernTextBox
         ResetCaretBlink()
     End Sub
 #End Region
+
 #Region "键盘导航 (OnKeyDown)"
     Protected Overrides Sub OnKeyDown(e As KeyEventArgs)
         MyBase.OnKeyDown(e)
@@ -631,6 +747,7 @@ Public Class ModernTextBox
         Return True
     End Function
 #End Region
+
 #Region "鼠标处理"
     Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
         MyBase.OnMouseDown(e)
@@ -699,6 +816,27 @@ Public Class ModernTextBox
         _scrollLineOffset = ScrollBarRenderer.HandleWheel(e.Delta, _scrollLineOffset, _visualLines.Count, VisibleLineCount())
         Invalidate()
     End Sub
+    Protected Overrides Sub OnMouseDoubleClick(e As MouseEventArgs)
+        MyBase.OnMouseDoubleClick(e)
+        If e.Button <> MouseButtons.Left Then Return
+        Dim line As String = _lines(_caretLine)
+        If line.Length = 0 Then Return
+        Dim col As Integer = Math.Min(_caretCol, line.Length - 1)
+        Dim left As Integer = col
+        While left > 0 AndAlso Not Char.IsWhiteSpace(line(left - 1))
+            left -= 1
+        End While
+        Dim right As Integer = col
+        While right < line.Length AndAlso Not Char.IsWhiteSpace(line(right))
+            right += 1
+        End While
+        _selAnchorLine = _caretLine
+        _selAnchorCol = left
+        _caretCol = right
+        _hasSelection = left <> right
+        ResetCaretBlink()
+        Invalidate()
+    End Sub
     Private Function HitTest(x As Integer, y As Integer) As Point
         Dim bi As Integer = 边框宽度
         Dim textLeft As Integer = Math.Max(Padding.Left, bi)
@@ -720,9 +858,10 @@ Public Class ModernTextBox
         Return New Point(vl.StartCol + colInVl, vl.LogicalLine)
     End Function
     Private Function FindColFromX(lineStr As String, x As Integer) As Integer
-        Return TextRenderHelper.FindColFromX(lineStr, x, Font, 行高)
+        Return TextRenderHelper.FindColFromX(GetDisplayText(lineStr), x, Font, 行高)
     End Function
 #End Region
+
 #Region "光标移动"
     Private Sub MoveCaret(deltaCol As Integer, deltaLine As Integer, extend As Boolean)
         If Not extend AndAlso _hasSelection AndAlso deltaCol <> 0 AndAlso deltaLine = 0 Then
@@ -897,10 +1036,20 @@ Public Class ModernTextBox
         End If
     End Sub
 #End Region
+
 #Region "文本编辑核心"
     Private Sub InsertTextCore(text As String)
         DeleteSelection()
         Dim normalized As String = text.Replace(vbCr, "")
+        If _maxLength > 0 Then
+            Dim currentLen As Integer = _lines.Sum(Function(l) l.Length) + _lines.Count - 1
+            Dim remaining As Integer = _maxLength - currentLen
+            If remaining <= 0 Then Return
+            If normalized.Length > remaining Then
+                normalized = normalized.Substring(0, remaining)
+            End If
+        End If
+        If normalized.Length = 0 Then Return
         If Not normalized.Contains(vbLf) Then
             Dim line As String = _lines(_caretLine)
             _lines(_caretLine) = String.Concat(line.AsSpan(0, _caretCol), normalized, line.AsSpan(_caretCol))
@@ -977,6 +1126,7 @@ Public Class ModernTextBox
         ClearSelection()
     End Sub
 #End Region
+
 #Region "选区"
     Private Sub SelectAll()
         _selAnchorLine = 0
@@ -1019,12 +1169,13 @@ Public Class ModernTextBox
         Return sb.ToString()
     End Function
 #End Region
+
 #Region "剪贴板"
     Private Sub CopySelection()
         If _hasSelection Then
             Try
                 Clipboard.SetText(GetSelectedText())
-            Catch
+            Catch ex As ExternalException
             End Try
         End If
     End Sub
@@ -1043,10 +1194,11 @@ Public Class ModernTextBox
                 PushUndo()
                 InsertTextCore(Clipboard.GetText())
             End If
-        Catch
+        Catch ex As ExternalException
         End Try
     End Sub
 #End Region
+
 #Region "撤回"
     Private Sub PushUndo()
         _undoStack.Add(New TextSnapshot(_lines, _caretLine, _caretCol))
@@ -1065,6 +1217,7 @@ Public Class ModernTextBox
         NotifyTextChanged()
     End Sub
 #End Region
+
 #Region "滚动条"
     Private Sub UpdateScrollBar()
         If Not 启用多行 OrElse Not IsHandleCreated Then
@@ -1075,6 +1228,7 @@ Public Class ModernTextBox
         Invalidate()
     End Sub
 #End Region
+
 #Region "输入法 IME"
     Private Sub UpdateImeWindow()
         If Not IsHandleCreated Then Return
@@ -1098,9 +1252,10 @@ Public Class ModernTextBox
         ImeHelper.SetCompositionPosition(Handle, cx, cy)
     End Sub
 #End Region
+
 #Region "辅助"
     Private Function MeasureWidth(text As String) As Integer
-        Return TextRenderHelper.MeasureTextWidth(text, Font, 行高)
+        Return TextRenderHelper.MeasureTextWidth(GetDisplayText(text), Font, 行高)
     End Function
     Private Function VisibleLineCount() As Integer
         Dim bi As Integer = 边框宽度
@@ -1230,7 +1385,29 @@ Public Class ModernTextBox
         _hasSelection = (_caretLine <> _selAnchorLine OrElse _caretCol <> _selAnchorCol)
         Invalidate()
     End Sub
+    Private Function GetDisplayText(text As String) As String
+        If _passwordChar = vbNullChar OrElse 启用多行 Then Return text
+        Return New String(_passwordChar, text.Length)
+    End Function
+    Private Function GetAbsoluteOffset(line As Integer, col As Integer) As Integer
+        Dim offset As Integer = 0
+        For i As Integer = 0 To line - 1
+            offset += _lines(i).Length + 2
+        Next
+        Return offset + col
+    End Function
+    Private Function GetLineColFromAbsolute(absOffset As Integer) As Point
+        Dim remaining As Integer = Math.Max(0, absOffset)
+        For i As Integer = 0 To _lines.Count - 1
+            If remaining <= _lines(i).Length Then
+                Return New Point(remaining, i)
+            End If
+            remaining -= _lines(i).Length + 2
+        Next
+        Return New Point(_lines(_lines.Count - 1).Length, _lines.Count - 1)
+    End Function
 #End Region
+
 #Region "事件"
     Protected Overrides Sub OnGotFocus(e As EventArgs)
         MyBase.OnGotFocus(e)
@@ -1268,6 +1445,7 @@ Public Class ModernTextBox
         Invalidate()
     End Sub
 #End Region
+
 #Region "禁用属性"
     <Browsable(False), EditorBrowsable(EditorBrowsableState.Never), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
     Public Shadows Property AutoScroll As Boolean
@@ -1334,4 +1512,5 @@ Public Class ModernTextBox
         End Set
     End Property
 #End Region
+
 End Class

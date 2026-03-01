@@ -219,6 +219,63 @@ Public Class ReDrawContextMenuStrip
             _owner = owner
         End Sub
 
+#Region "Tag 常量"
+        Private Const TagLabel As String = "label"
+        Private Const TagNothing As String = "nothing"
+        Private Const TagNull As String = "null"
+#End Region
+
+#Region "辅助方法"
+        ''' <summary>按 DPI 缩放项目内边距</summary>
+        Private Function GetScaledItemPadding() As Padding
+            Dim d As Integer = _owner._dpi
+            Dim p = _owner.项目内边距
+            Return New Padding(p.Left * d, p.Top * d, p.Right * d, p.Bottom * d)
+        End Function
+
+        ''' <summary>统一同步菜单项的 Padding / Margin</summary>
+        Private Sub ApplyItemLayout(item As ToolStripItem)
+            Dim tag As String = TryCast(item.Tag, String)
+            If tag = TagLabel Then
+                If item.Padding <> Padding.Empty Then item.Padding = Padding.Empty
+            Else
+                Dim expected = GetScaledItemPadding()
+                If item.Padding <> expected Then item.Padding = expected
+            End If
+            If item.Margin <> Padding.Empty Then item.Margin = Padding.Empty
+        End Sub
+
+        ''' <summary>绘制矢量勾选标记（无自定义图像时使用）</summary>
+        Private Sub DrawCheckMark(g As Graphics, imageRect As Rectangle, itemHeight As Integer)
+            Dim cx As Single = imageRect.X + imageRect.Width / 2.0F
+            Dim cy As Single = itemHeight / 2.0F
+            Dim s As Single = itemHeight * 0.18F
+            Dim pw As Single = Math.Max(1.6F, itemHeight * 0.08F)
+
+            Dim oldSmooth = g.SmoothingMode
+            g.SmoothingMode = SmoothingMode.AntiAlias
+
+            Using path As New GraphicsPath()
+                path.AddLines({
+                    New PointF(cx - s, cy),
+                    New PointF(cx - s * 0.35F, cy + s * 0.85F),
+                    New PointF(cx + s, cy - s)
+                })
+                Using wp As New Pen(Color.Black, pw)
+                    wp.StartCap = LineCap.Round
+                    wp.EndCap = LineCap.Round
+                    wp.LineJoin = LineJoin.Round
+                    path.Widen(wp)
+                End Using
+                Using brush As New SolidBrush(_owner.勾选颜色)
+                    g.FillPath(brush, path)
+                End Using
+            End Using
+
+            g.SmoothingMode = oldSmooth
+        End Sub
+#End Region
+
         Protected Overrides Sub Initialize(toolStrip As ToolStrip)
             MyBase.Initialize(toolStrip)
             toolStrip.BackColor = _owner.背景色
@@ -228,15 +285,7 @@ Public Class ReDrawContextMenuStrip
 
         Protected Overrides Sub InitializeItem(item As ToolStripItem)
             MyBase.InitializeItem(item)
-            Dim d As Integer = _owner._dpi
-            Select Case item.Tag
-                Case "label"
-                    item.Padding = New Padding(0)
-                Case Else
-                    Dim pad = _owner.项目内边距
-                    item.Padding = New Padding(pad.Left * d, pad.Top * d, pad.Right * d, pad.Bottom * d)
-            End Select
-            item.Margin = New Padding(0)
+            ApplyItemLayout(item)
         End Sub
 
         Protected Overrides Sub OnRenderToolStripBackground(e As ToolStripRenderEventArgs)
@@ -273,19 +322,19 @@ Public Class ReDrawContextMenuStrip
 
         Protected Overrides Sub OnRenderSeparator(e As ToolStripSeparatorRenderEventArgs)
             Dim d As Integer = _owner._dpi
-            Select Case e.Item.Tag
-                Case "nothing", "null"
-                    e.Item.AutoSize = False
-                    e.Item.Margin = New Padding(0)
-                    e.Item.Padding = New Padding(0)
-                    e.Item.Height = _owner.空白分隔高度 * d
-                    Exit Sub
-                Case Else
-                    e.Item.AutoSize = False
-                    e.Item.Height = _owner.分割线高度
-                    e.Item.Margin = New Padding(0, _owner.分割线外边距 * d, 0, _owner.分割线外边距 * d)
-                    e.Item.Padding = New Padding(0)
-            End Select
+            Dim tag As String = TryCast(e.Item.Tag, String)
+
+            e.Item.AutoSize = False
+            e.Item.Padding = Padding.Empty
+
+            If tag = TagNothing OrElse tag = TagNull Then
+                e.Item.Margin = Padding.Empty
+                e.Item.Height = _owner.空白分隔高度 * d
+                Return
+            End If
+
+            e.Item.Height = _owner.分割线高度
+            e.Item.Margin = New Padding(0, _owner.分割线外边距 * d, 0, _owner.分割线外边距 * d)
             Using b As New SolidBrush(_owner.分割线颜色)
                 e.Graphics.FillRectangle(b, 0, 0, e.Item.Width, e.Item.Height)
             End Using
@@ -298,23 +347,11 @@ Public Class ReDrawContextMenuStrip
         End Sub
 
         Protected Overrides Sub OnRenderMenuItemBackground(e As ToolStripItemRenderEventArgs)
-            ' 同步子菜单项的 Padding / Margin（子菜单继承 Renderer 时不会触发 InitializeItem）
-            Dim d As Integer = _owner._dpi
-            Select Case e.Item.Tag
-                Case "label"
-                    If e.Item.Padding <> New Padding(0) Then e.Item.Padding = New Padding(0)
-                Case Else
-                    Dim pad = _owner.项目内边距
-                    Dim expected As New Padding(pad.Left * d, pad.Top * d, pad.Right * d, pad.Bottom * d)
-                    If e.Item.Padding <> expected Then e.Item.Padding = expected
-            End Select
-            If e.Item.Margin <> New Padding(0) Then e.Item.Margin = New Padding(0)
+            ApplyItemLayout(e.Item)
 
-            If Not e.Item.Enabled Then Return
-            Select Case e.Item.Tag
-                Case "label"
-                    Return
-            End Select
+            Dim tag As String = TryCast(e.Item.Tag, String)
+            If Not e.Item.Enabled OrElse tag = TagLabel Then Return
+
             If e.Item.Selected Then
                 Dim m = _owner.选中高亮边距
                 Dim rect As New Rectangle(m.Left, m.Top, e.Item.Width - m.Horizontal, e.Item.Height - m.Vertical)
@@ -341,37 +378,7 @@ Public Class ReDrawContextMenuStrip
 
             ' 不绘制背景：让 OnRenderMenuItemBackground 的高亮自然透出，
             ' 勾选区域的背景色始终与菜单项焦点态保持一致。
-
-            Dim rawRect = e.ImageRectangle
-            Dim itemH As Integer = e.Item.Height
-            Dim cx As Single = rawRect.X + rawRect.Width / 2.0F
-            Dim cy As Single = itemH / 2.0F
-
-            ' 以项高为基准自动跟随 DPI 缩放
-            Dim s As Single = itemH * 0.18F
-            Dim pw As Single = Math.Max(1.6F, itemH * 0.08F)
-
-            Dim oldSmooth = g.SmoothingMode
-            g.SmoothingMode = SmoothingMode.AntiAlias
-
-            Using path As New GraphicsPath()
-                path.AddLines({
-                    New PointF(cx - s, cy),
-                    New PointF(cx - s * 0.35F, cy + s * 0.85F),
-                    New PointF(cx + s, cy - s)
-                })
-                Using wp As New Pen(Color.Black, pw)
-                    wp.StartCap = LineCap.Round
-                    wp.EndCap = LineCap.Round
-                    wp.LineJoin = LineJoin.Round
-                    path.Widen(wp)
-                End Using
-                Using brush As New SolidBrush(_owner.勾选颜色)
-                    g.FillPath(brush, path)
-                End Using
-            End Using
-
-            g.SmoothingMode = oldSmooth
+            DrawCheckMark(g, e.ImageRectangle, e.Item.Height)
         End Sub
 
         Protected Overrides Sub OnRenderItemText(e As ToolStripItemTextRenderEventArgs)
@@ -381,19 +388,13 @@ Public Class ReDrawContextMenuStrip
             If e.Item.Enabled Then
                 TextRenderer.DrawText(e.Graphics, escapedText, e.TextFont, textRect, _owner.文本颜色, Nothing, TextFormatFlags.VerticalCenter)
             Else
-                e.Item.Margin = New Padding(0)
-                e.Item.Padding = New Padding(0)
-                Select Case e.Item.Tag
-                    Case "label"
-                        Using f As New Font(e.TextFont.Name, e.TextFont.Size, FontStyle.Regular)
-                            TextRenderer.DrawText(e.Graphics, escapedText, f, textRect, e.TextColor, Nothing, TextFormatFlags.VerticalCenter)
-                        End Using
-                    Case Else
-                        Dim newSize As Single = Math.Max(1, e.TextFont.Size + _owner.禁用时文本字号偏移)
-                        Using f As New Font(e.TextFont.Name, newSize, FontStyle.Regular)
-                            TextRenderer.DrawText(e.Graphics, escapedText, f, textRect, e.TextColor, Nothing, TextFormatFlags.VerticalCenter)
-                        End Using
-                End Select
+                e.Item.Margin = Padding.Empty
+                e.Item.Padding = Padding.Empty
+                Dim tag As String = TryCast(e.Item.Tag, String)
+                Dim fontSize As Single = If(tag = TagLabel, e.TextFont.Size, Math.Max(1, e.TextFont.Size + _owner.禁用时文本字号偏移))
+                Using f As New Font(e.TextFont.Name, fontSize, FontStyle.Regular)
+                    TextRenderer.DrawText(e.Graphics, escapedText, f, textRect, e.TextColor, Nothing, TextFormatFlags.VerticalCenter)
+                End Using
             End If
         End Sub
 

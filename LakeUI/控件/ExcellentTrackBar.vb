@@ -9,6 +9,7 @@ Public Class ExcellentTrackBar
 
     Public Sub New()
         InitializeComponent()
+        SetStyle(ControlStyles.Selectable, True)
         标签列表 = New TrackLabelCollection(Me)
         字符串集合 = New StringItemCollection(Me)
     End Sub
@@ -187,8 +188,9 @@ Public Class ExcellentTrackBar
             If value = 最小值 Then Return
             If value > 最大值 Then value = 最大值
             最小值 = value
+            If 当前值 < 最小值 Then 当前值 = 最小值
             动画助手.SetImmediate(计算值比例(当前值))
-            If 当前值 < 最小值 Then Else Me.Invalidate()
+            Me.Invalidate()
         End Set
     End Property
 
@@ -202,8 +204,9 @@ Public Class ExcellentTrackBar
             If value = 最大值 Then Return
             If value < 最小值 Then value = 最小值
             最大值 = value
+            If 当前值 > 最大值 Then 当前值 = 最大值
             动画助手.SetImmediate(计算值比例(当前值))
-            If 当前值 > 最大值 Then Else Me.Invalidate()
+            Me.Invalidate()
         End Set
     End Property
 
@@ -220,6 +223,28 @@ Public Class ExcellentTrackBar
             Dim ratio As Single = 计算值比例(newVal)
             动画助手.AnimateTo(ratio)
             RaiseEvent ValueChanged(Me, EventArgs.Empty)
+        End Set
+    End Property
+
+    Private 小步进值 As Integer = 1
+    <Category("LakeUI"), Description("方向键和鼠标滚轮的步进值"), DefaultValue(1), Browsable(True)>
+    Public Property SmallChange As Integer
+        Get
+            Return 小步进值
+        End Get
+        Set(value As Integer)
+            小步进值 = Math.Max(1, value)
+        End Set
+    End Property
+
+    Private 大步进值 As Integer = 10
+    <Category("LakeUI"), Description("Page Up/Down 的步进值"), DefaultValue(10), Browsable(True)>
+    Public Property LargeChange As Integer
+        Get
+            Return 大步进值
+        End Get
+        Set(value As Integer)
+            大步进值 = Math.Max(1, value)
         End Set
     End Property
 
@@ -439,6 +464,50 @@ Public Class ExcellentTrackBar
         End Set
     End Property
 
+    Private 鼠标移上时滑块颜色 As Color = Color.Empty
+    <Category("LakeUI"), Description("鼠标移上时的滑块填充颜色，Empty 时使用 ThumbColor"), DefaultValue(GetType(Color), ""), Browsable(True)>
+    Public Property HoverThumbColor As Color
+        Get
+            Return 鼠标移上时滑块颜色
+        End Get
+        Set(value As Color)
+            SetValue(鼠标移上时滑块颜色, value)
+        End Set
+    End Property
+
+    Private 鼠标按下时滑块颜色 As Color = Color.Empty
+    <Category("LakeUI"), Description("鼠标按下时的滑块填充颜色，Empty 时使用 ThumbColor"), DefaultValue(GetType(Color), ""), Browsable(True)>
+    Public Property PressedThumbColor As Color
+        Get
+            Return 鼠标按下时滑块颜色
+        End Get
+        Set(value As Color)
+            SetValue(鼠标按下时滑块颜色, value)
+        End Set
+    End Property
+
+    Private 鼠标移上时滑块边框颜色 As Color = Color.Empty
+    <Category("LakeUI"), Description("鼠标移上时的滑块边框颜色，Empty 时使用 ThumbBorderColor"), DefaultValue(GetType(Color), ""), Browsable(True)>
+    Public Property HoverThumbBorderColor As Color
+        Get
+            Return 鼠标移上时滑块边框颜色
+        End Get
+        Set(value As Color)
+            SetValue(鼠标移上时滑块边框颜色, value)
+        End Set
+    End Property
+
+    Private 鼠标按下时滑块边框颜色 As Color = Color.Empty
+    <Category("LakeUI"), Description("鼠标按下时的滑块边框颜色，Empty 时使用 ThumbBorderColor"), DefaultValue(GetType(Color), ""), Browsable(True)>
+    Public Property PressedThumbBorderColor As Color
+        Get
+            Return 鼠标按下时滑块边框颜色
+        End Get
+        Set(value As Color)
+            SetValue(鼠标按下时滑块边框颜色, value)
+        End Set
+    End Property
+
     Private 标签颜色 As Color = Color.Gray
     <Category("LakeUI"), Description("刻度标签文字颜色"), DefaultValue(GetType(Color), "Gray"), Browsable(True)>
     Public Property LabelColor As Color
@@ -631,6 +700,11 @@ Public Class ExcellentTrackBar
         ' 文字独立渲染，不经过 SSAA
         绘制标签文字(e.Graphics)
         绘制滑块文字(e.Graphics, thumbRect)
+        If Not Enabled Then
+            Using brush As New SolidBrush(Color.FromArgb(128, BackColor))
+                e.Graphics.FillRectangle(brush, ClientRectangle)
+            End Using
+        End If
     End Sub
 
     Private Sub 绘制图形内容(g As Graphics, thumbRect As RectangleF)
@@ -675,26 +749,50 @@ Public Class ExcellentTrackBar
             fillRect = New RectangleF(trackRect.X, center, trackRect.Width, fillH)
         End If
 
-        g.SetClip(trackRect)
         If hasRadius Then
-            Using path = RectangleRenderer.创建圆角矩形路径(fillRect, 轨道圆角半径)
-                RectangleRenderer.绘制圆角背景(g, path, fillRect, 轨道填充颜色, Color.Empty, TrackOrientationEnum.Horizontal)
+            Using clipPath = RectangleRenderer.创建圆角矩形路径(trackRect, 轨道圆角半径)
+                g.SetClip(clipPath)
             End Using
         Else
-            RectangleRenderer.绘制矩形背景(g, fillRect, 轨道填充颜色, Color.Empty, TrackOrientationEnum.Horizontal)
+            g.SetClip(trackRect)
         End If
+        Using brush As New SolidBrush(轨道填充颜色)
+            g.FillRectangle(brush, fillRect)
+        End Using
         g.ResetClip()
     End Sub
 
+    Private Function 获取当前滑块颜色() As Color
+        Select Case 鼠标状态
+            Case MouseStateEnum.Hover
+                If 鼠标移上时滑块颜色 <> Color.Empty Then Return 鼠标移上时滑块颜色
+            Case MouseStateEnum.Pressed
+                If 鼠标按下时滑块颜色 <> Color.Empty Then Return 鼠标按下时滑块颜色
+        End Select
+        Return 滑块颜色
+    End Function
+
+    Private Function 获取当前滑块边框颜色() As Color
+        Select Case 鼠标状态
+            Case MouseStateEnum.Hover
+                If 鼠标移上时滑块边框颜色 <> Color.Empty Then Return 鼠标移上时滑块边框颜色
+            Case MouseStateEnum.Pressed
+                If 鼠标按下时滑块边框颜色 <> Color.Empty Then Return 鼠标按下时滑块边框颜色
+        End Select
+        Return 滑块边框颜色
+    End Function
+
     Private Sub 绘制滑块(g As Graphics, thumbRect As RectangleF)
+        Dim currentColor As Color = 获取当前滑块颜色()
+        Dim currentBorderColor As Color = 获取当前滑块边框颜色()
         If 滑块圆角半径 > 0 Then
             Using path = RectangleRenderer.创建圆角矩形路径(thumbRect, 滑块圆角半径)
-                RectangleRenderer.绘制圆角背景(g, path, thumbRect, 滑块颜色, 滑块渐变颜色, TrackOrientationEnum.Vertical)
-                RectangleRenderer.绘制圆角边框(g, path, 滑块边框颜色, 滑块边框宽度)
+                RectangleRenderer.绘制圆角背景(g, path, thumbRect, currentColor, 滑块渐变颜色, TrackOrientationEnum.Vertical)
+                RectangleRenderer.绘制圆角边框(g, path, currentBorderColor, 滑块边框宽度)
             End Using
         Else
-            RectangleRenderer.绘制矩形背景(g, thumbRect, 滑块颜色, 滑块渐变颜色, TrackOrientationEnum.Vertical)
-            RectangleRenderer.绘制矩形边框(g, thumbRect, 滑块边框颜色, 滑块边框宽度)
+            RectangleRenderer.绘制矩形背景(g, thumbRect, currentColor, 滑块渐变颜色, TrackOrientationEnum.Vertical)
+            RectangleRenderer.绘制矩形边框(g, thumbRect, currentBorderColor, 滑块边框宽度)
         End If
     End Sub
 
@@ -780,12 +878,34 @@ Public Class ExcellentTrackBar
 #End Region
 
 #Region "鼠标交互"
+    Private Enum MouseStateEnum
+        Normal
+        Hover
+        Pressed
+    End Enum
+    Private 鼠标状态 As MouseStateEnum = MouseStateEnum.Normal
+
     Private 正在拖动 As Boolean = False
     Private 拖动偏移 As Integer = 0
 
+    Protected Overrides Sub OnMouseEnter(e As EventArgs)
+        MyBase.OnMouseEnter(e)
+        鼠标状态 = MouseStateEnum.Hover
+        Me.Invalidate()
+    End Sub
+
+    Protected Overrides Sub OnMouseLeave(e As EventArgs)
+        MyBase.OnMouseLeave(e)
+        鼠标状态 = MouseStateEnum.Normal
+        Me.Invalidate()
+    End Sub
+
     Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
         MyBase.OnMouseDown(e)
-        If e.Button <> MouseButtons.Left Then Return
+        If Not Enabled OrElse e.Button <> MouseButtons.Left Then Return
+        鼠标状态 = MouseStateEnum.Pressed
+        Me.Focus()
+        Me.Invalidate()
         Dim thumbRect As RectangleF = 计算滑块矩形()
         If thumbRect.Contains(e.Location) Then
             正在拖动 = True
@@ -801,7 +921,7 @@ Public Class ExcellentTrackBar
 
     Protected Overrides Sub OnMouseMove(e As MouseEventArgs)
         MyBase.OnMouseMove(e)
-        If Not 正在拖动 Then Return
+        If Not Enabled OrElse Not 正在拖动 Then Return
         Dim pt As Point = If(方向 = TrackOrientationEnum.Horizontal,
                              New Point(e.X - 拖动偏移, e.Y),
                              New Point(e.X, e.Y - 拖动偏移))
@@ -811,11 +931,14 @@ Public Class ExcellentTrackBar
     Protected Overrides Sub OnMouseUp(e As MouseEventArgs)
         MyBase.OnMouseUp(e)
         正在拖动 = False
+        鼠标状态 = If(ClientRectangle.Contains(e.Location), MouseStateEnum.Hover, MouseStateEnum.Normal)
+        Me.Invalidate()
     End Sub
 
     Protected Overrides Sub OnMouseWheel(e As MouseEventArgs)
         MyBase.OnMouseWheel(e)
-        Value = Math.Max(最小值, Math.Min(最大值, 当前值 + If(e.Delta > 0, 1, -1)))
+        If Not Enabled Then Return
+        Value = Math.Max(最小值, Math.Min(最大值, 当前值 + If(e.Delta > 0, 小步进值, -小步进值)))
     End Sub
 
     Private Sub 更新值从坐标(point As Point)
@@ -830,17 +953,32 @@ Public Class ExcellentTrackBar
         End If
         Value = CInt(Math.Round(最小值 + Math.Max(0, Math.Min(1, ratio)) * range))
     End Sub
+
+    Protected Overrides Sub OnKeyDown(e As KeyEventArgs)
+        MyBase.OnKeyDown(e)
+        If Not Enabled Then Return
+        Select Case e.KeyCode
+            Case Keys.Right, Keys.Up
+                Value = Math.Min(最大值, 当前值 + 小步进值)
+                e.Handled = True
+            Case Keys.Left, Keys.Down
+                Value = Math.Max(最小值, 当前值 - 小步进值)
+                e.Handled = True
+            Case Keys.PageUp
+                Value = Math.Min(最大值, 当前值 + 大步进值)
+                e.Handled = True
+            Case Keys.PageDown
+                Value = Math.Max(最小值, 当前值 - 大步进值)
+                e.Handled = True
+            Case Keys.Home
+                Value = 最小值
+                e.Handled = True
+            Case Keys.End
+                Value = 最大值
+                e.Handled = True
+        End Select
+    End Sub
 #End Region
-
-    Protected Overrides Sub OnFontChanged(e As EventArgs)
-        MyBase.OnFontChanged(e)
-        Me.Invalidate()
-    End Sub
-
-    Protected Overrides Sub OnResize(e As EventArgs)
-        MyBase.OnResize(e)
-        Me.Invalidate()
-    End Sub
 
 #Region "禁用属性"
     <Browsable(False), EditorBrowsable(EditorBrowsableState.Never), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
@@ -908,5 +1046,20 @@ Public Class ExcellentTrackBar
         End Set
     End Property
 #End Region
+
+    Protected Overrides Sub OnFontChanged(e As EventArgs)
+        MyBase.OnFontChanged(e)
+        Me.Invalidate()
+    End Sub
+
+    Protected Overrides Sub OnResize(e As EventArgs)
+        MyBase.OnResize(e)
+        Me.Invalidate()
+    End Sub
+
+    Protected Overrides Sub OnEnabledChanged(e As EventArgs)
+        MyBase.OnEnabledChanged(e)
+        Me.Invalidate()
+    End Sub
 
 End Class

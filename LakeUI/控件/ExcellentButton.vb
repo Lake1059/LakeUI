@@ -31,15 +31,29 @@ Public Class ExcellentButton
             绘制图形内容(e.Graphics, 是否有圆角, 极限矩形区域, 内容矩形区域)
         End If
         绘制文本(e.Graphics, 内容矩形区域, 计算图标占用的水平宽度(内容矩形区域))
+        If Not Enabled Then
+            Using brush As New SolidBrush(Color.FromArgb(120, 0, 0, 0))
+                e.Graphics.FillRectangle(brush, 0, 0, Me.Width, Me.Height)
+            End Using
+        End If
     End Sub
     Private Sub 绘制图形内容(g As Graphics, 是否有圆角 As Boolean, 极限矩形区域 As RectangleF, 内容矩形区域 As RectangleF)
         g.SmoothingMode = SmoothingMode.AntiAlias
         g.PixelOffsetMode = PixelOffsetMode.HighQuality
         g.InterpolationMode = InterpolationMode.HighQualityBicubic
-        Dim 背景颜色缓存值 As Color = Nothing
-        Dim 渐变颜色缓存值 As Color = Nothing
-        Dim 边框颜色缓存值 As Color = Nothing
-        根据鼠标状态分配颜色(背景颜色缓存值, 渐变颜色缓存值, 边框颜色缓存值)
+        Dim 背景颜色缓存值 As Color
+        Dim 渐变颜色缓存值 As Color
+        Dim 边框颜色缓存值 As Color
+        If 颜色动画已启用 Then
+            Dim 目标背景 As Color = Nothing, 目标渐变 As Color = Nothing, 目标边框 As Color = Nothing
+            根据鼠标状态分配颜色(目标背景, 目标渐变, 目标边框)
+            Dim t As Single = 动画助手.Progress
+            背景颜色缓存值 = 颜色插值(动画前背景颜色, 目标背景, t)
+            渐变颜色缓存值 = 颜色插值(动画前渐变颜色, 目标渐变, t)
+            边框颜色缓存值 = 颜色插值(动画前边框颜色, 目标边框, t)
+        Else
+            根据鼠标状态分配颜色(背景颜色缓存值, 渐变颜色缓存值, 边框颜色缓存值)
+        End If
         If 是否有圆角 Then
             Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(极限矩形区域, 边框圆角半径)
                 RectangleRenderer.绘制圆角背景(g, path, 极限矩形区域, 背景颜色缓存值, 渐变颜色缓存值, 渐变方向)
@@ -64,17 +78,47 @@ Public Class ExcellentButton
             Case MouseStateEnum.Pressed
                 _背景颜色 = If(鼠标按下时背景颜色 <> Color.Empty, 鼠标按下时背景颜色, 背景基础颜色)
                 _渐变颜色 = If(鼠标按下时渐变颜色 <> Color.Empty, 鼠标按下时渐变颜色, 背景渐变颜色)
-                _边框颜色 = If(鼠标按下时渐变颜色 <> Color.Empty, 鼠标按下时边框颜色, 边框颜色)
+                _边框颜色 = If(鼠标按下时边框颜色 <> Color.Empty, 鼠标按下时边框颜色, 边框颜色)
             Case Else
                 _背景颜色 = 背景基础颜色
                 _渐变颜色 = 背景渐变颜色
                 _边框颜色 = 边框颜色
         End Select
     End Sub
+    Private Sub 切换鼠标颜色状态(新状态 As MouseStateEnum)
+        Dim 当前背景 As Color = Nothing, 当前渐变 As Color = Nothing, 当前边框 As Color = Nothing
+        If 颜色动画已启用 Then
+            Dim 旧目标背景 As Color = Nothing, 旧目标渐变 As Color = Nothing, 旧目标边框 As Color = Nothing
+            根据鼠标状态分配颜色(旧目标背景, 旧目标渐变, 旧目标边框)
+            Dim t As Single = 动画助手.Progress
+            当前背景 = 颜色插值(动画前背景颜色, 旧目标背景, t)
+            当前渐变 = 颜色插值(动画前渐变颜色, 旧目标渐变, t)
+            当前边框 = 颜色插值(动画前边框颜色, 旧目标边框, t)
+        Else
+            根据鼠标状态分配颜色(当前背景, 当前渐变, 当前边框)
+            颜色动画已启用 = True
+        End If
+        动画前背景颜色 = 当前背景
+        动画前渐变颜色 = 当前渐变
+        动画前边框颜色 = 当前边框
+        鼠标状态 = 新状态
+        动画助手.SetImmediate(0)
+        动画助手.AnimateTo(1)
+    End Sub
+    Private Shared Function 颜色插值(c1 As Color, c2 As Color, t As Single) As Color
+        Return Color.FromArgb(
+            字节插值(c1.A, c2.A, t),
+            字节插值(c1.R, c2.R, t),
+            字节插值(c1.G, c2.G, t),
+            字节插值(c1.B, c2.B, t))
+    End Function
+    Private Shared Function 字节插值(a As Integer, b As Integer, t As Single) As Integer
+        Return Math.Clamp(CInt(a + (b - a) * t), 0, 255)
+    End Function
 
     Private Sub 绘制图标(g As Graphics, 内容矩形区域 As RectangleF)
         If 图标 Is Nothing Then Return
-        Dim iconSize As Single = Math.Min(内容矩形区域.Height - 图标边距 * 2, 内容矩形区域.Width * 0.3F)
+        Dim iconSize As Single = 计算图标占用的水平宽度(内容矩形区域)
         Dim iconX As Single = 内容矩形区域.X + 图标边距
         Dim iconY As Single = 内容矩形区域.Y + (内容矩形区域.Height - iconSize) / 2.0F
         g.DrawImage(图标, New RectangleF(iconX, iconY, iconSize, iconSize))
@@ -96,15 +140,16 @@ Public Class ExcellentButton
         End Select
         Dim 文本格式2 As TextFormatFlags = 文本格式1 Or TextFormatFlags.EndEllipsis Or TextFormatFlags.NoPadding
         If Not String.IsNullOrEmpty(次要文本) Then
-            Dim 次要文本字体 As New Font(Me.Font.FontFamily, 次要文本字号, FontStyle.Regular)
-            Dim 主要文本尺寸 As Size = TextRenderer.MeasureText(g, MyBase.Text, Me.Font, 文本绘制区域.Size, 文本格式2)
-            Dim 次要文本尺寸 As Size = TextRenderer.MeasureText(g, 次要文本, 次要文本字体, 文本绘制区域.Size, 文本格式2)
-            Dim 文本极限高度 As Integer = 主要文本尺寸.Height + 主次文本间距 + 次要文本尺寸.Height
-            Dim 高度起始 As Integer = 文本绘制区域.Y + (文本绘制区域.Height - 文本极限高度) \ 2
-            Dim 主要文本区域 As New Rectangle(文本绘制区域.X, 高度起始, 文本绘制区域.Width, 主要文本尺寸.Height)
-            TextRenderer.DrawText(g, MyBase.Text, Me.Font, 主要文本区域, 文本颜色, 文本格式2)
-            Dim 次要文本区域 As New Rectangle(文本绘制区域.X, 高度起始 + 主要文本尺寸.Height + 主次文本间距, 文本绘制区域.Width, 次要文本尺寸.Height)
-            TextRenderer.DrawText(g, 次要文本, 次要文本字体, 次要文本区域, 次要文本颜色, 文本格式2)
+            Using 次要文本字体 As New Font(Me.Font.FontFamily, 次要文本字号, FontStyle.Regular)
+                Dim 主要文本尺寸 As Size = TextRenderer.MeasureText(g, MyBase.Text, Me.Font, 文本绘制区域.Size, 文本格式2)
+                Dim 次要文本尺寸 As Size = TextRenderer.MeasureText(g, 次要文本, 次要文本字体, 文本绘制区域.Size, 文本格式2)
+                Dim 文本极限高度 As Integer = 主要文本尺寸.Height + 主次文本间距 + 次要文本尺寸.Height
+                Dim 高度起始 As Integer = 文本绘制区域.Y + (文本绘制区域.Height - 文本极限高度) \ 2
+                Dim 主要文本区域 As New Rectangle(文本绘制区域.X, 高度起始, 文本绘制区域.Width, 主要文本尺寸.Height)
+                TextRenderer.DrawText(g, MyBase.Text, Me.Font, 主要文本区域, 文本颜色, 文本格式2)
+                Dim 次要文本区域 As New Rectangle(文本绘制区域.X, 高度起始 + 主要文本尺寸.Height + 主次文本间距, 文本绘制区域.Width, 次要文本尺寸.Height)
+                TextRenderer.DrawText(g, 次要文本, 次要文本字体, 次要文本区域, 次要文本颜色, 文本格式2)
+            End Using
         Else
             Dim 文本格式3 As TextFormatFlags = 文本格式2 Or TextFormatFlags.VerticalCenter
             TextRenderer.DrawText(g, MyBase.Text, Me.Font, 文本绘制区域, 文本颜色, 文本格式3)
@@ -120,27 +165,49 @@ Public Class ExcellentButton
         Pressed
     End Enum
     Private 鼠标状态 As MouseStateEnum = MouseStateEnum.Normal
+    Private ReadOnly 动画助手 As New AnimationHelper(Me)
+    Private 颜色动画已启用 As Boolean = False
+    Private 动画前背景颜色 As Color
+    Private 动画前渐变颜色 As Color
+    Private 动画前边框颜色 As Color
     Protected Overrides Sub OnMouseEnter(e As EventArgs)
         MyBase.OnMouseEnter(e)
-        鼠标状态 = MouseStateEnum.Hover
-        Me.Invalidate()
+        If Not Enabled Then Return
+        切换鼠标颜色状态(MouseStateEnum.Hover)
     End Sub
     Protected Overrides Sub OnMouseLeave(e As EventArgs)
         MyBase.OnMouseLeave(e)
-        鼠标状态 = MouseStateEnum.Normal
-        Me.Invalidate()
+        If Not Enabled Then Return
+        切换鼠标颜色状态(MouseStateEnum.Normal)
     End Sub
     Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
         MyBase.OnMouseDown(e)
-        鼠标状态 = MouseStateEnum.Pressed
-        Me.Invalidate()
+        If Not Enabled Then Return
+        切换鼠标颜色状态(MouseStateEnum.Pressed)
     End Sub
     Protected Overrides Sub OnMouseUp(e As MouseEventArgs)
         MyBase.OnMouseUp(e)
-        鼠标状态 = If(ClientRectangle.Contains(e.Location), MouseStateEnum.Hover, MouseStateEnum.Normal)
+        If Not Enabled Then Return
+        切换鼠标颜色状态(If(ClientRectangle.Contains(e.Location), MouseStateEnum.Hover, MouseStateEnum.Normal))
+    End Sub
+    Protected Overrides Sub OnEnabledChanged(e As EventArgs)
+        MyBase.OnEnabledChanged(e)
+        If Not Enabled Then
+            鼠标状态 = MouseStateEnum.Normal
+            颜色动画已启用 = False
+            动画助手.StopAnimation()
+        End If
         Me.Invalidate()
     End Sub
 #End Region
+
+#Region "通用"
+    Private Sub SetValue(Of T)(ByRef field As T, value As T)
+        If Not EqualityComparer(Of T).Default.Equals(field, value) Then
+            field = value
+            Me.Invalidate()
+        End If
+    End Sub
 
     Private 超采样倍率 As Integer = 1
     <Category("LakeUI"), Description(Class1.超采样抗锯齿描述词), DefaultValue(GetType(Class1.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
@@ -153,13 +220,28 @@ Public Class ExcellentButton
         End Set
     End Property
 
-    Private Sub SetValue(Of T)(ByRef field As T, value As T)
-        If Not EqualityComparer(Of T).Default.Equals(field, value) Then
-            field = value
-            Me.Invalidate()
-        End If
-    End Sub
+    <Category("LakeUI"), Description(Class1.动画时长描述词), DefaultValue(300), Browsable(True)>
+    Public Property AnimationDuration As Integer
+        Get
+            Return 动画助手.Duration
+        End Get
+        Set(value As Integer)
+            动画助手.Duration = Math.Max(0, value)
+        End Set
+    End Property
 
+    <Category("LakeUI"), Description("动画帧率上限，设为0则不限制"), DefaultValue(60), Browsable(True)>
+    Public Property AnimationFPS As Integer
+        Get
+            Return 动画助手.FPS
+        End Get
+        Set(value As Integer)
+            动画助手.FPS = Math.Max(0, value)
+        End Set
+    End Property
+#End Region
+
+#Region "边框属性"
     Private 边框颜色 As Color = Color.Gray
     <Category("LakeUI"), Description("边框颜色"), DefaultValue(GetType(Color), "Gray"), Browsable(True)>
     Public Property BorderColor As Color
@@ -190,7 +272,9 @@ Public Class ExcellentButton
             SetValue(边框圆角半径, value)
         End Set
     End Property
+#End Region
 
+#Region "背景属性"
     Private 背景基础颜色 As Color = Color.FromArgb(36, 36, 36)
     <Category("LakeUI"), Description("背景基础颜色"), DefaultValue(GetType(Color), "36,36,36"), Browsable(True)>
     Public Property BackColor1 As Color
@@ -221,14 +305,15 @@ Public Class ExcellentButton
             SetValue(渐变方向, value)
         End Set
     End Property
+#End Region
 
+#Region "文本属性"
     <Category("LakeUI"), Description("主要文本"), DefaultValue(GetType(String), "ExButton"), Browsable(True), DesignerSerializationVisibility(DesignerSerializationVisibility.Visible)>
     Public Overrides Property Text As String
         Get
             Return MyBase.Text
         End Get
         Set(value As String)
-            If MyBase.Text = value Then Return
             SetValue(MyBase.Text, value)
         End Set
     End Property
@@ -304,7 +389,9 @@ Public Class ExcellentButton
             SetValue(文字对齐方位, value)
         End Set
     End Property
+#End Region
 
+#Region "图标属性"
     Private 图标 As Image = Nothing
     <Category("LakeUI"), Description("图标"), DefaultValue(GetType(Image), ""), Browsable(True)>
     Public Property Icon As Image
@@ -326,7 +413,9 @@ Public Class ExcellentButton
             SetValue(图标边距, value)
         End Set
     End Property
+#End Region
 
+#Region "交互状态属性"
     Private 鼠标移上时背景颜色 As Color = Color.Empty
     <Category("LakeUI"), Description("鼠标移上时背景颜色"), DefaultValue(GetType(Color), ""), Browsable(True)>
     Public Property HoverBackColor1 As Color
@@ -387,8 +476,17 @@ Public Class ExcellentButton
             SetValue(鼠标按下时边框颜色, value)
         End Set
     End Property
+#End Region
 
 #Region "禁用属性"
+    <Browsable(False), EditorBrowsable(EditorBrowsableState.Never), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+    Public Shadows Property BackColor As Color
+        Get
+            Return Nothing
+        End Get
+        Set(value As Color)
+        End Set
+    End Property
     <Browsable(False), EditorBrowsable(EditorBrowsableState.Never), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
     Public Shadows Property AutoScroll As Boolean
         Get

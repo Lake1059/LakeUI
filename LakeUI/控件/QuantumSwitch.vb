@@ -40,6 +40,11 @@ Public Class QuantumSwitch
         Else
             绘制图形内容(e.Graphics, 极限矩形区域)
         End If
+        If Not Enabled Then
+            Using brush As New SolidBrush(Color.FromArgb(120, 0, 0, 0))
+                e.Graphics.FillRectangle(brush, 0, 0, Me.Width, Me.Height)
+            End Using
+        End If
     End Sub
 
     Private Sub 绘制图形内容(g As Graphics, 极限矩形区域 As RectangleF)
@@ -206,6 +211,7 @@ Public Class QuantumSwitch
 
     Protected Overrides Sub OnMouseEnter(e As EventArgs)
         MyBase.OnMouseEnter(e)
+        If Not Enabled Then Return
         鼠标状态 = MouseStateEnum.Hover
         Me.Invalidate()
         If 观测者模式 Then RaiseEvent StateChanged(Me, EventArgs.Empty)
@@ -213,6 +219,7 @@ Public Class QuantumSwitch
 
     Protected Overrides Sub OnMouseLeave(e As EventArgs)
         MyBase.OnMouseLeave(e)
+        If Not Enabled Then Return
         鼠标状态 = MouseStateEnum.Normal
         Me.Invalidate()
         If 观测者模式 Then RaiseEvent StateChanged(Me, EventArgs.Empty)
@@ -220,28 +227,24 @@ Public Class QuantumSwitch
 
     Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
         MyBase.OnMouseDown(e)
+        If Not Enabled Then Return
         鼠标状态 = MouseStateEnum.Pressed
         Me.Invalidate()
     End Sub
 
     Protected Overrides Sub OnMouseUp(e As MouseEventArgs)
         MyBase.OnMouseUp(e)
+        If Not Enabled Then Return
         鼠标状态 = If(ClientRectangle.Contains(e.Location), MouseStateEnum.Hover, MouseStateEnum.Normal)
         Me.Invalidate()
     End Sub
 
     Private Shared ReadOnly 随机数生成器 As New Random()
 
-    Protected Overrides Sub OnClick(e As EventArgs)
-        MyBase.OnClick(e)
-        ' 左键：在 Off 和 On 之间切换
+    Private Sub 执行左键切换()
         If 内部状态 = QuantumStateEnum.Superposition Then
             ' 叠加态坍缩：随机选择开或关，模拟量子不确定性
-            If 随机数生成器.Next(2) = 0 Then
-                State = QuantumStateEnum.Off
-            Else
-                State = QuantumStateEnum.On
-            End If
+            State = If(随机数生成器.Next(2) = 0, QuantumStateEnum.Off, QuantumStateEnum.On)
         ElseIf 内部状态 = QuantumStateEnum.Off Then
             State = QuantumStateEnum.On
         Else
@@ -249,19 +252,14 @@ Public Class QuantumSwitch
         End If
     End Sub
 
+    Protected Overrides Sub OnClick(e As EventArgs)
+        MyBase.OnClick(e)
+        执行左键切换()
+    End Sub
+
     Protected Overrides Sub OnDoubleClick(e As EventArgs)
         MyBase.OnDoubleClick(e)
-        If 内部状态 = QuantumStateEnum.Superposition Then
-            If 随机数生成器.Next(2) = 0 Then
-                State = QuantumStateEnum.Off
-            Else
-                State = QuantumStateEnum.On
-            End If
-        ElseIf 内部状态 = QuantumStateEnum.Off Then
-            State = QuantumStateEnum.On
-        Else
-            State = QuantumStateEnum.Off
-        End If
+        执行左键切换()
     End Sub
 
     Protected Overrides Sub OnMouseClick(e As MouseEventArgs)
@@ -275,8 +273,18 @@ Public Class QuantumSwitch
             End If
         End If
     End Sub
+
+    Protected Overrides Sub OnEnabledChanged(e As EventArgs)
+        MyBase.OnEnabledChanged(e)
+        If Not Enabled Then
+            鼠标状态 = MouseStateEnum.Normal
+            动画助手.StopAnimation()
+        End If
+        Me.Invalidate()
+    End Sub
 #End Region
 
+#Region "通用"
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
@@ -293,6 +301,7 @@ Public Class QuantumSwitch
             Case Else : Return 0.0F
         End Select
     End Function
+#End Region
 
 #Region "属性"
     Private 内部状态 As QuantumStateEnum = QuantumStateEnum.Off

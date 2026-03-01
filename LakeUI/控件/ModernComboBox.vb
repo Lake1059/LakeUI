@@ -5,6 +5,63 @@ Imports System.Drawing.Drawing2D
 Public Class ModernComboBox
     Public Event SelectedIndexChanged As EventHandler
     Public Shadows Event TextChanged As EventHandler
+    Public Event DropDownOpened As EventHandler
+    Public Event DropDownClosed As EventHandler
+
+    Public Class ItemCollection
+        Inherits ObjectModel.Collection(Of String)
+
+        Private _owner As ModernComboBox
+
+        Friend Sub New(owner As ModernComboBox)
+            _owner = owner
+        End Sub
+
+        Public Overloads Sub AddRange(collection As IEnumerable(Of String))
+            For Each s In collection
+                Add(s)
+            Next
+        End Sub
+
+        Protected Overrides Sub InsertItem(index As Integer, item As String)
+            MyBase.InsertItem(index, item)
+            If _owner._selectedIndex >= 0 AndAlso index <= _owner._selectedIndex Then
+                _owner._selectedIndex += 1
+            End If
+            _owner.Invalidate()
+        End Sub
+
+        Protected Overrides Sub RemoveItem(index As Integer)
+            MyBase.RemoveItem(index)
+            If _owner._selectedIndex = index Then
+                _owner._selectedIndex = -1
+                _owner._text = String.Empty
+                _owner.OnItemsTextChanged()
+            ElseIf _owner._selectedIndex > index Then
+                _owner._selectedIndex -= 1
+            End If
+            _owner.Invalidate()
+        End Sub
+
+        Protected Overrides Sub ClearItems()
+            MyBase.ClearItems()
+            Dim hadSelection As Boolean = _owner._selectedIndex >= 0
+            _owner._selectedIndex = -1
+            If hadSelection Then
+                _owner._text = String.Empty
+                _owner.OnItemsTextChanged()
+            End If
+            _owner.Invalidate()
+        End Sub
+
+        Protected Overrides Sub SetItem(index As Integer, item As String)
+            MyBase.SetItem(index, item)
+            If _owner._selectedIndex = index Then
+                _owner._text = item
+            End If
+            _owner.Invalidate()
+        End Sub
+    End Class
 
 #Region "字段"
     Private _text As String = String.Empty
@@ -21,7 +78,6 @@ Public Class ModernComboBox
     Private _selectedIndex As Integer = -1
     Private _droppedDown As Boolean = False
     Private _dropDownForm As DropDownListForm = Nothing
-    Private _dropDownHoverIndex As Integer = -1
 
     Private Enum MouseStateEnum
         Normal
@@ -31,6 +87,7 @@ Public Class ModernComboBox
     Private 鼠标状态 As MouseStateEnum = MouseStateEnum.Normal
     Private _mouseOverArrow As Boolean = False
 #End Region
+
 #Region "属性"
     <Category("LakeUI"), Description("主要文本"), DefaultValue(GetType(String), ""), Browsable(True),
      DesignerSerializationVisibility(DesignerSerializationVisibility.Visible)>
@@ -94,6 +151,20 @@ Public Class ModernComboBox
             End If
             Return Nothing
         End Get
+    End Property
+
+    <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+    Public Property DroppedDown As Boolean
+        Get
+            Return _droppedDown
+        End Get
+        Set(value As Boolean)
+            If value Then
+                OpenDropDown()
+            Else
+                CloseDropDown()
+            End If
+        End Set
     End Property
 
     Private 背景颜色 As Color = Color.FromArgb(36, 36, 36)
@@ -608,6 +679,7 @@ Public Class ModernComboBox
         End Set
     End Property
 #End Region
+
 #Region "初始化"
     Public Sub New()
         InitializeComponent()
@@ -638,6 +710,7 @@ Public Class ModernComboBox
         MyBase.OnHandleDestroyed(e)
     End Sub
 #End Region
+
 #Region "绘制"
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
         Dim w As Integer = ClientRectangle.Width
@@ -682,6 +755,12 @@ Public Class ModernComboBox
         End If
 
         DrawTextContent(e.Graphics, w, h)
+
+        If Not Enabled Then
+            Using brush As New SolidBrush(Color.FromArgb(120, 0, 0, 0))
+                e.Graphics.FillRectangle(brush, 0, 0, w, h)
+            End Using
+        End If
     End Sub
 
     Private Sub DrawBackground(g As Graphics, hasRadius As Boolean, boundsRect As RectangleF, borderClr As Color, bgClr As Color, bgClr2 As Color)
@@ -839,6 +918,7 @@ Public Class ModernComboBox
         End Using
     End Sub
 #End Region
+
 #Region "消息处理 (WndProc)"
     Protected Overrides Sub WndProc(ByRef m As Message)
         Select Case m.Msg
@@ -878,6 +958,7 @@ Public Class ModernComboBox
         End Select
     End Sub
 #End Region
+
 #Region "字符输入 (WM_CHAR)"
     Private Sub HandleWmChar(charCode As Integer)
         Select Case charCode
@@ -903,6 +984,7 @@ Public Class ModernComboBox
         ResetCaretBlink()
     End Sub
 #End Region
+
 #Region "键盘导航 (OnKeyDown)"
     Protected Overrides Sub OnKeyDown(e As KeyEventArgs)
         MyBase.OnKeyDown(e)
@@ -974,6 +1056,9 @@ Public Class ModernComboBox
             Case Keys.Escape
                 If _droppedDown Then CloseDropDown()
                 e.Handled = True
+            Case Keys.Enter
+                If _droppedDown Then CloseDropDown()
+                e.Handled = True
         End Select
         If e.Handled Then ResetCaretBlink()
     End Sub
@@ -982,7 +1067,7 @@ Public Class ModernComboBox
         Select Case keyData And Keys.KeyCode
             Case Keys.Left, Keys.Right, Keys.Up, Keys.Down,
                  Keys.Home, Keys.End, Keys.Delete, Keys.Enter,
-                 Keys.Escape
+                 Keys.Escape, Keys.Space
                 Return True
         End Select
         Return MyBase.IsInputKey(keyData)
@@ -992,6 +1077,7 @@ Public Class ModernComboBox
         Return True
     End Function
 #End Region
+
 #Region "鼠标处理"
     Protected Overrides Sub OnMouseEnter(e As EventArgs)
         MyBase.OnMouseEnter(e)
@@ -1008,6 +1094,7 @@ Public Class ModernComboBox
 
     Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
         MyBase.OnMouseDown(e)
+        If Not Enabled Then Return
         Focus()
         鼠标状态 = MouseStateEnum.Pressed
         If e.Button = MouseButtons.Left Then
@@ -1073,6 +1160,7 @@ Public Class ModernComboBox
         Return TextRenderHelper.FindColFromX(lineStr, x, Font, 行高)
     End Function
 #End Region
+
 #Region "光标移动"
     Private Sub MoveCaret(deltaCol As Integer, extend As Boolean)
         If Not extend AndAlso _hasSelection AndAlso deltaCol <> 0 Then
@@ -1171,6 +1259,7 @@ Public Class ModernComboBox
         End If
     End Sub
 #End Region
+
 #Region "文本编辑核心"
     Private Sub InsertTextCore(text As String)
         DeleteSelection()
@@ -1208,8 +1297,9 @@ Public Class ModernComboBox
         ClearSelection()
     End Sub
 #End Region
+
 #Region "选区"
-    Private Sub SelectAll()
+    Public Sub SelectAll()
         _selAnchorCol = 0
         _caretCol = _text.Length
         _hasSelection = _text.Length > 0
@@ -1228,6 +1318,7 @@ Public Class ModernComboBox
         Return _text.Substring(minC, maxC - minC)
     End Function
 #End Region
+
 #Region "剪贴板"
     Private Sub CopySelection()
         If _hasSelection Then
@@ -1256,6 +1347,37 @@ Public Class ModernComboBox
         End Try
     End Sub
 #End Region
+
+#Region "查找"
+    Public Function FindString(s As String) As Integer
+        Return FindString(s, -1)
+    End Function
+
+    Public Function FindString(s As String, startIndex As Integer) As Integer
+        If String.IsNullOrEmpty(s) Then Return -1
+        For i As Integer = startIndex + 1 To _items.Count - 1
+            If _items(i).StartsWith(s, StringComparison.CurrentCultureIgnoreCase) Then
+                Return i
+            End If
+        Next
+        Return -1
+    End Function
+
+    Public Function FindStringExact(s As String) As Integer
+        Return FindStringExact(s, -1)
+    End Function
+
+    Public Function FindStringExact(s As String, startIndex As Integer) As Integer
+        If s Is Nothing Then Return -1
+        For i As Integer = startIndex + 1 To _items.Count - 1
+            If String.Equals(_items(i), s, StringComparison.CurrentCultureIgnoreCase) Then
+                Return i
+            End If
+        Next
+        Return -1
+    End Function
+#End Region
+
 #Region "下拉列表"
     Private Sub OpenDropDown()
         If _items.Count = 0 Then Return
@@ -1264,6 +1386,7 @@ Public Class ModernComboBox
         _droppedDown = True
         _dropDownForm = New DropDownListForm(Me)
         _dropDownForm.ShowDropDown()
+        RaiseEvent DropDownOpened(Me, EventArgs.Empty)
     End Sub
 
     Friend Sub CloseDropDown()
@@ -1287,6 +1410,7 @@ Public Class ModernComboBox
         _droppedDown = False
         _dropDownForm = Nothing
         Invalidate()
+        RaiseEvent DropDownClosed(Me, EventArgs.Empty)
     End Sub
 
     Friend Sub OnDropDownItemClicked(index As Integer)
@@ -1306,6 +1430,7 @@ Public Class ModernComboBox
         Private _scrollOffset As Integer = 0
         Private _scrollBarVisible As Boolean = False
         Private _scrollBar As New ScrollBarRenderer()
+#Disable Warning IDE0044
         Private _finalHeight As Integer
         Private _originPt As Point
         Private _useIdle As Boolean = False
@@ -1319,6 +1444,7 @@ Public Class ModernComboBox
         ' 悬停动画
         Private ReadOnly 悬停秒表 As New Stopwatch()
         Private 悬停计时器 As Timer
+#Enable Warning IDE0044
         Private 悬停动画起始Y As Single = -1
         Private 悬停动画目标Y As Single = -1
         Private 悬停动画当前Y As Single = -1
@@ -1751,53 +1877,7 @@ Public Class ModernComboBox
         End Sub
     End Class
 #End Region
-    Public Class ItemCollection
-        Inherits ObjectModel.Collection(Of String)
 
-        Private _owner As ModernComboBox
-
-        Friend Sub New(owner As ModernComboBox)
-            _owner = owner
-        End Sub
-
-        Public Overloads Sub AddRange(collection As IEnumerable(Of String))
-            For Each s In collection
-                Add(s)
-            Next
-        End Sub
-
-        Protected Overrides Sub InsertItem(index As Integer, item As String)
-            MyBase.InsertItem(index, item)
-            If _owner._selectedIndex >= 0 AndAlso index <= _owner._selectedIndex Then
-                _owner._selectedIndex += 1
-            End If
-            _owner.Invalidate()
-        End Sub
-
-        Protected Overrides Sub RemoveItem(index As Integer)
-            MyBase.RemoveItem(index)
-            If _owner._selectedIndex = index Then
-                _owner._selectedIndex = -1
-            ElseIf _owner._selectedIndex > index Then
-                _owner._selectedIndex -= 1
-            End If
-            _owner.Invalidate()
-        End Sub
-
-        Protected Overrides Sub ClearItems()
-            MyBase.ClearItems()
-            _owner._selectedIndex = -1
-            _owner.Invalidate()
-        End Sub
-
-        Protected Overrides Sub SetItem(index As Integer, item As String)
-            MyBase.SetItem(index, item)
-            If _owner._selectedIndex = index Then
-                _owner._text = item
-            End If
-            _owner.Invalidate()
-        End Sub
-    End Class
 #Region "输入法 IME"
     Private Sub UpdateImeWindow()
         If Not IsHandleCreated OrElse Not 启用编辑 Then Return
@@ -1812,6 +1892,7 @@ Public Class ModernComboBox
         ImeHelper.SetCompositionPosition(Handle, cx, cy)
     End Sub
 #End Region
+
 #Region "辅助"
     Private ReadOnly Property ArrowAreaWidth As Integer
         Get
@@ -1843,6 +1924,11 @@ Public Class ModernComboBox
         RaiseEvent TextChanged(Me, EventArgs.Empty)
     End Sub
 
+    Friend Sub OnItemsTextChanged()
+        Invalidate()
+        RaiseEvent TextChanged(Me, EventArgs.Empty)
+    End Sub
+
     Private Sub ResetCaretBlink()
         _caretVisible = True
         _caretBlinkTimer.Stop()
@@ -1857,6 +1943,7 @@ Public Class ModernComboBox
         End If
     End Sub
 #End Region
+
 #Region "事件"
     Protected Overrides Sub OnGotFocus(e As EventArgs)
         MyBase.OnGotFocus(e)
@@ -1886,7 +1973,30 @@ Public Class ModernComboBox
         MyBase.OnFontChanged(e)
         Invalidate()
     End Sub
+
+    Protected Overrides Sub OnMouseWheel(e As MouseEventArgs)
+        MyBase.OnMouseWheel(e)
+        If _droppedDown Then Return
+        If _items.Count = 0 Then Return
+        If e.Delta > 0 Then
+            If _selectedIndex > 0 Then SelectedIndex = _selectedIndex - 1
+        ElseIf e.Delta < 0 Then
+            If _selectedIndex < _items.Count - 1 Then SelectedIndex = _selectedIndex + 1
+        End If
+    End Sub
+
+    Protected Overrides Sub OnEnabledChanged(e As EventArgs)
+        MyBase.OnEnabledChanged(e)
+        If Not Enabled Then
+            If _droppedDown Then CloseDropDown()
+            _caretBlinkTimer.Stop()
+            _caretVisible = False
+            鼠标状态 = MouseStateEnum.Normal
+        End If
+        Invalidate()
+    End Sub
 #End Region
+
 #Region "禁用属性"
     <Browsable(False), EditorBrowsable(EditorBrowsableState.Never), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
     Public Shadows Property AutoScroll As Boolean
@@ -1953,4 +2063,7 @@ Public Class ModernComboBox
         End Set
     End Property
 #End Region
+
+
+
 End Class

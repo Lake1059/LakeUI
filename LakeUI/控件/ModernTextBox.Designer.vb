@@ -6,8 +6,14 @@ Partial Class ModernTextBox
     <System.Diagnostics.DebuggerNonUserCode()> _
     Protected Overrides Sub Dispose(ByVal disposing As Boolean)
         Try
-            If disposing AndAlso components IsNot Nothing Then
-                components.Dispose()
+            If disposing Then
+                _caretBlinkTimer.Stop()
+                _caretBlinkTimer.Dispose()
+                _autoScrollTimer.Stop()
+                _autoScrollTimer.Dispose()
+                If components IsNot Nothing Then
+                    components.Dispose()
+                End If
             End If
         Finally
             MyBase.Dispose(disposing)

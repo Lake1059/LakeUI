@@ -6,8 +6,11 @@ Partial Class ExcellentButton
     <System.Diagnostics.DebuggerNonUserCode()>
     Protected Overrides Sub Dispose(disposing As Boolean)
         Try
-            If disposing AndAlso components IsNot Nothing Then
-                components.Dispose()
+            If disposing Then
+                动画助手?.Dispose()
+                If components IsNot Nothing Then
+                    components.Dispose()
+                End If
             End If
         Finally
             MyBase.Dispose(disposing)
@@ -30,7 +33,7 @@ Partial Class ExcellentButton
         AutoScaleMode = AutoScaleMode.Dpi
         DoubleBuffered = True
         Name = "ExcellentButton"
-        Size = New Size(100, 50)
+        Size = New Size(150, 40)
         ResumeLayout(False)
     End Sub
 
