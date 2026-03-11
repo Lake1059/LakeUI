@@ -22,48 +22,48 @@ Partial Class Form2
     '不要使用代码编辑器修改它。
     <System.Diagnostics.DebuggerStepThrough()> _
     Private Sub InitializeComponent()
-        Dim ListColumn10 As LakeUI.UltraDetailListView.ListColumn = New UltraDetailListView.ListColumn()
-        Dim ListColumn11 As LakeUI.UltraDetailListView.ListColumn = New UltraDetailListView.ListColumn()
-        Dim ListColumn12 As LakeUI.UltraDetailListView.ListColumn = New UltraDetailListView.ListColumn()
-        Dim ListGroup4 As LakeUI.UltraDetailListView.ListGroup = New UltraDetailListView.ListGroup()
-        Dim ListItem16 As LakeUI.UltraDetailListView.ListItem = New UltraDetailListView.ListItem()
-        Dim ListSubItem46 As LakeUI.UltraDetailListView.ListSubItem = New UltraDetailListView.ListSubItem()
-        Dim ListSubItem47 As LakeUI.UltraDetailListView.ListSubItem = New UltraDetailListView.ListSubItem()
-        Dim ListSubItem48 As LakeUI.UltraDetailListView.ListSubItem = New UltraDetailListView.ListSubItem()
-        Dim ListItem17 As LakeUI.UltraDetailListView.ListItem = New UltraDetailListView.ListItem()
-        Dim ListSubItem49 As LakeUI.UltraDetailListView.ListSubItem = New UltraDetailListView.ListSubItem()
-        Dim ListSubItem50 As LakeUI.UltraDetailListView.ListSubItem = New UltraDetailListView.ListSubItem()
-        Dim ListSubItem51 As LakeUI.UltraDetailListView.ListSubItem = New UltraDetailListView.ListSubItem()
-        Dim ListItem18 As LakeUI.UltraDetailListView.ListItem = New UltraDetailListView.ListItem()
-        Dim ListSubItem52 As LakeUI.UltraDetailListView.ListSubItem = New UltraDetailListView.ListSubItem()
-        Dim ListSubItem53 As LakeUI.UltraDetailListView.ListSubItem = New UltraDetailListView.ListSubItem()
-        Dim ListSubItem54 As LakeUI.UltraDetailListView.ListSubItem = New UltraDetailListView.ListSubItem()
-        Dim ListItem19 As LakeUI.UltraDetailListView.ListItem = New UltraDetailListView.ListItem()
-        Dim TextLine13 As LakeUI.UltraDetailListView.TextLine = New UltraDetailListView.TextLine()
+        Dim ListColumn1 As LakeUI.UltraDetailListView.ListColumn = New UltraDetailListView.ListColumn()
+        Dim ListColumn2 As LakeUI.UltraDetailListView.ListColumn = New UltraDetailListView.ListColumn()
+        Dim ListColumn3 As LakeUI.UltraDetailListView.ListColumn = New UltraDetailListView.ListColumn()
+        Dim ListGroup1 As LakeUI.UltraDetailListView.ListGroup = New UltraDetailListView.ListGroup()
+        Dim ListItem1 As LakeUI.UltraDetailListView.ListItem = New UltraDetailListView.ListItem()
+        Dim ListSubItem1 As LakeUI.UltraDetailListView.ListSubItem = New UltraDetailListView.ListSubItem()
+        Dim ListSubItem2 As LakeUI.UltraDetailListView.ListSubItem = New UltraDetailListView.ListSubItem()
+        Dim ListSubItem3 As LakeUI.UltraDetailListView.ListSubItem = New UltraDetailListView.ListSubItem()
+        Dim ListItem2 As LakeUI.UltraDetailListView.ListItem = New UltraDetailListView.ListItem()
+        Dim ListSubItem4 As LakeUI.UltraDetailListView.ListSubItem = New UltraDetailListView.ListSubItem()
+        Dim ListSubItem5 As LakeUI.UltraDetailListView.ListSubItem = New UltraDetailListView.ListSubItem()
+        Dim ListSubItem6 As LakeUI.UltraDetailListView.ListSubItem = New UltraDetailListView.ListSubItem()
+        Dim ListItem3 As LakeUI.UltraDetailListView.ListItem = New UltraDetailListView.ListItem()
+        Dim ListSubItem7 As LakeUI.UltraDetailListView.ListSubItem = New UltraDetailListView.ListSubItem()
+        Dim ListSubItem8 As LakeUI.UltraDetailListView.ListSubItem = New UltraDetailListView.ListSubItem()
+        Dim ListSubItem9 As LakeUI.UltraDetailListView.ListSubItem = New UltraDetailListView.ListSubItem()
+        Dim ListItem4 As LakeUI.UltraDetailListView.ListItem = New UltraDetailListView.ListItem()
+        Dim TextLine1 As LakeUI.UltraDetailListView.TextLine = New UltraDetailListView.TextLine()
         Dim resources As System.ComponentModel.ComponentResourceManager = New System.ComponentModel.ComponentResourceManager(GetType(Form2))
-        Dim ListSubItem55 As LakeUI.UltraDetailListView.ListSubItem = New UltraDetailListView.ListSubItem()
-        Dim TextLine14 As LakeUI.UltraDetailListView.TextLine = New UltraDetailListView.TextLine()
-        Dim ListSubItem56 As LakeUI.UltraDetailListView.ListSubItem = New UltraDetailListView.ListSubItem()
-        Dim TextLine15 As LakeUI.UltraDetailListView.TextLine = New UltraDetailListView.TextLine()
-        Dim ListSubItem57 As LakeUI.UltraDetailListView.ListSubItem = New UltraDetailListView.ListSubItem()
-        Dim TextLine16 As LakeUI.UltraDetailListView.TextLine = New UltraDetailListView.TextLine()
-        Dim ListItem20 As LakeUI.UltraDetailListView.ListItem = New UltraDetailListView.ListItem()
-        Dim ListSubItem58 As LakeUI.UltraDetailListView.ListSubItem = New UltraDetailListView.ListSubItem()
-        Dim ListSubItem59 As LakeUI.UltraDetailListView.ListSubItem = New UltraDetailListView.ListSubItem()
-        Dim ListSubItem60 As LakeUI.UltraDetailListView.ListSubItem = New UltraDetailListView.ListSubItem()
-        Dim TrackLabel22 As LakeUI.ExcellentTrackBar.TrackLabel = New ExcellentTrackBar.TrackLabel()
-        Dim TrackLabel23 As LakeUI.ExcellentTrackBar.TrackLabel = New ExcellentTrackBar.TrackLabel()
-        Dim TrackLabel24 As LakeUI.ExcellentTrackBar.TrackLabel = New ExcellentTrackBar.TrackLabel()
-        Dim TrackLabel25 As LakeUI.ExcellentTrackBar.TrackLabel = New ExcellentTrackBar.TrackLabel()
-        Dim TrackLabel26 As LakeUI.ExcellentTrackBar.TrackLabel = New ExcellentTrackBar.TrackLabel()
-        Dim TrackLabel27 As LakeUI.ExcellentTrackBar.TrackLabel = New ExcellentTrackBar.TrackLabel()
-        Dim TrackLabel28 As LakeUI.ExcellentTrackBar.TrackLabel = New ExcellentTrackBar.TrackLabel()
-        Dim ToolTipEntry4 As LakeUI.ModernComboBox.ToolTipEntry = New ModernComboBox.ToolTipEntry()
-        Dim ModernTab16 As LakeUI.ModernTabControl.ModernTab = New ModernTabControl.ModernTab()
-        Dim ModernTab17 As LakeUI.ModernTabControl.ModernTab = New ModernTabControl.ModernTab()
-        Dim ModernTab18 As LakeUI.ModernTabControl.ModernTab = New ModernTabControl.ModernTab()
-        Dim ModernTab19 As LakeUI.ModernTabControl.ModernTab = New ModernTabControl.ModernTab()
-        Dim ModernTab20 As LakeUI.ModernTabControl.ModernTab = New ModernTabControl.ModernTab()
+        Dim ListSubItem10 As LakeUI.UltraDetailListView.ListSubItem = New UltraDetailListView.ListSubItem()
+        Dim TextLine2 As LakeUI.UltraDetailListView.TextLine = New UltraDetailListView.TextLine()
+        Dim ListSubItem11 As LakeUI.UltraDetailListView.ListSubItem = New UltraDetailListView.ListSubItem()
+        Dim TextLine3 As LakeUI.UltraDetailListView.TextLine = New UltraDetailListView.TextLine()
+        Dim ListSubItem12 As LakeUI.UltraDetailListView.ListSubItem = New UltraDetailListView.ListSubItem()
+        Dim TextLine4 As LakeUI.UltraDetailListView.TextLine = New UltraDetailListView.TextLine()
+        Dim ListItem5 As LakeUI.UltraDetailListView.ListItem = New UltraDetailListView.ListItem()
+        Dim ListSubItem13 As LakeUI.UltraDetailListView.ListSubItem = New UltraDetailListView.ListSubItem()
+        Dim ListSubItem14 As LakeUI.UltraDetailListView.ListSubItem = New UltraDetailListView.ListSubItem()
+        Dim ListSubItem15 As LakeUI.UltraDetailListView.ListSubItem = New UltraDetailListView.ListSubItem()
+        Dim TrackLabel1 As LakeUI.ExcellentTrackBar.TrackLabel = New ExcellentTrackBar.TrackLabel()
+        Dim TrackLabel2 As LakeUI.ExcellentTrackBar.TrackLabel = New ExcellentTrackBar.TrackLabel()
+        Dim TrackLabel3 As LakeUI.ExcellentTrackBar.TrackLabel = New ExcellentTrackBar.TrackLabel()
+        Dim TrackLabel4 As LakeUI.ExcellentTrackBar.TrackLabel = New ExcellentTrackBar.TrackLabel()
+        Dim TrackLabel5 As LakeUI.ExcellentTrackBar.TrackLabel = New ExcellentTrackBar.TrackLabel()
+        Dim TrackLabel6 As LakeUI.ExcellentTrackBar.TrackLabel = New ExcellentTrackBar.TrackLabel()
+        Dim TrackLabel7 As LakeUI.ExcellentTrackBar.TrackLabel = New ExcellentTrackBar.TrackLabel()
+        Dim ToolTipEntry1 As LakeUI.ModernComboBox.ToolTipEntry = New ModernComboBox.ToolTipEntry()
+        Dim ModernTab1 As LakeUI.ModernTabControl.ModernTab = New ModernTabControl.ModernTab()
+        Dim ModernTab2 As LakeUI.ModernTabControl.ModernTab = New ModernTabControl.ModernTab()
+        Dim ModernTab3 As LakeUI.ModernTabControl.ModernTab = New ModernTabControl.ModernTab()
+        Dim ModernTab4 As LakeUI.ModernTabControl.ModernTab = New ModernTabControl.ModernTab()
+        Dim ModernTab5 As LakeUI.ModernTabControl.ModernTab = New ModernTabControl.ModernTab()
         UltraDetailListView1 = New UltraDetailListView()
         ExcellentTrackBar1 = New ExcellentTrackBar()
         QuantumSwitch1 = New QuantumSwitch()
@@ -82,76 +82,76 @@ Partial Class Form2
         ' UltraDetailListView1
         ' 
         UltraDetailListView1.BottomLinesSpacing = 10
-        ListColumn10.Text = "列宽会限制子项区域"
-        ListColumn10.Width = 300
-        ListColumn11.Text = "但不影响项的焦点宽度"
-        ListColumn11.Width = 300
-        ListColumn12.Text = "列宽的文字也可调整"
-        ListColumn12.Width = 300
-        UltraDetailListView1.Columns.Add(ListColumn10)
-        UltraDetailListView1.Columns.Add(ListColumn11)
-        UltraDetailListView1.Columns.Add(ListColumn12)
+        ListColumn1.Text = "列宽会限制子项区域"
+        ListColumn1.Width = 300
+        ListColumn2.Text = "但不影响项的焦点宽度"
+        ListColumn2.Width = 300
+        ListColumn3.Text = "列宽的文字也可调整"
+        ListColumn3.Width = 300
+        UltraDetailListView1.Columns.Add(ListColumn1)
+        UltraDetailListView1.Columns.Add(ListColumn2)
+        UltraDetailListView1.Columns.Add(ListColumn3)
         UltraDetailListView1.GroupHeight = 35
-        ListGroup4.Name = "G1"
-        ListGroup4.Text = "分组点击切换折叠"
-        UltraDetailListView1.Groups.Add(ListGroup4)
+        ListGroup1.Name = "G1"
+        ListGroup1.Text = "分组点击切换折叠"
+        UltraDetailListView1.Groups.Add(ListGroup1)
         UltraDetailListView1.HeaderBackColor = Color.FromArgb(CByte(64), CByte(64), CByte(64))
         UltraDetailListView1.HeaderBorderColor = SystemColors.ButtonShadow
         UltraDetailListView1.HeaderHeight = 40
         UltraDetailListView1.IconSize = New Size(48, 48)
         UltraDetailListView1.IconSpacing = 10
         UltraDetailListView1.ItemPadding = New Padding(10, 5, 5, 5)
-        ListSubItem46.Text = "所有文字都是子项数据"
-        ListSubItem47.Text = "可以在设计器里尝试效果"
-        ListSubItem48.Text = "不过没有原版那样的实时预览"
-        ListItem16.SubItems.Add(ListSubItem46)
-        ListItem16.SubItems.Add(ListSubItem47)
-        ListItem16.SubItems.Add(ListSubItem48)
-        ListSubItem49.Text = "全区域可进行拖拽选择"
-        ListSubItem50.Text = "拖拽的框也可以自定义颜色"
-        ListSubItem51.Text = "颜色可以是带透明度的"
-        ListItem17.SubItems.Add(ListSubItem49)
-        ListItem17.SubItems.Add(ListSubItem50)
-        ListItem17.SubItems.Add(ListSubItem51)
-        ListSubItem52.Text = "可响应键盘常用快捷键"
-        ListSubItem53.Text = "事件和属性也基本和原版一致"
-        ListSubItem54.Text = "更易于过渡上手"
-        ListItem18.SubItems.Add(ListSubItem52)
-        ListItem18.SubItems.Add(ListSubItem53)
-        ListItem18.SubItems.Add(ListSubItem54)
-        TextLine13.ForeColor = Color.LightSteelBlue
-        TextLine13.Text = "这里是底部专用行，特别适合用来展示任务处理进度详情，这里也可以单独设置字体和颜色，并独享极限宽度"
-        ListItem19.BottomLines.Add(TextLine13)
-        ListItem19.GroupName = "G1"
-        ListItem19.Icon = CType(resources.GetObject("ListItem19.Icon"), Image)
-        TextLine14.Text = "无需依赖其他组件"
-        ListSubItem55.ExtraLines.Add(TextLine14)
-        ListSubItem55.Text = "图标直接设置 Icon 即可"
-        TextLine15.ForeColor = Color.FromArgb(CByte(255), CByte(128), CByte(128))
-        TextLine15.Text = "每行文本都可以单独设置颜色"
-        ListSubItem56.ExtraLines.Add(TextLine15)
-        ListSubItem56.Font = New Font("华文新魏", 12F)
-        ListSubItem56.ForeColor = Color.FromArgb(CByte(128), CByte(128), CByte(255))
-        ListSubItem56.Text = "每行文本都可以单独设置字体"
-        TextLine16.Text = "项的高度取决于最高的子项"
-        ListSubItem57.ExtraLines.Add(TextLine16)
-        ListSubItem57.ForeColor = Color.FromArgb(CByte(128), CByte(255), CByte(128))
-        ListSubItem57.Text = "ExtraLines 负责管理多余的行"
-        ListItem19.SubItems.Add(ListSubItem55)
-        ListItem19.SubItems.Add(ListSubItem56)
-        ListItem19.SubItems.Add(ListSubItem57)
-        ListItem20.GroupName = "G1"
-        ListSubItem58.Text = "跨显示区域多选请按住 Ctrl"
-        ListSubItem59.Text = "直接框选会自动放弃绘制区域外的"
-        ListSubItem60.Text = "需要一些时间来熟悉机制"
-        ListItem20.SubItems.Add(ListSubItem58)
-        ListItem20.SubItems.Add(ListSubItem59)
-        ListItem20.SubItems.Add(ListSubItem60)
-        UltraDetailListView1.Items.Add(ListItem16)
-        UltraDetailListView1.Items.Add(ListItem17)
-        UltraDetailListView1.Items.Add(ListItem18)
-        UltraDetailListView1.Items.Add(ListItem19)
-        UltraDetailListView1.Items.Add(ListItem20)
+        ListSubItem1.Text = "所有文字都是子项数据"
+        ListSubItem2.Text = "可以在设计器里尝试效果"
+        ListSubItem3.Text = "不过没有原版那样的实时预览"
+        ListItem1.SubItems.Add(ListSubItem1)
+        ListItem1.SubItems.Add(ListSubItem2)
+        ListItem1.SubItems.Add(ListSubItem3)
+        ListSubItem4.Text = "全区域可进行拖拽选择"
+        ListSubItem5.Text = "拖拽的框也可以自定义颜色"
+        ListSubItem6.Text = "颜色可以是带透明度的"
+        ListItem2.SubItems.Add(ListSubItem4)
+        ListItem2.SubItems.Add(ListSubItem5)
+        ListItem2.SubItems.Add(ListSubItem6)
+        ListSubItem7.Text = "可响应键盘常用快捷键"
+        ListSubItem8.Text = "事件和属性也基本和原版一致"
+        ListSubItem9.Text = "更易于过渡上手"
+        ListItem3.SubItems.Add(ListSubItem7)
+        ListItem3.SubItems.Add(ListSubItem8)
+        ListItem3.SubItems.Add(ListSubItem9)
+        TextLine1.ForeColor = Color.LightSteelBlue
+        TextLine1.Text = "这里是底部专用行，特别适合用来展示任务处理进度详情，这里也可以单独设置字体和颜色，并独享极限宽度"
+        ListItem4.BottomLines.Add(TextLine1)
+        ListItem4.GroupName = "G1"
+        ListItem4.Icon = CType(resources.GetObject("ListItem4.Icon"), Image)
+        TextLine2.Text = "无需依赖其他组件"
+        ListSubItem10.ExtraLines.Add(TextLine2)
+        ListSubItem10.Text = "图标直接设置 Icon 即可"
+        TextLine3.ForeColor = Color.FromArgb(CByte(255), CByte(128), CByte(128))
+        TextLine3.Text = "每行文本都可以单独设置颜色"
+        ListSubItem11.ExtraLines.Add(TextLine3)
+        ListSubItem11.Font = New Font("华文新魏", 12F)
+        ListSubItem11.ForeColor = Color.FromArgb(CByte(128), CByte(128), CByte(255))
+        ListSubItem11.Text = "每行文本都可以单独设置字体"
+        TextLine4.Text = "项的高度取决于最高的子项"
+        ListSubItem12.ExtraLines.Add(TextLine4)
+        ListSubItem12.ForeColor = Color.FromArgb(CByte(128), CByte(255), CByte(128))
+        ListSubItem12.Text = "ExtraLines 负责管理多余的行"
+        ListItem4.SubItems.Add(ListSubItem10)
+        ListItem4.SubItems.Add(ListSubItem11)
+        ListItem4.SubItems.Add(ListSubItem12)
+        ListItem5.GroupName = "G1"
+        ListSubItem13.Text = "跨显示区域多选请按住 Ctrl"
+        ListSubItem14.Text = "直接框选会自动放弃绘制区域外的"
+        ListSubItem15.Text = "需要一些时间来熟悉机制"
+        ListItem5.SubItems.Add(ListSubItem13)
+        ListItem5.SubItems.Add(ListSubItem14)
+        ListItem5.SubItems.Add(ListSubItem15)
+        UltraDetailListView1.Items.Add(ListItem1)
+        UltraDetailListView1.Items.Add(ListItem2)
+        UltraDetailListView1.Items.Add(ListItem3)
+        UltraDetailListView1.Items.Add(ListItem4)
+        UltraDetailListView1.Items.Add(ListItem5)
         UltraDetailListView1.Location = New Point(436, 30)
         UltraDetailListView1.Name = "UltraDetailListView1"
         UltraDetailListView1.Size = New Size(936, 404)
@@ -165,22 +165,22 @@ Partial Class Form2
         ExcellentTrackBar1.BackColor = Color.FromArgb(CByte(36), CByte(36), CByte(36))
         ExcellentTrackBar1.LabelFont = New Font("MiSans Medium", 9F, FontStyle.Regular, GraphicsUnit.Point, CByte(134))
         ExcellentTrackBar1.LabelLineLength = 20
-        TrackLabel23.Position = 1
-        TrackLabel23.Side = ExcellentTrackBar.LabelSideEnum.TopOrLeft
-        TrackLabel24.Position = 2
-        TrackLabel25.Position = 3
-        TrackLabel25.Side = ExcellentTrackBar.LabelSideEnum.TopOrLeft
-        TrackLabel26.Position = 4
-        TrackLabel27.Position = 5
-        TrackLabel27.Side = ExcellentTrackBar.LabelSideEnum.TopOrLeft
-        TrackLabel28.Position = 6
-        ExcellentTrackBar1.Labels.Add(TrackLabel22)
-        ExcellentTrackBar1.Labels.Add(TrackLabel23)
-        ExcellentTrackBar1.Labels.Add(TrackLabel24)
-        ExcellentTrackBar1.Labels.Add(TrackLabel25)
-        ExcellentTrackBar1.Labels.Add(TrackLabel26)
-        ExcellentTrackBar1.Labels.Add(TrackLabel27)
-        ExcellentTrackBar1.Labels.Add(TrackLabel28)
+        TrackLabel2.Position = 1
+        TrackLabel2.Side = ExcellentTrackBar.LabelSideEnum.TopOrLeft
+        TrackLabel3.Position = 2
+        TrackLabel4.Position = 3
+        TrackLabel4.Side = ExcellentTrackBar.LabelSideEnum.TopOrLeft
+        TrackLabel5.Position = 4
+        TrackLabel6.Position = 5
+        TrackLabel6.Side = ExcellentTrackBar.LabelSideEnum.TopOrLeft
+        TrackLabel7.Position = 6
+        ExcellentTrackBar1.Labels.Add(TrackLabel1)
+        ExcellentTrackBar1.Labels.Add(TrackLabel2)
+        ExcellentTrackBar1.Labels.Add(TrackLabel3)
+        ExcellentTrackBar1.Labels.Add(TrackLabel4)
+        ExcellentTrackBar1.Labels.Add(TrackLabel5)
+        ExcellentTrackBar1.Labels.Add(TrackLabel6)
+        ExcellentTrackBar1.Labels.Add(TrackLabel7)
         ExcellentTrackBar1.Location = New Point(66, 501)
         ExcellentTrackBar1.Maximum = 6
         ExcellentTrackBar1.Name = "ExcellentTrackBar1"
@@ -241,9 +241,9 @@ Partial Class Form2
         ModernComboBox1.Items.Add("灵活适应各种交互场景")
         ModernComboBox1.Items.Add("av1_nvenc")
         ModernComboBox1.Items.Add("av2_nvenc")
-        ToolTipEntry4.ItemText = "av1_nvenc"
-        ToolTipEntry4.ToolTipText = "强烈推荐 RTX50 全系使用，强烈推荐使用 UHQ 模式"
-        ModernComboBox1.ItemToolTips.Add(ToolTipEntry4)
+        ToolTipEntry1.ItemText = "av1_nvenc"
+        ToolTipEntry1.ToolTipText = "强烈推荐 RTX50 全系使用，强烈推荐使用 UHQ 模式"
+        ModernComboBox1.ItemToolTips.Add(ToolTipEntry1)
         ModernComboBox1.Location = New Point(19, 324)
         ModernComboBox1.Name = "ModernComboBox1"
         ModernComboBox1.Padding = New Padding(15, 0, 10, 0)
@@ -289,11 +289,11 @@ Partial Class Form2
         ' 
         ' ModernTabControl1
         ' 
-        ModernTabControl1.Items.Add(ModernTab16)
-        ModernTabControl1.Items.Add(ModernTab17)
-        ModernTabControl1.Items.Add(ModernTab18)
-        ModernTabControl1.Items.Add(ModernTab19)
-        ModernTabControl1.Items.Add(ModernTab20)
+        ModernTabControl1.Items.Add(ModernTab1)
+        ModernTabControl1.Items.Add(ModernTab2)
+        ModernTabControl1.Items.Add(ModernTab3)
+        ModernTabControl1.Items.Add(ModernTab4)
+        ModernTabControl1.Items.Add(ModernTab5)
         ModernTabControl1.Location = New Point(759, 450)
         ModernTabControl1.Name = "ModernTabControl1"
         ModernTabControl1.Size = New Size(613, 92)
@@ -338,7 +338,7 @@ Partial Class Form2
         RoundDashBoard1.AnimationFPS = 0
         RoundDashBoard1.CenterTextFont = New Font("Segoe UI", 14F, FontStyle.Bold)
         RoundDashBoard1.FillGradientColor = Color.FromArgb(CByte(255), CByte(128), CByte(128))
-        RoundDashBoard1.Location = New Point(302, 649)
+        RoundDashBoard1.Location = New Point(414, 623)
         RoundDashBoard1.Name = "RoundDashBoard1"
         RoundDashBoard1.Radius = 60F
         RoundDashBoard1.Size = New Size(182, 179)
