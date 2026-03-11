@@ -17,19 +17,27 @@ Friend Module TextRenderHelper
     ''' </summary>
     Friend Function FindColFromX(lineStr As String, x As Integer, font As Font, lineHeight As Integer) As Integer
         If String.IsNullOrEmpty(lineStr) OrElse x <= 0 Then Return 0
-        Dim best As Integer = 0
-        Dim bestDist As Integer = Integer.MaxValue
-        For i As Integer = 0 To lineStr.Length
-            Dim cx As Integer = MeasureTextWidth(lineStr.Substring(0, i), font, lineHeight)
-            Dim dist As Integer = Math.Abs(x - cx)
-            If dist < bestDist Then
-                bestDist = dist
-                best = i
-            ElseIf dist > bestDist Then
-                Exit For
+        Dim n As Integer = lineStr.Length
+        Dim totalW As Integer = MeasureTextWidth(lineStr, font, lineHeight)
+        If x >= totalW Then Return n
+        Dim lo As Integer = 0
+        Dim hi As Integer = n
+        While lo < hi
+            Dim mid As Integer = (lo + hi + 1) \ 2
+            If MeasureTextWidth(lineStr.Substring(0, mid), font, lineHeight) <= x Then
+                lo = mid
+            Else
+                hi = mid - 1
             End If
-        Next
-        Return best
+        End While
+        If lo < n Then
+            Dim wLo As Integer = MeasureTextWidth(lineStr.Substring(0, lo), font, lineHeight)
+            Dim wNext As Integer = MeasureTextWidth(lineStr.Substring(0, lo + 1), font, lineHeight)
+            If x - wLo > wNext - x Then
+                Return lo + 1
+            End If
+        End If
+        Return lo
     End Function
 
 End Module

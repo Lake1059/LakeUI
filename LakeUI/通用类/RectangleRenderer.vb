@@ -4,6 +4,10 @@ Public Class RectangleRenderer
 
     Public Shared Function 创建圆角矩形路径(区域 As RectangleF, 半径 As Integer) As GraphicsPath
         Dim path As New GraphicsPath()
+        If 半径 <= 0 OrElse 区域.Width < 1 OrElse 区域.Height < 1 Then
+            path.AddRectangle(区域)
+            Return path
+        End If
         Dim 直径 As Single = 半径 * 2.0F
         Dim arc As New RectangleF(区域.Location, New SizeF(直径, 直径))
         path.AddArc(arc, 180, 90) ' 左上角
@@ -56,7 +60,7 @@ Public Class RectangleRenderer
     Public Shared Sub 绘制矩形边框(g As Graphics, 区域 As RectangleF, 边框颜色 As Color, 边框宽度 As Single)
         If 边框宽度 > 0 Then
             Using pen As New Pen(边框颜色, 边框宽度)
-                pen.Alignment = PenAlignment.Inset
+                pen.Alignment = PenAlignment.Center
                 g.DrawRectangle(pen, 区域.X, 区域.Y, 区域.Width, 区域.Height)
             End Using
         End If

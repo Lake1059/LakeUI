@@ -146,7 +146,7 @@ Public Class ExcellentTrackBar
         End Set
     End Property
 
-    <Category("LakeUI"), Description("动画帧率上限，设为0则不限制"), DefaultValue(60), Browsable(True)>
+    <Category("LakeUI"), Description(Class1.动画帧率描述词), DefaultValue(60), Browsable(True)>
     Public Property AnimationFPS As Integer
         Get
             Return 动画助手.FPS

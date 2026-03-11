@@ -12,7 +12,7 @@
     Public Shared Property GlobalSSAA As SuperSamplingScaleEnum = SuperSamplingScaleEnum.OFF
 
 
-    Public Const 动画时长描述词 As String = "指定动画的时长 (毫秒)，0 = 无动画，注意这是由 CPU 绘制的动画，运行时会吃满 UI 线程，在大型场景中应该关闭以保障操作响应。"
-
+    Public Const 动画时长描述词 As String = "指定动画的时长 (毫秒)，0 = 无动画，注意这是由 CPU 绘制的动画，在大型场景中应该关闭以保障操作响应。"
+    Public Const 动画帧率描述词 As String = "指定动画的帧率，0 = 不限制，此时会大幅消耗 UI 线程性能。假定显示器刷新率足够，绝大多数动画仅需 120 帧即可满足极致丝滑，对于颜色渐变动画仅需 60 帧。"
 
 End Class

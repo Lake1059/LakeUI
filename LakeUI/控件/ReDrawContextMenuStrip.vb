@@ -386,14 +386,14 @@ Public Class ReDrawContextMenuStrip
             Dim escapedText As String = e.Text.Replace("&", "&&")
 
             If e.Item.Enabled Then
-                TextRenderer.DrawText(e.Graphics, escapedText, e.TextFont, textRect, _owner.文本颜色, Nothing, TextFormatFlags.VerticalCenter)
+                TextRenderer.DrawText(e.Graphics, escapedText, e.TextFont, textRect, e.TextColor, Nothing, TextFormatFlags.VerticalCenter)
             Else
                 e.Item.Margin = Padding.Empty
                 e.Item.Padding = Padding.Empty
                 Dim tag As String = TryCast(e.Item.Tag, String)
                 Dim fontSize As Single = If(tag = TagLabel, e.TextFont.Size, Math.Max(1, e.TextFont.Size + _owner.禁用时文本字号偏移))
                 Using f As New Font(e.TextFont.Name, fontSize, FontStyle.Regular)
-                    TextRenderer.DrawText(e.Graphics, escapedText, f, textRect, e.TextColor, Nothing, TextFormatFlags.VerticalCenter)
+                    TextRenderer.DrawText(e.Graphics, escapedText, f, textRect, _owner.文本颜色, Nothing, TextFormatFlags.VerticalCenter)
                 End Using
             End If
         End Sub

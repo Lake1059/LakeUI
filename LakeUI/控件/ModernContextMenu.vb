@@ -224,41 +224,35 @@ Public Class ModernContextMenu
         End Set
     End Property
 
-    Private 图标区域宽度 As Integer = 24
-    <Category("LakeUI"), Description("图标区域宽度"), DefaultValue(GetType(Integer), "24"), Browsable(True)>
-    Public Property IconAreaWidth As Integer
+    Private 图标大小 As Integer = 24
+    <Category("LakeUI"), Description("图标绘制大小，同时决定图标列宽度；0 = 不保留图标列"), DefaultValue(GetType(Integer), "24"), Browsable(True)>
+    Public Property IconSize As Integer
         Get
-            Return 图标区域宽度
+            Return 图标大小
         End Get
         Set(value As Integer)
             If value < 0 Then value = 0
-            SetValue(图标区域宽度, value)
+            SetValue(图标大小, value)
         End Set
     End Property
 
-    Private 显示图标区域 As Boolean = True
-    <Category("LakeUI"), Description("是否显示图标和复选标记区域"), DefaultValue(True), Browsable(True)>
-    Public Property ShowIconArea As Boolean
+    Private 图标文字间距 As Integer = 10
+    <Category("LakeUI"), Description("图标与文字之间的间距"), DefaultValue(GetType(Integer), "10"), Browsable(True)>
+    Public Property IconTextSpacing As Integer
         Get
-            Return 显示图标区域
+            Return 图标文字间距
         End Get
-        Set(value As Boolean)
-            SetValue(显示图标区域, value)
+        Set(value As Integer)
+            If value < 0 Then value = 0
+            SetValue(图标文字间距, value)
         End Set
-    End Property
-
-    Friend ReadOnly Property 有效图标区域宽度 As Integer
-        Get
-            Return If(显示图标区域, 图标区域宽度, 0)
-        End Get
     End Property
 
     Private Const 勾选最小宽度 As Integer = 20
 
-    Friend ReadOnly Property 有效左侧保留宽度 As Integer
+    Friend ReadOnly Property 有效图标列宽度 As Integer
         Get
-            Dim w = 有效图标区域宽度
-            If w > 0 Then Return w
+            If 图标大小 > 0 Then Return 图标大小
             For Each item In 项目列表
                 If Not item.IsSeparator AndAlso Not item.IsDescription AndAlso item.Checked Then Return 勾选最小宽度
             Next
@@ -300,14 +294,14 @@ Public Class ModernContextMenu
         End Set
     End Property
 
-    Private 文本内边距 As New Padding(5, 0, 0, 0)
-    <Category("LakeUI"), Description("菜单项文本内边距"), DefaultValue(GetType(Padding), "5, 0, 0, 0"), Browsable(True)>
-    Public Property TextPadding As Padding
+    Private 项目内边距 As New Padding(5, 0, 0, 0)
+    <Category("LakeUI"), Description("菜单项内边距"), DefaultValue(GetType(Padding), "5, 0, 0, 0"), Browsable(True)>
+    Public Property ItemPadding As Padding
         Get
-            Return 文本内边距
+            Return 项目内边距
         End Get
         Set(value As Padding)
-            SetValue(文本内边距, value)
+            SetValue(项目内边距, value)
         End Set
     End Property
 
@@ -320,6 +314,40 @@ Public Class ModernContextMenu
         Set(value As Integer)
             If value < 0 Then value = 0
             SetValue(悬停动画时长, value)
+        End Set
+    End Property
+
+    Private 展开关闭动画时长 As Integer = 200
+    <Category("LakeUI"), Description("展开/关闭动画时长（毫秒），0 = 无动画"), DefaultValue(GetType(Integer), "200"), Browsable(True)>
+    Public Property PopupAnimationDuration As Integer
+        Get
+            Return 展开关闭动画时长
+        End Get
+        Set(value As Integer)
+            If value < 0 Then value = 0
+            SetValue(展开关闭动画时长, value)
+        End Set
+    End Property
+
+    Private 悬停动画帧率 As Integer = 60
+    <Category("LakeUI"), Description("悬停动画帧率上限，设为 0 则不限制"), DefaultValue(60), Browsable(True)>
+    Public Property HoverAnimationFPS As Integer
+        Get
+            Return 悬停动画帧率
+        End Get
+        Set(value As Integer)
+            悬停动画帧率 = Math.Max(0, value)
+        End Set
+    End Property
+
+    Private 展开关闭动画帧率 As Integer = 60
+    <Category("LakeUI"), Description("展开/关闭动画帧率上限，设为 0 则不限制"), DefaultValue(60), Browsable(True)>
+    Public Property PopupAnimationFPS As Integer
+        Get
+            Return 展开关闭动画帧率
+        End Get
+        Set(value As Integer)
+            展开关闭动画帧率 = Math.Max(0, value)
         End Set
     End Property
 
@@ -427,7 +455,8 @@ Public Class ModernContextMenu
 
         ' 悬停动画相关
         Private ReadOnly 动画秒表 As New Stopwatch()
-        Private ReadOnly 动画计时器 As New System.Windows.Forms.Timer() With {.Interval = 15}
+        Private 动画计时器 As System.Windows.Forms.Timer
+        Private 悬停用Idle As Boolean = False
         Private 动画起始Y As Single = -1
         Private 动画目标Y As Single = -1
         Private 动画当前Y As Single = -1
@@ -436,6 +465,14 @@ Public Class ModernContextMenu
         Private 动画当前高度 As Single = 0
         Private 动画中 As Boolean = False
         Private 动画显示高亮 As Boolean = False
+
+        ' 展开关闭动画相关
+        Private ReadOnly 展开关闭秒表 As New Stopwatch()
+        Private 展开关闭计时器 As System.Windows.Forms.Timer
+        Private 展开关闭用Idle As Boolean = False
+        Private 展开关闭动画中 As Boolean = False
+        Private 正在关闭动画 As Boolean = False
+        Private 最终高度 As Integer
 
         Private Const WM_LBUTTONDOWN As Integer = &H201
         Private Const WM_RBUTTONDOWN As Integer = &H204
@@ -455,7 +492,7 @@ Public Class ModernContextMenu
         Protected Overrides Sub WndProc(ByRef m As Message)
             MyBase.WndProc(m)
             If m.Msg = WM_ACTIVATEAPP AndAlso m.WParam = IntPtr.Zero Then
-                If Not 正在关闭 Then BeginInvoke(Sub() 关闭全部())
+                If Not 正在关闭 AndAlso Not 正在关闭动画 Then BeginInvoke(Sub() 关闭全部())
             End If
         End Sub
 
@@ -464,11 +501,23 @@ Public Class ModernContextMenu
             父弹窗 = parent
             BackColor = menu.BackColor1
             SetStyle(ControlStyles.AllPaintingInWmPaint Or ControlStyles.UserPaint Or ControlStyles.OptimizedDoubleBuffer, True)
-            AddHandler 动画计时器.Tick, AddressOf 动画更新帧
+
+            悬停用Idle = (menu.悬停动画帧率 <= 0)
+            If Not 悬停用Idle Then
+                Dim interval As Integer = Math.Max(1, 1000 \ menu.悬停动画帧率)
+                动画计时器 = New System.Windows.Forms.Timer() With {.Interval = interval}
+            End If
+
+            展开关闭用Idle = (menu.展开关闭动画帧率 <= 0)
+            If Not 展开关闭用Idle Then
+                Dim interval As Integer = Math.Max(1, 1000 \ menu.展开关闭动画帧率)
+                展开关闭计时器 = New System.Windows.Forms.Timer() With {.Interval = interval}
+            End If
         End Sub
 
         Friend Sub ShowAt(x As Integer, y As Integer)
             计算布局()
+            最终高度 = Me.Height
             Me.Location = New Point(x, y)
             Dim scr = Screen.FromPoint(New Point(x, y)).WorkingArea
             If Me.Right > scr.Right Then Me.Left = scr.Right - Me.Width
@@ -476,7 +525,16 @@ Public Class ModernContextMenu
             If Me.Left < scr.Left Then Me.Left = scr.Left
             If Me.Top < scr.Top Then Me.Top = scr.Top
             If 父弹窗 Is Nothing Then Application.AddMessageFilter(Me)
-            Me.Show()
+            If 菜单.展开关闭动画时长 > 0 Then
+                Me.Size = New Size(Me.Width, 1)
+                Me.Show()
+                展开关闭动画中 = True
+                正在关闭动画 = False
+                展开关闭秒表.Restart()
+                启动展开关闭驱动()
+            Else
+                Me.Show()
+            End If
         End Sub
 
         Private Sub 计算布局()
@@ -486,8 +544,9 @@ Public Class ModernContextMenu
             Dim maxContentWidth As Integer = 80
             项目区域列表.Clear()
 
-            Dim leftArea = 菜单.有效左侧保留宽度
-            Dim tp = 菜单.文本内边距
+            Dim iconCol = 菜单.有效图标列宽度
+            Dim ip = 菜单.项目内边距
+            Dim iconTextGap = If(iconCol > 0, 菜单.图标文字间距, 0)
 
             For Each item In 菜单.项目列表
                 If item.IsSeparator Then
@@ -496,7 +555,7 @@ Public Class ModernContextMenu
                 Else
                     Dim font = If(item.IsDescription, If(item.Font, 菜单.说明字体), If(item.Font, 菜单.菜单字体))
                     Dim textWidth = TextRenderer.MeasureText(item.Text, font).Width
-                    Dim w = leftArea + tp.Left + textWidth + tp.Right + 20
+                    Dim w = ip.Left + iconCol + iconTextGap + textWidth + ip.Right + 20
                     If Not item.IsDescription AndAlso item.SubMenu IsNot Nothing Then w += 20
                     maxContentWidth = Math.Max(maxContentWidth, w)
                     Dim h As Integer = If(item.IsDescription, 菜单.说明项高度, 菜单.项目高度)
@@ -601,19 +660,19 @@ Public Class ModernContextMenu
         End Sub
 
         Private Sub 绘制项目图形(g As Graphics, item As ModernMenuItem, rect As Rectangle)
-            Dim x As Integer = rect.X
-            Dim leftArea = 菜单.有效左侧保留宽度
+            Dim ip = 菜单.项目内边距
+            Dim iconCol = 菜单.有效图标列宽度
 
-            If leftArea > 0 Then
+            If iconCol > 0 Then
+                Dim iconX As Integer = rect.X + ip.Left
+                Dim iconY As Integer = rect.Y + (rect.Height - iconCol) \ 2
+
                 If item.Checked Then
-                    绘制勾选标记(g, New Rectangle(x, rect.Y, leftArea, rect.Height))
+                    绘制勾选标记(g, New Rectangle(iconX, iconY, iconCol, iconCol))
                 End If
 
                 If item.Icon IsNot Nothing Then
-                    Dim iconSize As Integer = Math.Min(leftArea - 4, rect.Height - 4)
-                    Dim iconX As Integer = x + (leftArea - iconSize) \ 2
-                    Dim iconY As Integer = rect.Y + (rect.Height - iconSize) \ 2
-                    g.DrawImage(item.Icon, New Rectangle(iconX, iconY, iconSize, iconSize))
+                    g.DrawImage(item.Icon, New Rectangle(iconX, iconY, iconCol, iconCol))
                 End If
             End If
 
@@ -623,15 +682,16 @@ Public Class ModernContextMenu
         End Sub
 
         Private Sub 绘制全部文本(g As Graphics)
-            Dim leftArea = 菜单.有效左侧保留宽度
-            Dim tp = 菜单.文本内边距
+            Dim iconCol = 菜单.有效图标列宽度
+            Dim ip = 菜单.项目内边距
+            Dim iconTextGap = If(iconCol > 0, 菜单.图标文字间距, 0)
 
             For i = 0 To 菜单.项目列表.Count - 1
                 If i >= 项目区域列表.Count Then Exit For
                 Dim item = 菜单.项目列表(i)
                 If item.IsSeparator Then Continue For
                 Dim rect = 项目区域列表(i)
-                Dim x As Integer = rect.X + leftArea + tp.Left
+                Dim x As Integer = rect.X + ip.Left + iconCol + iconTextGap
                 Dim font As Font
                 Dim foreColor As Color
                 If item.IsDescription Then
@@ -642,7 +702,7 @@ Public Class ModernContextMenu
                     foreColor = If(item.ForeColor <> Color.Empty, item.ForeColor, 菜单.文本颜色)
                 End If
                 Dim arrowSpace As Integer = If(Not item.IsDescription AndAlso item.SubMenu IsNot Nothing, 20, 0)
-                Dim textRect As New Rectangle(x, rect.Y + tp.Top, rect.Width - leftArea - tp.Left - tp.Right - arrowSpace, rect.Height - tp.Top - tp.Bottom)
+                Dim textRect As New Rectangle(x, rect.Y + ip.Top, rect.Width - ip.Left - iconCol - iconTextGap - ip.Right - arrowSpace, rect.Height - ip.Top - ip.Bottom)
                 TextRenderer.DrawText(g, item.Text, font, textRect, foreColor,
                     TextFormatFlags.Left Or TextFormatFlags.VerticalCenter Or TextFormatFlags.EndEllipsis Or TextFormatFlags.NoPadding)
             Next
@@ -833,7 +893,7 @@ Public Class ModernContextMenu
                 动画秒表.Restart()
                 If Not 动画中 Then
                     动画中 = True
-                    动画计时器.Start()
+                    启动悬停驱动()
                 End If
             Else
                 ' 悬停离开
@@ -870,8 +930,104 @@ Public Class ModernContextMenu
         Private Sub 停止动画()
             If 动画中 Then
                 动画中 = False
-                动画计时器.Stop()
+                停止悬停驱动()
                 动画秒表.Stop()
+            End If
+        End Sub
+
+#End Region
+
+#Region "展开关闭动画"
+
+        Private Sub 展开关闭帧更新(sender As Object, e As EventArgs)
+            Dim duration As Integer = 菜单.展开关闭动画时长
+            If duration <= 0 Then
+                停止展开关闭驱动()
+                展开关闭动画中 = False
+                If 正在关闭动画 Then
+                    完成关闭()
+                Else
+                    Me.Size = New Size(Me.Width, 最终高度)
+                End If
+                Return
+            End If
+
+            Dim elapsed As Double = 展开关闭秒表.Elapsed.TotalMilliseconds
+            Dim t As Single = CSng(Math.Min(elapsed / duration, 1.0))
+            Dim eased As Single = 1.0F - CSng(Math.Pow(1.0 - t, 3))
+
+            If 正在关闭动画 Then
+                Dim newH As Integer = Math.Max(1, CInt(最终高度 * (1.0F - eased)))
+                Me.Size = New Size(Me.Width, newH)
+            Else
+                Dim newH As Integer = Math.Max(1, CInt(最终高度 * eased))
+                Me.Size = New Size(Me.Width, newH)
+            End If
+            Invalidate()
+
+            If t >= 1.0F Then
+                停止展开关闭驱动()
+                展开关闭动画中 = False
+                If 正在关闭动画 Then
+                    完成关闭()
+                Else
+                    Me.Size = New Size(Me.Width, 最终高度)
+                    Invalidate()
+                End If
+            End If
+        End Sub
+
+        Private Sub 开始关闭动画()
+            If 正在关闭动画 Then Return
+            正在关闭动画 = True
+            展开关闭动画中 = True
+            展开关闭秒表.Restart()
+            启动展开关闭驱动()
+        End Sub
+
+        Private Sub 完成关闭()
+            正在关闭动画 = False
+            展开关闭动画中 = False
+            执行关闭()
+        End Sub
+
+#End Region
+
+#Region "动画驱动"
+
+        Private Sub 启动悬停驱动()
+            If 悬停用Idle Then
+                AddHandler Application.Idle, AddressOf 动画更新帧
+            Else
+                AddHandler 动画计时器.Tick, AddressOf 动画更新帧
+                动画计时器.Start()
+            End If
+        End Sub
+
+        Private Sub 停止悬停驱动()
+            If 悬停用Idle Then
+                RemoveHandler Application.Idle, AddressOf 动画更新帧
+            Else
+                动画计时器.Stop()
+                RemoveHandler 动画计时器.Tick, AddressOf 动画更新帧
+            End If
+        End Sub
+
+        Private Sub 启动展开关闭驱动()
+            If 展开关闭用Idle Then
+                AddHandler Application.Idle, AddressOf 展开关闭帧更新
+            Else
+                AddHandler 展开关闭计时器.Tick, AddressOf 展开关闭帧更新
+                展开关闭计时器.Start()
+            End If
+        End Sub
+
+        Private Sub 停止展开关闭驱动()
+            If 展开关闭用Idle Then
+                RemoveHandler Application.Idle, AddressOf 展开关闭帧更新
+            Else
+                展开关闭计时器.Stop()
+                RemoveHandler 展开关闭计时器.Tick, AddressOf 展开关闭帧更新
             End If
         End Sub
 
@@ -908,13 +1064,24 @@ Public Class ModernContextMenu
 
         Friend Sub 关闭自身及子菜单()
             If 正在关闭 Then Return
-            正在关闭 = True
-            停止动画()
-            动画计时器.Dispose()
             If 子菜单弹窗 IsNot Nothing AndAlso Not 子菜单弹窗.IsDisposed Then
                 子菜单弹窗.关闭自身及子菜单()
                 子菜单弹窗 = Nothing
             End If
+            If Not 正在关闭动画 AndAlso 菜单.展开关闭动画时长 > 0 AndAlso IsHandleCreated AndAlso Not IsDisposed Then
+                开始关闭动画()
+                Return
+            End If
+            执行关闭()
+        End Sub
+
+        Private Sub 执行关闭()
+            If 正在关闭 Then Return
+            正在关闭 = True
+            停止动画()
+            停止展开关闭驱动()
+            If 动画计时器 IsNot Nothing Then 动画计时器.Dispose()
+            If 展开关闭计时器 IsNot Nothing Then 展开关闭计时器.Dispose()
             If 父弹窗 Is Nothing Then
                 Application.RemoveMessageFilter(Me)
                 菜单.通知菜单关闭()
@@ -929,10 +1096,10 @@ Public Class ModernContextMenu
 
         Protected Overrides Sub OnDeactivate(e As EventArgs)
             MyBase.OnDeactivate(e)
-            If 正在关闭 OrElse IsDisposed OrElse Not IsHandleCreated Then Return
+            If 正在关闭 OrElse 正在关闭动画 OrElse IsDisposed OrElse Not IsHandleCreated Then Return
             Try
                 BeginInvoke(Sub()
-                                If 正在关闭 Then Return
+                                If 正在关闭 OrElse 正在关闭动画 Then Return
                                 Dim root = 获取根弹窗()
                                 If Not root.链中有活动窗口() Then
                                     root.关闭自身及子菜单()

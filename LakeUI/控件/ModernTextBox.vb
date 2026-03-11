@@ -8,12 +8,28 @@ Public Class ModernTextBox
     Public Shadows Event TextChanged As EventHandler
 
 #Region "内部数据结构"
+    Private Structure TextRun
+        Public StartCol As Integer
+        Public Length As Integer
+        Public ForeColor As Color
+        Public RunFont As Font
+        Public Sub New(startCol As Integer, length As Integer,
+                       Optional foreColor As Color = Nothing,
+                       Optional runFont As Font = Nothing)
+            Me.StartCol = startCol
+            Me.Length = length
+            Me.ForeColor = foreColor
+            Me.RunFont = runFont
+        End Sub
+    End Structure
     Private Structure TextSnapshot
         Public Lines As String()
+        Public LineRuns As List(Of List(Of TextRun))
         Public CaretLine As Integer
         Public CaretCol As Integer
-        Public Sub New(lines As IEnumerable(Of String), caretLine As Integer, caretCol As Integer)
+        Public Sub New(lines As IEnumerable(Of String), lineRuns As List(Of List(Of TextRun)), caretLine As Integer, caretCol As Integer)
             Me.Lines = lines.ToArray()
+            Me.LineRuns = lineRuns
             Me.CaretLine = caretLine
             Me.CaretCol = caretCol
         End Sub
@@ -32,12 +48,13 @@ Public Class ModernTextBox
 
 #Region "字段"
     Private _lines As New List(Of String) From {String.Empty}
+    Private _lineRuns As New List(Of List(Of TextRun)) From {Nothing}
     Private _caretLine As Integer = 0
     Private _caretCol As Integer = 0
     Private _selAnchorLine As Integer = 0
     Private _selAnchorCol As Integer = 0
     Private _hasSelection As Boolean = False
-    Private Const MAX_UNDO As Integer = 10
+    Private _maxUndo As Integer = 10
     Private _undoStack As New List(Of TextSnapshot)
     Private _caretVisible As Boolean = True
     Private _caretBlinkTimer As New Timer() With {.Interval = 530}
@@ -50,6 +67,10 @@ Public Class ModernTextBox
     Private _visualLines As New List(Of VisualLineInfo)
     Private _autoScrollTimer As New Timer() With {.Interval = 50}
     Private _lastMousePos As Point = Point.Empty
+    Private _ssaaBitmap As Bitmap = Nothing
+    Private _ssaaBitmapW As Integer = 0
+    Private _ssaaBitmapH As Integer = 0
+    Private _preserveScrollPosition As Boolean = False
 #End Region
 
 #Region "属性"
@@ -63,13 +84,24 @@ Public Class ModernTextBox
             Dim normalized As String = If(value, "").Replace(vbCr, "")
             If String.Join(vbLf, _lines) = normalized Then Return
             PushUndo()
+            Dim savedScrollLine As Integer = _scrollLineOffset
+            Dim savedScrollX As Integer = _scrollXOffset
             SetLinesFromString(normalized)
             _caretLine = 0
             _caretCol = 0
-            _scrollXOffset = 0
-            _scrollLineOffset = 0
+            If Not _preserveScrollPosition Then
+                _scrollXOffset = 0
+                _scrollLineOffset = 0
+            End If
             ClearSelection()
             NotifyTextChanged()
+            If _preserveScrollPosition Then
+                Dim maxOffset As Integer = Math.Max(0, _visualLines.Count - VisibleLineCount())
+                _scrollLineOffset = Math.Min(savedScrollLine, maxOffset)
+                _scrollXOffset = savedScrollX
+                UpdateScrollBar()
+                Invalidate()
+            End If
         End Set
     End Property
     Private Function ShouldSerializeText() As Boolean
@@ -318,6 +350,31 @@ Public Class ModernTextBox
         End Set
     End Property
 
+    <Category("LakeUI"), Description("重设Text时保留滚动条位置，适用于日志输出等场景"), DefaultValue(GetType(Boolean), "False"), Browsable(True)>
+    Public Property PreserveScrollPosition As Boolean
+        Get
+            Return _preserveScrollPosition
+        End Get
+        Set(value As Boolean)
+            _preserveScrollPosition = value
+        End Set
+    End Property
+
+    <Category("LakeUI"), Description("最大撤回次数，设为0则关闭撤回功能以节约性能"), DefaultValue(GetType(Integer), "10"), Browsable(True)>
+    Public Property MaxUndoCount As Integer
+        Get
+            Return _maxUndo
+        End Get
+        Set(value As Integer)
+            _maxUndo = Math.Max(0, value)
+            If _maxUndo = 0 Then
+                _undoStack.Clear()
+            ElseIf _undoStack.Count > _maxUndo Then
+                _undoStack.RemoveRange(0, _undoStack.Count - _maxUndo)
+            End If
+        End Set
+    End Property
+
     Private _wordWrap As Boolean = True
     <Category("LakeUI"), Description("自动换行（多行模式）"), DefaultValue(GetType(Boolean), "True"), Browsable(True)>
     Public Property WordWrap As Boolean
@@ -422,6 +479,72 @@ Public Class ModernTextBox
         ClearSelection()
         InsertTextCore(text)
     End Sub
+    ''' <summary>
+    ''' 追加一行文本，可指定颜色和字体。专为日志输出等高频场景优化：
+    ''' 跳过撤回记录、跳过全量视觉行重建、直接设置格式，配合 PreserveScrollPosition 使用效果最佳。
+    ''' </summary>
+    Public Sub AppendLine(text As String, Optional foreColor As Color = Nothing, Optional lineFont As Font = Nothing)
+        Dim lineText As String = If(text, "").Replace(vbCr, "").Replace(vbLf, "")
+
+        If _maxLength > 0 Then
+            Dim currentLen As Integer = _lines.Sum(Function(l) l.Length) + _lines.Count - 1
+            Dim overhead As Integer = If(_lines.Count = 1 AndAlso _lines(0).Length = 0, 0, 1)
+            Dim remaining As Integer = _maxLength - currentLen - overhead
+            If remaining <= 0 Then Return
+            If lineText.Length > remaining Then lineText = lineText.Substring(0, remaining)
+        End If
+
+        Dim isEmpty As Boolean = (_lines.Count = 1 AndAlso _lines(0).Length = 0)
+        Dim newLineIndex As Integer
+
+        If isEmpty Then
+            _lines(0) = lineText
+            newLineIndex = 0
+            _visualLines.Clear()
+        Else
+            newLineIndex = _lines.Count
+            _lines.Add(lineText)
+            _lineRuns.Add(Nothing)
+        End If
+
+        ' 直接设置格式 Run，避免二次遍历
+        If foreColor <> Color.Empty OrElse lineFont IsNot Nothing Then
+            If lineText.Length > 0 Then
+                _lineRuns(newLineIndex) = New List(Of TextRun) From {
+                    New TextRun(0, lineText.Length, foreColor, lineFont)
+                }
+            End If
+        End If
+
+        ' 增量追加视觉行，不做全量 RebuildVisualLines
+        Dim areaW As Integer = If(IsHandleCreated, TextAreaWidth(), 0)
+        If Not IsWordWrapActive() OrElse areaW <= 0 OrElse lineText.Length = 0 Then
+            _visualLines.Add(New VisualLineInfo(newLineIndex, 0, lineText.Length))
+        Else
+            Dim startCol As Integer = 0
+            While startCol < lineText.Length
+                Dim fitLen As Integer = FindFitLength(newLineIndex, startCol, areaW)
+                _visualLines.Add(New VisualLineInfo(newLineIndex, startCol, fitLen))
+                startCol += fitLen
+            End While
+        End If
+
+        ' 滚动条可见性变化时才回退到全量重建
+        Dim oldVisible As Boolean = _scrollBarVisible
+        UpdateScrollBar()
+        If _scrollBarVisible <> oldVisible Then
+            RebuildVisualLines()
+            UpdateScrollBar()
+        End If
+
+        ' 未启用保留位置时自动滚到底部
+        If Not _preserveScrollPosition Then
+            _scrollLineOffset = Math.Max(0, _visualLines.Count - VisibleLineCount())
+        End If
+
+        Invalidate()
+        RaiseEvent TextChanged(Me, EventArgs.Empty)
+    End Sub
     Public Shadows Sub [Select](start As Integer, length As Integer)
         Dim pos = GetLineColFromAbsolute(start)
         _selAnchorLine = pos.Y
@@ -439,6 +562,73 @@ Public Class ModernTextBox
     End Sub
     Public Sub ScrollToCaret()
         EnsureCaretVisible()
+        Invalidate()
+    End Sub
+    Public Sub ScrollToBottom()
+        If Not 启用多行 Then Return
+        Dim maxOffset As Integer = Math.Max(0, _visualLines.Count - VisibleLineCount())
+        _scrollLineOffset = maxOffset
+        UpdateScrollBar()
+        Invalidate()
+    End Sub
+    Public Sub ScrollToTop()
+        _scrollLineOffset = 0
+        _scrollXOffset = 0
+        UpdateScrollBar()
+        Invalidate()
+    End Sub
+    Public Sub ScrollToLine(lineIndex As Integer)
+        If Not 启用多行 Then Return
+        lineIndex = Math.Max(0, Math.Min(_lines.Count - 1, lineIndex))
+        Dim targetVi As Integer = _visualLines.Count - 1
+        For i As Integer = 0 To _visualLines.Count - 1
+            If _visualLines(i).LogicalLine >= lineIndex Then
+                targetVi = i
+                Exit For
+            End If
+        Next
+        Dim maxOffset As Integer = Math.Max(0, _visualLines.Count - VisibleLineCount())
+        _scrollLineOffset = Math.Min(targetVi, maxOffset)
+        UpdateScrollBar()
+        Invalidate()
+    End Sub
+    Public Sub SetFormat(startPos As Integer, length As Integer,
+                         Optional foreColor As Color = Nothing, Optional runFont As Font = Nothing)
+        If length <= 0 Then Return
+        Dim pos = GetLineColFromAbsolute(startPos)
+        Dim remaining = length
+        Dim line = pos.Y
+        Dim col = pos.X
+        While remaining > 0 AndAlso line < _lines.Count
+            Dim lineLen = _lines(line).Length
+            Dim colEnd = Math.Min(col + remaining, lineLen)
+            Dim segLen = colEnd - col
+            If segLen > 0 Then
+                ApplyFormatToLine(line, col, segLen, foreColor, runFont)
+            End If
+            remaining -= segLen + 2
+            line += 1
+            col = 0
+        End While
+        Invalidate()
+    End Sub
+    Public Sub SetLineFormat(lineIndex As Integer, startCol As Integer, length As Integer,
+                              Optional foreColor As Color = Nothing, Optional runFont As Font = Nothing)
+        If lineIndex < 0 OrElse lineIndex >= _lines.Count Then Return
+        If length <= 0 Then Return
+        startCol = Math.Max(0, startCol)
+        length = Math.Min(length, _lines(lineIndex).Length - startCol)
+        If length <= 0 Then Return
+        ApplyFormatToLine(lineIndex, startCol, length, foreColor, runFont)
+        Invalidate()
+    End Sub
+    Public Sub ClearFormat(startPos As Integer, length As Integer)
+        SetFormat(startPos, length, Color.Empty, Nothing)
+    End Sub
+    Public Sub ClearAllFormats()
+        For i = 0 To _lineRuns.Count - 1
+            _lineRuns(i) = Nothing
+        Next
         Invalidate()
     End Sub
 #End Region
@@ -468,6 +658,8 @@ Public Class ModernTextBox
     Protected Overrides Sub OnHandleDestroyed(e As EventArgs)
         _caretBlinkTimer.Stop()
         _autoScrollTimer.Stop()
+        _ssaaBitmap?.Dispose()
+        _ssaaBitmap = Nothing
         MyBase.OnHandleDestroyed(e)
     End Sub
 #End Region
@@ -485,15 +677,22 @@ Public Class ModernTextBox
         Dim bc As Color = If(Focused, 有焦点时边框颜色, 边框颜色)
         Dim _ssaa As Integer = If(Class1.GlobalSSAA > 1, Class1.GlobalSSAA, 超采样倍率)
         If _ssaa > 1 Then
-            Using bmp As New Bitmap(w * _ssaa, h * _ssaa)
-                Using g As Graphics = Graphics.FromImage(bmp)
-                    g.ScaleTransform(_ssaa, _ssaa)
-                    DrawBackground(g, hasRadius, boundsRect, bc)
-                End Using
-                e.Graphics.CompositingQuality = CompositingQuality.HighQuality
-                e.Graphics.InterpolationMode = InterpolationMode.HighQualityBicubic
-                e.Graphics.DrawImage(bmp, 0, 0, w, h)
+            Dim bmpW As Integer = w * _ssaa
+            Dim bmpH As Integer = h * _ssaa
+            If _ssaaBitmap Is Nothing OrElse _ssaaBitmapW <> bmpW OrElse _ssaaBitmapH <> bmpH Then
+                _ssaaBitmap?.Dispose()
+                _ssaaBitmap = New Bitmap(bmpW, bmpH)
+                _ssaaBitmapW = bmpW
+                _ssaaBitmapH = bmpH
+            End If
+            Using g As Graphics = Graphics.FromImage(_ssaaBitmap)
+                g.Clear(Color.Transparent)
+                g.ScaleTransform(_ssaa, _ssaa)
+                DrawBackground(g, hasRadius, boundsRect, bc)
             End Using
+            e.Graphics.CompositingQuality = CompositingQuality.HighQuality
+            e.Graphics.InterpolationMode = InterpolationMode.HighQualityBicubic
+            e.Graphics.DrawImage(_ssaaBitmap, 0, 0, w, h)
         Else
             DrawBackground(e.Graphics, hasRadius, boundsRect, bc)
         End If
@@ -537,6 +736,11 @@ Public Class ModernTextBox
                 New Point(textLeft + waterAlignOff, waterLineY + (行高 - FontHeight) \ 2),
                 水印颜色, TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine)
         End If
+        Dim wrapActive As Boolean = IsWordWrapActive()
+        Dim minL As Integer = 0, minC As Integer = 0, maxL As Integer = 0, maxC As Integer = 0
+        If _hasSelection Then
+            GetOrderedSelection(minL, minC, maxL, maxC)
+        End If
         Dim visibleLines As Integer = VisibleLineCount()
         Dim startVi As Integer = _scrollLineOffset
         Dim endVi As Integer = Math.Min(_visualLines.Count - 1, startVi + visibleLines + 1)
@@ -544,20 +748,14 @@ Public Class ModernTextBox
             Dim vl = _visualLines(vi)
             Dim lineY As Integer = If(isSingleLine, singleLineY,
                 textTop + (vi - _scrollLineOffset) * 行高)
-            Dim fullLineStr As String = _lines(vl.LogicalLine)
-            Dim lineStr As String = fullLineStr.Substring(vl.StartCol, vl.Length)
+            Dim alignOff As Integer = If(wrapActive, 0, GetAlignOffsetXForLine(vl.LogicalLine, textWidth))
+            Dim scrollX As Integer = If(wrapActive, 0, _scrollXOffset)
             If _hasSelection Then
-                DrawVisualLineSelection(g, vl, lineY, textLeft, textWidth)
+                DrawVisualLineSelection(g, vl, lineY, textLeft, alignOff, scrollX, minL, minC, maxL, maxC)
             End If
-            If lineStr.Length > 0 Then
-                Dim wrapActive As Boolean = IsWordWrapActive()
-                Dim alignOff As Integer = If(wrapActive, 0, GetAlignOffsetX(fullLineStr, textWidth))
-                Dim scrollX As Integer = If(wrapActive, 0, _scrollXOffset)
-                Dim textY As Integer = lineY + (行高 - FontHeight) \ 2
-                TextRenderer.DrawText(g, GetDisplayText(lineStr), Font,
-                    New Point(textLeft + alignOff - scrollX, textY),
-                    ForeColor,
-                    TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine)
+            If vl.Length > 0 Then
+                DrawLineRuns(g, vl.LogicalLine, vl.StartCol, vl.Length,
+                    textLeft + alignOff - scrollX, lineY)
             End If
         Next
         If Focused AndAlso _caretVisible Then
@@ -566,9 +764,9 @@ Public Class ModernTextBox
         g.ResetClip()
     End Sub
 
-    Private Sub DrawVisualLineSelection(g As Graphics, vl As VisualLineInfo, lineY As Integer, textLeft As Integer, textWidth As Integer)
-        Dim minL, minC, maxL, maxC As Integer
-        GetOrderedSelection(minL, minC, maxL, maxC)
+    Private Sub DrawVisualLineSelection(g As Graphics, vl As VisualLineInfo, lineY As Integer, textLeft As Integer,
+                                         alignOff As Integer, scrollX As Integer,
+                                         minL As Integer, minC As Integer, maxL As Integer, maxC As Integer)
         Dim li As Integer = vl.LogicalLine
         If li < minL OrElse li > maxL Then Return
         Dim selStart As Integer = If(li = minL, minC, 0)
@@ -578,16 +776,12 @@ Public Class ModernTextBox
         Dim drawEnd As Integer = Math.Min(selEnd, vlEnd)
         If drawStart > drawEnd Then Return
         If drawStart = drawEnd AndAlso Not (selEnd > vlEnd OrElse li < maxL) Then Return
-        Dim wrapActive As Boolean = IsWordWrapActive()
-        Dim fullLineStr As String = _lines(li)
-        Dim alignOff As Integer = If(wrapActive, 0, GetAlignOffsetX(fullLineStr, textWidth))
-        Dim scrollX As Integer = If(wrapActive, 0, _scrollXOffset)
-        Dim x1 As Integer = textLeft + alignOff + MeasureWidth(fullLineStr.Substring(vl.StartCol, drawStart - vl.StartCol)) - scrollX
+        Dim x1 As Integer = textLeft + alignOff + MeasureLineWidth(li, vl.StartCol, drawStart - vl.StartCol) - scrollX
         Dim x2 As Integer
         If selEnd > vlEnd OrElse li < maxL Then
-            x2 = textLeft + alignOff + MeasureWidth(fullLineStr.Substring(vl.StartCol, vl.Length)) + 6 - scrollX
+            x2 = textLeft + alignOff + MeasureLineWidth(li, vl.StartCol, vl.Length) + 6 - scrollX
         Else
-            x2 = textLeft + alignOff + MeasureWidth(fullLineStr.Substring(vl.StartCol, drawEnd - vl.StartCol)) - scrollX
+            x2 = textLeft + alignOff + MeasureLineWidth(li, vl.StartCol, drawEnd - vl.StartCol) - scrollX
         End If
         If x2 <= x1 Then Return
         Using br As New SolidBrush(选区背景色)
@@ -601,11 +795,10 @@ Public Class ModernTextBox
             Return
         End If
         Dim vl = _visualLines(vi)
-        Dim lineStr As String = _lines(_caretLine)
         Dim wrapActive As Boolean = IsWordWrapActive()
-        Dim alignOff As Integer = If(wrapActive, 0, GetAlignOffsetX(lineStr, TextAreaWidth()))
+        Dim alignOff As Integer = If(wrapActive, 0, GetAlignOffsetXForLine(_caretLine, TextAreaWidth()))
         Dim scrollX As Integer = If(wrapActive, 0, _scrollXOffset)
-        Dim cx As Integer = textLeft + alignOff + MeasureWidth(lineStr.Substring(vl.StartCol, _caretCol - vl.StartCol)) - scrollX
+        Dim cx As Integer = textLeft + alignOff + MeasureLineWidth(_caretLine, vl.StartCol, _caretCol - vl.StartCol) - scrollX
         Dim lineY As Integer
         If Not 启用多行 Then
             Dim bi2 As Integer = 边框宽度
@@ -627,6 +820,34 @@ Public Class ModernTextBox
             _visualLines.Count, VisibleLineCount(), _scrollLineOffset)
         _scrollBar.Draw(g, w, h, 边框宽度, 边框圆角半径, 滚动条宽度,
             滚动条轨道颜色, 滚动条颜色, 滚动条悬停颜色)
+    End Sub
+
+    Private Sub DrawLineRuns(g As Graphics, lineIndex As Integer, vlStartCol As Integer,
+                              vlLength As Integer, x As Integer, lineY As Integer)
+        Dim runs = _lineRuns(lineIndex)
+        Dim lineStr = _lines(lineIndex)
+        Dim vlEnd = vlStartCol + vlLength
+        If runs Is Nothing OrElse runs.Count = 0 Then
+            Dim text = GetDisplayText(lineStr.Substring(vlStartCol, vlLength))
+            Dim textY = lineY + (行高 - Font.Height) \ 2
+            TextRenderer.DrawText(g, text, Font, New Point(x, textY),
+                ForeColor, TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine)
+            Return
+        End If
+        Dim drawX = x
+        For Each r In runs
+            Dim rEnd = r.StartCol + r.Length
+            Dim segStart = Math.Max(r.StartCol, vlStartCol)
+            Dim segEnd = Math.Min(rEnd, vlEnd)
+            If segStart >= segEnd Then Continue For
+            Dim segText = GetDisplayText(lineStr.Substring(segStart, segEnd - segStart))
+            Dim useFore = If(r.ForeColor = Color.Empty, ForeColor, r.ForeColor)
+            Dim useFont = If(r.RunFont, Font)
+            Dim segTextY = lineY + (行高 - useFont.Height) \ 2
+            TextRenderer.DrawText(g, segText, useFont, New Point(drawX, segTextY),
+                useFore, TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine)
+            drawX += TextRenderHelper.MeasureTextWidth(segText, useFont, 行高)
+        Next
     End Sub
 
 #End Region
@@ -849,13 +1070,11 @@ Public Class ModernTextBox
         End If
         vi = Math.Max(0, Math.Min(_visualLines.Count - 1, vi))
         Dim vl = _visualLines(vi)
-        Dim fullLineStr As String = _lines(vl.LogicalLine)
-        Dim vlText As String = fullLineStr.Substring(vl.StartCol, vl.Length)
         Dim wrapActive As Boolean = IsWordWrapActive()
-        Dim alignOff As Integer = If(wrapActive, 0, GetAlignOffsetX(fullLineStr, TextAreaWidth()))
+        Dim alignOff As Integer = If(wrapActive, 0, GetAlignOffsetXForLine(vl.LogicalLine, TextAreaWidth()))
         Dim scrollX As Integer = If(wrapActive, 0, _scrollXOffset)
-        Dim colInVl As Integer = FindColFromX(vlText, x - textLeft - alignOff + scrollX)
-        Return New Point(vl.StartCol + colInVl, vl.LogicalLine)
+        Dim col As Integer = FindColFromXForLine(vl.LogicalLine, vl.StartCol, vl.Length, x - textLeft - alignOff + scrollX)
+        Return New Point(col, vl.LogicalLine)
     End Function
     Private Function FindColFromX(lineStr As String, x As Integer) As Integer
         Return TextRenderHelper.FindColFromX(GetDisplayText(lineStr), x, Font, 行高)
@@ -903,16 +1122,15 @@ Public Class ModernTextBox
             If IsWordWrapActive() Then
                 Dim curVi As Integer = GetVisualLineIndex(_caretLine, _caretCol)
                 Dim curVl = _visualLines(curVi)
-                Dim currentX As Integer = MeasureWidth(_lines(_caretLine).Substring(curVl.StartCol, _caretCol - curVl.StartCol))
+                Dim currentX As Integer = MeasureLineWidth(_caretLine, curVl.StartCol, _caretCol - curVl.StartCol)
                 Dim newVi As Integer = Math.Max(0, Math.Min(_visualLines.Count - 1, curVi + deltaLine))
                 Dim newVl = _visualLines(newVi)
                 _caretLine = newVl.LogicalLine
-                Dim vlText As String = _lines(newVl.LogicalLine).Substring(newVl.StartCol, newVl.Length)
-                _caretCol = newVl.StartCol + FindColFromX(vlText, currentX)
+                _caretCol = FindColFromXForLine(newVl.LogicalLine, newVl.StartCol, newVl.Length, currentX)
             Else
-                Dim currentX As Integer = MeasureWidth(_lines(_caretLine).Substring(0, _caretCol))
+                Dim currentX As Integer = MeasureLineWidth(_caretLine, 0, _caretCol)
                 _caretLine = Math.Max(0, Math.Min(_lines.Count - 1, _caretLine + deltaLine))
-                _caretCol = FindColFromX(_lines(_caretLine), currentX)
+                _caretCol = FindColFromXForLine(_caretLine, 0, _lines(_caretLine).Length, currentX)
             End If
         End If
         UpdateSelectionFromAnchor(extend)
@@ -1015,9 +1233,9 @@ Public Class ModernTextBox
         If Not IsWordWrapActive() Then
             Dim areaW As Integer = TextAreaWidth()
             If areaW > 0 Then
-                Dim caretX As Integer = MeasureWidth(_lines(_caretLine).Substring(0, _caretCol))
+                Dim caretX As Integer = MeasureLineWidth(_caretLine, 0, _caretCol)
                 If Not 启用多行 AndAlso 文本对齐 <> TextAlignMode.Left Then
-                    Dim lineW As Integer = MeasureWidth(_lines(_caretLine))
+                    Dim lineW As Integer = MeasureLineWidth(_caretLine, 0, _lines(_caretLine).Length)
                     If lineW < areaW Then
                         _scrollXOffset = 0
                         Return
@@ -1052,15 +1270,35 @@ Public Class ModernTextBox
         If normalized.Length = 0 Then Return
         If Not normalized.Contains(vbLf) Then
             Dim line As String = _lines(_caretLine)
+            Dim insertCol As Integer = _caretCol
             _lines(_caretLine) = String.Concat(line.AsSpan(0, _caretCol), normalized, line.AsSpan(_caretCol))
+            InsertIntoRuns(_caretLine, insertCol, normalized.Length)
             _caretCol += normalized.Length
         Else
             Dim parts() As String = normalized.Split(vbLf)
             Dim tail As String = _lines(_caretLine).Substring(_caretCol)
+            Dim insertLine As Integer = _caretLine
+            Dim insertCol As Integer = _caretCol
+            Dim tailRuns = SplitLineRunsAt(insertLine, insertCol)
             _lines(_caretLine) = String.Concat(_lines(_caretLine).AsSpan(0, _caretCol), parts(0))
+            If parts(0).Length > 0 Then
+                InsertIntoRuns(insertLine, insertCol, parts(0).Length)
+            End If
             For i As Integer = 1 To parts.Length - 1
                 _caretLine += 1
                 _lines.Insert(_caretLine, If(i = parts.Length - 1, parts(i) & tail, parts(i)))
+                If i = parts.Length - 1 AndAlso tailRuns IsNot Nothing Then
+                    Dim newLineRuns As New List(Of TextRun)
+                    If parts(i).Length > 0 Then
+                        newLineRuns.Add(New TextRun(0, parts(i).Length))
+                    End If
+                    For Each r In tailRuns
+                        newLineRuns.Add(New TextRun(r.StartCol + parts(i).Length, r.Length, r.ForeColor, r.RunFont))
+                    Next
+                    _lineRuns.Insert(_caretLine, MergeAdjacentRuns(newLineRuns))
+                Else
+                    _lineRuns.Insert(_caretLine, Nothing)
+                End If
             Next
             _caretCol = parts(parts.Length - 1).Length
         End If
@@ -1068,9 +1306,11 @@ Public Class ModernTextBox
     End Sub
     Private Sub InsertNewLine()
         Dim line As String = _lines(_caretLine)
+        Dim newLineRuns = SplitLineRunsAt(_caretLine, _caretCol)
         _lines(_caretLine) = line.Substring(0, _caretCol)
         _caretLine += 1
         _lines.Insert(_caretLine, line.Substring(_caretCol))
+        _lineRuns.Insert(_caretLine, newLineRuns)
         _caretCol = 0
         NotifyTextChanged()
     End Sub
@@ -1082,13 +1322,16 @@ Public Class ModernTextBox
             PushUndo()
             Dim line As String = _lines(_caretLine)
             _lines(_caretLine) = String.Concat(line.AsSpan(0, _caretCol - 1), line.AsSpan(_caretCol))
+            RemoveFromRuns(_caretLine, _caretCol - 1, 1)
             _caretCol -= 1
         ElseIf _caretLine > 0 Then
             PushUndo()
             Dim prev As String = _lines(_caretLine - 1)
             _caretCol = prev.Length
+            MergeLineRuns(_caretLine - 1, _caretLine, prev.Length)
             _lines(_caretLine - 1) = prev & _lines(_caretLine)
             _lines.RemoveAt(_caretLine)
+            _lineRuns.RemoveAt(_caretLine)
             _caretLine -= 1
         End If
         NotifyTextChanged()
@@ -1101,10 +1344,13 @@ Public Class ModernTextBox
             PushUndo()
             Dim line As String = _lines(_caretLine)
             _lines(_caretLine) = String.Concat(line.AsSpan(0, _caretCol), line.AsSpan(_caretCol + 1))
+            RemoveFromRuns(_caretLine, _caretCol, 1)
         ElseIf _caretLine < _lines.Count - 1 Then
             PushUndo()
+            MergeLineRuns(_caretLine, _caretLine + 1, _lines(_caretLine).Length)
             _lines(_caretLine) = _lines(_caretLine) & _lines(_caretLine + 1)
             _lines.RemoveAt(_caretLine + 1)
+            _lineRuns.RemoveAt(_caretLine + 1)
         End If
         NotifyTextChanged()
     End Sub
@@ -1114,11 +1360,42 @@ Public Class ModernTextBox
         GetOrderedSelection(minL, minC, maxL, maxC)
 
         If minL = maxL Then
+            RemoveFromRuns(minL, minC, maxC - minC)
             _lines(minL) = String.Concat(_lines(minL).AsSpan(0, minC), _lines(minL).AsSpan(maxC))
         Else
+            Dim tailRuns As List(Of TextRun) = Nothing
+            If _lineRuns(maxL) IsNot Nothing Then
+                tailRuns = New List(Of TextRun)
+                For Each r In _lineRuns(maxL)
+                    Dim rEnd = r.StartCol + r.Length
+                    If r.StartCol >= maxC Then
+                        tailRuns.Add(New TextRun(r.StartCol - maxC + minC, r.Length, r.ForeColor, r.RunFont))
+                    ElseIf rEnd > maxC Then
+                        tailRuns.Add(New TextRun(minC, rEnd - maxC, r.ForeColor, r.RunFont))
+                    End If
+                Next
+            End If
+            If _lineRuns(minL) IsNot Nothing Then
+                Dim leftRuns As New List(Of TextRun)
+                For Each r In _lineRuns(minL)
+                    If r.StartCol + r.Length <= minC Then
+                        leftRuns.Add(r)
+                    ElseIf r.StartCol < minC Then
+                        leftRuns.Add(New TextRun(r.StartCol, minC - r.StartCol, r.ForeColor, r.RunFont))
+                    End If
+                Next
+                If tailRuns IsNot Nothing Then leftRuns.AddRange(tailRuns)
+                _lineRuns(minL) = If(leftRuns.Count > 0, MergeAdjacentRuns(leftRuns), Nothing)
+            ElseIf tailRuns IsNot Nothing Then
+                Dim combined As New List(Of TextRun)
+                If minC > 0 Then combined.Add(New TextRun(0, minC))
+                combined.AddRange(tailRuns)
+                _lineRuns(minL) = MergeAdjacentRuns(combined)
+            End If
             _lines(minL) = String.Concat(_lines(minL).AsSpan(0, minC), _lines(maxL).AsSpan(maxC))
             For i As Integer = maxL To minL + 1 Step -1
                 _lines.RemoveAt(i)
+                _lineRuns.RemoveAt(i)
             Next
         End If
         _caretLine = minL
@@ -1201,16 +1478,21 @@ Public Class ModernTextBox
 
 #Region "撤回"
     Private Sub PushUndo()
-        _undoStack.Add(New TextSnapshot(_lines, _caretLine, _caretCol))
-        If _undoStack.Count > MAX_UNDO Then
+        If _maxUndo = 0 Then Return
+        _undoStack.Add(New TextSnapshot(_lines, CloneLineRuns(), _caretLine, _caretCol))
+        If _undoStack.Count > _maxUndo Then
             _undoStack.RemoveAt(0)
         End If
     End Sub
     Private Sub Undo()
-        If _undoStack.Count = 0 Then Return
+        If _maxUndo = 0 OrElse _undoStack.Count = 0 Then Return
         Dim snap As TextSnapshot = _undoStack(_undoStack.Count - 1)
         _undoStack.RemoveAt(_undoStack.Count - 1)
         _lines = New List(Of String)(snap.Lines)
+        _lineRuns = If(snap.LineRuns, New List(Of List(Of TextRun)))
+        While _lineRuns.Count < _lines.Count
+            _lineRuns.Add(Nothing)
+        End While
         _caretLine = Math.Min(snap.CaretLine, _lines.Count - 1)
         _caretCol = Math.Min(snap.CaretCol, _lines(_caretLine).Length)
         ClearSelection()
@@ -1225,23 +1507,21 @@ Public Class ModernTextBox
             Return
         End If
         _scrollBarVisible = _visualLines.Count > VisibleLineCount()
-        Invalidate()
     End Sub
 #End Region
 
 #Region "输入法 IME"
     Private Sub UpdateImeWindow()
         If Not IsHandleCreated Then Return
-        Dim lineStr As String = _lines(_caretLine)
         Dim vi As Integer = GetVisualLineIndex(_caretLine, _caretCol)
         Dim vl = _visualLines(vi)
         Dim wrapActive As Boolean = IsWordWrapActive()
         Dim bi As Integer = 边框宽度
         Dim imeLeft As Integer = Math.Max(Padding.Left, bi)
         Dim imeTop As Integer = Math.Max(Padding.Top, bi)
-        Dim alignOff As Integer = If(wrapActive, 0, GetAlignOffsetX(lineStr, TextAreaWidth()))
+        Dim alignOff As Integer = If(wrapActive, 0, GetAlignOffsetXForLine(_caretLine, TextAreaWidth()))
         Dim scrollX As Integer = If(wrapActive, 0, _scrollXOffset)
-        Dim cx As Integer = imeLeft + alignOff + MeasureWidth(lineStr.Substring(vl.StartCol, _caretCol - vl.StartCol)) - scrollX
+        Dim cx As Integer = imeLeft + alignOff + MeasureLineWidth(_caretLine, vl.StartCol, _caretCol - vl.StartCol) - scrollX
         Dim cy As Integer
         If 启用多行 Then
             cy = imeTop + (vi - _scrollLineOffset) * 行高 + 行高
@@ -1256,6 +1536,64 @@ Public Class ModernTextBox
 #Region "辅助"
     Private Function MeasureWidth(text As String) As Integer
         Return TextRenderHelper.MeasureTextWidth(GetDisplayText(text), Font, 行高)
+    End Function
+    Private Function MeasureLineWidth(lineIndex As Integer, startCol As Integer, length As Integer) As Integer
+        If length <= 0 Then Return 0
+        Dim runs = _lineRuns(lineIndex)
+        If runs Is Nothing OrElse runs.Count = 0 Then
+            Return MeasureWidth(_lines(lineIndex).Substring(startCol, length))
+        End If
+        Dim endCol = startCol + length
+        Dim totalWidth = 0
+        Dim lineStr = _lines(lineIndex)
+        For Each r In runs
+            Dim rEnd = r.StartCol + r.Length
+            Dim segStart = Math.Max(r.StartCol, startCol)
+            Dim segEnd = Math.Min(rEnd, endCol)
+            If segStart >= segEnd Then Continue For
+            Dim useFont = If(r.RunFont, Font)
+            Dim segText = GetDisplayText(lineStr.Substring(segStart, segEnd - segStart))
+            totalWidth += TextRenderHelper.MeasureTextWidth(segText, useFont, 行高)
+        Next
+        Return totalWidth
+    End Function
+    Private Function FindColFromXForLine(lineIndex As Integer, vlStartCol As Integer, vlLength As Integer, x As Integer) As Integer
+        If x <= 0 Then Return vlStartCol
+        Dim runs = _lineRuns(lineIndex)
+        If runs Is Nothing OrElse runs.Count = 0 Then
+            Return vlStartCol + FindColFromX(_lines(lineIndex).Substring(vlStartCol, vlLength), x)
+        End If
+        Dim vlEnd = vlStartCol + vlLength
+        Dim accWidth = 0
+        Dim lineStr = _lines(lineIndex)
+        For Each r In runs
+            Dim rEnd = r.StartCol + r.Length
+            Dim segStart = Math.Max(r.StartCol, vlStartCol)
+            Dim segEnd = Math.Min(rEnd, vlEnd)
+            If segStart >= segEnd Then Continue For
+            Dim useFont = If(r.RunFont, Font)
+            Dim segText = GetDisplayText(lineStr.Substring(segStart, segEnd - segStart))
+            Dim segWidth = TextRenderHelper.MeasureTextWidth(segText, useFont, 行高)
+            If accWidth + segWidth > x Then
+                Dim localCol = TextRenderHelper.FindColFromX(segText, x - accWidth, useFont, 行高)
+                Return segStart + localCol
+            End If
+            accWidth += segWidth
+        Next
+        Return vlStartCol + vlLength
+    End Function
+    Private Function GetAlignOffsetXForLine(lineIndex As Integer, areaWidth As Integer) As Integer
+        If 启用多行 OrElse 文本对齐 = TextAlignMode.Left Then Return 0
+        Dim textW As Integer = MeasureLineWidth(lineIndex, 0, _lines(lineIndex).Length)
+        If textW >= areaWidth Then Return 0
+        Select Case 文本对齐
+            Case TextAlignMode.Center
+                Return (areaWidth - textW) \ 2
+            Case TextAlignMode.Right
+                Return areaWidth - textW
+            Case Else
+                Return 0
+        End Select
     End Function
     Private Function VisibleLineCount() As Integer
         Dim bi As Integer = 边框宽度
@@ -1285,6 +1623,10 @@ Public Class ModernTextBox
         Dim normalized As String = If(s, "").Replace(vbCr, "")
         _lines = New List(Of String)(normalized.Split(vbLf))
         If _lines.Count = 0 Then _lines.Add("")
+        _lineRuns = New List(Of List(Of TextRun))(_lines.Count)
+        For i = 0 To _lines.Count - 1
+            _lineRuns.Add(Nothing)
+        Next
     End Sub
     Private Sub NotifyTextChanged()
         RebuildVisualLines()
@@ -1323,7 +1665,7 @@ Public Class ModernTextBox
             Else
                 Dim startCol As Integer = 0
                 While startCol < line.Length
-                    Dim fitLen As Integer = FindFitLength(line, startCol, areaW)
+                    Dim fitLen As Integer = FindFitLength(li, startCol, areaW)
                     _visualLines.Add(New VisualLineInfo(li, startCol, fitLen))
                     startCol += fitLen
                 End While
@@ -1333,16 +1675,17 @@ Public Class ModernTextBox
             _visualLines.Add(New VisualLineInfo(0, 0, 0))
         End If
     End Sub
-    Private Function FindFitLength(line As String, startCol As Integer, maxWidth As Integer) As Integer
+    Private Function FindFitLength(lineIndex As Integer, startCol As Integer, maxWidth As Integer) As Integer
+        Dim line As String = _lines(lineIndex)
         Dim remaining As Integer = line.Length - startCol
         If remaining <= 0 Then Return 0
-        If MeasureWidth(line.Substring(startCol)) <= maxWidth Then Return remaining
+        If MeasureLineWidth(lineIndex, startCol, remaining) <= maxWidth Then Return remaining
         Dim lo As Integer = 1
         Dim hi As Integer = remaining
         Dim best As Integer = 1
         While lo <= hi
             Dim mid As Integer = (lo + hi) \ 2
-            If MeasureWidth(line.Substring(startCol, mid)) <= maxWidth Then
+            If MeasureLineWidth(lineIndex, startCol, mid) <= maxWidth Then
                 best = mid
                 lo = mid + 1
             Else
@@ -1388,6 +1731,163 @@ Public Class ModernTextBox
     Private Function GetDisplayText(text As String) As String
         If _passwordChar = vbNullChar OrElse 启用多行 Then Return text
         Return New String(_passwordChar, text.Length)
+    End Function
+    Private Shared Function MergeAdjacentRuns(runs As List(Of TextRun)) As List(Of TextRun)
+        If runs.Count <= 1 Then Return runs
+        Dim merged As New List(Of TextRun) From {runs(0)}
+        For i = 1 To runs.Count - 1
+            Dim last = merged(merged.Count - 1)
+            If last.ForeColor = runs(i).ForeColor AndAlso
+               Object.Equals(last.RunFont, runs(i).RunFont) AndAlso
+               last.StartCol + last.Length = runs(i).StartCol Then
+                merged(merged.Count - 1) = New TextRun(last.StartCol, last.Length + runs(i).Length, last.ForeColor, last.RunFont)
+            Else
+                merged.Add(runs(i))
+            End If
+        Next
+        Return merged
+    End Function
+    Private Sub InsertIntoRuns(lineIndex As Integer, col As Integer, length As Integer)
+        Dim runs = _lineRuns(lineIndex)
+        If runs Is Nothing Then Return
+        Dim newRuns As New List(Of TextRun)
+        Dim defaultInserted As Boolean = False
+        For Each r In runs
+            Dim rEnd = r.StartCol + r.Length
+            If rEnd <= col Then
+                newRuns.Add(r)
+            ElseIf r.StartCol >= col Then
+                If Not defaultInserted Then
+                    newRuns.Add(New TextRun(col, length))
+                    defaultInserted = True
+                End If
+                newRuns.Add(New TextRun(r.StartCol + length, r.Length, r.ForeColor, r.RunFont))
+            Else
+                newRuns.Add(New TextRun(r.StartCol, col - r.StartCol, r.ForeColor, r.RunFont))
+                newRuns.Add(New TextRun(col, length))
+                defaultInserted = True
+                newRuns.Add(New TextRun(col + length, rEnd - col, r.ForeColor, r.RunFont))
+            End If
+        Next
+        If Not defaultInserted Then
+            newRuns.Add(New TextRun(col, length))
+        End If
+        _lineRuns(lineIndex) = MergeAdjacentRuns(newRuns)
+    End Sub
+    Private Sub RemoveFromRuns(lineIndex As Integer, col As Integer, length As Integer)
+        Dim runs = _lineRuns(lineIndex)
+        If runs Is Nothing Then Return
+        Dim removeEnd = col + length
+        Dim newRuns As New List(Of TextRun)
+        For Each r In runs
+            Dim rEnd = r.StartCol + r.Length
+            If rEnd <= col Then
+                newRuns.Add(r)
+            ElseIf r.StartCol >= removeEnd Then
+                newRuns.Add(New TextRun(r.StartCol - length, r.Length, r.ForeColor, r.RunFont))
+            ElseIf r.StartCol >= col AndAlso rEnd <= removeEnd Then
+                ' Entirely within removal range
+            Else
+                If r.StartCol < col Then
+                    If rEnd > removeEnd Then
+                        newRuns.Add(New TextRun(r.StartCol, r.Length - length, r.ForeColor, r.RunFont))
+                    Else
+                        newRuns.Add(New TextRun(r.StartCol, col - r.StartCol, r.ForeColor, r.RunFont))
+                    End If
+                Else
+                    Dim rightLen = rEnd - removeEnd
+                    newRuns.Add(New TextRun(col, rightLen, r.ForeColor, r.RunFont))
+                End If
+            End If
+        Next
+        _lineRuns(lineIndex) = If(newRuns.Count > 0, MergeAdjacentRuns(newRuns), Nothing)
+    End Sub
+    Private Function SplitLineRunsAt(lineIndex As Integer, col As Integer) As List(Of TextRun)
+        Dim runs = _lineRuns(lineIndex)
+        If runs Is Nothing Then Return Nothing
+        Dim leftRuns As New List(Of TextRun)
+        Dim rightRuns As New List(Of TextRun)
+        For Each r In runs
+            Dim rEnd = r.StartCol + r.Length
+            If rEnd <= col Then
+                leftRuns.Add(r)
+            ElseIf r.StartCol >= col Then
+                rightRuns.Add(New TextRun(r.StartCol - col, r.Length, r.ForeColor, r.RunFont))
+            Else
+                leftRuns.Add(New TextRun(r.StartCol, col - r.StartCol, r.ForeColor, r.RunFont))
+                rightRuns.Add(New TextRun(0, rEnd - col, r.ForeColor, r.RunFont))
+            End If
+        Next
+        _lineRuns(lineIndex) = If(leftRuns.Count > 0, leftRuns, Nothing)
+        Return If(rightRuns.Count > 0, rightRuns, Nothing)
+    End Function
+    Private Sub MergeLineRuns(targetLine As Integer, sourceLine As Integer, joinCol As Integer)
+        Dim tRuns = _lineRuns(targetLine)
+        Dim sRuns = _lineRuns(sourceLine)
+        If tRuns Is Nothing AndAlso sRuns Is Nothing Then Return
+        Dim newRuns As New List(Of TextRun)
+        If tRuns IsNot Nothing Then
+            newRuns.AddRange(tRuns)
+        Else
+            If joinCol > 0 Then newRuns.Add(New TextRun(0, joinCol))
+        End If
+        If sRuns IsNot Nothing Then
+            For Each r In sRuns
+                newRuns.Add(New TextRun(r.StartCol + joinCol, r.Length, r.ForeColor, r.RunFont))
+            Next
+        Else
+            Dim srcLen = _lines(sourceLine).Length
+            If srcLen > 0 Then newRuns.Add(New TextRun(joinCol, srcLen))
+        End If
+        _lineRuns(targetLine) = MergeAdjacentRuns(newRuns)
+    End Sub
+    Private Sub ApplyFormatToLine(lineIndex As Integer, col As Integer,
+                                   length As Integer, foreColor As Color, runFont As Font)
+        If _lineRuns(lineIndex) Is Nothing Then
+            _lineRuns(lineIndex) = New List(Of TextRun) From {
+                New TextRun(0, _lines(lineIndex).Length)
+            }
+        End If
+        Dim runs = _lineRuns(lineIndex)
+        Dim newRuns As New List(Of TextRun)
+        Dim applyStart = col
+        Dim applyEnd = col + length
+        For Each r In runs
+            Dim rEnd = r.StartCol + r.Length
+            If rEnd <= applyStart OrElse r.StartCol >= applyEnd Then
+                newRuns.Add(r)
+            Else
+                If r.StartCol < applyStart Then
+                    newRuns.Add(New TextRun(r.StartCol, applyStart - r.StartCol, r.ForeColor, r.RunFont))
+                End If
+                Dim overlapStart = Math.Max(r.StartCol, applyStart)
+                Dim overlapEnd = Math.Min(rEnd, applyEnd)
+                newRuns.Add(New TextRun(overlapStart, overlapEnd - overlapStart, foreColor, runFont))
+                If rEnd > applyEnd Then
+                    newRuns.Add(New TextRun(applyEnd, rEnd - applyEnd, r.ForeColor, r.RunFont))
+                End If
+            End If
+        Next
+        _lineRuns(lineIndex) = MergeAdjacentRuns(newRuns)
+        Dim allDefault = True
+        For Each r In _lineRuns(lineIndex)
+            If r.ForeColor <> Color.Empty OrElse r.RunFont IsNot Nothing Then
+                allDefault = False
+                Exit For
+            End If
+        Next
+        If allDefault Then _lineRuns(lineIndex) = Nothing
+    End Sub
+    Private Function CloneLineRuns() As List(Of List(Of TextRun))
+        Dim clone As New List(Of List(Of TextRun))(_lineRuns.Count)
+        For Each runs In _lineRuns
+            If runs Is Nothing Then
+                clone.Add(Nothing)
+            Else
+                clone.Add(New List(Of TextRun)(runs))
+            End If
+        Next
+        Return clone
     End Function
     Private Function GetAbsoluteOffset(line As Integer, col As Integer) As Integer
         Dim offset As Integer = 0

@@ -4,6 +4,13 @@
 Friend Class AnimationHelper
     Implements IDisposable
 
+    Public Enum EasingModeEnum
+        ''' <summary>缓出（默认）：从快到慢</summary>
+        EaseOut
+        ''' <summary>缓入缓出：从慢到快再到慢，有"阻力感"</summary>
+        EaseInOut
+    End Enum
+
     Private ReadOnly _秒表 As New Stopwatch()
     Private ReadOnly _计时器 As New System.Windows.Forms.Timer()
     Private ReadOnly _所有者 As Control
@@ -13,12 +20,23 @@ Friend Class AnimationHelper
     Private _动画中 As Boolean = False
     Private _使用空闲驱动 As Boolean = False
     Private _当前段时长 As Double = 0
+    Private _缓动模式 As EasingModeEnum = EasingModeEnum.EaseOut
 
     ''' <summary>动画时长 (毫秒)，0 = 无动画</summary>
     Public Property Duration As Integer = 300
 
     ''' <summary>动画帧率上限，0 = 不限制 (使用 Application.Idle)</summary>
     Public Property FPS As Integer = 60
+
+    ''' <summary>缓动模式</summary>
+    Public Property EasingMode As EasingModeEnum
+        Get
+            Return _缓动模式
+        End Get
+        Set(value As EasingModeEnum)
+            _缓动模式 = value
+        End Set
+    End Property
 
     ''' <summary>当前动画进度</summary>
     Public ReadOnly Property Progress As Single
@@ -72,7 +90,17 @@ Friend Class AnimationHelper
     Private Sub 更新帧(sender As Object, e As EventArgs)
         Dim elapsed As Double = _秒表.Elapsed.TotalMilliseconds
         Dim t As Single = CSng(Math.Min(elapsed / _当前段时长, 1.0))
-        Dim eased As Single = 1.0F - CSng(Math.Pow(1.0 - t, 3))
+        Dim eased As Single
+        Select Case _缓动模式
+            Case EasingModeEnum.EaseInOut
+                If t < 0.5F Then
+                    eased = 4.0F * t * t * t
+                Else
+                    eased = 1.0F - CSng(Math.Pow(-2.0 * t + 2.0, 3) / 2.0)
+                End If
+            Case Else
+                eased = 1.0F - CSng(Math.Pow(1.0 - t, 3))
+        End Select
         _进度 = _起始进度 + (_目标 - _起始进度) * eased
         If t >= 1.0F Then
             _进度 = _目标

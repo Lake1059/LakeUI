@@ -46,10 +46,11 @@ Public Class ScrollBarRenderer
     End Sub
 
     Public Sub Draw(g As Graphics, containerW As Integer, containerH As Integer,
-                    borderWidth As Integer, borderRadius As Integer,
-                    scrollBarWidth As Integer,
-                    trackColor As Color, thumbColor As Color, thumbHoverColor As Color)
+                     borderWidth As Integer, borderRadius As Integer,
+                     scrollBarWidth As Integer,
+                     trackColor As Color, thumbColor As Color, thumbHoverColor As Color)
         If TrackRect.IsEmpty Then Return
+        If TrackRect.Width < 1 OrElse TrackRect.Height < 1 OrElse scrollBarWidth < 1 Then Return
 
         Dim oldSmooth = g.SmoothingMode
         g.SmoothingMode = SmoothingMode.AntiAlias
@@ -185,10 +186,11 @@ Public Class ScrollBarRenderer
     End Sub
 
     Public Sub DrawHorizontal(g As Graphics, containerW As Integer, containerH As Integer,
-                              borderWidth As Integer, borderRadius As Integer,
-                              scrollBarHeight As Integer,
-                              trackColor As Color, thumbColor As Color, thumbHoverColor As Color)
+                               borderWidth As Integer, borderRadius As Integer,
+                               scrollBarHeight As Integer,
+                               trackColor As Color, thumbColor As Color, thumbHoverColor As Color)
         If TrackRect.IsEmpty Then Return
+        If TrackRect.Width < 1 OrElse TrackRect.Height < 1 OrElse scrollBarHeight < 1 Then Return
 
         Dim oldSmooth = g.SmoothingMode
         g.SmoothingMode = SmoothingMode.AntiAlias

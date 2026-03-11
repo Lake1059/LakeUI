@@ -63,6 +63,87 @@ Public Class ModernComboBox
         End Sub
     End Class
 
+    <TypeConverter(GetType(ExpandableObjectConverter))>
+    Public Class ToolTipEntry
+        Private _itemText As String = ""
+        Private _toolTipText As String = ""
+
+        Public Sub New()
+        End Sub
+
+        Public Sub New(itemText As String, toolTipText As String)
+            _itemText = If(itemText, "")
+            _toolTipText = If(toolTipText, "")
+        End Sub
+
+        <Category("LakeUI"), Description("对应的下拉项文本")>
+        Public Property ItemText As String
+            Get
+                Return _itemText
+            End Get
+            Set(value As String)
+                _itemText = If(value, "")
+            End Set
+        End Property
+
+        <Category("LakeUI"), Description("工具提示内容")>
+        Public Property ToolTipText As String
+            Get
+                Return _toolTipText
+            End Get
+            Set(value As String)
+                _toolTipText = If(value, "")
+            End Set
+        End Property
+
+        Public Overrides Function ToString() As String
+            If String.IsNullOrEmpty(_itemText) Then Return "(空)"
+            Return _itemText
+        End Function
+    End Class
+
+    Public Class ToolTipEntryCollection
+        Inherits ObjectModel.Collection(Of ToolTipEntry)
+
+        Private ReadOnly _dict As New Dictionary(Of String, String)(StringComparer.Ordinal)
+
+        Public Sub New()
+        End Sub
+
+        Public Function TryGetToolTip(itemText As String, ByRef tipText As String) As Boolean
+            Return _dict.TryGetValue(itemText, tipText)
+        End Function
+
+        Private Sub RebuildDictionary()
+            _dict.Clear()
+            For Each entry In Me
+                If Not String.IsNullOrEmpty(entry.ItemText) Then
+                    _dict(entry.ItemText) = entry.ToolTipText
+                End If
+            Next
+        End Sub
+
+        Protected Overrides Sub InsertItem(index As Integer, item As ToolTipEntry)
+            MyBase.InsertItem(index, item)
+            RebuildDictionary()
+        End Sub
+
+        Protected Overrides Sub RemoveItem(index As Integer)
+            MyBase.RemoveItem(index)
+            RebuildDictionary()
+        End Sub
+
+        Protected Overrides Sub ClearItems()
+            MyBase.ClearItems()
+            _dict.Clear()
+        End Sub
+
+        Protected Overrides Sub SetItem(index As Integer, item As ToolTipEntry)
+            MyBase.SetItem(index, item)
+            RebuildDictionary()
+        End Sub
+    End Class
+
 #Region "字段"
     Private _text As String = String.Empty
     Private _caretCol As Integer = 0
@@ -86,6 +167,7 @@ Public Class ModernComboBox
     End Enum
     Private 鼠标状态 As MouseStateEnum = MouseStateEnum.Normal
     Private _mouseOverArrow As Boolean = False
+    Private _itemToolTips As ToolTipEntryCollection
 #End Region
 
 #Region "属性"
@@ -572,6 +654,28 @@ Public Class ModernComboBox
         End Set
     End Property
 
+    Private 下拉高亮左侧偏移 As Integer = 0
+    <Category("LakeUI"), Description("下拉列表高亮区域左侧偏移量（正值外扩，负值内缩）"), DefaultValue(GetType(Integer), "0"), Browsable(True)>
+    Public Property DropDownHighlightInsetLeft As Integer
+        Get
+            Return 下拉高亮左侧偏移
+        End Get
+        Set(value As Integer)
+            SetValue(下拉高亮左侧偏移, value)
+        End Set
+    End Property
+
+    Private 下拉高亮右侧偏移 As Integer = 0
+    <Category("LakeUI"), Description("下拉列表高亮区域右侧偏移量（正值外扩，负值内缩）"), DefaultValue(GetType(Integer), "0"), Browsable(True)>
+    Public Property DropDownHighlightInsetRight As Integer
+        Get
+            Return 下拉高亮右侧偏移
+        End Get
+        Set(value As Integer)
+            SetValue(下拉高亮右侧偏移, value)
+        End Set
+    End Property
+
     Private 下拉间距 As Integer = 0
     <Category("LakeUI"), Description("下拉列表与主体的垂直间距"), DefaultValue(GetType(Integer), "0"), Browsable(True)>
     Public Property DropDownGap As Integer
@@ -669,7 +773,7 @@ Public Class ModernComboBox
     End Property
 
     Private 下拉动画帧率 As Integer = 60
-    <Category("LakeUI"), Description("动画帧率上限，设为0则不限制"), DefaultValue(60), Browsable(True)>
+    <Category("LakeUI"), Description(Class1.动画帧率描述词), DefaultValue(60), Browsable(True)>
     Public Property DropDownAnimationFPS As Integer
         Get
             Return 下拉动画帧率
@@ -678,12 +782,110 @@ Public Class ModernComboBox
             下拉动画帧率 = Math.Max(0, value)
         End Set
     End Property
+
+    <DesignerSerializationVisibility(DesignerSerializationVisibility.Content),
+     Editor("System.ComponentModel.Design.CollectionEditor, System.Design", "System.Drawing.Design.UITypeEditor, System.Drawing"),
+     Category("LakeUI"), Description("下拉项工具提示映射（ItemText → ToolTipText）"), Browsable(True)>
+    Public ReadOnly Property ItemToolTips As ToolTipEntryCollection
+        Get
+            Return _itemToolTips
+        End Get
+    End Property
+
+    Private 提示背景颜色 As Color = Color.FromArgb(50, 50, 50)
+    <Category("LakeUI"), Description("工具提示背景颜色"), DefaultValue(GetType(Color), "50,50,50"), Browsable(True)>
+    Public Property ToolTipBackColor As Color
+        Get
+            Return 提示背景颜色
+        End Get
+        Set(value As Color)
+            SetValue(提示背景颜色, value)
+        End Set
+    End Property
+
+    Private 提示文本颜色 As Color = Color.Silver
+    <Category("LakeUI"), Description("工具提示文本颜色"), DefaultValue(GetType(Color), "Silver"), Browsable(True)>
+    Public Property ToolTipForeColor As Color
+        Get
+            Return 提示文本颜色
+        End Get
+        Set(value As Color)
+            SetValue(提示文本颜色, value)
+        End Set
+    End Property
+
+    Private 提示边框颜色 As Color = Color.Gray
+    <Category("LakeUI"), Description("工具提示边框颜色"), DefaultValue(GetType(Color), "Gray"), Browsable(True)>
+    Public Property ToolTipBorderColor As Color
+        Get
+            Return 提示边框颜色
+        End Get
+        Set(value As Color)
+            SetValue(提示边框颜色, value)
+        End Set
+    End Property
+
+    Private 提示边框宽度 As Integer = 1
+    <Category("LakeUI"), Description("工具提示边框宽度"), DefaultValue(GetType(Integer), "1"), Browsable(True)>
+    Public Property ToolTipBorderSize As Integer
+        Get
+            Return 提示边框宽度
+        End Get
+        Set(value As Integer)
+            SetValue(提示边框宽度, value)
+        End Set
+    End Property
+
+    Private 提示圆角半径 As Integer = 0
+    <Category("LakeUI"), Description("工具提示圆角半径"), DefaultValue(GetType(Integer), "0"), Browsable(True)>
+    Public Property ToolTipBorderRadius As Integer
+        Get
+            Return 提示圆角半径
+        End Get
+        Set(value As Integer)
+            SetValue(提示圆角半径, value)
+        End Set
+    End Property
+
+    Private 提示内边距 As New Padding(10, 10, 10, 10)
+    <Category("LakeUI"), Description("工具提示内边距"), DefaultValue(GetType(Padding), "10, 10, 10, 10"), Browsable(True)>
+    Public Property ToolTipPadding As Padding
+        Get
+            Return 提示内边距
+        End Get
+        Set(value As Padding)
+            提示内边距 = value
+        End Set
+    End Property
+
+    Private 提示最大宽度 As Integer = 300
+    <Category("LakeUI"), Description("工具提示最大宽度"), DefaultValue(GetType(Integer), "300"), Browsable(True)>
+    Public Property ToolTipMaxWidth As Integer
+        Get
+            Return 提示最大宽度
+        End Get
+        Set(value As Integer)
+            提示最大宽度 = Math.Max(50, value)
+        End Set
+    End Property
+
+    Private 提示间距 As Integer = 0
+    <Category("LakeUI"), Description("工具提示与下拉列表的水平间距"), DefaultValue(GetType(Integer), "0"), Browsable(True)>
+    Public Property ToolTipGap As Integer
+        Get
+            Return 提示间距
+        End Get
+        Set(value As Integer)
+            提示间距 = value
+        End Set
+    End Property
 #End Region
 
 #Region "初始化"
     Public Sub New()
         InitializeComponent()
         _items = New ItemCollection(Me)
+        _itemToolTips = New ToolTipEntryCollection()
         SetStyle(ControlStyles.OptimizedDoubleBuffer Or
                  ControlStyles.AllPaintingInWmPaint Or
                  ControlStyles.UserPaint Or
@@ -1532,6 +1734,7 @@ Public Class ModernComboBox
         End Sub
 
         Friend Sub 关闭并释放()
+            关闭工具提示()
             停止悬停动画()
             停止展开关闭驱动()
             If 展开关闭计时器 IsNot Nothing Then 展开关闭计时器.Dispose()
@@ -1672,24 +1875,27 @@ Public Class ModernComboBox
             Dim radius As Integer = _owner.下拉圆角半径
             Dim pad As Padding = _owner.下拉内边距
             Dim inset As Integer = Math.Max(bw, 1)
+            Dim rightCorr As Integer = If(bw >= 2, 1, 0)
             Dim scrollW As Integer = If(_scrollBarVisible, _scrollBar.GetReservedWidth(w, inset), 0)
             Dim itemH As Integer = _owner.下拉项高度
             Dim visCount As Integer = Math.Min(_owner._items.Count, _owner.最大下拉项数)
 
             If radius > 0 Then
                 Using clipPath As GraphicsPath = RectangleRenderer.创建圆角矩形路径(
-                    New RectangleF(inset, inset, w - inset * 2 - scrollW, h - inset * 2),
+                    New RectangleF(inset, inset, w - inset * 2 - rightCorr - scrollW, h - inset * 2),
                     Math.Max(0, radius - inset))
                     g.SetClip(clipPath)
                 End Using
             Else
-                g.SetClip(New Rectangle(inset, inset, w - inset * 2 - scrollW, h - inset * 2))
+                g.SetClip(New Rectangle(inset, inset, w - inset * 2 - rightCorr - scrollW, h - inset * 2))
             End If
 
             ' 绘制悬停高亮
+            Dim hlL As Integer = inset - _owner.下拉高亮左侧偏移
+            Dim hlR As Integer = inset + rightCorr - _owner.下拉高亮右侧偏移
             If 悬停动画显示 Then
                 Dim highlightRect As New RectangleF(
-                    inset, 悬停动画当前Y, w - inset * 2 - scrollW, 悬停动画当前高度)
+                    hlL, 悬停动画当前Y, w - hlL - hlR - scrollW, 悬停动画当前高度)
                 Using br As New SolidBrush(_owner.下拉悬停颜色)
                     g.FillRectangle(br, highlightRect.X, highlightRect.Y, highlightRect.Width, highlightRect.Height)
                 End Using
@@ -1699,7 +1905,7 @@ Public Class ModernComboBox
                 Dim idx As Integer = i + _scrollOffset
                 If idx >= _owner._items.Count Then Exit For
                 Dim itemY As Integer = bw + pad.Top + i * itemH
-                Dim itemRect As New Rectangle(inset, itemY, w - inset * 2 - scrollW, itemH)
+                Dim itemRect As New Rectangle(hlL, itemY, w - hlL - hlR - scrollW, itemH)
 
                 If idx = _owner._selectedIndex Then
                     Using br As New SolidBrush(_owner.下拉选中颜色)
@@ -1827,6 +2033,7 @@ Public Class ModernComboBox
             If idx <> _hoverIndex Then
                 _hoverIndex = idx
                 更新悬停动画()
+                更新工具提示()
                 Invalidate()
             End If
         End Sub
@@ -1862,6 +2069,7 @@ Public Class ModernComboBox
             If _hoverIndex <> -1 Then
                 _hoverIndex = -1
                 更新悬停动画()
+                关闭工具提示()
                 Invalidate()
             End If
             If _scrollBar.ResetHover() Then Invalidate()
@@ -1873,7 +2081,128 @@ Public Class ModernComboBox
             Dim total As Integer = _owner._items.Count
             Dim vis As Integer = Math.Min(total, _owner.最大下拉项数)
             _scrollOffset = ScrollBarRenderer.HandleWheel(e.Delta, _scrollOffset, total, vis)
+            关闭工具提示()
             Invalidate()
+        End Sub
+
+        Private _tipForm As ToolTipForm = Nothing
+
+        Private Sub 更新工具提示()
+            If _hoverIndex >= 0 AndAlso _hoverIndex < _owner._items.Count Then
+                Dim itemText As String = _owner._items(_hoverIndex)
+                Dim tipText As String = Nothing
+                If _owner._itemToolTips.TryGetToolTip(itemText, tipText) AndAlso Not String.IsNullOrEmpty(tipText) Then
+                    If _tipForm Is Nothing OrElse _tipForm.IsDisposed Then
+                        _tipForm = New ToolTipForm(_owner)
+                    End If
+                    Dim itemRect = GetItemRect(_hoverIndex)
+                    Dim screenPt As Point = Me.PointToScreen(New Point(Me.Width + _owner.提示间距, CInt(itemRect.Y)))
+                    _tipForm.ShowTip(tipText, screenPt)
+                    Return
+                End If
+            End If
+            关闭工具提示()
+        End Sub
+
+        Private Sub 关闭工具提示()
+            If _tipForm IsNot Nothing AndAlso Not _tipForm.IsDisposed Then
+                _tipForm.Close()
+                _tipForm.Dispose()
+            End If
+            _tipForm = Nothing
+        End Sub
+    End Class
+
+    Private Class ToolTipForm
+        Inherits PopupForm
+
+        Private ReadOnly _owner As ModernComboBox
+        Private _tipText As String = ""
+
+        Public Sub New(owner As ModernComboBox)
+            _owner = owner
+            Me.DoubleBuffered = True
+            Me.AutoScaleMode = AutoScaleMode.Dpi
+            Me.BackColor = owner.提示背景颜色
+        End Sub
+
+        Public Sub ShowTip(text As String, screenLocation As Point)
+            _tipText = text
+            Dim pad As Padding = _owner.提示内边距
+            Dim bw As Integer = _owner.提示边框宽度
+            Dim maxW As Integer = _owner.提示最大宽度
+            Dim contentW As Integer = maxW - pad.Left - pad.Right - bw * 2
+            If contentW < 10 Then contentW = 10
+
+            Dim measured As Size = TextRenderer.MeasureText(_tipText, _owner.Font,
+                New Size(contentW, Integer.MaxValue),
+                TextFormatFlags.WordBreak Or TextFormatFlags.NoPadding)
+
+            Dim w As Integer = Math.Min(maxW, measured.Width + pad.Left + pad.Right + bw * 2)
+            Dim h As Integer = measured.Height + pad.Top + pad.Bottom + bw * 2
+
+            Me.Size = New Size(w, h)
+
+            Dim scr As Screen = Screen.FromPoint(screenLocation)
+            Dim loc As Point = screenLocation
+            If loc.X + w > scr.WorkingArea.Right Then
+                loc.X = screenLocation.X - Me.Width - _owner.Width - _owner.提示间距 * 2
+                If loc.X < scr.WorkingArea.Left Then loc.X = scr.WorkingArea.Left
+            End If
+            If loc.Y + h > scr.WorkingArea.Bottom Then
+                loc.Y = scr.WorkingArea.Bottom - h
+            End If
+            Me.Location = loc
+
+            If Not Visible Then Me.Show()
+            Invalidate()
+        End Sub
+
+        Protected Overrides Sub OnPaint(e As PaintEventArgs)
+            Dim w As Integer = ClientRectangle.Width
+            Dim h As Integer = ClientRectangle.Height
+            Dim bw As Integer = _owner.提示边框宽度
+            Dim radius As Integer = _owner.提示圆角半径
+            Dim pad As Padding = _owner.提示内边距
+            ' 先用背景色填满整个客户区，防止底层 Form 默认色透出
+            Using bgBr As New SolidBrush(_owner.提示背景颜色)
+                e.Graphics.FillRectangle(bgBr, 0, 0, w, h)
+            End Using
+
+            Dim boundsRect As New RectangleF(0, 0, w - 1, h - 1)
+            If bw > 0 Then
+                Dim half As Single = bw / 2.0F
+                boundsRect.Inflate(-half, -half)
+            End If
+
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias
+            e.Graphics.PixelOffsetMode = PixelOffsetMode.HighQuality
+            If radius > 0 Then
+                Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(boundsRect, radius)
+                    Using br As New SolidBrush(_owner.提示背景颜色)
+                        e.Graphics.FillPath(br, path)
+                    End Using
+                    If bw > 0 Then
+                        Using pen As New Pen(_owner.提示边框颜色, bw)
+                            pen.LineJoin = LineJoin.Round
+                            e.Graphics.DrawPath(pen, path)
+                        End Using
+                    End If
+                End Using
+            Else
+                If bw > 0 Then
+                    Using pen As New Pen(_owner.提示边框颜色, bw)
+                        e.Graphics.DrawRectangle(pen, boundsRect.X, boundsRect.Y, boundsRect.Width, boundsRect.Height)
+                    End Using
+                End If
+            End If
+
+            e.Graphics.TextRenderingHint = Drawing.Text.TextRenderingHint.ClearTypeGridFit
+            Dim textRect As New Rectangle(bw + pad.Left, bw + pad.Top,
+                w - bw * 2 - pad.Left - pad.Right,
+                h - bw * 2 - pad.Top - pad.Bottom)
+            TextRenderer.DrawText(e.Graphics, _tipText, _owner.Font, textRect, _owner.提示文本颜色,
+                TextFormatFlags.WordBreak Or TextFormatFlags.NoPadding Or TextFormatFlags.Left Or TextFormatFlags.Top)
         End Sub
     End Class
 #End Region
@@ -2063,7 +2392,5 @@ Public Class ModernComboBox
         End Set
     End Property
 #End Region
-
-
 
 End Class

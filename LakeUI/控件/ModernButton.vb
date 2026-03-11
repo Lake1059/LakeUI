@@ -2,7 +2,7 @@
 Imports System.Drawing.Drawing2D
 
 <DefaultEvent("Click")>
-Public Class ExcellentButton
+Public Class ModernButton
 #Region "绘制"
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
         Dim 是否有圆角 As Boolean = 边框圆角半径 > 0
@@ -106,6 +106,7 @@ Public Class ExcellentButton
         动画助手.AnimateTo(1)
     End Sub
     Private Shared Function 颜色插值(c1 As Color, c2 As Color, t As Single) As Color
+        If c1.IsEmpty AndAlso c2.IsEmpty Then Return Color.Empty
         Return Color.FromArgb(
             字节插值(c1.A, c2.A, t),
             字节插值(c1.R, c2.R, t),
@@ -124,10 +125,11 @@ Public Class ExcellentButton
         g.DrawImage(图标, New RectangleF(iconX, iconY, iconSize, iconSize))
     End Sub
     Private Sub 绘制文本(g As Graphics, 内容矩形区域 As RectangleF, 图标宽度 As Single)
+        Dim 图标占用总宽度 As Single = If(图标宽度 > 0, 图标宽度 + 图标边距, 0)
         Dim 文本绘制区域 As Rectangle = Rectangle.Round(New RectangleF(
-            内容矩形区域.X + 图标宽度 + 图标边距 + 边框圆角半径,
+            内容矩形区域.X + 图标占用总宽度 + 边框圆角半径,
             内容矩形区域.Y,
-            内容矩形区域.Width - 图标宽度 - 图标边距 - 边框圆角半径 * 2,
+            内容矩形区域.Width - 图标占用总宽度 - 边框圆角半径 * 2,
             内容矩形区域.Height))
         Dim 文本格式1 As TextFormatFlags
         Select Case 文字对齐方位
@@ -230,7 +232,7 @@ Public Class ExcellentButton
         End Set
     End Property
 
-    <Category("LakeUI"), Description("动画帧率上限，设为0则不限制"), DefaultValue(60), Browsable(True)>
+    <Category("LakeUI"), Description(Class1.动画帧率描述词), DefaultValue(60), Browsable(True)>
     Public Property AnimationFPS As Integer
         Get
             Return 动画助手.FPS
@@ -552,4 +554,5 @@ Public Class ExcellentButton
         End Set
     End Property
 #End Region
+
 End Class
