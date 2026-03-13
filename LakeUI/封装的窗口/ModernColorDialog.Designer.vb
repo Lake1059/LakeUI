@@ -122,7 +122,7 @@ Partial Class ModernColorDialog
         Panel1.Dock = DockStyle.Fill
         Panel1.Location = New Point(0, 0)
         Panel1.Name = "Panel1"
-        Panel1.Size = New Size(982, 452)
+        Panel1.Size = New Size(884, 386)
         Panel1.TabIndex = 0
         ' 
         ' Panel6
@@ -132,10 +132,10 @@ Partial Class ModernColorDialog
         Panel6.Controls.Add(ModernTextBox1)
         Panel6.Controls.Add(Label2)
         Panel6.Dock = DockStyle.Fill
-        Panel6.Location = New Point(382, 0)
+        Panel6.Location = New Point(335, 0)
         Panel6.Name = "Panel6"
         Panel6.Padding = New Padding(20, 20, 0, 0)
-        Panel6.Size = New Size(300, 452)
+        Panel6.Size = New Size(279, 386)
         Panel6.TabIndex = 3
         ' 
         ' ModernListBox1
@@ -143,22 +143,23 @@ Partial Class ModernColorDialog
         ModernListBox1.BorderRadius = 10
         ModernListBox1.BorderSize = 2
         ModernListBox1.Dock = DockStyle.Fill
+        ModernListBox1.ItemHeight = 26
         ModernListBox1.ItemHoverColor = Color.Empty
-        ModernListBox1.Location = New Point(20, 107)
+        ModernListBox1.Location = New Point(20, 100)
+        ModernListBox1.Margin = New Padding(2, 2, 2, 2)
         ModernListBox1.MultiSelect = False
         ModernListBox1.Name = "ModernListBox1"
         ModernListBox1.Padding = New Padding(10)
         ModernListBox1.ScrollBarHoverColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
-        ModernListBox1.ScrollBarWidth = 12
-        ModernListBox1.Size = New Size(280, 345)
+        ModernListBox1.Size = New Size(259, 286)
         ModernListBox1.TabIndex = 6
         ' 
         ' Label5
         ' 
         Label5.Dock = DockStyle.Top
-        Label5.Location = New Point(20, 97)
+        Label5.Location = New Point(20, 90)
         Label5.Name = "Label5"
-        Label5.Size = New Size(280, 10)
+        Label5.Size = New Size(259, 10)
         Label5.TabIndex = 5
         ' 
         ' ModernTextBox1
@@ -167,12 +168,13 @@ Partial Class ModernColorDialog
         ModernTextBox1.BorderSize = 2
         ModernTextBox1.CaretColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
         ModernTextBox1.Dock = DockStyle.Top
-        ModernTextBox1.Location = New Point(20, 53)
+        ModernTextBox1.Location = New Point(20, 50)
+        ModernTextBox1.Margin = New Padding(2, 2, 2, 2)
         ModernTextBox1.MaxUndoCount = 0
         ModernTextBox1.Name = "ModernTextBox1"
         ModernTextBox1.Padding = New Padding(13, 0, 13, 0)
         ModernTextBox1.ScrollBarHoverColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
-        ModernTextBox1.Size = New Size(280, 44)
+        ModernTextBox1.Size = New Size(259, 40)
         ModernTextBox1.TabIndex = 4
         ModernTextBox1.WaterText = "搜索 HTML 基本颜色"
         ' 
@@ -183,7 +185,7 @@ Partial Class ModernColorDialog
         Label2.Location = New Point(20, 20)
         Label2.Name = "Label2"
         Label2.Padding = New Padding(0, 0, 0, 10)
-        Label2.Size = New Size(98, 33)
+        Label2.Size = New Size(81, 30)
         Label2.TabIndex = 0
         Label2.Text = "HTML 颜色"
         ' 
@@ -195,7 +197,7 @@ Partial Class ModernColorDialog
         Panel4.Location = New Point(0, 0)
         Panel4.Name = "Panel4"
         Panel4.Padding = New Padding(20, 20, 0, 0)
-        Panel4.Size = New Size(382, 452)
+        Panel4.Size = New Size(335, 386)
         Panel4.TabIndex = 2
         ' 
         ' ModernPanel1
@@ -204,11 +206,12 @@ Partial Class ModernColorDialog
         ModernPanel1.BorderSize = 2
         ModernPanel1.Controls.Add(PictureBox1)
         ModernPanel1.Dock = DockStyle.Fill
-        ModernPanel1.Location = New Point(20, 53)
+        ModernPanel1.Location = New Point(20, 50)
+        ModernPanel1.Margin = New Padding(2)
         ModernPanel1.Name = "ModernPanel1"
         ModernPanel1.Padding = New Padding(5)
-        ModernPanel1.ScrollBarMode = ScrollMode.None
-        ModernPanel1.Size = New Size(362, 399)
+        ModernPanel1.ScrollBarMode = ModernPanel.ScrollMode.None
+        ModernPanel1.Size = New Size(315, 336)
         ModernPanel1.TabIndex = 1
         ' 
         ' PictureBox1
@@ -217,7 +220,7 @@ Partial Class ModernColorDialog
         PictureBox1.Dock = DockStyle.Fill
         PictureBox1.Location = New Point(10, 10)
         PictureBox1.Name = "PictureBox1"
-        PictureBox1.Size = New Size(341, 378)
+        PictureBox1.Size = New Size(294, 315)
         PictureBox1.TabIndex = 0
         PictureBox1.TabStop = False
         ' 
@@ -228,7 +231,7 @@ Partial Class ModernColorDialog
         Label1.Location = New Point(20, 20)
         Label1.Name = "Label1"
         Label1.Padding = New Padding(0, 0, 0, 10)
-        Label1.Size = New Size(61, 33)
+        Label1.Size = New Size(51, 30)
         Label1.TabIndex = 0
         Label1.Text = "色域图"
         ' 
@@ -251,10 +254,10 @@ Partial Class ModernColorDialog
         Panel7.Controls.Add(Panel5)
         Panel7.Controls.Add(Label3)
         Panel7.Dock = DockStyle.Right
-        Panel7.Location = New Point(682, 0)
+        Panel7.Location = New Point(614, 0)
         Panel7.Name = "Panel7"
         Panel7.Padding = New Padding(20, 20, 20, 0)
-        Panel7.Size = New Size(300, 452)
+        Panel7.Size = New Size(270, 386)
         Panel7.TabIndex = 4
         ' 
         ' Panel8
@@ -262,9 +265,9 @@ Partial Class ModernColorDialog
         Panel8.Controls.Add(ModernTextBox9)
         Panel8.Controls.Add(Label20)
         Panel8.Dock = DockStyle.Top
-        Panel8.Location = New Point(20, 375)
+        Panel8.Location = New Point(20, 344)
         Panel8.Name = "Panel8"
-        Panel8.Size = New Size(260, 36)
+        Panel8.Size = New Size(230, 32)
         Panel8.TabIndex = 19
         ' 
         ' ModernTextBox9
@@ -274,10 +277,11 @@ Partial Class ModernColorDialog
         ModernTextBox9.CaretColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
         ModernTextBox9.Dock = DockStyle.Fill
         ModernTextBox9.Location = New Point(100, 0)
+        ModernTextBox9.Margin = New Padding(2, 2, 2, 2)
         ModernTextBox9.Name = "ModernTextBox9"
         ModernTextBox9.Padding = New Padding(10, 0, 10, 0)
         ModernTextBox9.ScrollBarHoverColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
-        ModernTextBox9.Size = New Size(160, 36)
+        ModernTextBox9.Size = New Size(130, 32)
         ModernTextBox9.TabIndex = 5
         ' 
         ' Label20
@@ -285,7 +289,7 @@ Partial Class ModernColorDialog
         Label20.Dock = DockStyle.Left
         Label20.Location = New Point(0, 0)
         Label20.Name = "Label20"
-        Label20.Size = New Size(100, 36)
+        Label20.Size = New Size(100, 32)
         Label20.TabIndex = 6
         Label20.Text = "HEX"
         Label20.TextAlign = ContentAlignment.MiddleLeft
@@ -293,9 +297,9 @@ Partial Class ModernColorDialog
         ' Label4
         ' 
         Label4.Dock = DockStyle.Top
-        Label4.Location = New Point(20, 365)
+        Label4.Location = New Point(20, 334)
         Label4.Name = "Label4"
-        Label4.Size = New Size(260, 10)
+        Label4.Size = New Size(230, 10)
         Label4.TabIndex = 18
         ' 
         ' Panel14
@@ -303,9 +307,9 @@ Partial Class ModernColorDialog
         Panel14.Controls.Add(ModernTextBox8)
         Panel14.Controls.Add(Label21)
         Panel14.Dock = DockStyle.Top
-        Panel14.Location = New Point(20, 329)
+        Panel14.Location = New Point(20, 302)
         Panel14.Name = "Panel14"
-        Panel14.Size = New Size(260, 36)
+        Panel14.Size = New Size(230, 32)
         Panel14.TabIndex = 17
         ' 
         ' ModernTextBox8
@@ -315,10 +319,11 @@ Partial Class ModernColorDialog
         ModernTextBox8.CaretColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
         ModernTextBox8.Dock = DockStyle.Fill
         ModernTextBox8.Location = New Point(100, 0)
+        ModernTextBox8.Margin = New Padding(2, 2, 2, 2)
         ModernTextBox8.Name = "ModernTextBox8"
         ModernTextBox8.Padding = New Padding(10, 0, 10, 0)
         ModernTextBox8.ScrollBarHoverColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
-        ModernTextBox8.Size = New Size(160, 36)
+        ModernTextBox8.Size = New Size(130, 32)
         ModernTextBox8.TabIndex = 5
         ' 
         ' Label21
@@ -326,7 +331,7 @@ Partial Class ModernColorDialog
         Label21.Dock = DockStyle.Left
         Label21.Location = New Point(0, 0)
         Label21.Name = "Label21"
-        Label21.Size = New Size(100, 36)
+        Label21.Size = New Size(100, 32)
         Label21.TabIndex = 6
         Label21.Text = "透明 A"
         Label21.TextAlign = ContentAlignment.MiddleLeft
@@ -334,9 +339,9 @@ Partial Class ModernColorDialog
         ' Label18
         ' 
         Label18.Dock = DockStyle.Top
-        Label18.Location = New Point(20, 319)
+        Label18.Location = New Point(20, 292)
         Label18.Name = "Label18"
-        Label18.Size = New Size(260, 10)
+        Label18.Size = New Size(230, 10)
         Label18.TabIndex = 16
         ' 
         ' Panel13
@@ -344,9 +349,9 @@ Partial Class ModernColorDialog
         Panel13.Controls.Add(ModernTextBox7)
         Panel13.Controls.Add(Label19)
         Panel13.Dock = DockStyle.Top
-        Panel13.Location = New Point(20, 283)
+        Panel13.Location = New Point(20, 260)
         Panel13.Name = "Panel13"
-        Panel13.Size = New Size(260, 36)
+        Panel13.Size = New Size(230, 32)
         Panel13.TabIndex = 15
         ' 
         ' ModernTextBox7
@@ -356,10 +361,11 @@ Partial Class ModernColorDialog
         ModernTextBox7.CaretColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
         ModernTextBox7.Dock = DockStyle.Fill
         ModernTextBox7.Location = New Point(100, 0)
+        ModernTextBox7.Margin = New Padding(2, 2, 2, 2)
         ModernTextBox7.Name = "ModernTextBox7"
         ModernTextBox7.Padding = New Padding(10, 0, 10, 0)
         ModernTextBox7.ScrollBarHoverColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
-        ModernTextBox7.Size = New Size(160, 36)
+        ModernTextBox7.Size = New Size(130, 32)
         ModernTextBox7.TabIndex = 5
         ' 
         ' Label19
@@ -367,7 +373,7 @@ Partial Class ModernColorDialog
         Label19.Dock = DockStyle.Left
         Label19.Location = New Point(0, 0)
         Label19.Name = "Label19"
-        Label19.Size = New Size(100, 36)
+        Label19.Size = New Size(100, 32)
         Label19.TabIndex = 6
         Label19.Text = "亮度 L"
         Label19.TextAlign = ContentAlignment.MiddleLeft
@@ -375,9 +381,9 @@ Partial Class ModernColorDialog
         ' Label16
         ' 
         Label16.Dock = DockStyle.Top
-        Label16.Location = New Point(20, 273)
+        Label16.Location = New Point(20, 250)
         Label16.Name = "Label16"
-        Label16.Size = New Size(260, 10)
+        Label16.Size = New Size(230, 10)
         Label16.TabIndex = 14
         ' 
         ' Panel12
@@ -385,9 +391,9 @@ Partial Class ModernColorDialog
         Panel12.Controls.Add(ModernTextBox6)
         Panel12.Controls.Add(Label17)
         Panel12.Dock = DockStyle.Top
-        Panel12.Location = New Point(20, 237)
+        Panel12.Location = New Point(20, 218)
         Panel12.Name = "Panel12"
-        Panel12.Size = New Size(260, 36)
+        Panel12.Size = New Size(230, 32)
         Panel12.TabIndex = 13
         ' 
         ' ModernTextBox6
@@ -397,10 +403,11 @@ Partial Class ModernColorDialog
         ModernTextBox6.CaretColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
         ModernTextBox6.Dock = DockStyle.Fill
         ModernTextBox6.Location = New Point(100, 0)
+        ModernTextBox6.Margin = New Padding(2, 2, 2, 2)
         ModernTextBox6.Name = "ModernTextBox6"
         ModernTextBox6.Padding = New Padding(10, 0, 10, 0)
         ModernTextBox6.ScrollBarHoverColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
-        ModernTextBox6.Size = New Size(160, 36)
+        ModernTextBox6.Size = New Size(130, 32)
         ModernTextBox6.TabIndex = 5
         ' 
         ' Label17
@@ -408,7 +415,7 @@ Partial Class ModernColorDialog
         Label17.Dock = DockStyle.Left
         Label17.Location = New Point(0, 0)
         Label17.Name = "Label17"
-        Label17.Size = New Size(100, 36)
+        Label17.Size = New Size(100, 32)
         Label17.TabIndex = 6
         Label17.Text = "饱和 S"
         Label17.TextAlign = ContentAlignment.MiddleLeft
@@ -416,9 +423,9 @@ Partial Class ModernColorDialog
         ' Label14
         ' 
         Label14.Dock = DockStyle.Top
-        Label14.Location = New Point(20, 227)
+        Label14.Location = New Point(20, 208)
         Label14.Name = "Label14"
-        Label14.Size = New Size(260, 10)
+        Label14.Size = New Size(230, 10)
         Label14.TabIndex = 12
         ' 
         ' Panel11
@@ -426,9 +433,9 @@ Partial Class ModernColorDialog
         Panel11.Controls.Add(ModernTextBox5)
         Panel11.Controls.Add(Label15)
         Panel11.Dock = DockStyle.Top
-        Panel11.Location = New Point(20, 191)
+        Panel11.Location = New Point(20, 176)
         Panel11.Name = "Panel11"
-        Panel11.Size = New Size(260, 36)
+        Panel11.Size = New Size(230, 32)
         Panel11.TabIndex = 11
         ' 
         ' ModernTextBox5
@@ -438,10 +445,11 @@ Partial Class ModernColorDialog
         ModernTextBox5.CaretColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
         ModernTextBox5.Dock = DockStyle.Fill
         ModernTextBox5.Location = New Point(100, 0)
+        ModernTextBox5.Margin = New Padding(2, 2, 2, 2)
         ModernTextBox5.Name = "ModernTextBox5"
         ModernTextBox5.Padding = New Padding(10, 0, 10, 0)
         ModernTextBox5.ScrollBarHoverColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
-        ModernTextBox5.Size = New Size(160, 36)
+        ModernTextBox5.Size = New Size(130, 32)
         ModernTextBox5.TabIndex = 5
         ' 
         ' Label15
@@ -449,7 +457,7 @@ Partial Class ModernColorDialog
         Label15.Dock = DockStyle.Left
         Label15.Location = New Point(0, 0)
         Label15.Name = "Label15"
-        Label15.Size = New Size(100, 36)
+        Label15.Size = New Size(100, 32)
         Label15.TabIndex = 6
         Label15.Text = "色调 E"
         Label15.TextAlign = ContentAlignment.MiddleLeft
@@ -457,9 +465,9 @@ Partial Class ModernColorDialog
         ' Label12
         ' 
         Label12.Dock = DockStyle.Top
-        Label12.Location = New Point(20, 181)
+        Label12.Location = New Point(20, 166)
         Label12.Name = "Label12"
-        Label12.Size = New Size(260, 10)
+        Label12.Size = New Size(230, 10)
         Label12.TabIndex = 10
         ' 
         ' Panel10
@@ -467,9 +475,9 @@ Partial Class ModernColorDialog
         Panel10.Controls.Add(ModernTextBox4)
         Panel10.Controls.Add(Label13)
         Panel10.Dock = DockStyle.Top
-        Panel10.Location = New Point(20, 145)
+        Panel10.Location = New Point(20, 134)
         Panel10.Name = "Panel10"
-        Panel10.Size = New Size(260, 36)
+        Panel10.Size = New Size(230, 32)
         Panel10.TabIndex = 9
         ' 
         ' ModernTextBox4
@@ -479,10 +487,11 @@ Partial Class ModernColorDialog
         ModernTextBox4.CaretColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
         ModernTextBox4.Dock = DockStyle.Fill
         ModernTextBox4.Location = New Point(100, 0)
+        ModernTextBox4.Margin = New Padding(2, 2, 2, 2)
         ModernTextBox4.Name = "ModernTextBox4"
         ModernTextBox4.Padding = New Padding(10, 0, 10, 0)
         ModernTextBox4.ScrollBarHoverColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
-        ModernTextBox4.Size = New Size(160, 36)
+        ModernTextBox4.Size = New Size(130, 32)
         ModernTextBox4.TabIndex = 5
         ' 
         ' Label13
@@ -490,7 +499,7 @@ Partial Class ModernColorDialog
         Label13.Dock = DockStyle.Left
         Label13.Location = New Point(0, 0)
         Label13.Name = "Label13"
-        Label13.Size = New Size(100, 36)
+        Label13.Size = New Size(100, 32)
         Label13.TabIndex = 6
         Label13.Text = "蓝 B"
         Label13.TextAlign = ContentAlignment.MiddleLeft
@@ -498,9 +507,9 @@ Partial Class ModernColorDialog
         ' Label8
         ' 
         Label8.Dock = DockStyle.Top
-        Label8.Location = New Point(20, 135)
+        Label8.Location = New Point(20, 124)
         Label8.Name = "Label8"
-        Label8.Size = New Size(260, 10)
+        Label8.Size = New Size(230, 10)
         Label8.TabIndex = 8
         ' 
         ' Panel9
@@ -508,9 +517,9 @@ Partial Class ModernColorDialog
         Panel9.Controls.Add(ModernTextBox3)
         Panel9.Controls.Add(Label10)
         Panel9.Dock = DockStyle.Top
-        Panel9.Location = New Point(20, 99)
+        Panel9.Location = New Point(20, 92)
         Panel9.Name = "Panel9"
-        Panel9.Size = New Size(260, 36)
+        Panel9.Size = New Size(230, 32)
         Panel9.TabIndex = 7
         ' 
         ' ModernTextBox3
@@ -520,10 +529,11 @@ Partial Class ModernColorDialog
         ModernTextBox3.CaretColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
         ModernTextBox3.Dock = DockStyle.Fill
         ModernTextBox3.Location = New Point(100, 0)
+        ModernTextBox3.Margin = New Padding(2, 2, 2, 2)
         ModernTextBox3.Name = "ModernTextBox3"
         ModernTextBox3.Padding = New Padding(10, 0, 10, 0)
         ModernTextBox3.ScrollBarHoverColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
-        ModernTextBox3.Size = New Size(160, 36)
+        ModernTextBox3.Size = New Size(130, 32)
         ModernTextBox3.TabIndex = 5
         ' 
         ' Label10
@@ -531,7 +541,7 @@ Partial Class ModernColorDialog
         Label10.Dock = DockStyle.Left
         Label10.Location = New Point(0, 0)
         Label10.Name = "Label10"
-        Label10.Size = New Size(100, 36)
+        Label10.Size = New Size(100, 32)
         Label10.TabIndex = 6
         Label10.Text = "绿 G"
         Label10.TextAlign = ContentAlignment.MiddleLeft
@@ -539,9 +549,9 @@ Partial Class ModernColorDialog
         ' Label7
         ' 
         Label7.Dock = DockStyle.Top
-        Label7.Location = New Point(20, 89)
+        Label7.Location = New Point(20, 82)
         Label7.Name = "Label7"
-        Label7.Size = New Size(260, 10)
+        Label7.Size = New Size(230, 10)
         Label7.TabIndex = 6
         ' 
         ' Panel5
@@ -549,9 +559,9 @@ Partial Class ModernColorDialog
         Panel5.Controls.Add(ModernTextBox2)
         Panel5.Controls.Add(Label9)
         Panel5.Dock = DockStyle.Top
-        Panel5.Location = New Point(20, 53)
+        Panel5.Location = New Point(20, 50)
         Panel5.Name = "Panel5"
-        Panel5.Size = New Size(260, 36)
+        Panel5.Size = New Size(230, 32)
         Panel5.TabIndex = 2
         ' 
         ' ModernTextBox2
@@ -561,10 +571,11 @@ Partial Class ModernColorDialog
         ModernTextBox2.CaretColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
         ModernTextBox2.Dock = DockStyle.Fill
         ModernTextBox2.Location = New Point(100, 0)
+        ModernTextBox2.Margin = New Padding(2, 2, 2, 2)
         ModernTextBox2.Name = "ModernTextBox2"
         ModernTextBox2.Padding = New Padding(10, 0, 10, 0)
         ModernTextBox2.ScrollBarHoverColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
-        ModernTextBox2.Size = New Size(160, 36)
+        ModernTextBox2.Size = New Size(130, 32)
         ModernTextBox2.TabIndex = 5
         ' 
         ' Label9
@@ -572,7 +583,7 @@ Partial Class ModernColorDialog
         Label9.Dock = DockStyle.Left
         Label9.Location = New Point(0, 0)
         Label9.Name = "Label9"
-        Label9.Size = New Size(100, 36)
+        Label9.Size = New Size(100, 32)
         Label9.TabIndex = 6
         Label9.Text = "红 R"
         Label9.TextAlign = ContentAlignment.MiddleLeft
@@ -584,7 +595,7 @@ Partial Class ModernColorDialog
         Label3.Location = New Point(20, 20)
         Label3.Name = "Label3"
         Label3.Padding = New Padding(0, 0, 0, 10)
-        Label3.Size = New Size(44, 33)
+        Label3.Size = New Size(37, 30)
         Label3.TabIndex = 0
         Label3.Text = "数值"
         ' 
@@ -595,10 +606,10 @@ Partial Class ModernColorDialog
         Panel2.Controls.Add(Label11)
         Panel2.Controls.Add(ModernButton1)
         Panel2.Dock = DockStyle.Bottom
-        Panel2.Location = New Point(0, 551)
+        Panel2.Location = New Point(0, 481)
         Panel2.Name = "Panel2"
         Panel2.Padding = New Padding(20)
-        Panel2.Size = New Size(982, 82)
+        Panel2.Size = New Size(884, 80)
         Panel2.TabIndex = 4
         ' 
         ' ModernButton13
@@ -609,9 +620,10 @@ Partial Class ModernColorDialog
         ModernButton13.Dock = DockStyle.Left
         ModernButton13.HoverBorderColor = Color.CornflowerBlue
         ModernButton13.Location = New Point(20, 20)
+        ModernButton13.Margin = New Padding(2)
         ModernButton13.Name = "ModernButton13"
         ModernButton13.PressedBorderColor = Color.MediumSlateBlue
-        ModernButton13.Size = New Size(120, 42)
+        ModernButton13.Size = New Size(120, 40)
         ModernButton13.TabIndex = 6
         ModernButton13.Text = "取色器"
         ' 
@@ -622,19 +634,20 @@ Partial Class ModernColorDialog
         ModernButton2.BorderSize = 2
         ModernButton2.Dock = DockStyle.Right
         ModernButton2.HoverBorderColor = Color.CornflowerBlue
-        ModernButton2.Location = New Point(712, 20)
+        ModernButton2.Location = New Point(614, 20)
+        ModernButton2.Margin = New Padding(2)
         ModernButton2.Name = "ModernButton2"
         ModernButton2.PressedBorderColor = Color.MediumSlateBlue
-        ModernButton2.Size = New Size(120, 42)
+        ModernButton2.Size = New Size(120, 40)
         ModernButton2.TabIndex = 5
         ModernButton2.Text = "确定"
         ' 
         ' Label11
         ' 
         Label11.Dock = DockStyle.Right
-        Label11.Location = New Point(832, 20)
+        Label11.Location = New Point(734, 20)
         Label11.Name = "Label11"
-        Label11.Size = New Size(10, 42)
+        Label11.Size = New Size(10, 40)
         Label11.TabIndex = 4
         ' 
         ' ModernButton1
@@ -644,10 +657,11 @@ Partial Class ModernColorDialog
         ModernButton1.BorderSize = 2
         ModernButton1.Dock = DockStyle.Right
         ModernButton1.HoverBorderColor = Color.CornflowerBlue
-        ModernButton1.Location = New Point(842, 20)
+        ModernButton1.Location = New Point(744, 20)
+        ModernButton1.Margin = New Padding(2)
         ModernButton1.Name = "ModernButton1"
         ModernButton1.PressedBorderColor = Color.MediumSlateBlue
-        ModernButton1.Size = New Size(120, 42)
+        ModernButton1.Size = New Size(120, 40)
         ModernButton1.TabIndex = 0
         ModernButton1.Text = "取消"
         ' 
@@ -656,10 +670,10 @@ Partial Class ModernColorDialog
         Panel3.Controls.Add(Panel15)
         Panel3.Controls.Add(ModernPanel2)
         Panel3.Dock = DockStyle.Bottom
-        Panel3.Location = New Point(0, 452)
+        Panel3.Location = New Point(0, 386)
         Panel3.Name = "Panel3"
         Panel3.Padding = New Padding(20, 20, 20, 0)
-        Panel3.Size = New Size(982, 99)
+        Panel3.Size = New Size(884, 95)
         Panel3.TabIndex = 5
         ' 
         ' Panel15
@@ -667,10 +681,10 @@ Partial Class ModernColorDialog
         Panel15.Controls.Add(Panel16)
         Panel15.Controls.Add(HtmlColorLabel1)
         Panel15.Dock = DockStyle.Fill
-        Panel15.Location = New Point(105, 20)
+        Panel15.Location = New Point(95, 20)
         Panel15.Name = "Panel15"
         Panel15.Padding = New Padding(20, 0, 0, 0)
-        Panel15.Size = New Size(857, 79)
+        Panel15.Size = New Size(769, 75)
         Panel15.TabIndex = 3
         ' 
         ' Panel16
@@ -695,9 +709,9 @@ Partial Class ModernColorDialog
         Panel16.Controls.Add(Label6)
         Panel16.Controls.Add(ModernButton3)
         Panel16.Dock = DockStyle.Fill
-        Panel16.Location = New Point(20, 34)
+        Panel16.Location = New Point(20, 31)
         Panel16.Name = "Panel16"
-        Panel16.Size = New Size(837, 45)
+        Panel16.Size = New Size(749, 44)
         Panel16.TabIndex = 3
         ' 
         ' ModernButton12
@@ -707,18 +721,19 @@ Partial Class ModernColorDialog
         ModernButton12.BorderSize = 0
         ModernButton12.Dock = DockStyle.Left
         ModernButton12.ForeColor = Color.Gray
-        ModernButton12.Location = New Point(522, 0)
+        ModernButton12.Location = New Point(495, 0)
+        ModernButton12.Margin = New Padding(2)
         ModernButton12.Name = "ModernButton12"
-        ModernButton12.Size = New Size(48, 45)
+        ModernButton12.Size = New Size(45, 44)
         ModernButton12.TabIndex = 22
         ModernButton12.Text = "10"
         ' 
         ' Label29
         ' 
         Label29.Dock = DockStyle.Left
-        Label29.Location = New Point(512, 0)
+        Label29.Location = New Point(485, 0)
         Label29.Name = "Label29"
-        Label29.Size = New Size(10, 45)
+        Label29.Size = New Size(10, 44)
         Label29.TabIndex = 21
         ' 
         ' ModernButton11
@@ -728,18 +743,19 @@ Partial Class ModernColorDialog
         ModernButton11.BorderSize = 0
         ModernButton11.Dock = DockStyle.Left
         ModernButton11.ForeColor = Color.Gray
-        ModernButton11.Location = New Point(464, 0)
+        ModernButton11.Location = New Point(440, 0)
+        ModernButton11.Margin = New Padding(2)
         ModernButton11.Name = "ModernButton11"
-        ModernButton11.Size = New Size(48, 45)
+        ModernButton11.Size = New Size(45, 44)
         ModernButton11.TabIndex = 20
         ModernButton11.Text = "9"
         ' 
         ' Label28
         ' 
         Label28.Dock = DockStyle.Left
-        Label28.Location = New Point(454, 0)
+        Label28.Location = New Point(430, 0)
         Label28.Name = "Label28"
-        Label28.Size = New Size(10, 45)
+        Label28.Size = New Size(10, 44)
         Label28.TabIndex = 19
         ' 
         ' ModernButton10
@@ -749,18 +765,19 @@ Partial Class ModernColorDialog
         ModernButton10.BorderSize = 0
         ModernButton10.Dock = DockStyle.Left
         ModernButton10.ForeColor = Color.Gray
-        ModernButton10.Location = New Point(406, 0)
+        ModernButton10.Location = New Point(385, 0)
+        ModernButton10.Margin = New Padding(2)
         ModernButton10.Name = "ModernButton10"
-        ModernButton10.Size = New Size(48, 45)
+        ModernButton10.Size = New Size(45, 44)
         ModernButton10.TabIndex = 18
         ModernButton10.Text = "8"
         ' 
         ' Label27
         ' 
         Label27.Dock = DockStyle.Left
-        Label27.Location = New Point(396, 0)
+        Label27.Location = New Point(375, 0)
         Label27.Name = "Label27"
-        Label27.Size = New Size(10, 45)
+        Label27.Size = New Size(10, 44)
         Label27.TabIndex = 17
         ' 
         ' ModernButton9
@@ -770,18 +787,19 @@ Partial Class ModernColorDialog
         ModernButton9.BorderSize = 0
         ModernButton9.Dock = DockStyle.Left
         ModernButton9.ForeColor = Color.Gray
-        ModernButton9.Location = New Point(348, 0)
+        ModernButton9.Location = New Point(330, 0)
+        ModernButton9.Margin = New Padding(2)
         ModernButton9.Name = "ModernButton9"
-        ModernButton9.Size = New Size(48, 45)
+        ModernButton9.Size = New Size(45, 44)
         ModernButton9.TabIndex = 16
         ModernButton9.Text = "7"
         ' 
         ' Label26
         ' 
         Label26.Dock = DockStyle.Left
-        Label26.Location = New Point(338, 0)
+        Label26.Location = New Point(320, 0)
         Label26.Name = "Label26"
-        Label26.Size = New Size(10, 45)
+        Label26.Size = New Size(10, 44)
         Label26.TabIndex = 15
         ' 
         ' ModernButton8
@@ -791,18 +809,19 @@ Partial Class ModernColorDialog
         ModernButton8.BorderSize = 0
         ModernButton8.Dock = DockStyle.Left
         ModernButton8.ForeColor = Color.Gray
-        ModernButton8.Location = New Point(290, 0)
+        ModernButton8.Location = New Point(275, 0)
+        ModernButton8.Margin = New Padding(2)
         ModernButton8.Name = "ModernButton8"
-        ModernButton8.Size = New Size(48, 45)
+        ModernButton8.Size = New Size(45, 44)
         ModernButton8.TabIndex = 14
         ModernButton8.Text = "6"
         ' 
         ' Label25
         ' 
         Label25.Dock = DockStyle.Left
-        Label25.Location = New Point(280, 0)
+        Label25.Location = New Point(265, 0)
         Label25.Name = "Label25"
-        Label25.Size = New Size(10, 45)
+        Label25.Size = New Size(10, 44)
         Label25.TabIndex = 13
         ' 
         ' ModernButton7
@@ -812,18 +831,19 @@ Partial Class ModernColorDialog
         ModernButton7.BorderSize = 0
         ModernButton7.Dock = DockStyle.Left
         ModernButton7.ForeColor = Color.Gray
-        ModernButton7.Location = New Point(232, 0)
+        ModernButton7.Location = New Point(220, 0)
+        ModernButton7.Margin = New Padding(2)
         ModernButton7.Name = "ModernButton7"
-        ModernButton7.Size = New Size(48, 45)
+        ModernButton7.Size = New Size(45, 44)
         ModernButton7.TabIndex = 12
         ModernButton7.Text = "5"
         ' 
         ' Label24
         ' 
         Label24.Dock = DockStyle.Left
-        Label24.Location = New Point(222, 0)
+        Label24.Location = New Point(210, 0)
         Label24.Name = "Label24"
-        Label24.Size = New Size(10, 45)
+        Label24.Size = New Size(10, 44)
         Label24.TabIndex = 11
         ' 
         ' ModernButton6
@@ -833,18 +853,19 @@ Partial Class ModernColorDialog
         ModernButton6.BorderSize = 0
         ModernButton6.Dock = DockStyle.Left
         ModernButton6.ForeColor = Color.Gray
-        ModernButton6.Location = New Point(174, 0)
+        ModernButton6.Location = New Point(165, 0)
+        ModernButton6.Margin = New Padding(2)
         ModernButton6.Name = "ModernButton6"
-        ModernButton6.Size = New Size(48, 45)
+        ModernButton6.Size = New Size(45, 44)
         ModernButton6.TabIndex = 10
         ModernButton6.Text = "4"
         ' 
         ' Label23
         ' 
         Label23.Dock = DockStyle.Left
-        Label23.Location = New Point(164, 0)
+        Label23.Location = New Point(155, 0)
         Label23.Name = "Label23"
-        Label23.Size = New Size(10, 45)
+        Label23.Size = New Size(10, 44)
         Label23.TabIndex = 9
         ' 
         ' ModernButton5
@@ -854,18 +875,19 @@ Partial Class ModernColorDialog
         ModernButton5.BorderSize = 0
         ModernButton5.Dock = DockStyle.Left
         ModernButton5.ForeColor = Color.Gray
-        ModernButton5.Location = New Point(116, 0)
+        ModernButton5.Location = New Point(110, 0)
+        ModernButton5.Margin = New Padding(2)
         ModernButton5.Name = "ModernButton5"
-        ModernButton5.Size = New Size(48, 45)
+        ModernButton5.Size = New Size(45, 44)
         ModernButton5.TabIndex = 8
         ModernButton5.Text = "3"
         ' 
         ' Label22
         ' 
         Label22.Dock = DockStyle.Left
-        Label22.Location = New Point(106, 0)
+        Label22.Location = New Point(100, 0)
         Label22.Name = "Label22"
-        Label22.Size = New Size(10, 45)
+        Label22.Size = New Size(10, 44)
         Label22.TabIndex = 7
         ' 
         ' ModernButton4
@@ -875,18 +897,19 @@ Partial Class ModernColorDialog
         ModernButton4.BorderSize = 0
         ModernButton4.Dock = DockStyle.Left
         ModernButton4.ForeColor = Color.Gray
-        ModernButton4.Location = New Point(58, 0)
+        ModernButton4.Location = New Point(55, 0)
+        ModernButton4.Margin = New Padding(2)
         ModernButton4.Name = "ModernButton4"
-        ModernButton4.Size = New Size(48, 45)
+        ModernButton4.Size = New Size(45, 44)
         ModernButton4.TabIndex = 6
         ModernButton4.Text = "2"
         ' 
         ' Label6
         ' 
         Label6.Dock = DockStyle.Left
-        Label6.Location = New Point(48, 0)
+        Label6.Location = New Point(45, 0)
         Label6.Name = "Label6"
-        Label6.Size = New Size(10, 45)
+        Label6.Size = New Size(10, 44)
         Label6.TabIndex = 5
         ' 
         ' ModernButton3
@@ -897,8 +920,9 @@ Partial Class ModernColorDialog
         ModernButton3.Dock = DockStyle.Left
         ModernButton3.ForeColor = Color.Gray
         ModernButton3.Location = New Point(0, 0)
+        ModernButton3.Margin = New Padding(2)
         ModernButton3.Name = "ModernButton3"
-        ModernButton3.Size = New Size(48, 45)
+        ModernButton3.Size = New Size(45, 44)
         ModernButton3.TabIndex = 0
         ModernButton3.Text = "1"
         ' 
@@ -908,9 +932,10 @@ Partial Class ModernColorDialog
         HtmlColorLabel1.AutoSizeMode = AutoSizeMode.GrowAndShrink
         HtmlColorLabel1.Dock = DockStyle.Top
         HtmlColorLabel1.Location = New Point(20, 0)
+        HtmlColorLabel1.Margin = New Padding(2, 2, 2, 2)
         HtmlColorLabel1.Name = "HtmlColorLabel1"
         HtmlColorLabel1.Padding = New Padding(0, 0, 0, 10)
-        HtmlColorLabel1.Size = New Size(837, 34)
+        HtmlColorLabel1.Size = New Size(749, 31)
         HtmlColorLabel1.TabIndex = 2
         HtmlColorLabel1.Text = "收藏夹   <span style=""color:gray"">左键读取，右键写入，中键清除，仅保留在当前应用程序运行周期内</span>"
         ' 
@@ -921,19 +946,19 @@ Partial Class ModernColorDialog
         ModernPanel2.BorderSize = 0
         ModernPanel2.Dock = DockStyle.Left
         ModernPanel2.Location = New Point(20, 20)
+        ModernPanel2.Margin = New Padding(2)
         ModernPanel2.Name = "ModernPanel2"
         ModernPanel2.Padding = New Padding(10)
-        ModernPanel2.ScrollBarMode = ScrollMode.None
-        ModernPanel2.Size = New Size(85, 79)
-        ModernPanel2.SuperSamplingScale = Class1.SuperSamplingScaleEnum.x2
+        ModernPanel2.ScrollBarMode = ModernPanel.ScrollMode.None
+        ModernPanel2.Size = New Size(75, 75)
         ModernPanel2.TabIndex = 2
         ' 
         ' ModernColorDialog
         ' 
-        AutoScaleDimensions = New SizeF(120F, 120F)
+        AutoScaleDimensions = New SizeF(96F, 96F)
         AutoScaleMode = AutoScaleMode.Dpi
         BackColor = Color.FromArgb(CByte(48), CByte(48), CByte(48))
-        ClientSize = New Size(982, 633)
+        ClientSize = New Size(884, 561)
         Controls.Add(Panel1)
         Controls.Add(Panel3)
         Controls.Add(Panel2)
@@ -942,6 +967,7 @@ Partial Class ModernColorDialog
         ForeColor = Color.Silver
         MaximizeBox = False
         MinimizeBox = False
+        MinimumSize = New Size(900, 600)
         Name = "ModernColorDialog"
         ShowIcon = False
         ShowInTaskbar = False

@@ -670,8 +670,9 @@ Public Class ModernTextBox
         Dim h As Integer = ClientRectangle.Height
         Dim hasRadius As Boolean = 边框圆角半径 > 0
         Dim boundsRect As New RectangleF(0, 0, w - 1, h - 1)
+        Dim s As Single = DpiScale()
         If 边框宽度 > 0 Then
-            Dim half As Single = 边框宽度 / 2.0F
+            Dim half As Single = 边框宽度 * s / 2.0F
             boundsRect.Inflate(-half, -half)
         End If
         Dim bc As Color = If(Focused, 有焦点时边框颜色, 边框颜色)
@@ -704,20 +705,21 @@ Public Class ModernTextBox
         g.SmoothingMode = SmoothingMode.AntiAlias
         g.PixelOffsetMode = PixelOffsetMode.HighQuality
         g.InterpolationMode = InterpolationMode.HighQualityBicubic
+        Dim s As Single = DpiScale()
         If hasRadius Then
-            Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(boundsRect, 边框圆角半径)
+            Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(boundsRect, 边框圆角半径 * s)
                 RectangleRenderer.绘制圆角背景(g, path, boundsRect, 背景颜色, Color.Empty, Orientation.Horizontal)
-                RectangleRenderer.绘制圆角边框(g, path, borderClr, 边框宽度)
+                RectangleRenderer.绘制圆角边框(g, path, borderClr, 边框宽度 * s)
             End Using
         Else
             RectangleRenderer.绘制矩形背景(g, boundsRect, 背景颜色, Color.Empty, Orientation.Horizontal)
-            RectangleRenderer.绘制矩形边框(g, boundsRect, borderClr, 边框宽度)
+            RectangleRenderer.绘制矩形边框(g, boundsRect, borderClr, 边框宽度 * s)
         End If
     End Sub
 
     Private Sub DrawTextContent(g As Graphics, w As Integer, h As Integer)
         g.TextRenderingHint = Drawing.Text.TextRenderingHint.ClearTypeGridFit
-        Dim bi As Integer = 边框宽度
+        Dim bi As Integer = CInt(Math.Round(边框宽度 * DpiScale()))
         Dim textLeft As Integer = Math.Max(Padding.Left, bi)
         Dim textTop As Integer = Math.Max(Padding.Top, bi)
         Dim textRight As Integer = Math.Max(Padding.Right, bi)
@@ -733,8 +735,8 @@ Public Class ModernTextBox
             Dim waterLineY As Integer = If(isSingleLine, singleLineY, textTop)
             Dim waterAlignOff As Integer = GetAlignOffsetX(水印文本, textWidth)
             TextRenderer.DrawText(g, 水印文本, Font,
-                New Point(textLeft + waterAlignOff, waterLineY + (行高 - FontHeight) \ 2),
-                水印颜色, TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine)
+                New Rectangle(textLeft + waterAlignOff, waterLineY, textWidth, 行高),
+                水印颜色, TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine Or TextFormatFlags.VerticalCenter)
         End If
         Dim wrapActive As Boolean = IsWordWrapActive()
         Dim minL As Integer = 0, minC As Integer = 0, maxL As Integer = 0, maxC As Integer = 0
@@ -801,7 +803,7 @@ Public Class ModernTextBox
         Dim cx As Integer = textLeft + alignOff + MeasureLineWidth(_caretLine, vl.StartCol, _caretCol - vl.StartCol) - scrollX
         Dim lineY As Integer
         If Not 启用多行 Then
-            Dim bi2 As Integer = 边框宽度
+            Dim bi2 As Integer = CInt(Math.Round(边框宽度 * DpiScale()))
             Dim textHeight As Integer = ClientRectangle.Height - Math.Max(Padding.Top, bi2) - Math.Max(Padding.Bottom, bi2)
             lineY = textTop + (textHeight - 行高) \ 2
         Else
@@ -816,9 +818,13 @@ Public Class ModernTextBox
 
     Private Sub DrawScrollBar(g As Graphics, w As Integer, h As Integer)
         If Not _scrollBarVisible Then Return
-        _scrollBar.ComputeLayout(w, h, 边框宽度, 边框圆角半径, 0, 0, 滚动条宽度,
+        Dim s As Single = DpiScale()
+        Dim scaledBorder As Integer = CInt(Math.Round(边框宽度 * s))
+        Dim scaledRadius As Integer = CInt(Math.Round(边框圆角半径 * s))
+        Dim scaledScrollW As Integer = CInt(Math.Round(滚动条宽度 * s))
+        _scrollBar.ComputeLayout(w, h, scaledBorder, scaledRadius, 0, 0, scaledScrollW,
             _visualLines.Count, VisibleLineCount(), _scrollLineOffset)
-        _scrollBar.Draw(g, w, h, 边框宽度, 边框圆角半径, 滚动条宽度,
+        _scrollBar.Draw(g, w, h, scaledBorder, scaledRadius, scaledScrollW,
             滚动条轨道颜色, 滚动条颜色, 滚动条悬停颜色)
     End Sub
 
@@ -829,9 +835,8 @@ Public Class ModernTextBox
         Dim vlEnd = vlStartCol + vlLength
         If runs Is Nothing OrElse runs.Count = 0 Then
             Dim text = GetDisplayText(lineStr.Substring(vlStartCol, vlLength))
-            Dim textY = lineY + (行高 - Font.Height) \ 2
-            TextRenderer.DrawText(g, text, Font, New Point(x, textY),
-                ForeColor, TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine)
+            TextRenderer.DrawText(g, text, Font, New Rectangle(x, lineY, Short.MaxValue, 行高),
+                ForeColor, TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine Or TextFormatFlags.VerticalCenter)
             Return
         End If
         Dim drawX = x
@@ -843,9 +848,8 @@ Public Class ModernTextBox
             Dim segText = GetDisplayText(lineStr.Substring(segStart, segEnd - segStart))
             Dim useFore = If(r.ForeColor = Color.Empty, ForeColor, r.ForeColor)
             Dim useFont = If(r.RunFont, Font)
-            Dim segTextY = lineY + (行高 - useFont.Height) \ 2
-            TextRenderer.DrawText(g, segText, useFont, New Point(drawX, segTextY),
-                useFore, TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine)
+            TextRenderer.DrawText(g, segText, useFont, New Rectangle(drawX, lineY, Short.MaxValue, 行高),
+                useFore, TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine Or TextFormatFlags.VerticalCenter)
             drawX += TextRenderHelper.MeasureTextWidth(segText, useFont, 行高)
         Next
     End Sub
@@ -1017,7 +1021,7 @@ Public Class ModernTextBox
             _caretCol = pos.X
             _hasSelection = (_caretLine <> _selAnchorLine OrElse _caretCol <> _selAnchorCol)
             EnsureCaretVisible()
-            If 启用多行 AndAlso (e.Y < Math.Max(Padding.Top, 边框宽度) OrElse e.Y > ClientRectangle.Height - Math.Max(Padding.Bottom, 边框宽度)) Then
+            If 启用多行 AndAlso (e.Y < Math.Max(Padding.Top, CInt(Math.Round(边框宽度 * DpiScale()))) OrElse e.Y > ClientRectangle.Height - Math.Max(Padding.Bottom, CInt(Math.Round(边框宽度 * DpiScale())))) Then
                 If Not _autoScrollTimer.Enabled Then _autoScrollTimer.Start()
             Else
                 _autoScrollTimer.Stop()
@@ -1059,7 +1063,7 @@ Public Class ModernTextBox
         Invalidate()
     End Sub
     Private Function HitTest(x As Integer, y As Integer) As Point
-        Dim bi As Integer = 边框宽度
+        Dim bi As Integer = CInt(Math.Round(边框宽度 * DpiScale()))
         Dim textLeft As Integer = Math.Max(Padding.Left, bi)
         Dim vi As Integer
         If 启用多行 Then
@@ -1516,7 +1520,7 @@ Public Class ModernTextBox
         Dim vi As Integer = GetVisualLineIndex(_caretLine, _caretCol)
         Dim vl = _visualLines(vi)
         Dim wrapActive As Boolean = IsWordWrapActive()
-        Dim bi As Integer = 边框宽度
+        Dim bi As Integer = CInt(Math.Round(边框宽度 * DpiScale()))
         Dim imeLeft As Integer = Math.Max(Padding.Left, bi)
         Dim imeTop As Integer = Math.Max(Padding.Top, bi)
         Dim alignOff As Integer = If(wrapActive, 0, GetAlignOffsetXForLine(_caretLine, TextAreaWidth()))
@@ -1596,12 +1600,12 @@ Public Class ModernTextBox
         End Select
     End Function
     Private Function VisibleLineCount() As Integer
-        Dim bi As Integer = 边框宽度
+        Dim bi As Integer = CInt(Math.Round(边框宽度 * DpiScale()))
         Dim h As Integer = ClientRectangle.Height - Math.Max(Padding.Top, bi) - Math.Max(Padding.Bottom, bi)
         Return Math.Max(1, h \ 行高)
     End Function
     Private Function TextAreaWidth() As Integer
-        Dim bi As Integer = 边框宽度
+        Dim bi As Integer = CInt(Math.Round(边框宽度 * DpiScale()))
         Dim inset As Integer = Math.Max(Padding.Left, bi)
         Dim scrollW As Integer = If(_scrollBarVisible, _scrollBar.GetReservedWidth(ClientRectangle.Width, inset), 0)
         Return ClientRectangle.Width - Math.Max(Padding.Left, bi) - Math.Max(Padding.Right, bi) - scrollW
@@ -1652,6 +1656,9 @@ Public Class ModernTextBox
             Invalidate()
         End If
     End Sub
+    Private Function DpiScale() As Single
+        Return Me.DeviceDpi / 96.0F
+    End Function
     Private Function IsWordWrapActive() As Boolean
         Return 启用多行 AndAlso _wordWrap
     End Function
@@ -1708,7 +1715,7 @@ Public Class ModernTextBox
             _autoScrollTimer.Stop()
             Return
         End If
-        Dim bi As Integer = 边框宽度
+        Dim bi As Integer = CInt(Math.Round(边框宽度 * DpiScale()))
         Dim textTop As Integer = Math.Max(Padding.Top, bi)
         Dim textBottom As Integer = ClientRectangle.Height - Math.Max(Padding.Bottom, bi)
         Dim scrollDelta As Integer
@@ -1942,6 +1949,11 @@ Public Class ModernTextBox
     End Sub
     Protected Overrides Sub OnForeColorChanged(e As EventArgs)
         MyBase.OnForeColorChanged(e)
+        Invalidate()
+    End Sub
+    Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
+        MyBase.OnDpiChangedAfterParent(e)
+        RebuildVisualLines()
         Invalidate()
     End Sub
 #End Region

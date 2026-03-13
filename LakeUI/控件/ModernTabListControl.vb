@@ -351,13 +351,13 @@ Public Class ModernTabListControl
 
         更新滚动条布局()
         If Not _标签栏滚动条.TrackRect.IsEmpty Then
-            Dim sbContainerW As Integer = If(标签页位置 = TabSideEnum.Left, 标签栏宽度, Me.Width)
-            _标签栏滚动条.Draw(g, sbContainerW, Me.Height, 0, 0, 滚动条宽度, 滚动条轨道颜色, 滚动条滑块颜色, 滚动条悬停颜色)
+            Dim sbContainerW As Integer = If(标签页位置 = TabSideEnum.Left, CInt(标签栏宽度 * DpiScale()), Me.Width)
+            _标签栏滚动条.Draw(g, sbContainerW, Me.Height, 0, 0, CInt(滚动条宽度 * DpiScale()), 滚动条轨道颜色, 滚动条滑块颜色, 滚动条悬停颜色)
         End If
 
         If 内容区域边框宽度 > 0 Then
             Dim contentRect = 获取内容区域矩形()
-            Using pen As New Pen(内容区域边框颜色, 内容区域边框宽度)
+            Using pen As New Pen(内容区域边框颜色, 内容区域边框宽度 * DpiScale())
                 g.DrawRectangle(pen, contentRect.X, contentRect.Y, contentRect.Width - 1, contentRect.Height - 1)
             End Using
         End If
@@ -365,13 +365,15 @@ Public Class ModernTabListControl
 
     Private Sub 绘制分割线(g As Graphics, index As Integer)
         Dim bounds = 获取标签页项矩形(index)
-        Dim lineY As Single = bounds.Y + (bounds.Height - 1) / 2.0F
+        Dim lineH As Single = Math.Max(1, DpiScale())
+        Dim lineY As Single = bounds.Y + (bounds.Height - lineH) / 2.0F
         Using brush As New SolidBrush(分割线颜色值)
-            g.FillRectangle(brush, bounds.X, lineY, bounds.Width, 1)
+            g.FillRectangle(brush, bounds.X, lineY, bounds.Width, lineH)
         End Using
     End Sub
 
     Private Sub 绘制标签页项图形(g As Graphics, index As Integer)
+        Dim s As Single = DpiScale()
         Dim bounds As RectangleF = 获取标签页项矩形(index)
         Dim isSelected As Boolean = (_selectedIndex = index)
         Dim hoverProgress As Single = 获取动画进度(index)
@@ -384,7 +386,7 @@ Public Class ModernTabListControl
         End If
 
         If 标签页圆角半径 > 0 Then
-            Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(bounds, 标签页圆角半径)
+            Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(bounds, 标签页圆角半径 * s)
                 Using brush As New SolidBrush(bgColor)
                     g.FillPath(brush, path)
                 End Using
@@ -398,12 +400,12 @@ Public Class ModernTabListControl
         If isSelected AndAlso 选中指示条宽度 > 0 Then
             Dim indicatorRect As RectangleF
             If 标签页位置 = TabSideEnum.Left Then
-                indicatorRect = New RectangleF(bounds.X, bounds.Y + 选中指示条边距, 选中指示条宽度, bounds.Height - 选中指示条边距 * 2)
+                indicatorRect = New RectangleF(bounds.X, bounds.Y + 选中指示条边距 * s, 选中指示条宽度 * s, bounds.Height - 选中指示条边距 * s * 2)
             Else
-                indicatorRect = New RectangleF(bounds.Right - 选中指示条宽度, bounds.Y + 选中指示条边距, 选中指示条宽度, bounds.Height - 选中指示条边距 * 2)
+                indicatorRect = New RectangleF(bounds.Right - 选中指示条宽度 * s, bounds.Y + 选中指示条边距 * s, 选中指示条宽度 * s, bounds.Height - 选中指示条边距 * s * 2)
             End If
             If 选中指示条圆角半径 > 0 Then
-                Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(indicatorRect, 选中指示条圆角半径)
+                Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(indicatorRect, 选中指示条圆角半径 * s)
                     Using brush As New SolidBrush(选中指示条颜色)
                         g.FillPath(brush, path)
                     End Using
@@ -417,13 +419,13 @@ Public Class ModernTabListControl
 
         If isSelected AndAlso Me.Focused AndAlso 焦点边框颜色 <> Color.Empty Then
             Dim focusBounds = bounds
-            focusBounds.Inflate(-1, -1)
+            focusBounds.Inflate(-s, -s)
             If 标签页圆角半径 > 0 Then
-                Using focusPath As GraphicsPath = RectangleRenderer.创建圆角矩形路径(focusBounds, Math.Max(1, 标签页圆角半径 - 1))
-                    RectangleRenderer.绘制圆角边框(g, focusPath, 焦点边框颜色, 1.0F)
+                Using focusPath As GraphicsPath = RectangleRenderer.创建圆角矩形路径(focusBounds, Math.Max(1, 标签页圆角半径 * s - s))
+                    RectangleRenderer.绘制圆角边框(g, focusPath, 焦点边框颜色, s)
                 End Using
             Else
-                RectangleRenderer.绘制矩形边框(g, focusBounds, 焦点边框颜色, 1.0F)
+                RectangleRenderer.绘制矩形边框(g, focusBounds, 焦点边框颜色, s)
             End If
         End If
 
@@ -435,9 +437,11 @@ Public Class ModernTabListControl
         Dim item = 项目列表(index)
         If item.TabIcon Is Nothing Then Return
 
-        Dim iconX As Single = bounds.X + 标签页文本左边距
-        Dim iconY As Single = bounds.Y + (bounds.Height - 图标尺寸) / 2.0F
-        g.DrawImage(item.TabIcon, New RectangleF(iconX, iconY, 图标尺寸, 图标尺寸))
+        Dim s As Single = DpiScale()
+        Dim scaledIconSize As Single = 图标尺寸 * s
+        Dim iconX As Single = bounds.X + 标签页文本左边距 * s
+        Dim iconY As Single = bounds.Y + (bounds.Height - scaledIconSize) / 2.0F
+        g.DrawImage(item.TabIcon, New RectangleF(iconX, iconY, scaledIconSize, scaledIconSize))
     End Sub
 
     Private Sub 绘制标签页文本(g As Graphics, index As Integer)
@@ -446,13 +450,16 @@ Public Class ModernTabListControl
         Dim item = 项目列表(index)
         If item.IsSeparator Then Return
 
+        Dim s As Single = DpiScale()
+        Dim _textPad As Integer = CInt(标签页文本左边距 * s)
+
         If item.IsDescription Then
             Dim descFont = If(item.TabFont, 说明字体值)
             Dim descColor = If(item.NormalForeColor <> Color.Empty, item.NormalForeColor, 说明文本颜色值)
             Dim textRect As New Rectangle(
-                bounds.X + 标签页文本左边距,
+                bounds.X + _textPad,
                 bounds.Y,
-                bounds.Width - 标签页文本左边距 * 2,
+                bounds.Width - _textPad * 2,
                 bounds.Height)
             TextRenderer.DrawText(g, item.Text, descFont, textRect, descColor,
                 TextFormatFlags.Left Or TextFormatFlags.VerticalCenter Or TextFormatFlags.EndEllipsis Or TextFormatFlags.NoPadding)
@@ -466,16 +473,15 @@ Public Class ModernTabListControl
             If(item.SelectedForeColor <> Color.Empty, item.SelectedForeColor, 选中标签页文本颜色),
             If(item.NormalForeColor <> Color.Empty, item.NormalForeColor, 标签页默认文本颜色))
         textFont = If(item.TabFont, Me.Font)
-
         Dim iconOffset As Integer = 0
         If item.TabIcon IsNot Nothing Then
-            iconOffset = 图标尺寸 + 图标与文本间距
+            iconOffset = CInt((图标尺寸 + 图标与文本间距) * s)
         End If
 
         Dim textRect2 As New Rectangle(
-            bounds.X + 标签页文本左边距 + iconOffset,
+            bounds.X + _textPad + iconOffset,
             bounds.Y,
-            bounds.Width - 标签页文本左边距 * 2 - iconOffset,
+            bounds.Width - _textPad * 2 - iconOffset,
             bounds.Height)
         TextRenderer.DrawText(g, item.Text, textFont, textRect2, textColor,
             TextFormatFlags.Left Or TextFormatFlags.VerticalCenter Or TextFormatFlags.EndEllipsis Or TextFormatFlags.NoPadding)
@@ -484,38 +490,42 @@ Public Class ModernTabListControl
 
 #Region "布局"
     Private Function 获取标签栏矩形() As Rectangle
+        Dim w As Integer = CInt(标签栏宽度 * DpiScale())
         If 标签页位置 = TabSideEnum.Left Then
-            Return New Rectangle(0, 0, 标签栏宽度, Me.Height)
+            Return New Rectangle(0, 0, w, Me.Height)
         Else
-            Return New Rectangle(Me.Width - 标签栏宽度, 0, 标签栏宽度, Me.Height)
+            Return New Rectangle(Me.Width - w, 0, w, Me.Height)
         End If
     End Function
 
     Private Function 获取内容区域矩形() As Rectangle
+        Dim w As Integer = CInt(标签栏宽度 * DpiScale())
         If 标签页位置 = TabSideEnum.Left Then
-            Return New Rectangle(标签栏宽度, 0, Math.Max(0, Me.Width - 标签栏宽度), Me.Height)
+            Return New Rectangle(w, 0, Math.Max(0, Me.Width - w), Me.Height)
         Else
-            Return New Rectangle(0, 0, Math.Max(0, Me.Width - 标签栏宽度), Me.Height)
+            Return New Rectangle(0, 0, Math.Max(0, Me.Width - w), Me.Height)
         End If
     End Function
 
     Private Function 获取标签页项矩形(index As Integer) As RectangleF
+        Dim s As Single = DpiScale()
         Dim tabStripRect = 获取标签栏矩形()
-        Dim x As Single = tabStripRect.X + 标签栏内边距.Left
-        Dim w As Single = tabStripRect.Width - 标签栏内边距.Left - 标签栏内边距.Right
-        Dim y As Single = 标签栏内边距.Top - _滚动偏移
+        Dim x As Single = tabStripRect.X + 标签栏内边距.Left * s
+        Dim w As Single = tabStripRect.Width - (标签栏内边距.Left + 标签栏内边距.Right) * s
+        Dim y As Single = 标签栏内边距.Top * s - _滚动偏移
         For i As Integer = 0 To index - 1
-            y += 获取项高度(i) + 标签页项间距
+            y += 获取项高度(i) + 标签页项间距 * s
         Next
         Return New RectangleF(x, y, w, 获取项高度(index))
     End Function
 
     Private Function 获取项高度(index As Integer) As Single
-        If index < 0 OrElse index >= 项目列表.Count Then Return 标签页项高度
+        Dim s As Single = DpiScale()
+        If index < 0 OrElse index >= 项目列表.Count Then Return 标签页项高度 * s
         Dim item = 项目列表(index)
-        If item.IsSeparator Then Return 分割线高度值
-        If item.IsDescription Then Return 说明项高度值
-        Return 标签页项高度
+        If item.IsSeparator Then Return 分割线高度值 * s
+        If item.IsDescription Then Return 说明项高度值 * s
+        Return 标签页项高度 * s
     End Function
 
     Private Sub 同步内容面板布局()
@@ -525,13 +535,14 @@ Public Class ModernTabListControl
     End Sub
 
     Private Function 获取标签页总高度() As Single
+        Dim s As Single = DpiScale()
         If 项目列表.Count = 0 Then Return 0
-        Dim h As Single = 标签栏内边距.Top
+        Dim h As Single = 标签栏内边距.Top * s
         For i As Integer = 0 To 项目列表.Count - 1
             h += 获取项高度(i)
-            If i < 项目列表.Count - 1 Then h += 标签页项间距
+            If i < 项目列表.Count - 1 Then h += 标签页项间距 * s
         Next
-        h += 标签栏内边距.Bottom
+        h += 标签栏内边距.Bottom * s
         Return h
     End Function
 
@@ -543,9 +554,10 @@ Public Class ModernTabListControl
 
     Private Sub 确保选中项可见()
         If _selectedIndex < 0 OrElse _selectedIndex >= 项目列表.Count Then Return
-        Dim absY As Single = 标签栏内边距.Top
+        Dim s As Single = DpiScale()
+        Dim absY As Single = 标签栏内边距.Top * s
         For i As Integer = 0 To _selectedIndex - 1
-            absY += 获取项高度(i) + 标签页项间距
+            absY += 获取项高度(i) + 标签页项间距 * s
         Next
         Dim itemH As Single = 获取项高度(_selectedIndex)
         If absY < _滚动偏移 Then
@@ -557,6 +569,7 @@ Public Class ModernTabListControl
     End Sub
 
     Private Sub 更新滚动条布局()
+        Dim s As Single = DpiScale()
         Dim totalH As Integer = CInt(获取标签页总高度())
         Dim visibleH As Integer = Me.Height
         If totalH <= visibleH OrElse 项目列表.Count = 0 Then
@@ -564,8 +577,8 @@ Public Class ModernTabListControl
             _标签栏滚动条.TrackRect = Rectangle.Empty
             Return
         End If
-        Dim sbContainerW As Integer = If(标签页位置 = TabSideEnum.Left, 标签栏宽度, Me.Width)
-        _标签栏滚动条.ComputeLayout(sbContainerW, Me.Height, 0, 0, 标签栏内边距.Top, 标签栏内边距.Bottom, 滚动条宽度, totalH, visibleH, _滚动偏移)
+        Dim sbContainerW As Integer = If(标签页位置 = TabSideEnum.Left, CInt(标签栏宽度 * s), Me.Width)
+        _标签栏滚动条.ComputeLayout(sbContainerW, Me.Height, 0, 0, CInt(标签栏内边距.Top * s), CInt(标签栏内边距.Bottom * s), CInt(滚动条宽度 * s), totalH, visibleH, _滚动偏移)
     End Sub
 
     Protected Overrides Sub OnResize(e As EventArgs)
@@ -765,7 +778,7 @@ Public Class ModernTabListControl
         If Not stripRect.Contains(e.Location) Then Return
         Dim totalHeight = CInt(获取标签页总高度())
         If totalHeight <= Me.Height Then Return
-        Dim scrollAmount As Integer = Math.Max(1, SystemInformation.MouseWheelScrollLines * 标签页项高度 \ 3)
+        Dim scrollAmount As Integer = Math.Max(1, CInt(SystemInformation.MouseWheelScrollLines * 标签页项高度 * DpiScale() / 3))
         _滚动偏移 -= Math.Sign(e.Delta) * scrollAmount
         限制滚动范围()
         Me.Invalidate()
@@ -850,6 +863,16 @@ Public Class ModernTabListControl
             field = value
             Me.Invalidate()
         End If
+    End Sub
+
+    Private Function DpiScale() As Single
+        Return Me.DeviceDpi / 96.0F
+    End Function
+
+    Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
+        MyBase.OnDpiChangedAfterParent(e)
+        同步内容面板布局()
+        Me.Invalidate()
     End Sub
 
     Private 超采样倍率 As Integer = 1

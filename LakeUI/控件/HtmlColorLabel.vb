@@ -191,7 +191,7 @@ Public Class HtmlColorLabel
         Dim 是否有圆角 As Boolean = 边框圆角半径 > 0
         Dim 极限矩形区域 As New RectangleF(0, 0, Me.Width - 1, Me.Height - 1)
         If 边框宽度 > 0 Then
-            Dim half As Single = 边框宽度 / 2.0F
+            Dim half As Single = 边框宽度 * DpiScale() / 2.0F
             极限矩形区域.Inflate(-half, -half)
         End If
         Dim 内容矩形区域 As New RectangleF(
@@ -225,14 +225,15 @@ Public Class HtmlColorLabel
         g.SmoothingMode = SmoothingMode.AntiAlias
         g.PixelOffsetMode = PixelOffsetMode.HighQuality
         g.InterpolationMode = InterpolationMode.HighQualityBicubic
+        Dim s As Single = DpiScale()
         If 是否有圆角 Then
-            Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(极限矩形区域, 边框圆角半径)
+            Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(极限矩形区域, 边框圆角半径 * s)
                 RectangleRenderer.绘制圆角背景(g, path, 极限矩形区域, MyBase.BackColor, Color.Empty, Orientation.Vertical)
-                RectangleRenderer.绘制圆角边框(g, path, 边框颜色, 边框宽度)
+                RectangleRenderer.绘制圆角边框(g, path, 边框颜色, 边框宽度 * s)
             End Using
         Else
             RectangleRenderer.绘制矩形背景(g, 极限矩形区域, MyBase.BackColor, Color.Empty, Orientation.Vertical)
-            RectangleRenderer.绘制矩形边框(g, 极限矩形区域, 边框颜色, 边框宽度)
+            RectangleRenderer.绘制矩形边框(g, 极限矩形区域, 边框颜色, 边框宽度 * s)
         End If
     End Sub
 
@@ -367,6 +368,10 @@ Public Class HtmlColorLabel
         End If
     End Sub
 
+    Private Function DpiScale() As Single
+        Return Me.DeviceDpi / 96.0F
+    End Function
+
     Private 超采样倍率 As Integer = 1
     <Category("LakeUI"), Description(Class1.超采样抗锯齿描述词), DefaultValue(GetType(Class1.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
     Public Property SuperSamplingScale As Class1.SuperSamplingScaleEnum
@@ -451,6 +456,11 @@ Public Class HtmlColorLabel
     Protected Overrides Sub OnPaddingChanged(e As EventArgs)
         MyBase.OnPaddingChanged(e)
         更新自动尺寸()
+        Me.Invalidate()
+    End Sub
+
+    Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
+        MyBase.OnDpiChangedAfterParent(e)
         Me.Invalidate()
     End Sub
 

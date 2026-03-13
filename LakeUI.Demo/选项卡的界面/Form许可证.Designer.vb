@@ -33,6 +33,7 @@ Partial Class Form许可证
         ModernTextBox1.Dock = DockStyle.Fill
         ModernTextBox1.Font = New Font("Microsoft YaHei UI", 10.2F, FontStyle.Regular, GraphicsUnit.Point, CByte(134))
         ModernTextBox1.Location = New Point(0, 0)
+        ModernTextBox1.MaxUndoCount = 0
         ModernTextBox1.MultiLine = True
         ModernTextBox1.Name = "ModernTextBox1"
         ModernTextBox1.Padding = New Padding(30)

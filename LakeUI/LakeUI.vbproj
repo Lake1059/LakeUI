@@ -25,6 +25,8 @@
     <RepositoryUrl>https://github.com/Lake1059/LakeUI</RepositoryUrl>
     <PackAsTool>False</PackAsTool>
     <PackageIcon>LakeUI.png</PackageIcon>
+	<ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+	<ForceDesignerDpiUnaware>True</ForceDesignerDpiUnaware>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">

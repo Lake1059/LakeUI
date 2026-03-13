@@ -1056,7 +1056,10 @@ Public Class ModernListBox
 #Region "布局计算"
 
     Private Function 获取边框内边距() As Integer
-        Return Math.Max(边框宽度, If(边框圆角半径 > 0, 边框圆角半径 \ 2, 0))
+        Dim s As Single = DpiScale()
+        Dim bw As Integer = CInt(Math.Round(边框宽度 * s))
+        Dim br As Integer = CInt(Math.Round(边框圆角半径 * s))
+        Return Math.Max(bw, If(br > 0, br \ 2, 0))
     End Function
 
     Private Function 获取内容区域() As Rectangle
@@ -1070,8 +1073,9 @@ Public Class ModernListBox
 
     Private Function 估算可见行数() As Integer
         Dim contentRect = 获取内容区域()
-        If 行高 <= 0 Then Return 1
-        Return Math.Max(1, contentRect.Height \ 行高)
+        Dim scaledH As Integer = CInt(Math.Round(行高 * DpiScale()))
+        If scaledH <= 0 Then Return 1
+        Return Math.Max(1, contentRect.Height \ scaledH)
     End Function
 
     Private Sub 校正滚动偏移()
@@ -1087,12 +1091,13 @@ Public Class ModernListBox
     Private Function 获取项Y坐标(index As Integer) As Integer
         If index < _scrollOffset OrElse index >= _items.Count Then Return -1
         Dim contentRect = 获取内容区域()
-        Return contentRect.Y + (index - _scrollOffset) * 行高
+        Return contentRect.Y + (index - _scrollOffset) * CInt(Math.Round(行高 * DpiScale()))
     End Function
 
     Private Function 获取复选框区域宽度() As Integer
         If Not 显示复选框 Then Return 0
-        Return 复选框左边距 + 复选框大小 + 复选框右边距
+        Dim s As Single = DpiScale()
+        Return CInt(Math.Round(复选框左边距 * s)) + CInt(Math.Round(复选框大小 * s)) + CInt(Math.Round(复选框右边距 * s))
     End Function
 
     Private Function 是否在拖选区域(mouseX As Integer) As Boolean
@@ -1101,7 +1106,7 @@ Public Class ModernListBox
         Dim contentRect = 获取内容区域()
         Dim inset As Integer = 获取边框内边距()
         Dim scrollW As Integer = If(Not _scrollBar.TrackRect.IsEmpty, Width - inset - _scrollBar.VisualLeft, 0)
-        Dim zoneLeft As Integer = contentRect.Right - scrollW - 拖选区域宽度
+        Dim zoneLeft As Integer = contentRect.Right - scrollW - CInt(Math.Round(拖选区域宽度 * DpiScale()))
         Return mouseX >= zoneLeft
     End Function
 
@@ -1120,8 +1125,9 @@ Public Class ModernListBox
         Dim h As Integer = ClientRectangle.Height
         Dim hasRadius As Boolean = 边框圆角半径 > 0
         Dim boundsRect As New RectangleF(0, 0, w - 1, h - 1)
+        Dim s As Single = DpiScale()
         If 边框宽度 > 0 Then
-            Dim half As Single = 边框宽度 / 2.0F
+            Dim half As Single = 边框宽度 * s / 2.0F
             boundsRect.Inflate(-half, -half)
         End If
         Dim bc As Color = If(Focused, 有焦点时边框颜色, 边框颜色)
@@ -1151,7 +1157,7 @@ Public Class ModernListBox
         Dim clipRect As New RectangleF(inset, inset, w - inset * 2 - 1, h - inset * 2 - 1)
         If clipRect.Width > 0 AndAlso clipRect.Height > 0 Then
             If hasRadius Then
-                Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(clipRect, Math.Max(0, 边框圆角半径 - 边框宽度))
+                Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(clipRect, Math.Max(0, 边框圆角半径 * s - 边框宽度 * s))
                     e.Graphics.SetClip(path)
                 End Using
             Else
@@ -1177,19 +1183,20 @@ Public Class ModernListBox
     End Sub
 
     Private Sub DrawBackground(g As Graphics, hasRadius As Boolean, boundsRect As RectangleF, borderClr As Color, bgClr As Color)
+        Dim s As Single = DpiScale()
         g.SmoothingMode = SmoothingMode.AntiAlias
         g.PixelOffsetMode = PixelOffsetMode.HighQuality
         g.InterpolationMode = InterpolationMode.HighQualityBicubic
         If hasRadius Then
-            Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(boundsRect, 边框圆角半径)
+            Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(boundsRect, 边框圆角半径 * s)
                 RectangleRenderer.绘制圆角背景(g, path, boundsRect, bgClr, Color.Empty, Orientation.Vertical)
-                RectangleRenderer.绘制圆角边框(g, path, borderClr, 边框宽度)
+                RectangleRenderer.绘制圆角边框(g, path, borderClr, 边框宽度 * s)
             End Using
         Else
             Using br As New SolidBrush(bgClr)
                 g.FillRectangle(br, boundsRect)
             End Using
-            RectangleRenderer.绘制矩形边框(g, boundsRect, borderClr, 边框宽度)
+            RectangleRenderer.绘制矩形边框(g, boundsRect, borderClr, 边框宽度 * s)
         End If
     End Sub
 
@@ -1204,8 +1211,9 @@ Public Class ModernListBox
         If _items.Count > visCount OrElse _scrollOffset > 0 Then
             Dim contentRect = 获取内容区域()
             Dim inset As Integer = 获取边框内边距()
-            _scrollBar.ComputeLayout(Width, Height, 边框宽度, 边框圆角半径,
-                contentRect.Y - inset, Height - contentRect.Bottom, 滚动条宽度,
+            Dim s As Single = DpiScale()
+            _scrollBar.ComputeLayout(Width, Height, CInt(Math.Round(边框宽度 * s)), CInt(Math.Round(边框圆角半径 * s)),
+                contentRect.Y - inset, Height - contentRect.Bottom, CInt(Math.Round(滚动条宽度 * s)),
                 _items.Count, visCount, _scrollOffset)
         Else
             _scrollBar.ThumbRect = Rectangle.Empty
@@ -1216,8 +1224,9 @@ Public Class ModernListBox
 
     Private Sub 绘制滚动条(g As Graphics)
         If _scrollBar.TrackRect.IsEmpty Then Return
-        _scrollBar.Draw(g, Width, Height, 边框宽度, 边框圆角半径,
-            滚动条宽度, 滚动条轨道颜色, 滚动条颜色, 滚动条悬停颜色)
+        Dim s As Single = DpiScale()
+        _scrollBar.Draw(g, Width, Height, CInt(Math.Round(边框宽度 * s)), CInt(Math.Round(边框圆角半径 * s)),
+            CInt(Math.Round(滚动条宽度 * s)), 滚动条轨道颜色, 滚动条颜色, 滚动条悬停颜色)
     End Sub
 
     Private Sub 绘制全部项(g As Graphics)
@@ -1226,6 +1235,15 @@ Public Class ModernListBox
         If contentRect.Height <= 0 OrElse contentRect.Width <= 0 Then Return
 
         g.TextRenderingHint = Drawing.Text.TextRenderingHint.ClearTypeGridFit
+
+        Dim s As Single = DpiScale()
+        Dim scaledH As Integer = CInt(Math.Round(行高 * s))
+        Dim scaledPadL As Integer = CInt(Math.Round(项左内边距 * s))
+        Dim scaledCbLeft As Integer = CInt(Math.Round(复选框左边距 * s))
+        Dim scaledCbSize As Integer = CInt(Math.Round(复选框大小 * s))
+        Dim scaledIconW As Integer = CInt(Math.Round(图标尺寸.Width * s))
+        Dim scaledIconH As Integer = CInt(Math.Round(图标尺寸.Height * s))
+        Dim scaledIconMR As Integer = CInt(Math.Round(图标右边距 * s))
 
         Dim inset As Integer = 获取边框内边距()
         Dim scrollW As Integer = If(Not _scrollBar.TrackRect.IsEmpty, Width - inset - _scrollBar.VisualLeft, 0)
@@ -1245,10 +1263,10 @@ Public Class ModernListBox
         For i As Integer = 0 To visCount - 1
             Dim idx As Integer = i + _scrollOffset
             If idx >= _items.Count Then Exit For
-            Dim itemY As Integer = contentRect.Y + i * 行高
-            If itemY + 行高 > contentRect.Bottom Then Exit For
+            Dim itemY As Integer = contentRect.Y + i * scaledH
+            If itemY + scaledH > contentRect.Bottom Then Exit For
 
-            Dim itemRect As New Rectangle(contentRect.X, itemY, availW, 行高)
+            Dim itemRect As New Rectangle(contentRect.X, itemY, availW, scaledH)
 
             ' 选中背景
             If _selectedIndices.Contains(idx) Then
@@ -1262,12 +1280,12 @@ Public Class ModernListBox
             End If
 
             Dim itemText As String = _items(idx)
-            Dim textX As Integer = contentRect.X + 项左内边距
+            Dim textX As Integer = contentRect.X + scaledPadL
 
             ' 复选框
             If 显示复选框 Then
-                Dim cbX As Integer = contentRect.X + 复选框左边距
-                Dim cbY As Integer = itemY + (行高 - 复选框大小) \ 2
+                Dim cbX As Integer = contentRect.X + scaledCbLeft
+                Dim cbY As Integer = itemY + (scaledH - scaledCbSize) \ 2
                 绘制复选框(g, cbX, cbY, 获取复选状态(idx))
                 textX = contentRect.X + 获取复选框区域宽度()
             End If
@@ -1276,19 +1294,19 @@ Public Class ModernListBox
             Dim icon As Image = Nothing
             If _itemIcons.TryGetIcon(itemText, icon) AndAlso icon IsNot Nothing Then
                 Dim iconX As Integer = textX
-                Dim iconY As Integer = itemY + (行高 - 图标尺寸.Height) \ 2
+                Dim iconY As Integer = itemY + (scaledH - scaledIconH) \ 2
                 Dim prevMode = g.InterpolationMode
                 g.InterpolationMode = InterpolationMode.HighQualityBicubic
-                g.DrawImage(icon, New Rectangle(iconX, iconY, 图标尺寸.Width, 图标尺寸.Height))
+                g.DrawImage(icon, New Rectangle(iconX, iconY, scaledIconW, scaledIconH))
                 g.InterpolationMode = prevMode
-                textX += 图标尺寸.Width + 图标右边距
+                textX += scaledIconW + scaledIconMR
             End If
 
             ' 文本
-            Dim textRight As Integer = itemRect.Right - 项左内边距
+            Dim textRight As Integer = itemRect.Right - scaledPadL
             Dim textWidth As Integer = textRight - textX
             If textWidth > 0 Then
-                Dim textRect As New Rectangle(textX, itemY, textWidth, 行高)
+                Dim textRect As New Rectangle(textX, itemY, textWidth, scaledH)
                 TextRenderer.DrawText(g, itemText, Font, textRect, ForeColor,
                     TextFormatFlags.Left Or TextFormatFlags.VerticalCenter Or TextFormatFlags.EndEllipsis Or TextFormatFlags.NoPadding)
             End If
@@ -1296,18 +1314,23 @@ Public Class ModernListBox
     End Sub
 
     Private Sub 绘制复选框(g As Graphics, x As Integer, y As Integer, state As CheckStateEnum)
-        Dim rect As New RectangleF(x, y, 复选框大小, 复选框大小)
+        Dim s As Single = DpiScale()
+        Dim scaledSize As Single = 复选框大小 * s
+        Dim scaledRadius As Single = 复选框圆角半径 * s
+        Dim scaledBW As Single = 复选框边框宽度 * s
+        Dim scaledMarkW As Single = 复选框标记线宽 * s
+        Dim rect As New RectangleF(x, y, scaledSize, scaledSize)
         Dim prevSmooth = g.SmoothingMode
         g.SmoothingMode = SmoothingMode.AntiAlias
 
         ' 背景
-        If 复选框圆角半径 > 0 Then
-            Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(rect, 复选框圆角半径)
+        If scaledRadius > 0 Then
+            Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(rect, scaledRadius)
                 Using br As New SolidBrush(复选框背景颜色)
                     g.FillPath(br, path)
                 End Using
-                If 复选框边框宽度 > 0 Then
-                    Using pen As New Pen(复选框边框颜色, 复选框边框宽度)
+                If scaledBW > 0 Then
+                    Using pen As New Pen(复选框边框颜色, scaledBW)
                         pen.LineJoin = LineJoin.Round
                         g.DrawPath(pen, path)
                     End Using
@@ -1317,32 +1340,32 @@ Public Class ModernListBox
             Using br As New SolidBrush(复选框背景颜色)
                 g.FillRectangle(br, rect)
             End Using
-            If 复选框边框宽度 > 0 Then
-                Using pen As New Pen(复选框边框颜色, 复选框边框宽度)
+            If scaledBW > 0 Then
+                Using pen As New Pen(复选框边框颜色, scaledBW)
                     g.DrawRectangle(pen, rect.X, rect.Y, rect.Width, rect.Height)
                 End Using
             End If
         End If
 
         ' 标记
-        Dim inset As Single = 复选框大小 * 0.2F
+        Dim inset As Single = scaledSize * 0.2F
         Select Case state
             Case CheckStateEnum.Checked
-                Using pen As New Pen(复选框勾选颜色, 复选框标记线宽)
+                Using pen As New Pen(复选框勾选颜色, scaledMarkW)
                     pen.StartCap = LineCap.Round
                     pen.EndCap = LineCap.Round
                     pen.LineJoin = LineJoin.Round
-                    Dim p1 As New PointF(x + inset, y + 复选框大小 * 0.5F)
-                    Dim p2 As New PointF(x + 复选框大小 * 0.4F, y + 复选框大小 - inset)
-                    Dim p3 As New PointF(x + 复选框大小 - inset, y + inset)
+                    Dim p1 As New PointF(x + inset, y + scaledSize * 0.5F)
+                    Dim p2 As New PointF(x + scaledSize * 0.4F, y + scaledSize - inset)
+                    Dim p3 As New PointF(x + scaledSize - inset, y + inset)
                     g.DrawLines(pen, {p1, p2, p3})
                 End Using
             Case CheckStateEnum.Crossed
-                Using pen As New Pen(复选框叉选颜色, 复选框标记线宽)
+                Using pen As New Pen(复选框叉选颜色, scaledMarkW)
                     pen.StartCap = LineCap.Round
                     pen.EndCap = LineCap.Round
-                    g.DrawLine(pen, x + inset, y + inset, x + 复选框大小 - inset, y + 复选框大小 - inset)
-                    g.DrawLine(pen, x + 复选框大小 - inset, y + inset, x + inset, y + 复选框大小 - inset)
+                    g.DrawLine(pen, x + inset, y + inset, x + scaledSize - inset, y + scaledSize - inset)
+                    g.DrawLine(pen, x + scaledSize - inset, y + inset, x + inset, y + scaledSize - inset)
                 End Using
         End Select
 
@@ -1364,14 +1387,15 @@ Public Class ModernListBox
     Private Sub 绘制拖动排序指示线(g As Graphics)
         If Not _isDragReordering OrElse _dragReorderInsertIndex < 0 Then Return
         Dim contentRect = 获取内容区域()
+        Dim scaledH As Integer = CInt(Math.Round(行高 * DpiScale()))
         Dim lineY As Integer
         If _dragReorderInsertIndex >= _items.Count Then
-            lineY = contentRect.Y + Math.Min(_items.Count - _scrollOffset, 估算可见行数()) * 行高
+            lineY = contentRect.Y + Math.Min(_items.Count - _scrollOffset, 估算可见行数()) * scaledH
         Else
             lineY = 获取项Y坐标(_dragReorderInsertIndex)
             If lineY < 0 Then Return
         End If
-        Using pen As New Pen(拖动排序指示线颜色, 拖动排序指示线宽)
+        Using pen As New Pen(拖动排序指示线颜色, 拖动排序指示线宽 * DpiScale())
             g.DrawLine(pen, contentRect.X, lineY, contentRect.Right, lineY)
         End Using
     End Sub
@@ -1415,8 +1439,9 @@ Public Class ModernListBox
             Dim hitIdx As Integer = 命中测试(e.Y)
             If 显示复选框 AndAlso hitIdx >= 0 Then
                 Dim contentRect = 获取内容区域()
-                Dim cbLeft As Integer = contentRect.X + 复选框左边距
-                Dim cbRight As Integer = cbLeft + 复选框大小
+                Dim _s As Single = DpiScale()
+                Dim cbLeft As Integer = contentRect.X + CInt(Math.Round(复选框左边距 * _s))
+                Dim cbRight As Integer = cbLeft + CInt(Math.Round(复选框大小 * _s))
                 If e.X >= cbLeft AndAlso e.X <= cbRight Then
                     _isCheckDragging = True
                     _checkDragState = 获取复选状态(hitIdx)
@@ -1444,8 +1469,9 @@ Public Class ModernListBox
             Dim hitIdx = 命中测试(e.Y)
             If hitIdx >= 0 AndAlso hitIdx <> _checkDragLastIndex AndAlso 显示复选框 Then
                 Dim contentRect = 获取内容区域()
-                Dim cbLeft As Integer = contentRect.X + 复选框左边距
-                Dim cbRight As Integer = cbLeft + 复选框大小
+                Dim _s As Single = DpiScale()
+                Dim cbLeft As Integer = contentRect.X + CInt(Math.Round(复选框左边距 * _s))
+                Dim cbRight As Integer = cbLeft + CInt(Math.Round(复选框大小 * _s))
                 If e.X >= cbLeft AndAlso e.X <= cbRight Then
                     _checkDragApplied = True
                     If 获取复选状态(hitIdx) <> _checkDragState Then
@@ -1599,7 +1625,9 @@ Public Class ModernListBox
         Dim contentRect = 获取内容区域()
         If mouseY < contentRect.Y OrElse mouseY >= contentRect.Bottom Then Return -1
         Dim relY As Integer = mouseY - contentRect.Y
-        Dim idx As Integer = relY \ 行高 + _scrollOffset
+        Dim scaledH As Integer = CInt(Math.Round(行高 * DpiScale()))
+        If scaledH <= 0 Then Return -1
+        Dim idx As Integer = relY \ scaledH + _scrollOffset
         If idx < 0 OrElse idx >= _items.Count Then Return -1
         Return idx
     End Function
@@ -1615,7 +1643,9 @@ Public Class ModernListBox
     Private Function 计算拖动排序插入位置(mouseY As Integer) As Integer
         Dim contentRect = 获取内容区域()
         Dim relY As Integer = mouseY - contentRect.Y
-        Dim rawSlot As Integer = CInt(Math.Round(relY / 行高)) + _scrollOffset
+        Dim scaledH As Integer = CInt(Math.Round(行高 * DpiScale()))
+        If scaledH <= 0 Then Return 0
+        Dim rawSlot As Integer = CInt(Math.Round(relY / scaledH)) + _scrollOffset
         Return Math.Max(0, Math.Min(rawSlot, _items.Count))
     End Function
 
@@ -1739,12 +1769,13 @@ Public Class ModernListBox
     Private Function 命中测试矩形(dragRect As Rectangle) As List(Of Integer)
         Dim result As New List(Of Integer)
         Dim contentRect = 获取内容区域()
+        Dim scaledH As Integer = CInt(Math.Round(行高 * DpiScale()))
         Dim visCount = 估算可见行数()
         For i As Integer = 0 To visCount - 1
             Dim idx As Integer = i + _scrollOffset
             If idx >= _items.Count Then Exit For
-            Dim itemY As Integer = contentRect.Y + i * 行高
-            Dim itemRect As New Rectangle(contentRect.X, itemY, contentRect.Width, 行高)
+            Dim itemY As Integer = contentRect.Y + i * scaledH
+            Dim itemRect As New Rectangle(contentRect.X, itemY, contentRect.Width, scaledH)
             If dragRect.IntersectsWith(itemRect) Then
                 result.Add(idx)
             End If
@@ -1786,11 +1817,11 @@ Public Class ModernListBox
             _hoverAnimFromH += (_hoverAnimToH - _hoverAnimFromH) * t
         Else
             _hoverAnimFromY = newY
-            _hoverAnimFromH = 行高
+            _hoverAnimFromH = CInt(Math.Round(行高 * DpiScale()))
         End If
 
         _hoverAnimToY = newY
-        _hoverAnimToH = 行高
+        _hoverAnimToH = CInt(Math.Round(行高 * DpiScale()))
         _hoverAnimActive = True
         _hoverAnim.Duration = 动画时长
         _hoverAnim.SetImmediate(0)
@@ -2141,9 +2172,19 @@ Public Class ModernListBox
         Invalidate()
     End Sub
 
+    Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
+        MyBase.OnDpiChangedAfterParent(e)
+        校正滚动偏移()
+        Invalidate()
+    End Sub
+
 #End Region
 
 #Region "辅助"
+
+    Private Function DpiScale() As Single
+        Return Me.DeviceDpi / 96.0F
+    End Function
 
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then

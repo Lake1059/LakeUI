@@ -9,6 +9,8 @@ Public Class UltraDetailListView
     Public Event SelectedIndexChanged As EventHandler
     Public Event ItemClick As EventHandler(Of ListItemEventArgs)
     Public Event ItemDoubleClick As EventHandler(Of ListItemEventArgs)
+    Public Event ItemOrderChanged As EventHandler
+    Public Event AfterLabelEdit As EventHandler(Of LabelEditEventArgs)
 
     Public Class ListItemEventArgs
         Inherits EventArgs
@@ -17,6 +19,25 @@ Public Class UltraDetailListView
         Public Sub New(item As ListItem, displayRowIndex As Integer)
             Me.Item = item
             Me.DisplayRowIndex = displayRowIndex
+        End Sub
+    End Class
+
+    Public Class LabelEditEventArgs
+        Inherits EventArgs
+        Public ReadOnly Property Item As ListItem
+        Public ReadOnly Property DisplayRowIndex As Integer
+        Public ReadOnly Property ColumnIndex As Integer
+        ''' <summary>编辑前的原始文本。</summary>
+        Public ReadOnly Property OldLabel As String
+        ''' <summary>编辑后的新文本；事件处理程序可修改此值以替换最终写入的文本。</summary>
+        Public Property Label As String
+        Public Property CancelEdit As Boolean = False
+        Public Sub New(item As ListItem, displayRowIndex As Integer, columnIndex As Integer, oldLabel As String, label As String)
+            Me.Item = item
+            Me.DisplayRowIndex = displayRowIndex
+            Me.ColumnIndex = columnIndex
+            Me.OldLabel = oldLabel
+            Me.Label = label
         End Sub
     End Class
 
@@ -202,6 +223,9 @@ Public Class UltraDetailListView
         <DefaultValue(GetType(Padding), "10, 0, 0, 0"), Description("列标题文字内边距")>
         Public Property HeaderPadding As Padding = New Padding(10, 0, 0, 0)
 
+        <DefaultValue(False), Description("是否允许慢速单击编辑此列的子项主文本")>
+        Public Property AllowLabelEdit As Boolean = False
+
         Public Sub New()
         End Sub
         Public Sub New(text As String, Optional width As Integer = 100)
@@ -340,6 +364,22 @@ Public Class UltraDetailListView
     Private _displayRows As New List(Of DisplayRow)
 
     Private Sub 重建显示列表()
+        取消标签编辑等待()
+        If _editTextBox IsNot Nothing Then 结束标签编辑(True)
+
+        ' 记录当前选中的项引用，用于重建后重新映射
+        Dim prevSelectedItems As New List(Of ListItem)
+        Dim prevAnchorItem As ListItem = Nothing
+        For Each idx In _selectedIndices
+            If idx >= 0 AndAlso idx < _displayRows.Count AndAlso _displayRows(idx).Type = DisplayRowType.Item Then
+                prevSelectedItems.Add(_displayRows(idx).Item)
+            End If
+        Next
+        If _selectionAnchor >= 0 AndAlso _selectionAnchor < _displayRows.Count AndAlso
+           _displayRows(_selectionAnchor).Type = DisplayRowType.Item Then
+            prevAnchorItem = _displayRows(_selectionAnchor).Item
+        End If
+
         _displayRows.Clear()
 
         ' 无分组的项
@@ -372,6 +412,25 @@ Public Class UltraDetailListView
                 Next
             End If
         Next
+
+        ' 重新映射选中索引
+        _selectedIndices.Clear()
+        If prevSelectedItems.Count > 0 Then
+            For i = 0 To _displayRows.Count - 1
+                If _displayRows(i).Type = DisplayRowType.Item AndAlso prevSelectedItems.Contains(_displayRows(i).Item) Then
+                    _selectedIndices.Add(i)
+                End If
+            Next
+        End If
+        If prevAnchorItem IsNot Nothing Then
+            _selectionAnchor = -1
+            For i = 0 To _displayRows.Count - 1
+                If _displayRows(i).Type = DisplayRowType.Item AndAlso _displayRows(i).Item Is prevAnchorItem Then
+                    _selectionAnchor = i
+                    Exit For
+                End If
+            Next
+        End If
 
         校正滚动偏移()
         校正横向滚动偏移()
@@ -457,6 +516,10 @@ Public Class UltraDetailListView
             Me.Invalidate()
         End If
     End Sub
+
+    Private Function DpiScale() As Single
+        Return Me.DeviceDpi / 96.0F
+    End Function
 
     Private Function 获取文本格式标志() As TextFormatFlags
         Dim flags As TextFormatFlags = TextFormatFlags.Left Or TextFormatFlags.Top Or TextFormatFlags.NoPadding
@@ -784,10 +847,7 @@ Public Class UltraDetailListView
             Return 图标间距
         End Get
         Set(value As Integer)
-            If 图标间距 <> value Then
-                图标间距 = value
-                Me.Invalidate()
-            End If
+            SetValueWithFullRebuild(图标间距, value)
         End Set
     End Property
 
@@ -967,6 +1027,32 @@ Public Class UltraDetailListView
 
 #End Region
 
+#Region "外观属性 - 拖动排序"
+
+    Private 拖动排序指示线颜色 As Color = Color.CornflowerBlue
+    <Category("LakeUI"), Description("拖动排序时的插入位置指示线颜色"), DefaultValue(GetType(Color), "CornflowerBlue"), Browsable(True)>
+    Public Property DragReorderLineColor As Color
+        Get
+            Return 拖动排序指示线颜色
+        End Get
+        Set(value As Color)
+            SetValue(拖动排序指示线颜色, value)
+        End Set
+    End Property
+
+    Private 拖动排序指示线宽 As Integer = 2
+    <Category("LakeUI"), Description("拖动排序指示线宽"), DefaultValue(GetType(Integer), "2"), Browsable(True)>
+    Public Property DragReorderLineWidth As Integer
+        Get
+            Return 拖动排序指示线宽
+        End Get
+        Set(value As Integer)
+            SetValue(拖动排序指示线宽, value)
+        End Set
+    End Property
+
+#End Region
+
 #Region "外观属性 - 动画"
 
     Private 动画时长 As Integer = 0
@@ -1029,6 +1115,28 @@ Public Class UltraDetailListView
         End Set
     End Property
 
+    Private 允许拖动排序 As Boolean = False
+    <Category("LakeUI"), Description("是否允许拖动排序（仅在同一分组内）"), DefaultValue(False), Browsable(True)>
+    Public Property AllowDragReorder As Boolean
+        Get
+            Return 允许拖动排序
+        End Get
+        Set(value As Boolean)
+            允许拖动排序 = value
+        End Set
+    End Property
+
+    Private 拖选区域宽度 As Integer = 30
+    <Category("LakeUI"), Description("同时启用多选和拖动排序时，控件右侧强制框选区域的宽度"), DefaultValue(GetType(Integer), "30"), Browsable(True)>
+    Public Property DragSelectZoneWidth As Integer
+        Get
+            Return 拖选区域宽度
+        End Get
+        Set(value As Integer)
+            拖选区域宽度 = Math.Max(0, value)
+        End Set
+    End Property
+
 #End Region
 
 #Region "内部状态"
@@ -1061,6 +1169,21 @@ Public Class UltraDetailListView
     Private _dragPreSelectedIndices As New HashSet(Of Integer)
     Private Const DragThreshold As Integer = 4
     Private _updateCount As Integer = 0
+
+    ' 拖动排序状态
+    Private _isDragReordering As Boolean = False
+    Private _dragReorderSourceIndex As Integer = -1
+    Private _dragReorderSourceIndices As New List(Of Integer)
+    Private _dragReorderInsertIndex As Integer = -1
+    Private _mouseDownInDragSelectZone As Boolean = False
+
+    ' 标签编辑状态
+    Private _labelEditTimer As Timer
+    Private _labelEditPendingIndex As Integer = -1
+    Private _editTextBox As ModernTextBox = Nothing
+    Private _editRowIndex As Integer = -1
+    Private _editColumnIndex As Integer = -1
+    Private _labelEditPendingColumn As Integer = -1
 
     Private _truncTooltip As ToolTip
     Private _truncTooltipText As String = ""
@@ -1205,7 +1328,8 @@ Public Class UltraDetailListView
 #Region "布局计算"
 
     Private Function 获取边框内边距() As Integer
-        Return Math.Max(边框宽度, If(边框圆角半径 > 0, 边框圆角半径 \ 2, 0))
+        Dim s As Single = DpiScale()
+        Return CInt(Math.Max(边框宽度 * s, If(边框圆角半径 > 0, 边框圆角半径 * s / 2, 0)))
     End Function
 
     Private Function 获取列标题区域() As Rectangle
@@ -1346,8 +1470,9 @@ Public Class UltraDetailListView
         Dim inset As Integer = 获取边框内边距()
         Dim clipRect As New RectangleF(inset, inset, Me.Width - inset * 2 - 1, Me.Height - inset * 2 - 1)
         If clipRect.Width <= 0 OrElse clipRect.Height <= 0 Then Return
+        Dim s As Single = DpiScale()
         If 边框圆角半径 > 0 Then
-            Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(clipRect, Math.Max(0, 边框圆角半径 - 边框宽度))
+            Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(clipRect, Math.Max(0, (边框圆角半径 - 边框宽度) * s))
                 g.SetClip(path)
             End Using
         Else
@@ -1360,6 +1485,7 @@ Public Class UltraDetailListView
 
         绘制全部行(g)
         绘制拖选框(g)
+        绘制拖动排序指示线(g)
 
         If _ssaa <= 1 Then
             绘制滚动条(g)
@@ -1372,23 +1498,24 @@ Public Class UltraDetailListView
     Private Sub 绘制背景与边框(g As Graphics)
         g.SmoothingMode = SmoothingMode.AntiAlias
         g.PixelOffsetMode = PixelOffsetMode.HighQuality
+        Dim s As Single = DpiScale()
         Dim boundsRect As New RectangleF(0, 0, Me.Width - 1, Me.Height - 1)
         If 边框宽度 > 0 Then
-            Dim half As Single = 边框宽度 / 2.0F
+            Dim half As Single = 边框宽度 * s / 2.0F
             boundsRect.Inflate(-half, -half)
         End If
         If 边框圆角半径 > 0 Then
-            Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(boundsRect, 边框圆角半径)
+            Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(boundsRect, 边框圆角半径 * s)
                 Using br As New SolidBrush(背景颜色)
                     g.FillPath(br, path)
                 End Using
-                RectangleRenderer.绘制圆角边框(g, path, 边框颜色, 边框宽度)
+                RectangleRenderer.绘制圆角边框(g, path, 边框颜色, 边框宽度 * s)
             End Using
         Else
             Using br As New SolidBrush(背景颜色)
                 g.FillRectangle(br, boundsRect)
             End Using
-            RectangleRenderer.绘制矩形边框(g, boundsRect, 边框颜色, 边框宽度)
+            RectangleRenderer.绘制矩形边框(g, boundsRect, 边框颜色, 边框宽度 * s)
         End If
     End Sub
 
@@ -1406,7 +1533,8 @@ Public Class UltraDetailListView
             Dim extraTop As Integer = contentRect.Y - inset
             Dim hsbSpace As Integer = If(需要横向滚动条(), 滚动条宽度 + ScrollBarRenderer.Margin * 2, 0)
             Dim extraBottom As Integer = Me.Padding.Bottom + hsbSpace
-            _scrollBar.ComputeLayout(Me.Width, Me.Height, 边框宽度, 边框圆角半径,
+            Dim s As Single = DpiScale()
+            _scrollBar.ComputeLayout(Me.Width, Me.Height, CInt(边框宽度 * s), CInt(边框圆角半径 * s),
                 extraTop, extraBottom, 滚动条宽度,
                 _displayRows.Count, visCount, _scrollOffset)
         Else
@@ -1430,14 +1558,16 @@ Public Class UltraDetailListView
         Dim visibleW As Integer = Math.Max(1, contentRect.Width - vsbReserved)
         Dim paddingLeft As Integer = contentRect.X - inset
         Dim paddingRight As Integer = Me.Padding.Right + vsbReserved
-        _hScrollBar.ComputeHorizontalLayout(Me.Width, Me.Height, 边框宽度, 边框圆角半径,
+        Dim s As Single = DpiScale()
+        _hScrollBar.ComputeHorizontalLayout(Me.Width, Me.Height, CInt(边框宽度 * s), CInt(边框圆角半径 * s),
             paddingLeft, paddingRight, 滚动条宽度,
             totalW, visibleW, _hScrollOffset)
     End Sub
 
     Private Sub 绘制横向滚动条(g As Graphics)
         If _hScrollBar.TrackRect.IsEmpty Then Return
-        _hScrollBar.DrawHorizontal(g, Me.Width, Me.Height, 边框宽度, 边框圆角半径,
+        Dim s As Single = DpiScale()
+        _hScrollBar.DrawHorizontal(g, Me.Width, Me.Height, CInt(边框宽度 * s), CInt(边框圆角半径 * s),
             滚动条宽度, 滚动条轨道颜色, 滚动条滑块颜色, 滚动条悬停颜色)
     End Sub
 
@@ -1448,7 +1578,7 @@ Public Class UltraDetailListView
         End Using
 
         Dim colXList = 获取列X列表()
-        Using pen As New Pen(列标题分隔线颜色, 列标题分隔线宽度)
+        Using pen As New Pen(列标题分隔线颜色, 列标题分隔线宽度 * DpiScale())
             For i As Integer = 0 To _columns.Count - 1
                 Dim col = _columns(i)
                 Dim x As Integer = colXList(i)
@@ -1482,7 +1612,7 @@ Public Class UltraDetailListView
         ' 绘制悬停动画高亮
         Using selectedBr As New SolidBrush(项选中背景颜色),
               hoverBr As New SolidBrush(项悬停背景颜色),
-              checkedPen As New Pen(项高亮边框颜色, 项高亮边框宽度)
+              checkedPen As New Pen(项高亮边框颜色, 项高亮边框宽度 * DpiScale())
 
             If _hoverAnimActive AndAlso _hoverRowIndex >= 0 AndAlso Not _selectedIndices.Contains(_hoverRowIndex) Then
                 Dim t As Single = _hoverAnim.Progress
@@ -1511,10 +1641,11 @@ Public Class UltraDetailListView
                 Else
                     绘制项行(g, row.Item, rowRect, colXList)
                     If row.Item.Checked AndAlso 项高亮边框宽度 > 0 Then
-                        Dim half As Single = 项高亮边框宽度 / 2.0F
+                        Dim scaledCheckedBorder As Single = 项高亮边框宽度 * DpiScale()
+                        Dim half As Single = scaledCheckedBorder / 2.0F
                         Dim borderRect As New RectangleF(
                             rowRect.X + half, rowRect.Y + half,
-                            rowRect.Width - 项高亮边框宽度, rowRect.Height - 项高亮边框宽度)
+                            rowRect.Width - scaledCheckedBorder, rowRect.Height - scaledCheckedBorder)
                         g.DrawRectangle(checkedPen, borderRect.X, borderRect.Y, borderRect.Width, borderRect.Height)
                     End If
                 End If
@@ -1658,7 +1789,8 @@ Public Class UltraDetailListView
 
     Private Sub 绘制滚动条(g As Graphics)
         If _scrollBar.TrackRect.IsEmpty Then Return
-        _scrollBar.Draw(g, Me.Width, Me.Height, 边框宽度, 边框圆角半径,
+        Dim s As Single = DpiScale()
+        _scrollBar.Draw(g, Me.Width, Me.Height, CInt(边框宽度 * s), CInt(边框圆角半径 * s),
             滚动条宽度, 滚动条轨道颜色, 滚动条滑块颜色, 滚动条悬停颜色)
     End Sub
 
@@ -1671,6 +1803,29 @@ Public Class UltraDetailListView
         End Using
         Using pen As New Pen(选框边框颜色)
             g.DrawRectangle(pen, rect)
+        End Using
+    End Sub
+
+    Private Sub 绘制拖动排序指示线(g As Graphics)
+        If Not _isDragReordering OrElse _dragReorderInsertIndex < 0 Then Return
+        Dim contentRect = 获取内容区域()
+        Dim inset = 获取边框内边距()
+        Dim scrollW = If(Not _scrollBar.TrackRect.IsEmpty, Me.Width - inset - _scrollBar.VisualLeft, 0)
+        Dim availW = contentRect.Width - scrollW
+        If _columns.Count > 0 Then availW = Math.Max(availW, 获取总列宽())
+        Dim lineY As Integer
+        If _dragReorderInsertIndex < _displayRows.Count Then
+            lineY = 获取行Y坐标(_dragReorderInsertIndex)
+            If lineY < 0 Then Return
+        Else
+            Dim lastIdx = _dragReorderInsertIndex - 1
+            If lastIdx < 0 OrElse lastIdx >= _displayRows.Count Then Return
+            lineY = 获取行Y坐标(lastIdx)
+            If lineY < 0 Then Return
+            lineY += _displayRows(lastIdx).Height
+        End If
+        Using pen As New Pen(拖动排序指示线颜色, 拖动排序指示线宽 * DpiScale())
+            g.DrawLine(pen, contentRect.X, lineY, contentRect.X + availW, lineY)
         End Using
     End Sub
 
@@ -1711,12 +1866,45 @@ Public Class UltraDetailListView
             Return
         End If
 
-        ' 拖选检测
+        ' 拖选/拖排序检测
         If e.Button = MouseButtons.Left AndAlso _mouseDownInContent Then
+            If _isDragReordering Then
+                隐藏截断提示()
+                _dragReorderInsertIndex = 计算拖动排序插入位置(e.Y)
+                Me.Invalidate()
+                Return
+            End If
+
             If Not _isDragSelecting Then
                 If Math.Abs(e.X - _mouseDownPos.X) > DragThreshold OrElse Math.Abs(e.Y - _mouseDownPos.Y) > DragThreshold Then
-                    _isDragSelecting = True
-                    _dragPreSelectedIndices = New HashSet(Of Integer)(_selectedIndices)
+                    取消标签编辑等待()
+                    If 应该拖选() Then
+                        _isDragSelecting = True
+                        _dragPreSelectedIndices = New HashSet(Of Integer)(_selectedIndices)
+                    ElseIf 允许拖动排序 AndAlso _dragReorderSourceIndex >= 0 AndAlso
+                           _dragReorderSourceIndex < _displayRows.Count AndAlso
+                           _displayRows(_dragReorderSourceIndex).Type = DisplayRowType.Item Then
+                        _isDragReordering = True
+                        Dim srcGroup = _displayRows(_dragReorderSourceIndex).Item.GroupName
+                        If _selectedIndices.Contains(_dragReorderSourceIndex) AndAlso _selectedIndices.Count > 1 Then
+                            Dim allSameGroup = _selectedIndices.All(Function(idx) idx >= 0 AndAlso idx < _displayRows.Count AndAlso
+                                _displayRows(idx).Type = DisplayRowType.Item AndAlso
+                                String.Equals(_displayRows(idx).Item.GroupName, srcGroup, StringComparison.Ordinal))
+                            If allSameGroup Then
+                                _dragReorderSourceIndices = _selectedIndices.OrderBy(Function(x) x).ToList()
+                            Else
+                                _dragReorderSourceIndices = New List(Of Integer) From {_dragReorderSourceIndex}
+                            End If
+                        Else
+                            _dragReorderSourceIndices = New List(Of Integer) From {_dragReorderSourceIndex}
+                        End If
+                        _dragReorderInsertIndex = _dragReorderSourceIndex
+                        Me.Invalidate()
+                        Return
+                    ElseIf 允许多选 Then
+                        _isDragSelecting = True
+                        _dragPreSelectedIndices = New HashSet(Of Integer)(_selectedIndices)
+                    End If
                 End If
             End If
             If _isDragSelecting Then
@@ -1752,6 +1940,9 @@ Public Class UltraDetailListView
 
     Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
         MyBase.OnMouseDown(e)
+
+        取消标签编辑等待()
+        If _editTextBox IsNot Nothing Then 结束标签编辑(False)
 
         _mouseDownInContent = False
 
@@ -1807,10 +1998,25 @@ Public Class UltraDetailListView
         _mouseDownPos = e.Location
         _mouseDownInContent = True
         _isDragSelecting = False
+        _isDragReordering = False
+        _dragReorderSourceIndex = hitRow
+        _mouseDownInDragSelectZone = 是否在拖选区域(e.X)
     End Sub
 
     Protected Overrides Sub OnMouseUp(e As MouseEventArgs)
         MyBase.OnMouseUp(e)
+
+        ' 完成拖动排序
+        If _isDragReordering Then
+            _isDragReordering = False
+            执行拖动排序()
+            _dragReorderSourceIndex = -1
+            _dragReorderSourceIndices.Clear()
+            _dragReorderInsertIndex = -1
+            _mouseDownInContent = False
+            Me.Invalidate()
+            Return
+        End If
 
         If _isDragSelecting Then
             _isDragSelecting = False
@@ -1847,6 +2053,8 @@ Public Class UltraDetailListView
     Protected Overrides Sub OnMouseWheel(e As MouseEventArgs)
         MyBase.OnMouseWheel(e)
         隐藏截断提示()
+        取消标签编辑等待()
+        If _editTextBox IsNot Nothing Then 结束标签编辑(False)
         If (Control.ModifierKeys And Keys.Shift) = Keys.Shift Then
             If _columns.Count > 0 AndAlso 需要横向滚动条() Then
                 Dim totalW = 获取总列宽()
@@ -1873,6 +2081,12 @@ Public Class UltraDetailListView
     Private Sub 处理点击选择(hitRow As Integer, e As MouseEventArgs)
         Dim ctrlHeld As Boolean = (Control.ModifierKeys And Keys.Control) = Keys.Control
         Dim shiftHeld As Boolean = (Control.ModifierKeys And Keys.Shift) = Keys.Shift
+
+        ' 检测是否是对已选中单项的慢速点击
+        Dim wasOnlySelected As Boolean = (Not ctrlHeld AndAlso Not shiftHeld AndAlso
+            _selectedIndices.Count = 1 AndAlso _selectedIndices.Contains(hitRow) AndAlso
+            hitRow >= 0 AndAlso hitRow < _displayRows.Count AndAlso
+            _displayRows(hitRow).Type = DisplayRowType.Item)
 
         If hitRow < 0 OrElse hitRow >= _displayRows.Count Then
             If Not ctrlHeld AndAlso Not shiftHeld Then
@@ -1907,6 +2121,14 @@ Public Class UltraDetailListView
             设置选中集合({hitRow})
         End If
 
+        ' 慢速点击编辑检测
+        Dim clickedCol As Integer = 命中测试列(e.Location)
+        If wasOnlySelected AndAlso 列可编辑(clickedCol) Then
+            开始标签编辑等待(hitRow, clickedCol)
+        Else
+            取消标签编辑等待()
+        End If
+
         RaiseEvent ItemClick(Me, New ListItemEventArgs(row.Item, hitRow))
     End Sub
 
@@ -1916,6 +2138,7 @@ Public Class UltraDetailListView
 
     Protected Overrides Sub OnMouseDoubleClick(e As MouseEventArgs)
         MyBase.OnMouseDoubleClick(e)
+        取消标签编辑等待()
         Dim hitRow = 命中测试行(e.Location)
         If hitRow >= 0 AndAlso hitRow < _displayRows.Count Then
             Dim row = _displayRows(hitRow)
@@ -1935,7 +2158,7 @@ Public Class UltraDetailListView
                  Keys.Up Or Keys.Shift, Keys.Down Or Keys.Shift,
                  Keys.PageUp Or Keys.Shift, Keys.PageDown Or Keys.Shift,
                  Keys.Home Or Keys.Shift, Keys.End Or Keys.Shift,
-                 Keys.A Or Keys.Control
+                 Keys.A Or Keys.Control, Keys.F2, Keys.Escape
                 OnKeyDown(New KeyEventArgs(keyData))
                 Return True
         End Select
@@ -1951,6 +2174,26 @@ Public Class UltraDetailListView
             Case Keys.A
                 If (e.Modifiers And Keys.Control) = Keys.Control Then
                     SelectAll()
+                    e.Handled = True
+                End If
+            Case Keys.F2
+                If _selectedIndices.Count = 1 Then
+                    Dim firstEditableCol = 查找首个可编辑列()
+                    If firstEditableCol >= 0 Then
+                        开始标签编辑(_selectedIndices.Min(), firstEditableCol)
+                    End If
+                End If
+                e.Handled = True
+            Case Keys.Escape
+                If _editTextBox IsNot Nothing Then
+                    结束标签编辑(True)
+                    e.Handled = True
+                ElseIf _isDragReordering Then
+                    _isDragReordering = False
+                    _dragReorderSourceIndex = -1
+                    _dragReorderSourceIndices.Clear()
+                    _dragReorderInsertIndex = -1
+                    Me.Invalidate()
                     e.Handled = True
                 End If
             Case Keys.Up
@@ -2100,6 +2343,258 @@ Public Class UltraDetailListView
 
 #End Region
 
+#Region "拖动排序"
+
+    Private Function 是否在拖选区域(mouseX As Integer) As Boolean
+        If Not 允许多选 Then Return False
+        If Not 允许拖动排序 Then Return True
+        Dim contentRect = 获取内容区域()
+        Dim inset = 获取边框内边距()
+        Dim scrollW = If(Not _scrollBar.TrackRect.IsEmpty, Me.Width - inset - _scrollBar.VisualLeft, 0)
+        Dim zoneLeft = contentRect.Right - scrollW - 拖选区域宽度
+        Return mouseX >= zoneLeft
+    End Function
+
+    Private Function 应该拖选() As Boolean
+        If Not 允许多选 Then Return False
+        If Not 允许拖动排序 Then Return True
+        Return _mouseDownInDragSelectZone
+    End Function
+
+    Private Function 计算拖动排序插入位置(mouseY As Integer) As Integer
+        If _dragReorderSourceIndex < 0 OrElse _dragReorderSourceIndex >= _displayRows.Count Then Return -1
+        Dim sourceGroup As String = _displayRows(_dragReorderSourceIndex).Item.GroupName
+        Dim groupRows As New List(Of Integer)
+        For i = 0 To _displayRows.Count - 1
+            If _displayRows(i).Type = DisplayRowType.Item AndAlso
+               String.Equals(_displayRows(i).Item.GroupName, sourceGroup, StringComparison.Ordinal) Then
+                groupRows.Add(i)
+            End If
+        Next
+        If groupRows.Count = 0 Then Return -1
+        Dim bestSlot As Integer = groupRows(0)
+        Dim bestDist As Integer = Integer.MaxValue
+        For g = 0 To groupRows.Count
+            Dim gapY As Integer
+            If g < groupRows.Count Then
+                Dim y = 获取行Y坐标(groupRows(g))
+                If y < 0 Then Continue For
+                gapY = y
+            Else
+                Dim lastIdx = groupRows(g - 1)
+                Dim y = 获取行Y坐标(lastIdx)
+                If y < 0 Then Continue For
+                gapY = y + _displayRows(lastIdx).Height
+            End If
+            Dim dist = Math.Abs(mouseY - gapY)
+            If dist < bestDist Then
+                bestDist = dist
+                bestSlot = If(g < groupRows.Count, groupRows(g), groupRows(g - 1) + 1)
+            End If
+        Next
+        Return bestSlot
+    End Function
+
+    Private Sub 执行拖动排序()
+        If _dragReorderSourceIndices.Count = 0 OrElse _dragReorderInsertIndex < 0 Then Return
+        Dim movedItems As New List(Of ListItem)
+        For Each dispIdx In _dragReorderSourceIndices.OrderBy(Function(x) x)
+            If dispIdx >= 0 AndAlso dispIdx < _displayRows.Count AndAlso _displayRows(dispIdx).Type = DisplayRowType.Item Then
+                movedItems.Add(_displayRows(dispIdx).Item)
+            End If
+        Next
+        If movedItems.Count = 0 Then Return
+
+        Dim targetItemsIndex As Integer
+        If _dragReorderInsertIndex < _displayRows.Count AndAlso _displayRows(_dragReorderInsertIndex).Type = DisplayRowType.Item Then
+            targetItemsIndex = 查找项索引(_displayRows(_dragReorderInsertIndex).Item)
+        Else
+            Dim groupName = movedItems(0).GroupName
+            targetItemsIndex = _items.Count
+            For i = _items.Count - 1 To 0 Step -1
+                If String.Equals(_items(i).GroupName, groupName, StringComparison.Ordinal) Then
+                    targetItemsIndex = i + 1
+                    Exit For
+                End If
+            Next
+        End If
+
+        Dim sourceItemsIndices As New List(Of Integer)
+        For Each item In movedItems
+            sourceItemsIndices.Add(查找项索引(item))
+        Next
+        sourceItemsIndices.Sort()
+
+        Dim countBefore = sourceItemsIndices.Where(Function(i) i < targetItemsIndex).Count()
+        Dim adjustedTarget = targetItemsIndex - countBefore
+
+        BeginUpdate()
+        For i = sourceItemsIndices.Count - 1 To 0 Step -1
+            _items.RemoveAt(sourceItemsIndices(i))
+        Next
+        adjustedTarget = Math.Max(0, Math.Min(adjustedTarget, _items.Count))
+        For i = 0 To movedItems.Count - 1
+            _items.Insert(adjustedTarget + i, movedItems(i))
+        Next
+        EndUpdate()
+
+        _selectedIndices.Clear()
+        For i = 0 To _displayRows.Count - 1
+            If _displayRows(i).Type = DisplayRowType.Item AndAlso movedItems.Contains(_displayRows(i).Item) Then
+                _selectedIndices.Add(i)
+            End If
+        Next
+        _selectionAnchor = If(_selectedIndices.Count > 0, _selectedIndices.Min(), -1)
+        RaiseEvent ItemOrderChanged(Me, EventArgs.Empty)
+        RaiseEvent SelectedIndexChanged(Me, EventArgs.Empty)
+    End Sub
+
+    Private Function 查找项索引(item As ListItem) As Integer
+        For i = 0 To _items.Count - 1
+            If _items(i) Is item Then Return i
+        Next
+        Return -1
+    End Function
+
+#End Region
+
+#Region "标签编辑"
+
+    Private Sub 开始标签编辑等待(displayRowIndex As Integer, columnIndex As Integer)
+        取消标签编辑等待()
+        _labelEditPendingIndex = displayRowIndex
+        _labelEditPendingColumn = columnIndex
+        If _labelEditTimer Is Nothing Then
+            _labelEditTimer = New Timer()
+            AddHandler _labelEditTimer.Tick, AddressOf 标签编辑计时器触发
+        End If
+        _labelEditTimer.Interval = SystemInformation.DoubleClickTime + 100
+        _labelEditTimer.Start()
+    End Sub
+
+    Private Sub 取消标签编辑等待()
+        _labelEditPendingIndex = -1
+        _labelEditPendingColumn = -1
+        _labelEditTimer?.Stop()
+    End Sub
+
+    Private Sub 标签编辑计时器触发(sender As Object, e As EventArgs)
+        _labelEditTimer.Stop()
+        Dim idx = _labelEditPendingIndex
+        Dim col = _labelEditPendingColumn
+        _labelEditPendingIndex = -1
+        _labelEditPendingColumn = -1
+        If idx >= 0 AndAlso col >= 0 Then 开始标签编辑(idx, col)
+    End Sub
+
+    ''' <summary>开始编辑指定行指定列的子项主文本。</summary>
+    Public Sub 开始标签编辑(displayRowIndex As Integer, columnIndex As Integer)
+        If _editTextBox IsNot Nothing Then 结束标签编辑(True)
+        If displayRowIndex < 0 OrElse displayRowIndex >= _displayRows.Count Then Return
+        If Not 列可编辑(columnIndex) Then Return
+        Dim row = _displayRows(displayRowIndex)
+        If row.Type <> DisplayRowType.Item Then Return
+        Dim item = row.Item
+        If columnIndex >= item.SubItems.Count Then Return
+
+        Dim rowY = 获取行Y坐标(displayRowIndex)
+        If rowY < 0 Then Return
+
+        Dim contentRect = 获取内容区域()
+        Dim inset = 获取边框内边距()
+        Dim scrollW = If(Not _scrollBar.TrackRect.IsEmpty, Me.Width - inset - _scrollBar.VisualLeft, 0)
+        Dim availW = contentRect.Width - scrollW
+        If _columns.Count > 0 Then availW = Math.Max(availW, 获取总列宽())
+
+        Dim colXList = 获取列X列表()
+        Dim colX = colXList(Math.Min(columnIndex, colXList.Count - 1))
+        Dim colW = _columns(columnIndex).Width
+        Dim iconAreaW = If(columnIndex = 0, 获取图标区域宽度(item), 0)
+        Dim cellX = colX + 项内边距.Left + iconAreaW
+        Dim cellW = colW - 项内边距.Horizontal - iconAreaW
+        If cellW <= 20 Then Return
+
+        _editRowIndex = displayRowIndex
+        _editColumnIndex = columnIndex
+        Dim sub_ = item.SubItems(columnIndex)
+
+        _editTextBox = New ModernTextBox With {
+            .Text = sub_.Text,
+            .Font = If(sub_.Font, Me.Font),
+            .ForeColor = If(sub_.ForeColor <> Color.Empty, sub_.ForeColor, 项文本颜色),
+            .BackColor1 = 背景颜色,
+            .BorderSize = 1,
+            .BorderColor = 项高亮边框颜色,
+            .BorderColorFocus = 项高亮边框颜色,
+            .Padding = New Padding(2, 0, 2, 0),
+            .Location = New Point(cellX, rowY),
+            .Size = New Size(cellW, row.Height)
+        }
+
+        Me.Controls.Add(_editTextBox)
+        _editTextBox.BringToFront()
+        _editTextBox.Focus()
+        _editTextBox.[Select](0, sub_.Text.Length)
+
+        AddHandler _editTextBox.PreviewKeyDown, AddressOf 编辑框预览按键
+        AddHandler _editTextBox.LostFocus, AddressOf 编辑框失焦
+        AddHandler _editTextBox.KeyDown, AddressOf 编辑框按键
+    End Sub
+
+    Private Sub 编辑框预览按键(sender As Object, e As PreviewKeyDownEventArgs)
+        If e.KeyCode = Keys.Escape Then e.IsInputKey = True
+    End Sub
+
+    Private Sub 编辑框失焦(sender As Object, e As EventArgs)
+        结束标签编辑(False)
+    End Sub
+
+    Private Sub 编辑框按键(sender As Object, e As KeyEventArgs)
+        If e.KeyCode = Keys.Return Then
+            结束标签编辑(False)
+            e.Handled = True
+        ElseIf e.KeyCode = Keys.Escape Then
+            结束标签编辑(True)
+            e.Handled = True
+        End If
+    End Sub
+
+    Private Sub 结束标签编辑(cancel As Boolean)
+        If _editTextBox Is Nothing Then Return
+        Dim editBox = _editTextBox
+        _editTextBox = Nothing
+
+        RemoveHandler editBox.PreviewKeyDown, AddressOf 编辑框预览按键
+        RemoveHandler editBox.LostFocus, AddressOf 编辑框失焦
+        RemoveHandler editBox.KeyDown, AddressOf 编辑框按键
+
+        Dim shouldRefocus = editBox.Focused
+
+        If Not cancel AndAlso _editRowIndex >= 0 AndAlso _editRowIndex < _displayRows.Count AndAlso _editColumnIndex >= 0 Then
+            Dim row = _displayRows(_editRowIndex)
+            If row.Type = DisplayRowType.Item AndAlso _editColumnIndex < row.Item.SubItems.Count Then
+                Dim oldText = row.Item.SubItems(_editColumnIndex).Text
+                Dim newText = editBox.Text
+                Dim args As New LabelEditEventArgs(row.Item, _editRowIndex, _editColumnIndex, oldText, newText)
+                RaiseEvent AfterLabelEdit(Me, args)
+                If Not args.CancelEdit Then
+                    row.Item.SubItems(_editColumnIndex).Text = args.Label
+                    row.Item.InvalidateCache()
+                    重建显示列表()
+                End If
+            End If
+        End If
+
+        _editRowIndex = -1
+        _editColumnIndex = -1
+        Me.Controls.Remove(editBox)
+        editBox.Dispose()
+        Me.Invalidate()
+        If shouldRefocus Then Me.Focus()
+    End Sub
+
+#End Region
+
 #Region "命中测试"
 
     Private Function 命中测试行(pt As Point) As Integer
@@ -2131,6 +2626,31 @@ Public Class UltraDetailListView
             If Math.Abs(mouseX - sepX) <= ColumnResizeHitZone Then
                 Return i
             End If
+        Next
+        Return -1
+    End Function
+
+    Private Function 命中测试列(pt As Point) As Integer
+        If _columns.Count = 0 Then Return -1
+        Dim colXList = 获取列X列表()
+        For i = 0 To _columns.Count - 1
+            Dim colX = colXList(i)
+            If pt.X >= colX AndAlso pt.X < colX + _columns(i).Width Then
+                Return i
+            End If
+        Next
+        Return -1
+    End Function
+
+    Private Function 列可编辑(colIndex As Integer) As Boolean
+        If colIndex < 0 OrElse _columns.Count = 0 Then Return False
+        If colIndex >= _columns.Count Then Return False
+        Return _columns(colIndex).AllowLabelEdit
+    End Function
+
+    Private Function 查找首个可编辑列() As Integer
+        For i = 0 To _columns.Count - 1
+            If _columns(i).AllowLabelEdit Then Return i
         Next
         Return -1
     End Function
@@ -2409,6 +2929,8 @@ Public Class UltraDetailListView
 
     Protected Overrides Sub OnSizeChanged(e As EventArgs)
         MyBase.OnSizeChanged(e)
+        取消标签编辑等待()
+        If _editTextBox IsNot Nothing Then 结束标签编辑(True)
         If _columns.Count = 0 Then
             全部项高度缓存失效()
             重建显示列表()
@@ -2424,8 +2946,28 @@ Public Class UltraDetailListView
         Me.Invalidate()
     End Sub
 
+    Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
+        MyBase.OnDpiChangedAfterParent(e)
+        全部项高度缓存失效()
+        重建显示列表()
+        Me.Invalidate()
+    End Sub
+
     Friend Sub 释放资源()
         _hoverAnim?.Dispose()
+        取消标签编辑等待()
+        If _editTextBox IsNot Nothing Then
+            RemoveHandler _editTextBox.PreviewKeyDown, AddressOf 编辑框预览按键
+            RemoveHandler _editTextBox.LostFocus, AddressOf 编辑框失焦
+            RemoveHandler _editTextBox.KeyDown, AddressOf 编辑框按键
+            _editTextBox.Dispose()
+            _editTextBox = Nothing
+        End If
+        If _labelEditTimer IsNot Nothing Then
+            RemoveHandler _labelEditTimer.Tick, AddressOf 标签编辑计时器触发
+            _labelEditTimer.Dispose()
+            _labelEditTimer = Nothing
+        End If
         If _truncTooltip IsNot Nothing Then
             RemoveHandler _truncTooltip.Draw, AddressOf 工具提示绘制
             RemoveHandler _truncTooltip.Popup, AddressOf 工具提示弹出

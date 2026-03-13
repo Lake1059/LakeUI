@@ -8,7 +8,7 @@ Public Class ModernButton
         Dim 是否有圆角 As Boolean = 边框圆角半径 > 0
         Dim 极限矩形区域 As New RectangleF(0, 0, Me.Width - 1, Me.Height - 1)
         If 边框宽度 > 0 Then
-            Dim half As Single = 边框宽度 / 2.0F
+            Dim half As Single = 边框宽度 * DpiScale() / 2.0F
             极限矩形区域.Inflate(-half, -half)
         End If
         Dim 内容矩形区域 As New RectangleF(
@@ -54,20 +54,21 @@ Public Class ModernButton
         Else
             根据鼠标状态分配颜色(背景颜色缓存值, 渐变颜色缓存值, 边框颜色缓存值)
         End If
+        Dim s As Single = DpiScale()
         If 是否有圆角 Then
-            Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(极限矩形区域, 边框圆角半径)
+            Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(极限矩形区域, 边框圆角半径 * s)
                 RectangleRenderer.绘制圆角背景(g, path, 极限矩形区域, 背景颜色缓存值, 渐变颜色缓存值, 渐变方向)
-                RectangleRenderer.绘制圆角边框(g, path, 边框颜色缓存值, 边框宽度)
+                RectangleRenderer.绘制圆角边框(g, path, 边框颜色缓存值, 边框宽度 * s)
             End Using
         Else
             RectangleRenderer.绘制矩形背景(g, 极限矩形区域, 背景颜色缓存值, 渐变颜色缓存值, 渐变方向)
-            RectangleRenderer.绘制矩形边框(g, 极限矩形区域, 边框颜色缓存值, 边框宽度)
+            RectangleRenderer.绘制矩形边框(g, 极限矩形区域, 边框颜色缓存值, 边框宽度 * s)
         End If
         绘制图标(g, 内容矩形区域)
     End Sub
     Private Function 计算图标占用的水平宽度(内容矩形区域 As RectangleF) As Single
         If 图标 Is Nothing Then Return 0
-        Return Math.Min(内容矩形区域.Height - 图标边距 * 2, 内容矩形区域.Width * 0.3F)
+        Return Math.Min(内容矩形区域.Height - 图标边距 * DpiScale() * 2, 内容矩形区域.Width * 0.3F)
     End Function
     Private Sub 根据鼠标状态分配颜色(ByRef _背景颜色 As Color, ByRef _渐变颜色 As Color, ByRef _边框颜色 As Color)
         Select Case 鼠标状态
@@ -120,16 +121,19 @@ Public Class ModernButton
     Private Sub 绘制图标(g As Graphics, 内容矩形区域 As RectangleF)
         If 图标 Is Nothing Then Return
         Dim iconSize As Single = 计算图标占用的水平宽度(内容矩形区域)
-        Dim iconX As Single = 内容矩形区域.X + 图标边距
+        Dim iconX As Single = 内容矩形区域.X + 图标边距 * DpiScale()
         Dim iconY As Single = 内容矩形区域.Y + (内容矩形区域.Height - iconSize) / 2.0F
         g.DrawImage(图标, New RectangleF(iconX, iconY, iconSize, iconSize))
     End Sub
     Private Sub 绘制文本(g As Graphics, 内容矩形区域 As RectangleF, 图标宽度 As Single)
-        Dim 图标占用总宽度 As Single = If(图标宽度 > 0, 图标宽度 + 图标边距, 0)
+        Dim s As Single = DpiScale()
+        Dim _图标边距 As Single = 图标边距 * s
+        Dim _边框圆角半径 As Single = 边框圆角半径 * s
+        Dim 图标占用总宽度 As Single = If(图标宽度 > 0, 图标宽度 + _图标边距, 0)
         Dim 文本绘制区域 As Rectangle = Rectangle.Round(New RectangleF(
-            内容矩形区域.X + 图标占用总宽度 + 边框圆角半径,
+            内容矩形区域.X + 图标占用总宽度 + _边框圆角半径,
             内容矩形区域.Y,
-            内容矩形区域.Width - 图标占用总宽度 - 边框圆角半径 * 2,
+            内容矩形区域.Width - 图标占用总宽度 - _边框圆角半径 * 2,
             内容矩形区域.Height))
         Dim 文本格式1 As TextFormatFlags
         Select Case 文字对齐方位
@@ -145,11 +149,12 @@ Public Class ModernButton
             Using 次要文本字体 As New Font(Me.Font.FontFamily, 次要文本字号, FontStyle.Regular)
                 Dim 主要文本尺寸 As Size = TextRenderer.MeasureText(g, MyBase.Text, Me.Font, 文本绘制区域.Size, 文本格式2)
                 Dim 次要文本尺寸 As Size = TextRenderer.MeasureText(g, 次要文本, 次要文本字体, 文本绘制区域.Size, 文本格式2)
-                Dim 文本极限高度 As Integer = 主要文本尺寸.Height + 主次文本间距 + 次要文本尺寸.Height
+                Dim _主次文本间距 As Integer = CInt(Math.Round(主次文本间距 * s))
+                Dim 文本极限高度 As Integer = 主要文本尺寸.Height + _主次文本间距 + 次要文本尺寸.Height
                 Dim 高度起始 As Integer = 文本绘制区域.Y + (文本绘制区域.Height - 文本极限高度) \ 2
                 Dim 主要文本区域 As New Rectangle(文本绘制区域.X, 高度起始, 文本绘制区域.Width, 主要文本尺寸.Height)
                 TextRenderer.DrawText(g, MyBase.Text, Me.Font, 主要文本区域, 文本颜色, 文本格式2)
-                Dim 次要文本区域 As New Rectangle(文本绘制区域.X, 高度起始 + 主要文本尺寸.Height + 主次文本间距, 文本绘制区域.Width, 次要文本尺寸.Height)
+                Dim 次要文本区域 As New Rectangle(文本绘制区域.X, 高度起始 + 主要文本尺寸.Height + _主次文本间距, 文本绘制区域.Width, 次要文本尺寸.Height)
                 TextRenderer.DrawText(g, 次要文本, 次要文本字体, 次要文本区域, 次要文本颜色, 文本格式2)
             End Using
         Else
@@ -201,6 +206,10 @@ Public Class ModernButton
         End If
         Me.Invalidate()
     End Sub
+    Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
+        MyBase.OnDpiChangedAfterParent(e)
+        Me.Invalidate()
+    End Sub
 #End Region
 
 #Region "通用"
@@ -210,6 +219,10 @@ Public Class ModernButton
             Me.Invalidate()
         End If
     End Sub
+
+    Private Function DpiScale() As Single
+        Return Me.DeviceDpi / 96.0F
+    End Function
 
     Private 超采样倍率 As Integer = 1
     <Category("LakeUI"), Description(Class1.超采样抗锯齿描述词), DefaultValue(GetType(Class1.SuperSamplingScaleEnum), "OFF"), Browsable(True)>

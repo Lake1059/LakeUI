@@ -210,6 +210,11 @@ Public Class ReDrawContextMenuStrip
         Padding = New Padding(边框宽度)
     End Sub
 
+    Protected Overrides Sub OnOpening(e As CancelEventArgs)
+        _renderer.SyncItems(Me)
+        MyBase.OnOpening(e)
+    End Sub
+
     Private Class ReDrawContextMenuStripRenderer
         Inherits ToolStripRenderer
 
@@ -236,7 +241,7 @@ Public Class ReDrawContextMenuStrip
         ''' <summary>统一同步菜单项的 Padding / Margin</summary>
         Private Sub ApplyItemLayout(item As ToolStripItem)
             Dim tag As String = TryCast(item.Tag, String)
-            If tag = TagLabel Then
+            If tag = TagLabel OrElse Not item.Enabled Then
                 If item.Padding <> Padding.Empty Then item.Padding = Padding.Empty
             Else
                 Dim expected = GetScaledItemPadding()
@@ -281,25 +286,66 @@ Public Class ReDrawContextMenuStrip
             toolStrip.BackColor = _owner.背景色
             toolStrip.ForeColor = _owner.文本颜色
             toolStrip.Padding = New Padding(_owner.边框宽度)
+            If TypeOf toolStrip Is ToolStripDropDownMenu AndAlso toolStrip IsNot _owner Then
+                Dim ddm = DirectCast(toolStrip, ToolStripDropDownMenu)
+                ddm.ShowImageMargin = _owner.ShowImageMargin
+                ddm.ShowCheckMargin = _owner.ShowCheckMargin
+            End If
         End Sub
 
         Protected Overrides Sub InitializeItem(item As ToolStripItem)
             MyBase.InitializeItem(item)
-            ApplyItemLayout(item)
+            If TypeOf item Is ToolStripSeparator Then
+                SyncSeparator(item)
+            Else
+                ApplyItemLayout(item)
+            End If
+        End Sub
+
+        Private Sub SyncSeparator(item As ToolStripItem)
+            item.AutoSize = False
+            item.Padding = Padding.Empty
+            Dim d As Integer = _owner._dpi
+            Dim tag As String = TryCast(item.Tag, String)
+            If tag = TagNothing OrElse tag = TagNull Then
+                item.Margin = Padding.Empty
+                item.Height = _owner.空白分隔高度 * d
+            Else
+                item.Height = _owner.分割线高度
+                item.Margin = New Padding(0, _owner.分割线外边距 * d, 0, _owner.分割线外边距 * d)
+            End If
+        End Sub
+
+        Friend Sub SyncItems(ts As ToolStrip)
+            ts.SuspendLayout()
+            Try
+                ts.BackColor = _owner.背景色
+                ts.ForeColor = _owner.文本颜色
+                ts.Padding = New Padding(_owner.边框宽度)
+                If TypeOf ts Is ToolStripDropDownMenu Then
+                    Dim ddm = DirectCast(ts, ToolStripDropDownMenu)
+                    ddm.ShowImageMargin = _owner.ShowImageMargin
+                    ddm.ShowCheckMargin = _owner.ShowCheckMargin
+                End If
+                For Each item In ts.Items.OfType(Of ToolStripItem)()
+                    If TypeOf item Is ToolStripSeparator Then
+                        SyncSeparator(item)
+                    Else
+                        ApplyItemLayout(item)
+                    End If
+                    If TypeOf item Is ToolStripMenuItem Then
+                        Dim mi = DirectCast(item, ToolStripMenuItem)
+                        If mi.HasDropDownItems Then
+                            SyncItems(mi.DropDown)
+                        End If
+                    End If
+                Next
+            Finally
+                ts.ResumeLayout(True)
+            End Try
         End Sub
 
         Protected Overrides Sub OnRenderToolStripBackground(e As ToolStripRenderEventArgs)
-            Dim ts = e.ToolStrip
-            Dim expectedPad As New Padding(_owner.边框宽度)
-            If ts.Padding <> expectedPad Then ts.Padding = expectedPad
-            If ts.BackColor <> _owner.背景色 Then ts.BackColor = _owner.背景色
-            If ts.ForeColor <> _owner.文本颜色 Then ts.ForeColor = _owner.文本颜色
-            ' 同步子菜单的图标列 / 复选列显示状态
-            If TypeOf ts Is ToolStripDropDownMenu AndAlso ts IsNot _owner Then
-                Dim ddm = DirectCast(ts, ToolStripDropDownMenu)
-                If ddm.ShowImageMargin <> _owner.ShowImageMargin Then ddm.ShowImageMargin = _owner.ShowImageMargin
-                If ddm.ShowCheckMargin <> _owner.ShowCheckMargin Then ddm.ShowCheckMargin = _owner.ShowCheckMargin
-            End If
             Using b As New SolidBrush(_owner.背景色)
                 e.Graphics.FillRectangle(b, e.AffectedBounds)
             End Using
@@ -321,20 +367,8 @@ Public Class ReDrawContextMenuStrip
         End Sub
 
         Protected Overrides Sub OnRenderSeparator(e As ToolStripSeparatorRenderEventArgs)
-            Dim d As Integer = _owner._dpi
             Dim tag As String = TryCast(e.Item.Tag, String)
-
-            e.Item.AutoSize = False
-            e.Item.Padding = Padding.Empty
-
-            If tag = TagNothing OrElse tag = TagNull Then
-                e.Item.Margin = Padding.Empty
-                e.Item.Height = _owner.空白分隔高度 * d
-                Return
-            End If
-
-            e.Item.Height = _owner.分割线高度
-            e.Item.Margin = New Padding(0, _owner.分割线外边距 * d, 0, _owner.分割线外边距 * d)
+            If tag = TagNothing OrElse tag = TagNull Then Return
             Using b As New SolidBrush(_owner.分割线颜色)
                 e.Graphics.FillRectangle(b, 0, 0, e.Item.Width, e.Item.Height)
             End Using
@@ -347,8 +381,6 @@ Public Class ReDrawContextMenuStrip
         End Sub
 
         Protected Overrides Sub OnRenderMenuItemBackground(e As ToolStripItemRenderEventArgs)
-            ApplyItemLayout(e.Item)
-
             Dim tag As String = TryCast(e.Item.Tag, String)
             If Not e.Item.Enabled OrElse tag = TagLabel Then Return
 
@@ -388,8 +420,6 @@ Public Class ReDrawContextMenuStrip
             If e.Item.Enabled Then
                 TextRenderer.DrawText(e.Graphics, escapedText, e.TextFont, textRect, e.TextColor, Nothing, TextFormatFlags.VerticalCenter)
             Else
-                e.Item.Margin = Padding.Empty
-                e.Item.Padding = Padding.Empty
                 Dim tag As String = TryCast(e.Item.Tag, String)
                 Dim fontSize As Single = If(tag = TagLabel, e.TextFont.Size, Math.Max(1, e.TextFont.Size + _owner.禁用时文本字号偏移))
                 Using f As New Font(e.TextFont.Name, fontSize, FontStyle.Regular)

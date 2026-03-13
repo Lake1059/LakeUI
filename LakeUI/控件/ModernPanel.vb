@@ -2,27 +2,26 @@
 Imports System.Drawing.Drawing2D
 
 ''' <summary>
-''' 滚动策略枚举。
+''' 继承 Panel 的现代化面板控件，支持自定义滚动条、边框圆角和 AutoSize。
+''' 可在设计器中像原版 Panel 一样直接添加子控件，子控件自动获得高 DPI 缩放支持。
 ''' </summary>
-Public Enum ScrollMode
-    ''' <summary>不显示滚动条。</summary>
-    None = 0
-    ''' <summary>仅垂直滚动。</summary>
-    Vertical = 1
-    ''' <summary>仅水平滚动。</summary>
-    Horizontal = 2
-    ''' <summary>同时支持垂直和水平滚动。</summary>
-    Both = 3
-End Enum
-
-''' <summary>
-''' 纯自绘的现代化面板控件，支持自定义滚动条、边框圆角和 AutoSize。
-''' 可在设计器中像原版 Panel 一样直接添加子控件。
-''' </summary>
-<Designer("System.Windows.Forms.Design.ParentControlDesigner, System.Design", GetType(Design.IDesigner))>
 <Docking(DockingBehavior.Ask)>
 <DefaultEvent("Scroll")>
 Public Class ModernPanel
+
+    ''' <summary>
+    ''' 滚动策略枚举。
+    ''' </summary>
+    Public Enum ScrollMode
+        ''' <summary>不显示滚动条。</summary>
+        None = 0
+        ''' <summary>仅垂直滚动。</summary>
+        Vertical = 1
+        ''' <summary>仅水平滚动。</summary>
+        Horizontal = 2
+        ''' <summary>同时支持垂直和水平滚动。</summary>
+        Both = 3
+    End Enum
 
 #Region "构造"
 
@@ -35,6 +34,8 @@ Public Class ModernPanel
                  ControlStyles.ContainerControl Or
                  ControlStyles.SupportsTransparentBackColor, True)
         UpdateStyles()
+        Me.AutoScroll = False
+        _lastDeviceDpi = Me.DeviceDpi
     End Sub
 
 #End Region
@@ -50,8 +51,15 @@ Public Class ModernPanel
         End If
     End Sub
 
+    Private Function DpiScale() As Single
+        Return Me.DeviceDpi / 96.0F
+    End Function
+
     Private Function 获取边框内边距() As Integer
-        Return Math.Max(边框宽度, If(边框圆角半径 > 0, 边框圆角半径 \ 2, 0))
+        Dim s As Single = DpiScale()
+        Dim scaledBorder As Integer = CInt(Math.Round(边框宽度 * s))
+        Dim scaledRadius As Integer = CInt(Math.Round(边框圆角半径 * s))
+        Return Math.Max(scaledBorder, If(边框圆角半径 > 0, scaledRadius \ 2, 0))
     End Function
 
     ''' <summary>获取有效内边距：边框内缩 + 用户 Padding，Padding 表示边框内侧到内容的间距。
@@ -66,15 +74,16 @@ Public Class ModernPanel
             inset + Me.Padding.Bottom + endFix)
     End Function
 
-    ''' <summary>重写 DisplayRectangle，使 Dock 子控件自动避开边框区域。</summary>
+    ''' <summary>重写 DisplayRectangle，使 Dock 子控件自动避开边框和滚动条区域。</summary>
     Public Overrides ReadOnly Property DisplayRectangle As Rectangle
         Get
             Dim ep As Padding = 获取有效内边距()
+            Dim sbReserve As Integer = CInt(Math.Round(滚动条宽度 * DpiScale())) + ScrollBarRenderer.Margin
             Return New Rectangle(
                 ep.Left,
                 ep.Top,
-                Math.Max(0, Me.ClientSize.Width - ep.Horizontal),
-                Math.Max(0, Me.ClientSize.Height - ep.Vertical))
+                Math.Max(0, Me.ClientSize.Width - ep.Horizontal - If(_showVScroll, sbReserve, 0)),
+                Math.Max(0, Me.ClientSize.Height - ep.Vertical - If(_showHScroll, sbReserve, 0)))
         End Get
     End Property
 
@@ -85,7 +94,6 @@ Public Class ModernPanel
         Dim ep As Padding = 获取有效内边距()
         For Each ctrl As Control In Me.Controls
             If Not ctrl.Visible Then Continue For
-            If ctrl.Dock <> DockStyle.None Then Continue For
             Dim tag As ChildLayoutInfo = Nothing
             Dim dl, dt As Integer
             If _childLayouts.TryGetValue(ctrl, tag) Then
@@ -95,8 +103,15 @@ Public Class ModernPanel
                 dl = ctrl.Left - ep.Left + _hScrollOffset
                 dt = ctrl.Top - ep.Top + _vScrollOffset
             End If
-            Dim r As Integer = dl + ctrl.Width + ctrl.Margin.Right
-            Dim b As Integer = dt + ctrl.Height + ctrl.Margin.Bottom
+            Dim r, b As Integer
+            If ctrl.Dock <> DockStyle.None Then
+                ' 停靠控件的尺寸已由布局引擎约束，不额外加 Margin
+                r = dl + ctrl.Width
+                b = dt + ctrl.Height
+            Else
+                r = dl + ctrl.Width + ctrl.Margin.Right
+                b = dt + ctrl.Height + ctrl.Margin.Bottom
+            End If
             If r > maxRight Then maxRight = r
             If b > maxBottom Then maxBottom = b
         Next
@@ -106,7 +121,7 @@ Public Class ModernPanel
     ''' <summary>获取扣除滚动条保留区域后的有效视口大小。</summary>
     Private Function 获取有效视口大小() As Size
         Dim ep As Padding = 获取有效内边距()
-        Dim sbReserve As Integer = 滚动条宽度 + ScrollBarRenderer.Margin
+        Dim sbReserve As Integer = CInt(Math.Round(滚动条宽度 * DpiScale())) + ScrollBarRenderer.Margin
         Dim w As Integer = Me.Width - ep.Horizontal - If(_showVScroll, sbReserve, 0)
         Dim h As Integer = Me.Height - ep.Vertical - If(_showHScroll, sbReserve, 0)
         Return New Size(Math.Max(0, w), Math.Max(0, h))
@@ -161,6 +176,43 @@ Public Class ModernPanel
         End Get
         Set(value As Color)
             SetValue(背景颜色, value)
+        End Set
+    End Property
+
+#End Region
+
+#Region "外观属性 - 背景图片"
+
+    Private _image As Image = Nothing
+    ''' <summary>面板背景图片，以原比例撑满绘制（Zoom），圆角区域自动裁切。</summary>
+    <Category("LakeUI"), Description("背景图片（Zoom 模式，自动圆角裁切）"), DefaultValue(GetType(Image), Nothing), Browsable(True)>
+    Public Property Image As Image
+        Get
+            Return _image
+        End Get
+        Set(value As Image)
+            _image = value
+            Me.Invalidate()
+        End Set
+    End Property
+
+    ' 屏蔽继承自 Panel 的 BackgroundImage / BackgroundImageLayout，
+    ' 防止基类 OnPaintBackground 自行绘制图片绕过我们的圆角裁切逻辑。
+    <Browsable(False), EditorBrowsable(EditorBrowsableState.Never), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+    Public Overrides Property BackgroundImage As Image
+        Get
+            Return Nothing
+        End Get
+        Set(value As Image)
+        End Set
+    End Property
+
+    <Browsable(False), EditorBrowsable(EditorBrowsableState.Never), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+    Public Overrides Property BackgroundImageLayout As ImageLayout
+        Get
+            Return ImageLayout.None
+        End Get
+        Set(value As ImageLayout)
         End Set
     End Property
 
@@ -281,6 +333,11 @@ Public Class ModernPanel
 
     Private ReadOnly _childLayouts As New Dictionary(Of Control, ChildLayoutInfo)()
 
+    Private _inScrollUpdate As Boolean = False
+
+    Private _lastDeviceDpi As Integer = 96
+    Private _inDpiChange As Boolean = False
+
 #End Region
 
 #Region "滚动区域计算"
@@ -294,11 +351,26 @@ Public Class ModernPanel
     End Function
 
     Private Sub 更新滚动区域()
+        If _inScrollUpdate OrElse _inDpiChange Then Return
+        _inScrollUpdate = True
+        Try
+            更新滚动区域Core()
+        Finally
+            _inScrollUpdate = False
+        End Try
+    End Sub
+
+    Private Sub 更新滚动区域Core()
         _contentSize = 计算内容总大小()
+
+        Dim s As Single = DpiScale()
+        Dim scaledBorderWidth As Integer = CInt(Math.Round(边框宽度 * s))
+        Dim scaledBorderRadius As Integer = CInt(Math.Round(边框圆角半径 * s))
+        Dim scaledScrollBarWidth As Integer = CInt(Math.Round(滚动条宽度 * s))
 
         Dim inset As Integer = 获取边框内边距()
         Dim ep As Padding = 获取有效内边距()
-        Dim sbReserve As Integer = 滚动条宽度 + ScrollBarRenderer.Margin
+        Dim sbReserve As Integer = scaledScrollBarWidth + ScrollBarRenderer.Margin
 
         ' 不含滚动条的完整视口
         Dim fullW As Integer = Me.Width - ep.Horizontal
@@ -328,8 +400,8 @@ Public Class ModernPanel
 
         ' 垂直
         If needV Then
-            _vScrollBar.ComputeLayout(Me.Width, Me.Height, 边框宽度, 边框圆角半径,
-                ep.Top - inset, ep.Bottom - inset + If(needH, sbReserve, 0), 滚动条宽度,
+            _vScrollBar.ComputeLayout(Me.Width, Me.Height, scaledBorderWidth, scaledBorderRadius,
+                ep.Top - inset, ep.Bottom - inset + If(needH, sbReserve, 0), scaledScrollBarWidth,
                 _contentSize.Height, viewH, _vScrollOffset)
             Dim maxOff As Integer = Math.Max(0, _contentSize.Height - viewH)
             _vScrollOffset = Math.Max(0, Math.Min(_vScrollOffset, maxOff))
@@ -343,8 +415,8 @@ Public Class ModernPanel
         ' 水平
         If needH Then
             Dim vsbReserved As Integer = If(needV, Me.Width - inset - _vScrollBar.VisualLeft, 0)
-            _hScrollBar.ComputeHorizontalLayout(Me.Width, Me.Height, 边框宽度, 边框圆角半径,
-                ep.Left - inset, ep.Right - inset + vsbReserved, 滚动条宽度,
+            _hScrollBar.ComputeHorizontalLayout(Me.Width, Me.Height, scaledBorderWidth, scaledBorderRadius,
+                ep.Left - inset, ep.Right - inset + vsbReserved, scaledScrollBarWidth,
                 _contentSize.Width, viewW, _hScrollOffset)
             Dim maxOff As Integer = Math.Max(0, _contentSize.Width - viewW)
             _hScrollOffset = Math.Max(0, Math.Min(_hScrollOffset, maxOff))
@@ -360,13 +432,13 @@ Public Class ModernPanel
 
     Private Sub 应用子控件偏移()
         _suppressLocationSync = True
+        SuspendLayout()
         Try
             Dim ep As Padding = 获取有效内边距()
             Dim ox As Integer = ep.Left - _hScrollOffset
             Dim oy As Integer = ep.Top - _vScrollOffset
 
             For Each ctrl As Control In Me.Controls
-                If ctrl.Dock <> DockStyle.None Then Continue For
                 Dim tag As ChildLayoutInfo = Nothing
                 If Not _childLayouts.TryGetValue(ctrl, tag) Then
                     tag = New ChildLayoutInfo With {
@@ -379,6 +451,7 @@ Public Class ModernPanel
                 ctrl.Top = oy + tag.DesignTop
             Next
         Finally
+            ResumeLayout(False)
             _suppressLocationSync = False
         End Try
     End Sub
@@ -423,36 +496,102 @@ Public Class ModernPanel
     Private Sub 绘制背景与边框(g As Graphics)
         g.SmoothingMode = SmoothingMode.AntiAlias
         g.PixelOffsetMode = PixelOffsetMode.HighQuality
+        Dim s As Single = DpiScale()
         Dim boundsRect As New RectangleF(0, 0, Me.Width - 1, Me.Height - 1)
+        Dim half As Single = 0
         If 边框宽度 > 0 Then
-            Dim half As Single = 边框宽度 / 2.0F
+            half = 边框宽度 * s / 2.0F
             boundsRect.Inflate(-half, -half)
         End If
         If 边框圆角半径 > 0 Then
-            Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(boundsRect, 边框圆角半径)
-                Using br As New SolidBrush(背景颜色)
-                    g.FillPath(br, path)
+            Dim scaledRadius As Single = 边框圆角半径 * s
+            Dim isCircle As Boolean = (scaledRadius * 2 >= boundsRect.Width) AndAlso
+                                       (scaledRadius * 2 >= boundsRect.Height)
+            If isCircle Then
+                ' 当圆角半径足以构成正圆/椭圆时，改用专门的椭圆绘制逻辑避免四弧拼接瑕疵
+                Using path As GraphicsPath = RectangleRenderer.创建椭圆路径(boundsRect)
+                    Using br As New SolidBrush(背景颜色)
+                        g.FillPath(br, path)
+                    End Using
+                    绘制背景图片(g, path)
+                    RectangleRenderer.绘制椭圆边框(g, boundsRect, 边框颜色, 边框宽度 * s)
                 End Using
-                RectangleRenderer.绘制圆角边框(g, path, 边框颜色, 边框宽度)
-            End Using
+            Else
+                Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(boundsRect, scaledRadius)
+                    Using br As New SolidBrush(背景颜色)
+                        g.FillPath(br, path)
+                    End Using
+                    绘制背景图片(g, path)
+                    RectangleRenderer.绘制圆角边框(g, path, 边框颜色, 边框宽度 * s)
+                End Using
+            End If
         Else
             Using br As New SolidBrush(背景颜色)
                 g.FillRectangle(br, boundsRect)
             End Using
-            RectangleRenderer.绘制矩形边框(g, boundsRect, 边框颜色, 边框宽度)
+            绘制背景图片(g, Nothing)
+            RectangleRenderer.绘制矩形边框(g, boundsRect, 边框颜色, 边框宽度 * s)
         End If
+    End Sub
+
+    ''' <summary>
+    ''' 主流圆形裁切方案：在一张独立的 32bpp ARGB 透明位图上，
+    ''' 用 TextureBrush(等大缩放图) + FillPath(圆角路径) 一步完成裁剪，
+    ''' 笔刷和路径在同一坐标系，无需任何 Transform，路径外像素天然透明。
+    ''' </summary>
+    Private Sub 绘制背景图片(g As Graphics, clipPath As GraphicsPath)
+        If _image Is Nothing Then Return
+        Dim img As Image = _image
+        Dim w As Integer = Me.Width
+        Dim h As Integer = Me.Height
+        If w < 1 OrElse h < 1 Then Return
+
+        ' 1) 把原图按 Zoom 缩放到与控件等大的位图上
+        Using scaled As New Bitmap(w, h, Imaging.PixelFormat.Format32bppArgb)
+            Using sg As Graphics = Graphics.FromImage(scaled)
+                sg.InterpolationMode = InterpolationMode.HighQualityBicubic
+                sg.CompositingQuality = CompositingQuality.HighQuality
+                Dim ratioW As Single = CSng(w) / img.Width
+                Dim ratioH As Single = CSng(h) / img.Height
+                Dim ratio As Single = Math.Min(ratioW, ratioH)
+                Dim drawW As Single = img.Width * ratio
+                Dim drawH As Single = img.Height * ratio
+                Dim dx As Single = (w - drawW) / 2.0F
+                Dim dy As Single = (h - drawH) / 2.0F
+                sg.DrawImage(img, New RectangleF(dx, dy, drawW, drawH))
+            End Using
+
+            If clipPath IsNot Nothing Then
+                ' 2) 在一张全新的 ARGB 透明位图上，用 TextureBrush + FillPath 裁剪
+                '    笔刷和路径都是 (0,0)~(w,h)，坐标天然对齐，无需任何 Transform
+                Using result As New Bitmap(w, h, Imaging.PixelFormat.Format32bppArgb)
+                    Using rg As Graphics = Graphics.FromImage(result)
+                        rg.SmoothingMode = SmoothingMode.AntiAlias
+                        Using tb As New TextureBrush(scaled)
+                            rg.FillPath(tb, clipPath)
+                        End Using
+                    End Using
+                    ' 3) 覆盖到已绘制的 BackColor1 之上
+                    g.DrawImage(result, 0, 0, w, h)
+                End Using
+            Else
+                g.DrawImage(scaled, 0, 0, w, h)
+            End If
+        End Using
     End Sub
 
     Private Sub 绘制垂直滚动条(g As Graphics)
         If _vScrollBar.TrackRect.IsEmpty Then Return
-        _vScrollBar.Draw(g, Me.Width, Me.Height, 边框宽度, 边框圆角半径,
-            滚动条宽度, 滚动条轨道颜色, 滚动条滑块颜色, 滚动条悬停颜色)
+        Dim s As Single = DpiScale()
+        _vScrollBar.Draw(g, Me.Width, Me.Height, CInt(Math.Round(边框宽度 * s)), CInt(Math.Round(边框圆角半径 * s)),
+            CInt(Math.Round(滚动条宽度 * s)), 滚动条轨道颜色, 滚动条滑块颜色, 滚动条悬停颜色)
     End Sub
 
     Private Sub 绘制水平滚动条(g As Graphics)
         If _hScrollBar.TrackRect.IsEmpty Then Return
-        _hScrollBar.DrawHorizontal(g, Me.Width, Me.Height, 边框宽度, 边框圆角半径,
-            滚动条宽度, 滚动条轨道颜色, 滚动条滑块颜色, 滚动条悬停颜色)
+        Dim s As Single = DpiScale()
+        _hScrollBar.DrawHorizontal(g, Me.Width, Me.Height, CInt(Math.Round(边框宽度 * s)), CInt(Math.Round(边框圆角半径 * s)),
+            CInt(Math.Round(滚动条宽度 * s)), 滚动条轨道颜色, 滚动条滑块颜色, 滚动条悬停颜色)
     End Sub
 
 #End Region
@@ -568,6 +707,35 @@ Public Class ModernPanel
         Me.Invalidate()
     End Sub
 
+    Protected Overrides Sub OnDpiChangedBeforeParent(e As EventArgs)
+        _inDpiChange = True
+        MyBase.OnDpiChangedBeforeParent(e)
+    End Sub
+
+    Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
+        MyBase.OnDpiChangedAfterParent(e)
+
+        Dim newDpi As Integer = Me.DeviceDpi
+        Dim oldDpi As Integer = _lastDeviceDpi
+        _lastDeviceDpi = newDpi
+
+        If oldDpi > 0 AndAlso oldDpi <> newDpi Then
+            Dim ratio As Single = CSng(newDpi) / CSng(oldDpi)
+
+            ' 按 DPI 比例缩放滚动偏移（像素坐标）
+            _vScrollOffset = CInt(Math.Round(_vScrollOffset * ratio))
+            _hScrollOffset = CInt(Math.Round(_hScrollOffset * ratio))
+
+            ' 清空设计坐标缓存，由框架缩放后的子控件位置重新捕获
+            _childLayouts.Clear()
+        End If
+
+        _inDpiChange = False
+        更新滚动区域()
+        Me.PerformLayout()
+        Me.Invalidate()
+    End Sub
+
     Protected Overrides Sub OnControlAdded(e As ControlEventArgs)
         MyBase.OnControlAdded(e)
         If e.Control.Dock = DockStyle.None Then
@@ -596,12 +764,13 @@ Public Class ModernPanel
     Private _suppressLocationSync As Boolean = False
 
     Private Sub 子控件布局变更(sender As Object, e As EventArgs)
+        If _inScrollUpdate OrElse _inDpiChange Then Return
         更新滚动区域()
         Me.Invalidate()
     End Sub
 
     Private Sub 子控件位置变更(sender As Object, e As EventArgs)
-        If _suppressLocationSync Then Return
+        If _suppressLocationSync OrElse _inDpiChange Then Return
         Dim ctrl = DirectCast(sender, Control)
         If ctrl.Dock <> DockStyle.None Then Return
         Dim tag As ChildLayoutInfo = Nothing
@@ -612,7 +781,32 @@ Public Class ModernPanel
     End Sub
 
     Protected Overrides Sub OnLayout(levent As LayoutEventArgs)
-        MyBase.OnLayout(levent)
+        _inScrollUpdate = True
+        Try
+            MyBase.OnLayout(levent)
+        Finally
+            _inScrollUpdate = False
+        End Try
+
+        ' DPI 变化期间跳过设计坐标捕获和滚动区域更新，由 OnDpiChangedAfterParent 统一处理
+        If _inDpiChange Then Return
+
+        ' 布局引擎完成后，捕获停靠控件的设计坐标（此时它们处于未偏移的视口位置）
+        Dim ep As Padding = 获取有效内边距()
+        For Each ctrl As Control In Me.Controls
+            If ctrl.Dock = DockStyle.None Then Continue For
+            If Not ctrl.Visible Then Continue For
+            Dim tag As ChildLayoutInfo = Nothing
+            If Not _childLayouts.TryGetValue(ctrl, tag) Then
+                tag = New ChildLayoutInfo()
+                _childLayouts(ctrl) = tag
+            End If
+            tag.DesignLeft = ctrl.Left - ep.Left
+            tag.DesignTop = ctrl.Top - ep.Top
+        Next
+
+        更新滚动区域()
+
         If AutoSize Then
             PerformAutoSize()
         End If
@@ -658,10 +852,6 @@ Public Class ModernPanel
         _vScrollOffset = Math.Max(0, verticalOffset)
         更新滚动区域()
         Me.Invalidate()
-    End Sub
-
-    Private Sub ModernPanel_Load(sender As Object, e As EventArgs) Handles MyBase.Load
-
     End Sub
 
     ''' <summary>获取当前垂直滚动偏移。</summary>

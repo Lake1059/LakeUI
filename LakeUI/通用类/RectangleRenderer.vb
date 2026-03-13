@@ -2,7 +2,7 @@
 
 Public Class RectangleRenderer
 
-    Public Shared Function 创建圆角矩形路径(区域 As RectangleF, 半径 As Integer) As GraphicsPath
+    Public Shared Function 创建圆角矩形路径(区域 As RectangleF, 半径 As Single) As GraphicsPath
         Dim path As New GraphicsPath()
         If 半径 <= 0 OrElse 区域.Width < 1 OrElse 区域.Height < 1 Then
             path.AddRectangle(区域)
@@ -62,6 +62,23 @@ Public Class RectangleRenderer
             Using pen As New Pen(边框颜色, 边框宽度)
                 pen.Alignment = PenAlignment.Center
                 g.DrawRectangle(pen, 区域.X, 区域.Y, 区域.Width, 区域.Height)
+            End Using
+        End If
+    End Sub
+
+    ''' <summary>创建椭圆路径（当控件为正方形时即为正圆）。</summary>
+    Public Shared Function 创建椭圆路径(区域 As RectangleF) As GraphicsPath
+        Dim path As New GraphicsPath()
+        path.AddEllipse(区域)
+        Return path
+    End Function
+
+    ''' <summary>绘制椭圆边框（当控件为正方形时即为正圆边框）。</summary>
+    Public Shared Sub 绘制椭圆边框(g As Graphics, 区域 As RectangleF, 边框颜色 As Color, 边框宽度 As Single)
+        If 边框宽度 > 0 Then
+            Using pen As New Pen(边框颜色, 边框宽度)
+                pen.Alignment = PenAlignment.Center
+                g.DrawEllipse(pen, 区域)
             End Using
         End If
     End Sub

@@ -28,11 +28,13 @@ Partial Class ModernTabListControl
     <System.Diagnostics.DebuggerStepThrough()>
     Private Sub InitializeComponent()
         SuspendLayout()
-        components = New System.ComponentModel.Container()
+        ' 
+        ' ModernTabListControl
+        ' 
+        AutoScaleDimensions = New SizeF(96F, 96F)
         AutoScaleMode = AutoScaleMode.Dpi
         DoubleBuffered = True
         Name = "ModernTabListControl"
-        Size = New Size(300, 300)
         ResumeLayout(False)
     End Sub
 

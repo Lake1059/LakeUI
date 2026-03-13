@@ -515,6 +515,10 @@ Public Class ModernContextMenu
             End If
         End Sub
 
+        Private Function DpiScale() As Single
+            Return DeviceDpi / 96.0F
+        End Function
+
         Friend Sub ShowAt(x As Integer, y As Integer)
             计算布局()
             最终高度 = Me.Height
@@ -538,37 +542,44 @@ Public Class ModernContextMenu
         End Sub
 
         Private Sub 计算布局()
-            Dim pad = 菜单.内边距
-            Dim border = 菜单.边框宽度
-            Dim currentY As Integer = pad.Top + border
-            Dim maxContentWidth As Integer = 80
+            Dim s As Single = DpiScale()
+            Dim padL As Integer = CInt(菜单.内边距.Left * s)
+            Dim padR As Integer = CInt(菜单.内边距.Right * s)
+            Dim padT As Integer = CInt(菜单.内边距.Top * s)
+            Dim padB As Integer = CInt(菜单.内边距.Bottom * s)
+            Dim border As Integer = CInt(菜单.边框宽度 * s)
+            Dim currentY As Integer = padT + border
+            Dim maxContentWidth As Integer = CInt(80 * s)
             项目区域列表.Clear()
 
-            Dim iconCol = 菜单.有效图标列宽度
-            Dim ip = 菜单.项目内边距
-            Dim iconTextGap = If(iconCol > 0, 菜单.图标文字间距, 0)
+            Dim iconCol As Integer = CInt(菜单.有效图标列宽度 * s)
+            Dim ipL As Integer = CInt(菜单.项目内边距.Left * s)
+            Dim ipR As Integer = CInt(菜单.项目内边距.Right * s)
+            Dim iconTextGap As Integer = If(iconCol > 0, CInt(菜单.图标文字间距 * s), 0)
+            Dim arrowExtra As Integer = CInt(20 * s)
 
             For Each item In 菜单.项目列表
                 If item.IsSeparator Then
-                    项目区域列表.Add(New Rectangle(0, currentY, 0, 菜单.分割线高度))
-                    currentY += 菜单.分割线高度
+                    Dim sepH As Integer = CInt(菜单.分割线高度 * s)
+                    项目区域列表.Add(New Rectangle(0, currentY, 0, sepH))
+                    currentY += sepH
                 Else
                     Dim font = If(item.IsDescription, If(item.Font, 菜单.说明字体), If(item.Font, 菜单.菜单字体))
                     Dim textWidth = TextRenderer.MeasureText(item.Text, font).Width
-                    Dim w = ip.Left + iconCol + iconTextGap + textWidth + ip.Right + 20
-                    If Not item.IsDescription AndAlso item.SubMenu IsNot Nothing Then w += 20
+                    Dim w = ipL + iconCol + iconTextGap + textWidth + ipR + arrowExtra
+                    If Not item.IsDescription AndAlso item.SubMenu IsNot Nothing Then w += arrowExtra
                     maxContentWidth = Math.Max(maxContentWidth, w)
-                    Dim h As Integer = If(item.IsDescription, 菜单.说明项高度, 菜单.项目高度)
+                    Dim h As Integer = CInt(If(item.IsDescription, 菜单.说明项高度, 菜单.项目高度) * s)
                     项目区域列表.Add(New Rectangle(0, currentY, 0, h))
                     currentY += h
                 End If
             Next
 
-            Dim contentWidth = maxContentWidth + pad.Left + pad.Right
+            Dim contentWidth = maxContentWidth + padL + padR
             Dim totalWidth = contentWidth + border * 2
-            Dim totalHeight = currentY + pad.Bottom + border
-            Dim itemX = border + pad.Left
-            Dim itemWidth = totalWidth - border * 2 - pad.Left - pad.Right
+            Dim totalHeight = currentY + padB + border
+            Dim itemX = border + padL
+            Dim itemWidth = totalWidth - border * 2 - padL - padR
 
             For i = 0 To 项目区域列表.Count - 1
                 Dim r = 项目区域列表(i)
@@ -607,7 +618,7 @@ Public Class ModernContextMenu
             End Using
 
             If 菜单.边框宽度 > 0 Then
-                Dim bw = 菜单.边框宽度
+                Dim bw As Integer = CInt(菜单.边框宽度 * DpiScale())
                 Dim cw = ClientSize.Width - 1
                 Dim ch = ClientSize.Height - 1
                 Using brush As New SolidBrush(菜单.边框颜色)
@@ -646,7 +657,7 @@ Public Class ModernContextMenu
                 项目区域列表(0).Width, 动画当前高度)
             Dim highlightColor As Color = If(鼠标按下, 菜单.按下背景颜色, 菜单.悬停背景颜色)
             If 菜单.悬停圆角半径 > 0 Then
-                Dim radius As Integer = Math.Min(菜单.悬停圆角半径, CInt(highlightRect.Height) \ 2)
+                Dim radius As Integer = Math.Min(CInt(菜单.悬停圆角半径 * DpiScale()), CInt(highlightRect.Height) \ 2)
                 Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(highlightRect, radius)
                     Using brush As New SolidBrush(highlightColor)
                         g.FillPath(brush, path)
@@ -660,11 +671,12 @@ Public Class ModernContextMenu
         End Sub
 
         Private Sub 绘制项目图形(g As Graphics, item As ModernMenuItem, rect As Rectangle)
-            Dim ip = 菜单.项目内边距
-            Dim iconCol = 菜单.有效图标列宽度
+            Dim s As Single = DpiScale()
+            Dim ipL As Integer = CInt(菜单.项目内边距.Left * s)
+            Dim iconCol As Integer = CInt(菜单.有效图标列宽度 * s)
 
             If iconCol > 0 Then
-                Dim iconX As Integer = rect.X + ip.Left
+                Dim iconX As Integer = rect.X + ipL
                 Dim iconY As Integer = rect.Y + (rect.Height - iconCol) \ 2
 
                 If item.Checked Then
@@ -677,21 +689,26 @@ Public Class ModernContextMenu
             End If
 
             If item.SubMenu IsNot Nothing Then
-                绘制箭头(g, New Rectangle(rect.Right - 16, rect.Y, 16, rect.Height))
+                Dim arrowW As Integer = CInt(16 * s)
+                绘制箭头(g, New Rectangle(rect.Right - arrowW, rect.Y, arrowW, rect.Height))
             End If
         End Sub
 
         Private Sub 绘制全部文本(g As Graphics)
-            Dim iconCol = 菜单.有效图标列宽度
-            Dim ip = 菜单.项目内边距
-            Dim iconTextGap = If(iconCol > 0, 菜单.图标文字间距, 0)
+            Dim s As Single = DpiScale()
+            Dim iconCol As Integer = CInt(菜单.有效图标列宽度 * s)
+            Dim ipL As Integer = CInt(菜单.项目内边距.Left * s)
+            Dim ipR As Integer = CInt(菜单.项目内边距.Right * s)
+            Dim ipT As Integer = CInt(菜单.项目内边距.Top * s)
+            Dim ipB As Integer = CInt(菜单.项目内边距.Bottom * s)
+            Dim iconTextGap As Integer = If(iconCol > 0, CInt(菜单.图标文字间距 * s), 0)
 
             For i = 0 To 菜单.项目列表.Count - 1
                 If i >= 项目区域列表.Count Then Exit For
                 Dim item = 菜单.项目列表(i)
                 If item.IsSeparator Then Continue For
                 Dim rect = 项目区域列表(i)
-                Dim x As Integer = rect.X + ip.Left + iconCol + iconTextGap
+                Dim x As Integer = rect.X + ipL + iconCol + iconTextGap
                 Dim font As Font
                 Dim foreColor As Color
                 If item.IsDescription Then
@@ -701,8 +718,8 @@ Public Class ModernContextMenu
                     font = If(item.Font, 菜单.菜单字体)
                     foreColor = If(item.ForeColor <> Color.Empty, item.ForeColor, 菜单.文本颜色)
                 End If
-                Dim arrowSpace As Integer = If(Not item.IsDescription AndAlso item.SubMenu IsNot Nothing, 20, 0)
-                Dim textRect As New Rectangle(x, rect.Y + ip.Top, rect.Width - ip.Left - iconCol - iconTextGap - ip.Right - arrowSpace, rect.Height - ip.Top - ip.Bottom)
+                Dim arrowSpace As Integer = If(Not item.IsDescription AndAlso item.SubMenu IsNot Nothing, CInt(20 * s), 0)
+                Dim textRect As New Rectangle(x, rect.Y + ipT, rect.Width - ipL - iconCol - iconTextGap - ipR - arrowSpace, rect.Height - ipT - ipB)
                 TextRenderer.DrawText(g, item.Text, font, textRect, foreColor,
                     TextFormatFlags.Left Or TextFormatFlags.VerticalCenter Or TextFormatFlags.EndEllipsis Or TextFormatFlags.NoPadding)
             Next
@@ -740,7 +757,7 @@ Public Class ModernContextMenu
         Private Sub 绘制箭头(g As Graphics, rect As Rectangle)
             Dim cx As Single = rect.X + rect.Width / 2.0F
             Dim cy As Single = rect.Y + rect.Height / 2.0F
-            Dim arrSize As Single = 菜单.箭头大小
+            Dim arrSize As Single = 菜单.箭头大小 * DpiScale()
             Dim arrH As Single = arrSize
             Dim arrW As Single = CSng(arrSize * Math.Sqrt(3.0) / 2.0)
 

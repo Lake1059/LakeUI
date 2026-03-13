@@ -130,6 +130,10 @@ Public Class ExcellentTrackBar
 
     Private ReadOnly 动画助手 As New AnimationHelper(Me) With {.Duration = 0}
 
+    Private Function DpiScale() As Single
+        Return Me.DeviceDpi / 96.0F
+    End Function
+
     Private Function 计算值比例(val As Integer) As Single
         Dim range As Integer = 最大值 - 最小值
         If range = 0 Then Return 0.0F
@@ -590,19 +594,24 @@ Public Class ExcellentTrackBar
     End Function
 
     Private Function 计算轨道区域() As RectangleF
+        Dim s As Single = DpiScale()
+        Dim _轨道粗细 As Single = 轨道粗细 * s
+        Dim _滑块宽度 As Single = 滑块宽度 * s
+        Dim _滑块高度 As Single = 滑块高度 * s
+        Dim _标签连线长度 As Single = 标签连线长度 * s
         Dim fontH As Integer = TextRenderer.MeasureText("A", 获取标签字体()).Height
         ' 单侧标签所需空间：从轨道边缘出发 2px 间隙 + 连线 + 文字
-        Dim labelUnit As Single = 轨道粗细 / 2.0F + fontH + 标签连线长度 + 2
+        Dim labelUnit As Single = _轨道粗细 / 2.0F + fontH + _标签连线长度 + 2
         If 方向 = TrackOrientationEnum.Horizontal Then
             Dim hasTop As Boolean = 标签列表.Any(Function(l) l.Side = LabelSideEnum.TopOrLeft)
             Dim hasBot As Boolean = 标签列表.Any(Function(l) l.Side = LabelSideEnum.BottomOrRight)
             ' 轨道中心到内容顶/底的距离：有标签取 labelUnit，无标签取滑块半高
-            Dim aboveCenter As Single = If(hasTop, Math.Max(滑块高度 / 2.0F, labelUnit), 滑块高度 / 2.0F)
-            Dim belowCenter As Single = If(hasBot, Math.Max(滑块高度 / 2.0F, labelUnit), 滑块高度 / 2.0F)
+            Dim aboveCenter As Single = If(hasTop, Math.Max(_滑块高度 / 2.0F, labelUnit), _滑块高度 / 2.0F)
+            Dim belowCenter As Single = If(hasBot, Math.Max(_滑块高度 / 2.0F, labelUnit), _滑块高度 / 2.0F)
             ' 整体内容在控件内居中
             Dim centerY As Single = (Me.Height - aboveCenter - belowCenter) / 2.0F + aboveCenter
-            Return New RectangleF(滑块宽度 / 2.0F, centerY - 轨道粗细 / 2.0F,
-                                  Me.Width - 滑块宽度, 轨道粗细)
+            Return New RectangleF(_滑块宽度 / 2.0F, centerY - _轨道粗细 / 2.0F,
+                                  Me.Width - _滑块宽度, _轨道粗细)
         Else
             Dim hasLeft As Boolean = 标签列表.Any(Function(l) l.Side = LabelSideEnum.TopOrLeft)
             Dim hasRight As Boolean = 标签列表.Any(Function(l) l.Side = LabelSideEnum.BottomOrRight)
@@ -619,13 +628,13 @@ Public Class ExcellentTrackBar
                     If w > maxRightW Then maxRightW = w
                 End If
             Next
-            Dim leftUnit As Single = 轨道粗细 / 2.0F + maxLeftW + 标签连线长度 + 2
-            Dim rightUnit As Single = 轨道粗细 / 2.0F + maxRightW + 标签连线长度 + 2
-            Dim leftCenter As Single = If(hasLeft, Math.Max(滑块宽度 / 2.0F, leftUnit), 滑块宽度 / 2.0F)
-            Dim rightCenter As Single = If(hasRight, Math.Max(滑块宽度 / 2.0F, rightUnit), 滑块宽度 / 2.0F)
+            Dim leftUnit As Single = _轨道粗细 / 2.0F + maxLeftW + _标签连线长度 + 2
+            Dim rightUnit As Single = _轨道粗细 / 2.0F + maxRightW + _标签连线长度 + 2
+            Dim leftCenter As Single = If(hasLeft, Math.Max(_滑块宽度 / 2.0F, leftUnit), _滑块宽度 / 2.0F)
+            Dim rightCenter As Single = If(hasRight, Math.Max(_滑块宽度 / 2.0F, rightUnit), _滑块宽度 / 2.0F)
             Dim centerX As Single = (Me.Width - leftCenter - rightCenter) / 2.0F + leftCenter
-            Return New RectangleF(centerX - 轨道粗细 / 2.0F, 滑块高度 / 2.0F,
-                                  轨道粗细, Me.Height - 滑块高度)
+            Return New RectangleF(centerX - _轨道粗细 / 2.0F, _滑块高度 / 2.0F,
+                                  _轨道粗细, Me.Height - _滑块高度)
         End If
     End Function
 
@@ -640,14 +649,17 @@ Public Class ExcellentTrackBar
     End Function
 
     Private Function 计算滑块矩形() As RectangleF
+        Dim s As Single = DpiScale()
+        Dim _滑块宽度 As Single = 滑块宽度 * s
+        Dim _滑块高度 As Single = 滑块高度 * s
         Dim center As Single = 计算滑块中心坐标()
         Dim trackRect As RectangleF = 计算轨道区域()
         If 方向 = TrackOrientationEnum.Horizontal Then
-            Dim thumbY As Single = trackRect.Y + trackRect.Height / 2.0F - 滑块高度 / 2.0F
-            Return New RectangleF(center - 滑块宽度 / 2.0F, thumbY, 滑块宽度, 滑块高度)
+            Dim thumbY As Single = trackRect.Y + trackRect.Height / 2.0F - _滑块高度 / 2.0F
+            Return New RectangleF(center - _滑块宽度 / 2.0F, thumbY, _滑块宽度, _滑块高度)
         Else
-            Dim thumbX As Single = trackRect.X + trackRect.Width / 2.0F - 滑块宽度 / 2.0F
-            Return New RectangleF(thumbX, center - 滑块高度 / 2.0F, 滑块宽度, 滑块高度)
+            Dim thumbX As Single = trackRect.X + trackRect.Width / 2.0F - _滑块宽度 / 2.0F
+            Return New RectangleF(thumbX, center - _滑块高度 / 2.0F, _滑块宽度, _滑块高度)
         End If
     End Function
 
@@ -666,16 +678,20 @@ Public Class ExcellentTrackBar
     End Function
 
     Private Function 计算鼠标响应区域() As RectangleF
+        Dim s As Single = DpiScale()
+        Dim _滑块宽度 As Single = 滑块宽度 * s
+        Dim _滑块高度 As Single = 滑块高度 * s
+        Dim _标签连线长度 As Single = 标签连线长度 * s
         Dim trackRect As RectangleF = 计算轨道区域()
         Dim thumbRect As RectangleF = 计算滑块矩形()
         If 方向 = TrackOrientationEnum.Horizontal Then
-            Dim top As Single = Math.Min(thumbRect.Y, trackRect.Y - 2 - 标签连线长度)
-            Dim bottom As Single = Math.Max(thumbRect.Bottom, trackRect.Bottom + 2 + 标签连线长度)
-            Return New RectangleF(trackRect.X - 滑块宽度 / 2.0F, top, trackRect.Width + 滑块宽度, bottom - top)
+            Dim top As Single = Math.Min(thumbRect.Y, trackRect.Y - 2 - _标签连线长度)
+            Dim bottom As Single = Math.Max(thumbRect.Bottom, trackRect.Bottom + 2 + _标签连线长度)
+            Return New RectangleF(trackRect.X - _滑块宽度 / 2.0F, top, trackRect.Width + _滑块宽度, bottom - top)
         Else
-            Dim left As Single = Math.Min(thumbRect.X, trackRect.X - 2 - 标签连线长度)
-            Dim right As Single = Math.Max(thumbRect.Right, trackRect.Right + 2 + 标签连线长度)
-            Return New RectangleF(left, trackRect.Y - 滑块高度 / 2.0F, right - left, trackRect.Height + 滑块高度)
+            Dim left As Single = Math.Min(thumbRect.X, trackRect.X - 2 - _标签连线长度)
+            Dim right As Single = Math.Max(thumbRect.Right, trackRect.Right + 2 + _标签连线长度)
+            Return New RectangleF(left, trackRect.Y - _滑块高度 / 2.0F, right - left, trackRect.Height + _滑块高度)
         End If
     End Function
 #End Region
@@ -717,22 +733,25 @@ Public Class ExcellentTrackBar
     End Sub
 
     Private Sub 绘制轨道(g As Graphics)
+        Dim s As Single = DpiScale()
+        Dim _轨道圆角半径 As Single = 轨道圆角半径 * s
+        Dim _轨道边框宽度 As Single = 轨道边框宽度 * s
         Dim trackRect As RectangleF = 计算轨道区域()
         If trackRect.Width <= 0 OrElse trackRect.Height <= 0 Then Return
         Dim hasRadius As Boolean = 轨道圆角半径 > 0
 
         ' 背景轨道
         If hasRadius Then
-            Using path = RectangleRenderer.创建圆角矩形路径(trackRect, 轨道圆角半径)
+            Using path = RectangleRenderer.创建圆角矩形路径(trackRect, _轨道圆角半径)
                 RectangleRenderer.绘制圆角背景(g, path, trackRect, 轨道颜色, Color.Empty, TrackOrientationEnum.Horizontal)
                 If 轨道边框宽度 > 0 AndAlso 轨道边框颜色 <> Color.Empty Then
-                    RectangleRenderer.绘制圆角边框(g, path, 轨道边框颜色, 轨道边框宽度)
+                    RectangleRenderer.绘制圆角边框(g, path, 轨道边框颜色, _轨道边框宽度)
                 End If
             End Using
         Else
             RectangleRenderer.绘制矩形背景(g, trackRect, 轨道颜色, Color.Empty, TrackOrientationEnum.Horizontal)
             If 轨道边框宽度 > 0 AndAlso 轨道边框颜色 <> Color.Empty Then
-                RectangleRenderer.绘制矩形边框(g, trackRect, 轨道边框颜色, 轨道边框宽度)
+                RectangleRenderer.绘制矩形边框(g, trackRect, 轨道边框颜色, _轨道边框宽度)
             End If
         End If
 
@@ -750,7 +769,7 @@ Public Class ExcellentTrackBar
         End If
 
         If hasRadius Then
-            Using clipPath = RectangleRenderer.创建圆角矩形路径(trackRect, 轨道圆角半径)
+            Using clipPath = RectangleRenderer.创建圆角矩形路径(trackRect, _轨道圆角半径)
                 g.SetClip(clipPath)
             End Using
         Else
@@ -783,21 +802,25 @@ Public Class ExcellentTrackBar
     End Function
 
     Private Sub 绘制滑块(g As Graphics, thumbRect As RectangleF)
+        Dim s As Single = DpiScale()
+        Dim _滑块圆角半径 As Single = 滑块圆角半径 * s
+        Dim _滑块边框宽度 As Single = 滑块边框宽度 * s
         Dim currentColor As Color = 获取当前滑块颜色()
         Dim currentBorderColor As Color = 获取当前滑块边框颜色()
         If 滑块圆角半径 > 0 Then
-            Using path = RectangleRenderer.创建圆角矩形路径(thumbRect, 滑块圆角半径)
+            Using path = RectangleRenderer.创建圆角矩形路径(thumbRect, _滑块圆角半径)
                 RectangleRenderer.绘制圆角背景(g, path, thumbRect, currentColor, 滑块渐变颜色, TrackOrientationEnum.Vertical)
-                RectangleRenderer.绘制圆角边框(g, path, currentBorderColor, 滑块边框宽度)
+                RectangleRenderer.绘制圆角边框(g, path, currentBorderColor, _滑块边框宽度)
             End Using
         Else
             RectangleRenderer.绘制矩形背景(g, thumbRect, currentColor, 滑块渐变颜色, TrackOrientationEnum.Vertical)
-            RectangleRenderer.绘制矩形边框(g, thumbRect, currentBorderColor, 滑块边框宽度)
+            RectangleRenderer.绘制矩形边框(g, thumbRect, currentBorderColor, _滑块边框宽度)
         End If
     End Sub
 
     Private Sub 绘制标签连线(g As Graphics)
         If 标签列表.Count = 0 Then Return
+        Dim _标签连线长度 As Single = 标签连线长度 * DpiScale()
         Dim trackRect As RectangleF = 计算轨道区域()
         Using pen As New Pen(标签连线颜色, 1)
             For Each lbl In 标签列表
@@ -805,15 +828,15 @@ Public Class ExcellentTrackBar
                 Dim coord As Single = 计算值对应轨道坐标(lbl.Position)
                 If 方向 = TrackOrientationEnum.Horizontal Then
                     If lbl.Side = LabelSideEnum.TopOrLeft Then
-                        g.DrawLine(pen, coord, trackRect.Y - 2, coord, trackRect.Y - 2 - 标签连线长度)
+                        g.DrawLine(pen, coord, trackRect.Y - 2, coord, trackRect.Y - 2 - _标签连线长度)
                     Else
-                        g.DrawLine(pen, coord, trackRect.Bottom + 2, coord, trackRect.Bottom + 2 + 标签连线长度)
+                        g.DrawLine(pen, coord, trackRect.Bottom + 2, coord, trackRect.Bottom + 2 + _标签连线长度)
                     End If
                 Else
                     If lbl.Side = LabelSideEnum.TopOrLeft Then
-                        g.DrawLine(pen, trackRect.X - 2, coord, trackRect.X - 2 - 标签连线长度, coord)
+                        g.DrawLine(pen, trackRect.X - 2, coord, trackRect.X - 2 - _标签连线长度, coord)
                     Else
-                        g.DrawLine(pen, trackRect.Right + 2, coord, trackRect.Right + 2 + 标签连线长度, coord)
+                        g.DrawLine(pen, trackRect.Right + 2, coord, trackRect.Right + 2 + _标签连线长度, coord)
                     End If
                 End If
             Next
@@ -822,6 +845,7 @@ Public Class ExcellentTrackBar
 
     Private Sub 绘制标签文字(g As Graphics)
         If 标签列表.Count = 0 Then Return
+        Dim _标签连线长度 As Single = 标签连线长度 * DpiScale()
         Dim trackRect As RectangleF = 计算轨道区域()
         For Each lbl In 标签列表
             If lbl.Position < 最小值 OrElse lbl.Position > 最大值 Then Continue For
@@ -834,22 +858,22 @@ Public Class ExcellentTrackBar
                 Dim textX As Integer = CInt(coord - textSize.Width / 2.0F)
                 If lbl.Side = LabelSideEnum.TopOrLeft Then
                     TextRenderer.DrawText(g, displayText, labelFont,
-                                          New Point(textX, CInt(trackRect.Y - 2 - 标签连线长度 - textSize.Height)),
+                                          New Point(textX, CInt(trackRect.Y - 2 - _标签连线长度 - textSize.Height)),
                                           标签颜色)
                 Else
                     TextRenderer.DrawText(g, displayText, labelFont,
-                                          New Point(textX, CInt(trackRect.Bottom + 2 + 标签连线长度)),
+                                          New Point(textX, CInt(trackRect.Bottom + 2 + _标签连线长度)),
                                           标签颜色)
                 End If
             Else
                 Dim textY As Integer = CInt(coord - textSize.Height / 2.0F)
                 If lbl.Side = LabelSideEnum.TopOrLeft Then
                     TextRenderer.DrawText(g, displayText, labelFont,
-                                          New Point(CInt(trackRect.X - 2 - 标签连线长度 - textSize.Width), textY),
+                                          New Point(CInt(trackRect.X - 2 - _标签连线长度 - textSize.Width), textY),
                                           标签颜色)
                 Else
                     TextRenderer.DrawText(g, displayText, labelFont,
-                                          New Point(CInt(trackRect.Right + 2 + 标签连线长度), textY),
+                                          New Point(CInt(trackRect.Right + 2 + _标签连线长度), textY),
                                           标签颜色)
                 End If
             End If
@@ -1059,6 +1083,11 @@ Public Class ExcellentTrackBar
 
     Protected Overrides Sub OnEnabledChanged(e As EventArgs)
         MyBase.OnEnabledChanged(e)
+        Me.Invalidate()
+    End Sub
+
+    Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
+        MyBase.OnDpiChangedAfterParent(e)
         Me.Invalidate()
     End Sub
 

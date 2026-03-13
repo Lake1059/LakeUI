@@ -920,7 +920,7 @@ Public Class ModernComboBox
         Dim hasRadius As Boolean = 边框圆角半径 > 0
         Dim boundsRect As New RectangleF(0, 0, w - 1, h - 1)
         If 边框宽度 > 0 Then
-            Dim half As Single = 边框宽度 / 2.0F
+            Dim half As Single = 边框宽度 * DpiScale() / 2.0F
             boundsRect.Inflate(-half, -half)
         End If
         Dim bc As Color = If(Focused, 有焦点时边框颜色, 边框颜色)
@@ -969,20 +969,21 @@ Public Class ModernComboBox
         g.SmoothingMode = SmoothingMode.AntiAlias
         g.PixelOffsetMode = PixelOffsetMode.HighQuality
         g.InterpolationMode = InterpolationMode.HighQualityBicubic
+        Dim s As Single = DpiScale()
         If hasRadius Then
-            Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(boundsRect, 边框圆角半径)
+            Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(boundsRect, 边框圆角半径 * s)
                 RectangleRenderer.绘制圆角背景(g, path, boundsRect, bgClr, bgClr2, 渐变方向)
-                RectangleRenderer.绘制圆角边框(g, path, borderClr, 边框宽度)
+                RectangleRenderer.绘制圆角边框(g, path, borderClr, 边框宽度 * s)
             End Using
         Else
             RectangleRenderer.绘制矩形背景(g, boundsRect, bgClr, bgClr2, 渐变方向)
-            RectangleRenderer.绘制矩形边框(g, boundsRect, borderClr, 边框宽度)
+            RectangleRenderer.绘制矩形边框(g, boundsRect, borderClr, 边框宽度 * s)
         End If
     End Sub
 
     Private Sub DrawTextContent(g As Graphics, w As Integer, h As Integer)
         g.TextRenderingHint = Drawing.Text.TextRenderingHint.ClearTypeGridFit
-        Dim bi As Integer = 边框宽度
+        Dim bi As Integer = CInt(边框宽度 * DpiScale())
         Dim textLeft As Integer = Math.Max(Padding.Left, bi)
         Dim textTop As Integer = Math.Max(Padding.Top, bi)
         Dim textRight As Integer = Math.Max(Padding.Right, bi)
@@ -1032,7 +1033,7 @@ Public Class ModernComboBox
     End Sub
 
     Private Sub DrawCaret(g As Graphics, textLeft As Integer, textTop As Integer)
-        Dim bi As Integer = 边框宽度
+        Dim bi As Integer = CInt(边框宽度 * DpiScale())
         Dim textHeight As Integer = ClientRectangle.Height - Math.Max(Padding.Top, bi) - Math.Max(Padding.Bottom, bi)
         Dim textWidth As Integer = ClientRectangle.Width - textLeft - Math.Max(Padding.Right, bi) - ArrowAreaWidth
         Dim alignOff As Integer = GetAlignOffsetX(_text, textWidth)
@@ -1041,13 +1042,14 @@ Public Class ModernComboBox
         Dim caretH As Integer = 行高 - 2
         Dim caretY As Integer = lineY + (行高 - caretH) \ 2
         Using br As New SolidBrush(光标颜色)
-            g.FillRectangle(br, cx, caretY, 光标线宽, caretH)
+            g.FillRectangle(br, cx, caretY, CInt(光标线宽 * DpiScale()), caretH)
         End Using
     End Sub
 
     Private Sub DrawSeparatorAndArrow(g As Graphics, w As Integer, h As Integer, borderClr As Color)
+        Dim s As Single = DpiScale()
         Dim aaw As Integer = ArrowAreaWidth
-        Dim bi As Integer = 边框宽度
+        Dim bi As Integer = CInt(边框宽度 * s)
         Dim sepX As Single = w - aaw - If(bi > 0, bi / 2.0F, 0)
         Dim topInset As Integer = Math.Max(Padding.Top, bi)
         Dim bottomInset As Integer = Math.Max(Padding.Bottom, bi)
@@ -1069,7 +1071,7 @@ Public Class ModernComboBox
         End If
 
         If 显示分隔线 AndAlso 边框宽度 > 0 Then
-            Using pen As New Pen(borderClr, 边框宽度)
+            Using pen As New Pen(borderClr, 边框宽度 * s)
                 g.DrawLine(pen, sepX, topInset, sepX, h - bottomInset)
             End Using
         End If
@@ -1088,14 +1090,15 @@ Public Class ModernComboBox
         Dim squareLeft As Single = w - aaw
         Dim centerX As Single = squareLeft + aaw / 2.0F
         Dim centerY As Single = h / 2.0F
-        Dim arrW As Single = 箭头大小
-        Dim arrH As Single = 箭头大小 * Math.Sqrt(3.0) / 2.0
+        Dim scaledArrow As Single = 箭头大小 * s
+        Dim arrW As Single = scaledArrow
+        Dim arrH As Single = scaledArrow * Math.Sqrt(3.0) / 2.0
         Dim verts() As PointF = {
             New PointF(centerX - arrW / 2.0F, centerY - arrH / 2.0F),
             New PointF(centerX + arrW / 2.0F, centerY - arrH / 2.0F),
             New PointF(centerX, centerY + arrH / 2.0F)
         }
-        Dim cr As Single = Math.Max(箭头大小 * 0.2F, 1.0F)
+        Dim cr As Single = Math.Max(scaledArrow * 0.2F, 1.0F)
         g.SmoothingMode = SmoothingMode.AntiAlias
         Using path As New GraphicsPath()
             For i As Integer = 0 To 2
@@ -1351,7 +1354,7 @@ Public Class ModernComboBox
     End Sub
 
     Private Function HitTestCol(x As Integer) As Integer
-        Dim bi As Integer = 边框宽度
+        Dim bi As Integer = CInt(边框宽度 * DpiScale())
         Dim textLeft As Integer = Math.Max(Padding.Left, bi)
         Dim textWidth As Integer = ClientRectangle.Width - textLeft - Math.Max(Padding.Right, bi) - ArrowAreaWidth
         Dim alignOff As Integer = GetAlignOffsetX(_text, textWidth)
@@ -1441,7 +1444,7 @@ Public Class ModernComboBox
     End Sub
 
     Private Sub EnsureCaretVisible()
-        Dim bi As Integer = 边框宽度
+        Dim bi As Integer = CInt(边框宽度 * DpiScale())
         Dim textLeft As Integer = Math.Max(Padding.Left, bi)
         Dim areaW As Integer = ClientRectangle.Width - textLeft - Math.Max(Padding.Right, bi) - ArrowAreaWidth
         If areaW <= 0 Then Return
@@ -1453,7 +1456,7 @@ Public Class ModernComboBox
                 Return
             End If
         End If
-        Dim margin As Integer = 光标线宽 + 2
+        Dim margin As Integer = CInt(光标线宽 * DpiScale()) + 2
         If caretX - _scrollXOffset < 0 Then
             _scrollXOffset = Math.Max(0, caretX - margin)
         ElseIf caretX - _scrollXOffset >= areaW - margin Then
@@ -1675,9 +1678,11 @@ Public Class ModernComboBox
             End If
 
             Dim visCount As Integer = Math.Min(owner._items.Count, owner.最大下拉项数)
-            Dim bw As Integer = owner.下拉边框宽度
+            Dim s As Single = owner.DpiScale()
+            Dim bw As Integer = CInt(owner.下拉边框宽度 * s)
+            Dim itemH As Integer = CInt(owner.下拉项高度 * s)
             Dim pad As Padding = owner.下拉内边距
-            _finalHeight = visCount * owner.下拉项高度 + bw * 2 + pad.Top + pad.Bottom
+            _finalHeight = visCount * itemH + bw * 2 + pad.Top + pad.Bottom
             _originPt = owner.PointToScreen(New Point(0, owner.Height + owner.下拉间距))
             Dim scr As Screen = Screen.FromControl(owner)
             If _originPt.Y + _finalHeight > scr.WorkingArea.Bottom Then
@@ -1805,8 +1810,9 @@ Public Class ModernComboBox
         Protected Overrides Sub OnPaint(e As PaintEventArgs)
             Dim w As Integer = ClientRectangle.Width
             Dim h As Integer = ClientRectangle.Height
-            Dim bw As Integer = _owner.下拉边框宽度
-            Dim radius As Integer = _owner.下拉圆角半径
+            Dim s As Single = _owner.DpiScale()
+            Dim bw As Integer = CInt(_owner.下拉边框宽度 * s)
+            Dim radius As Integer = CInt(_owner.下拉圆角半径 * s)
             Dim boundsRect As New RectangleF(0, 0, w - 1, h - 1)
             If bw > 0 Then
                 Dim half As Single = bw / 2.0F
@@ -1831,11 +1837,11 @@ Public Class ModernComboBox
             DrawDropDownItems(e.Graphics, w, h)
 
             If _scrollBarVisible Then
-                _scrollBar.ComputeLayout(w, h, _owner.下拉边框宽度, _owner.下拉圆角半径,
+                _scrollBar.ComputeLayout(w, h, bw, radius,
                     _owner.下拉内边距.Top, _owner.下拉内边距.Bottom,
                     _owner.下拉滚动条宽度,
                     _owner._items.Count, Math.Min(_owner._items.Count, _owner.最大下拉项数), _scrollOffset)
-                _scrollBar.Draw(e.Graphics, w, h, _owner.下拉边框宽度, _owner.下拉圆角半径,
+                _scrollBar.Draw(e.Graphics, w, h, bw, radius,
                     _owner.下拉滚动条宽度,
                     _owner.下拉滚动条轨道颜色, _owner.下拉滚动条颜色, _owner.下拉滚动条悬停颜色)
             End If
@@ -1871,13 +1877,14 @@ Public Class ModernComboBox
 
         Private Sub DrawDropDownItems(g As Graphics, w As Integer, h As Integer)
             g.TextRenderingHint = Drawing.Text.TextRenderingHint.ClearTypeGridFit
-            Dim bw As Integer = _owner.下拉边框宽度
-            Dim radius As Integer = _owner.下拉圆角半径
+            Dim s As Single = _owner.DpiScale()
+            Dim bw As Integer = CInt(_owner.下拉边框宽度 * s)
+            Dim radius As Integer = CInt(_owner.下拉圆角半径 * s)
             Dim pad As Padding = _owner.下拉内边距
             Dim inset As Integer = Math.Max(bw, 1)
             Dim rightCorr As Integer = If(bw >= 2, 1, 0)
             Dim scrollW As Integer = If(_scrollBarVisible, _scrollBar.GetReservedWidth(w, inset), 0)
-            Dim itemH As Integer = _owner.下拉项高度
+            Dim itemH As Integer = CInt(_owner.下拉项高度 * s)
             Dim visCount As Integer = Math.Min(_owner._items.Count, _owner.最大下拉项数)
 
             If radius > 0 Then
@@ -1925,17 +1932,19 @@ Public Class ModernComboBox
         End Sub
 
         Private Function GetItemIndexAtY(y As Integer) As Integer
-            Dim bw As Integer = _owner.下拉边框宽度
-            Dim itemH As Integer = _owner.下拉项高度
+            Dim s As Single = _owner.DpiScale()
+            Dim bw As Integer = CInt(_owner.下拉边框宽度 * s)
+            Dim itemH As Integer = CInt(_owner.下拉项高度 * s)
             Dim idx As Integer = (y - bw - _owner.下拉内边距.Top) \ itemH + _scrollOffset
             If idx < 0 OrElse idx >= _owner._items.Count Then Return -1
             Return idx
         End Function
 
         Private Function GetItemRect(index As Integer) As RectangleF
-            Dim bw As Integer = _owner.下拉边框宽度
+            Dim s As Single = _owner.DpiScale()
+            Dim bw As Integer = CInt(_owner.下拉边框宽度 * s)
             Dim pad As Padding = _owner.下拉内边距
-            Dim itemH As Integer = _owner.下拉项高度
+            Dim itemH As Integer = CInt(_owner.下拉项高度 * s)
             Dim visIdx As Integer = index - _scrollOffset
             Dim itemY As Single = bw + pad.Top + visIdx * itemH
             Return New RectangleF(0, itemY, ClientRectangle.Width, itemH)
@@ -2210,7 +2219,7 @@ Public Class ModernComboBox
 #Region "输入法 IME"
     Private Sub UpdateImeWindow()
         If Not IsHandleCreated OrElse Not 启用编辑 Then Return
-        Dim bi As Integer = 边框宽度
+        Dim bi As Integer = CInt(边框宽度 * DpiScale())
         Dim imeLeft As Integer = Math.Max(Padding.Left, bi)
         Dim imeTop As Integer = Math.Max(Padding.Top, bi)
         Dim textWidth As Integer = ClientRectangle.Width - imeLeft - Math.Max(Padding.Right, bi) - ArrowAreaWidth
@@ -2228,6 +2237,10 @@ Public Class ModernComboBox
             Return Me.Height
         End Get
     End Property
+
+    Private Function DpiScale() As Single
+        Return Me.DeviceDpi / 96.0F
+    End Function
 
     Private Function MeasureWidth(text As String) As Integer
         Return TextRenderHelper.MeasureTextWidth(text, Font, 行高)
@@ -2322,6 +2335,11 @@ Public Class ModernComboBox
             _caretVisible = False
             鼠标状态 = MouseStateEnum.Normal
         End If
+        Invalidate()
+    End Sub
+
+    Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
+        MyBase.OnDpiChangedAfterParent(e)
         Invalidate()
     End Sub
 #End Region

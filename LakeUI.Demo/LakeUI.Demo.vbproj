@@ -6,6 +6,8 @@
     <StartupObject>Sub Main</StartupObject>
     <UseWindowsForms>true</UseWindowsForms>
     <MyType>WindowsForms</MyType>
+	<ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+	<ForceDesignerDpiUnaware>True</ForceDesignerDpiUnaware>
   </PropertyGroup>
 
   <ItemGroup>

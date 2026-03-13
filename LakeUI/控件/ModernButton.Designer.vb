@@ -27,13 +27,14 @@ Partial Class ModernButton
     Private Sub InitializeComponent()
         SuspendLayout()
         ' 
-        ' ExcellentButton
+        ' ModernButton
         ' 
-        AutoScaleDimensions = New SizeF(120F, 120F)
+        AutoScaleDimensions = New SizeF(96F, 96F)
         AutoScaleMode = AutoScaleMode.Dpi
         DoubleBuffered = True
-        Name = "ExcellentButton"
-        Size = New Size(150, 40)
+        Margin = New Padding(2, 2, 2, 2)
+        Name = "ModernButton"
+        Size = New Size(120, 35)
         ResumeLayout(False)
     End Sub
 

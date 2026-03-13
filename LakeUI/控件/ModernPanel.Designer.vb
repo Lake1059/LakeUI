@@ -1,8 +1,8 @@
 ﻿<Global.Microsoft.VisualBasic.CompilerServices.DesignerGenerated()> _
 Partial Class ModernPanel
-    Inherits System.Windows.Forms.UserControl
+    Inherits System.Windows.Forms.Panel
 
-    'UserControl 重写释放以清理组件列表。
+    'Panel 重写释放以清理组件列表。
     <System.Diagnostics.DebuggerNonUserCode()> _
     Protected Overrides Sub Dispose(ByVal disposing As Boolean)
         Try
@@ -26,8 +26,6 @@ Partial Class ModernPanel
         ' 
         ' ModernPanel
         ' 
-        AutoScaleDimensions = New SizeF(120F, 120F)
-        AutoScaleMode = AutoScaleMode.Dpi
         DoubleBuffered = True
         Name = "ModernPanel"
         ResumeLayout(False)

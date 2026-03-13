@@ -22,8 +22,9 @@ Public Class QuantumSwitch
 #Region "绘制"
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
         Dim 极限矩形区域 As New RectangleF(0, 0, Me.Width - 1, Me.Height - 1)
+        Dim s As Single = DpiScale()
         If 边框宽度 > 0 Then
-            Dim half As Single = 边框宽度 / 2.0F
+            Dim half As Single = 边框宽度 * s / 2.0F
             极限矩形区域.Inflate(-half, -half)
         End If
         Dim _ssaa As Integer = If(Class1.GlobalSSAA > 1, Class1.GlobalSSAA, 超采样倍率)
@@ -74,15 +75,17 @@ Public Class QuantumSwitch
             Using brush As New SolidBrush(轨道颜色)
                 g.FillPath(brush, path)
             End Using
-            RectangleRenderer.绘制圆角边框(g, path, 当前边框颜色, 边框宽度)
+            Dim s As Single = DpiScale()
+            RectangleRenderer.绘制圆角边框(g, path, 当前边框颜色, 边框宽度 * s)
         End Using
 
         ' 绘制滑块（圆形）
-        Dim 滑块直径 As Single = 极限矩形区域.Height - 滑块边距值 * 2
-        Dim 滑块最小X As Single = 极限矩形区域.X + 滑块边距值
-        Dim 滑块最大X As Single = 极限矩形区域.Right - 滑块边距值 - 滑块直径
+        Dim _滑块边距 As Single = 滑块边距值 * DpiScale()
+        Dim 滑块直径 As Single = 极限矩形区域.Height - _滑块边距 * 2
+        Dim 滑块最小X As Single = 极限矩形区域.X + _滑块边距
+        Dim 滑块最大X As Single = 极限矩形区域.Right - _滑块边距 - 滑块直径
         Dim 滑块X As Single = 滑块最小X + (滑块最大X - 滑块最小X) * 动画助手.Progress
-        Dim 滑块Y As Single = 极限矩形区域.Y + 滑块边距值
+        Dim 滑块Y As Single = 极限矩形区域.Y + _滑块边距
         Using brush As New SolidBrush(滑块颜色)
             g.FillEllipse(brush, 滑块X, 滑块Y, 滑块直径, 滑块直径)
         End Using
@@ -95,15 +98,17 @@ Public Class QuantumSwitch
             Using brush As New SolidBrush(不确定态轨道颜色值)
                 g.FillPath(brush, path)
             End Using
-            RectangleRenderer.绘制圆角边框(g, path, 获取当前边框颜色(), 边框宽度)
+            Dim s As Single = DpiScale()
+            RectangleRenderer.绘制圆角边框(g, path, 获取当前边框颜色(), 边框宽度 * s)
         End Using
 
         ' 绘制滑块固定在中间位置
-        Dim 滑块直径 As Single = 极限矩形区域.Height - 滑块边距值 * 2
-        Dim 滑块最小X As Single = 极限矩形区域.X + 滑块边距值
-        Dim 滑块最大X As Single = 极限矩形区域.Right - 滑块边距值 - 滑块直径
+        Dim _滑块边距 As Single = 滑块边距值 * DpiScale()
+        Dim 滑块直径 As Single = 极限矩形区域.Height - _滑块边距 * 2
+        Dim 滑块最小X As Single = 极限矩形区域.X + _滑块边距
+        Dim 滑块最大X As Single = 极限矩形区域.Right - _滑块边距 - 滑块直径
         Dim 滑块X As Single = 滑块最小X + (滑块最大X - 滑块最小X) * 0.5F
-        Dim 滑块Y As Single = 极限矩形区域.Y + 滑块边距值
+        Dim 滑块Y As Single = 极限矩形区域.Y + _滑块边距
         Using brush As New SolidBrush(不确定态滑块颜色值)
             g.FillEllipse(brush, 滑块X, 滑块Y, 滑块直径, 滑块直径)
         End Using
@@ -282,6 +287,10 @@ Public Class QuantumSwitch
         End If
         Me.Invalidate()
     End Sub
+    Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
+        MyBase.OnDpiChangedAfterParent(e)
+        Me.Invalidate()
+    End Sub
 #End Region
 
 #Region "通用"
@@ -293,6 +302,10 @@ Public Class QuantumSwitch
     End Sub
 
     Private ReadOnly 动画助手 As New AnimationHelper(Me)
+
+    Private Function DpiScale() As Single
+        Return Me.DeviceDpi / 96.0F
+    End Function
 
     Private Function 计算状态目标进度() As Single
         Select Case 内部状态
