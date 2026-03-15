@@ -1642,6 +1642,7 @@ Public Class ModernTextBox
         End If
         EnsureCaretVisible()
         Invalidate()
+        OnTextChanged(EventArgs.Empty)
         RaiseEvent TextChanged(Me, EventArgs.Empty)
     End Sub
     Private Sub ResetCaretBlink()

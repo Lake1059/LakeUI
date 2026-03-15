@@ -8,6 +8,7 @@ Partial Class ExcellentProgressBar
         Try
             If disposing Then
                 动画助手.Dispose()
+                动画助手2.Dispose()
                 If components IsNot Nothing Then
                     components.Dispose()
                 End If

@@ -8,4 +8,8 @@
         Dim a As New ModernColorDialog
         a.ShowDialog(Me)
     End Sub
+
+    Private Sub Form_ModernColorDialog_Load(sender As Object, e As EventArgs) Handles MyBase.Load
+
+    End Sub
 End Class

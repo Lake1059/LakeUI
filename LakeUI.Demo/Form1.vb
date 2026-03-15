@@ -1,6 +1,6 @@
 ﻿Public Class Form1
     Private Sub Form1_Load(sender As Object, e As EventArgs) Handles MyBase.Load
-        Form2.Show()
+
         Me.ModernTabListControl1.Items(1).BoundControl = Form基本信息
         Me.ModernTabListControl1.Items(2).BoundControl = Form许可证
 
@@ -21,6 +21,8 @@
         Me.ModernTabListControl1.Items(19).BoundControl = Form_HtmlColorLabel
         Me.ModernTabListControl1.Items(20).BoundControl = Form_ModernFontDialog
         Me.ModernTabListControl1.Items(21).BoundControl = Form_ModernColorDialog
+        Me.ModernTabListControl1.Items(22).BoundControl = Form_ExcellentProgressBar
+        Me.ModernTabListControl1.Items(23).BoundControl = Form_RoundDashBoard
     End Sub
 
     Private Sub Form1_Shown(sender As Object, e As EventArgs) Handles Me.Shown

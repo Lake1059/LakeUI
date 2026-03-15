@@ -32,25 +32,28 @@ Partial Class Form许可证
         ModernTextBox1.CaretColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
         ModernTextBox1.Dock = DockStyle.Fill
         ModernTextBox1.Font = New Font("Microsoft YaHei UI", 10.2F, FontStyle.Regular, GraphicsUnit.Point, CByte(134))
+        ModernTextBox1.LineHeight = 30
         ModernTextBox1.Location = New Point(0, 0)
+        ModernTextBox1.Margin = New Padding(2, 2, 2, 2)
         ModernTextBox1.MaxUndoCount = 0
         ModernTextBox1.MultiLine = True
         ModernTextBox1.Name = "ModernTextBox1"
-        ModernTextBox1.Padding = New Padding(30)
+        ModernTextBox1.Padding = New Padding(23, 26, 23, 26)
         ModernTextBox1.ReadOnly = True
         ModernTextBox1.ScrollBarHoverColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
-        ModernTextBox1.Size = New Size(902, 685)
+        ModernTextBox1.Size = New Size(702, 582)
         ModernTextBox1.TabIndex = 3
         ModernTextBox1.Text = "ModernTextBox1"
         ' 
         ' Form许可证
         ' 
-        AutoScaleDimensions = New SizeF(9F, 20F)
+        AutoScaleDimensions = New SizeF(7F, 17F)
         AutoScaleMode = AutoScaleMode.Font
         BackColor = Color.FromArgb(CByte(36), CByte(36), CByte(36))
-        ClientSize = New Size(902, 685)
+        ClientSize = New Size(702, 582)
         Controls.Add(ModernTextBox1)
         ForeColor = Color.Silver
+        Margin = New Padding(2, 3, 2, 3)
         Name = "Form许可证"
         Text = "Form许可证"
         ResumeLayout(False)

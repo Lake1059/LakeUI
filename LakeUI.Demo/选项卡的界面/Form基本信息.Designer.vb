@@ -31,10 +31,11 @@ Partial Class Form基本信息
         Label1.AutoSize = True
         Label1.Dock = DockStyle.Top
         Label1.Font = New Font("Microsoft YaHei UI", 16.2F, FontStyle.Regular, GraphicsUnit.Point, CByte(134))
-        Label1.Location = New Point(20, 20)
+        Label1.Location = New Point(16, 16)
+        Label1.Margin = New Padding(2, 0, 2, 0)
         Label1.Name = "Label1"
-        Label1.Padding = New Padding(0, 0, 0, 20)
-        Label1.Size = New Size(168, 56)
+        Label1.Padding = New Padding(0, 0, 0, 16)
+        Label1.Size = New Size(133, 46)
         Label1.TabIndex = 0
         Label1.Text = "湖界 LakeUI"
         ' 
@@ -46,28 +47,31 @@ Partial Class Form基本信息
         ModernTextBox1.CaretColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
         ModernTextBox1.Dock = DockStyle.Fill
         ModernTextBox1.Font = New Font("Microsoft YaHei UI", 10.2F, FontStyle.Regular, GraphicsUnit.Point, CByte(134))
-        ModernTextBox1.Location = New Point(20, 76)
+        ModernTextBox1.LineHeight = 30
+        ModernTextBox1.Location = New Point(16, 62)
+        ModernTextBox1.Margin = New Padding(2, 2, 2, 2)
         ModernTextBox1.MultiLine = True
         ModernTextBox1.Name = "ModernTextBox1"
-        ModernTextBox1.Padding = New Padding(20)
+        ModernTextBox1.Padding = New Padding(16)
         ModernTextBox1.ReadOnly = True
         ModernTextBox1.ScrollBarHoverColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
-        ModernTextBox1.Size = New Size(878, 640)
+        ModernTextBox1.Size = New Size(702, 511)
         ModernTextBox1.SuperSamplingScale = Class1.SuperSamplingScaleEnum.x2
         ModernTextBox1.TabIndex = 1
         ModernTextBox1.Text = "ModernTextBox1"
         ' 
         ' Form基本信息
         ' 
-        AutoScaleDimensions = New SizeF(120F, 120F)
+        AutoScaleDimensions = New SizeF(96F, 96F)
         AutoScaleMode = AutoScaleMode.Dpi
         BackColor = Color.FromArgb(CByte(36), CByte(36), CByte(36))
-        ClientSize = New Size(918, 736)
+        ClientSize = New Size(734, 589)
         Controls.Add(ModernTextBox1)
         Controls.Add(Label1)
         ForeColor = Color.Silver
+        Margin = New Padding(2)
         Name = "Form基本信息"
-        Padding = New Padding(20)
+        Padding = New Padding(16)
         Text = "Form基本信息"
         ResumeLayout(False)
         PerformLayout()

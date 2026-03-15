@@ -22,9 +22,9 @@ Partial Class Form_ModernComboBox
     '不要使用代码编辑器修改它。
     <System.Diagnostics.DebuggerStepThrough()> _
     Private Sub InitializeComponent()
-        Dim ToolTipEntry1 As LakeUI.ModernComboBox.ToolTipEntry = New ModernComboBox.ToolTipEntry()
-        Dim ToolTipEntry2 As LakeUI.ModernComboBox.ToolTipEntry = New ModernComboBox.ToolTipEntry()
-        Dim ToolTipEntry3 As LakeUI.ModernComboBox.ToolTipEntry = New ModernComboBox.ToolTipEntry()
+        Dim ToolTipEntry4 As LakeUI.ModernComboBox.ToolTipEntry = New ModernComboBox.ToolTipEntry()
+        Dim ToolTipEntry5 As LakeUI.ModernComboBox.ToolTipEntry = New ModernComboBox.ToolTipEntry()
+        Dim ToolTipEntry6 As LakeUI.ModernComboBox.ToolTipEntry = New ModernComboBox.ToolTipEntry()
         ModernPanel1 = New ModernPanel()
         Panel4 = New Panel()
         ModernComboBox3 = New ModernComboBox()
@@ -99,9 +99,9 @@ Partial Class Form_ModernComboBox
         ModernComboBox3.Items.Add("下拉选项3")
         ModernComboBox3.Items.Add("下拉选项4")
         ModernComboBox3.Items.Add("下拉选项5")
-        ToolTipEntry1.ItemText = "下拉选项1"
-        ToolTipEntry1.ToolTipText = "可以根据指定选项的文本来设置工具提示"
-        ModernComboBox3.ItemToolTips.Add(ToolTipEntry1)
+        ToolTipEntry4.ItemText = "下拉选项1"
+        ToolTipEntry4.ToolTipText = "可以根据指定选项的文本来设置工具提示"
+        ModernComboBox3.ItemToolTips.Add(ToolTipEntry4)
         ModernComboBox3.Location = New Point(0, 0)
         ModernComboBox3.Margin = New Padding(2, 2, 2, 2)
         ModernComboBox3.Name = "ModernComboBox3"
@@ -157,9 +157,9 @@ Partial Class Form_ModernComboBox
         ModernComboBox2.Items.Add("下拉选项3")
         ModernComboBox2.Items.Add("下拉选项4")
         ModernComboBox2.Items.Add("下拉选项5")
-        ToolTipEntry2.ItemText = "下拉选项1"
-        ToolTipEntry2.ToolTipText = "可以根据指定选项的文本来设置工具提示"
-        ModernComboBox2.ItemToolTips.Add(ToolTipEntry2)
+        ToolTipEntry5.ItemText = "下拉选项1"
+        ToolTipEntry5.ToolTipText = "可以根据指定选项的文本来设置工具提示"
+        ModernComboBox2.ItemToolTips.Add(ToolTipEntry5)
         ModernComboBox2.Location = New Point(0, 0)
         ModernComboBox2.Margin = New Padding(2, 2, 2, 2)
         ModernComboBox2.Name = "ModernComboBox2"
@@ -214,9 +214,9 @@ Partial Class Form_ModernComboBox
         ModernComboBox1.Items.Add("下拉选项3")
         ModernComboBox1.Items.Add("下拉选项4")
         ModernComboBox1.Items.Add("下拉选项5")
-        ToolTipEntry3.ItemText = "下拉选项1"
-        ToolTipEntry3.ToolTipText = "可以根据指定选项的文本来设置工具提示"
-        ModernComboBox1.ItemToolTips.Add(ToolTipEntry3)
+        ToolTipEntry6.ItemText = "下拉选项1"
+        ToolTipEntry6.ToolTipText = "可以根据指定选项的文本来设置工具提示"
+        ModernComboBox1.ItemToolTips.Add(ToolTipEntry6)
         ModernComboBox1.Location = New Point(0, 0)
         ModernComboBox1.Margin = New Padding(2, 2, 2, 2)
         ModernComboBox1.Name = "ModernComboBox1"
@@ -263,6 +263,7 @@ Partial Class Form_ModernComboBox
         ModernButton4.BorderSize = 0
         ModernButton4.Dock = DockStyle.Left
         ModernButton4.Font = New Font("Microsoft YaHei UI", 10.8F, FontStyle.Bold, GraphicsUnit.Point, CByte(134))
+        ModernButton4.ForeColor = Color.YellowGreen
         ModernButton4.Location = New Point(424, 0)
         ModernButton4.Margin = New Padding(2)
         ModernButton4.Name = "ModernButton4"
@@ -288,6 +289,7 @@ Partial Class Form_ModernComboBox
         ModernButton3.BorderSize = 0
         ModernButton3.Dock = DockStyle.Left
         ModernButton3.Font = New Font("Microsoft YaHei UI", 10.8F, FontStyle.Bold, GraphicsUnit.Point, CByte(134))
+        ModernButton3.ForeColor = Color.Orchid
         ModernButton3.Location = New Point(296, 0)
         ModernButton3.Margin = New Padding(2)
         ModernButton3.Name = "ModernButton3"
@@ -338,6 +340,7 @@ Partial Class Form_ModernComboBox
         ModernButton1.BorderSize = 0
         ModernButton1.Dock = DockStyle.Left
         ModernButton1.Font = New Font("Microsoft YaHei UI", 10.8F, FontStyle.Bold, GraphicsUnit.Point, CByte(134))
+        ModernButton1.ForeColor = Color.YellowGreen
         ModernButton1.Location = New Point(0, 0)
         ModernButton1.Margin = New Padding(2)
         ModernButton1.Name = "ModernButton1"

@@ -24,9 +24,10 @@
     <PackageProjectUrl>https://github.com/Lake1059/LakeUI</PackageProjectUrl>
     <RepositoryUrl>https://github.com/Lake1059/LakeUI</RepositoryUrl>
     <PackAsTool>False</PackAsTool>
-    <PackageIcon>LakeUI.png</PackageIcon>
+	<PackageIcon>LakeUI.png</PackageIcon>
 	<ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
 	<ForceDesignerDpiUnaware>True</ForceDesignerDpiUnaware>
+	<PackageTags>winform;winform_ui;winui;winforms_ui</PackageTags>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
@@ -48,11 +49,11 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Update="LakeUI.png">
+    <None Include="LakeUI.png">
       <Pack>True</Pack>
       <PackagePath>\</PackagePath>
     </None>
-    <None Update="README.md">
+    <None Include="README.md">
       <Pack>True</Pack>
       <PackagePath>\</PackagePath>
     </None>

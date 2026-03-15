@@ -176,6 +176,7 @@ Partial Class Form_ModernListBox
         ModernButton4.BorderSize = 0
         ModernButton4.Dock = DockStyle.Left
         ModernButton4.Font = New Font("Microsoft YaHei UI", 10.8F, FontStyle.Bold, GraphicsUnit.Point, CByte(134))
+        ModernButton4.ForeColor = Color.YellowGreen
         ModernButton4.Location = New Point(424, 0)
         ModernButton4.Margin = New Padding(2)
         ModernButton4.Name = "ModernButton4"
@@ -201,6 +202,7 @@ Partial Class Form_ModernListBox
         ModernButton3.BorderSize = 0
         ModernButton3.Dock = DockStyle.Left
         ModernButton3.Font = New Font("Microsoft YaHei UI", 10.8F, FontStyle.Bold, GraphicsUnit.Point, CByte(134))
+        ModernButton3.ForeColor = Color.Orchid
         ModernButton3.Location = New Point(296, 0)
         ModernButton3.Margin = New Padding(2)
         ModernButton3.Name = "ModernButton3"
@@ -251,6 +253,7 @@ Partial Class Form_ModernListBox
         ModernButton1.BorderSize = 0
         ModernButton1.Dock = DockStyle.Left
         ModernButton1.Font = New Font("Microsoft YaHei UI", 10.8F, FontStyle.Bold, GraphicsUnit.Point, CByte(134))
+        ModernButton1.ForeColor = Color.YellowGreen
         ModernButton1.Location = New Point(0, 0)
         ModernButton1.Margin = New Padding(2)
         ModernButton1.Name = "ModernButton1"

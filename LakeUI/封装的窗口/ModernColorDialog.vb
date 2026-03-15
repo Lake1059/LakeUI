@@ -59,8 +59,8 @@ Public Class ModernColorDialog
 
     ' ── 收藏夹 ──
     Private _favButtons() As ModernButton
-    Private ReadOnly _favoriteColors(9) As Color
-    Private ReadOnly _favoriteSet(9) As Boolean
+    Private Shared ReadOnly _favoriteColors(9) As Color
+    Private Shared ReadOnly _favoriteSet(9) As Boolean
 
     ' ── 全屏取色器 ──
     Private _eyeDropperActive As Boolean = False
@@ -109,9 +109,6 @@ Public Class ModernColorDialog
         ' 初始化 HTML 基本颜色表（按 VS Web 色彩顺序排列，带颜色色块图标）
         InitHtmlColors()
         PopulateColorList()
-
-        ' 初始化收藏夹
-        For i = 0 To 9 : _favoriteColors(i) = Color.Black : Next
 
         ' 从 SelectedColor 初始化界面
         ApplyColorToUI(SelectedColor, True)
@@ -165,6 +162,18 @@ Public Class ModernColorDialog
             AddHandler _favButtons(i).MouseDown, Sub(s As Object, ev As MouseEventArgs)
                                                      FavoriteButton_Click(idx, ev.Button)
                                                  End Sub
+        Next
+
+        ' 初始化收藏夹按钮的外观
+        For i = 0 To _favButtons.Length - 1
+            If _favoriteSet(i) Then
+                _favButtons(i).BackColor1 = Color.FromArgb(_favoriteColors(i).R, _favoriteColors(i).G, _favoriteColors(i).B)
+                Dim lum = 0.299 * _favoriteColors(i).R + 0.587 * _favoriteColors(i).G + 0.114 * _favoriteColors(i).B
+                _favButtons(i).ForeColor = If(lum > 128, Color.Black, Color.White)
+            Else
+                _favButtons(i).BackColor1 = Color.Black
+                _favButtons(i).ForeColor = Color.Gray
+            End If
         Next
 
         ' 后台生成色域图
@@ -449,10 +458,14 @@ Public Class ModernColorDialog
 #Region "色域图交互"
 
     Private Sub PictureBox1_MouseInteract(sender As Object, e As MouseEventArgs)
-        If e.Button = MouseButtons.Left Then PickColorFromChromaticity(e.X, e.Y)
+        If e.Button = MouseButtons.Left Then
+            PickColorFromChromaticity(e.X, e.Y, keepLightness:=True)
+        ElseIf e.Button = MouseButtons.Right Then
+            PickColorFromChromaticity(e.X, e.Y, keepLightness:=False)
+        End If
     End Sub
 
-    Private Sub PickColorFromChromaticity(px As Integer, py As Integer)
+    Private Sub PickColorFromChromaticity(px As Integer, py As Integer, keepLightness As Boolean)
         Dim w = PictureBox1.ClientSize.Width
         Dim h = PictureBox1.ClientSize.Height
         If w < 10 OrElse h < 10 Then Return
@@ -463,7 +476,7 @@ Public Class ModernColorDialog
 
         ClampToGamut()
 
-        ' CIE xy → XYZ (Y=1) → 归一化 sRGB
+        ' CIE xy → XYZ (Y=1) → 归一化 sRGB（得到该色度点的最大亮度色）
         Dim c As Color
         If _markerY > 0.001 Then
             Dim cX2 = _markerX / _markerY
@@ -471,6 +484,16 @@ Public Class ModernColorDialog
             c = XYZtoSRGB(cX2, 1.0, cZ)
         Else
             c = Color.Black
+        End If
+
+        If keepLightness Then
+            ' 使用当前亮度值计算新颜色，不可用时使用默认亮度 50
+            Dim hsl = RGBtoHSL(c.R, c.G, c.B)
+            Dim currentL As Double = 50.0
+            Dim unused = Double.TryParse(ModernTextBox7.Text, currentL)
+            currentL = Math.Clamp(currentL, 0, 100)
+            Dim rgb = HSLtoRGB(hsl.Item1, hsl.Item2, currentL)
+            c = Color.FromArgb(255, rgb.Item1, rgb.Item2, rgb.Item3)
         End If
 
         SelectedColor = Color.FromArgb(ParseCurrentAlpha(), c.R, c.G, c.B)
@@ -570,6 +593,16 @@ Public Class ModernColorDialog
     End Sub
 
     Private Sub HighlightHtmlColor(c As Color)
+        ' 如果当前选中项已经匹配目标颜色，则不改变选择
+        ' （避免在 RGB 相同的颜色之间跳转，如 Aqua/Cyan、Fuchsia/Magenta）
+        Dim currentIdx = ModernListBox1.SelectedIndex
+        If currentIdx >= 0 AndAlso currentIdx < ModernListBox1.Items.Count Then
+            Dim currentColor = Color.FromName(ModernListBox1.Items(currentIdx))
+            If currentColor.R = c.R AndAlso currentColor.G = c.G AndAlso currentColor.B = c.B Then
+                Return
+            End If
+        End If
+
         ' 必须搜索当前可见的 ListBox 项（可能已被搜索框过滤），而非 _htmlColors 全量索引
         For i = 0 To ModernListBox1.Items.Count - 1
             Dim hc = Color.FromName(ModernListBox1.Items(i))
@@ -1010,7 +1043,28 @@ Public Class ModernColorDialog
 
     Private Sub ModernColorDialog_SizeChanged(sender As Object, e As EventArgs) Handles Me.SizeChanged
         If Me.WindowState = FormWindowState.Minimized Then Exit Sub
-        Panel4.Width = Panel4.Parent.Width * 0.4
+
+        ' 计算 PictureBox1 可用高度，反推 Panel4 宽度使图片框保持正方形
+        Dim panelPad = Panel4.Padding                     ' (20, 20, 0, 0)
+        Dim labelH = Label1.Height                         ' "色域图" 标签高度
+        Dim mpPad = ModernPanel1.Padding                   ' (5, 5, 5, 5)
+        Dim mpBorder = ModernPanel1.BorderSize             ' 2
+
+        ' PictureBox1 可用高度 = Panel4 内容高度 - 标签 - ModernPanel1 内边距和边框
+        Dim innerHeight = Panel4.Parent.ClientSize.Height - panelPad.Top - panelPad.Bottom - labelH _
+                          - mpPad.Top - mpPad.Bottom - mpBorder * 2
+
+        ' 反推 Panel4 宽度 = 正方形边长 + ModernPanel1 内边距和边框 + Panel4 左右 Padding
+        Panel4.Width = innerHeight + mpPad.Left + mpPad.Right + mpBorder * 2 + panelPad.Left + panelPad.Right
     End Sub
 
+    Private Sub ModernButton14_Click(sender As Object, e As EventArgs) Handles ModernButton14.Click
+        Me.ModernContextMenu1.MenuFont = Me.Font
+        Me.ModernContextMenu1.DescriptionFont = New Font(Me.Font.Name, 9)
+        Me.ModernContextMenu1.Show(Me, Me.ModernContextMenu1.MenuPadding.Left, Me.ModernContextMenu1.MenuPadding.Top)
+    End Sub
+
+    Private Sub ModernColorDialog_Load(sender As Object, e As EventArgs) Handles MyBase.Load
+
+    End Sub
 End Class

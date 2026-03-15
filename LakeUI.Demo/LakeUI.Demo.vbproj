@@ -1,13 +1,15 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <OutputType>WinExe</OutputType>
-    <TargetFramework>net10.0-windows</TargetFramework>
-    <StartupObject>Sub Main</StartupObject>
-    <UseWindowsForms>true</UseWindowsForms>
-    <MyType>WindowsForms</MyType>
+	<OutputType>WinExe</OutputType>
+	<TargetFramework>net10.0-windows</TargetFramework>
+	<StartupObject>Sub Main</StartupObject>
+	<UseWindowsForms>true</UseWindowsForms>
+	<MyType>WindowsForms</MyType>
 	<ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
 	<ForceDesignerDpiUnaware>True</ForceDesignerDpiUnaware>
+	<PublishSingleFile>true</PublishSingleFile>
+	<SelfContained>false</SelfContained>
   </PropertyGroup>
 
   <ItemGroup>

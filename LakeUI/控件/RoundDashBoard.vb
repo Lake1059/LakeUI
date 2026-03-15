@@ -38,10 +38,11 @@ Public Class RoundDashBoard
         g.PixelOffsetMode = PixelOffsetMode.HighQuality
         g.InterpolationMode = InterpolationMode.HighQualityBicubic
 
+        Dim s As Single = DpiScale()
         Dim 中心X As Single = Me.Width / 2.0F
         Dim 中心Y As Single = Me.Height / 2.0F
         Dim 外径 As Single = 外圈半径
-        Dim 厚度值 As Single = 圆弧厚度
+        Dim 厚度值 As Single = 圆弧厚度 * s
 
         ' 确保半径不超出控件范围
         Dim 最大半径 As Single = Math.Min(中心X, 中心Y) - 1
@@ -58,82 +59,83 @@ Public Class RoundDashBoard
         Dim 实际扫过角 As Single = 表盘角度
 
         ' 绘制轨道背景
-        Using pen As New Pen(轨道背景颜色, 画笔宽度)
-            pen.StartCap = LineCap.Round
-            pen.EndCap = LineCap.Round
-            If 实际扫过角 >= 360 Then
-                g.DrawEllipse(pen, 绘制矩形)
-            Else
-                g.DrawArc(pen, 绘制矩形, 实际起始角, 实际扫过角)
-            End If
-        End Using
+        绘制圆弧(g, 绘制矩形, 轨道背景颜色, 画笔宽度, 实际起始角, 实际扫过角)
 
         ' 绘制填充弧
         Dim progress As Single = 动画助手.Progress
         If progress > 0.001F Then
             Dim 填充扫过角 As Single = 实际扫过角 * progress
             If 填充渐变颜色 <> Color.Empty Then
-                绘制渐变弧(g, 绘制矩形, 画笔宽度, 实际起始角, 填充扫过角, 实际扫过角, progress)
+                绘制渐变弧(g, 绘制矩形, 画笔宽度, 实际起始角, 填充扫过角, 实际扫过角)
             Else
-                Using pen As New Pen(填充基础颜色, 画笔宽度)
-                    pen.StartCap = LineCap.Round
-                    pen.EndCap = LineCap.Round
-                    If 填充扫过角 >= 360 Then
-                        g.DrawEllipse(pen, 绘制矩形)
-                    Else
-                        g.DrawArc(pen, 绘制矩形, 实际起始角, 填充扫过角)
-                    End If
-                End Using
+                绘制圆弧(g, 绘制矩形, 填充基础颜色, 画笔宽度, 实际起始角, 填充扫过角)
             End If
 
-            ' 绘制指针
-            If 显示指针 Then
-                Dim 指针角度弧度 As Double = (实际起始角 + 填充扫过角) * Math.PI / 180.0
-                Dim 指针内半径 As Single = 外径 - 画笔宽度 - 指针长度值
-                If 指针内半径 < 0 Then 指针内半径 = 0
-                Dim 指针外半径 As Single = 外径 + 2
-
-                Dim x1 As Single = 中心X + CSng(Math.Cos(指针角度弧度)) * 指针内半径
-                Dim y1 As Single = 中心Y + CSng(Math.Sin(指针角度弧度)) * 指针内半径
-                Dim x2 As Single = 中心X + CSng(Math.Cos(指针角度弧度)) * 指针外半径
-                Dim y2 As Single = 中心Y + CSng(Math.Sin(指针角度弧度)) * 指针外半径
-
-                Using pen As New Pen(指针颜色值, 指针宽度值)
-                    pen.StartCap = LineCap.Round
-                    pen.EndCap = LineCap.Round
-                    g.DrawLine(pen, x1, y1, x2, y2)
-                End Using
-            End If
+            If 显示指针 Then 绘制指针(g, 中心X, 中心Y, 外径, 画笔宽度, 实际起始角 + 填充扫过角, s)
         End If
 
-        ' 绘制中心文字
-        If 中心文字模式 <> CenterTextModeEnum.None Then
-            Dim 文字内容 As String = ""
-            Select Case 中心文字模式
-                Case CenterTextModeEnum.Percentage
-                    文字内容 = CInt(Math.Round(progress * 100)).ToString() & "%"
-                Case CenterTextModeEnum.Value
-                    Dim 显示值 As Integer = CInt(Math.Round(最小值 + (最大值 - 最小值) * progress))
-                    文字内容 = 显示值.ToString()
-                Case CenterTextModeEnum.Custom
-                    文字内容 = 自定义文字
-            End Select
-
-            If Not String.IsNullOrEmpty(文字内容) Then
-                Using sf As New StringFormat()
-                    sf.Alignment = StringAlignment.Center
-                    sf.LineAlignment = StringAlignment.Center
-                    Using brush As New SolidBrush(中心文字颜色值)
-                        g.TextRenderingHint = Drawing.Text.TextRenderingHint.AntiAliasGridFit
-                        g.DrawString(文字内容, 中心文字字体值, brush, 中心X, 中心Y, sf)
-                    End Using
-                End Using
-            End If
-        End If
+        绘制中心文字(g, 中心X, 中心Y, progress)
     End Sub
+
+    Private Shared Sub 绘制圆弧(g As Graphics, rect As RectangleF, color As Color, penWidth As Single, startAngle As Single, sweepAngle As Single)
+        Using pen As New Pen(color, penWidth)
+            pen.StartCap = LineCap.Round
+            pen.EndCap = LineCap.Round
+            If sweepAngle >= 360 Then
+                g.DrawEllipse(pen, rect)
+            Else
+                g.DrawArc(pen, rect, startAngle, sweepAngle)
+            End If
+        End Using
+    End Sub
+
+    Private Sub 绘制指针(g As Graphics, 中心X As Single, 中心Y As Single, 外径 As Single, 画笔宽度 As Single, 角度 As Single, s As Single)
+        Dim 指针角度弧度 As Double = 角度 * Math.PI / 180.0
+        Dim cosVal As Single = CSng(Math.Cos(指针角度弧度))
+        Dim sinVal As Single = CSng(Math.Sin(指针角度弧度))
+        Dim 指针内半径 As Single = Math.Max(0, 外径 - 画笔宽度 - 指针长度值 * s)
+        Dim 指针外半径 As Single = 外径 + 2
+
+        Using pen As New Pen(指针颜色值, 指针宽度值 * s)
+            pen.StartCap = LineCap.Round
+            pen.EndCap = LineCap.Round
+            g.DrawLine(pen,
+                       中心X + cosVal * 指针内半径, 中心Y + sinVal * 指针内半径,
+                       中心X + cosVal * 指针外半径, 中心Y + sinVal * 指针外半径)
+        End Using
+    End Sub
+
+    Private Sub 绘制中心文字(g As Graphics, 中心X As Single, 中心Y As Single, progress As Single)
+        If 中心文字模式 = CenterTextModeEnum.None Then Return
+
+        Dim 文字内容 As String = 获取中心文字内容(progress)
+        If String.IsNullOrEmpty(文字内容) Then Return
+
+        Using sf As New StringFormat()
+            sf.Alignment = StringAlignment.Center
+            sf.LineAlignment = StringAlignment.Center
+            Using brush As New SolidBrush(中心文字颜色值)
+                g.TextRenderingHint = Drawing.Text.TextRenderingHint.AntiAliasGridFit
+                g.DrawString(文字内容, 中心文字字体值, brush, 中心X, 中心Y, sf)
+            End Using
+        End Using
+    End Sub
+
+    Private Function 获取中心文字内容(progress As Single) As String
+        Select Case 中心文字模式
+            Case CenterTextModeEnum.Percentage
+                Return CInt(Math.Round(progress * 100)).ToString() & "%"
+            Case CenterTextModeEnum.Value
+                Return CInt(Math.Round(最小值 + (最大值 - 最小值) * progress)).ToString()
+            Case CenterTextModeEnum.Custom
+                Return 自定义文字
+            Case Else
+                Return ""
+        End Select
+    End Function
 #End Region
 
-    Private Sub 绘制渐变弧(g As Graphics, rect As RectangleF, penWidth As Single, startAngle As Single, fillSweep As Single, totalSweep As Single, progress As Single)
+    Private Sub 绘制渐变弧(g As Graphics, rect As RectangleF, penWidth As Single, startAngle As Single, fillSweep As Single, totalSweep As Single)
         Const 步进角度 As Single = 2.0F
         Dim 段数 As Integer = Math.Max(1, CInt(Math.Ceiling(fillSweep / 步进角度)))
         Dim 每段角度 As Single = fillSweep / 段数
@@ -197,6 +199,15 @@ Public Class RoundDashBoard
         If Not Enabled Then 动画助手.StopAnimation()
         Me.Invalidate()
     End Sub
+
+    Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
+        MyBase.OnDpiChangedAfterParent(e)
+        Me.Invalidate()
+    End Sub
+
+    Private Function DpiScale() As Single
+        Return Me.DeviceDpi / 96.0F
+    End Function
 #End Region
 
 #Region "属性"
@@ -387,7 +398,7 @@ Public Class RoundDashBoard
         End Set
     End Property
 
-    Private Shared ReadOnly 默认中心文字字体 As New Font("Segoe UI", 18, FontStyle.Bold)
+    Private Shared ReadOnly 默认中心文字字体 As New Font("Segoe UI", 14, FontStyle.Bold)
     Private 中心文字字体值 As Font = 默认中心文字字体
     <Category("LakeUI"), Description("中心文字字体"), Browsable(True)>
     Public Property CenterTextFont As Font

@@ -2,8 +2,7 @@ Imports System.ComponentModel
 Imports System.Drawing.Drawing2D
 
 ''' <summary>
-''' 现代化选项卡列表控件。采用自绘列表 + 面板的组合方式，
-''' 彻底避开原生 TabControl 的底层协议问题。
+''' 现代化选项卡列表控件。
 ''' 每个 <see cref="ModernTabPage"/> 可绑定一个 <see cref="Control"/> 作为内容，
 ''' 运行时自动切换其可见性。支持分割线和小字说明项。
 ''' </summary>
@@ -134,6 +133,11 @@ Public Class ModernTabListControl
     Private ReadOnly 项目列表 As New List(Of ModernTabPage)
     Private _滚动偏移 As Integer = 0
     Private ReadOnly _标签栏滚动条 As New ScrollBarRenderer()
+    Private _搜索框控件 As Control = Nothing
+    Private _搜索文本 As String = ""
+    Private _搜索框高度 As Integer = 30
+    Private _搜索框原始父级 As Control = Nothing
+    Private _搜索框原始边界 As Rectangle
 
     Public Sub New()
         InitializeComponent()
@@ -183,6 +187,39 @@ Public Class ModernTabListControl
         For Each item In 项目列表
             If item.Owner IsNot Me Then item.Owner = Me
         Next
+    End Sub
+
+    Private Function 项目是否可见(index As Integer) As Boolean
+        If index < 0 OrElse index >= 项目列表.Count Then Return False
+        If String.IsNullOrEmpty(_搜索文本) Then Return True
+        Dim item = 项目列表(index)
+        If item.IsSeparator OrElse item.IsDescription Then Return True
+        Return item.Text IsNot Nothing AndAlso item.Text.IndexOf(_搜索文本, StringComparison.OrdinalIgnoreCase) >= 0
+    End Function
+
+    Private Function 获取搜索框区域高度() As Single
+        If _搜索框控件 Is Nothing Then Return 0
+        Dim s As Single = DpiScale()
+        Return 标签栏内边距.Top * s + _搜索框高度 * s + 标签栏内边距.Top * s
+    End Function
+
+    Private Sub 同步搜索框布局()
+        If _搜索框控件 Is Nothing Then Return
+        Dim s As Single = DpiScale()
+        Dim tabStripRect = 获取标签栏矩形()
+        Dim x As Integer = CInt(tabStripRect.X + 标签栏内边距.Left * s)
+        Dim y As Integer = CInt(标签栏内边距.Top * s)
+        Dim w As Integer = CInt(tabStripRect.Width - (标签栏内边距.Left + 标签栏内边距.Right) * s)
+        _搜索框控件.SetBounds(x, y, w, CInt(_搜索框高度 * s))
+    End Sub
+
+    Private Sub 搜索框文本变更(sender As Object, e As EventArgs)
+        Dim ctrl = TryCast(sender, Control)
+        If ctrl Is Nothing Then Return
+        _搜索文本 = If(ctrl.Text, "")
+        _滚动偏移 = 0
+        限制滚动范围()
+        Invalidate()
     End Sub
 #End Region
 
@@ -235,6 +272,7 @@ Public Class ModernTabListControl
 
     Private Function 上一个可选索引(fromIndex As Integer) As Integer
         For i As Integer = fromIndex - 1 To 0 Step -1
+            If Not 项目是否可见(i) Then Continue For
             If Not 项目列表(i).IsSeparator AndAlso Not 项目列表(i).IsDescription Then Return i
         Next
         Return fromIndex
@@ -242,6 +280,7 @@ Public Class ModernTabListControl
 
     Private Function 下一个可选索引(fromIndex As Integer) As Integer
         For i As Integer = fromIndex + 1 To 项目列表.Count - 1
+            If Not 项目是否可见(i) Then Continue For
             If Not 项目列表(i).IsSeparator AndAlso Not 项目列表(i).IsDescription Then Return i
         Next
         Return fromIndex
@@ -249,6 +288,7 @@ Public Class ModernTabListControl
 
     Private Function 第一个可选索引() As Integer
         For i As Integer = 0 To 项目列表.Count - 1
+            If Not 项目是否可见(i) Then Continue For
             If Not 项目列表(i).IsSeparator AndAlso Not 项目列表(i).IsDescription Then Return i
         Next
         Return -1
@@ -256,6 +296,7 @@ Public Class ModernTabListControl
 
     Private Function 最后一个可选索引() As Integer
         For i As Integer = 项目列表.Count - 1 To 0 Step -1
+            If Not 项目是否可见(i) Then Continue For
             If Not 项目列表(i).IsSeparator AndAlso Not 项目列表(i).IsDescription Then Return i
         Next
         Return -1
@@ -315,9 +356,27 @@ Public Class ModernTabListControl
             绘制图形内容(e.Graphics)
         End If
         Dim tabClipState = e.Graphics.Save()
-        e.Graphics.SetClip(获取标签栏矩形(), CombineMode.Intersect)
+        Dim tabScrollableClip = 获取标签栏矩形()
+        Dim searchH As Integer = CInt(获取搜索框区域高度())
+        If searchH > 0 Then
+            tabScrollableClip = New Rectangle(tabScrollableClip.X, tabScrollableClip.Y + searchH, tabScrollableClip.Width, Math.Max(0, tabScrollableClip.Height - searchH))
+        End If
+        Dim totalTabH2 As Integer = CInt(获取标签页总高度())
+        Dim viewportTabH2 As Integer = CInt(获取可滚动视口高度())
+        Dim scaledIndH As Integer = CInt(更多指示器高度 * DpiScale())
+        If _滚动偏移 > 0 Then
+            tabScrollableClip = New Rectangle(tabScrollableClip.X, tabScrollableClip.Y + scaledIndH, tabScrollableClip.Width, Math.Max(0, tabScrollableClip.Height - scaledIndH))
+        End If
+        If (totalTabH2 > viewportTabH2) AndAlso (totalTabH2 - _滚动偏移 > viewportTabH2) Then
+            tabScrollableClip = New Rectangle(tabScrollableClip.X, tabScrollableClip.Y, tabScrollableClip.Width, Math.Max(0, tabScrollableClip.Height - scaledIndH))
+        End If
+        e.Graphics.SetClip(tabScrollableClip, CombineMode.Intersect)
         For i As Integer = 0 To 项目列表.Count - 1
-            绘制标签页文本(e.Graphics, i)
+            If Not 项目是否可见(i) Then Continue For
+            Dim itemRect = 获取标签页项矩形(i)
+            If itemRect.Top >= tabScrollableClip.Bottom Then Exit For
+            If itemRect.Top < tabScrollableClip.Top OrElse itemRect.Bottom > tabScrollableClip.Bottom Then Continue For
+            绘制标签页文本(e.Graphics, i, tabScrollableClip)
         Next
         e.Graphics.Restore(tabClipState)
     End Sub
@@ -336,9 +395,34 @@ Public Class ModernTabListControl
         End Using
 
         Dim gState = g.Save()
-        g.SetClip(获取标签栏矩形(), CombineMode.Intersect)
+        Dim tabItemClip = 获取标签栏矩形()
+        Dim searchAreaH As Integer = CInt(获取搜索框区域高度())
+        If searchAreaH > 0 Then
+            tabItemClip = New Rectangle(tabItemClip.X, tabItemClip.Y + searchAreaH, tabItemClip.Width, Math.Max(0, tabItemClip.Height - searchAreaH))
+        End If
+
+        Dim totalTabH As Integer = CInt(获取标签页总高度())
+        Dim viewportTabH As Integer = CInt(获取可滚动视口高度())
+        Dim hasMoreAbove As Boolean = _滚动偏移 > 0
+        Dim hasMoreBelow As Boolean = (totalTabH > viewportTabH) AndAlso (totalTabH - _滚动偏移 > viewportTabH)
+        Dim scaledIndicatorH As Integer = CInt(更多指示器高度 * DpiScale())
+        Dim topIndicatorH As Integer = If(hasMoreAbove, scaledIndicatorH, 0)
+        Dim bottomIndicatorH As Integer = If(hasMoreBelow, scaledIndicatorH, 0)
+
+        Dim clippedTabItemClip As Rectangle = tabItemClip
+        If topIndicatorH > 0 Then
+            clippedTabItemClip = New Rectangle(clippedTabItemClip.X, clippedTabItemClip.Y + topIndicatorH, clippedTabItemClip.Width, Math.Max(0, clippedTabItemClip.Height - topIndicatorH))
+        End If
+        If bottomIndicatorH > 0 Then
+            clippedTabItemClip = New Rectangle(clippedTabItemClip.X, clippedTabItemClip.Y, clippedTabItemClip.Width, Math.Max(0, clippedTabItemClip.Height - bottomIndicatorH))
+        End If
+        g.SetClip(clippedTabItemClip, CombineMode.Intersect)
 
         For i As Integer = 0 To 项目列表.Count - 1
+            If Not 项目是否可见(i) Then Continue For
+            Dim itemRect = 获取标签页项矩形(i)
+            If itemRect.Top >= clippedTabItemClip.Bottom Then Exit For
+            If itemRect.Top < clippedTabItemClip.Top OrElse itemRect.Bottom > clippedTabItemClip.Bottom Then Continue For
             Dim item = 项目列表(i)
             If item.IsSeparator Then
                 绘制分割线(g, i)
@@ -348,6 +432,13 @@ Public Class ModernTabListControl
         Next
 
         g.Restore(gState)
+
+        If hasMoreAbove Then
+            绘制更多指示器(g, New RectangleF(tabItemClip.X, tabItemClip.Y, tabItemClip.Width, topIndicatorH), True)
+        End If
+        If hasMoreBelow Then
+            绘制更多指示器(g, New RectangleF(tabItemClip.X, tabItemClip.Bottom - bottomIndicatorH, tabItemClip.Width, bottomIndicatorH), False)
+        End If
 
         更新滚动条布局()
         If Not _标签栏滚动条.TrackRect.IsEmpty Then
@@ -361,6 +452,22 @@ Public Class ModernTabListControl
                 g.DrawRectangle(pen, contentRect.X, contentRect.Y, contentRect.Width - 1, contentRect.Height - 1)
             End Using
         End If
+    End Sub
+
+    Private Sub 绘制更多指示器(g As Graphics, rect As RectangleF, isTop As Boolean)
+        If rect.Height < 2 Then Return
+        Dim c1 As Color = Color.FromArgb(200, 标签栏背景颜色)
+        Dim c2 As Color = Color.FromArgb(0, 标签栏背景颜色)
+        Dim pt1 As New PointF(rect.X, If(isTop, rect.Y, rect.Bottom - 1))
+        Dim pt2 As New PointF(rect.X, If(isTop, rect.Bottom - 1, rect.Y))
+        Using br As New LinearGradientBrush(pt1, pt2, c1, c2)
+            g.FillRectangle(br, rect)
+        End Using
+        Dim symbol As String = If(isTop, "▲", "▼")
+        Using symbolFont As New Font(Me.Font.FontFamily, Math.Max(7, Me.Font.Size - 1), FontStyle.Regular)
+            TextRenderer.DrawText(g, symbol, symbolFont, Rectangle.Round(rect), 更多指示器颜色,
+                TextFormatFlags.HorizontalCenter Or TextFormatFlags.VerticalCenter Or TextFormatFlags.NoPadding)
+        End Using
     End Sub
 
     Private Sub 绘制分割线(g As Graphics, index As Integer)
@@ -444,9 +551,10 @@ Public Class ModernTabListControl
         g.DrawImage(item.TabIcon, New RectangleF(iconX, iconY, scaledIconSize, scaledIconSize))
     End Sub
 
-    Private Sub 绘制标签页文本(g As Graphics, index As Integer)
+    Private Sub 绘制标签页文本(g As Graphics, index As Integer, visibleClip As Rectangle)
         If index >= 项目列表.Count Then Return
         Dim bounds As Rectangle = Rectangle.Round(获取标签页项矩形(index))
+        If Not bounds.IntersectsWith(visibleClip) Then Return
         Dim item = 项目列表(index)
         If item.IsSeparator Then Return
 
@@ -456,11 +564,12 @@ Public Class ModernTabListControl
         If item.IsDescription Then
             Dim descFont = If(item.TabFont, 说明字体值)
             Dim descColor = If(item.NormalForeColor <> Color.Empty, item.NormalForeColor, 说明文本颜色值)
-            Dim textRect As New Rectangle(
+            Dim textRect As Rectangle = Rectangle.Intersect(New Rectangle(
                 bounds.X + _textPad,
                 bounds.Y,
                 bounds.Width - _textPad * 2,
-                bounds.Height)
+                bounds.Height), visibleClip)
+            If textRect.IsEmpty Then Return
             TextRenderer.DrawText(g, item.Text, descFont, textRect, descColor,
                 TextFormatFlags.Left Or TextFormatFlags.VerticalCenter Or TextFormatFlags.EndEllipsis Or TextFormatFlags.NoPadding)
             Return
@@ -478,11 +587,12 @@ Public Class ModernTabListControl
             iconOffset = CInt((图标尺寸 + 图标与文本间距) * s)
         End If
 
-        Dim textRect2 As New Rectangle(
+        Dim textRect2 As Rectangle = Rectangle.Intersect(New Rectangle(
             bounds.X + _textPad + iconOffset,
             bounds.Y,
             bounds.Width - _textPad * 2 - iconOffset,
-            bounds.Height)
+            bounds.Height), visibleClip)
+        If textRect2.IsEmpty Then Return
         TextRenderer.DrawText(g, item.Text, textFont, textRect2, textColor,
             TextFormatFlags.Left Or TextFormatFlags.VerticalCenter Or TextFormatFlags.EndEllipsis Or TextFormatFlags.NoPadding)
     End Sub
@@ -512,10 +622,19 @@ Public Class ModernTabListControl
         Dim tabStripRect = 获取标签栏矩形()
         Dim x As Single = tabStripRect.X + 标签栏内边距.Left * s
         Dim w As Single = tabStripRect.Width - (标签栏内边距.Left + 标签栏内边距.Right) * s
-        Dim y As Single = 标签栏内边距.Top * s - _滚动偏移
+        If 项目列表.Count > 0 AndAlso 获取标签页总高度() > 获取可滚动视口高度() Then
+            w -= 滚动条宽度 * s
+        End If
+        Dim y As Single = 获取搜索框区域高度() + 标签栏内边距.Top * s - _滚动偏移
+        Dim visibleCount As Integer = 0
         For i As Integer = 0 To index - 1
-            y += 获取项高度(i) + 标签页项间距 * s
+            If 项目是否可见(i) Then
+                If visibleCount > 0 Then y += 标签页项间距 * s
+                y += 获取项高度(i)
+                visibleCount += 1
+            End If
         Next
+        If 项目是否可见(index) AndAlso visibleCount > 0 Then y += 标签页项间距 * s
         Return New RectangleF(x, y, w, 获取项高度(index))
     End Function
 
@@ -532,38 +651,55 @@ Public Class ModernTabListControl
         Dim contentRect = 获取内容区域矩形()
         _内容面板.Bounds = contentRect
         _内容面板.BackColor = 内容区域背景颜色
+        同步搜索框布局()
     End Sub
 
     Private Function 获取标签页总高度() As Single
         Dim s As Single = DpiScale()
         If 项目列表.Count = 0 Then Return 0
         Dim h As Single = 标签栏内边距.Top * s
+        Dim visibleCount As Integer = 0
         For i As Integer = 0 To 项目列表.Count - 1
-            h += 获取项高度(i)
-            If i < 项目列表.Count - 1 Then h += 标签页项间距 * s
+            If 项目是否可见(i) Then
+                If visibleCount > 0 Then h += 标签页项间距 * s
+                h += 获取项高度(i)
+                visibleCount += 1
+            End If
         Next
         h += 标签栏内边距.Bottom * s
         Return h
     End Function
 
+    Private Function 获取可滚动视口高度() As Single
+        Return Math.Max(0, Me.Height - 获取搜索框区域高度())
+    End Function
+
     Private Sub 限制滚动范围()
         Dim totalHeight = CInt(获取标签页总高度())
-        Dim maxScroll = Math.Max(0, totalHeight - Me.Height)
+        Dim maxScroll = Math.Max(0, totalHeight - CInt(获取可滚动视口高度()))
         _滚动偏移 = Math.Clamp(_滚动偏移, 0, maxScroll)
     End Sub
 
     Private Sub 确保选中项可见()
         If _selectedIndex < 0 OrElse _selectedIndex >= 项目列表.Count Then Return
+        If Not 项目是否可见(_selectedIndex) Then Return
         Dim s As Single = DpiScale()
         Dim absY As Single = 标签栏内边距.Top * s
+        Dim visibleCount As Integer = 0
         For i As Integer = 0 To _selectedIndex - 1
-            absY += 获取项高度(i) + 标签页项间距 * s
+            If 项目是否可见(i) Then
+                If visibleCount > 0 Then absY += 标签页项间距 * s
+                absY += 获取项高度(i)
+                visibleCount += 1
+            End If
         Next
+        If visibleCount > 0 Then absY += 标签页项间距 * s
         Dim itemH As Single = 获取项高度(_selectedIndex)
+        Dim viewportH As Single = 获取可滚动视口高度()
         If absY < _滚动偏移 Then
             _滚动偏移 = CInt(absY)
-        ElseIf absY + itemH > _滚动偏移 + Me.Height Then
-            _滚动偏移 = CInt(absY + itemH - Me.Height)
+        ElseIf absY + itemH > _滚动偏移 + viewportH Then
+            _滚动偏移 = CInt(absY + itemH - viewportH)
         End If
         限制滚动范围()
     End Sub
@@ -571,14 +707,15 @@ Public Class ModernTabListControl
     Private Sub 更新滚动条布局()
         Dim s As Single = DpiScale()
         Dim totalH As Integer = CInt(获取标签页总高度())
-        Dim visibleH As Integer = Me.Height
+        Dim searchAreaH As Integer = CInt(获取搜索框区域高度())
+        Dim visibleH As Integer = CInt(获取可滚动视口高度())
         If totalH <= visibleH OrElse 项目列表.Count = 0 Then
             _标签栏滚动条.ThumbRect = Rectangle.Empty
             _标签栏滚动条.TrackRect = Rectangle.Empty
             Return
         End If
         Dim sbContainerW As Integer = If(标签页位置 = TabSideEnum.Left, CInt(标签栏宽度 * s), Me.Width)
-        _标签栏滚动条.ComputeLayout(sbContainerW, Me.Height, 0, 0, CInt(标签栏内边距.Top * s), CInt(标签栏内边距.Bottom * s), CInt(滚动条宽度 * s), totalH, visibleH, _滚动偏移)
+        _标签栏滚动条.ComputeLayout(sbContainerW, Me.Height, 0, 0, CInt(标签栏内边距.Top * s) + searchAreaH, CInt(标签栏内边距.Bottom * s), CInt(滚动条宽度 * s), totalH, visibleH, _滚动偏移)
     End Sub
 
     Protected Overrides Sub OnResize(e As EventArgs)
@@ -683,6 +820,7 @@ Public Class ModernTabListControl
 
     Private Function HitTestTab(clientPoint As Point) As Integer
         For i As Integer = 0 To 项目列表.Count - 1
+            If Not 项目是否可见(i) Then Continue For
             If 获取标签页项矩形(i).Contains(clientPoint.X, clientPoint.Y) Then
                 Dim item = 项目列表(i)
                 If item.IsSeparator OrElse item.IsDescription Then Return -1
@@ -697,7 +835,7 @@ Public Class ModernTabListControl
 
         If _标签栏滚动条.IsDragging Then
             Dim totalH = CInt(获取标签页总高度())
-            _滚动偏移 = _标签栏滚动条.DragMove(e.Y, totalH, Me.Height)
+            _滚动偏移 = _标签栏滚动条.DragMove(e.Y, totalH, CInt(获取可滚动视口高度()))
             Me.Invalidate()
             Return
         End If
@@ -706,6 +844,7 @@ Public Class ModernTabListControl
 
         Dim newHover As Integer = -1
         For i As Integer = 0 To 项目列表.Count - 1
+            If Not 项目是否可见(i) Then Continue For
             If 获取标签页项矩形(i).Contains(e.Location.X, e.Location.Y) Then
                 Dim item = 项目列表(i)
                 If Not item.IsSeparator AndAlso Not item.IsDescription Then
@@ -748,7 +887,7 @@ Public Class ModernTabListControl
             If _标签栏滚动条.BeginDrag(e.Location, _滚动偏移) Then Return
             If Not _标签栏滚动条.TrackRect.IsEmpty Then
                 Dim totalH = CInt(获取标签页总高度())
-                Dim newOff = _标签栏滚动条.TrackClick(e.Location, _滚动偏移, totalH, Me.Height)
+                Dim newOff = _标签栏滚动条.TrackClick(e.Location, _滚动偏移, totalH, CInt(获取可滚动视口高度()))
                 If newOff <> _滚动偏移 Then
                     _滚动偏移 = newOff
                     限制滚动范围()
@@ -777,7 +916,7 @@ Public Class ModernTabListControl
         Dim stripRect = 获取标签栏矩形()
         If Not stripRect.Contains(e.Location) Then Return
         Dim totalHeight = CInt(获取标签页总高度())
-        If totalHeight <= Me.Height Then Return
+        If totalHeight <= CInt(获取可滚动视口高度()) Then Return
         Dim scrollAmount As Integer = Math.Max(1, CInt(SystemInformation.MouseWheelScrollLines * 标签页项高度 * DpiScale() / 3))
         _滚动偏移 -= Math.Sign(e.Delta) * scrollAmount
         限制滚动范围()
@@ -963,6 +1102,64 @@ Public Class ModernTabListControl
         End Get
         Set(value As Color)
             SetValue(标签栏背景颜色, value)
+            If _搜索框控件 IsNot Nothing Then _搜索框控件.BackColor = value
+        End Set
+    End Property
+
+    ''' <summary>
+    ''' 设置标签栏顶部的搜索框控件。该控件需具有 Text 属性和 TextChanged 事件。
+    ''' 控件将被自动放入标签栏顶部区域，与顶部和选项卡列表的间距均为 <see cref="TabStripPadding"/> 的 Top 值，
+    ''' 宽度撑满标签栏（减去左右内边距）。设为 Nothing 可移除搜索框。
+    ''' </summary>
+    <Category("LakeUI"), Description("标签栏顶部的搜索框控件，需具有 Text 属性和 TextChanged 事件"), DefaultValue(GetType(Control), Nothing), Browsable(True)>
+    Public Property SearchBoxControl As Control
+        Get
+            Return _搜索框控件
+        End Get
+        Set(value As Control)
+            If _搜索框控件 Is value Then Return
+            If _搜索框控件 IsNot Nothing Then
+                RemoveHandler _搜索框控件.TextChanged, AddressOf 搜索框文本变更
+                If _搜索框控件.Parent Is Me Then Me.Controls.Remove(_搜索框控件)
+                If _搜索框原始父级 IsNot Nothing Then
+                    _搜索框控件.Bounds = _搜索框原始边界
+                    If _搜索框控件.Parent IsNot _搜索框原始父级 Then
+                        _搜索框原始父级.Controls.Add(_搜索框控件)
+                    End If
+                End If
+                _搜索框原始父级 = Nothing
+            End If
+            _搜索框控件 = value
+            _搜索文本 = ""
+            If _搜索框控件 IsNot Nothing Then
+                _搜索文本 = If(_搜索框控件.Text, "")
+                _搜索框原始父级 = _搜索框控件.Parent
+                _搜索框原始边界 = _搜索框控件.Bounds
+                _搜索框控件.BackColor = 标签栏背景颜色
+                If _搜索框控件.Parent IsNot Me Then Me.Controls.Add(_搜索框控件)
+                _搜索框控件.BringToFront()
+                AddHandler _搜索框控件.TextChanged, AddressOf 搜索框文本变更
+                同步搜索框布局()
+            End If
+            _滚动偏移 = 0
+            限制滚动范围()
+            Invalidate()
+        End Set
+    End Property
+
+    <Category("LakeUI"), Description("搜索框区域的高度"), DefaultValue(30), Browsable(True)>
+    Public Property SearchBoxHeight As Integer
+        Get
+            Return _搜索框高度
+        End Get
+        Set(value As Integer)
+            value = Math.Max(1, value)
+            If _搜索框高度 <> value Then
+                _搜索框高度 = value
+                同步搜索框布局()
+                限制滚动范围()
+                Invalidate()
+            End If
         End Set
     End Property
 #End Region
@@ -1231,6 +1428,30 @@ Public Class ModernTabListControl
         End Get
         Set(value As Color)
             SetValue(滚动条悬停颜色, value)
+        End Set
+    End Property
+#End Region
+
+#Region "更多指示器属性"
+    Private 更多指示器高度 As Integer = 20
+    <Category("LakeUI"), Description("上下还有更多内容时的指示器高度"), DefaultValue(20), Browsable(True)>
+    Public Property MoreIndicatorHeight As Integer
+        Get
+            Return 更多指示器高度
+        End Get
+        Set(value As Integer)
+            SetValue(更多指示器高度, Math.Max(0, value))
+        End Set
+    End Property
+
+    Private 更多指示器颜色 As Color = Color.FromArgb(120, 120, 120)
+    <Category("LakeUI"), Description("更多内容指示器文字颜色"), DefaultValue(GetType(Color), "120, 120, 120"), Browsable(True)>
+    Public Property MoreIndicatorColor As Color
+        Get
+            Return 更多指示器颜色
+        End Get
+        Set(value As Color)
+            SetValue(更多指示器颜色, value)
         End Set
     End Property
 #End Region

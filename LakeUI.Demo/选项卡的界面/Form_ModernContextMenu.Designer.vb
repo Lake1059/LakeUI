@@ -22,13 +22,13 @@ Partial Class Form_ModernContextMenu
     '不要使用代码编辑器修改它。
     <System.Diagnostics.DebuggerStepThrough()> _
     Private Sub InitializeComponent()
-        Dim ModernMenuItem8 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
-        Dim ModernMenuItem9 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
-        Dim ModernMenuItem10 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
-        Dim ModernMenuItem11 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
-        Dim ModernMenuItem12 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
-        Dim ModernMenuItem13 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
-        Dim ModernMenuItem14 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
+        Dim ModernMenuItem1 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
+        Dim ModernMenuItem2 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
+        Dim ModernMenuItem3 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
+        Dim ModernMenuItem4 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
+        Dim ModernMenuItem5 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
+        Dim ModernMenuItem6 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
+        Dim ModernMenuItem7 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
         ModernPanel1 = New ModernPanel()
         Label5 = New Label()
         Panel1 = New Panel()
@@ -95,6 +95,7 @@ Partial Class Form_ModernContextMenu
         ModernButton4.BorderSize = 0
         ModernButton4.Dock = DockStyle.Left
         ModernButton4.Font = New Font("Microsoft YaHei UI", 10.8F, FontStyle.Bold, GraphicsUnit.Point, CByte(134))
+        ModernButton4.ForeColor = Color.YellowGreen
         ModernButton4.Location = New Point(424, 0)
         ModernButton4.Margin = New Padding(2)
         ModernButton4.Name = "ModernButton4"
@@ -120,6 +121,7 @@ Partial Class Form_ModernContextMenu
         ModernButton3.BorderSize = 0
         ModernButton3.Dock = DockStyle.Left
         ModernButton3.Font = New Font("Microsoft YaHei UI", 10.8F, FontStyle.Bold, GraphicsUnit.Point, CByte(134))
+        ModernButton3.ForeColor = Color.Orchid
         ModernButton3.Location = New Point(296, 0)
         ModernButton3.Margin = New Padding(2)
         ModernButton3.Name = "ModernButton3"
@@ -170,6 +172,7 @@ Partial Class Form_ModernContextMenu
         ModernButton1.BorderSize = 0
         ModernButton1.Dock = DockStyle.Left
         ModernButton1.Font = New Font("Microsoft YaHei UI", 10.8F, FontStyle.Bold, GraphicsUnit.Point, CByte(134))
+        ModernButton1.ForeColor = Color.YellowGreen
         ModernButton1.Location = New Point(0, 0)
         ModernButton1.Margin = New Padding(2)
         ModernButton1.Name = "ModernButton1"
@@ -197,30 +200,30 @@ Partial Class Form_ModernContextMenu
         ModernContextMenu1.HoverRadius = 5
         ModernContextMenu1.IconSize = 0
         ModernContextMenu1.ItemPadding = New Padding(10, 0, 10, 0)
-        ModernMenuItem8.Font = Nothing
-        ModernMenuItem8.Text = "ModernMenuItem"
-        ModernMenuItem9.Font = Nothing
-        ModernMenuItem9.ForeColor = Color.CornflowerBlue
-        ModernMenuItem9.Text = "ModernMenuItem"
-        ModernMenuItem10.Font = New Font("华文中宋", 10.7999992F, FontStyle.Bold, GraphicsUnit.Point, CByte(134))
-        ModernMenuItem10.ForeColor = Color.IndianRed
-        ModernMenuItem10.Text = "ModernMenuItem"
-        ModernMenuItem11.Font = Nothing
-        ModernMenuItem11.IsSeparator = True
-        ModernMenuItem12.Font = Nothing
-        ModernMenuItem12.IsDescription = True
-        ModernMenuItem12.Text = "小字说明"
-        ModernMenuItem13.Font = Nothing
-        ModernMenuItem13.Text = "ModernMenuItem"
-        ModernMenuItem14.Font = Nothing
-        ModernMenuItem14.Text = "ModernMenuItem"
-        ModernContextMenu1.Items.Add(ModernMenuItem8)
-        ModernContextMenu1.Items.Add(ModernMenuItem9)
-        ModernContextMenu1.Items.Add(ModernMenuItem10)
-        ModernContextMenu1.Items.Add(ModernMenuItem11)
-        ModernContextMenu1.Items.Add(ModernMenuItem12)
-        ModernContextMenu1.Items.Add(ModernMenuItem13)
-        ModernContextMenu1.Items.Add(ModernMenuItem14)
+        ModernMenuItem1.Font = Nothing
+        ModernMenuItem1.Text = "ModernMenuItem"
+        ModernMenuItem2.Font = Nothing
+        ModernMenuItem2.ForeColor = Color.CornflowerBlue
+        ModernMenuItem2.Text = "ModernMenuItem"
+        ModernMenuItem3.Font = New Font("华文中宋", 10.7999992F, FontStyle.Bold, GraphicsUnit.Point, CByte(134))
+        ModernMenuItem3.ForeColor = Color.IndianRed
+        ModernMenuItem3.Text = "ModernMenuItem"
+        ModernMenuItem4.Font = Nothing
+        ModernMenuItem4.IsSeparator = True
+        ModernMenuItem5.Font = Nothing
+        ModernMenuItem5.IsDescription = True
+        ModernMenuItem5.Text = "小字说明"
+        ModernMenuItem6.Font = Nothing
+        ModernMenuItem6.Text = "ModernMenuItem"
+        ModernMenuItem7.Font = Nothing
+        ModernMenuItem7.Text = "ModernMenuItem"
+        ModernContextMenu1.Items.Add(ModernMenuItem1)
+        ModernContextMenu1.Items.Add(ModernMenuItem2)
+        ModernContextMenu1.Items.Add(ModernMenuItem3)
+        ModernContextMenu1.Items.Add(ModernMenuItem4)
+        ModernContextMenu1.Items.Add(ModernMenuItem5)
+        ModernContextMenu1.Items.Add(ModernMenuItem6)
+        ModernContextMenu1.Items.Add(ModernMenuItem7)
         ModernContextMenu1.MenuFont = New Font("Microsoft YaHei UI", 10.2F, FontStyle.Regular, GraphicsUnit.Point, CByte(134))
         ModernContextMenu1.MenuPadding = New Padding(10)
         ModernContextMenu1.PopupAnimationFPS = 0

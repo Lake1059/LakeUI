@@ -24,8 +24,6 @@ Partial Class Form_ModernTextBox
     Private Sub InitializeComponent()
         ModernPanel1 = New ModernPanel()
         Panel3 = New Panel()
-        HtmlColorLabel2 = New HtmlColorLabel()
-        HtmlColorLabel1 = New HtmlColorLabel()
         ModernTextBox2 = New ModernTextBox()
         Label5 = New Label()
         Panel2 = New Panel()
@@ -40,6 +38,7 @@ Partial Class Form_ModernTextBox
         Label2 = New Label()
         ModernButton1 = New ModernButton()
         Label1 = New Label()
+        Label7 = New Label()
         ModernPanel1.SuspendLayout()
         Panel3.SuspendLayout()
         Panel2.SuspendLayout()
@@ -53,6 +52,7 @@ Partial Class Form_ModernTextBox
         ModernPanel1.Controls.Add(Label5)
         ModernPanel1.Controls.Add(Panel2)
         ModernPanel1.Controls.Add(Label6)
+        ModernPanel1.Controls.Add(Label7)
         ModernPanel1.Controls.Add(Panel1)
         ModernPanel1.Controls.Add(Label1)
         ModernPanel1.Dock = DockStyle.Fill
@@ -65,42 +65,12 @@ Partial Class Form_ModernTextBox
         ' 
         ' Panel3
         ' 
-        Panel3.Controls.Add(HtmlColorLabel2)
-        Panel3.Controls.Add(HtmlColorLabel1)
         Panel3.Controls.Add(ModernTextBox2)
         Panel3.Dock = DockStyle.Fill
-        Panel3.Location = New Point(20, 255)
+        Panel3.Location = New Point(20, 315)
         Panel3.Name = "Panel3"
-        Panel3.Size = New Size(713, 329)
+        Panel3.Size = New Size(713, 269)
         Panel3.TabIndex = 42
-        ' 
-        ' HtmlColorLabel2
-        ' 
-        HtmlColorLabel2.AutoSize = True
-        HtmlColorLabel2.AutoSizeMode = AutoSizeMode.GrowAndShrink
-        HtmlColorLabel2.Dock = DockStyle.Top
-        HtmlColorLabel2.Font = New Font("Microsoft YaHei UI", 10F)
-        HtmlColorLabel2.Location = New Point(288, 61)
-        HtmlColorLabel2.Margin = New Padding(2, 2, 2, 2)
-        HtmlColorLabel2.Name = "HtmlColorLabel2"
-        HtmlColorLabel2.Padding = New Padding(20, 0, 0, 20)
-        HtmlColorLabel2.Size = New Size(425, 81)
-        HtmlColorLabel2.TabIndex = 41
-        HtmlColorLabel2.Text = "完美支持输入法，定制所有颜色包括选中焦点，支持设定撤回次数；还支持一个轻量的富文本功能，专为日志输出调优的行插入功能等。"
-        ' 
-        ' HtmlColorLabel1
-        ' 
-        HtmlColorLabel1.AutoSize = True
-        HtmlColorLabel1.AutoSizeMode = AutoSizeMode.GrowAndShrink
-        HtmlColorLabel1.Dock = DockStyle.Top
-        HtmlColorLabel1.Font = New Font("Microsoft YaHei UI", 10F)
-        HtmlColorLabel1.Location = New Point(288, 0)
-        HtmlColorLabel1.Margin = New Padding(2, 2, 2, 2)
-        HtmlColorLabel1.Name = "HtmlColorLabel1"
-        HtmlColorLabel1.Padding = New Padding(20, 0, 0, 20)
-        HtmlColorLabel1.Size = New Size(425, 61)
-        HtmlColorLabel1.TabIndex = 40
-        HtmlColorLabel1.Text = "这是真正从头制作的文本框，没有依赖原版 TextBox，因此性能占用会比原版高一些，但换来了极致的输入体验。"
         ' 
         ' ModernTextBox2
         ' 
@@ -115,7 +85,7 @@ Partial Class Form_ModernTextBox
         ModernTextBox2.Name = "ModernTextBox2"
         ModernTextBox2.Padding = New Padding(10)
         ModernTextBox2.ScrollBarHoverColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
-        ModernTextBox2.Size = New Size(288, 329)
+        ModernTextBox2.Size = New Size(504, 269)
         ModernTextBox2.TabIndex = 39
         ModernTextBox2.WaterText = "ModernTextBox2"
         ' 
@@ -124,7 +94,7 @@ Partial Class Form_ModernTextBox
         Label5.AutoSize = True
         Label5.Dock = DockStyle.Top
         Label5.Font = New Font("Microsoft YaHei UI", 10F)
-        Label5.Location = New Point(20, 205)
+        Label5.Location = New Point(20, 265)
         Label5.Name = "Label5"
         Label5.Padding = New Padding(0, 20, 0, 10)
         Label5.Size = New Size(65, 50)
@@ -135,7 +105,7 @@ Partial Class Form_ModernTextBox
         ' 
         Panel2.Controls.Add(ModernTextBox1)
         Panel2.Dock = DockStyle.Top
-        Panel2.Location = New Point(20, 170)
+        Panel2.Location = New Point(20, 230)
         Panel2.Name = "Panel2"
         Panel2.Size = New Size(713, 35)
         Panel2.TabIndex = 40
@@ -152,7 +122,7 @@ Partial Class Form_ModernTextBox
         ModernTextBox1.Name = "ModernTextBox1"
         ModernTextBox1.Padding = New Padding(10, 0, 10, 0)
         ModernTextBox1.ScrollBarHoverColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
-        ModernTextBox1.Size = New Size(288, 35)
+        ModernTextBox1.Size = New Size(504, 35)
         ModernTextBox1.TabIndex = 39
         ModernTextBox1.WaterText = "ModernTextBox1"
         ' 
@@ -161,7 +131,7 @@ Partial Class Form_ModernTextBox
         Label6.AutoSize = True
         Label6.Dock = DockStyle.Top
         Label6.Font = New Font("Microsoft YaHei UI", 10F)
-        Label6.Location = New Point(20, 120)
+        Label6.Location = New Point(20, 180)
         Label6.Name = "Label6"
         Label6.Padding = New Padding(0, 20, 0, 10)
         Label6.Size = New Size(65, 50)
@@ -190,6 +160,7 @@ Partial Class Form_ModernTextBox
         ModernButton4.BorderSize = 0
         ModernButton4.Dock = DockStyle.Left
         ModernButton4.Font = New Font("Microsoft YaHei UI", 10.8F, FontStyle.Bold, GraphicsUnit.Point, CByte(134))
+        ModernButton4.ForeColor = Color.Salmon
         ModernButton4.Location = New Point(424, 0)
         ModernButton4.Margin = New Padding(2)
         ModernButton4.Name = "ModernButton4"
@@ -265,6 +236,7 @@ Partial Class Form_ModernTextBox
         ModernButton1.BorderSize = 0
         ModernButton1.Dock = DockStyle.Left
         ModernButton1.Font = New Font("Microsoft YaHei UI", 10.8F, FontStyle.Bold, GraphicsUnit.Point, CByte(134))
+        ModernButton1.ForeColor = Color.YellowGreen
         ModernButton1.Location = New Point(0, 0)
         ModernButton1.Margin = New Padding(2)
         ModernButton1.Name = "ModernButton1"
@@ -286,6 +258,18 @@ Partial Class Form_ModernTextBox
         Label1.TabIndex = 34
         Label1.Text = "现代化文本框 ModernTextBox"
         ' 
+        ' Label7
+        ' 
+        Label7.AutoSize = True
+        Label7.Dock = DockStyle.Top
+        Label7.Font = New Font("Microsoft YaHei UI", 10F)
+        Label7.Location = New Point(20, 120)
+        Label7.Name = "Label7"
+        Label7.Padding = New Padding(0, 20, 0, 0)
+        Label7.Size = New Size(345, 60)
+        Label7.TabIndex = 43
+        Label7.Text = "你知道从头做一个文本框要多少代码吗？超过两千行！" & vbCrLf & "Just try it, you will love it!"
+        ' 
         ' Form_ModernTextBox
         ' 
         AutoScaleDimensions = New SizeF(96F, 96F)
@@ -299,7 +283,6 @@ Partial Class Form_ModernTextBox
         ModernPanel1.ResumeLayout(False)
         ModernPanel1.PerformLayout()
         Panel3.ResumeLayout(False)
-        Panel3.PerformLayout()
         Panel2.ResumeLayout(False)
         Panel1.ResumeLayout(False)
         ResumeLayout(False)
@@ -321,6 +304,5 @@ Partial Class Form_ModernTextBox
     Friend WithEvents ModernTextBox2 As ModernTextBox
     Friend WithEvents Label5 As Label
     Friend WithEvents Panel2 As Panel
-    Friend WithEvents HtmlColorLabel2 As HtmlColorLabel
-    Friend WithEvents HtmlColorLabel1 As HtmlColorLabel
+    Friend WithEvents Label7 As Label
 End Class

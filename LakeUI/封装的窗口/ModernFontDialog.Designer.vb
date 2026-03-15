@@ -89,7 +89,7 @@ Partial Class ModernFontDialog
         Panel1.Location = New Point(0, 0)
         Panel1.Name = "Panel1"
         Panel1.Padding = New Padding(20, 20, 0, 20)
-        Panel1.Size = New Size(300, 611)
+        Panel1.Size = New Size(300, 561)
         Panel1.TabIndex = 1
         ' 
         ' ModernListBox1
@@ -97,19 +97,20 @@ Partial Class ModernFontDialog
         ModernListBox1.BorderRadius = 10
         ModernListBox1.BorderSize = 2
         ModernListBox1.Dock = DockStyle.Fill
-        ModernListBox1.Location = New Point(20, 100)
+        ModernListBox1.ItemHeight = 26
+        ModernListBox1.Location = New Point(20, 96)
         ModernListBox1.Margin = New Padding(2, 2, 2, 2)
         ModernListBox1.Name = "ModernListBox1"
         ModernListBox1.Padding = New Padding(10)
         ModernListBox1.ScrollBarHoverColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
         ModernListBox1.ScrollBarWidth = 12
-        ModernListBox1.Size = New Size(280, 491)
+        ModernListBox1.Size = New Size(280, 445)
         ModernListBox1.TabIndex = 3
         ' 
         ' Label2
         ' 
         Label2.Dock = DockStyle.Top
-        Label2.Location = New Point(20, 90)
+        Label2.Location = New Point(20, 86)
         Label2.Name = "Label2"
         Label2.Size = New Size(280, 10)
         Label2.TabIndex = 2
@@ -125,7 +126,7 @@ Partial Class ModernFontDialog
         ModernTextBox1.Name = "ModernTextBox1"
         ModernTextBox1.Padding = New Padding(13, 0, 13, 0)
         ModernTextBox1.ScrollBarHoverColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
-        ModernTextBox1.Size = New Size(280, 40)
+        ModernTextBox1.Size = New Size(280, 36)
         ModernTextBox1.TabIndex = 1
         ModernTextBox1.WaterText = "选择字体"
         ' 
@@ -137,7 +138,7 @@ Partial Class ModernFontDialog
         Panel2.Dock = DockStyle.Top
         Panel2.Location = New Point(300, 0)
         Panel2.Name = "Panel2"
-        Panel2.Size = New Size(584, 300)
+        Panel2.Size = New Size(564, 300)
         Panel2.TabIndex = 2
         ' 
         ' Panel5
@@ -147,10 +148,10 @@ Partial Class ModernFontDialog
         Panel5.Controls.Add(Panel6)
         Panel5.Controls.Add(Label8)
         Panel5.Dock = DockStyle.Fill
-        Panel5.Location = New Point(400, 0)
+        Panel5.Location = New Point(375, 0)
         Panel5.Name = "Panel5"
         Panel5.Padding = New Padding(20)
-        Panel5.Size = New Size(184, 300)
+        Panel5.Size = New Size(189, 300)
         Panel5.TabIndex = 4
         ' 
         ' Panel7
@@ -160,7 +161,7 @@ Partial Class ModernFontDialog
         Panel7.Dock = DockStyle.Top
         Panel7.Location = New Point(20, 90)
         Panel7.Name = "Panel7"
-        Panel7.Size = New Size(144, 30)
+        Panel7.Size = New Size(149, 30)
         Panel7.TabIndex = 4
         ' 
         ' Label10
@@ -169,7 +170,7 @@ Partial Class ModernFontDialog
         Label10.Location = New Point(55, 0)
         Label10.Name = "Label10"
         Label10.Padding = New Padding(10, 0, 0, 0)
-        Label10.Size = New Size(89, 30)
+        Label10.Size = New Size(94, 30)
         Label10.TabIndex = 1
         Label10.Text = "下划线"
         Label10.TextAlign = ContentAlignment.MiddleLeft
@@ -189,7 +190,7 @@ Partial Class ModernFontDialog
         Label7.Dock = DockStyle.Top
         Label7.Location = New Point(20, 80)
         Label7.Name = "Label7"
-        Label7.Size = New Size(144, 10)
+        Label7.Size = New Size(149, 10)
         Label7.TabIndex = 3
         ' 
         ' Panel6
@@ -199,7 +200,7 @@ Partial Class ModernFontDialog
         Panel6.Dock = DockStyle.Top
         Panel6.Location = New Point(20, 50)
         Panel6.Name = "Panel6"
-        Panel6.Size = New Size(144, 30)
+        Panel6.Size = New Size(149, 30)
         Panel6.TabIndex = 1
         ' 
         ' Label9
@@ -208,7 +209,7 @@ Partial Class ModernFontDialog
         Label9.Location = New Point(55, 0)
         Label9.Name = "Label9"
         Label9.Padding = New Padding(10, 0, 0, 0)
-        Label9.Size = New Size(89, 30)
+        Label9.Size = New Size(94, 30)
         Label9.TabIndex = 1
         Label9.Text = "删除线"
         Label9.TextAlign = ContentAlignment.MiddleLeft
@@ -244,7 +245,7 @@ Partial Class ModernFontDialog
         Panel4.Location = New Point(200, 0)
         Panel4.Name = "Panel4"
         Panel4.Padding = New Padding(20, 20, 0, 20)
-        Panel4.Size = New Size(200, 300)
+        Panel4.Size = New Size(175, 300)
         Panel4.TabIndex = 3
         ' 
         ' ModernListBox3
@@ -252,21 +253,22 @@ Partial Class ModernFontDialog
         ModernListBox3.BorderRadius = 10
         ModernListBox3.BorderSize = 2
         ModernListBox3.Dock = DockStyle.Fill
-        ModernListBox3.Location = New Point(20, 100)
+        ModernListBox3.ItemHeight = 26
+        ModernListBox3.Location = New Point(20, 96)
         ModernListBox3.Margin = New Padding(2, 2, 2, 2)
         ModernListBox3.Name = "ModernListBox3"
         ModernListBox3.Padding = New Padding(10)
         ModernListBox3.ScrollBarHoverColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
         ModernListBox3.ScrollBarWidth = 12
-        ModernListBox3.Size = New Size(180, 180)
+        ModernListBox3.Size = New Size(155, 184)
         ModernListBox3.TabIndex = 3
         ' 
         ' Label5
         ' 
         Label5.Dock = DockStyle.Top
-        Label5.Location = New Point(20, 90)
+        Label5.Location = New Point(20, 86)
         Label5.Name = "Label5"
-        Label5.Size = New Size(180, 10)
+        Label5.Size = New Size(155, 10)
         Label5.TabIndex = 2
         ' 
         ' ModernTextBox3
@@ -280,7 +282,7 @@ Partial Class ModernFontDialog
         ModernTextBox3.Name = "ModernTextBox3"
         ModernTextBox3.Padding = New Padding(13, 0, 13, 0)
         ModernTextBox3.ScrollBarHoverColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
-        ModernTextBox3.Size = New Size(180, 40)
+        ModernTextBox3.Size = New Size(155, 36)
         ModernTextBox3.TabIndex = 1
         ModernTextBox3.WaterText = "选择字号"
         ' 
@@ -313,19 +315,20 @@ Partial Class ModernFontDialog
         ModernListBox2.BorderRadius = 10
         ModernListBox2.BorderSize = 2
         ModernListBox2.Dock = DockStyle.Fill
-        ModernListBox2.Location = New Point(20, 100)
+        ModernListBox2.ItemHeight = 26
+        ModernListBox2.Location = New Point(20, 96)
         ModernListBox2.Margin = New Padding(2, 2, 2, 2)
         ModernListBox2.Name = "ModernListBox2"
         ModernListBox2.Padding = New Padding(10)
         ModernListBox2.ScrollBarHoverColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
         ModernListBox2.ScrollBarWidth = 12
-        ModernListBox2.Size = New Size(180, 180)
+        ModernListBox2.Size = New Size(180, 184)
         ModernListBox2.TabIndex = 3
         ' 
         ' Label3
         ' 
         Label3.Dock = DockStyle.Top
-        Label3.Location = New Point(20, 90)
+        Label3.Location = New Point(20, 86)
         Label3.Name = "Label3"
         Label3.Size = New Size(180, 10)
         Label3.TabIndex = 2
@@ -341,7 +344,7 @@ Partial Class ModernFontDialog
         ModernTextBox2.Name = "ModernTextBox2"
         ModernTextBox2.Padding = New Padding(13, 0, 13, 0)
         ModernTextBox2.ScrollBarHoverColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
-        ModernTextBox2.Size = New Size(180, 40)
+        ModernTextBox2.Size = New Size(180, 36)
         ModernTextBox2.TabIndex = 1
         ModernTextBox2.WaterText = "选择字形"
         ' 
@@ -362,10 +365,10 @@ Partial Class ModernFontDialog
         Panel8.Controls.Add(Label11)
         Panel8.Controls.Add(ModernButton1)
         Panel8.Dock = DockStyle.Bottom
-        Panel8.Location = New Point(300, 531)
+        Panel8.Location = New Point(300, 481)
         Panel8.Name = "Panel8"
         Panel8.Padding = New Padding(20)
-        Panel8.Size = New Size(584, 80)
+        Panel8.Size = New Size(564, 80)
         Panel8.TabIndex = 3
         ' 
         ' ModernButton2
@@ -375,7 +378,7 @@ Partial Class ModernFontDialog
         ModernButton2.BorderSize = 2
         ModernButton2.Dock = DockStyle.Right
         ModernButton2.HoverBorderColor = Color.CornflowerBlue
-        ModernButton2.Location = New Point(314, 20)
+        ModernButton2.Location = New Point(294, 20)
         ModernButton2.Margin = New Padding(2)
         ModernButton2.Name = "ModernButton2"
         ModernButton2.PressedBorderColor = Color.MediumSlateBlue
@@ -386,7 +389,7 @@ Partial Class ModernFontDialog
         ' Label11
         ' 
         Label11.Dock = DockStyle.Right
-        Label11.Location = New Point(434, 20)
+        Label11.Location = New Point(414, 20)
         Label11.Name = "Label11"
         Label11.Size = New Size(10, 40)
         Label11.TabIndex = 4
@@ -398,7 +401,7 @@ Partial Class ModernFontDialog
         ModernButton1.BorderSize = 2
         ModernButton1.Dock = DockStyle.Right
         ModernButton1.HoverBorderColor = Color.CornflowerBlue
-        ModernButton1.Location = New Point(444, 20)
+        ModernButton1.Location = New Point(424, 20)
         ModernButton1.Margin = New Padding(2)
         ModernButton1.Name = "ModernButton1"
         ModernButton1.PressedBorderColor = Color.MediumSlateBlue
@@ -417,7 +420,7 @@ Partial Class ModernFontDialog
         Panel9.Location = New Point(300, 300)
         Panel9.Name = "Panel9"
         Panel9.Padding = New Padding(20, 0, 20, 0)
-        Panel9.Size = New Size(584, 231)
+        Panel9.Size = New Size(564, 181)
         Panel9.TabIndex = 4
         ' 
         ' Label16
@@ -484,7 +487,7 @@ Partial Class ModernFontDialog
         AutoScaleDimensions = New SizeF(96F, 96F)
         AutoScaleMode = AutoScaleMode.Dpi
         BackColor = Color.FromArgb(CByte(48), CByte(48), CByte(48))
-        ClientSize = New Size(884, 611)
+        ClientSize = New Size(864, 561)
         Controls.Add(Panel9)
         Controls.Add(Panel8)
         Controls.Add(Panel2)
@@ -493,11 +496,11 @@ Partial Class ModernFontDialog
         ForeColor = Color.Silver
         MaximizeBox = False
         MinimizeBox = False
-        MinimumSize = New Size(900, 650)
+        MinimumSize = New Size(880, 600)
         Name = "ModernFontDialog"
         ShowIcon = False
         ShowInTaskbar = False
-        StartPosition = FormStartPosition.Manual
+        StartPosition = FormStartPosition.CenterParent
         Text = "FontDialog"
         Panel1.ResumeLayout(False)
         Panel1.PerformLayout()
