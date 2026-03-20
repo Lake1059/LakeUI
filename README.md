@@ -5,7 +5,7 @@
 > 这个世界总要有人去造轮子，造好看好用的轮子。
 
 NuGet：https://www.nuget.org/packages/LakeUI  
-官网：https://lakeui.top
+官网：https://lakeui.top  
 购买许可证：[爱发电 ifdian.net](https://ifdian.net/item/15f0758814a911f1979752540025c377)  
 Q群：1087964158
 
