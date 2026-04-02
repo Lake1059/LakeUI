@@ -1,5 +1,6 @@
 ﻿Public Class Form1
     Private Sub Form1_Load(sender As Object, e As EventArgs) Handles MyBase.Load
+        Me.ThisIsYourWindow1.Attach(Me)
 
         Me.ModernTabListControl1.Items(1).BoundControl = Form基本信息
         Me.ModernTabListControl1.Items(2).BoundControl = Form许可证
@@ -23,9 +24,16 @@
         Me.ModernTabListControl1.Items(21).BoundControl = Form_ModernColorDialog
         Me.ModernTabListControl1.Items(22).BoundControl = Form_ExcellentProgressBar
         Me.ModernTabListControl1.Items(23).BoundControl = Form_RoundDashBoard
+        Me.ModernTabListControl1.Items(24).BoundControl = Form_JustEmptyControl
+        Me.ModernTabListControl1.Items(25).BoundControl = Form_ModernCheckBox
+        Me.ModernTabListControl1.Items(26).BoundControl = Form_ThisIsYourWindow
+        Me.ModernTabListControl1.Items(27).BoundControl = Form_MarkDownViewer
+        Me.ModernTabListControl1.Items(28).BoundControl = Form_ProgressRing
+        Me.ModernTabListControl1.Items(29).BoundControl = Form_SysTaskBarProgress
     End Sub
 
     Private Sub Form1_Shown(sender As Object, e As EventArgs) Handles Me.Shown
         Me.ModernTabListControl1.SelectedIndex = 1
+
     End Sub
 End Class

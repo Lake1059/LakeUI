@@ -200,7 +200,7 @@ Public Class ModernTabListControl
     Private Function 获取搜索框区域高度() As Single
         If _搜索框控件 Is Nothing Then Return 0
         Dim s As Single = DpiScale()
-        Return 标签栏内边距.Top * s + _搜索框高度 * s + 标签栏内边距.Top * s
+        Return 标签栏内边距.Top * s + _搜索框高度 * s
     End Function
 
     Private Sub 同步搜索框布局()

@@ -643,17 +643,6 @@ Public Class ModernComboBox
         End Set
     End Property
 
-    Private 下拉圆角半径 As Integer = 0
-    <Category("LakeUI"), Description("下拉列表圆角半径"), DefaultValue(GetType(Integer), "0"), Browsable(True)>
-    Public Property DropDownBorderRadius As Integer
-        Get
-            Return 下拉圆角半径
-        End Get
-        Set(value As Integer)
-            SetValue(下拉圆角半径, value)
-        End Set
-    End Property
-
     Private 下拉高亮左侧偏移 As Integer = 0
     <Category("LakeUI"), Description("下拉列表高亮区域左侧偏移量（正值外扩，负值内缩）"), DefaultValue(GetType(Integer), "0"), Browsable(True)>
     Public Property DropDownHighlightInsetLeft As Integer
@@ -673,6 +662,17 @@ Public Class ModernComboBox
         End Get
         Set(value As Integer)
             SetValue(下拉高亮右侧偏移, value)
+        End Set
+    End Property
+
+    Private 下拉高亮兼容内边距 As Boolean = False
+    <Category("LakeUI"), Description("是否让选项高亮区域兼容内边距（左右方向随 DropDownPadding 收缩）"), DefaultValue(GetType(Boolean), "False"), Browsable(True)>
+    Public Property DropDownHighlightMatchPadding As Boolean
+        Get
+            Return 下拉高亮兼容内边距
+        End Get
+        Set(value As Boolean)
+            SetValue(下拉高亮兼容内边距, value)
         End Set
     End Property
 
@@ -998,8 +998,8 @@ Public Class ModernComboBox
         If isEmpty AndAlso Not String.IsNullOrEmpty(水印文本) Then
             Dim waterAlignOff As Integer = GetAlignOffsetX(水印文本, textWidth)
             TextRenderer.DrawText(g, 水印文本, Font,
-                New Point(textLeft + waterAlignOff, singleLineY + (行高 - FontHeight) \ 2),
-                水印颜色, TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine)
+                New Rectangle(textLeft + waterAlignOff, textTop, textWidth, textHeight),
+                水印颜色, TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine Or TextFormatFlags.VerticalCenter)
         End If
 
         If Not isEmpty Then
@@ -1663,6 +1663,7 @@ Public Class ModernComboBox
         Private Const WM_RBUTTONDOWN As Integer = &H204
         Private Const WM_MBUTTONDOWN As Integer = &H207
         Private Const WM_NCLBUTTONDOWN As Integer = &HA1
+        Private Const WM_ACTIVATEAPP As Integer = &H1C
 
         Public Sub New(owner As ModernComboBox)
             _owner = owner
@@ -1695,6 +1696,13 @@ Public Class ModernComboBox
             If owner._selectedIndex >= 0 Then
                 Dim maxOff As Integer = Math.Max(0, owner._items.Count - visCount)
                 _scrollOffset = Math.Max(0, Math.Min(maxOff, owner._selectedIndex - visCount \ 2))
+            End If
+        End Sub
+
+        Protected Overrides Sub WndProc(ByRef m As Message)
+            MyBase.WndProc(m)
+            If m.Msg = WM_ACTIVATEAPP AndAlso m.WParam = IntPtr.Zero Then
+                If Not 正在关闭动画 Then BeginInvoke(Sub() _owner.CloseDropDown())
             End If
         End Sub
 
@@ -1812,7 +1820,6 @@ Public Class ModernComboBox
             Dim h As Integer = ClientRectangle.Height
             Dim s As Single = _owner.DpiScale()
             Dim bw As Integer = CInt(_owner.下拉边框宽度 * s)
-            Dim radius As Integer = CInt(_owner.下拉圆角半径 * s)
             Dim boundsRect As New RectangleF(0, 0, w - 1, h - 1)
             If bw > 0 Then
                 Dim half As Single = bw / 2.0F
@@ -1824,54 +1831,40 @@ Public Class ModernComboBox
                 Using bmp As New Bitmap(w * scale, h * scale)
                     Using g As Graphics = Graphics.FromImage(bmp)
                         g.ScaleTransform(scale, scale)
-                        DrawDropDownBackground(g, boundsRect, radius, bw)
+                        DrawDropDownBackground(g, boundsRect, bw)
                     End Using
                     e.Graphics.CompositingQuality = CompositingQuality.HighQuality
                     e.Graphics.InterpolationMode = InterpolationMode.HighQualityBicubic
                     e.Graphics.DrawImage(bmp, 0, 0, w, h)
                 End Using
             Else
-                DrawDropDownBackground(e.Graphics, boundsRect, radius, bw)
+                DrawDropDownBackground(e.Graphics, boundsRect, bw)
             End If
 
             DrawDropDownItems(e.Graphics, w, h)
 
             If _scrollBarVisible Then
-                _scrollBar.ComputeLayout(w, h, bw, radius,
+                _scrollBar.ComputeLayout(w, h, bw, 0,
                     _owner.下拉内边距.Top, _owner.下拉内边距.Bottom,
                     _owner.下拉滚动条宽度,
                     _owner._items.Count, Math.Min(_owner._items.Count, _owner.最大下拉项数), _scrollOffset)
-                _scrollBar.Draw(e.Graphics, w, h, bw, radius,
+                _scrollBar.Draw(e.Graphics, w, h, bw, 0,
                     _owner.下拉滚动条宽度,
                     _owner.下拉滚动条轨道颜色, _owner.下拉滚动条颜色, _owner.下拉滚动条悬停颜色)
             End If
         End Sub
 
-        Private Sub DrawDropDownBackground(g As Graphics, boundsRect As RectangleF, radius As Integer, bw As Integer)
+        Private Sub DrawDropDownBackground(g As Graphics, boundsRect As RectangleF, bw As Integer)
             g.SmoothingMode = SmoothingMode.AntiAlias
             g.PixelOffsetMode = PixelOffsetMode.HighQuality
             g.InterpolationMode = InterpolationMode.HighQualityBicubic
-            If radius > 0 Then
-                Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(boundsRect, radius)
-                    Using br As New SolidBrush(_owner.下拉背景颜色)
-                        g.FillPath(br, path)
-                    End Using
-                    If bw > 0 Then
-                        Using pen As New Pen(_owner.下拉边框颜色, bw)
-                            pen.LineJoin = LineJoin.Round
-                            g.DrawPath(pen, path)
-                        End Using
-                    End If
+            Using br As New SolidBrush(_owner.下拉背景颜色)
+                g.FillRectangle(br, boundsRect.X, boundsRect.Y, boundsRect.Width, boundsRect.Height)
+            End Using
+            If bw > 0 Then
+                Using pen As New Pen(_owner.下拉边框颜色, bw)
+                    g.DrawRectangle(pen, boundsRect.X, boundsRect.Y, boundsRect.Width, boundsRect.Height)
                 End Using
-            Else
-                Using br As New SolidBrush(_owner.下拉背景颜色)
-                    g.FillRectangle(br, boundsRect.X, boundsRect.Y, boundsRect.Width, boundsRect.Height)
-                End Using
-                If bw > 0 Then
-                    Using pen As New Pen(_owner.下拉边框颜色, bw)
-                        g.DrawRectangle(pen, boundsRect.X, boundsRect.Y, boundsRect.Width, boundsRect.Height)
-                    End Using
-                End If
             End If
         End Sub
 
@@ -1879,7 +1872,6 @@ Public Class ModernComboBox
             g.TextRenderingHint = Drawing.Text.TextRenderingHint.ClearTypeGridFit
             Dim s As Single = _owner.DpiScale()
             Dim bw As Integer = CInt(_owner.下拉边框宽度 * s)
-            Dim radius As Integer = CInt(_owner.下拉圆角半径 * s)
             Dim pad As Padding = _owner.下拉内边距
             Dim inset As Integer = Math.Max(bw, 1)
             Dim rightCorr As Integer = If(bw >= 2, 1, 0)
@@ -1887,19 +1879,15 @@ Public Class ModernComboBox
             Dim itemH As Integer = CInt(_owner.下拉项高度 * s)
             Dim visCount As Integer = Math.Min(_owner._items.Count, _owner.最大下拉项数)
 
-            If radius > 0 Then
-                Using clipPath As GraphicsPath = RectangleRenderer.创建圆角矩形路径(
-                    New RectangleF(inset, inset, w - inset * 2 - rightCorr - scrollW, h - inset * 2),
-                    Math.Max(0, radius - inset))
-                    g.SetClip(clipPath)
-                End Using
-            Else
-                g.SetClip(New Rectangle(inset, inset, w - inset * 2 - rightCorr - scrollW, h - inset * 2))
-            End If
+            g.SetClip(New Rectangle(inset, inset, w - inset * 2 - rightCorr - scrollW, h - inset * 2))
 
             ' 绘制悬停高亮
             Dim hlL As Integer = inset - _owner.下拉高亮左侧偏移
             Dim hlR As Integer = inset + rightCorr - _owner.下拉高亮右侧偏移
+            If _owner.下拉高亮兼容内边距 Then
+                hlL += pad.Left
+                hlR += pad.Right
+            End If
             If 悬停动画显示 Then
                 Dim highlightRect As New RectangleF(
                     hlL, 悬停动画当前Y, w - hlL - hlR - scrollW, 悬停动画当前高度)

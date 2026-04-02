@@ -144,7 +144,6 @@ Partial Class Form_ModernComboBox
         ModernComboBox2.CaretColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
         ModernComboBox2.Dock = DockStyle.Left
         ModernComboBox2.DropDownAnimationDuration = 0
-        ModernComboBox2.DropDownBorderRadius = 10
         ModernComboBox2.DropDownBorderSize = 2
         ModernComboBox2.DropDownGap = 10
         ModernComboBox2.DropDownPadding = New Padding(10)
@@ -202,7 +201,6 @@ Partial Class Form_ModernComboBox
         ModernComboBox1.CaretColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
         ModernComboBox1.Dock = DockStyle.Left
         ModernComboBox1.DropDownAnimationDuration = 0
-        ModernComboBox1.DropDownBorderRadius = 10
         ModernComboBox1.DropDownBorderSize = 2
         ModernComboBox1.DropDownGap = 10
         ModernComboBox1.DropDownPadding = New Padding(10)

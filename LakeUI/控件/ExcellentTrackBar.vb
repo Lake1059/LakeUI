@@ -40,8 +40,8 @@ Public Class ExcellentTrackBar
 
     Public Class TrackLabel
         ''' <summary>对应的值（数值模式）或索引（字符串列表模式）</summary>
-        <DefaultValue(0)>
-        Public Property Position As Integer = 0
+        <DefaultValue(0.0)>
+        Public Property Position As Double = 0
         ''' <summary>显示的文字，字符串列表模式下为空时自动使用列表项目文字</summary>
         <DefaultValue("")>
         Public Property Text As String = ""
@@ -63,7 +63,9 @@ Public Class ExcellentTrackBar
 
         Protected Overrides Sub InsertItem(index As Integer, item As TrackLabel)
             ' 在末尾追加时自动递增 Position（设计器和运行时均生效）
-            If index = Me.Count AndAlso Me.Count > 0 AndAlso item.Position = 0 Then
+            ' 仅当 Position 0 已被其他标签占用时才递增，避免无法在零位添加标签
+            If index = Me.Count AndAlso Me.Count > 0 AndAlso item.Position = 0.0 AndAlso
+               Me.Any(Function(l) l.Position = 0.0) Then
                 item.Position = Me.Max(Function(l) l.Position) + 1
             End If
             MyBase.InsertItem(index, item)
@@ -134,10 +136,10 @@ Public Class ExcellentTrackBar
         Return Me.DeviceDpi / 96.0F
     End Function
 
-    Private Function 计算值比例(val As Integer) As Single
-        Dim range As Integer = 最大值 - 最小值
+    Private Function 计算值比例(val As Double) As Single
+        Dim range As Double = 最大值 - 最小值
         If range = 0 Then Return 0.0F
-        Return (val - 最小值) / CSng(range)
+        Return CSng((val - 最小值) / range)
     End Function
 
     <Category("LakeUI"), Description(Class1.动画时长描述词), DefaultValue(0), Browsable(True)>
@@ -182,46 +184,46 @@ Public Class ExcellentTrackBar
         End Set
     End Property
 
-    Private 最小值 As Integer = 0
-    <Category("LakeUI"), Description("最小值"), DefaultValue(0), Browsable(True)>
-    Public Property Minimum As Integer
+    Private 最小值 As Double = 0
+    <Category("LakeUI"), Description("最小值"), DefaultValue(0.0), Browsable(True)>
+    Public Property Minimum As Double
         Get
             Return 最小值
         End Get
-        Set(value As Integer)
+        Set(value As Double)
             If value = 最小值 Then Return
-            If value > 最大值 Then value = 最大值
             最小值 = value
+            If 最大值 < 最小值 Then 最大值 = 最小值
             If 当前值 < 最小值 Then 当前值 = 最小值
             动画助手.SetImmediate(计算值比例(当前值))
             Me.Invalidate()
         End Set
     End Property
 
-    Private 最大值 As Integer = 100
-    <Category("LakeUI"), Description("最大值"), DefaultValue(100), Browsable(True)>
-    Public Property Maximum As Integer
+    Private 最大值 As Double = 100
+    <Category("LakeUI"), Description("最大值"), DefaultValue(100.0), Browsable(True)>
+    Public Property Maximum As Double
         Get
             Return 最大值
         End Get
-        Set(value As Integer)
+        Set(value As Double)
             If value = 最大值 Then Return
-            If value < 最小值 Then value = 最小值
             最大值 = value
+            If 最小值 > 最大值 Then 最小值 = 最大值
             If 当前值 > 最大值 Then 当前值 = 最大值
             动画助手.SetImmediate(计算值比例(当前值))
             Me.Invalidate()
         End Set
     End Property
 
-    Private 当前值 As Integer = 0
-    <Category("LakeUI"), Description("当前值"), DefaultValue(0), Browsable(True)>
-    Public Property Value As Integer
+    Private 当前值 As Double = 0
+    <Category("LakeUI"), Description("当前值"), DefaultValue(0.0), Browsable(True)>
+    Public Property Value As Double
         Get
             Return 当前值
         End Get
-        Set(value As Integer)
-            Dim newVal As Integer = Math.Max(最小值, Math.Min(最大值, value))
+        Set(value As Double)
+            Dim newVal As Double = Math.Max(最小值, Math.Min(最大值, value))
             If newVal = 当前值 Then Return
             当前值 = newVal
             Dim ratio As Single = 计算值比例(newVal)
@@ -230,25 +232,25 @@ Public Class ExcellentTrackBar
         End Set
     End Property
 
-    Private 小步进值 As Integer = 1
-    <Category("LakeUI"), Description("方向键和鼠标滚轮的步进值"), DefaultValue(1), Browsable(True)>
-    Public Property SmallChange As Integer
+    Private 小步进值 As Double = 1
+    <Category("LakeUI"), Description("方向键和鼠标滚轮的步进值"), DefaultValue(1.0), Browsable(True)>
+    Public Property SmallChange As Double
         Get
             Return 小步进值
         End Get
-        Set(value As Integer)
-            小步进值 = Math.Max(1, value)
+        Set(value As Double)
+            小步进值 = Math.Max(0.001, value)
         End Set
     End Property
 
-    Private 大步进值 As Integer = 10
-    <Category("LakeUI"), Description("Page Up/Down 的步进值"), DefaultValue(10), Browsable(True)>
-    Public Property LargeChange As Integer
+    Private 大步进值 As Double = 10
+    <Category("LakeUI"), Description("Page Up/Down 的步进值"), DefaultValue(10.0), Browsable(True)>
+    Public Property LargeChange As Double
         Get
             Return 大步进值
         End Get
-        Set(value As Integer)
-            大步进值 = Math.Max(1, value)
+        Set(value As Double)
+            大步进值 = Math.Max(0.001, value)
         End Set
     End Property
 
@@ -285,8 +287,11 @@ Public Class ExcellentTrackBar
     <Browsable(False)>
     Public ReadOnly Property CurrentStringItem As String
         Get
-            If 使用字符串列表 AndAlso 当前值 >= 0 AndAlso 当前值 < 字符串集合.Count Then
-                Return 字符串集合(当前值)
+            If 使用字符串列表 Then
+                Dim idx As Integer = CInt(Math.Round(当前值))
+                If idx >= 0 AndAlso idx < 字符串集合.Count Then
+                    Return 字符串集合(idx)
+                End If
             End If
             Return String.Empty
         End Get
@@ -457,6 +462,17 @@ Public Class ExcellentTrackBar
         End Set
     End Property
 
+    Private 滑块文字小数位数 As Integer = -1
+    <Category("LakeUI"), Description("滑块文字显示的小数位数（四舍五入），-1 为不限制"), DefaultValue(-1), Browsable(True)>
+    Public Property ThumbTextDecimalPlaces As Integer
+        Get
+            Return 滑块文字小数位数
+        End Get
+        Set(value As Integer)
+            SetValue(滑块文字小数位数, Math.Max(-1, value))
+        End Set
+    End Property
+
     Private 滑块文字颜色 As Color = Color.White
     <Category("LakeUI"), Description("滑块文字颜色"), DefaultValue(GetType(Color), "White"), Browsable(True)>
     Public Property ThumbTextColor As Color
@@ -570,13 +586,13 @@ Public Class ExcellentTrackBar
         End Get
     End Property
 
-    Public Sub AddLabel(position As Integer, text As String, side As LabelSideEnum)
+    Public Sub AddLabel(position As Single, text As String, side As LabelSideEnum)
         标签列表.Add(New TrackLabel() With {.Position = position, .Text = text, .Side = side})
     End Sub
 
     ''' <summary>自动使用下一个递增索引追加标签，无需手动指定 Position</summary>
     Public Sub AddLabel(text As String, side As LabelSideEnum)
-        Dim nextPos As Integer = If(标签列表.Count = 0, 0, 标签列表.Max(Function(l) l.Position) + 1)
+        Dim nextPos As Single = If(标签列表.Count = 0, 0F, 标签列表.Max(Function(l) l.Position) + 1)
         标签列表.Add(New TrackLabel() With {.Position = nextPos, .Text = text, .Side = side})
     End Sub
 
@@ -587,8 +603,11 @@ Public Class ExcellentTrackBar
 
 #Region "布局计算"
     Private Function 获取标签显示文字(lbl As TrackLabel) As String
-        If 使用字符串列表 AndAlso lbl.Position >= 0 AndAlso lbl.Position < 字符串集合.Count Then
-            Return If(String.IsNullOrEmpty(lbl.Text), 字符串集合(lbl.Position), lbl.Text)
+        If 使用字符串列表 Then
+            Dim idx As Integer = CInt(Math.Round(lbl.Position))
+            If idx >= 0 AndAlso idx < 字符串集合.Count Then
+                Return If(String.IsNullOrEmpty(lbl.Text), 字符串集合(idx), lbl.Text)
+            End If
         End If
         Return lbl.Text
     End Function
@@ -600,6 +619,12 @@ Public Class ExcellentTrackBar
         Dim _滑块高度 As Single = 滑块高度 * s
         Dim _标签连线长度 As Single = 标签连线长度 * s
         Dim fontH As Integer = TextRenderer.MeasureText("A", 获取标签字体()).Height
+        Dim padL As Single = Padding.Left
+        Dim padR As Single = Padding.Right
+        Dim padT As Single = Padding.Top
+        Dim padB As Single = Padding.Bottom
+        Dim availW As Single = Me.Width - padL - padR
+        Dim availH As Single = Me.Height - padT - padB
         ' 单侧标签所需空间：从轨道边缘出发 2px 间隙 + 连线 + 文字
         Dim labelUnit As Single = _轨道粗细 / 2.0F + fontH + _标签连线长度 + 2
         If 方向 = TrackOrientationEnum.Horizontal Then
@@ -609,9 +634,9 @@ Public Class ExcellentTrackBar
             Dim aboveCenter As Single = If(hasTop, Math.Max(_滑块高度 / 2.0F, labelUnit), _滑块高度 / 2.0F)
             Dim belowCenter As Single = If(hasBot, Math.Max(_滑块高度 / 2.0F, labelUnit), _滑块高度 / 2.0F)
             ' 整体内容在控件内居中
-            Dim centerY As Single = (Me.Height - aboveCenter - belowCenter) / 2.0F + aboveCenter
-            Return New RectangleF(_滑块宽度 / 2.0F, centerY - _轨道粗细 / 2.0F,
-                                  Me.Width - _滑块宽度, _轨道粗细)
+            Dim centerY As Single = padT + (availH - aboveCenter - belowCenter) / 2.0F + aboveCenter
+            Return New RectangleF(padL + _滑块宽度 / 2.0F, centerY - _轨道粗细 / 2.0F,
+                                  availW - _滑块宽度, _轨道粗细)
         Else
             Dim hasLeft As Boolean = 标签列表.Any(Function(l) l.Side = LabelSideEnum.TopOrLeft)
             Dim hasRight As Boolean = 标签列表.Any(Function(l) l.Side = LabelSideEnum.BottomOrRight)
@@ -632,9 +657,9 @@ Public Class ExcellentTrackBar
             Dim rightUnit As Single = _轨道粗细 / 2.0F + maxRightW + _标签连线长度 + 2
             Dim leftCenter As Single = If(hasLeft, Math.Max(_滑块宽度 / 2.0F, leftUnit), _滑块宽度 / 2.0F)
             Dim rightCenter As Single = If(hasRight, Math.Max(_滑块宽度 / 2.0F, rightUnit), _滑块宽度 / 2.0F)
-            Dim centerX As Single = (Me.Width - leftCenter - rightCenter) / 2.0F + leftCenter
-            Return New RectangleF(centerX - _轨道粗细 / 2.0F, _滑块高度 / 2.0F,
-                                  _轨道粗细, Me.Height - _滑块高度)
+            Dim centerX As Single = padL + (availW - leftCenter - rightCenter) / 2.0F + leftCenter
+            Return New RectangleF(centerX - _轨道粗细 / 2.0F, padT + _滑块高度 / 2.0F,
+                                  _轨道粗细, availH - _滑块高度)
         End If
     End Function
 
@@ -663,13 +688,13 @@ Public Class ExcellentTrackBar
         End If
     End Function
 
-    Private Function 计算值对应轨道坐标(position As Integer) As Single
-        Dim range As Integer = 最大值 - 最小值
+    Private Function 计算值对应轨道坐标(position As Double) As Single
+        Dim range As Double = 最大值 - 最小值
         Dim trackRect As RectangleF = 计算轨道区域()
         If range = 0 Then
             Return If(方向 = TrackOrientationEnum.Horizontal, trackRect.X, trackRect.Bottom)
         End If
-        Dim ratio As Single = Math.Max(0, Math.Min(1, (position - 最小值) / CSng(range)))
+        Dim ratio As Single = CSng(Math.Max(0, Math.Min(1, (position - 最小值) / range)))
         If 方向 = TrackOrientationEnum.Horizontal Then
             Return trackRect.X + ratio * trackRect.Width
         Else
@@ -880,15 +905,33 @@ Public Class ExcellentTrackBar
         Next
     End Sub
 
+    Private Function 格式化显示值(val As Double) As String
+        Dim rounded As Double
+        If 滑块文字小数位数 >= 0 Then
+            rounded = Math.Round(val, 滑块文字小数位数, MidpointRounding.AwayFromZero)
+        Else
+            rounded = val
+        End If
+        If rounded = 0 Then rounded = 0
+        Dim text As String
+        If 滑块文字小数位数 >= 0 Then
+            text = rounded.ToString("F" & 滑块文字小数位数)
+        Else
+            text = rounded.ToString()
+        End If
+        Return text.TrimEnd("0"c).TrimEnd("."c)
+    End Function
+
     Private Sub 绘制滑块文字(g As Graphics, thumbRect As RectangleF)
         If 滑块文字模式 = ThumbTextModeEnum.None Then Return
         Dim displayText As String
         Select Case 滑块文字模式
             Case ThumbTextModeEnum.Value
-                displayText = 当前值.ToString()
+                displayText = 格式化显示值(当前值)
             Case ThumbTextModeEnum.StringItem
-                displayText = If(使用字符串列表 AndAlso 当前值 >= 0 AndAlso 当前值 < 字符串集合.Count,
-                                 字符串集合(当前值), 当前值.ToString())
+                Dim idx As Integer = CInt(Math.Round(当前值))
+                displayText = If(使用字符串列表 AndAlso idx >= 0 AndAlso idx < 字符串集合.Count,
+                                 字符串集合(idx), 格式化显示值(当前值))
             Case ThumbTextModeEnum.Custom
                 displayText = 滑块自定义文字
             Case Else
@@ -967,15 +1010,15 @@ Public Class ExcellentTrackBar
 
     Private Sub 更新值从坐标(point As Point)
         Dim trackRect As RectangleF = 计算轨道区域()
-        Dim range As Integer = 最大值 - 最小值
+        Dim range As Double = 最大值 - 最小值
         If range = 0 Then Return
-        Dim ratio As Single
+        Dim ratio As Double
         If 方向 = TrackOrientationEnum.Horizontal Then
             ratio = (point.X - trackRect.X) / trackRect.Width
         Else
             ratio = (trackRect.Bottom - point.Y) / trackRect.Height
         End If
-        Value = CInt(Math.Round(最小值 + Math.Max(0, Math.Min(1, ratio)) * range))
+        Value = 最小值 + Math.Max(0.0, Math.Min(1.0, ratio)) * range
     End Sub
 
     Protected Overrides Sub OnKeyDown(e As KeyEventArgs)
@@ -1088,6 +1131,11 @@ Public Class ExcellentTrackBar
 
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
+        Me.Invalidate()
+    End Sub
+
+    Protected Overrides Sub OnPaddingChanged(e As EventArgs)
+        MyBase.OnPaddingChanged(e)
         Me.Invalidate()
     End Sub
 

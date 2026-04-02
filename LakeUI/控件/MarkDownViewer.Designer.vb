@@ -1,5 +1,5 @@
 ﻿<Global.Microsoft.VisualBasic.CompilerServices.DesignerGenerated()> _
-Partial Class HtmlColorLabel
+Partial Class MarkDownViewer
     Inherits System.Windows.Forms.UserControl
 
     'UserControl 重写释放以清理组件列表。
@@ -24,14 +24,13 @@ Partial Class HtmlColorLabel
     Private Sub InitializeComponent()
         SuspendLayout()
         ' 
-        ' HtmlColorLabel
+        ' MarkDownViewer
         ' 
         AutoScaleDimensions = New SizeF(96F, 96F)
         AutoScaleMode = AutoScaleMode.Dpi
         DoubleBuffered = True
-        Margin = New Padding(2, 2, 2, 2)
-        Name = "HtmlColorLabel"
-        Size = New Size(120, 120)
+        Font = New Font("Microsoft YaHei UI", 10F)
+        Name = "MarkDownViewer"
         ResumeLayout(False)
     End Sub
 

@@ -193,6 +193,9 @@ Public Class UltraDetailListView
         <DefaultValue(False), Description("是否折叠")>
         Public Property IsCollapsed As Boolean = False
 
+        <DefaultValue(GetType(Color), ""), Description("分组文字颜色，留空时使用控件的 GroupForeColor")>
+        Public Property ForeColor As Color = Color.Empty
+
         <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
         Public Property Tag As Object = Nothing
 
@@ -398,7 +401,7 @@ Public Class UltraDetailListView
             _displayRows.Add(New DisplayRow With {
                 .Type = DisplayRowType.GroupHeader,
                 .Group = grp,
-                .Height = 分组标题高度
+                .Height = Dpi(分组标题高度)
             })
             If Not grp.IsCollapsed Then
                 For Each itm In _items
@@ -521,6 +524,20 @@ Public Class UltraDetailListView
         Return Me.DeviceDpi / 96.0F
     End Function
 
+    Private Function Dpi(value As Integer) As Integer
+        Return CInt(value * DpiScale())
+    End Function
+
+    Private Function Dpi(value As Padding) As Padding
+        Dim s As Single = DpiScale()
+        Return New Padding(CInt(value.Left * s), CInt(value.Top * s), CInt(value.Right * s), CInt(value.Bottom * s))
+    End Function
+
+    Private Function Dpi(value As Size) As Size
+        Dim s As Single = DpiScale()
+        Return New Size(CInt(value.Width * s), CInt(value.Height * s))
+    End Function
+
     Private Function 获取文本格式标志() As TextFormatFlags
         Dim flags As TextFormatFlags = TextFormatFlags.Left Or TextFormatFlags.Top Or TextFormatFlags.NoPadding
         Return If(自动换行, flags Or TextFormatFlags.WordBreak, flags Or TextFormatFlags.EndEllipsis)
@@ -528,19 +545,19 @@ Public Class UltraDetailListView
 
     Private Function 获取图标区域宽度(item As ListItem) As Integer
         If item.Icon IsNot Nothing AndAlso 图标尺寸.Width > 0 AndAlso 图标尺寸.Height > 0 Then
-            Return 图标尺寸.Width + 图标间距
+            Return Dpi(图标尺寸).Width + Dpi(图标间距)
         End If
         Return 0
     End Function
 
     Private Function 计算底部文本行高度(item As ListItem, rowWidth As Integer) As Integer
         If item.BottomLines.Count = 0 Then Return 0
-        Dim blW As Integer = rowWidth - 项内边距.Horizontal
+        Dim blW As Integer = rowWidth - Dpi(项内边距).Horizontal
         Dim flags As TextFormatFlags = 获取文本格式标志()
         Dim proposed As New Size(Math.Max(1, blW), Integer.MaxValue)
-        Dim h As Integer = 底部文本行间距
+        Dim h As Integer = Dpi(底部文本行间距)
         For Each bl In item.BottomLines
-            h += 文本行间距
+            h += Dpi(文本行间距)
             h += TextRenderer.MeasureText(If(String.IsNullOrEmpty(bl.Text), "Ag", bl.Text), If(bl.Font, Me.Font), proposed, flags).Height
         Next
         Return h
@@ -800,16 +817,16 @@ Public Class UltraDetailListView
     End Property
 
     Private Function 获取有效内容上边距() As Integer
-        Return If(内容边距.Top < 0, 项内边距.Top, 内容边距.Top)
+        Return Dpi(If(内容边距.Top < 0, 项内边距.Top, 内容边距.Top))
     End Function
 
     Private Function 获取有效内容下边距() As Integer
-        Return If(内容边距.Bottom < 0, 项内边距.Bottom, 内容边距.Bottom)
+        Return Dpi(If(内容边距.Bottom < 0, 项内边距.Bottom, 内容边距.Bottom))
     End Function
 
     Private Function 获取行前间距(rowIndex As Integer) As Integer
         If rowIndex <= _scrollOffset Then Return 0
-        Dim spacing = 项间距
+        Dim spacing = Dpi(项间距)
         If rowIndex > 0 AndAlso rowIndex < _displayRows.Count Then
             Dim prevRow = _displayRows(rowIndex - 1)
             Dim currRow = _displayRows(rowIndex)
@@ -1282,6 +1299,7 @@ Public Class UltraDetailListView
     Private Function 计算项高度(item As ListItem) As Integer
         If item.CachedHeight >= 0 Then Return item.CachedHeight
         Dim iconAreaW As Integer = 获取图标区域宽度(item)
+        Dim scaledPadding As Padding = Dpi(项内边距)
         Dim maxSubH As Integer = 0
         For i As Integer = 0 To item.SubItems.Count - 1
             Dim sub_ = item.SubItems(i)
@@ -1291,7 +1309,7 @@ Public Class UltraDetailListView
             Else
                 colW = 获取内容区域().Width
             End If
-            Dim availW As Integer = colW - 项内边距.Horizontal
+            Dim availW As Integer = colW - scaledPadding.Horizontal
             If i = 0 Then availW -= iconAreaW
             Dim subH As Integer = 计算子项内容高度(sub_, availW)
             If subH > maxSubH Then maxSubH = subH
@@ -1299,9 +1317,9 @@ Public Class UltraDetailListView
         If maxSubH = 0 Then
             maxSubH = TextRenderer.MeasureText("Ag", Me.Font).Height
         End If
-        If iconAreaW > 0 AndAlso 图标尺寸.Height > maxSubH Then maxSubH = 图标尺寸.Height
+        If iconAreaW > 0 AndAlso Dpi(图标尺寸).Height > maxSubH Then maxSubH = Dpi(图标尺寸).Height
         maxSubH += 计算底部文本行高度(item, If(_columns.Count > 0, 获取总列宽(), 获取内容区域().Width))
-        item.CachedHeight = maxSubH + 项内边距.Vertical
+        item.CachedHeight = maxSubH + scaledPadding.Vertical
         Return item.CachedHeight
     End Function
 
@@ -1311,7 +1329,7 @@ Public Class UltraDetailListView
         Dim flags As TextFormatFlags = 获取文本格式标志()
         Dim totalH As Integer = TextRenderer.MeasureText(If(String.IsNullOrEmpty(sub_.Text), "Ag", sub_.Text), f, proposed, flags).Height
         For Each line_ In sub_.ExtraLines
-            totalH += 文本行间距
+            totalH += Dpi(文本行间距)
             totalH += TextRenderer.MeasureText(If(String.IsNullOrEmpty(line_.Text), "Ag", line_.Text), If(line_.Font, Me.Font), proposed, flags).Height
         Next
         Return totalH
@@ -1337,7 +1355,7 @@ Public Class UltraDetailListView
         Dim x As Integer = inset + Me.Padding.Left
         Dim y As Integer = inset + Me.Padding.Top
         Dim w As Integer = Me.Width - inset * 2 - Me.Padding.Horizontal
-        Return New Rectangle(x, y, Math.Max(0, w), 列标题高度)
+        Return New Rectangle(x, y, Math.Max(0, w), Dpi(列标题高度))
     End Function
 
     Private Function 获取内容区域() As Rectangle
@@ -1345,12 +1363,12 @@ Public Class UltraDetailListView
         Dim x As Integer = inset + Me.Padding.Left
         Dim y As Integer = inset + Me.Padding.Top
         If 列标题可见 AndAlso _columns.Count > 0 Then
-            y += 列标题高度
+            y += Dpi(列标题高度)
         End If
         Dim w As Integer = Me.Width - inset * 2 - Me.Padding.Horizontal
         Dim h As Integer = Me.Height - inset - Me.Padding.Bottom - y
         If 需要横向滚动条() Then
-            h -= (滚动条宽度 + ScrollBarRenderer.Margin * 2)
+            h -= (Dpi(滚动条宽度) + ScrollBarRenderer.Margin * 2)
         End If
         Return New Rectangle(x, y, Math.Max(0, w), Math.Max(0, h))
     End Function
@@ -1358,7 +1376,7 @@ Public Class UltraDetailListView
     Private Function 估算可见行数() As Integer
         Dim contentRect = 获取内容区域()
         Dim availH As Integer = contentRect.Height
-        If _scrollOffset > 0 Then availH -= 更多指示器高度
+        If _scrollOffset > 0 Then availH -= Dpi(更多指示器高度)
         availH -= 获取有效内容上边距() + 获取有效内容下边距()
         Dim count As Integer = 0
         Dim usedH As Integer = 0
@@ -1375,7 +1393,7 @@ Public Class UltraDetailListView
         If rowIndex < _scrollOffset OrElse rowIndex >= _displayRows.Count Then Return -1
         Dim contentRect = 获取内容区域()
         Dim hasMoreAbove As Boolean = _scrollOffset > 0
-        Dim y As Integer = contentRect.Y + If(hasMoreAbove, 更多指示器高度, 0) + 获取有效内容上边距()
+        Dim y As Integer = contentRect.Y + If(hasMoreAbove, Dpi(更多指示器高度), 0) + 获取有效内容上边距()
         For i As Integer = _scrollOffset To rowIndex - 1
             y += _displayRows(i).Height + 获取行前间距(i + 1)
         Next
@@ -1531,11 +1549,11 @@ Public Class UltraDetailListView
             Dim contentRect = 获取内容区域()
             Dim inset As Integer = 获取边框内边距()
             Dim extraTop As Integer = contentRect.Y - inset
-            Dim hsbSpace As Integer = If(需要横向滚动条(), 滚动条宽度 + ScrollBarRenderer.Margin * 2, 0)
+            Dim hsbSpace As Integer = If(需要横向滚动条(), Dpi(滚动条宽度) + ScrollBarRenderer.Margin * 2, 0)
             Dim extraBottom As Integer = Me.Padding.Bottom + hsbSpace
             Dim s As Single = DpiScale()
             _scrollBar.ComputeLayout(Me.Width, Me.Height, CInt(边框宽度 * s), CInt(边框圆角半径 * s),
-                extraTop, extraBottom, 滚动条宽度,
+                extraTop, extraBottom, Dpi(滚动条宽度),
                 _displayRows.Count, visCount, _scrollOffset)
         Else
             _scrollBar.ThumbRect = Rectangle.Empty
@@ -1560,7 +1578,7 @@ Public Class UltraDetailListView
         Dim paddingRight As Integer = Me.Padding.Right + vsbReserved
         Dim s As Single = DpiScale()
         _hScrollBar.ComputeHorizontalLayout(Me.Width, Me.Height, CInt(边框宽度 * s), CInt(边框圆角半径 * s),
-            paddingLeft, paddingRight, 滚动条宽度,
+            paddingLeft, paddingRight, Dpi(滚动条宽度),
             totalW, visibleW, _hScrollOffset)
     End Sub
 
@@ -1568,7 +1586,7 @@ Public Class UltraDetailListView
         If _hScrollBar.TrackRect.IsEmpty Then Return
         Dim s As Single = DpiScale()
         _hScrollBar.DrawHorizontal(g, Me.Width, Me.Height, CInt(边框宽度 * s), CInt(边框圆角半径 * s),
-            滚动条宽度, 滚动条轨道颜色, 滚动条滑块颜色, 滚动条悬停颜色)
+            Dpi(滚动条宽度), 滚动条轨道颜色, 滚动条滑块颜色, 滚动条悬停颜色)
     End Sub
 
     Private Sub 绘制列标题(g As Graphics)
@@ -1582,7 +1600,7 @@ Public Class UltraDetailListView
             For i As Integer = 0 To _columns.Count - 1
                 Dim col = _columns(i)
                 Dim x As Integer = colXList(i)
-                Dim pad As Padding = col.HeaderPadding
+                Dim pad As Padding = Dpi(col.HeaderPadding)
                 Dim textRect As New Rectangle(x + pad.Left, headerRect.Y + pad.Top, col.Width - pad.Horizontal, headerRect.Height - pad.Vertical)
                 TextRenderer.DrawText(g, col.Text, Me.Font, textRect, 列标题文字颜色,
                     TextFormatFlags.Left Or TextFormatFlags.VerticalCenter Or TextFormatFlags.EndEllipsis Or TextFormatFlags.NoPadding)
@@ -1598,7 +1616,7 @@ Public Class UltraDetailListView
         If contentRect.Height <= 0 OrElse contentRect.Width <= 0 Then Return
 
         Dim hasMoreAbove As Boolean = _scrollOffset > 0
-        Dim topIndicatorH As Integer = If(hasMoreAbove, 更多指示器高度, 0)
+        Dim topIndicatorH As Integer = If(hasMoreAbove, Dpi(更多指示器高度), 0)
         Dim currentY As Integer = contentRect.Y + topIndicatorH + 获取有效内容上边距()
         Dim bottomLimit As Integer = contentRect.Bottom - 获取有效内容下边距()
         Dim lastDrawnIndex As Integer = _scrollOffset - 1
@@ -1669,8 +1687,9 @@ Public Class UltraDetailListView
             g.FillRectangle(br, rect)
         End Using
 
-        Const arrowSize As Integer = 12
-        Dim arrowX As Integer = rect.X + 10
+        Dim arrowSize As Integer = Dpi(12)
+        Dim arrowMargin As Integer = Dpi(10)
+        Dim arrowX As Integer = rect.X + arrowMargin
         Dim arrowY As Integer = rect.Y + (rect.Height - arrowSize) \ 2
         Dim prevSmooth = g.SmoothingMode
         g.SmoothingMode = SmoothingMode.AntiAlias
@@ -1680,14 +1699,15 @@ Public Class UltraDetailListView
         Else
             pts = {New PointF(arrowX, arrowY), New PointF(arrowX + arrowSize, arrowY), New PointF(arrowX + arrowSize \ 2, arrowY + arrowSize)}
         End If
-        Using br As New SolidBrush(分组文字颜色)
+        Dim effectiveColor As Color = If(grp.ForeColor <> Color.Empty, grp.ForeColor, 分组文字颜色)
+        Using br As New SolidBrush(effectiveColor)
             g.FillPolygon(br, pts)
         End Using
         g.SmoothingMode = prevSmooth
 
-        Dim textX As Integer = arrowX + arrowSize + 6
-        Dim textRect As New Rectangle(textX, rect.Y, rect.Right - textX - 4, rect.Height)
-        TextRenderer.DrawText(g, grp.Text, Me.Font, textRect, 分组文字颜色,
+        Dim textX As Integer = arrowX + arrowSize + Dpi(6)
+        Dim textRect As New Rectangle(textX, rect.Y, rect.Right - textX - Dpi(4), rect.Height)
+        TextRenderer.DrawText(g, grp.Text, Me.Font, textRect, effectiveColor,
             TextFormatFlags.Left Or TextFormatFlags.VerticalCenter Or TextFormatFlags.EndEllipsis Or TextFormatFlags.NoPadding)
 
         Using pen As New Pen(分组分隔线颜色)
@@ -1698,8 +1718,10 @@ Public Class UltraDetailListView
     Private Sub 绘制项行(g As Graphics, item As ListItem, rowRect As Rectangle, colXList As List(Of Integer))
         Dim iconAreaW As Integer = 获取图标区域宽度(item)
         Dim hasIcon As Boolean = iconAreaW > 0
+        Dim scaledPadding As Padding = Dpi(项内边距)
+        Dim scaledIconSize As Size = Dpi(图标尺寸)
         Dim bottomLinesH As Integer = 计算底部文本行高度(item, rowRect.Width)
-        Dim upperPartH As Integer = rowRect.Height - 项内边距.Vertical - bottomLinesH
+        Dim upperPartH As Integer = rowRect.Height - scaledPadding.Vertical - bottomLinesH
         Dim flags As TextFormatFlags = 获取文本格式标志()
 
         Dim colCount As Integer = If(_columns.Count > 0, _columns.Count, 1)
@@ -1710,15 +1732,15 @@ Public Class UltraDetailListView
             Dim colW As Integer = If(_columns.Count > 0, _columns(colIdx).Width, rowRect.Width)
 
             Dim cellRect As New Rectangle(
-                colX + 项内边距.Left, rowRect.Y + 项内边距.Top,
-                colW - 项内边距.Horizontal, upperPartH)
+                colX + scaledPadding.Left, rowRect.Y + scaledPadding.Top,
+                colW - scaledPadding.Horizontal, upperPartH)
 
             If colIdx = 0 AndAlso hasIcon Then
                 Dim iconX As Integer = cellRect.X
-                Dim iconY As Integer = rowRect.Y + 项内边距.Top + (upperPartH - 图标尺寸.Height) \ 2
+                Dim iconY As Integer = rowRect.Y + scaledPadding.Top + (upperPartH - scaledIconSize.Height) \ 2
                 Dim prevMode = g.InterpolationMode
                 g.InterpolationMode = InterpolationMode.HighQualityBicubic
-                g.DrawImage(item.Icon, New Rectangle(iconX, iconY, 图标尺寸.Width, 图标尺寸.Height))
+                g.DrawImage(item.Icon, New Rectangle(iconX, iconY, scaledIconSize.Width, scaledIconSize.Height))
                 g.InterpolationMode = prevMode
                 cellRect = New Rectangle(cellRect.X + iconAreaW, cellRect.Y, cellRect.Width - iconAreaW, cellRect.Height)
             End If
@@ -1741,7 +1763,7 @@ Public Class UltraDetailListView
 
             ' 附加文本行
             For Each line_ In sub_.ExtraLines
-                lineY += 文本行间距
+                lineY += Dpi(文本行间距)
                 Dim lf As Font = If(line_.Font, Me.Font)
                 Dim lc As Color = If(line_.ForeColor <> Color.Empty, line_.ForeColor, 项文本颜色)
                 Dim lh As Integer = TextRenderer.MeasureText(If(String.IsNullOrEmpty(line_.Text), "Ag", line_.Text), lf, proposed, flags).Height
@@ -1754,12 +1776,12 @@ Public Class UltraDetailListView
 
         ' 底部附加文本行
         If item.BottomLines.Count > 0 Then
-            Dim blX As Integer = rowRect.X + 项内边距.Left
-            Dim blW As Integer = rowRect.Width - 项内边距.Horizontal
-            Dim blY As Integer = rowRect.Y + 项内边距.Top + upperPartH + 底部文本行间距
+            Dim blX As Integer = rowRect.X + scaledPadding.Left
+            Dim blW As Integer = rowRect.Width - scaledPadding.Horizontal
+            Dim blY As Integer = rowRect.Y + scaledPadding.Top + upperPartH + Dpi(底部文本行间距)
             Dim blProposed As New Size(Math.Max(1, blW), Integer.MaxValue)
             For Each bl In item.BottomLines
-                blY += 文本行间距
+                blY += Dpi(文本行间距)
                 Dim lf As Font = If(bl.Font, Me.Font)
                 Dim lc As Color = If(bl.ForeColor <> Color.Empty, bl.ForeColor, 项文本颜色)
                 Dim lh As Integer = TextRenderer.MeasureText(If(String.IsNullOrEmpty(bl.Text), "Ag", bl.Text), lf, blProposed, flags).Height
@@ -1791,7 +1813,7 @@ Public Class UltraDetailListView
         If _scrollBar.TrackRect.IsEmpty Then Return
         Dim s As Single = DpiScale()
         _scrollBar.Draw(g, Me.Width, Me.Height, CInt(边框宽度 * s), CInt(边框圆角半径 * s),
-            滚动条宽度, 滚动条轨道颜色, 滚动条滑块颜色, 滚动条悬停颜色)
+            Dpi(滚动条宽度), 滚动条轨道颜色, 滚动条滑块颜色, 滚动条悬停颜色)
     End Sub
 
     Private Sub 绘制拖选框(g As Graphics)
@@ -2321,7 +2343,7 @@ Public Class UltraDetailListView
         Dim result As New List(Of Integer)
         Dim contentRect = 获取内容区域()
         Dim hasMoreAbove As Boolean = _scrollOffset > 0
-        Dim topOffset As Integer = If(hasMoreAbove, 更多指示器高度, 0)
+        Dim topOffset As Integer = If(hasMoreAbove, Dpi(更多指示器高度), 0)
         Dim currentY As Integer = contentRect.Y + topOffset + 获取有效内容上边距()
         Dim bottomLimit As Integer = contentRect.Bottom - 获取有效内容下边距()
         Dim rowW As Integer = contentRect.Width
@@ -2351,7 +2373,7 @@ Public Class UltraDetailListView
         Dim contentRect = 获取内容区域()
         Dim inset = 获取边框内边距()
         Dim scrollW = If(Not _scrollBar.TrackRect.IsEmpty, Me.Width - inset - _scrollBar.VisualLeft, 0)
-        Dim zoneLeft = contentRect.Right - scrollW - 拖选区域宽度
+        Dim zoneLeft = contentRect.Right - scrollW - Dpi(拖选区域宽度)
         Return mouseX >= zoneLeft
     End Function
 
@@ -2510,8 +2532,9 @@ Public Class UltraDetailListView
         Dim colX = colXList(Math.Min(columnIndex, colXList.Count - 1))
         Dim colW = _columns(columnIndex).Width
         Dim iconAreaW = If(columnIndex = 0, 获取图标区域宽度(item), 0)
-        Dim cellX = colX + 项内边距.Left + iconAreaW
-        Dim cellW = colW - 项内边距.Horizontal - iconAreaW
+        Dim scaledPadding As Padding = Dpi(项内边距)
+        Dim cellX = colX + scaledPadding.Left + iconAreaW
+        Dim cellW = colW - scaledPadding.Horizontal - iconAreaW
         If cellW <= 20 Then Return
 
         _editRowIndex = displayRowIndex
@@ -2601,7 +2624,7 @@ Public Class UltraDetailListView
         Dim contentRect = 获取内容区域()
         If Not contentRect.Contains(pt) Then Return -1
         Dim hasMoreAbove As Boolean = _scrollOffset > 0
-        Dim topOffset As Integer = If(hasMoreAbove, 更多指示器高度, 0)
+        Dim topOffset As Integer = If(hasMoreAbove, Dpi(更多指示器高度), 0)
         Dim currentY As Integer = contentRect.Y + topOffset + 获取有效内容上边距()
         Dim bottomLimit As Integer = contentRect.Bottom - 获取有效内容下边距()
 
@@ -2623,7 +2646,7 @@ Public Class UltraDetailListView
         Dim colXList = 获取列X列表()
         For i As Integer = 0 To _columns.Count - 1
             Dim sepX As Integer = colXList(i) + _columns(i).Width
-            If Math.Abs(mouseX - sepX) <= ColumnResizeHitZone Then
+            If Math.Abs(mouseX - sepX) <= Dpi(ColumnResizeHitZone) Then
                 Return i
             End If
         Next
@@ -2805,9 +2828,10 @@ Public Class UltraDetailListView
         Dim iconAreaW = 获取图标区域宽度(item)
         Dim colXList = 获取列X列表()
         Dim measureFlags As TextFormatFlags = TextFormatFlags.Left Or TextFormatFlags.Top Or TextFormatFlags.NoPadding
+        Dim scaledPadding As Padding = Dpi(项内边距)
 
         Dim bottomLinesH As Integer = 计算底部文本行高度(item, rowRect.Width)
-        Dim upperPartH = rowRect.Height - 项内边距.Vertical - bottomLinesH
+        Dim upperPartH = rowRect.Height - scaledPadding.Vertical - bottomLinesH
 
         ' 检测子项区域
         Dim colCount = If(_columns.Count > 0, _columns.Count, 1)
@@ -2819,12 +2843,12 @@ Public Class UltraDetailListView
             If pt.X < colX OrElse pt.X >= colX + colW Then Continue For
 
             Dim sub_ = item.SubItems(colIdx)
-            Dim cellW = colW - 项内边距.Horizontal
+            Dim cellW = colW - scaledPadding.Horizontal
             If colIdx = 0 Then cellW -= iconAreaW
             If cellW <= 0 Then Return ""
 
             Dim contentH = 计算子项内容高度(sub_, cellW)
-            Dim cellTop = rowRect.Y + 项内边距.Top
+            Dim cellTop = rowRect.Y + scaledPadding.Top
             Dim startY = cellTop + Math.Max(0, (upperPartH - contentH) \ 2)
             Dim lineY = startY
             Dim proposed As New Size(Math.Max(1, cellW), Integer.MaxValue)
@@ -2839,7 +2863,7 @@ Public Class UltraDetailListView
 
             ' 附加文本行
             For Each line_ In sub_.ExtraLines
-                lineY += 文本行间距
+                lineY += Dpi(文本行间距)
                 Dim lf = If(line_.Font, Me.Font)
                 Dim lh = TextRenderer.MeasureText(If(String.IsNullOrEmpty(line_.Text), "Ag", line_.Text), lf, proposed, measureFlags).Height
                 If pt.Y >= lineY AndAlso pt.Y < lineY + lh Then
@@ -2853,11 +2877,11 @@ Public Class UltraDetailListView
 
         ' 检测底部附加文本行区域
         If item.BottomLines.Count > 0 Then
-            Dim blW = rowRect.Width - 项内边距.Horizontal
-            Dim blY = rowRect.Y + 项内边距.Top + upperPartH + 底部文本行间距
+            Dim blW = rowRect.Width - scaledPadding.Horizontal
+            Dim blY = rowRect.Y + scaledPadding.Top + upperPartH + Dpi(底部文本行间距)
             Dim blProp As New Size(Math.Max(1, blW), Integer.MaxValue)
             For Each bl In item.BottomLines
-                blY += 文本行间距
+                blY += Dpi(文本行间距)
                 Dim lf = If(bl.Font, Me.Font)
                 Dim lh = TextRenderer.MeasureText(If(String.IsNullOrEmpty(bl.Text), "Ag", bl.Text), lf, blProp, measureFlags).Height
                 If pt.Y >= blY AndAlso pt.Y < blY + lh Then

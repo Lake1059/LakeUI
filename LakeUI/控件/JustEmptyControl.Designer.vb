@@ -1,5 +1,5 @@
 ﻿<Global.Microsoft.VisualBasic.CompilerServices.DesignerGenerated()> _
-Partial Class HtmlColorLabel
+Partial Class JustEmptyControl
     Inherits System.Windows.Forms.UserControl
 
     'UserControl 重写释放以清理组件列表。
@@ -22,17 +22,8 @@ Partial Class HtmlColorLabel
     '不要使用代码编辑器修改它。
     <System.Diagnostics.DebuggerStepThrough()> _
     Private Sub InitializeComponent()
-        SuspendLayout()
-        ' 
-        ' HtmlColorLabel
-        ' 
-        AutoScaleDimensions = New SizeF(96F, 96F)
-        AutoScaleMode = AutoScaleMode.Dpi
-        DoubleBuffered = True
-        Margin = New Padding(2, 2, 2, 2)
-        Name = "HtmlColorLabel"
-        Size = New Size(120, 120)
-        ResumeLayout(False)
+        components = New System.ComponentModel.Container()
+        Me.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font
     End Sub
 
 End Class

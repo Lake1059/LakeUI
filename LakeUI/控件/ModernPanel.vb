@@ -476,14 +476,14 @@ Public Class ModernPanel
             Using bmp As New Bitmap(Me.Width * _ssaa, Me.Height * _ssaa)
                 Using sg As Graphics = Graphics.FromImage(bmp)
                     sg.ScaleTransform(_ssaa, _ssaa)
-                    sg.SmoothingMode = SmoothingMode.AntiAlias
-                    sg.PixelOffsetMode = PixelOffsetMode.HighQuality
+                    sg.SmoothingMode = Class1.GlobalSmoothingMode
+                    sg.PixelOffsetMode = Class1.GlobalPixelOffsetMode
                     绘制背景与边框(sg)
                     绘制垂直滚动条(sg)
                     绘制水平滚动条(sg)
                 End Using
-                g.CompositingQuality = CompositingQuality.HighQuality
-                g.InterpolationMode = InterpolationMode.HighQualityBicubic
+                g.CompositingQuality = Class1.GlobalCompositingQuality
+                g.InterpolationMode = Class1.GlobalInterpolationMode
                 g.DrawImage(bmp, 0, 0, Me.Width, Me.Height)
             End Using
         Else
@@ -494,13 +494,12 @@ Public Class ModernPanel
     End Sub
 
     Private Sub 绘制背景与边框(g As Graphics)
-        g.SmoothingMode = SmoothingMode.AntiAlias
-        g.PixelOffsetMode = PixelOffsetMode.HighQuality
+        g.SmoothingMode = Class1.GlobalSmoothingMode
+        g.PixelOffsetMode = Class1.GlobalPixelOffsetMode
         Dim s As Single = DpiScale()
         Dim boundsRect As New RectangleF(0, 0, Me.Width - 1, Me.Height - 1)
-        Dim half As Single = 0
         If 边框宽度 > 0 Then
-            half = 边框宽度 * s / 2.0F
+            Dim half As Single = 边框宽度 * s / 2.0F
             boundsRect.Inflate(-half, -half)
         End If
         If 边框圆角半径 > 0 Then
@@ -549,8 +548,8 @@ Public Class ModernPanel
         ' 1) 把原图按 Zoom 缩放到与控件等大的位图上
         Using scaled As New Bitmap(w, h, Imaging.PixelFormat.Format32bppArgb)
             Using sg As Graphics = Graphics.FromImage(scaled)
-                sg.InterpolationMode = InterpolationMode.HighQualityBicubic
-                sg.CompositingQuality = CompositingQuality.HighQuality
+                sg.InterpolationMode = Class1.GlobalInterpolationMode
+                sg.CompositingQuality = Class1.GlobalCompositingQuality
                 Dim ratioW As Single = CSng(w) / img.Width
                 Dim ratioH As Single = CSng(h) / img.Height
                 Dim ratio As Single = Math.Min(ratioW, ratioH)
@@ -566,7 +565,7 @@ Public Class ModernPanel
                 '    笔刷和路径都是 (0,0)~(w,h)，坐标天然对齐，无需任何 Transform
                 Using result As New Bitmap(w, h, Imaging.PixelFormat.Format32bppArgb)
                     Using rg As Graphics = Graphics.FromImage(result)
-                        rg.SmoothingMode = SmoothingMode.AntiAlias
+                        rg.SmoothingMode = Class1.GlobalSmoothingMode
                         Using tb As New TextureBrush(scaled)
                             rg.FillPath(tb, clipPath)
                         End Using

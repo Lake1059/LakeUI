@@ -21,8 +21,8 @@ Public Class BooleanSwitch
                     g.ScaleTransform(_ssaa, _ssaa)
                     绘制图形内容(g, 极限矩形区域)
                 End Using
-                e.Graphics.CompositingQuality = CompositingQuality.HighQuality
-                e.Graphics.InterpolationMode = InterpolationMode.HighQualityBicubic
+                e.Graphics.CompositingQuality = Class1.GlobalCompositingQuality
+                e.Graphics.InterpolationMode = Class1.GlobalInterpolationMode
                 e.Graphics.DrawImage(bmp, 0, 0, Me.Width, Me.Height)
             End Using
         Else
@@ -36,9 +36,9 @@ Public Class BooleanSwitch
     End Sub
 
     Private Sub 绘制图形内容(g As Graphics, 极限矩形区域 As RectangleF)
-        g.SmoothingMode = SmoothingMode.AntiAlias
-        g.PixelOffsetMode = PixelOffsetMode.HighQuality
-        g.InterpolationMode = InterpolationMode.HighQualityBicubic
+        g.SmoothingMode = Class1.GlobalSmoothingMode
+        g.PixelOffsetMode = Class1.GlobalPixelOffsetMode
+        g.InterpolationMode = Class1.GlobalInterpolationMode
 
         Dim 轨道颜色 As Color = 获取当前轨道颜色()
         Dim 滑块颜色 As Color = 获取当前滑块颜色()

@@ -15,4 +15,21 @@
     Public Const 动画时长描述词 As String = "指定动画的时长 (毫秒)，0 = 无动画，注意这是由 CPU 绘制的动画，在大型场景中应该关闭以保障操作响应。"
     Public Const 动画帧率描述词 As String = "指定动画的帧率，0 = 不限制，此时会大幅消耗 UI 线程性能。假定显示器刷新率足够，绝大多数动画仅需 120 帧即可满足极致丝滑，对于颜色渐变动画仅需 60 帧。"
 
+    ''' <summary>
+    ''' 全局 Graphics 平滑模式设置，用于控制图形绘制的抗锯齿效果
+    ''' </summary>
+    Public Shared Property GlobalSmoothingMode As Drawing2D.SmoothingMode = Drawing2D.SmoothingMode.AntiAlias
+    ''' <summary>
+    ''' 全局 Graphics 像素偏移模式设置，用于提高图形绘制质量
+    ''' </summary>
+    Public Shared Property GlobalPixelOffsetMode As Drawing2D.PixelOffsetMode = Drawing2D.PixelOffsetMode.HighQuality
+    ''' <summary>
+    ''' 全局 Graphics 插值模式设置，用于控制图像缩放质量
+    ''' </summary>
+    Public Shared Property GlobalInterpolationMode As Drawing2D.InterpolationMode = Drawing2D.InterpolationMode.HighQualityBicubic
+    ''' <summary>
+    ''' 全局 Graphics 合成质量设置，用于控制图像合成质量（用于 SSAA 降采样）
+    ''' </summary>
+    Public Shared Property GlobalCompositingQuality As Drawing2D.CompositingQuality = Drawing2D.CompositingQuality.HighQuality
+
 End Class

@@ -22,6 +22,7 @@ Partial Class Form1
     'Do not modify it using the code editor.
     <System.Diagnostics.DebuggerStepThrough()>
     Private Sub InitializeComponent()
+        components = New ComponentModel.Container()
         Dim ModernTabPage1 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
         Dim ModernTabPage2 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
         Dim ModernTabPage3 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
@@ -46,6 +47,12 @@ Partial Class Form1
         Dim ModernTabPage22 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
         Dim ModernTabPage23 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
         Dim ModernTabPage24 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
+        Dim ModernTabPage25 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
+        Dim ModernTabPage26 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
+        Dim ModernTabPage27 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
+        Dim ModernTabPage28 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
+        Dim ModernTabPage29 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
+        Dim ModernTabPage30 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
         Dim ModernMenuItem1 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
         Dim resources As System.ComponentModel.ComponentResourceManager = New System.ComponentModel.ComponentResourceManager(GetType(Form1))
         Dim ModernMenuItem2 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
@@ -55,6 +62,7 @@ Partial Class Form1
         ModernTabListControl1 = New ModernTabListControl()
         ModernTextBox1 = New ModernTextBox()
         ModernContextMenu1 = New ModernContextMenu()
+        ThisIsYourWindow1 = New ThisIsYourWindow(components)
         ModernTabListControl1.SuspendLayout()
         SuspendLayout()
         ' 
@@ -88,6 +96,12 @@ Partial Class Form1
         ModernTabPage22.Text = "ModernColorDialog"
         ModernTabPage23.Text = "ExcellentProgressBar"
         ModernTabPage24.Text = "RoundDashBoard"
+        ModernTabPage25.Text = "JustEmptyControl"
+        ModernTabPage26.Text = "ModernCheckBox"
+        ModernTabPage27.Text = "ThisIsYourWindow"
+        ModernTabPage28.Text = "MarkDownViewer"
+        ModernTabPage29.Text = "ProgressRing"
+        ModernTabPage30.Text = "SysTaskBarProgress"
         ModernTabListControl1.Items.Add(ModernTabPage1)
         ModernTabListControl1.Items.Add(ModernTabPage2)
         ModernTabListControl1.Items.Add(ModernTabPage3)
@@ -112,6 +126,12 @@ Partial Class Form1
         ModernTabListControl1.Items.Add(ModernTabPage22)
         ModernTabListControl1.Items.Add(ModernTabPage23)
         ModernTabListControl1.Items.Add(ModernTabPage24)
+        ModernTabListControl1.Items.Add(ModernTabPage25)
+        ModernTabListControl1.Items.Add(ModernTabPage26)
+        ModernTabListControl1.Items.Add(ModernTabPage27)
+        ModernTabListControl1.Items.Add(ModernTabPage28)
+        ModernTabListControl1.Items.Add(ModernTabPage29)
+        ModernTabListControl1.Items.Add(ModernTabPage30)
         ModernTabListControl1.Location = New Point(0, 0)
         ModernTabListControl1.Name = "ModernTabListControl1"
         ModernTabListControl1.ScrollBarWidth = 10
@@ -170,6 +190,27 @@ Partial Class Form1
         ModernContextMenu1.SeparatorHeight = 20
         ModernContextMenu1.SuperSamplingScale = Class1.SuperSamplingScaleEnum.x2
         ' 
+        ' ThisIsYourWindow1
+        ' 
+        ThisIsYourWindow1.BorderColor = Color.MediumPurple
+        ThisIsYourWindow1.BorderInactiveColor = Color.MediumPurple
+        ThisIsYourWindow1.ButtonCornerRadius = 5
+        ThisIsYourWindow1.ButtonGlyphLineWidth = 2F
+        ThisIsYourWindow1.ButtonGlyphSize = 12
+        ThisIsYourWindow1.ButtonPadding = New Padding(0, 5, 5, 5)
+        ThisIsYourWindow1.ButtonWidth = 50
+        ThisIsYourWindow1.CaptionBackColor = Color.FromArgb(CByte(48), CByte(48), CByte(48))
+        ThisIsYourWindow1.CaptionButtonGlyphColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
+        ThisIsYourWindow1.CaptionHeight = 50
+        ThisIsYourWindow1.CaptionInactiveBackColor = Color.FromArgb(CByte(48), CByte(48), CByte(48))
+        ThisIsYourWindow1.CloseButtonGlyphColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
+        ThisIsYourWindow1.IconPaddingLeft = 15
+        ThisIsYourWindow1.IconSize = 20
+        ThisIsYourWindow1.ResizeBorderWidth = 10
+        ThisIsYourWindow1.ShadowColor = Color.MediumPurple
+        ThisIsYourWindow1.ShadowEnabled = True
+        ThisIsYourWindow1.TitleAlign = ThisIsYourWindow.TitleAlignEnum.Center
+        ' 
         ' Form1
         ' 
         AutoScaleDimensions = New SizeF(96F, 96F)
@@ -183,12 +224,13 @@ Partial Class Form1
         Name = "Form1"
         ShowIcon = False
         StartPosition = FormStartPosition.CenterScreen
-        Text = "LakeUI.Demo"
+        Text = "LakeUI 1.1 DEMO"
         ModernTabListControl1.ResumeLayout(False)
         ResumeLayout(False)
     End Sub
     Friend WithEvents ModernTabListControl1 As ModernTabListControl
     Friend WithEvents ModernContextMenu1 As ModernContextMenu
     Friend WithEvents ModernTextBox1 As ModernTextBox
+    Friend WithEvents ThisIsYourWindow1 As ThisIsYourWindow
 
 End Class

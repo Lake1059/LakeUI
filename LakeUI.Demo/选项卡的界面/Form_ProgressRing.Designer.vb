@@ -1,5 +1,5 @@
 ﻿<Global.Microsoft.VisualBasic.CompilerServices.DesignerGenerated()> _
-Partial Class Form_HtmlColorLabel
+Partial Class Form_ProgressRing
     Inherits System.Windows.Forms.Form
 
     'Form 重写 Dispose，以清理组件列表。
@@ -23,10 +23,16 @@ Partial Class Form_HtmlColorLabel
     <System.Diagnostics.DebuggerStepThrough()> _
     Private Sub InitializeComponent()
         ModernPanel1 = New ModernPanel()
+        Panel7 = New Panel()
+        ModernButton6 = New ModernButton()
+        Label11 = New Label()
+        ModernButton5 = New ModernButton()
         Label7 = New Label()
-        ModernTextBox1 = New ModernTextBox()
+        Panel3 = New Panel()
+        ProgressRing2 = New ProgressRing()
         Label5 = New Label()
-        HtmlColorLabel1 = New HtmlColorLabel()
+        Panel2 = New Panel()
+        ProgressRing1 = New ProgressRing()
         Label6 = New Label()
         Panel1 = New Panel()
         ModernButton4 = New ModernButton()
@@ -38,16 +44,20 @@ Partial Class Form_HtmlColorLabel
         ModernButton1 = New ModernButton()
         Label1 = New Label()
         ModernPanel1.SuspendLayout()
+        Panel7.SuspendLayout()
+        Panel3.SuspendLayout()
+        Panel2.SuspendLayout()
         Panel1.SuspendLayout()
         SuspendLayout()
         ' 
         ' ModernPanel1
         ' 
         ModernPanel1.BorderSize = 0
+        ModernPanel1.Controls.Add(Panel7)
         ModernPanel1.Controls.Add(Label7)
-        ModernPanel1.Controls.Add(ModernTextBox1)
+        ModernPanel1.Controls.Add(Panel3)
         ModernPanel1.Controls.Add(Label5)
-        ModernPanel1.Controls.Add(HtmlColorLabel1)
+        ModernPanel1.Controls.Add(Panel2)
         ModernPanel1.Controls.Add(Label6)
         ModernPanel1.Controls.Add(Panel1)
         ModernPanel1.Controls.Add(Label1)
@@ -56,65 +66,125 @@ Partial Class Form_HtmlColorLabel
         ModernPanel1.Margin = New Padding(2)
         ModernPanel1.Name = "ModernPanel1"
         ModernPanel1.Padding = New Padding(20)
-        ModernPanel1.Size = New Size(712, 586)
-        ModernPanel1.TabIndex = 42
+        ModernPanel1.Size = New Size(726, 654)
+        ModernPanel1.TabIndex = 45
+        ' 
+        ' Panel7
+        ' 
+        Panel7.Controls.Add(ModernButton6)
+        Panel7.Controls.Add(Label11)
+        Panel7.Controls.Add(ModernButton5)
+        Panel7.Dock = DockStyle.Top
+        Panel7.Location = New Point(20, 360)
+        Panel7.Name = "Panel7"
+        Panel7.Padding = New Padding(0, 10, 0, 0)
+        Panel7.Size = New Size(686, 45)
+        Panel7.TabIndex = 51
+        ' 
+        ' ModernButton6
+        ' 
+        ModernButton6.BackColor2 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton6.BorderRadius = 10
+        ModernButton6.BorderSize = 2
+        ModernButton6.Dock = DockStyle.Left
+        ModernButton6.HoverBorderColor = Color.CornflowerBlue
+        ModernButton6.Location = New Point(110, 10)
+        ModernButton6.Margin = New Padding(2)
+        ModernButton6.Name = "ModernButton6"
+        ModernButton6.PressedBorderColor = Color.MediumSlateBlue
+        ModernButton6.Size = New Size(100, 35)
+        ModernButton6.TabIndex = 9
+        ModernButton6.Text = "停止"
+        ' 
+        ' Label11
+        ' 
+        Label11.Dock = DockStyle.Left
+        Label11.Location = New Point(100, 10)
+        Label11.Name = "Label11"
+        Label11.Size = New Size(10, 35)
+        Label11.TabIndex = 10
+        ' 
+        ' ModernButton5
+        ' 
+        ModernButton5.BackColor2 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton5.BorderRadius = 10
+        ModernButton5.BorderSize = 2
+        ModernButton5.Dock = DockStyle.Left
+        ModernButton5.HoverBorderColor = Color.CornflowerBlue
+        ModernButton5.Location = New Point(0, 10)
+        ModernButton5.Margin = New Padding(2)
+        ModernButton5.Name = "ModernButton5"
+        ModernButton5.PressedBorderColor = Color.MediumSlateBlue
+        ModernButton5.Size = New Size(100, 35)
+        ModernButton5.TabIndex = 11
+        ModernButton5.Text = "播放"
         ' 
         ' Label7
         ' 
         Label7.AutoSize = True
         Label7.Dock = DockStyle.Top
         Label7.Font = New Font("Microsoft YaHei UI", 10F)
-        Label7.Location = New Point(20, 396)
+        Label7.Location = New Point(20, 320)
         Label7.Name = "Label7"
-        Label7.Padding = New Padding(0, 10, 0, 10)
-        Label7.Size = New Size(221, 40)
-        Label7.TabIndex = 47
-        Label7.Text = "<div> 也支持识别，总之多试试吧"
+        Label7.Padding = New Padding(0, 20, 0, 0)
+        Label7.Size = New Size(51, 40)
+        Label7.TabIndex = 44
+        Label7.Text = "控制器"
         ' 
-        ' ModernTextBox1
+        ' Panel3
         ' 
-        ModernTextBox1.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
-        ModernTextBox1.BorderRadius = 10
-        ModernTextBox1.BorderSize = 0
-        ModernTextBox1.CaretColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
-        ModernTextBox1.Dock = DockStyle.Top
-        ModernTextBox1.Location = New Point(20, 271)
-        ModernTextBox1.Margin = New Padding(2, 2, 2, 2)
-        ModernTextBox1.MaxUndoCount = 0
-        ModernTextBox1.MultiLine = True
-        ModernTextBox1.Name = "ModernTextBox1"
-        ModernTextBox1.Padding = New Padding(13, 10, 13, 10)
-        ModernTextBox1.ReadOnly = True
-        ModernTextBox1.ScrollBarHoverColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
-        ModernTextBox1.Size = New Size(672, 125)
-        ModernTextBox1.TabIndex = 46
-        ModernTextBox1.Text = "HtmlColorLabel1 <span style=""color:Green"">这是专用于显示高亮文字的标签控件</span> <span style=""color:CornflowerBlue"">直接写 HTML 的文字颜色标记即可</span> <span style=""color:IndianRed"">支持 HTML 自身颜色、十六进制、RGB、RGBA、HSL</span>"
+        Panel3.Controls.Add(ProgressRing2)
+        Panel3.Dock = DockStyle.Top
+        Panel3.Location = New Point(20, 270)
+        Panel3.Name = "Panel3"
+        Panel3.Size = New Size(686, 50)
+        Panel3.TabIndex = 43
+        ' 
+        ' ProgressRing2
+        ' 
+        ProgressRing2.AnimationDuration = 3000
+        ProgressRing2.AnimationFPS = 120
+        ProgressRing2.AnimationStyle = ProgressRing.StyleEnum.Win10
+        ProgressRing2.AutoStart = False
+        ProgressRing2.Dock = DockStyle.Left
+        ProgressRing2.Location = New Point(0, 0)
+        ProgressRing2.Name = "ProgressRing2"
+        ProgressRing2.RingThickness = 8F
+        ProgressRing2.Size = New Size(50, 50)
+        ProgressRing2.TabIndex = 40
         ' 
         ' Label5
         ' 
         Label5.AutoSize = True
         Label5.Dock = DockStyle.Top
         Label5.Font = New Font("Microsoft YaHei UI", 10F)
-        Label5.Location = New Point(20, 231)
+        Label5.Location = New Point(20, 220)
         Label5.Name = "Label5"
-        Label5.Padding = New Padding(0, 10, 0, 10)
-        Label5.Size = New Size(101, 40)
-        Label5.TabIndex = 45
-        Label5.Text = "其 Text 的值为"
+        Label5.Padding = New Padding(0, 20, 0, 10)
+        Label5.Size = New Size(88, 50)
+        Label5.TabIndex = 42
+        Label5.Text = "Win 10 样式"
         ' 
-        ' HtmlColorLabel1
+        ' Panel2
         ' 
-        HtmlColorLabel1.AutoSize = True
-        HtmlColorLabel1.AutoSizeMode = AutoSizeMode.GrowAndShrink
-        HtmlColorLabel1.Dock = DockStyle.Top
-        HtmlColorLabel1.Font = New Font("微软雅黑", 10.2F, FontStyle.Regular, GraphicsUnit.Point, CByte(134))
-        HtmlColorLabel1.Location = New Point(20, 170)
-        HtmlColorLabel1.Margin = New Padding(2)
-        HtmlColorLabel1.Name = "HtmlColorLabel1"
-        HtmlColorLabel1.Padding = New Padding(10)
-        HtmlColorLabel1.Size = New Size(672, 61)
-        HtmlColorLabel1.TabIndex = 44
-        HtmlColorLabel1.Text = "HtmlColorLabel1 <span style=""color:Green"">这是专用于显示高亮文字的标签控件</span> <span style=""color:CornflowerBlue"">直接写 HTML 的文字颜色标记即可</span> <span style=""color:IndianRed"">支持 HTML 自身颜色、十六进制、RGB、RGBA、HSL</span>"
+        Panel2.Controls.Add(ProgressRing1)
+        Panel2.Dock = DockStyle.Top
+        Panel2.Location = New Point(20, 170)
+        Panel2.Name = "Panel2"
+        Panel2.Size = New Size(686, 50)
+        Panel2.TabIndex = 41
+        ' 
+        ' ProgressRing1
+        ' 
+        ProgressRing1.AnimationDuration = 3000
+        ProgressRing1.AnimationFPS = 120
+        ProgressRing1.AutoStart = False
+        ProgressRing1.Dock = DockStyle.Left
+        ProgressRing1.Location = New Point(0, 0)
+        ProgressRing1.Name = "ProgressRing1"
+        ProgressRing1.RingThickness = 8F
+        ProgressRing1.Size = New Size(50, 50)
+        ProgressRing1.TabIndex = 40
         ' 
         ' Label6
         ' 
@@ -124,9 +194,9 @@ Partial Class Form_HtmlColorLabel
         Label6.Location = New Point(20, 120)
         Label6.Name = "Label6"
         Label6.Padding = New Padding(0, 20, 0, 10)
-        Label6.Size = New Size(65, 50)
-        Label6.TabIndex = 38
-        Label6.Text = "示例效果"
+        Label6.Size = New Size(88, 50)
+        Label6.TabIndex = 39
+        Label6.Text = "Win 11 样式"
         ' 
         ' Panel1
         ' 
@@ -140,7 +210,7 @@ Partial Class Form_HtmlColorLabel
         Panel1.Dock = DockStyle.Top
         Panel1.Location = New Point(20, 70)
         Panel1.Name = "Panel1"
-        Panel1.Size = New Size(672, 50)
+        Panel1.Size = New Size(686, 50)
         Panel1.TabIndex = 35
         ' 
         ' ModernButton4
@@ -176,13 +246,14 @@ Partial Class Form_HtmlColorLabel
         ModernButton3.BorderSize = 0
         ModernButton3.Dock = DockStyle.Left
         ModernButton3.Font = New Font("Microsoft YaHei UI", 10.8F, FontStyle.Bold, GraphicsUnit.Point, CByte(134))
+        ModernButton3.ForeColor = Color.Orchid
         ModernButton3.Location = New Point(296, 0)
         ModernButton3.Margin = New Padding(2)
         ModernButton3.Name = "ModernButton3"
         ModernButton3.Size = New Size(120, 50)
         ModernButton3.SubText = "动画支持"
         ModernButton3.TabIndex = 4
-        ModernButton3.Text = "无"
+        ModernButton3.Text = "全程动画"
         ModernButton3.TextAlign = ModernButton.TextAlignEnum.Left
         ' 
         ' Label3
@@ -207,7 +278,7 @@ Partial Class Form_HtmlColorLabel
         ModernButton2.Size = New Size(160, 50)
         ModernButton2.SubText = "技术偏好"
         ModernButton2.TabIndex = 2
-        ModernButton2.Text = "拿来科技"
+        ModernButton2.Text = "微软科技"
         ModernButton2.TextAlign = ModernButton.TextAlignEnum.Left
         ' 
         ' Label2
@@ -244,23 +315,26 @@ Partial Class Form_HtmlColorLabel
         Label1.Location = New Point(20, 20)
         Label1.Name = "Label1"
         Label1.Padding = New Padding(0, 0, 0, 20)
-        Label1.Size = New Size(474, 50)
+        Label1.Size = New Size(343, 50)
         Label1.TabIndex = 34
-        Label1.Text = "支持 HTML 颜色标记的标签 HtmlColorLabel"
+        Label1.Text = "无进度的加载动画 ProgressRing"
         ' 
-        ' Form_HtmlColorLabel
+        ' Form_ProgressRing
         ' 
         AutoScaleDimensions = New SizeF(96F, 96F)
         AutoScaleMode = AutoScaleMode.Dpi
         BackColor = Color.FromArgb(CByte(36), CByte(36), CByte(36))
-        ClientSize = New Size(712, 586)
+        ClientSize = New Size(726, 654)
         Controls.Add(ModernPanel1)
-        Font = New Font("Microsoft YaHei UI", 10.2F, FontStyle.Regular, GraphicsUnit.Point, CByte(134))
+        Font = New Font("Microsoft YaHei UI", 10F)
         ForeColor = Color.Silver
-        Name = "Form_HtmlColorLabel"
-        Text = "Form_HtmlColorLabel"
+        Name = "Form_ProgressRing"
+        Text = "Form_ProgressRing"
         ModernPanel1.ResumeLayout(False)
         ModernPanel1.PerformLayout()
+        Panel7.ResumeLayout(False)
+        Panel3.ResumeLayout(False)
+        Panel2.ResumeLayout(False)
         Panel1.ResumeLayout(False)
         ResumeLayout(False)
     End Sub
@@ -276,8 +350,14 @@ Partial Class Form_HtmlColorLabel
     Friend WithEvents Label2 As Label
     Friend WithEvents ModernButton1 As ModernButton
     Friend WithEvents Label1 As Label
+    Friend WithEvents Panel3 As Panel
+    Friend WithEvents ProgressRing2 As ProgressRing
     Friend WithEvents Label5 As Label
-    Friend WithEvents HtmlColorLabel1 As HtmlColorLabel
-    Friend WithEvents ModernTextBox1 As ModernTextBox
+    Friend WithEvents Panel2 As Panel
+    Friend WithEvents ProgressRing1 As ProgressRing
     Friend WithEvents Label7 As Label
+    Friend WithEvents Panel7 As Panel
+    Friend WithEvents ModernButton6 As ModernButton
+    Friend WithEvents Label11 As Label
+    Friend WithEvents ModernButton5 As ModernButton
 End Class

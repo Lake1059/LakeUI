@@ -398,7 +398,7 @@ Public Class ModernColorDialog
             polyPoints(i) = CIExyToPixel(_polyX(i), _polyY(i), w, h)
         Next
         Using g = Graphics.FromImage(bmp)
-            g.SmoothingMode = SmoothingMode.AntiAlias
+            g.SmoothingMode = Class1.GlobalSmoothingMode
             Using pen As New Pen(Color.FromArgb(140, 200, 200, 200), 1.0F)
                 g.DrawPolygon(pen, polyPoints)
             End Using
@@ -444,7 +444,7 @@ Public Class ModernColorDialog
         End Using
 
         Using pen As New Pen(Color.FromArgb(120, invColor), 1.0F)
-            g.SmoothingMode = SmoothingMode.AntiAlias
+            g.SmoothingMode = Class1.GlobalSmoothingMode
             g.DrawEllipse(pen, px - crossSize, py - crossSize, crossSize * 2, crossSize * 2)
         End Using
     End Sub

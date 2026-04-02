@@ -1,13 +1,16 @@
 ﻿<Global.Microsoft.VisualBasic.CompilerServices.DesignerGenerated()> _
-Partial Class HtmlColorLabel
+Partial Class ModernCheckBox
     Inherits System.Windows.Forms.UserControl
 
     'UserControl 重写释放以清理组件列表。
     <System.Diagnostics.DebuggerNonUserCode()> _
     Protected Overrides Sub Dispose(ByVal disposing As Boolean)
         Try
-            If disposing AndAlso components IsNot Nothing Then
-                components.Dispose()
+            If disposing Then
+                动画助手?.Dispose()
+                If components IsNot Nothing Then
+                    components.Dispose()
+                End If
             End If
         Finally
             MyBase.Dispose(disposing)
@@ -24,14 +27,13 @@ Partial Class HtmlColorLabel
     Private Sub InitializeComponent()
         SuspendLayout()
         ' 
-        ' HtmlColorLabel
+        ' ModernCheckBox
         ' 
-        AutoScaleDimensions = New SizeF(96F, 96F)
+        AutoScaleDimensions = New SizeF(96.0F, 96.0F)
         AutoScaleMode = AutoScaleMode.Dpi
         DoubleBuffered = True
-        Margin = New Padding(2, 2, 2, 2)
-        Name = "HtmlColorLabel"
-        Size = New Size(120, 120)
+        Name = "ModernCheckBox"
+        Size = New Size(150, 40)
         ResumeLayout(False)
     End Sub
 

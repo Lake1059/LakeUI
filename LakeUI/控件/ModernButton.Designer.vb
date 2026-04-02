@@ -8,6 +8,7 @@ Partial Class ModernButton
         Try
             If disposing Then
                 动画助手?.Dispose()
+                长按动画助手?.Dispose()
                 If components IsNot Nothing Then
                     components.Dispose()
                 End If

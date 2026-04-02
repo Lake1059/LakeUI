@@ -6,7 +6,7 @@ Public Class ModernButton
 #Region "绘制"
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
         Dim 是否有圆角 As Boolean = 边框圆角半径 > 0
-        Dim 极限矩形区域 As New RectangleF(0, 0, Me.Width - 1, Me.Height - 1)
+        Dim 极限矩形区域 As New RectangleF(0, 0, Me.Width, Me.Height)
         If 边框宽度 > 0 Then
             Dim half As Single = 边框宽度 * DpiScale() / 2.0F
             极限矩形区域.Inflate(-half, -half)
@@ -23,8 +23,8 @@ Public Class ModernButton
                     g.ScaleTransform(_ssaa, _ssaa)
                     绘制图形内容(g, 是否有圆角, 极限矩形区域, 内容矩形区域)
                 End Using
-                e.Graphics.CompositingQuality = CompositingQuality.HighQuality
-                e.Graphics.InterpolationMode = InterpolationMode.HighQualityBicubic
+                e.Graphics.CompositingQuality = Class1.GlobalCompositingQuality
+                e.Graphics.InterpolationMode = Class1.GlobalInterpolationMode
                 e.Graphics.DrawImage(bmp, 0, 0, Me.Width, Me.Height)
             End Using
         Else
@@ -36,11 +36,15 @@ Public Class ModernButton
                 e.Graphics.FillRectangle(brush, 0, 0, Me.Width, Me.Height)
             End Using
         End If
+        If 长按正在进行 AndAlso 长按动画助手.Progress >= 1.0F Then
+            长按正在进行 = False
+            BeginInvoke(Sub() MyBase.OnClick(EventArgs.Empty))
+        End If
     End Sub
     Private Sub 绘制图形内容(g As Graphics, 是否有圆角 As Boolean, 极限矩形区域 As RectangleF, 内容矩形区域 As RectangleF)
-        g.SmoothingMode = SmoothingMode.AntiAlias
-        g.PixelOffsetMode = PixelOffsetMode.HighQuality
-        g.InterpolationMode = InterpolationMode.HighQualityBicubic
+        g.SmoothingMode = Class1.GlobalSmoothingMode
+        g.PixelOffsetMode = Class1.GlobalPixelOffsetMode
+        g.InterpolationMode = Class1.GlobalInterpolationMode
         Dim 背景颜色缓存值 As Color
         Dim 渐变颜色缓存值 As Color
         Dim 边框颜色缓存值 As Color
@@ -58,10 +62,14 @@ Public Class ModernButton
         If 是否有圆角 Then
             Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(极限矩形区域, 边框圆角半径 * s)
                 RectangleRenderer.绘制圆角背景(g, path, 极限矩形区域, 背景颜色缓存值, 渐变颜色缓存值, 渐变方向)
+                绘制背景图片(g, 极限矩形区域, path)
+                绘制长按遮罩(g, 极限矩形区域, path)
                 RectangleRenderer.绘制圆角边框(g, path, 边框颜色缓存值, 边框宽度 * s)
             End Using
         Else
             RectangleRenderer.绘制矩形背景(g, 极限矩形区域, 背景颜色缓存值, 渐变颜色缓存值, 渐变方向)
+            绘制背景图片(g, 极限矩形区域, Nothing)
+            绘制长按遮罩(g, 极限矩形区域, Nothing)
             RectangleRenderer.绘制矩形边框(g, 极限矩形区域, 边框颜色缓存值, 边框宽度 * s)
         End If
         绘制图标(g, 内容矩形区域)
@@ -118,6 +126,42 @@ Public Class ModernButton
         Return Math.Clamp(CInt(a + (b - a) * t), 0, 255)
     End Function
 
+    Private Sub 绘制背景图片(g As Graphics, 极限矩形区域 As RectangleF, clipPath As GraphicsPath)
+        If 背景图片 Is Nothing Then Return
+        Dim oldClip As Region = g.Clip
+        If clipPath IsNot Nothing Then
+            g.SetClip(clipPath, CombineMode.Intersect)
+        Else
+            g.SetClip(极限矩形区域, CombineMode.Intersect)
+        End If
+        g.DrawImage(背景图片, Rectangle.Round(极限矩形区域))
+        g.Clip = oldClip
+    End Sub
+    Private Sub 绘制长按遮罩(g As Graphics, 极限矩形区域 As RectangleF, clipPath As GraphicsPath)
+        If Not 长按确认已启用 Then Return
+        Dim progress As Single = 长按动画助手.Progress
+        If progress < 0.001F Then Return
+        Dim maskRect As RectangleF
+        If 长按遮罩方向 = HoldClickDirectionEnum.LeftToRight Then
+            maskRect = New RectangleF(极限矩形区域.X, 极限矩形区域.Y, 极限矩形区域.Width * progress, 极限矩形区域.Height)
+        Else
+            Dim w As Single = 极限矩形区域.Width * progress
+            maskRect = New RectangleF(极限矩形区域.Right - w, 极限矩形区域.Y, w, 极限矩形区域.Height)
+        End If
+        Dim state = g.Save()
+        If clipPath IsNot Nothing Then
+            g.SetClip(clipPath, CombineMode.Intersect)
+        End If
+        g.SetClip(maskRect, CombineMode.Intersect)
+        Using brush As New SolidBrush(长按遮罩颜色)
+            If clipPath IsNot Nothing Then
+                g.FillPath(brush, clipPath)
+            Else
+                g.FillRectangle(brush, 极限矩形区域)
+            End If
+        End Using
+        g.Restore(state)
+    End Sub
     Private Sub 绘制图标(g As Graphics, 内容矩形区域 As RectangleF)
         If 图标 Is Nothing Then Return
         Dim iconSize As Single = 计算图标占用的水平宽度(内容矩形区域)
@@ -173,10 +217,17 @@ Public Class ModernButton
     End Enum
     Private 鼠标状态 As MouseStateEnum = MouseStateEnum.Normal
     Private ReadOnly 动画助手 As New AnimationHelper(Me)
+    Private ReadOnly 长按动画助手 As New AnimationHelper(Me) With {.EasingMode = AnimationHelper.EasingModeEnum.EaseInOut, .Duration = 800}
+    Private 长按正在进行 As Boolean = False
     Private 颜色动画已启用 As Boolean = False
     Private 动画前背景颜色 As Color
     Private 动画前渐变颜色 As Color
     Private 动画前边框颜色 As Color
+    Protected Overrides Sub OnClick(e As EventArgs)
+        If Not 长按确认已启用 Then
+            MyBase.OnClick(e)
+        End If
+    End Sub
     Protected Overrides Sub OnMouseEnter(e As EventArgs)
         MyBase.OnMouseEnter(e)
         If Not Enabled Then Return
@@ -186,16 +237,31 @@ Public Class ModernButton
         MyBase.OnMouseLeave(e)
         If Not Enabled Then Return
         切换鼠标颜色状态(MouseStateEnum.Normal)
+        If 长按确认已启用 Then
+            长按正在进行 = False
+            长按动画助手.StopAnimation()
+            长按动画助手.SetImmediate(0)
+        End If
     End Sub
     Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
         MyBase.OnMouseDown(e)
         If Not Enabled Then Return
         切换鼠标颜色状态(MouseStateEnum.Pressed)
+        If 长按确认已启用 Then
+            长按正在进行 = True
+            长按动画助手.SetImmediate(0)
+            长按动画助手.AnimateTo(1)
+        End If
     End Sub
     Protected Overrides Sub OnMouseUp(e As MouseEventArgs)
         MyBase.OnMouseUp(e)
         If Not Enabled Then Return
         切换鼠标颜色状态(If(ClientRectangle.Contains(e.Location), MouseStateEnum.Hover, MouseStateEnum.Normal))
+        If 长按确认已启用 Then
+            长按正在进行 = False
+            长按动画助手.StopAnimation()
+            长按动画助手.SetImmediate(0)
+        End If
     End Sub
     Protected Overrides Sub OnEnabledChanged(e As EventArgs)
         MyBase.OnEnabledChanged(e)
@@ -203,6 +269,9 @@ Public Class ModernButton
             鼠标状态 = MouseStateEnum.Normal
             颜色动画已启用 = False
             动画助手.StopAnimation()
+            长按正在进行 = False
+            长按动画助手.StopAnimation()
+            长按动画助手.SetImmediate(0)
         End If
         Me.Invalidate()
     End Sub
@@ -318,6 +387,16 @@ Public Class ModernButton
         End Get
         Set(value As Orientation)
             SetValue(渐变方向, value)
+        End Set
+    End Property
+    Private 背景图片 As Image = Nothing
+    <Category("LakeUI"), Description("背景图片"), DefaultValue(GetType(Image), ""), Browsable(True)>
+    Public Property BackImage As Image
+        Get
+            Return 背景图片
+        End Get
+        Set(value As Image)
+            SetValue(背景图片, value)
         End Set
     End Property
 #End Region
@@ -489,6 +568,66 @@ Public Class ModernButton
         End Get
         Set(value As Color)
             SetValue(鼠标按下时边框颜色, value)
+        End Set
+    End Property
+#End Region
+
+#Region "长按确认属性"
+    Public Enum HoldClickDirectionEnum
+        LeftToRight
+        RightToLeft
+    End Enum
+
+    Private 长按确认已启用 As Boolean = False
+    <Category("LakeUI"), Description("启用长按确认模式，按住一定时间后才触发 Click"), DefaultValue(False), Browsable(True)>
+    Public Property HoldClickEnabled As Boolean
+        Get
+            Return 长按确认已启用
+        End Get
+        Set(value As Boolean)
+            SetValue(长按确认已启用, value)
+        End Set
+    End Property
+
+    <Category("LakeUI"), Description("长按确认动画时长（毫秒）"), DefaultValue(800), Browsable(True)>
+    Public Property HoldClickDuration As Integer
+        Get
+            Return 长按动画助手.Duration
+        End Get
+        Set(value As Integer)
+            长按动画助手.Duration = Math.Max(0, value)
+        End Set
+    End Property
+
+    <Category("LakeUI"), Description("长按确认动画帧率"), DefaultValue(60), Browsable(True)>
+    Public Property HoldClickFPS As Integer
+        Get
+            Return 长按动画助手.FPS
+        End Get
+        Set(value As Integer)
+            长按动画助手.FPS = Math.Max(0, value)
+        End Set
+    End Property
+
+    Private 长按遮罩颜色 As Color = Color.FromArgb(80, 255, 255, 255)
+    <Category("LakeUI"), Description("长按确认遮罩颜色"), DefaultValue(GetType(Color), "80, 255, 255, 255"), Browsable(True)>
+    Public Property HoldClickMaskColor As Color
+        Get
+            Return 长按遮罩颜色
+        End Get
+        Set(value As Color)
+            SetValue(长按遮罩颜色, value)
+        End Set
+    End Property
+
+    Private 长按遮罩方向 As HoldClickDirectionEnum = HoldClickDirectionEnum.LeftToRight
+    <Category("LakeUI"), Description("长按确认遮罩扫过方向"), DefaultValue(GetType(HoldClickDirectionEnum), "LeftToRight"), Browsable(True)>
+    Public Property HoldClickDirection As HoldClickDirectionEnum
+        Get
+            Return 长按遮罩方向
+        End Get
+        Set(value As HoldClickDirectionEnum)
+            SetValue(长按遮罩方向, value)
         End Set
     End Property
 #End Region
