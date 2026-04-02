@@ -919,7 +919,10 @@ Public Class ExcellentTrackBar
         Else
             text = rounded.ToString()
         End If
-        Return text.TrimEnd("0"c).TrimEnd("."c)
+        If text.Contains(".") Then
+            text = text.TrimEnd("0"c).TrimEnd("."c)
+        End If
+        Return text
     End Function
 
     Private Sub 绘制滑块文字(g As Graphics, thumbRect As RectangleF)
@@ -1018,7 +1021,8 @@ Public Class ExcellentTrackBar
         Else
             ratio = (trackRect.Bottom - point.Y) / trackRect.Height
         End If
-        Value = 最小值 + Math.Max(0.0, Math.Min(1.0, ratio)) * range
+        Dim rawVal As Double = 最小值 + Math.Max(0.0, Math.Min(1.0, ratio)) * range
+        Value = Math.Round((rawVal - 最小值) / 小步进值) * 小步进值 + 最小值
     End Sub
 
     Protected Overrides Sub OnKeyDown(e As KeyEventArgs)
