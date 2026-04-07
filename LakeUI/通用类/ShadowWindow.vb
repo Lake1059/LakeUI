@@ -83,6 +83,7 @@ Friend Class ShadowWindow
 #End Region
 
     Private _lastHostSize As Size
+    Private _globalAlpha As Byte = 255
 
     Public Sub New()
         Me.FormBorderStyle = FormBorderStyle.None
@@ -154,6 +155,28 @@ Friend Class ShadowWindow
     ''' <summary>强制下次 UpdateShadow 时重新渲染。</summary>
     Public Sub ForceReset()
         _lastHostSize = Size.Empty
+    End Sub
+
+    <DllImport("user32.dll", EntryPoint:="UpdateLayeredWindow")>
+    Private Shared Function UpdateLayeredWindowBlend(
+        hwnd As IntPtr, hdcDst As IntPtr,
+        pptDst As IntPtr, psize As IntPtr,
+        hdcSrc As IntPtr, pptSrc As IntPtr,
+        crKey As Integer, ByRef pblend As BLENDFUNCTION,
+        dwFlags As Integer) As Boolean
+    End Function
+
+    ''' <summary>设置阴影窗口的全局透明度乘数（0=完全透明，255=完全不透明）。</summary>
+    Public Sub SetGlobalAlpha(alpha As Byte)
+        _globalAlpha = alpha
+        Dim blend As New BLENDFUNCTION() With {
+            .BlendOp = AC_SRC_OVER,
+            .BlendFlags = 0,
+            .SourceConstantAlpha = alpha,
+            .AlphaFormat = AC_SRC_ALPHA
+        }
+        UpdateLayeredWindowBlend(Me.Handle, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero,
+                                 IntPtr.Zero, IntPtr.Zero, 0, blend, ULW_ALPHA)
     End Sub
 
     ''' <summary>渲染阴影位图（预乘 Alpha）。</summary>
@@ -230,7 +253,7 @@ Friend Class ShadowWindow
             Dim blend As New BLENDFUNCTION() With {
                 .BlendOp = AC_SRC_OVER,
                 .BlendFlags = 0,
-                .SourceConstantAlpha = 255,
+                .SourceConstantAlpha = _globalAlpha,
                 .AlphaFormat = AC_SRC_ALPHA
             }
             UpdateLayeredWindow(Me.Handle, screenDC, ptDst, sz, memDC, ptSrc, 0, blend, ULW_ALPHA)

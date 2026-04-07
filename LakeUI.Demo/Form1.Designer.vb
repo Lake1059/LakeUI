@@ -206,9 +206,11 @@ Partial Class Form1
         ThisIsYourWindow1.CloseButtonGlyphColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
         ThisIsYourWindow1.IconPaddingLeft = 15
         ThisIsYourWindow1.IconSize = 20
+        ThisIsYourWindow1.CloseAnimation = ThisIsYourWindow.WindowCloseAnimationMode.DWM
+        ThisIsYourWindow1.ShowAnimation = ThisIsYourWindow.WindowShowAnimationMode.DWM
         ThisIsYourWindow1.ResizeBorderWidth = 10
-        ThisIsYourWindow1.ShadowColor = Color.MediumPurple
-        ThisIsYourWindow1.ShadowEnabled = True
+        ThisIsYourWindow1.LayerShadowColor = Color.MediumPurple
+        ThisIsYourWindow1.ShadowMode = ThisIsYourWindow.ShadowModeEnum.Layer
         ThisIsYourWindow1.TitleAlign = ThisIsYourWindow.TitleAlignEnum.Center
         ' 
         ' Form1

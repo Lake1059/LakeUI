@@ -50,6 +50,7 @@ Public Class ThisIsYourWindow
     Private Const SWP_NOSIZE As Integer = &H1
     Private Const SWP_NOZORDER As Integer = &H4
 
+    Private Const DWMWA_TRANSITIONS_FORCEDISABLED As Integer = 3
     Private Const DWMWA_WINDOW_CORNER_PREFERENCE As Integer = 33
     Private Const DWMWA_BORDER_COLOR As Integer = 34
     Private Const DWMWA_COLOR_NONE As Integer = &HFFFFFFFE
@@ -62,11 +63,14 @@ Public Class ThisIsYourWindow
     End Enum
 
     Private Const GWL_STYLE As Integer = -16
+    Private Const GWL_EXSTYLE As Integer = -20
     Private Const WS_CAPTION As Integer = &HC00000
     Private Const WS_THICKFRAME As Integer = &H40000
     Private Const WS_MINIMIZEBOX As Integer = &H20000
     Private Const WS_MAXIMIZEBOX As Integer = &H10000
     Private Const WS_SYSMENU As Integer = &H80000
+    Private Const WS_EX_LAYERED As Integer = &H80000
+    Private Const LWA_ALPHA As Integer = &H2
 
     <DllImport("user32.dll", EntryPoint:="SetWindowLongPtrW")>
     Private Shared Function SetWindowLongPtr(hWnd As IntPtr, nIndex As Integer, dwNewLong As IntPtr) As IntPtr
@@ -103,6 +107,11 @@ Public Class ThisIsYourWindow
     Private Shared Function ReleaseCapture() As <MarshalAs(UnmanagedType.Bool)> Boolean
     End Function
 
+    <DllImport("user32.dll")>
+    Private Shared Function SetLayeredWindowAttributes(hWnd As IntPtr, crKey As Integer,
+                                                       bAlpha As Byte, dwFlags As Integer) As <MarshalAs(UnmanagedType.Bool)> Boolean
+    End Function
+
     <StructLayout(LayoutKind.Sequential)>
     Private Structure RECT
         Public Left, Top, Right, Bottom As Integer
@@ -135,6 +144,10 @@ Public Class ThisIsYourWindow
         Public CloseRect, MaxRect, MinRect, IconRect As Rectangle
         Public ShadowForm As ShadowWindow
         Public IsInSizeMove As Boolean = False
+        Public AnimatingShow As Boolean = False
+        Public AnimatingClose As Boolean = False
+        Public OriginalOpacity As Double = 1.0
+        Public PendingFirstPaintRestore As Boolean = False
         Public Sub New(form As Form)
             HostForm = form
         End Sub
@@ -169,6 +182,24 @@ Public Class ThisIsYourWindow
         Custom = 2
     End Enum
 
+    Public Enum WindowShowAnimationMode
+        None = 0
+        DWM = 1
+        Win32 = 2
+    End Enum
+
+    Public Enum WindowCloseAnimationMode
+        None = 0
+        DWM = 1
+        Win32 = 2
+    End Enum
+
+    Public Enum ShadowModeEnum
+        None = 0
+        DWM = 1
+        Layer = 2
+    End Enum
+
 #End Region
 
 #Region "通用辅助"
@@ -193,7 +224,18 @@ Public Class ThisIsYourWindow
 
     Private Sub 宿主窗口_Paint(sender As Object, e As PaintEventArgs)
         Dim frm = TryCast(sender, Form)
-        If frm IsNot Nothing Then PaintWindow(e.Graphics, frm)
+        If frm Is Nothing Then Return
+        PaintWindow(e.Graphics, frm)
+        Dim s = 查找状态(frm)
+        If s IsNot Nothing AndAlso s.PendingFirstPaintRestore Then
+            s.PendingFirstPaintRestore = False
+            If s.AnimatingShow Then
+                开始渐入动画(s)
+            Else
+                Dim alphaByte As Byte = CByte(Math.Min(255, Math.Max(0, CInt(Math.Round(s.OriginalOpacity * 255)))))
+                SetLayeredWindowAttributes(frm.Handle, 0, alphaByte, LWA_ALPHA)
+            End If
+        End If
     End Sub
 
     Private Sub 宿主窗口_FormClosed(sender As Object, e As FormClosedEventArgs)
@@ -208,6 +250,38 @@ Public Class ThisIsYourWindow
             s.OriginalPadding.Top + _标题栏高度,
             s.OriginalPadding.Right + _边框厚度,
             s.OriginalPadding.Bottom + _边框厚度)
+    End Sub
+
+    Friend Sub 开始渐入动画(s As PerFormState)
+        If s Is Nothing OrElse Not s.AnimatingShow Then Return
+        Dim frm = s.HostForm
+        Dim targetAlpha As Integer = CInt(Math.Round(s.OriginalOpacity * 255))
+        Dim syncShadow As Boolean = (_阴影模式 = ShadowModeEnum.Layer) AndAlso s.ShadowForm IsNot Nothing
+        Dim duration As Integer = _动画持续时间
+        Dim t As New Timer() With {.Interval = 15}
+        Dim elapsed As Integer = 0
+        AddHandler t.Tick, Sub(sender, ev)
+                               elapsed += 15
+                               Dim ratio As Double = Math.Min(1.0, elapsed / CDbl(duration))
+                               If Not s.AnimatingShow OrElse elapsed >= duration OrElse frm.IsDisposed Then
+                                   t.Stop() : t.Dispose()
+                                   s.AnimatingShow = False
+                                   If Not frm.IsDisposed Then
+                                       SetLayeredWindowAttributes(frm.Handle, 0, CByte(targetAlpha), LWA_ALPHA)
+                                       If syncShadow AndAlso s.ShadowForm IsNot Nothing Then
+                                           s.ShadowForm.SetGlobalAlpha(255)
+                                       End If
+                                       更新阴影(s)
+                                   End If
+                               Else
+                                   Dim alpha As Byte = CByte(CInt(Math.Round(targetAlpha * ratio)))
+                                   SetLayeredWindowAttributes(frm.Handle, 0, alpha, LWA_ALPHA)
+                                   If syncShadow AndAlso s.ShadowForm IsNot Nothing Then
+                                       s.ShadowForm.SetGlobalAlpha(CByte(CInt(Math.Round(255 * ratio))))
+                                   End If
+                               End If
+                           End Sub
+        t.Start()
     End Sub
 
 #End Region
@@ -682,64 +756,48 @@ Public Class ThisIsYourWindow
 
 #End Region
 
-#Region "属性 - 原生框架"
+#Region "属性 - 阴影"
 
-    Private _使用原生阴影 As Boolean = False
+    Private _阴影模式 As ShadowModeEnum = ShadowModeEnum.None
     ''' <summary>
-    ''' 控制是否保留 WS_CAPTION 以获取 DWM 原生窗口阴影。
-    ''' True — 保留 WS_CAPTION，可获得 DWM 阴影与贴靠动画，但 DWM 可能在左上角/右上角产生透明圆角伪影。
-    ''' False（默认）— 移除 WS_CAPTION，无 DWM 阴影但窗口角落干净，可搭配 ShadowEnabled 使用自定义阴影。
+    ''' 窗口阴影模式。
+    ''' None — 无阴影，移除 WS_CAPTION 以避免透明圆角伪影。
+    ''' DWM — 保留 WS_CAPTION 以获取 DWM 原生窗口阴影（可能在角落产生透明圆角伪影）。
+    ''' Layer — 移除 WS_CAPTION，使用自定义分层窗口阴影。
     ''' </summary>
-    <Category("LakeUI"), Description("保留 DWM 原生阴影 (True) 或移除以避免透明圆角伪影 (False)。"), DefaultValue(False)>
-    Public Property UseNativeShadow As Boolean
+    <Category("LakeUI"), Description("窗口阴影模式：None 无阴影、DWM 原生阴影、Layer 自定义分层窗口阴影。"), DefaultValue(GetType(ShadowModeEnum), "None")>
+    Public Property ShadowMode As ShadowModeEnum
         Get
-            Return _使用原生阴影
+            Return _阴影模式
         End Get
-        Set(value As Boolean)
-            If _使用原生阴影 = value Then Return
-            _使用原生阴影 = value
+        Set(value As ShadowModeEnum)
+            If _阴影模式 = value Then Return
+            _阴影模式 = value
             For Each s In _forms.Values
                 Dim hWnd = s.HostForm.Handle
                 Dim style As Long = GetWindowLongPtr(hWnd, GWL_STYLE).ToInt64()
-                If value Then
+                If value = ShadowModeEnum.DWM Then
                     style = style Or WS_CAPTION
                 Else
-                    style = style And Not CLng(WS_CAPTION)
+                    style = style And Not WS_CAPTION
                 End If
                 SetWindowLongPtr(hWnd, GWL_STYLE, New IntPtr(style))
                 SetWindowPos(hWnd, IntPtr.Zero, 0, 0, 0, 0,
-                             CUInt(SWP_FRAMECHANGED Or SWP_NOMOVE Or SWP_NOSIZE Or SWP_NOZORDER))
+                             SWP_FRAMECHANGED Or SWP_NOMOVE Or SWP_NOSIZE Or SWP_NOZORDER)
+                更新阴影(s)
                 s.HostForm.Invalidate()
             Next
         End Set
     End Property
 
-#End Region
-
-#Region "属性 - 阴影"
-
-    Private _阴影启用 As Boolean = False
-    <Category("LakeUI"), Description("是否启用自定义窗口阴影。启用后可获得比 DWM 默认更深的阴影效果。"), DefaultValue(False)>
-    Public Property ShadowEnabled As Boolean
+    Private _分层阴影深度 As Integer = 15
+    <Category("LakeUI"), Description("分层阴影的扩展范围（逻辑像素）。值越大阴影越宽越深。仅 ShadowMode = Layer 时生效。"), DefaultValue(15)>
+    Public Property LayerShadowDepth As Integer
         Get
-            Return _阴影启用
-        End Get
-        Set(value As Boolean)
-            _阴影启用 = value
-            For Each s In _forms.Values
-                更新阴影(s)
-            Next
-        End Set
-    End Property
-
-    Private _阴影深度 As Integer = 15
-    <Category("LakeUI"), Description("阴影的扩展范围（逻辑像素）。值越大阴影越宽越深。"), DefaultValue(15)>
-    Public Property ShadowDepth As Integer
-        Get
-            Return _阴影深度
+            Return _分层阴影深度
         End Get
         Set(value As Integer)
-            _阴影深度 = Math.Max(1, value)
+            _分层阴影深度 = Math.Max(1, value)
             For Each s In _forms.Values
                 If s.ShadowForm IsNot Nothing Then s.ShadowForm.ForceReset()
                 更新阴影(s)
@@ -747,14 +805,14 @@ Public Class ThisIsYourWindow
         End Set
     End Property
 
-    Private _阴影颜色 As Color = Color.Black
-    <Category("LakeUI"), Description("阴影颜色。"), DefaultValue(GetType(Color), "Black")>
-    Public Property ShadowColor As Color
+    Private _分层阴影颜色 As Color = Color.Black
+    <Category("LakeUI"), Description("分层阴影颜色。仅 ShadowMode = Layer 时生效。"), DefaultValue(GetType(Color), "Black")>
+    Public Property LayerShadowColor As Color
         Get
-            Return _阴影颜色
+            Return _分层阴影颜色
         End Get
         Set(value As Color)
-            _阴影颜色 = value
+            _分层阴影颜色 = value
             For Each s In _forms.Values
                 If s.ShadowForm IsNot Nothing Then s.ShadowForm.ForceReset()
                 更新阴影(s)
@@ -762,14 +820,14 @@ Public Class ThisIsYourWindow
         End Set
     End Property
 
-    Private _阴影不透明度 As Byte = 80
-    <Category("LakeUI"), Description("阴影的最大不透明度 (0-255)。"), DefaultValue(CByte(80))>
-    Public Property ShadowOpacity As Byte
+    Private _分层阴影不透明度 As Byte = 80
+    <Category("LakeUI"), Description("分层阴影的最大不透明度 (0-255)。仅 ShadowMode = Layer 时生效。"), DefaultValue(CByte(80))>
+    Public Property LayerShadowOpacity As Byte
         Get
-            Return _阴影不透明度
+            Return _分层阴影不透明度
         End Get
         Set(value As Byte)
-            _阴影不透明度 = value
+            _分层阴影不透明度 = value
             For Each s In _forms.Values
                 If s.ShadowForm IsNot Nothing Then s.ShadowForm.ForceReset()
                 更新阴影(s)
@@ -782,7 +840,7 @@ Public Class ThisIsYourWindow
         Dim zoomed As Boolean = (s.HostForm.WindowState = FormWindowState.Maximized)
         Dim minimized As Boolean = (s.HostForm.WindowState = FormWindowState.Minimized)
 
-        If Not _阴影启用 OrElse zoomed OrElse minimized OrElse Not s.HostForm.Visible Then
+        If _阴影模式 <> ShadowModeEnum.Layer OrElse zoomed OrElse minimized OrElse Not s.HostForm.Visible Then
             If s.ShadowForm IsNot Nothing Then
                 s.ShadowForm.Visible = False
             End If
@@ -795,9 +853,13 @@ Public Class ThisIsYourWindow
         End If
 
         Dim bounds = s.HostForm.Bounds
-        s.ShadowForm.UpdateShadow(bounds, _阴影深度, _阴影颜色, _阴影不透明度, s.IsInSizeMove)
+        s.ShadowForm.UpdateShadow(bounds, _分层阴影深度, _分层阴影颜色, _分层阴影不透明度, s.IsInSizeMove)
         s.ShadowForm.PlaceBehind(s.HostForm.Handle)
         If Not s.ShadowForm.Visible Then s.ShadowForm.Visible = True
+
+        If s.AnimatingShow AndAlso _显示动画模式 = WindowShowAnimationMode.Win32 Then
+            s.ShadowForm.SetGlobalAlpha(0)
+        End If
     End Sub
 
     Private Sub 销毁阴影(s As PerFormState)
@@ -807,6 +869,55 @@ Public Class ThisIsYourWindow
             s.ShadowForm = Nothing
         End If
     End Sub
+
+#End Region
+
+#Region "属性 - 动画"
+
+    Private _显示动画模式 As WindowShowAnimationMode = WindowShowAnimationMode.DWM
+    ''' <summary>
+    ''' 窗口出现时的动画方式。
+    ''' DWM（默认）— 使用 DWM 原生窗口出现过渡动画。
+    ''' Win32 — 禁止 DWM 过渡，使用自定义分层窗口透明度渐入动画。
+    ''' None — 无动画，禁止 DWM 过渡以避免白屏闪烁。
+    ''' </summary>
+    <Category("LakeUI"), Description("窗口出现时的动画方式：DWM 原生动画、Win32 自定义渐入或无动画。"), DefaultValue(GetType(WindowShowAnimationMode), "DWM")>
+    Public Property ShowAnimation As WindowShowAnimationMode
+        Get
+            Return _显示动画模式
+        End Get
+        Set(value As WindowShowAnimationMode)
+            _显示动画模式 = value
+        End Set
+    End Property
+
+    Private _关闭动画模式 As WindowCloseAnimationMode = WindowCloseAnimationMode.DWM
+    ''' <summary>
+    ''' 窗口关闭时的动画方式。
+    ''' DWM（默认）— 使用 DWM 原生窗口关闭过渡动画。
+    ''' Win32 — 禁止 DWM 过渡，使用自定义透明度渐出动画。
+    ''' None — 无动画，禁止 DWM 过渡以避免白屏闪烁。
+    ''' </summary>
+    <Category("LakeUI"), Description("窗口关闭时的动画方式：DWM 原生动画、Win32 自定义渐出或无动画。"), DefaultValue(GetType(WindowCloseAnimationMode), "DWM")>
+    Public Property CloseAnimation As WindowCloseAnimationMode
+        Get
+            Return _关闭动画模式
+        End Get
+        Set(value As WindowCloseAnimationMode)
+            _关闭动画模式 = value
+        End Set
+    End Property
+
+    Private _动画持续时间 As Integer = 200
+    <Category("LakeUI"), Description("渐入/渐出动画的持续时间（毫秒）。"), DefaultValue(200)>
+    Public Property AnimationDuration As Integer
+        Get
+            Return _动画持续时间
+        End Get
+        Set(value As Integer)
+            _动画持续时间 = Math.Max(50, value)
+        End Set
+    End Property
 
 #End Region
 
@@ -1100,8 +1211,24 @@ Public Class ThisIsYourWindow
         Dim s As New PerFormState(targetForm) With {.OriginalPadding = targetForm.Padding}
 
         Dim hWnd As IntPtr = targetForm.Handle
+
+        ' ── 第一步：标记与隐藏（通过 P/Invoke 直接操作分层窗口，绝不触碰 Form.Opacity） ──
+        ' Form.Opacity 会触发 AllowTransparency → UpdateStyles() →
+        ' SetWindowLong(GWL_STYLE, CreateParams.Style) 把 WS_CAPTION 写回，
+        ' 导致窗口以默认标题栏出现（白屏）。
+        ' 因此改用 SetLayeredWindowAttributes 直接设置 alpha=0。
+        s.OriginalOpacity = targetForm.Opacity
+        If _显示动画模式 = WindowShowAnimationMode.Win32 Then s.AnimatingShow = True
+        If _显示动画模式 <> WindowShowAnimationMode.DWM Then
+            Dim exStyle As Long = GetWindowLongPtr(hWnd, GWL_EXSTYLE).ToInt64()
+            SetWindowLongPtr(hWnd, GWL_EXSTYLE, New IntPtr(exStyle Or WS_EX_LAYERED))
+            SetLayeredWindowAttributes(hWnd, 0, 0, LWA_ALPHA)
+            s.PendingFirstPaintRestore = True
+        End If
+
+        ' ── 第二步：修改窗口样式 ──
         Dim style As Long = GetWindowLongPtr(hWnd, GWL_STYLE).ToInt64()
-        If _使用原生阴影 Then
+        If _阴影模式 = ShadowModeEnum.DWM Then
             style = style Or WS_CAPTION
         Else
             style = style And Not CLng(WS_CAPTION)
@@ -1109,6 +1236,7 @@ Public Class ThisIsYourWindow
         style = style Or WS_THICKFRAME Or WS_MINIMIZEBOX Or WS_MAXIMIZEBOX Or WS_SYSMENU
         SetWindowLongPtr(hWnd, GWL_STYLE, New IntPtr(style))
 
+        ' ── 第三步：DWM 属性 ──
         Try
             Dim pref As Integer = DWM_WINDOW_CORNER_PREFERENCE.DWMWCP_DONOTROUND
             Dim u1 = DwmSetWindowAttribute(hWnd, DWMWA_WINDOW_CORNER_PREFERENCE, pref, 4)
@@ -1116,12 +1244,18 @@ Public Class ThisIsYourWindow
             Dim u2 = DwmSetWindowAttribute(hWnd, DWMWA_BORDER_COLOR, colorNone, 4)
             Dim margins As MARGINS : margins.Bottom = 1
             Dim u3 = DwmExtendFrameIntoClientArea(hWnd, margins)
+            If _显示动画模式 <> WindowShowAnimationMode.DWM Then
+                Dim disable As Integer = 1
+                DwmSetWindowAttribute(hWnd, DWMWA_TRANSITIONS_FORCEDISABLED, disable, 4)
+            End If
         Catch
         End Try
 
+        ' ── 第四步：注册拦截器 ──
         s.Interceptor = New WindowMessageInterceptor(Me, s)
         _forms(hWnd) = s
 
+        ' ── 第五步：使样式变更生效 ──
         SetWindowPos(hWnd, IntPtr.Zero, 0, 0, 0, 0,
                      CUInt(SWP_FRAMECHANGED Or SWP_NOMOVE Or SWP_NOSIZE Or SWP_NOZORDER))
 
@@ -1156,6 +1290,73 @@ Public Class ThisIsYourWindow
     Public Sub DetachAll()
         For Each s In _forms.Values.ToList()
             Detach(s.HostForm)
+        Next
+    End Sub
+
+    ''' <summary>
+    ''' 强制以当前最新属性重新接管目标窗体。
+    ''' 重新应用窗口样式、DWM 属性、内边距、按钮布局及阴影，并触发重绘。
+    ''' 如果窗体尚未附加，则等同于调用 <see cref="Attach"/>。
+    ''' </summary>
+    Public Sub Refresh(targetForm As Form)
+#If NET5_0 Then
+        If targetForm Is Nothing Then Throw New ArgumentNullException(NameOf(targetForm))
+#Else
+        ArgumentNullException.ThrowIfNull(targetForm)
+#End If
+        If Not targetForm.IsHandleCreated Then Return
+
+        Dim s = 查找状态(targetForm)
+        If s Is Nothing Then
+            Attach(targetForm)
+            Return
+        End If
+
+        Dim hWnd As IntPtr = targetForm.Handle
+
+        ' ── 重新应用窗口样式 ──
+        Dim style As Long = GetWindowLongPtr(hWnd, GWL_STYLE).ToInt64()
+        If _阴影模式 = ShadowModeEnum.DWM Then
+            style = style Or WS_CAPTION
+        Else
+            style = style And Not CLng(WS_CAPTION)
+        End If
+        style = style Or WS_THICKFRAME Or WS_MINIMIZEBOX Or WS_MAXIMIZEBOX Or WS_SYSMENU
+        SetWindowLongPtr(hWnd, GWL_STYLE, New IntPtr(style))
+
+        ' ── 重新应用 DWM 属性 ──
+        Try
+            Dim pref As Integer = DWM_WINDOW_CORNER_PREFERENCE.DWMWCP_DONOTROUND
+            DwmSetWindowAttribute(hWnd, DWMWA_WINDOW_CORNER_PREFERENCE, pref, 4)
+            Dim colorNone As Integer = DWMWA_COLOR_NONE
+            DwmSetWindowAttribute(hWnd, DWMWA_BORDER_COLOR, colorNone, 4)
+            Dim margins As MARGINS : margins.Bottom = 1
+            DwmExtendFrameIntoClientArea(hWnd, margins)
+        Catch
+        End Try
+
+        ' ── 使样式变更生效 ──
+        SetWindowPos(hWnd, IntPtr.Zero, 0, 0, 0, 0,
+                     CUInt(SWP_FRAMECHANGED Or SWP_NOMOVE Or SWP_NOSIZE Or SWP_NOZORDER))
+
+        ' ── 重新计算布局 ──
+        RecalculateButtonBounds(s)
+        更新窗口内边距(s)
+
+        ' ── 重建阴影 ──
+        If s.ShadowForm IsNot Nothing Then s.ShadowForm.ForceReset()
+        更新阴影(s)
+
+        ' ── 强制重绘 ──
+        targetForm.Invalidate()
+    End Sub
+
+    ''' <summary>
+    ''' 强制以当前最新属性重新接管所有已附加的窗体。
+    ''' </summary>
+    Public Sub RefreshAll()
+        For Each s In _forms.Values.ToList()
+            Refresh(s.HostForm)
         Next
     End Sub
 
@@ -1213,6 +1414,8 @@ Public Class ThisIsYourWindow
     Private Const WM_CAPTURECHANGED As Integer = &H215
     Private Const WM_ENTERSIZEMOVE As Integer = &H231
     Private Const WM_EXITSIZEMOVE As Integer = &H232
+    Private Const WM_SHOWWINDOW As Integer = &H18
+    Private Const WM_CLOSE As Integer = &H10
 
     Friend Class WindowMessageInterceptor
         Inherits NativeWindow
@@ -1279,7 +1482,7 @@ Public Class ThisIsYourWindow
 
                 Case WM_SIZE
                     MyBase.WndProc(m)
-                    If Not _owner._使用原生阴影 Then _owner.切换动画样式(_state.HostForm.Handle, False)
+                    If _owner._阴影模式 <> ShadowModeEnum.DWM Then _owner.切换动画样式(_state.HostForm.Handle, False)
                     _owner.RecalculateButtonBounds(_state)
                     _state.HostForm?.Invalidate()
                     _owner.更新阴影(_state)
@@ -1391,6 +1594,68 @@ Public Class ThisIsYourWindow
                         _state.PressedHit = HTNOWHERE
                         _state.HoverHit = HTNOWHERE
                         _owner.InvalidateCaption(_state.HostForm)
+                    End If
+                    MyBase.WndProc(m)
+                    Return
+
+                Case WM_SHOWWINDOW
+                    If m.WParam <> IntPtr.Zero AndAlso _state.PendingFirstPaintRestore Then
+                        ' 最终安全网：显示前确保窗口仍然处于完全透明状态且样式正确
+                        Dim hWnd = _state.HostForm.Handle
+                        Dim exStyle As Long = GetWindowLongPtr(hWnd, GWL_EXSTYLE).ToInt64()
+                        If (exStyle And WS_EX_LAYERED) = 0 Then
+                            SetWindowLongPtr(hWnd, GWL_EXSTYLE, New IntPtr(exStyle Or WS_EX_LAYERED))
+                        End If
+                        SetLayeredWindowAttributes(hWnd, 0, 0, LWA_ALPHA)
+                        If _owner._阴影模式 <> ShadowModeEnum.DWM Then
+                            Dim st As Long = GetWindowLongPtr(hWnd, GWL_STYLE).ToInt64()
+                            If (st And WS_CAPTION) = WS_CAPTION Then
+                                SetWindowLongPtr(hWnd, GWL_STYLE, New IntPtr(st And Not CLng(WS_CAPTION)))
+                            End If
+                        End If
+                    End If
+                    MyBase.WndProc(m)
+                    If m.WParam <> IntPtr.Zero AndAlso _owner._显示动画模式 <> WindowShowAnimationMode.DWM Then
+                        Try
+                            Dim enable As Integer = 0
+                            DwmSetWindowAttribute(_state.HostForm.Handle, DWMWA_TRANSITIONS_FORCEDISABLED, enable, 4)
+                        Catch
+                        End Try
+                    End If
+                    Return
+
+                Case WM_CLOSE
+                    If _owner._关闭动画模式 <> WindowCloseAnimationMode.DWM Then
+                        Try
+                            Dim disable As Integer = 1
+                            DwmSetWindowAttribute(_state.HostForm.Handle, DWMWA_TRANSITIONS_FORCEDISABLED, disable, 4)
+                        Catch
+                        End Try
+                    End If
+                    If _owner._关闭动画模式 = WindowCloseAnimationMode.Win32 AndAlso Not _state.AnimatingClose Then
+                        _state.AnimatingClose = True
+                        _state.AnimatingShow = False
+                        Dim frm = _state.HostForm
+                        Dim origOpacity = frm.Opacity
+                        Dim t As New Timer() With {.Interval = 15}
+                        Dim elapsed As Integer = 0
+                        Dim duration As Integer = _owner._动画持续时间
+                        AddHandler t.Tick, Sub(s, ev)
+                                               elapsed += 15
+                                               If elapsed >= duration OrElse frm.IsDisposed Then
+                                                   frm.Opacity = 0
+                                                   t.Stop() : t.Dispose()
+                                                   frm.Close()
+                                                   If Not frm.IsDisposed Then
+                                                       frm.Opacity = origOpacity
+                                                       _state.AnimatingClose = False
+                                                   End If
+                                               Else
+                                                   frm.Opacity = origOpacity * (1.0 - elapsed / CDbl(duration))
+                                               End If
+                                           End Sub
+                        t.Start()
+                        Return
                     End If
                     MyBase.WndProc(m)
                     Return

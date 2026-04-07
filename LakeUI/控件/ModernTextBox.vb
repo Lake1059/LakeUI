@@ -9,7 +9,7 @@ Public Class ModernTextBox
     Public Shadows Event TextChanged As EventHandler
     Public Event LinkClicked As EventHandler(Of LinkClickedEventArgs)
 
-#Region "ÄÚ²¿Êı¾İ½á¹¹"
+#Region "å†…éƒ¨æ•°æ®ç»“æ„"
     Private Structure TextRun
         Public StartCol As Integer
         Public Length As Integer
@@ -56,9 +56,30 @@ Public Class ModernTextBox
             Me.Url = url
         End Sub
     End Structure
+    Public Structure SyntaxToken
+        Public StartCol As Integer
+        Public Length As Integer
+        Public ForeColor As Color
+        Public Sub New(startCol As Integer, length As Integer, foreColor As Color)
+            Me.StartCol = startCol
+            Me.Length = length
+            Me.ForeColor = foreColor
+        End Sub
+    End Structure
+    Public Structure SyntaxHighlightResult
+        Public Tokens As List(Of SyntaxToken)
+        Public EndState As Integer
+        Public Sub New(tokens As List(Of SyntaxToken), endState As Integer)
+            Me.Tokens = tokens
+            Me.EndState = endState
+        End Sub
+    End Structure
+    Public Interface ISyntaxHighlighter
+        Function HighlightLine(lineIndex As Integer, lineText As String, previousLineState As Integer) As SyntaxHighlightResult
+    End Interface
 #End Region
 
-#Region "×Ö¶Î"
+#Region "å­—æ®µ"
     Private _lines As New List(Of String) From {String.Empty}
     Private _lineRuns As New List(Of List(Of TextRun)) From {Nothing}
     Private _caretLine As Integer = 0
@@ -87,11 +108,21 @@ Public Class ModernTextBox
     Private _underlineFontCache As Font = Nothing
     Private _underlineFontBase As Font = Nothing
     Private _mouseDownLinkText As String = Nothing
+    Private _syntaxHighlighter As ISyntaxHighlighter = Nothing
+    Private _lineStates As New List(Of Integer) From {0}
+    Private å¯ç”¨è¯­æ³•é«˜äº® As Boolean = False
+    Private æ˜¾ç¤ºè¡Œå· As Boolean = False
+    Private è¡Œå·é¢œè‰² As Color = Color.FromArgb(140, 140, 140)
+    Private è¡Œå·èƒŒæ™¯é¢œè‰² As Color = Color.FromArgb(30, 30, 30)
+    Private è¡Œå·å­—ä½“ As Font = Nothing
+    Private è¡Œå·å·¦è· As Integer = 6
+    Private è¡Œå·å³è· As Integer = 8
+    Private è¡Œå·å¯¹é½ As TextAlignMode = TextAlignMode.Right
     Private Shared ReadOnly LinkRegex As New Regex("(https?://|ftp://|www\.)\S+", RegexOptions.IgnoreCase Or RegexOptions.Compiled)
 #End Region
 
-#Region "ÊôĞÔ"
-    <Category("LakeUI"), Description("Ö÷ÒªÎÄ±¾"), DefaultValue(GetType(String), ""), Browsable(True),
+#Region "å±æ€§"
+    <Category("LakeUI"), Description("ä¸»è¦æ–‡æœ¬"), DefaultValue(GetType(String), ""), Browsable(True),
      DesignerSerializationVisibility(DesignerSerializationVisibility.Visible)>
     Public Overrides Property Text As String
         Get
@@ -128,145 +159,145 @@ Public Class ModernTextBox
         Text = String.Empty
     End Sub
 
-    Private ±³¾°ÑÕÉ« As Color = Color.FromArgb(36, 36, 36)
-    <Category("LakeUI"), Description("±³¾°ÑÕÉ«"), DefaultValue(GetType(Color), "36,36,36"), Browsable(True)>
+    Private èƒŒæ™¯é¢œè‰² As Color = Color.FromArgb(36, 36, 36)
+    <Category("LakeUI"), Description("èƒŒæ™¯é¢œè‰²"), DefaultValue(GetType(Color), "36,36,36"), Browsable(True)>
     Public Property BackColor1 As Color
         Get
-            Return ±³¾°ÑÕÉ«
+            Return èƒŒæ™¯é¢œè‰²
         End Get
         Set(value As Color)
-            SetValue(±³¾°ÑÕÉ«, value)
+            SetValue(èƒŒæ™¯é¢œè‰², value)
         End Set
     End Property
 
-    Private ÎÄ±¾ÑÕÉ« As Color = Color.Silver
-    <Category("LakeUI"), Description("ÎÄ±¾ÑÕÉ«"), DefaultValue(GetType(Color), "Silver"), Browsable(True)>
+    Private æ–‡æœ¬é¢œè‰² As Color = Color.Silver
+    <Category("LakeUI"), Description("æ–‡æœ¬é¢œè‰²"), DefaultValue(GetType(Color), "Silver"), Browsable(True)>
     Public Overrides Property ForeColor As Color
         Get
-            Return ÎÄ±¾ÑÕÉ«
+            Return æ–‡æœ¬é¢œè‰²
         End Get
         Set(value As Color)
-            SetValue(ÎÄ±¾ÑÕÉ«, value)
+            SetValue(æ–‡æœ¬é¢œè‰², value)
         End Set
     End Property
 
-    Private ĞĞ¸ß As Integer = 25
-    <Category("LakeUI"), Description("ĞĞ¸ß"), DefaultValue(GetType(Integer), "25"), Browsable(True)>
+    Private è¡Œé«˜ As Integer = 25
+    <Category("LakeUI"), Description("è¡Œé«˜"), DefaultValue(GetType(Integer), "25"), Browsable(True)>
     Public Property LineHeight As Integer
         Get
-            Return ĞĞ¸ß
+            Return è¡Œé«˜
         End Get
         Set(value As Integer)
-            ĞĞ¸ß = Math.Max(10, value)
+            è¡Œé«˜ = Math.Max(10, value)
             UpdateScrollBar()
             Invalidate()
         End Set
     End Property
 
-    Private ¹â±êÏß¿í As Integer = 2
-    <Category("LakeUI"), Description("¹â±êÏß¿í"), DefaultValue(GetType(Integer), "2"), Browsable(True)>
+    Private å…‰æ ‡çº¿å®½ As Integer = 2
+    <Category("LakeUI"), Description("å…‰æ ‡çº¿å®½"), DefaultValue(GetType(Integer), "2"), Browsable(True)>
     Public Property CaretWidth As Integer
         Get
-            Return ¹â±êÏß¿í
+            Return å…‰æ ‡çº¿å®½
         End Get
         Set(value As Integer)
-            ¹â±êÏß¿í = Math.Max(1, value)
+            å…‰æ ‡çº¿å®½ = Math.Max(1, value)
             Invalidate()
         End Set
     End Property
 
-    Private ¹â±êÑÕÉ« As Color = Color.FromArgb(220, 220, 220)
-    <Category("LakeUI"), Description("¹â±êÑÕÉ«"), DefaultValue(GetType(Color), "220, 220, 220"), Browsable(True)>
+    Private å…‰æ ‡é¢œè‰² As Color = Color.FromArgb(220, 220, 220)
+    <Category("LakeUI"), Description("å…‰æ ‡é¢œè‰²"), DefaultValue(GetType(Color), "220, 220, 220"), Browsable(True)>
     Public Property CaretColor As Color
         Get
-            Return ¹â±êÑÕÉ«
+            Return å…‰æ ‡é¢œè‰²
         End Get
         Set(value As Color)
-            SetValue(¹â±êÑÕÉ«, value)
+            SetValue(å…‰æ ‡é¢œè‰², value)
         End Set
     End Property
 
-    Private Ñ¡Çø±³¾°É« As Color = Color.FromArgb(80, 80, 80)
-    <Category("LakeUI"), Description("Ñ¡Çø±³¾°É«"), DefaultValue(GetType(Color), "80, 80, 80"), Browsable(True)>
+    Private é€‰åŒºèƒŒæ™¯è‰² As Color = Color.FromArgb(80, 80, 80)
+    <Category("LakeUI"), Description("é€‰åŒºèƒŒæ™¯è‰²"), DefaultValue(GetType(Color), "80, 80, 80"), Browsable(True)>
     Public Property SelectionColor As Color
         Get
-            Return Ñ¡Çø±³¾°É«
+            Return é€‰åŒºèƒŒæ™¯è‰²
         End Get
         Set(value As Color)
-            SetValue(Ñ¡Çø±³¾°É«, value)
+            SetValue(é€‰åŒºèƒŒæ™¯è‰², value)
         End Set
     End Property
 
-    Private ±ß¿òÑÕÉ« As Color = Color.Gray
-    <Category("LakeUI"), Description("±ß¿òÑÕÉ«"), DefaultValue(GetType(Color), "Gray"), Browsable(True)>
+    Private è¾¹æ¡†é¢œè‰² As Color = Color.Gray
+    <Category("LakeUI"), Description("è¾¹æ¡†é¢œè‰²"), DefaultValue(GetType(Color), "Gray"), Browsable(True)>
     Public Property BorderColor As Color
         Get
-            Return ±ß¿òÑÕÉ«
+            Return è¾¹æ¡†é¢œè‰²
         End Get
         Set(value As Color)
-            SetValue(±ß¿òÑÕÉ«, value)
+            SetValue(è¾¹æ¡†é¢œè‰², value)
         End Set
     End Property
 
-    Private ÓĞ½¹µãÊ±±ß¿òÑÕÉ« As Color = Color.Gray
-    <Category("LakeUI"), Description("ÓĞ½¹µãÊ±±ß¿òÑÕÉ«"), DefaultValue(GetType(Color), "Gray"), Browsable(True)>
+    Private æœ‰ç„¦ç‚¹æ—¶è¾¹æ¡†é¢œè‰² As Color = Color.Gray
+    <Category("LakeUI"), Description("æœ‰ç„¦ç‚¹æ—¶è¾¹æ¡†é¢œè‰²"), DefaultValue(GetType(Color), "Gray"), Browsable(True)>
     Public Property BorderColorFocus As Color
         Get
-            Return ÓĞ½¹µãÊ±±ß¿òÑÕÉ«
+            Return æœ‰ç„¦ç‚¹æ—¶è¾¹æ¡†é¢œè‰²
         End Get
         Set(v As Color)
-            SetValue(ÓĞ½¹µãÊ±±ß¿òÑÕÉ«, v)
+            SetValue(æœ‰ç„¦ç‚¹æ—¶è¾¹æ¡†é¢œè‰², v)
         End Set
     End Property
 
-    Private ±ß¿ò¿í¶È As Integer = 1
-    <Category("LakeUI"), Description("±ß¿ò¿í¶È"), DefaultValue(GetType(Integer), "1"), Browsable(True)>
+    Private è¾¹æ¡†å®½åº¦ As Integer = 1
+    <Category("LakeUI"), Description("è¾¹æ¡†å®½åº¦"), DefaultValue(GetType(Integer), "1"), Browsable(True)>
     Public Property BorderSize As Integer
         Get
-            Return ±ß¿ò¿í¶È
+            Return è¾¹æ¡†å®½åº¦
         End Get
         Set(value As Integer)
-            SetValue(±ß¿ò¿í¶È, value)
+            SetValue(è¾¹æ¡†å®½åº¦, value)
         End Set
     End Property
 
-    Private ±ß¿òÔ²½Ç°ë¾¶ As Integer = 0
-    <Category("LakeUI"), Description("±ß¿òÔ²½Ç°ë¾¶"), DefaultValue(GetType(Integer), "0"), Browsable(True)>
+    Private è¾¹æ¡†åœ†è§’åŠå¾„ As Integer = 0
+    <Category("LakeUI"), Description("è¾¹æ¡†åœ†è§’åŠå¾„"), DefaultValue(GetType(Integer), "0"), Browsable(True)>
     Public Property BorderRadius As Integer
         Get
-            Return ±ß¿òÔ²½Ç°ë¾¶
+            Return è¾¹æ¡†åœ†è§’åŠå¾„
         End Get
         Set(value As Integer)
-            SetValue(±ß¿òÔ²½Ç°ë¾¶, value)
+            SetValue(è¾¹æ¡†åœ†è§’åŠå¾„, value)
         End Set
     End Property
 
-    Private ÆôÓÃ¶àĞĞ As Boolean = False
-    <Category("LakeUI"), Description("ÆôÓÃ¶àĞĞ"), DefaultValue(GetType(Boolean), "False"), Browsable(True)>
+    Private å¯ç”¨å¤šè¡Œ As Boolean = False
+    <Category("LakeUI"), Description("å¯ç”¨å¤šè¡Œ"), DefaultValue(GetType(Boolean), "False"), Browsable(True)>
     Public Property MultiLine As Boolean
         Get
-            Return ÆôÓÃ¶àĞĞ
+            Return å¯ç”¨å¤šè¡Œ
         End Get
         Set(value As Boolean)
-            ÆôÓÃ¶àĞĞ = value
+            å¯ç”¨å¤šè¡Œ = value
             RebuildVisualLines()
             UpdateScrollBar()
             Invalidate()
         End Set
     End Property
 
-    Private ÆôÓÃÖ»¶ÁÄ£Ê½ As Boolean
-    <Category("LakeUI"), Description("ÆôÓÃºó×èÖ¹ÓÃ»§¸ü¸ÄÎÄ±¾"), DefaultValue(GetType(Boolean), "False"), Browsable(True)>
+    Private å¯ç”¨åªè¯»æ¨¡å¼ As Boolean
+    <Category("LakeUI"), Description("å¯ç”¨åé˜»æ­¢ç”¨æˆ·æ›´æ”¹æ–‡æœ¬"), DefaultValue(GetType(Boolean), "False"), Browsable(True)>
     Public Property [ReadOnly] As Boolean
         Get
-            Return ÆôÓÃÖ»¶ÁÄ£Ê½
+            Return å¯ç”¨åªè¯»æ¨¡å¼
         End Get
         Set(value As Boolean)
-            ÆôÓÃÖ»¶ÁÄ£Ê½ = value
+            å¯ç”¨åªè¯»æ¨¡å¼ = value
         End Set
     End Property
 
-    <Description("»ñÈ¡×ÜĞĞÊı"), Browsable(False)>
+    <Description("è·å–æ€»è¡Œæ•°"), Browsable(False)>
     Public ReadOnly Property LineCount As Integer
         Get
             Return _lines.Count
@@ -278,133 +309,262 @@ Public Class ModernTextBox
         Center = 1
         Right = 2
     End Enum
-    Private ÎÄ±¾¶ÔÆë As TextAlignMode = TextAlignMode.Left
-    <Category("LakeUI"), Description("ÎÄ±¾¶ÔÆë·½Ê½£¬½öµ¥ĞĞÄ£Ê½ÉúĞ§"), DefaultValue(TextAlignMode.Left), Browsable(True)>
+    Private æ–‡æœ¬å¯¹é½ As TextAlignMode = TextAlignMode.Left
+    <Category("LakeUI"), Description("æ–‡æœ¬å¯¹é½æ–¹å¼ï¼Œä»…å•è¡Œæ¨¡å¼ç”Ÿæ•ˆ"), DefaultValue(TextAlignMode.Left), Browsable(True)>
     Public Property TextAlign As TextAlignMode
         Get
-            Return ÎÄ±¾¶ÔÆë
+            Return æ–‡æœ¬å¯¹é½
         End Get
         Set(value As TextAlignMode)
-            SetValue(ÎÄ±¾¶ÔÆë, value)
+            SetValue(æ–‡æœ¬å¯¹é½, value)
         End Set
     End Property
 
-    Private Ë®Ó¡ÎÄ±¾ As String = ""
-    <Category("LakeUI"), Description("Ë®Ó¡ÎÄ±¾"), DefaultValue(GetType(String), ""), Browsable(True)>
+    Private æ°´å°æ–‡æœ¬ As String = ""
+    <Category("LakeUI"), Description("æ°´å°æ–‡æœ¬"), DefaultValue(GetType(String), ""), Browsable(True)>
     Public Property WaterText As String
         Get
-            Return Ë®Ó¡ÎÄ±¾
+            Return æ°´å°æ–‡æœ¬
         End Get
         Set(value As String)
-            SetValue(Ë®Ó¡ÎÄ±¾, value)
+            SetValue(æ°´å°æ–‡æœ¬, value)
         End Set
     End Property
 
-    Private Ë®Ó¡ÑÕÉ« As Color = Color.Gray
-    <Category("LakeUI"), Description("Ë®Ó¡ÑÕÉ«"), DefaultValue(GetType(Color), "Gray"), Browsable(True)>
+    Private æ°´å°é¢œè‰² As Color = Color.Gray
+    <Category("LakeUI"), Description("æ°´å°é¢œè‰²"), DefaultValue(GetType(Color), "Gray"), Browsable(True)>
     Public Property WaterTextForeColor As Color
         Get
-            Return Ë®Ó¡ÑÕÉ«
+            Return æ°´å°é¢œè‰²
         End Get
         Set(value As Color)
-            SetValue(Ë®Ó¡ÑÕÉ«, value)
+            SetValue(æ°´å°é¢œè‰², value)
         End Set
     End Property
 
-    Private ¹ö¶¯Ìõ¿í¶È As Integer = 10
-    <Category("LakeUI"), Description("¹ö¶¯Ìõ¿í¶È"), DefaultValue(GetType(Integer), "10"), Browsable(True)>
+    Private æ»šåŠ¨æ¡å®½åº¦ As Integer = 10
+    <Category("LakeUI"), Description("æ»šåŠ¨æ¡å®½åº¦"), DefaultValue(GetType(Integer), "10"), Browsable(True)>
     Public Property ScrollBarWidth As Integer
         Get
-            Return ¹ö¶¯Ìõ¿í¶È
+            Return æ»šåŠ¨æ¡å®½åº¦
         End Get
         Set(value As Integer)
-            ¹ö¶¯Ìõ¿í¶È = Math.Max(2, value)
+            æ»šåŠ¨æ¡å®½åº¦ = Math.Max(2, value)
             Invalidate()
         End Set
     End Property
 
-    Private ¹ö¶¯ÌõÑÕÉ« As Color = Color.FromArgb(140, 140, 140)
-    <Category("LakeUI"), Description("¹ö¶¯Ìõ»¬¿éÑÕÉ«"), DefaultValue(GetType(Color), "140, 140, 140"), Browsable(True)>
+    Private æ»šåŠ¨æ¡é¢œè‰² As Color = Color.FromArgb(140, 140, 140)
+    <Category("LakeUI"), Description("æ»šåŠ¨æ¡æ»‘å—é¢œè‰²"), DefaultValue(GetType(Color), "140, 140, 140"), Browsable(True)>
     Public Property ScrollBarColor As Color
         Get
-            Return ¹ö¶¯ÌõÑÕÉ«
+            Return æ»šåŠ¨æ¡é¢œè‰²
         End Get
         Set(value As Color)
-            SetValue(¹ö¶¯ÌõÑÕÉ«, value)
+            SetValue(æ»šåŠ¨æ¡é¢œè‰², value)
         End Set
     End Property
 
-    Private ¹ö¶¯ÌõĞüÍ£ÑÕÉ« As Color = Color.FromArgb(200, 200, 200)
-    <Category("LakeUI"), Description("¹ö¶¯Ìõ»¬¿éĞüÍ£/ÍÏ×§ÑÕÉ«"), DefaultValue(GetType(Color), "200, 200, 200"), Browsable(True)>
+    Private æ»šåŠ¨æ¡æ‚¬åœé¢œè‰² As Color = Color.FromArgb(200, 200, 200)
+    <Category("LakeUI"), Description("æ»šåŠ¨æ¡æ»‘å—æ‚¬åœ/æ‹–æ‹½é¢œè‰²"), DefaultValue(GetType(Color), "200, 200, 200"), Browsable(True)>
     Public Property ScrollBarHoverColor As Color
         Get
-            Return ¹ö¶¯ÌõĞüÍ£ÑÕÉ«
+            Return æ»šåŠ¨æ¡æ‚¬åœé¢œè‰²
         End Get
         Set(value As Color)
-            SetValue(¹ö¶¯ÌõĞüÍ£ÑÕÉ«, value)
+            SetValue(æ»šåŠ¨æ¡æ‚¬åœé¢œè‰², value)
         End Set
     End Property
 
-    Private ¹ö¶¯Ìõ¹ìµÀÑÕÉ« As Color = Color.FromArgb(20, 255, 255, 255)
-    <Category("LakeUI"), Description("¹ö¶¯Ìõ¹ìµÀÑÕÉ«"), DefaultValue(GetType(Color), "20, 255, 255, 255"), Browsable(True)>
+    Private æ»šåŠ¨æ¡è½¨é“é¢œè‰² As Color = Color.FromArgb(20, 255, 255, 255)
+    <Category("LakeUI"), Description("æ»šåŠ¨æ¡è½¨é“é¢œè‰²"), DefaultValue(GetType(Color), "20, 255, 255, 255"), Browsable(True)>
     Public Property ScrollBarTrackColor As Color
         Get
-            Return ¹ö¶¯Ìõ¹ìµÀÑÕÉ«
+            Return æ»šåŠ¨æ¡è½¨é“é¢œè‰²
         End Get
         Set(value As Color)
-            SetValue(¹ö¶¯Ìõ¹ìµÀÑÕÉ«, value)
+            SetValue(æ»šåŠ¨æ¡è½¨é“é¢œè‰², value)
         End Set
     End Property
 
-    Private ÆôÓÃÁ´½ÓÊ¶±ğ As Boolean = False
-    <Category("LakeUI"), Description("ÊÇ·ñÆôÓÃ³¬Á´½Ó×Ô¶¯Ê¶±ğ"), DefaultValue(GetType(Boolean), "False"), Browsable(True)>
+    Private å¯ç”¨é“¾æ¥è¯†åˆ« As Boolean = False
+    <Category("LakeUI"), Description("æ˜¯å¦å¯ç”¨è¶…é“¾æ¥è‡ªåŠ¨è¯†åˆ«"), DefaultValue(GetType(Boolean), "False"), Browsable(True)>
     Public Property LinkDetection As Boolean
         Get
-            Return ÆôÓÃÁ´½ÓÊ¶±ğ
+            Return å¯ç”¨é“¾æ¥è¯†åˆ«
         End Get
         Set(value As Boolean)
-            If ÆôÓÃÁ´½ÓÊ¶±ğ <> value Then
-                ÆôÓÃÁ´½ÓÊ¶±ğ = value
+            If å¯ç”¨é“¾æ¥è¯†åˆ« <> value Then
+                å¯ç”¨é“¾æ¥è¯†åˆ« = value
                 RebuildAllLinks()
                 Invalidate()
             End If
         End Set
     End Property
 
-    Private Á´½ÓÑÕÉ« As Color = Color.FromArgb(86, 156, 214)
-    <Category("LakeUI"), Description("Á´½ÓäÖÈ¾ÑÕÉ«"), DefaultValue(GetType(Color), "86, 156, 214"), Browsable(True)>
+    Private é“¾æ¥é¢œè‰² As Color = Color.FromArgb(86, 156, 214)
+    <Category("LakeUI"), Description("é“¾æ¥æ¸²æŸ“é¢œè‰²"), DefaultValue(GetType(Color), "86, 156, 214"), Browsable(True)>
     Public Property LinkColor As Color
         Get
-            Return Á´½ÓÑÕÉ«
+            Return é“¾æ¥é¢œè‰²
         End Get
         Set(value As Color)
-            SetValue(Á´½ÓÑÕÉ«, value)
+            SetValue(é“¾æ¥é¢œè‰², value)
         End Set
     End Property
 
-    Private Á´½ÓÏÂ»®Ïß As Boolean = True
-    <Category("LakeUI"), Description("ÊÇ·ñÎªÁ´½ÓäÖÈ¾ÏÂ»®Ïß"), DefaultValue(GetType(Boolean), "True"), Browsable(True)>
+    Private é“¾æ¥ä¸‹åˆ’çº¿ As Boolean = True
+    <Category("LakeUI"), Description("æ˜¯å¦ä¸ºé“¾æ¥æ¸²æŸ“ä¸‹åˆ’çº¿"), DefaultValue(GetType(Boolean), "True"), Browsable(True)>
     Public Property LinkUnderline As Boolean
         Get
-            Return Á´½ÓÏÂ»®Ïß
+            Return é“¾æ¥ä¸‹åˆ’çº¿
         End Get
         Set(value As Boolean)
-            SetValue(Á´½ÓÏÂ»®Ïß, value)
+            SetValue(é“¾æ¥ä¸‹åˆ’çº¿, value)
         End Set
     End Property
 
-    Private ³¬²ÉÑù±¶ÂÊ As Integer = 1
-    <Category("LakeUI"), Description(Class1.³¬²ÉÑù¿¹¾â³İÃèÊö´Ê), DefaultValue(GetType(Class1.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
+    <Category("LakeUI"), Description("è¯­æ³•é«˜äº®å™¨ï¼Œè®¾ç½®åè‡ªåŠ¨å¯¹æ–‡æœ¬è¿›è¡Œè¯­æ³•ç€è‰²"), DefaultValue(GetType(ISyntaxHighlighter), Nothing), Browsable(False)>
+    Public Property SyntaxHighlighter As ISyntaxHighlighter
+        Get
+            Return _syntaxHighlighter
+        End Get
+        Set(value As ISyntaxHighlighter)
+            _syntaxHighlighter = value
+            If å¯ç”¨è¯­æ³•é«˜äº® Then
+                ApplySyntaxHighlighting()
+            End If
+            Invalidate()
+        End Set
+    End Property
+
+    <Category("LakeUI"), Description("æ˜¯å¦å¯ç”¨è¯­æ³•é«˜äº®"), DefaultValue(GetType(Boolean), "False"), Browsable(True)>
+    Public Property EnableSyntaxHighlight As Boolean
+        Get
+            Return å¯ç”¨è¯­æ³•é«˜äº®
+        End Get
+        Set(value As Boolean)
+            If å¯ç”¨è¯­æ³•é«˜äº® <> value Then
+                å¯ç”¨è¯­æ³•é«˜äº® = value
+                If value Then
+                    ApplySyntaxHighlighting()
+                Else
+                    ClearAllFormats()
+                End If
+                Invalidate()
+            End If
+        End Set
+    End Property
+
+    <Category("LakeUI"), Description("æ˜¯å¦æ˜¾ç¤ºè¡Œå·ï¼ˆä»…å¤šè¡Œæ¨¡å¼ï¼‰"), DefaultValue(GetType(Boolean), "False"), Browsable(True)>
+    Public Property ShowLineNumbers As Boolean
+        Get
+            Return æ˜¾ç¤ºè¡Œå·
+        End Get
+        Set(value As Boolean)
+            If æ˜¾ç¤ºè¡Œå· <> value Then
+                æ˜¾ç¤ºè¡Œå· = value
+                RebuildVisualLines()
+                UpdateScrollBar()
+                Invalidate()
+            End If
+        End Set
+    End Property
+
+    <Category("LakeUI"), Description("è¡Œå·æ–‡æœ¬é¢œè‰²"), DefaultValue(GetType(Color), "140, 140, 140"), Browsable(True)>
+    Public Property LineNumberForeColor As Color
+        Get
+            Return è¡Œå·é¢œè‰²
+        End Get
+        Set(value As Color)
+            SetValue(è¡Œå·é¢œè‰², value)
+        End Set
+    End Property
+
+    <Category("LakeUI"), Description("è¡Œå·åŒºåŸŸèƒŒæ™¯é¢œè‰²"), DefaultValue(GetType(Color), "30, 30, 30"), Browsable(True)>
+    Public Property LineNumberBackColor As Color
+        Get
+            Return è¡Œå·èƒŒæ™¯é¢œè‰²
+        End Get
+        Set(value As Color)
+            SetValue(è¡Œå·èƒŒæ™¯é¢œè‰², value)
+        End Set
+    End Property
+
+    <Category("LakeUI"), Description("è¡Œå·å­—ä½“ï¼Œä¸ºNothingæ—¶ä½¿ç”¨æ§ä»¶Font"), Browsable(True),
+     DesignerSerializationVisibility(DesignerSerializationVisibility.Visible)>
+    Public Property LineNumberFont As Font
+        Get
+            Return è¡Œå·å­—ä½“
+        End Get
+        Set(value As Font)
+            è¡Œå·å­—ä½“ = value
+            If æ˜¾ç¤ºè¡Œå· Then
+                RebuildVisualLines()
+                UpdateScrollBar()
+                Invalidate()
+            End If
+        End Set
+    End Property
+    Private Function ShouldSerializeLineNumberFont() As Boolean
+        Return è¡Œå·å­—ä½“ IsNot Nothing
+    End Function
+    Public Sub ResetLineNumberFont()
+        LineNumberFont = Nothing
+    End Sub
+
+    <Category("LakeUI"), Description("è¡Œå·åŒºåŸŸå·¦ä¾§å†…è·"), DefaultValue(GetType(Integer), "6"), Browsable(True)>
+    Public Property LineNumberPaddingLeft As Integer
+        Get
+            Return è¡Œå·å·¦è·
+        End Get
+        Set(value As Integer)
+            è¡Œå·å·¦è· = Math.Max(0, value)
+            If æ˜¾ç¤ºè¡Œå· Then
+                RebuildVisualLines()
+                UpdateScrollBar()
+                Invalidate()
+            End If
+        End Set
+    End Property
+
+    <Category("LakeUI"), Description("è¡Œå·åŒºåŸŸå³ä¾§å†…è·"), DefaultValue(GetType(Integer), "8"), Browsable(True)>
+    Public Property LineNumberPaddingRight As Integer
+        Get
+            Return è¡Œå·å³è·
+        End Get
+        Set(value As Integer)
+            è¡Œå·å³è· = Math.Max(0, value)
+            If æ˜¾ç¤ºè¡Œå· Then
+                RebuildVisualLines()
+                UpdateScrollBar()
+                Invalidate()
+            End If
+        End Set
+    End Property
+
+    <Category("LakeUI"), Description("è¡Œå·å¯¹é½æ–¹å¼"), DefaultValue(TextAlignMode.Right), Browsable(True)>
+    Public Property LineNumberAlign As TextAlignMode
+        Get
+            Return è¡Œå·å¯¹é½
+        End Get
+        Set(value As TextAlignMode)
+            SetValue(è¡Œå·å¯¹é½, value)
+        End Set
+    End Property
+
+    Private è¶…é‡‡æ ·å€ç‡ As Integer = 1
+    <Category("LakeUI"), Description(Class1.è¶…é‡‡æ ·æŠ—é”¯é½¿æè¿°è¯), DefaultValue(GetType(Class1.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
     Public Property SuperSamplingScale As Class1.SuperSamplingScaleEnum
         Get
-            Return ³¬²ÉÑù±¶ÂÊ
+            Return è¶…é‡‡æ ·å€ç‡
         End Get
         Set(value As Class1.SuperSamplingScaleEnum)
-            SetValue(³¬²ÉÑù±¶ÂÊ, value)
+            SetValue(è¶…é‡‡æ ·å€ç‡, value)
         End Set
     End Property
 
-    <Category("LakeUI"), Description("ÖØÉèTextÊ±±£Áô¹ö¶¯ÌõÎ»ÖÃ£¬ÊÊÓÃÓÚÈÕÖ¾Êä³öµÈ³¡¾°"), DefaultValue(GetType(Boolean), "False"), Browsable(True)>
+    <Category("LakeUI"), Description("é‡è®¾Textæ—¶ä¿ç•™æ»šåŠ¨æ¡ä½ç½®ï¼Œé€‚ç”¨äºæ—¥å¿—è¾“å‡ºç­‰åœºæ™¯"), DefaultValue(GetType(Boolean), "False"), Browsable(True)>
     Public Property PreserveScrollPosition As Boolean
         Get
             Return _preserveScrollPosition
@@ -414,7 +574,7 @@ Public Class ModernTextBox
         End Set
     End Property
 
-    <Category("LakeUI"), Description("×î´ó³·»Ø´ÎÊı£¬ÉèÎª0Ôò¹Ø±Õ³·»Ø¹¦ÄÜÒÔ½ÚÔ¼ĞÔÄÜ"), DefaultValue(GetType(Integer), "10"), Browsable(True)>
+    <Category("LakeUI"), Description("æœ€å¤§æ’¤å›æ¬¡æ•°ï¼Œè®¾ä¸º0åˆ™å…³é—­æ’¤å›åŠŸèƒ½ä»¥èŠ‚çº¦æ€§èƒ½"), DefaultValue(GetType(Integer), "10"), Browsable(True)>
     Public Property MaxUndoCount As Integer
         Get
             Return _maxUndo
@@ -430,7 +590,7 @@ Public Class ModernTextBox
     End Property
 
     Private _wordWrap As Boolean = True
-    <Category("LakeUI"), Description("×Ô¶¯»»ĞĞ£¨¶àĞĞÄ£Ê½£©"), DefaultValue(GetType(Boolean), "True"), Browsable(True)>
+    <Category("LakeUI"), Description("è‡ªåŠ¨æ¢è¡Œï¼ˆå¤šè¡Œæ¨¡å¼ï¼‰"), DefaultValue(GetType(Boolean), "True"), Browsable(True)>
     Public Property WordWrap As Boolean
         Get
             Return _wordWrap
@@ -447,7 +607,7 @@ Public Class ModernTextBox
     End Property
 
     Private _maxLength As Integer = 0
-    <Category("LakeUI"), Description("×î´óÔÊĞí×Ö·ûÊı£¬0 = ÎŞÏŞÖÆ"), DefaultValue(0), Browsable(True)>
+    <Category("LakeUI"), Description("æœ€å¤§å…è®¸å­—ç¬¦æ•°ï¼Œ0 = æ— é™åˆ¶"), DefaultValue(0), Browsable(True)>
     Public Property MaxLength As Integer
         Get
             Return _maxLength
@@ -458,7 +618,7 @@ Public Class ModernTextBox
     End Property
 
     Private _passwordChar As Char = ChrW(0)
-    <Category("LakeUI"), Description("ÃÜÂëÑÚÂë×Ö·û£¬Îª¿ÕÔò²»ÆôÓÃ£¨½öµ¥ĞĞÄ£Ê½£©"), DefaultValue(GetType(Char), ""), Browsable(True)>
+    <Category("LakeUI"), Description("å¯†ç æ©ç å­—ç¬¦ï¼Œä¸ºç©ºåˆ™ä¸å¯ç”¨ï¼ˆä»…å•è¡Œæ¨¡å¼ï¼‰"), DefaultValue(GetType(Char), ""), Browsable(True)>
     Public Property PasswordChar As Char
         Get
             Return _passwordChar
@@ -521,7 +681,7 @@ Public Class ModernTextBox
     End Property
 #End Region
 
-#Region "¹«¹²·½·¨"
+#Region "å…¬å…±æ–¹æ³•"
     Public Sub Clear()
         Text = String.Empty
     End Sub
@@ -534,8 +694,8 @@ Public Class ModernTextBox
         InsertTextCore(text)
     End Sub
     ''' <summary>
-    ''' ×·¼ÓÒ»ĞĞÎÄ±¾£¬¿ÉÖ¸¶¨ÑÕÉ«ºÍ×ÖÌå¡£×¨ÎªÈÕÖ¾Êä³öµÈ¸ßÆµ³¡¾°ÓÅ»¯£º
-    ''' Ìø¹ı³·»Ø¼ÇÂ¼¡¢Ìø¹ıÈ«Á¿ÊÓ¾õĞĞÖØ½¨¡¢Ö±½ÓÉèÖÃ¸ñÊ½£¬ÅäºÏ PreserveScrollPosition Ê¹ÓÃĞ§¹û×î¼Ñ¡£
+    ''' è¿½åŠ ä¸€è¡Œæ–‡æœ¬ï¼Œå¯æŒ‡å®šé¢œè‰²å’Œå­—ä½“ã€‚ä¸“ä¸ºæ—¥å¿—è¾“å‡ºç­‰é«˜é¢‘åœºæ™¯ä¼˜åŒ–ï¼š
+    ''' è·³è¿‡æ’¤å›è®°å½•ã€è·³è¿‡å…¨é‡è§†è§‰è¡Œé‡å»ºã€ç›´æ¥è®¾ç½®æ ¼å¼ï¼Œé…åˆ PreserveScrollPosition ä½¿ç”¨æ•ˆæœæœ€ä½³ã€‚
     ''' </summary>
     Public Sub AppendLine(text As String, Optional foreColor As Color = Nothing, Optional lineFont As Font = Nothing)
         Dim lineText As String = If(text, "").Replace(vbCr, "").Replace(vbLf, "")
@@ -560,21 +720,24 @@ Public Class ModernTextBox
             _lines.Add(lineText)
             _lineRuns.Add(Nothing)
             _lineLinks.Add(Nothing)
+            _lineStates.Add(0)
         End If
 
-        ' Ö±½ÓÉèÖÃ¸ñÊ½ Run£¬±ÜÃâ¶ş´Î±éÀú
+        ' ç›´æ¥è®¾ç½®æ ¼å¼ Runï¼Œé¿å…äºŒæ¬¡éå†
         If foreColor <> Color.Empty OrElse lineFont IsNot Nothing Then
             If lineText.Length > 0 Then
                 _lineRuns(newLineIndex) = New List(Of TextRun) From {
                     New TextRun(0, lineText.Length, foreColor, lineFont)
                 }
             End If
+        ElseIf _syntaxHighlighter IsNot Nothing Then
+            ApplySyntaxHighlightingToLine(newLineIndex)
         End If
 
-        ' ¼ì²âÁ´½Ó
+        ' æ£€æµ‹é“¾æ¥
         DetectLinksInLine(newLineIndex)
 
-        ' ÔöÁ¿×·¼ÓÊÓ¾õĞĞ£¬²»×öÈ«Á¿ RebuildVisualLines
+        ' å¢é‡è¿½åŠ è§†è§‰è¡Œï¼Œä¸åšå…¨é‡ RebuildVisualLines
         Dim areaW As Integer = If(IsHandleCreated, TextAreaWidth(), 0)
         If Not IsWordWrapActive() OrElse areaW <= 0 OrElse lineText.Length = 0 Then
             _visualLines.Add(New VisualLineInfo(newLineIndex, 0, lineText.Length))
@@ -587,7 +750,7 @@ Public Class ModernTextBox
             End While
         End If
 
-        ' ¹ö¶¯Ìõ¿É¼ûĞÔ±ä»¯Ê±²Å»ØÍËµ½È«Á¿ÖØ½¨
+        ' æ»šåŠ¨æ¡å¯è§æ€§å˜åŒ–æ—¶æ‰å›é€€åˆ°å…¨é‡é‡å»º
         Dim oldVisible As Boolean = _scrollBarVisible
         UpdateScrollBar()
         If _scrollBarVisible <> oldVisible Then
@@ -595,7 +758,7 @@ Public Class ModernTextBox
             UpdateScrollBar()
         End If
 
-        ' Î´ÆôÓÃ±£ÁôÎ»ÖÃÊ±×Ô¶¯¹öµ½µ×²¿
+        ' æœªå¯ç”¨ä¿ç•™ä½ç½®æ—¶è‡ªåŠ¨æ»šåˆ°åº•éƒ¨
         If Not _preserveScrollPosition Then
             _scrollLineOffset = Math.Max(0, _visualLines.Count - VisibleLineCount())
         End If
@@ -623,7 +786,7 @@ Public Class ModernTextBox
         Invalidate()
     End Sub
     Public Sub ScrollToBottom()
-        If Not ÆôÓÃ¶àĞĞ Then Return
+        If Not å¯ç”¨å¤šè¡Œ Then Return
         Dim maxOffset As Integer = Math.Max(0, _visualLines.Count - VisibleLineCount())
         _scrollLineOffset = maxOffset
         UpdateScrollBar()
@@ -636,7 +799,7 @@ Public Class ModernTextBox
         Invalidate()
     End Sub
     Public Sub ScrollToLine(lineIndex As Integer)
-        If Not ÆôÓÃ¶àĞĞ Then Return
+        If Not å¯ç”¨å¤šè¡Œ Then Return
         lineIndex = Math.Max(0, Math.Min(_lines.Count - 1, lineIndex))
         Dim targetVi As Integer = _visualLines.Count - 1
         For i As Integer = 0 To _visualLines.Count - 1
@@ -691,7 +854,7 @@ Public Class ModernTextBox
     End Sub
 #End Region
 
-#Region "³õÊ¼»¯"
+#Region "åˆå§‹åŒ–"
     Public Sub New()
         InitializeComponent()
         SetStyle(ControlStyles.OptimizedDoubleBuffer Or
@@ -724,19 +887,19 @@ Public Class ModernTextBox
     End Sub
 #End Region
 
-#Region "»æÖÆ"
+#Region "ç»˜åˆ¶"
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
         Dim w As Integer = ClientRectangle.Width
         Dim h As Integer = ClientRectangle.Height
-        Dim hasRadius As Boolean = ±ß¿òÔ²½Ç°ë¾¶ > 0
+        Dim hasRadius As Boolean = è¾¹æ¡†åœ†è§’åŠå¾„ > 0
         Dim boundsRect As New RectangleF(0, 0, w - 1, h - 1)
         Dim s As Single = DpiScale()
-        If ±ß¿ò¿í¶È > 0 Then
-            Dim half As Single = ±ß¿ò¿í¶È * s / 2.0F
+        If è¾¹æ¡†å®½åº¦ > 0 Then
+            Dim half As Single = è¾¹æ¡†å®½åº¦ * s / 2.0F
             boundsRect.Inflate(-half, -half)
         End If
-        Dim bc As Color = If(Focused, ÓĞ½¹µãÊ±±ß¿òÑÕÉ«, ±ß¿òÑÕÉ«)
-        Dim _ssaa As Integer = If(Class1.GlobalSSAA > 1, Class1.GlobalSSAA, ³¬²ÉÑù±¶ÂÊ)
+        Dim bc As Color = If(Focused, æœ‰ç„¦ç‚¹æ—¶è¾¹æ¡†é¢œè‰², è¾¹æ¡†é¢œè‰²)
+        Dim _ssaa As Integer = If(Class1.GlobalSSAA > 1, Class1.GlobalSSAA, è¶…é‡‡æ ·å€ç‡)
         If _ssaa > 1 Then
             Dim bmpW As Integer = w * _ssaa
             Dim bmpH As Integer = h * _ssaa
@@ -749,67 +912,160 @@ Public Class ModernTextBox
             Using g As Graphics = Graphics.FromImage(_ssaaBitmap)
                 g.Clear(Color.Transparent)
                 g.ScaleTransform(_ssaa, _ssaa)
-                DrawBackground(g, hasRadius, boundsRect, bc)
+                DrawBackgroundFill(g, hasRadius, boundsRect)
             End Using
             e.Graphics.CompositingQuality = CompositingQuality.HighQuality
             e.Graphics.InterpolationMode = InterpolationMode.HighQualityBicubic
             e.Graphics.DrawImage(_ssaaBitmap, 0, 0, w, h)
         Else
-            DrawBackground(e.Graphics, hasRadius, boundsRect, bc)
+            DrawBackgroundFill(e.Graphics, hasRadius, boundsRect)
         End If
         DrawTextContent(e.Graphics, w, h)
+        ' è¾¹æ¡†ç»˜åˆ¶åœ¨è¡Œå·èƒŒæ™¯ä¹‹ä¸Š
+        If _ssaa > 1 Then
+            Using g As Graphics = Graphics.FromImage(_ssaaBitmap)
+                g.Clear(Color.Transparent)
+                g.ScaleTransform(_ssaa, _ssaa)
+                DrawBorderOnly(g, hasRadius, boundsRect, bc)
+            End Using
+            e.Graphics.CompositingQuality = CompositingQuality.HighQuality
+            e.Graphics.InterpolationMode = InterpolationMode.HighQualityBicubic
+            e.Graphics.DrawImage(_ssaaBitmap, 0, 0, w, h)
+        Else
+            DrawBorderOnly(e.Graphics, hasRadius, boundsRect, bc)
+        End If
         DrawScrollBar(e.Graphics, w, h)
     End Sub
 
-    Private Sub DrawBackground(g As Graphics, hasRadius As Boolean, boundsRect As RectangleF, borderClr As Color)
+    Private Sub DrawBackgroundFill(g As Graphics, hasRadius As Boolean, boundsRect As RectangleF)
         g.SmoothingMode = SmoothingMode.AntiAlias
         g.PixelOffsetMode = PixelOffsetMode.HighQuality
         g.InterpolationMode = InterpolationMode.HighQualityBicubic
         Dim s As Single = DpiScale()
         If hasRadius Then
-            Using path As GraphicsPath = RectangleRenderer.´´½¨Ô²½Ç¾ØĞÎÂ·¾¶(boundsRect, ±ß¿òÔ²½Ç°ë¾¶ * s)
-                RectangleRenderer.»æÖÆÔ²½Ç±³¾°(g, path, boundsRect, ±³¾°ÑÕÉ«, Color.Empty, Orientation.Horizontal)
-                RectangleRenderer.»æÖÆÔ²½Ç±ß¿ò(g, path, borderClr, ±ß¿ò¿í¶È * s)
+            Using path As GraphicsPath = RectangleRenderer.åˆ›å»ºåœ†è§’çŸ©å½¢è·¯å¾„(boundsRect, è¾¹æ¡†åœ†è§’åŠå¾„ * s)
+                RectangleRenderer.ç»˜åˆ¶åœ†è§’èƒŒæ™¯(g, path, boundsRect, èƒŒæ™¯é¢œè‰², Color.Empty, Orientation.Horizontal)
             End Using
         Else
-            RectangleRenderer.»æÖÆ¾ØĞÎ±³¾°(g, boundsRect, ±³¾°ÑÕÉ«, Color.Empty, Orientation.Horizontal)
-            RectangleRenderer.»æÖÆ¾ØĞÎ±ß¿ò(g, boundsRect, borderClr, ±ß¿ò¿í¶È * s)
+            RectangleRenderer.ç»˜åˆ¶çŸ©å½¢èƒŒæ™¯(g, boundsRect, èƒŒæ™¯é¢œè‰², Color.Empty, Orientation.Horizontal)
+        End If
+    End Sub
+
+    Private Sub DrawBorderOnly(g As Graphics, hasRadius As Boolean, boundsRect As RectangleF, borderClr As Color)
+        g.SmoothingMode = SmoothingMode.AntiAlias
+        g.PixelOffsetMode = PixelOffsetMode.HighQuality
+        g.InterpolationMode = InterpolationMode.HighQualityBicubic
+        Dim s As Single = DpiScale()
+        If hasRadius Then
+            Using path As GraphicsPath = RectangleRenderer.åˆ›å»ºåœ†è§’çŸ©å½¢è·¯å¾„(boundsRect, è¾¹æ¡†åœ†è§’åŠå¾„ * s)
+                RectangleRenderer.ç»˜åˆ¶åœ†è§’è¾¹æ¡†(g, path, borderClr, è¾¹æ¡†å®½åº¦ * s)
+            End Using
+        Else
+            RectangleRenderer.ç»˜åˆ¶çŸ©å½¢è¾¹æ¡†(g, boundsRect, borderClr, è¾¹æ¡†å®½åº¦ * s)
         End If
     End Sub
 
     Private Sub DrawTextContent(g As Graphics, w As Integer, h As Integer)
         g.TextRenderingHint = Drawing.Text.TextRenderingHint.ClearTypeGridFit
-        Dim bi As Integer = CInt(Math.Round(±ß¿ò¿í¶È * DpiScale()))
-        Dim textLeft As Integer = Math.Max(Padding.Left, bi)
+        Dim bi As Integer = CInt(Math.Round(è¾¹æ¡†å®½åº¦ * DpiScale()))
         Dim textTop As Integer = Math.Max(Padding.Top, bi)
         Dim textRight As Integer = Math.Max(Padding.Right, bi)
         Dim textBottom As Integer = Math.Max(Padding.Bottom, bi)
-        Dim scrollW As Integer = If(_scrollBarVisible, CInt(Math.Round(¹ö¶¯Ìõ¿í¶È * DpiScale())) + ScrollBarRenderer.Margin * 2, 0)
+        Dim gutterW As Integer = LineNumberGutterWidth()
+        Dim gutterLeft As Integer = bi
+        Dim textLeft As Integer
+        If gutterW > 0 Then
+            textLeft = bi + gutterW + Padding.Left
+        Else
+            textLeft = Math.Max(Padding.Left, bi)
+        End If
+        Dim scrollW As Integer = If(_scrollBarVisible, CInt(Math.Round(æ»šåŠ¨æ¡å®½åº¦ * DpiScale())) + ScrollBarRenderer.Margin * 2, 0)
         Dim textWidth As Integer = w - textLeft - Math.Max(textRight, scrollW)
         Dim textHeight As Integer = h - textTop - textBottom
+        Dim isSingleLine As Boolean = Not å¯ç”¨å¤šè¡Œ
+        Dim singleLineY As Integer = textTop + (textHeight - è¡Œé«˜) \ 2
+        Dim visibleLines As Integer = VisibleLineCount()
+        Dim startVi As Integer = _scrollLineOffset
+        Dim endVi As Integer = Math.Min(_visualLines.Count - 1, startVi + visibleLines + 1)
+
+        ' ç»˜åˆ¶è¡Œå·åŒºåŸŸï¼ˆç´§è´´ä¸Šä¸‹è¾¹æ¡†å†…ä¾§ï¼‰
+        If gutterW > 0 Then
+            ' ç»˜åˆ¶è¡Œå·èƒŒæ™¯ï¼Œå…¼å®¹åœ†è§’è¾¹æ¡†
+            If è¡Œå·èƒŒæ™¯é¢œè‰² <> Color.Empty Then
+                Dim s As Single = DpiScale()
+                Dim gutterRect As New Rectangle(0, 0, bi + gutterW, h)
+                If è¾¹æ¡†åœ†è§’åŠå¾„ > 0 Then
+                    Dim boundsRect As New RectangleF(0, 0, w - 1, h - 1)
+                    If è¾¹æ¡†å®½åº¦ > 0 Then
+                        Dim half As Single = è¾¹æ¡†å®½åº¦ * s / 2.0F
+                        boundsRect.Inflate(-half, -half)
+                    End If
+                    Using clipPath As GraphicsPath = RectangleRenderer.åˆ›å»ºåœ†è§’çŸ©å½¢è·¯å¾„(boundsRect, è¾¹æ¡†åœ†è§’åŠå¾„ * s)
+                        Dim oldSmooth = g.SmoothingMode
+                        g.SmoothingMode = SmoothingMode.AntiAlias
+                        Using rgn As New Region(clipPath)
+                            rgn.Intersect(gutterRect)
+                            g.SetClip(rgn, Drawing2D.CombineMode.Replace)
+                        End Using
+                        Using br As New SolidBrush(è¡Œå·èƒŒæ™¯é¢œè‰²)
+                            g.FillRectangle(br, gutterRect)
+                        End Using
+                        g.SmoothingMode = oldSmooth
+                        g.ResetClip()
+                    End Using
+                Else
+                    Using br As New SolidBrush(è¡Œå·èƒŒæ™¯é¢œè‰²)
+                        g.FillRectangle(br, gutterRect)
+                    End Using
+                End If
+            End If
+            g.SetClip(New Rectangle(gutterLeft, textTop, gutterW, textHeight))
+            Dim useNumFont As Font = If(è¡Œå·å­—ä½“, Font)
+            Dim contentW As Integer = gutterW - è¡Œå·å·¦è· - è¡Œå·å³è·
+            Dim lastDrawnLogical As Integer = -1
+            For vi As Integer = startVi To endVi
+                Dim vl = _visualLines(vi)
+                Dim lineY As Integer = textTop + (vi - _scrollLineOffset) * è¡Œé«˜
+                If vl.LogicalLine <> lastDrawnLogical Then
+                    lastDrawnLogical = vl.LogicalLine
+                    Dim numStr As String = (vl.LogicalLine + 1).ToString()
+                    Dim numW As Integer = TextRenderHelper.MeasureTextWidth(numStr, useNumFont, è¡Œé«˜)
+                    Dim numX As Integer
+                    Select Case è¡Œå·å¯¹é½
+                        Case TextAlignMode.Left
+                            numX = gutterLeft + è¡Œå·å·¦è·
+                        Case TextAlignMode.Center
+                            numX = gutterLeft + è¡Œå·å·¦è· + (contentW - numW) \ 2
+                        Case Else ' Right
+                            numX = gutterLeft + è¡Œå·å·¦è· + contentW - numW
+                    End Select
+                    TextRenderer.DrawText(g, numStr, useNumFont,
+                        New Rectangle(numX, lineY, numW, è¡Œé«˜),
+                        è¡Œå·é¢œè‰², TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine Or TextFormatFlags.VerticalCenter)
+                End If
+            Next
+            g.ResetClip()
+        End If
+
+        ' ç»˜åˆ¶æ–‡æœ¬å†…å®¹
         g.SetClip(New Rectangle(textLeft, textTop, textWidth, textHeight))
-        Dim isSingleLine As Boolean = Not ÆôÓÃ¶àĞĞ
-        Dim singleLineY As Integer = textTop + (textHeight - ĞĞ¸ß) \ 2
         Dim isEmpty As Boolean = (_lines.Count = 1 AndAlso _lines(0).Length = 0)
-        If isEmpty AndAlso Not String.IsNullOrEmpty(Ë®Ó¡ÎÄ±¾) Then
+        If isEmpty AndAlso Not String.IsNullOrEmpty(æ°´å°æ–‡æœ¬) Then
             Dim waterLineY As Integer = If(isSingleLine, singleLineY, textTop)
-            Dim waterAlignOff As Integer = GetAlignOffsetX(Ë®Ó¡ÎÄ±¾, textWidth)
-            TextRenderer.DrawText(g, Ë®Ó¡ÎÄ±¾, Font,
-                New Rectangle(textLeft + waterAlignOff, waterLineY, textWidth, ĞĞ¸ß),
-                Ë®Ó¡ÑÕÉ«, TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine Or TextFormatFlags.VerticalCenter)
+            Dim waterAlignOff As Integer = GetAlignOffsetX(æ°´å°æ–‡æœ¬, textWidth)
+            TextRenderer.DrawText(g, æ°´å°æ–‡æœ¬, Font,
+                New Rectangle(textLeft + waterAlignOff, waterLineY, textWidth, è¡Œé«˜),
+                æ°´å°é¢œè‰², TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine Or TextFormatFlags.VerticalCenter)
         End If
         Dim wrapActive As Boolean = IsWordWrapActive()
         Dim minL As Integer = 0, minC As Integer = 0, maxL As Integer = 0, maxC As Integer = 0
         If _hasSelection Then
             GetOrderedSelection(minL, minC, maxL, maxC)
         End If
-        Dim visibleLines As Integer = VisibleLineCount()
-        Dim startVi As Integer = _scrollLineOffset
-        Dim endVi As Integer = Math.Min(_visualLines.Count - 1, startVi + visibleLines + 1)
         For vi As Integer = startVi To endVi
             Dim vl = _visualLines(vi)
             Dim lineY As Integer = If(isSingleLine, singleLineY,
-                textTop + (vi - _scrollLineOffset) * ĞĞ¸ß)
+                textTop + (vi - _scrollLineOffset) * è¡Œé«˜)
             Dim alignOff As Integer = If(wrapActive, 0, GetAlignOffsetXForLine(vl.LogicalLine, textWidth))
             Dim scrollX As Integer = If(wrapActive, 0, _scrollXOffset)
             If _hasSelection Then
@@ -846,8 +1102,8 @@ Public Class ModernTextBox
             x2 = textLeft + alignOff + MeasureLineWidth(li, vl.StartCol, drawEnd - vl.StartCol) - scrollX
         End If
         If x2 <= x1 Then Return
-        Using br As New SolidBrush(Ñ¡Çø±³¾°É«)
-            g.FillRectangle(br, x1, lineY, x2 - x1, ĞĞ¸ß)
+        Using br As New SolidBrush(é€‰åŒºèƒŒæ™¯è‰²)
+            g.FillRectangle(br, x1, lineY, x2 - x1, è¡Œé«˜)
         End Using
     End Sub
 
@@ -862,30 +1118,30 @@ Public Class ModernTextBox
         Dim scrollX As Integer = If(wrapActive, 0, _scrollXOffset)
         Dim cx As Integer = textLeft + alignOff + MeasureLineWidth(_caretLine, vl.StartCol, _caretCol - vl.StartCol) - scrollX
         Dim lineY As Integer
-        If Not ÆôÓÃ¶àĞĞ Then
-            Dim bi2 As Integer = CInt(Math.Round(±ß¿ò¿í¶È * DpiScale()))
+        If Not å¯ç”¨å¤šè¡Œ Then
+            Dim bi2 As Integer = CInt(Math.Round(è¾¹æ¡†å®½åº¦ * DpiScale()))
             Dim textHeight As Integer = ClientRectangle.Height - Math.Max(Padding.Top, bi2) - Math.Max(Padding.Bottom, bi2)
-            lineY = textTop + (textHeight - ĞĞ¸ß) \ 2
+            lineY = textTop + (textHeight - è¡Œé«˜) \ 2
         Else
-            lineY = textTop + (vi - _scrollLineOffset) * ĞĞ¸ß
+            lineY = textTop + (vi - _scrollLineOffset) * è¡Œé«˜
         End If
-        Dim caretH As Integer = ĞĞ¸ß - 2
-        Dim caretY As Integer = lineY + (ĞĞ¸ß - caretH) \ 2
-        Using br As New SolidBrush(¹â±êÑÕÉ«)
-            g.FillRectangle(br, cx, caretY, ¹â±êÏß¿í, caretH)
+        Dim caretH As Integer = è¡Œé«˜ - 2
+        Dim caretY As Integer = lineY + (è¡Œé«˜ - caretH) \ 2
+        Using br As New SolidBrush(å…‰æ ‡é¢œè‰²)
+            g.FillRectangle(br, cx, caretY, å…‰æ ‡çº¿å®½, caretH)
         End Using
     End Sub
 
     Private Sub DrawScrollBar(g As Graphics, w As Integer, h As Integer)
         If Not _scrollBarVisible Then Return
         Dim s As Single = DpiScale()
-        Dim scaledBorder As Integer = CInt(Math.Round(±ß¿ò¿í¶È * s))
-        Dim scaledRadius As Integer = CInt(Math.Round(±ß¿òÔ²½Ç°ë¾¶ * s))
-        Dim scaledScrollW As Integer = CInt(Math.Round(¹ö¶¯Ìõ¿í¶È * s))
+        Dim scaledBorder As Integer = CInt(Math.Round(è¾¹æ¡†å®½åº¦ * s))
+        Dim scaledRadius As Integer = CInt(Math.Round(è¾¹æ¡†åœ†è§’åŠå¾„ * s))
+        Dim scaledScrollW As Integer = CInt(Math.Round(æ»šåŠ¨æ¡å®½åº¦ * s))
         _scrollBar.ComputeLayout(w, h, scaledBorder, scaledRadius, 0, 0, scaledScrollW,
             _visualLines.Count, VisibleLineCount(), _scrollLineOffset)
         _scrollBar.Draw(g, w, h, scaledBorder, scaledRadius, scaledScrollW,
-            ¹ö¶¯Ìõ¹ìµÀÑÕÉ«, ¹ö¶¯ÌõÑÕÉ«, ¹ö¶¯ÌõĞüÍ£ÑÕÉ«)
+            æ»šåŠ¨æ¡è½¨é“é¢œè‰², æ»šåŠ¨æ¡é¢œè‰², æ»šåŠ¨æ¡æ‚¬åœé¢œè‰²)
     End Sub
 
     Private Sub DrawLineRuns(g As Graphics, lineIndex As Integer, vlStartCol As Integer,
@@ -894,11 +1150,11 @@ Public Class ModernTextBox
         Dim lineStr = _lines(lineIndex)
         Dim vlEnd = vlStartCol + vlLength
         Dim links = If(lineIndex < _lineLinks.Count, _lineLinks(lineIndex), Nothing)
-        Dim hasLinks As Boolean = links IsNot Nothing AndAlso links.Count > 0 AndAlso (_passwordChar = vbNullChar OrElse ÆôÓÃ¶àĞĞ)
+        Dim hasLinks As Boolean = links IsNot Nothing AndAlso links.Count > 0 AndAlso (_passwordChar = vbNullChar OrElse å¯ç”¨å¤šè¡Œ)
         If runs Is Nothing OrElse runs.Count = 0 Then
             If Not hasLinks Then
                 Dim text = GetDisplayText(lineStr.Substring(vlStartCol, vlLength))
-                TextRenderer.DrawText(g, text, Font, New Rectangle(x, lineY, Short.MaxValue, ĞĞ¸ß),
+                TextRenderer.DrawText(g, text, Font, New Rectangle(x, lineY, Short.MaxValue, è¡Œé«˜),
                     ForeColor, TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine Or TextFormatFlags.VerticalCenter)
             Else
                 DrawSegmentsWithLinks(g, lineStr, vlStartCol, vlEnd, x, lineY, ForeColor, Font, links)
@@ -915,9 +1171,9 @@ Public Class ModernTextBox
             Dim useFont = If(r.RunFont, Font)
             If Not hasLinks Then
                 Dim segText = GetDisplayText(lineStr.Substring(segStart, segEnd - segStart))
-                TextRenderer.DrawText(g, segText, useFont, New Rectangle(drawX, lineY, Short.MaxValue, ĞĞ¸ß),
+                TextRenderer.DrawText(g, segText, useFont, New Rectangle(drawX, lineY, Short.MaxValue, è¡Œé«˜),
                     useFore, TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine Or TextFormatFlags.VerticalCenter)
-                drawX += TextRenderHelper.MeasureTextWidth(segText, useFont, ĞĞ¸ß)
+                drawX += TextRenderHelper.MeasureTextWidth(segText, useFont, è¡Œé«˜)
             Else
                 drawX = DrawSegmentsWithLinks(g, lineStr, segStart, segEnd, drawX, lineY, useFore, useFont, links)
             End If
@@ -935,34 +1191,34 @@ Public Class ModernTextBox
             If pos < link.StartCol AndAlso pos < endCol Then
                 Dim nonLinkEnd = Math.Min(link.StartCol, endCol)
                 Dim segText = GetDisplayText(lineStr.Substring(pos, nonLinkEnd - pos))
-                TextRenderer.DrawText(g, segText, baseFont, New Rectangle(drawX, lineY, Short.MaxValue, ĞĞ¸ß),
+                TextRenderer.DrawText(g, segText, baseFont, New Rectangle(drawX, lineY, Short.MaxValue, è¡Œé«˜),
                     baseFore, TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine Or TextFormatFlags.VerticalCenter)
-                drawX += TextRenderHelper.MeasureTextWidth(segText, baseFont, ĞĞ¸ß)
+                drawX += TextRenderHelper.MeasureTextWidth(segText, baseFont, è¡Œé«˜)
                 pos = nonLinkEnd
             End If
             Dim overlapStart = Math.Max(pos, link.StartCol)
             Dim overlapEnd = Math.Min(endCol, linkEnd)
             If overlapStart < overlapEnd Then
                 Dim linkText = GetDisplayText(lineStr.Substring(overlapStart, overlapEnd - overlapStart))
-                Dim linkFont = If(Á´½ÓÏÂ»®Ïß, GetUnderlineFont(baseFont), baseFont)
-                TextRenderer.DrawText(g, linkText, linkFont, New Rectangle(drawX, lineY, Short.MaxValue, ĞĞ¸ß),
-                    Á´½ÓÑÕÉ«, TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine Or TextFormatFlags.VerticalCenter)
-                drawX += TextRenderHelper.MeasureTextWidth(linkText, baseFont, ĞĞ¸ß)
+                Dim linkFont = If(é“¾æ¥ä¸‹åˆ’çº¿, GetUnderlineFont(baseFont), baseFont)
+                TextRenderer.DrawText(g, linkText, linkFont, New Rectangle(drawX, lineY, Short.MaxValue, è¡Œé«˜),
+                    é“¾æ¥é¢œè‰², TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine Or TextFormatFlags.VerticalCenter)
+                drawX += TextRenderHelper.MeasureTextWidth(linkText, baseFont, è¡Œé«˜)
                 pos = overlapEnd
             End If
         Next
         If pos < endCol Then
             Dim segText = GetDisplayText(lineStr.Substring(pos, endCol - pos))
-            TextRenderer.DrawText(g, segText, baseFont, New Rectangle(drawX, lineY, Short.MaxValue, ĞĞ¸ß),
+            TextRenderer.DrawText(g, segText, baseFont, New Rectangle(drawX, lineY, Short.MaxValue, è¡Œé«˜),
                 baseFore, TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine Or TextFormatFlags.VerticalCenter)
-            drawX += TextRenderHelper.MeasureTextWidth(segText, baseFont, ĞĞ¸ß)
+            drawX += TextRenderHelper.MeasureTextWidth(segText, baseFont, è¡Œé«˜)
         End If
         Return drawX
     End Function
 
 #End Region
 
-#Region "ÏûÏ¢´¦Àí (WndProc)"
+#Region "æ¶ˆæ¯å¤„ç† (WndProc)"
     Protected Overrides Sub WndProc(ByRef m As Message)
         Select Case m.Msg
             Case WM_GETDLGCODE
@@ -998,29 +1254,29 @@ Public Class ModernTextBox
 
 #End Region
 
-#Region "×Ö·ûÊäÈë (WM_CHAR)"
+#Region "å­—ç¬¦è¾“å…¥ (WM_CHAR)"
     Private Sub HandleWmChar(charCode As Integer)
         Select Case charCode
             Case 1  ' Ctrl+A
                 SelectAll()
             Case 3  ' Ctrl+C
-                If _passwordChar = vbNullChar OrElse ÆôÓÃ¶àĞĞ Then CopySelection()
+                If _passwordChar = vbNullChar OrElse å¯ç”¨å¤šè¡Œ Then CopySelection()
             Case 22 ' Ctrl+V
                 PasteText()
             Case 24 ' Ctrl+X
-                If _passwordChar = vbNullChar OrElse ÆôÓÃ¶àĞĞ Then CutSelection()
+                If _passwordChar = vbNullChar OrElse å¯ç”¨å¤šè¡Œ Then CutSelection()
             Case 26 ' Ctrl+Z
                 Undo()
             Case 8  ' Backspace
-                If Not ÆôÓÃÖ»¶ÁÄ£Ê½ Then HandleBackspace()
+                If Not å¯ç”¨åªè¯»æ¨¡å¼ Then HandleBackspace()
             Case 13 ' Enter
-                If Not ÆôÓÃÖ»¶ÁÄ£Ê½ AndAlso ÆôÓÃ¶àĞĞ Then
+                If Not å¯ç”¨åªè¯»æ¨¡å¼ AndAlso å¯ç”¨å¤šè¡Œ Then
                     PushUndo()
                     DeleteSelection()
                     InsertNewLine()
                 End If
             Case Else
-                If Not ÆôÓÃÖ»¶ÁÄ£Ê½ Then
+                If Not å¯ç”¨åªè¯»æ¨¡å¼ Then
                     Dim ch As Char = ChrW(charCode)
                     If Not Char.IsControl(ch) Then
                         PushUndo()
@@ -1033,7 +1289,7 @@ Public Class ModernTextBox
     End Sub
 #End Region
 
-#Region "¼üÅÌµ¼º½ (OnKeyDown)"
+#Region "é”®ç›˜å¯¼èˆª (OnKeyDown)"
     Protected Overrides Sub OnKeyDown(e As KeyEventArgs)
         MyBase.OnKeyDown(e)
         Dim shift As Boolean = e.Shift
@@ -1046,9 +1302,9 @@ Public Class ModernTextBox
                 If ctrl Then MoveCaretWordRight(shift) Else MoveCaret(1, 0, shift)
                 e.Handled = True
             Case Keys.Up
-                If ÆôÓÃ¶àĞĞ Then MoveCaret(0, -1, shift) : e.Handled = True
+                If å¯ç”¨å¤šè¡Œ Then MoveCaret(0, -1, shift) : e.Handled = True
             Case Keys.Down
-                If ÆôÓÃ¶àĞĞ Then MoveCaret(0, 1, shift) : e.Handled = True
+                If å¯ç”¨å¤šè¡Œ Then MoveCaret(0, 1, shift) : e.Handled = True
             Case Keys.Home
                 MoveCaretHome(shift, ctrl)
                 e.Handled = True
@@ -1056,12 +1312,12 @@ Public Class ModernTextBox
                 MoveCaretEnd(shift, ctrl)
                 e.Handled = True
             Case Keys.Delete
-                If Not ÆôÓÃÖ»¶ÁÄ£Ê½ Then HandleDelete()
+                If Not å¯ç”¨åªè¯»æ¨¡å¼ Then HandleDelete()
                 e.Handled = True
             Case Keys.PageUp
-                If ÆôÓÃ¶àĞĞ Then MoveCaret(0, -VisibleLineCount(), shift) : e.Handled = True
+                If å¯ç”¨å¤šè¡Œ Then MoveCaret(0, -VisibleLineCount(), shift) : e.Handled = True
             Case Keys.PageDown
-                If ÆôÓÃ¶àĞĞ Then MoveCaret(0, VisibleLineCount(), shift) : e.Handled = True
+                If å¯ç”¨å¤šè¡Œ Then MoveCaret(0, VisibleLineCount(), shift) : e.Handled = True
         End Select
         If e.Handled Then ResetCaretBlink()
     End Sub
@@ -1079,7 +1335,7 @@ Public Class ModernTextBox
     End Function
 #End Region
 
-#Region "Êó±ê´¦Àí"
+#Region "é¼ æ ‡å¤„ç†"
     Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
         MyBase.OnMouseDown(e)
         Focus()
@@ -1134,7 +1390,7 @@ Public Class ModernTextBox
             _caretCol = pos.X
             _hasSelection = (_caretLine <> _selAnchorLine OrElse _caretCol <> _selAnchorCol)
             EnsureCaretVisible()
-            If ÆôÓÃ¶àĞĞ AndAlso (e.Y < Math.Max(Padding.Top, CInt(Math.Round(±ß¿ò¿í¶È * DpiScale()))) OrElse e.Y > ClientRectangle.Height - Math.Max(Padding.Bottom, CInt(Math.Round(±ß¿ò¿í¶È * DpiScale())))) Then
+            If å¯ç”¨å¤šè¡Œ AndAlso (e.Y < Math.Max(Padding.Top, CInt(Math.Round(è¾¹æ¡†å®½åº¦ * DpiScale()))) OrElse e.Y > ClientRectangle.Height - Math.Max(Padding.Bottom, CInt(Math.Round(è¾¹æ¡†å®½åº¦ * DpiScale())))) Then
                 If Not _autoScrollTimer.Enabled Then _autoScrollTimer.Start()
             Else
                 _autoScrollTimer.Stop()
@@ -1158,7 +1414,7 @@ Public Class ModernTextBox
     End Sub
     Protected Overrides Sub OnMouseWheel(e As MouseEventArgs)
         MyBase.OnMouseWheel(e)
-        If Not ÆôÓÃ¶àĞĞ Then Return
+        If Not å¯ç”¨å¤šè¡Œ Then Return
         _scrollLineOffset = ScrollBarRenderer.HandleWheel(e.Delta, _scrollLineOffset, _visualLines.Count, VisibleLineCount())
         Invalidate()
     End Sub
@@ -1184,12 +1440,13 @@ Public Class ModernTextBox
         Invalidate()
     End Sub
     Private Function HitTest(x As Integer, y As Integer) As Point
-        Dim bi As Integer = CInt(Math.Round(±ß¿ò¿í¶È * DpiScale()))
-        Dim textLeft As Integer = Math.Max(Padding.Left, bi)
+        Dim bi As Integer = CInt(Math.Round(è¾¹æ¡†å®½åº¦ * DpiScale()))
+        Dim gutterW As Integer = LineNumberGutterWidth()
+        Dim textLeft As Integer = If(gutterW > 0, bi + gutterW + Padding.Left, Math.Max(Padding.Left, bi))
         Dim vi As Integer
-        If ÆôÓÃ¶àĞĞ Then
+        If å¯ç”¨å¤šè¡Œ Then
             Dim textTop As Integer = Math.Max(Padding.Top, bi)
-            vi = (y - textTop) \ ĞĞ¸ß + _scrollLineOffset
+            vi = (y - textTop) \ è¡Œé«˜ + _scrollLineOffset
         Else
             vi = 0
         End If
@@ -1202,11 +1459,11 @@ Public Class ModernTextBox
         Return New Point(col, vl.LogicalLine)
     End Function
     Private Function FindColFromX(lineStr As String, x As Integer) As Integer
-        Return TextRenderHelper.FindColFromX(GetDisplayText(lineStr), x, Font, ĞĞ¸ß)
+        Return TextRenderHelper.FindColFromX(GetDisplayText(lineStr), x, Font, è¡Œé«˜)
     End Function
 #End Region
 
-#Region "¹â±êÒÆ¶¯"
+#Region "å…‰æ ‡ç§»åŠ¨"
     Private Sub MoveCaret(deltaCol As Integer, deltaLine As Integer, extend As Boolean)
         If Not extend AndAlso _hasSelection AndAlso deltaCol <> 0 AndAlso deltaLine = 0 Then
             Dim minL, minC, maxL, maxC As Integer
@@ -1342,8 +1599,8 @@ Public Class ModernTextBox
         End If
     End Sub
     Private Sub EnsureCaretVisible()
-        ' ´¹Ö±·½Ïò
-        If ÆôÓÃ¶àĞĞ Then
+        ' å‚ç›´æ–¹å‘
+        If å¯ç”¨å¤šè¡Œ Then
             Dim vi As Integer = GetVisualLineIndex(_caretLine, _caretCol)
             Dim vis As Integer = VisibleLineCount()
             If vi < _scrollLineOffset Then
@@ -1354,12 +1611,12 @@ Public Class ModernTextBox
             _scrollLineOffset = Math.Max(0, _scrollLineOffset)
         End If
         UpdateScrollBar()
-        ' Ë®Æ½·½Ïò
+        ' æ°´å¹³æ–¹å‘
         If Not IsWordWrapActive() Then
             Dim areaW As Integer = TextAreaWidth()
             If areaW > 0 Then
                 Dim caretX As Integer = MeasureLineWidth(_caretLine, 0, _caretCol)
-                If Not ÆôÓÃ¶àĞĞ AndAlso ÎÄ±¾¶ÔÆë <> TextAlignMode.Left Then
+                If Not å¯ç”¨å¤šè¡Œ AndAlso æ–‡æœ¬å¯¹é½ <> TextAlignMode.Left Then
                     Dim lineW As Integer = MeasureLineWidth(_caretLine, 0, _lines(_caretLine).Length)
                     If lineW < areaW Then
                         _scrollXOffset = 0
@@ -1367,7 +1624,7 @@ Public Class ModernTextBox
                     End If
                 End If
 
-                Dim margin As Integer = ¹â±êÏß¿í + 2
+                Dim margin As Integer = å…‰æ ‡çº¿å®½ + 2
                 If caretX - _scrollXOffset < 0 Then
                     _scrollXOffset = Math.Max(0, caretX - margin)
                 ElseIf caretX - _scrollXOffset >= areaW - margin Then
@@ -1380,7 +1637,7 @@ Public Class ModernTextBox
     End Sub
 #End Region
 
-#Region "ÎÄ±¾±à¼­ºËĞÄ"
+#Region "æ–‡æœ¬ç¼–è¾‘æ ¸å¿ƒ"
     Private Sub InsertTextCore(text As String)
         DeleteSelection()
         Dim normalized As String = text.Replace(vbCr, "")
@@ -1529,7 +1786,7 @@ Public Class ModernTextBox
     End Sub
 #End Region
 
-#Region "Ñ¡Çø"
+#Region "é€‰åŒº"
     Private Sub SelectAll()
         _selAnchorLine = 0
         _selAnchorCol = 0
@@ -1572,7 +1829,7 @@ Public Class ModernTextBox
     End Function
 #End Region
 
-#Region "¼ôÌù°å"
+#Region "å‰ªè´´æ¿"
     Private Sub CopySelection()
         If _hasSelection Then
             Try
@@ -1582,7 +1839,7 @@ Public Class ModernTextBox
         End If
     End Sub
     Private Sub CutSelection()
-        If _hasSelection AndAlso Not ÆôÓÃÖ»¶ÁÄ£Ê½ Then
+        If _hasSelection AndAlso Not å¯ç”¨åªè¯»æ¨¡å¼ Then
             PushUndo()
             CopySelection()
             DeleteSelection()
@@ -1590,7 +1847,7 @@ Public Class ModernTextBox
         End If
     End Sub
     Private Sub PasteText()
-        If ÆôÓÃÖ»¶ÁÄ£Ê½ Then Return
+        If å¯ç”¨åªè¯»æ¨¡å¼ Then Return
         Try
             If Clipboard.ContainsText() Then
                 PushUndo()
@@ -1601,7 +1858,7 @@ Public Class ModernTextBox
     End Sub
 #End Region
 
-#Region "³·»Ø"
+#Region "æ’¤å›"
     Private Sub PushUndo()
         If _maxUndo = 0 Then Return
         _undoStack.Add(New TextSnapshot(_lines, CloneLineRuns(), _caretLine, _caretCol))
@@ -1625,9 +1882,9 @@ Public Class ModernTextBox
     End Sub
 #End Region
 
-#Region "¹ö¶¯Ìõ"
+#Region "æ»šåŠ¨æ¡"
     Private Sub UpdateScrollBar()
-        If Not ÆôÓÃ¶àĞĞ OrElse Not IsHandleCreated Then
+        If Not å¯ç”¨å¤šè¡Œ OrElse Not IsHandleCreated Then
             _scrollBarVisible = False
             Return
         End If
@@ -1635,32 +1892,33 @@ Public Class ModernTextBox
     End Sub
 #End Region
 
-#Region "ÊäÈë·¨ IME"
+#Region "è¾“å…¥æ³• IME"
     Private Sub UpdateImeWindow()
         If Not IsHandleCreated Then Return
         Dim vi As Integer = GetVisualLineIndex(_caretLine, _caretCol)
         Dim vl = _visualLines(vi)
         Dim wrapActive As Boolean = IsWordWrapActive()
-        Dim bi As Integer = CInt(Math.Round(±ß¿ò¿í¶È * DpiScale()))
-        Dim imeLeft As Integer = Math.Max(Padding.Left, bi)
+        Dim bi As Integer = CInt(Math.Round(è¾¹æ¡†å®½åº¦ * DpiScale()))
+        Dim gutterW As Integer = LineNumberGutterWidth()
+        Dim imeLeft As Integer = If(gutterW > 0, bi + gutterW + Padding.Left, Math.Max(Padding.Left, bi))
         Dim imeTop As Integer = Math.Max(Padding.Top, bi)
         Dim alignOff As Integer = If(wrapActive, 0, GetAlignOffsetXForLine(_caretLine, TextAreaWidth()))
         Dim scrollX As Integer = If(wrapActive, 0, _scrollXOffset)
         Dim cx As Integer = imeLeft + alignOff + MeasureLineWidth(_caretLine, vl.StartCol, _caretCol - vl.StartCol) - scrollX
         Dim cy As Integer
-        If ÆôÓÃ¶àĞĞ Then
-            cy = imeTop + (vi - _scrollLineOffset) * ĞĞ¸ß + ĞĞ¸ß
+        If å¯ç”¨å¤šè¡Œ Then
+            cy = imeTop + (vi - _scrollLineOffset) * è¡Œé«˜ + è¡Œé«˜
         Else
             Dim textHeight As Integer = ClientRectangle.Height - imeTop - Math.Max(Padding.Bottom, bi)
-            cy = imeTop + (textHeight - ĞĞ¸ß) \ 2 + ĞĞ¸ß
+            cy = imeTop + (textHeight - è¡Œé«˜) \ 2 + è¡Œé«˜
         End If
         ImeHelper.SetCompositionPosition(Handle, cx, cy)
     End Sub
 #End Region
 
-#Region "¸¨Öú"
+#Region "è¾…åŠ©"
     Private Function MeasureWidth(text As String) As Integer
-        Return TextRenderHelper.MeasureTextWidth(GetDisplayText(text), Font, ĞĞ¸ß)
+        Return TextRenderHelper.MeasureTextWidth(GetDisplayText(text), Font, è¡Œé«˜)
     End Function
     Private Function MeasureLineWidth(lineIndex As Integer, startCol As Integer, length As Integer) As Integer
         If length <= 0 Then Return 0
@@ -1678,7 +1936,7 @@ Public Class ModernTextBox
             If segStart >= segEnd Then Continue For
             Dim useFont = If(r.RunFont, Font)
             Dim segText = GetDisplayText(lineStr.Substring(segStart, segEnd - segStart))
-            totalWidth += TextRenderHelper.MeasureTextWidth(segText, useFont, ĞĞ¸ß)
+            totalWidth += TextRenderHelper.MeasureTextWidth(segText, useFont, è¡Œé«˜)
         Next
         Return totalWidth
     End Function
@@ -1698,9 +1956,9 @@ Public Class ModernTextBox
             If segStart >= segEnd Then Continue For
             Dim useFont = If(r.RunFont, Font)
             Dim segText = GetDisplayText(lineStr.Substring(segStart, segEnd - segStart))
-            Dim segWidth = TextRenderHelper.MeasureTextWidth(segText, useFont, ĞĞ¸ß)
+            Dim segWidth = TextRenderHelper.MeasureTextWidth(segText, useFont, è¡Œé«˜)
             If accWidth + segWidth > x Then
-                Dim localCol = TextRenderHelper.FindColFromX(segText, x - accWidth, useFont, ĞĞ¸ß)
+                Dim localCol = TextRenderHelper.FindColFromX(segText, x - accWidth, useFont, è¡Œé«˜)
                 Return segStart + localCol
             End If
             accWidth += segWidth
@@ -1708,10 +1966,10 @@ Public Class ModernTextBox
         Return vlStartCol + vlLength
     End Function
     Private Function GetAlignOffsetXForLine(lineIndex As Integer, areaWidth As Integer) As Integer
-        If ÆôÓÃ¶àĞĞ OrElse ÎÄ±¾¶ÔÆë = TextAlignMode.Left Then Return 0
+        If å¯ç”¨å¤šè¡Œ OrElse æ–‡æœ¬å¯¹é½ = TextAlignMode.Left Then Return 0
         Dim textW As Integer = MeasureLineWidth(lineIndex, 0, _lines(lineIndex).Length)
         If textW >= areaWidth Then Return 0
-        Select Case ÎÄ±¾¶ÔÆë
+        Select Case æ–‡æœ¬å¯¹é½
             Case TextAlignMode.Center
                 Return (areaWidth - textW) \ 2
             Case TextAlignMode.Right
@@ -1721,20 +1979,29 @@ Public Class ModernTextBox
         End Select
     End Function
     Private Function VisibleLineCount() As Integer
-        Dim bi As Integer = CInt(Math.Round(±ß¿ò¿í¶È * DpiScale()))
+        Dim bi As Integer = CInt(Math.Round(è¾¹æ¡†å®½åº¦ * DpiScale()))
         Dim h As Integer = ClientRectangle.Height - Math.Max(Padding.Top, bi) - Math.Max(Padding.Bottom, bi)
-        Return Math.Max(1, h \ ĞĞ¸ß)
+        Return Math.Max(1, h \ è¡Œé«˜)
     End Function
     Private Function TextAreaWidth() As Integer
-        Dim bi As Integer = CInt(Math.Round(±ß¿ò¿í¶È * DpiScale()))
-        Dim scrollW As Integer = If(_scrollBarVisible, CInt(Math.Round(¹ö¶¯Ìõ¿í¶È * DpiScale())) + ScrollBarRenderer.Margin * 2, 0)
-        Return ClientRectangle.Width - Math.Max(Padding.Left, bi) - Math.Max(Math.Max(Padding.Right, bi), scrollW)
+        Dim bi As Integer = CInt(Math.Round(è¾¹æ¡†å®½åº¦ * DpiScale()))
+        Dim scrollW As Integer = If(_scrollBarVisible, CInt(Math.Round(æ»šåŠ¨æ¡å®½åº¦ * DpiScale())) + ScrollBarRenderer.Margin * 2, 0)
+        Dim gutterW As Integer = LineNumberGutterWidth()
+        Dim leftUsed As Integer = If(gutterW > 0, bi + gutterW + Padding.Left, Math.Max(Padding.Left, bi))
+        Return ClientRectangle.Width - leftUsed - Math.Max(Math.Max(Padding.Right, bi), scrollW)
+    End Function
+    Private Function LineNumberGutterWidth() As Integer
+        If Not æ˜¾ç¤ºè¡Œå· OrElse Not å¯ç”¨å¤šè¡Œ Then Return 0
+        Dim useFont As Font = If(è¡Œå·å­—ä½“, Font)
+        Dim maxNum As String = _lines.Count.ToString()
+        Dim numW As Integer = TextRenderHelper.MeasureTextWidth(maxNum, useFont, è¡Œé«˜)
+        Return è¡Œå·å·¦è· + numW + è¡Œå·å³è·
     End Function
     Private Function GetAlignOffsetX(lineStr As String, areaWidth As Integer) As Integer
-        If ÆôÓÃ¶àĞĞ OrElse ÎÄ±¾¶ÔÆë = TextAlignMode.Left Then Return 0
+        If å¯ç”¨å¤šè¡Œ OrElse æ–‡æœ¬å¯¹é½ = TextAlignMode.Left Then Return 0
         Dim textW As Integer = MeasureWidth(lineStr)
         If textW >= areaWidth Then Return 0
-        Select Case ÎÄ±¾¶ÔÆë
+        Select Case æ–‡æœ¬å¯¹é½
             Case TextAlignMode.Center
                 Return (areaWidth - textW) \ 2
             Case TextAlignMode.Right
@@ -1749,12 +2016,15 @@ Public Class ModernTextBox
         If _lines.Count = 0 Then _lines.Add("")
         _lineRuns = New List(Of List(Of TextRun))(_lines.Count)
         _lineLinks = New List(Of List(Of LinkRange))(_lines.Count)
+        _lineStates = New List(Of Integer)(_lines.Count)
         For i = 0 To _lines.Count - 1
             _lineRuns.Add(Nothing)
             _lineLinks.Add(Nothing)
+            _lineStates.Add(0)
         Next
     End Sub
     Private Sub NotifyTextChanged()
+        ApplySyntaxHighlighting()
         RebuildAllLinks()
         RebuildVisualLines()
         Dim oldVisible As Boolean = _scrollBarVisible
@@ -1784,7 +2054,7 @@ Public Class ModernTextBox
         Return Me.DeviceDpi / 96.0F
     End Function
     Private Function IsWordWrapActive() As Boolean
-        Return ÆôÓÃ¶àĞĞ AndAlso _wordWrap
+        Return å¯ç”¨å¤šè¡Œ AndAlso _wordWrap
     End Function
     Private Sub RebuildVisualLines()
         _visualLines.Clear()
@@ -1839,7 +2109,7 @@ Public Class ModernTextBox
             _autoScrollTimer.Stop()
             Return
         End If
-        Dim bi As Integer = CInt(Math.Round(±ß¿ò¿í¶È * DpiScale()))
+        Dim bi As Integer = CInt(Math.Round(è¾¹æ¡†å®½åº¦ * DpiScale()))
         Dim textTop As Integer = Math.Max(Padding.Top, bi)
         Dim textBottom As Integer = ClientRectangle.Height - Math.Max(Padding.Bottom, bi)
         Dim scrollDelta As Integer
@@ -1860,7 +2130,7 @@ Public Class ModernTextBox
         Invalidate()
     End Sub
     Private Function GetDisplayText(text As String) As String
-        If _passwordChar = vbNullChar OrElse ÆôÓÃ¶àĞĞ Then Return text
+        If _passwordChar = vbNullChar OrElse å¯ç”¨å¤šè¡Œ Then Return text
         Return New String(_passwordChar, text.Length)
     End Function
     Private Shared Function MergeAdjacentRuns(runs As List(Of TextRun)) As List(Of TextRun)
@@ -2045,12 +2315,12 @@ Public Class ModernTextBox
         Next
     End Sub
     Private Sub DetectLinksInLine(lineIndex As Integer)
-        If Not ÆôÓÃÁ´½ÓÊ¶±ğ Then
+        If Not å¯ç”¨é“¾æ¥è¯†åˆ« Then
             _lineLinks(lineIndex) = Nothing
             Return
         End If
         Dim line = _lines(lineIndex)
-        If line.Length = 0 OrElse (_passwordChar <> vbNullChar AndAlso Not ÆôÓÃ¶àĞĞ) Then
+        If line.Length = 0 OrElse (_passwordChar <> vbNullChar AndAlso Not å¯ç”¨å¤šè¡Œ) Then
             _lineLinks(lineIndex) = Nothing
             Return
         End If
@@ -2069,7 +2339,7 @@ Public Class ModernTextBox
         _lineLinks(lineIndex) = If(links.Count > 0, links, Nothing)
     End Sub
     Private Function FindLinkAtPosition(line As Integer, col As Integer) As String
-        If Not ÆôÓÃÁ´½ÓÊ¶±ğ Then Return Nothing
+        If Not å¯ç”¨é“¾æ¥è¯†åˆ« Then Return Nothing
         If line < 0 OrElse line >= _lineLinks.Count Then Return Nothing
         Dim links = _lineLinks(line)
         If links Is Nothing Then Return Nothing
@@ -2089,9 +2359,65 @@ Public Class ModernTextBox
         _underlineFontCache = New Font(baseFont, baseFont.Style Or FontStyle.Underline)
         Return _underlineFontCache
     End Function
+    Private Sub ApplySyntaxHighlighting()
+        _lineStates.Clear()
+        For i = 0 To _lines.Count - 1
+            _lineStates.Add(0)
+        Next
+        If Not å¯ç”¨è¯­æ³•é«˜äº® OrElse _syntaxHighlighter Is Nothing Then Return
+        Dim prevState As Integer = 0
+        For i = 0 To _lines.Count - 1
+            Dim result = _syntaxHighlighter.HighlightLine(i, _lines(i), prevState)
+            _lineStates(i) = result.EndState
+            If result.Tokens IsNot Nothing AndAlso result.Tokens.Count > 0 Then
+                Dim runs As New List(Of TextRun)
+                Dim pos As Integer = 0
+                For Each tk In result.Tokens
+                    If tk.StartCol > pos Then
+                        runs.Add(New TextRun(pos, tk.StartCol - pos))
+                    End If
+                    runs.Add(New TextRun(tk.StartCol, tk.Length, tk.ForeColor, Nothing))
+                    pos = tk.StartCol + tk.Length
+                Next
+                If pos < _lines(i).Length Then
+                    runs.Add(New TextRun(pos, _lines(i).Length - pos))
+                End If
+                _lineRuns(i) = MergeAdjacentRuns(runs)
+            Else
+                _lineRuns(i) = Nothing
+            End If
+            prevState = result.EndState
+        Next
+    End Sub
+    Private Sub ApplySyntaxHighlightingToLine(lineIndex As Integer)
+        If Not å¯ç”¨è¯­æ³•é«˜äº® OrElse _syntaxHighlighter Is Nothing Then Return
+        Dim prevState As Integer = If(lineIndex > 0 AndAlso lineIndex - 1 < _lineStates.Count, _lineStates(lineIndex - 1), 0)
+        Dim result = _syntaxHighlighter.HighlightLine(lineIndex, _lines(lineIndex), prevState)
+        While _lineStates.Count <= lineIndex
+            _lineStates.Add(0)
+        End While
+        _lineStates(lineIndex) = result.EndState
+        If result.Tokens IsNot Nothing AndAlso result.Tokens.Count > 0 Then
+            Dim runs As New List(Of TextRun)
+            Dim pos As Integer = 0
+            For Each tk In result.Tokens
+                If tk.StartCol > pos Then
+                    runs.Add(New TextRun(pos, tk.StartCol - pos))
+                End If
+                runs.Add(New TextRun(tk.StartCol, tk.Length, tk.ForeColor, Nothing))
+                pos = tk.StartCol + tk.Length
+            Next
+            If pos < _lines(lineIndex).Length Then
+                runs.Add(New TextRun(pos, _lines(lineIndex).Length - pos))
+            End If
+            _lineRuns(lineIndex) = MergeAdjacentRuns(runs)
+        Else
+            _lineRuns(lineIndex) = Nothing
+        End If
+    End Sub
 #End Region
 
-#Region "ÊÂ¼ş"
+#Region "äº‹ä»¶"
     Protected Overrides Sub OnGotFocus(e As EventArgs)
         MyBase.OnGotFocus(e)
         If IsHandleCreated Then
@@ -2134,7 +2460,7 @@ Public Class ModernTextBox
     End Sub
 #End Region
 
-#Region "½ûÓÃÊôĞÔ"
+#Region "ç¦ç”¨å±æ€§"
     <Browsable(False), EditorBrowsable(EditorBrowsableState.Never), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
     Public Shadows Property AutoScroll As Boolean
         Get

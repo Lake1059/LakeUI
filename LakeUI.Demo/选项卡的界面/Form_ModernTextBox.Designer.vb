@@ -29,6 +29,7 @@ Partial Class Form_ModernTextBox
         Panel2 = New Panel()
         ModernTextBox1 = New ModernTextBox()
         Label6 = New Label()
+        Label7 = New Label()
         Panel1 = New Panel()
         ModernButton4 = New ModernButton()
         Label4 = New Label()
@@ -38,7 +39,6 @@ Partial Class Form_ModernTextBox
         Label2 = New Label()
         ModernButton1 = New ModernButton()
         Label1 = New Label()
-        Label7 = New Label()
         ModernPanel1.SuspendLayout()
         Panel3.SuspendLayout()
         Panel2.SuspendLayout()
@@ -78,6 +78,7 @@ Partial Class Form_ModernTextBox
         ModernTextBox2.BorderSize = 2
         ModernTextBox2.CaretColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
         ModernTextBox2.Dock = DockStyle.Left
+        ModernTextBox2.EnableSyntaxHighlight = True
         ModernTextBox2.Font = New Font("Microsoft YaHei UI", 10F)
         ModernTextBox2.Location = New Point(0, 0)
         ModernTextBox2.Margin = New Padding(2, 2, 2, 2)
@@ -85,6 +86,7 @@ Partial Class Form_ModernTextBox
         ModernTextBox2.Name = "ModernTextBox2"
         ModernTextBox2.Padding = New Padding(10)
         ModernTextBox2.ScrollBarHoverColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
+        ModernTextBox2.ShowLineNumbers = True
         ModernTextBox2.Size = New Size(504, 269)
         ModernTextBox2.TabIndex = 39
         ModernTextBox2.WaterText = "ModernTextBox2"
@@ -97,9 +99,9 @@ Partial Class Form_ModernTextBox
         Label5.Location = New Point(20, 265)
         Label5.Name = "Label5"
         Label5.Padding = New Padding(0, 20, 0, 10)
-        Label5.Size = New Size(65, 50)
+        Label5.Size = New Size(496, 50)
         Label5.TabIndex = 41
-        Label5.Text = "多行模式"
+        Label5.Text = "多行模式 + 行数显示 + VB.NET 基本语法高亮（实现过程请去看 Demo 源码）"
         ' 
         ' Panel2
         ' 
@@ -137,6 +139,18 @@ Partial Class Form_ModernTextBox
         Label6.Size = New Size(65, 50)
         Label6.TabIndex = 38
         Label6.Text = "单行模式"
+        ' 
+        ' Label7
+        ' 
+        Label7.AutoSize = True
+        Label7.Dock = DockStyle.Top
+        Label7.Font = New Font("Microsoft YaHei UI", 10F)
+        Label7.Location = New Point(20, 120)
+        Label7.Name = "Label7"
+        Label7.Padding = New Padding(0, 20, 0, 0)
+        Label7.Size = New Size(345, 60)
+        Label7.TabIndex = 43
+        Label7.Text = "你知道从头做一个文本框要多少代码吗？超过两千行！" & vbCrLf & "Just try it, you will love it!"
         ' 
         ' Panel1
         ' 
@@ -257,18 +271,6 @@ Partial Class Form_ModernTextBox
         Label1.Size = New Size(331, 50)
         Label1.TabIndex = 34
         Label1.Text = "现代化文本框 ModernTextBox"
-        ' 
-        ' Label7
-        ' 
-        Label7.AutoSize = True
-        Label7.Dock = DockStyle.Top
-        Label7.Font = New Font("Microsoft YaHei UI", 10F)
-        Label7.Location = New Point(20, 120)
-        Label7.Name = "Label7"
-        Label7.Padding = New Padding(0, 20, 0, 0)
-        Label7.Size = New Size(345, 60)
-        Label7.TabIndex = 43
-        Label7.Text = "你知道从头做一个文本框要多少代码吗？超过两千行！" & vbCrLf & "Just try it, you will love it!"
         ' 
         ' Form_ModernTextBox
         ' 

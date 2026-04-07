@@ -1,5 +1,6 @@
 ﻿Public Class Form1
     Private Sub Form1_Load(sender As Object, e As EventArgs) Handles MyBase.Load
+
         Me.ThisIsYourWindow1.Attach(Me)
 
         Me.ModernTabListControl1.Items(1).BoundControl = Form基本信息
@@ -34,6 +35,10 @@
 
     Private Sub Form1_Shown(sender As Object, e As EventArgs) Handles Me.Shown
         Me.ModernTabListControl1.SelectedIndex = 1
+
+    End Sub
+
+    Private Sub Form1_FormClosing(sender As Object, e As FormClosingEventArgs) Handles Me.FormClosing
 
     End Sub
 End Class
