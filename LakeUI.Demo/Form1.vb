@@ -31,6 +31,8 @@
         Me.ModernTabListControl1.Items(27).BoundControl = Form_MarkDownViewer
         Me.ModernTabListControl1.Items(28).BoundControl = Form_ProgressRing
         Me.ModernTabListControl1.Items(29).BoundControl = Form_SysTaskBarProgress
+        Me.ModernTabListControl1.Items(30).BoundControl = Form_PixelPictureBox
+        Me.ModernTabListControl1.Items(31).BoundControl = Form_TaskbarThumbnailToolbar
     End Sub
 
     Private Sub Form1_Shown(sender As Object, e As EventArgs) Handles Me.Shown

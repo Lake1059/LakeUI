@@ -110,14 +110,14 @@ Public Class ModernTextBox
     Private _mouseDownLinkText As String = Nothing
     Private _syntaxHighlighter As ISyntaxHighlighter = Nothing
     Private _lineStates As New List(Of Integer) From {0}
-    Private 启用语法高亮 As Boolean = False
-    Private 显示行号 As Boolean = False
-    Private 行号颜色 As Color = Color.FromArgb(140, 140, 140)
-    Private 行号背景颜色 As Color = Color.FromArgb(30, 30, 30)
-    Private 行号字体 As Font = Nothing
-    Private 行号左距 As Integer = 10
-    Private 行号右距 As Integer = 10
-    Private 行号对齐 As TextAlignMode = TextAlignMode.Right
+    Private _enableSyntaxHighlight As Boolean = False
+    Private _showLineNumbers As Boolean = False
+    Private _lineNumForeColor As Color = Color.FromArgb(140, 140, 140)
+    Private _lineNumBackColor As Color = Color.FromArgb(30, 30, 30)
+    Private _lineNumFont As Font = Nothing
+    Private _lineNumPadLeft As Integer = 10
+    Private _lineNumPadRight As Integer = 10
+    Private _lineNumAlign As TextAlignMode = TextAlignMode.Right
     Private Shared ReadOnly LinkRegex As New Regex("(https?://|ftp://|www\.)\S+", RegexOptions.IgnoreCase Or RegexOptions.Compiled)
     Private Const TF As TextFormatFlags = TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine Or TextFormatFlags.VerticalCenter
     Private _cachedDpiScale As Single = 1.0F
@@ -215,8 +215,8 @@ Public Class ModernTextBox
         End Set
     End Property
 
-    Private 光标颜色 As Color
-    <Category("LakeUI"), Description("光标颜色"), DefaultValue(GetType(Color), "220, 220, 220"), Browsable(True)>
+    Private 光标颜色 As Color = Color.Gainsboro
+    <Category("LakeUI"), Description("光标颜色"), DefaultValue(GetType(Color), "Gainsboro"), Browsable(True)>
     Public Property CaretColor As Color
         Get
             Return 光标颜色
@@ -378,8 +378,8 @@ Public Class ModernTextBox
         End Set
     End Property
 
-    Private 滚动条悬停颜色 As Color = Color.FromArgb(200, 200, 200)
-    <Category("LakeUI"), Description("滚动条滑块悬停/拖拽颜色"), DefaultValue(GetType(Color), "200, 200, 200"), Browsable(True)>
+    Private 滚动条悬停颜色 As Color = SystemColors.ScrollBar
+    <Category("LakeUI"), Description("滚动条滑块悬停/拖拽颜色"), DefaultValue(GetType(Color), "ScrollBar"), Browsable(True)>
     Public Property ScrollBarHoverColor As Color
         Get
             Return 滚动条悬停颜色
@@ -444,7 +444,7 @@ Public Class ModernTextBox
         End Get
         Set(value As ISyntaxHighlighter)
             _syntaxHighlighter = value
-            If 启用语法高亮 Then
+            If _enableSyntaxHighlight Then
                 ApplySyntaxHighlighting()
             End If
             Invalidate()
@@ -454,11 +454,11 @@ Public Class ModernTextBox
     <Category("LakeUI"), Description("是否启用语法高亮"), DefaultValue(GetType(Boolean), "False"), Browsable(True)>
     Public Property EnableSyntaxHighlight As Boolean
         Get
-            Return 启用语法高亮
+            Return _enableSyntaxHighlight
         End Get
         Set(value As Boolean)
-            If 启用语法高亮 <> value Then
-                启用语法高亮 = value
+            If _enableSyntaxHighlight <> value Then
+                _enableSyntaxHighlight = value
                 If value Then
                     ApplySyntaxHighlighting()
                 Else
@@ -472,11 +472,11 @@ Public Class ModernTextBox
     <Category("LakeUI"), Description("是否显示行号（仅多行模式）"), DefaultValue(GetType(Boolean), "False"), Browsable(True)>
     Public Property ShowLineNumbers As Boolean
         Get
-            Return 显示行号
+            Return _showLineNumbers
         End Get
         Set(value As Boolean)
-            If 显示行号 <> value Then
-                显示行号 = value
+            If _showLineNumbers <> value Then
+                _showLineNumbers = value
                 RebuildVisualLines()
                 UpdateScrollBar()
                 Invalidate()
@@ -487,20 +487,20 @@ Public Class ModernTextBox
     <Category("LakeUI"), Description("行号文本颜色"), DefaultValue(GetType(Color), "140, 140, 140"), Browsable(True)>
     Public Property LineNumberForeColor As Color
         Get
-            Return 行号颜色
+            Return _lineNumForeColor
         End Get
         Set(value As Color)
-            SetValue(行号颜色, value)
+            SetValue(_lineNumForeColor, value)
         End Set
     End Property
 
     <Category("LakeUI"), Description("行号区域背景颜色"), DefaultValue(GetType(Color), "30, 30, 30"), Browsable(True)>
     Public Property LineNumberBackColor As Color
         Get
-            Return 行号背景颜色
+            Return _lineNumBackColor
         End Get
         Set(value As Color)
-            SetValue(行号背景颜色, value)
+            SetValue(_lineNumBackColor, value)
         End Set
     End Property
 
@@ -508,11 +508,11 @@ Public Class ModernTextBox
      DesignerSerializationVisibility(DesignerSerializationVisibility.Visible)>
     Public Property LineNumberFont As Font
         Get
-            Return 行号字体
+            Return _lineNumFont
         End Get
         Set(value As Font)
-            行号字体 = value
-            If 显示行号 Then
+            _lineNumFont = value
+            If _showLineNumbers Then
                 RebuildVisualLines()
                 UpdateScrollBar()
                 Invalidate()
@@ -520,7 +520,7 @@ Public Class ModernTextBox
         End Set
     End Property
     Private Function ShouldSerializeLineNumberFont() As Boolean
-        Return 行号字体 IsNot Nothing
+        Return _lineNumFont IsNot Nothing
     End Function
     Public Sub ResetLineNumberFont()
         LineNumberFont = Nothing
@@ -529,12 +529,12 @@ Public Class ModernTextBox
     <Category("LakeUI"), Description("行号区域左侧内距"), DefaultValue(GetType(Integer), "10"), Browsable(True)>
     Public Property LineNumberPaddingLeft As Integer
         Get
-            Return 行号左距
+            Return _lineNumPadLeft
         End Get
         Set(value As Integer)
-            行号左距 = Math.Max(0, value)
+            _lineNumPadLeft = Math.Max(0, value)
             UpdateDpiCache()
-            If 显示行号 Then
+            If _showLineNumbers Then
                 RebuildVisualLines()
                 UpdateScrollBar()
                 Invalidate()
@@ -545,12 +545,12 @@ Public Class ModernTextBox
     <Category("LakeUI"), Description("行号区域右侧内距"), DefaultValue(GetType(Integer), "10"), Browsable(True)>
     Public Property LineNumberPaddingRight As Integer
         Get
-            Return 行号右距
+            Return _lineNumPadRight
         End Get
         Set(value As Integer)
-            行号右距 = Math.Max(0, value)
+            _lineNumPadRight = Math.Max(0, value)
             UpdateDpiCache()
-            If 显示行号 Then
+            If _showLineNumbers Then
                 RebuildVisualLines()
                 UpdateScrollBar()
                 Invalidate()
@@ -561,10 +561,10 @@ Public Class ModernTextBox
     <Category("LakeUI"), Description("行号对齐方式"), DefaultValue(TextAlignMode.Right), Browsable(True)>
     Public Property LineNumberAlign As TextAlignMode
         Get
-            Return 行号对齐
+            Return _lineNumAlign
         End Get
         Set(value As TextAlignMode)
-            SetValue(行号对齐, value)
+            SetValue(_lineNumAlign, value)
         End Set
     End Property
 
@@ -998,18 +998,18 @@ Public Class ModernTextBox
             textLeft = Math.Max(Padding.Left, bi)
         End If
         Dim scrollW As Integer = If(_scrollBarVisible, CInt(Math.Round(滚动条宽度 * DpiScale())) + ScrollBarRenderer.Margin * 2, 0)
-        Dim textWidth As Integer = w - textLeft - Math.Max(textRight, scrollW)
+        Dim textWidth As Integer = w - textLeft - textRight - scrollW
         Dim textHeight As Integer = h - textTop - textBottom
         Dim isSingleLine As Boolean = Not 启用多行
         Dim singleLineY As Integer = textTop + (textHeight - _scaledLineHeight) \ 2
         Dim visibleLines As Integer = VisibleLineCount()
         Dim startVi As Integer = _scrollLineOffset
-        Dim endVi As Integer = Math.Min(_visualLines.Count - 1, startVi + visibleLines + 1)
+        Dim endVi As Integer = Math.Min(_visualLines.Count - 1, startVi + visibleLines - 1)
 
         ' 绘制行号区域（紧贴上下边框内侧）
         If gutterW > 0 Then
             ' 绘制行号背景，兼容圆角边框
-            If 行号背景颜色 <> Color.Empty Then
+            If _lineNumBackColor <> Color.Empty Then
                 Dim s As Single = DpiScale()
                 Dim gutterRect As New Rectangle(0, 0, bi + gutterW, h)
                 If 边框圆角半径 > 0 Then
@@ -1025,20 +1025,20 @@ Public Class ModernTextBox
                             rgn.Intersect(gutterRect)
                             g.SetClip(rgn, Drawing2D.CombineMode.Replace)
                         End Using
-                        Using br As New SolidBrush(行号背景颜色)
+                        Using br As New SolidBrush(_lineNumBackColor)
                             g.FillRectangle(br, gutterRect)
                         End Using
                         g.SmoothingMode = oldSmooth
                         g.ResetClip()
                     End Using
                 Else
-                    Using br As New SolidBrush(行号背景颜色)
+                    Using br As New SolidBrush(_lineNumBackColor)
                         g.FillRectangle(br, gutterRect)
                     End Using
                 End If
             End If
             g.SetClip(New Rectangle(gutterLeft, textTop, gutterW, textHeight))
-            Dim useNumFont As Font = If(行号字体, Font)
+            Dim useNumFont As Font = If(_lineNumFont, Font)
             Dim contentW As Integer = gutterW - _scaledLineNumPadL - _scaledLineNumPadR
             Dim lastDrawnLogical As Integer = -1
             For vi As Integer = startVi To endVi
@@ -1049,7 +1049,7 @@ Public Class ModernTextBox
                     Dim numStr As String = (vl.LogicalLine + 1).ToString()
                     Dim numW As Integer = TextRenderHelper.MeasureTextWidth(numStr, useNumFont, _scaledLineHeight)
                     Dim numX As Integer
-                    Select Case 行号对齐
+                    Select Case _lineNumAlign
                         Case TextAlignMode.Left
                             numX = gutterLeft + _scaledLineNumPadL
                         Case TextAlignMode.Center
@@ -1059,7 +1059,7 @@ Public Class ModernTextBox
                     End Select
                     TextRenderer.DrawText(g, numStr, useNumFont,
                         New Rectangle(numX, lineY, numW, _scaledLineHeight),
-                        行号颜色, TF)
+                        _lineNumForeColor, TF)
                 End If
             Next
             g.ResetClip()
@@ -2015,11 +2015,11 @@ Public Class ModernTextBox
         Dim scrollW As Integer = If(_scrollBarVisible, CInt(Math.Round(滚动条宽度 * DpiScale())) + ScrollBarRenderer.Margin * 2, 0)
         Dim gutterW As Integer = LineNumberGutterWidth()
         Dim leftUsed As Integer = If(gutterW > 0, bi + gutterW + Padding.Left, Math.Max(Padding.Left, bi))
-        Return ClientRectangle.Width - leftUsed - Math.Max(Math.Max(Padding.Right, bi), scrollW)
+        Return ClientRectangle.Width - leftUsed - Math.Max(Padding.Right, bi) - scrollW
     End Function
     Private Function LineNumberGutterWidth() As Integer
-        If Not 显示行号 OrElse Not 启用多行 Then Return 0
-        Dim useFont As Font = If(行号字体, Font)
+        If Not _showLineNumbers OrElse Not 启用多行 Then Return 0
+        Dim useFont As Font = If(_lineNumFont, Font)
         Dim maxNum As String = _lines.Count.ToString()
         Dim numW As Integer = TextRenderHelper.MeasureTextWidth(maxNum, useFont, _scaledLineHeight)
         Return _scaledLineNumPadL + numW + _scaledLineNumPadR
@@ -2304,7 +2304,7 @@ Public Class ModernTextBox
         For i = 0 To _lines.Count - 1
             _lineStates.Add(0)
         Next
-        If Not 启用语法高亮 OrElse _syntaxHighlighter Is Nothing Then Return
+        If Not _enableSyntaxHighlight OrElse _syntaxHighlighter Is Nothing Then Return
         Dim prevState As Integer = 0
         For i = 0 To _lines.Count - 1
             Dim result = _syntaxHighlighter.HighlightLine(i, _lines(i), prevState)
@@ -2314,7 +2314,7 @@ Public Class ModernTextBox
         Next
     End Sub
     Private Sub ApplySyntaxHighlightingToLine(lineIndex As Integer)
-        If Not 启用语法高亮 OrElse _syntaxHighlighter Is Nothing Then Return
+        If Not _enableSyntaxHighlight OrElse _syntaxHighlighter Is Nothing Then Return
         Dim prevState As Integer = If(lineIndex > 0 AndAlso lineIndex - 1 < _lineStates.Count, _lineStates(lineIndex - 1), 0)
         Dim result = _syntaxHighlighter.HighlightLine(lineIndex, _lines(lineIndex), prevState)
         While _lineStates.Count <= lineIndex
@@ -2324,7 +2324,7 @@ Public Class ModernTextBox
         _lineRuns(lineIndex) = TokensToRuns(result.Tokens, _lines(lineIndex).Length)
     End Sub
     Private Sub UpdateSyntaxHighlightingFrom(fromLine As Integer, toLine As Integer)
-        If Not 启用语法高亮 OrElse _syntaxHighlighter Is Nothing Then Return
+        If Not _enableSyntaxHighlight OrElse _syntaxHighlighter Is Nothing Then Return
         Dim prevState As Integer = If(fromLine > 0, _lineStates(fromLine - 1), 0)
         For i As Integer = fromLine To _lines.Count - 1
             Dim oldEndState As Integer = _lineStates(i)
@@ -2409,8 +2409,8 @@ Public Class ModernTextBox
         _cachedBorderInset = CInt(Math.Round(边框宽度 * _cachedDpiScale))
         _scaledLineHeight = CInt(Math.Round(行高 * _cachedDpiScale))
         _scaledCaretWidth = CInt(Math.Round(光标线宽 * _cachedDpiScale))
-        _scaledLineNumPadL = CInt(Math.Round(行号左距 * _cachedDpiScale))
-        _scaledLineNumPadR = CInt(Math.Round(行号右距 * _cachedDpiScale))
+        _scaledLineNumPadL = CInt(Math.Round(_lineNumPadLeft * _cachedDpiScale))
+        _scaledLineNumPadR = CInt(Math.Round(_lineNumPadRight * _cachedDpiScale))
     End Sub
     Private Function IsWordWrapActive() As Boolean
         Return 启用多行 AndAlso _wordWrap

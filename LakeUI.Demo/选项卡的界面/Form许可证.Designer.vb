@@ -32,7 +32,6 @@ Partial Class Form许可证
         ModernTextBox1.CaretColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
         ModernTextBox1.Dock = DockStyle.Fill
         ModernTextBox1.Font = New Font("Microsoft YaHei UI", 10.2F, FontStyle.Regular, GraphicsUnit.Point, CByte(134))
-        ModernTextBox1.LineHeight = 30
         ModernTextBox1.Location = New Point(0, 0)
         ModernTextBox1.Margin = New Padding(2, 2, 2, 2)
         ModernTextBox1.MaxUndoCount = 0

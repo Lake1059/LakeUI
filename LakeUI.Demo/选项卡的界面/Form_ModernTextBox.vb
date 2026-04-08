@@ -3,9 +3,7 @@ Public Class Form_ModernTextBox
     Private Sub Form_ModernTextBox_Load(sender As Object, e As EventArgs) Handles MyBase.Load
         Me.ModernTextBox2.SyntaxHighlighter = New VbKeywordHighlighter()
     End Sub
-
 End Class
-
 
 Public Class VbKeywordHighlighter
     Implements ModernTextBox.ISyntaxHighlighter
@@ -17,42 +15,38 @@ Public Class VbKeywordHighlighter
     Private Shared ReadOnly ColorString As Color = Color.FromArgb(214, 157, 133)       ' 橙色 - 字符串
     Private Shared ReadOnly ColorComment As Color = Color.FromArgb(87, 166, 74)        ' 绿色 - 注释
     Private Shared ReadOnly ColorNumber As Color = Color.FromArgb(181, 206, 168)       ' 浅绿 - 数字
-    Private Shared ReadOnly ColorOperatorWord As Color = Color.FromArgb(86, 156, 214)  ' 蓝色 - 运算符关键字
     Private Shared ReadOnly ColorPreprocessor As Color = Color.FromArgb(155, 155, 155) ' 灰色 - 预处理指令
     Private Shared ReadOnly ColorXmlDoc As Color = Color.FromArgb(96, 139, 78)         ' 深绿 - XML文档注释
 
-    ' ═══════════ 关键字分类表 ═══════════
+    ' ═══════════ 关键字分类表（三组互不重叠） ═══════════
     Private Shared ReadOnly Keywords As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase) From {
-        "AddHandler", "AddressOf", "Alias", "And", "AndAlso",
-        "ByRef", "ByVal", "Call", "Case", "Catch",
+        "AddHandler", "AddressOf", "Alias", "And", "AndAlso", "As",
+        "ByRef", "ByVal", "Call",
         "CBool", "CByte", "CChar", "CDate", "CDbl", "CDec", "CInt", "CLng",
         "CObj", "CSByte", "CShort", "CSng", "CStr", "CType", "CUInt", "CULng", "CUShort",
-        "Class", "Const", "Continue", "Declare", "Default",
-        "Delegate", "Dim", "DirectCast", "Do",
-        "Each", "Else", "ElseIf", "End", "EndIf", "Enum", "Erase", "Error", "Event",
-        "Exit", "Finally", "For", "Friend", "Function",
-        "Get", "GetType", "GetXmlNamespace", "Global", "GoSub", "GoTo",
-        "Handles", "If", "Implements", "Imports", "In", "Inherits",
-        "Interface", "Is", "IsNot", "Let", "Lib", "Like", "Loop",
+        "Class", "Const", "Declare", "Default", "Delegate", "Dim", "DirectCast",
+        "End", "Enum", "Erase", "Error", "Event",
+        "False", "Friend", "Function",
+        "Get", "GetType", "GetXmlNamespace", "Global",
+        "Handles", "Implements", "Imports", "In", "Inherits",
+        "Interface", "Is", "IsNot", "Let", "Lib", "Like",
         "Me", "Mod", "Module", "MustInherit", "MustOverride", "MyBase", "MyClass",
-        "Namespace", "Narrowing", "New", "Next",
-        "Not", "Nothing", "NotInheritable", "NotOverridable",
+        "NameOf", "Namespace", "Narrowing", "New", "Not", "Nothing",
+        "NotInheritable", "NotOverridable",
         "Of", "On", "Operator", "Option", "Optional", "Or", "OrElse",
         "Overloads", "Overridable", "Overrides",
         "ParamArray", "Partial", "Private", "Property", "Protected", "Public",
-        "RaiseEvent", "ReadOnly", "ReDim", "REM", "RemoveHandler",
-        "Resume", "Return", "Select", "Set", "Shadows", "Shared",
-        "Static", "Step", "Stop", "Structure", "Sub", "SyncLock",
-        "Then", "Throw", "To", "Try", "TryCast", "TypeOf",
-        "Using", "Wend", "When", "While", "Widening", "With", "WithEvents", "WriteOnly",
-        "Xor", "As"
+        "RaiseEvent", "ReadOnly", "ReDim", "RemoveHandler",
+        "Set", "Shadows", "Shared", "Static", "Stop", "Structure", "Sub",
+        "True", "TryCast", "TypeOf",
+        "Widening", "WithEvents", "WriteOnly", "Xor"
     }
 
     Private Shared ReadOnly ControlFlowKeywords As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase) From {
-        "If", "Then", "Else", "ElseIf", "End If",
+        "If", "End If", "Then", "Else", "ElseIf",
         "Select", "Case",
         "For", "Each", "Next", "To", "Step",
-        "While", "Wend", "Do", "Loop", "Until",
+        "While", "End While", "Wend", "Do", "Loop", "Until",
         "Try", "Catch", "Finally", "Throw",
         "GoTo", "GoSub", "Resume", "Continue", "Exit", "Return",
         "With", "Using", "SyncLock",
@@ -70,38 +64,16 @@ Public Class VbKeywordHighlighter
         "Color", "Point", "PointF", "Size", "SizeF", "Rectangle", "RectangleF",
         "Font", "Bitmap", "Image", "Graphics", "Pen", "Brush", "SolidBrush",
         "Form", "Control", "Panel", "Button", "Label", "TextBox", "ComboBox",
-        "Timer", "BackgroundWorker", "DefaultEvent"
+        "Timer", "BackgroundWorker",
+        "EventArgs", "DefaultEvent", "EventHandler"
     }
-
-    Private Shared ReadOnly OperatorWords As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase) From {
-        "And", "AndAlso", "Or", "OrElse", "Xor", "Not",
-        "Is", "IsNot", "Like", "Mod",
-        "TypeOf", "GetType", "DirectCast", "TryCast", "CType",
-        "CBool", "CByte", "CChar", "CDate", "CDbl", "CDec", "CInt", "CLng",
-        "CObj", "CSByte", "CShort", "CSng", "CStr", "CUInt", "CULng", "CUShort",
-        "AddressOf", "NameOf"
-    }
-
-    Private Shared ReadOnly PreprocessorKeywords As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase) From {
-        "#If", "#ElseIf", "#Else", "#End", "#Const", "#Region", "#End Region",
-        "#ExternalSource", "#ExternalChecksum", "#Disable", "#Enable"
-    }
-
-    Private Shared ReadOnly LiteralKeywords As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase) From {
-        "True", "False", "Nothing", "Me", "MyBase", "MyClass"
-    }
-
-    ' ═══════════ 行状态常量 ═══════════
-    Private Const STATE_NORMAL As Integer = 0
-    Private Const STATE_IN_XML_DOC As Integer = 0  ' XML文档注释不跨行
-    Private Const STATE_IN_LINE_CONTINUATION As Integer = 1
 
     Public Function HighlightLine(lineIndex As Integer, lineText As String,
             previousLineState As Integer) As ModernTextBox.SyntaxHighlightResult _
             Implements ModernTextBox.ISyntaxHighlighter.HighlightLine
 
         Dim tokens As New List(Of ModernTextBox.SyntaxToken)
-        If lineText.Length = 0 Then Return New ModernTextBox.SyntaxHighlightResult(tokens, STATE_NORMAL)
+        If lineText.Length = 0 Then Return New ModernTextBox.SyntaxHighlightResult(tokens, 0)
 
         Dim i As Integer = 0
 
@@ -113,30 +85,21 @@ Public Class VbKeywordHighlighter
         ' 预处理指令: #Region, #If 等
         If i < lineText.Length AndAlso lineText(i) = "#"c Then
             tokens.Add(New ModernTextBox.SyntaxToken(i, lineText.Length - i, ColorPreprocessor))
-            Return New ModernTextBox.SyntaxHighlightResult(tokens, STATE_NORMAL)
+            Return New ModernTextBox.SyntaxHighlightResult(tokens, 0)
         End If
 
         ' XML 文档注释: '''
         If i + 2 < lineText.Length AndAlso lineText(i) = "'"c AndAlso lineText(i + 1) = "'"c AndAlso lineText(i + 2) = "'"c Then
             tokens.Add(New ModernTextBox.SyntaxToken(i, lineText.Length - i, ColorXmlDoc))
-            Return New ModernTextBox.SyntaxHighlightResult(tokens, STATE_NORMAL)
+            Return New ModernTextBox.SyntaxHighlightResult(tokens, 0)
         End If
 
         ' 逐字符扫描
         While i < lineText.Length
             Dim ch As Char = lineText(i)
 
-            ' ── 注释: ' 或 REM ──
+            ' ── 注释: ' ──
             If ch = "'"c Then
-                tokens.Add(New ModernTextBox.SyntaxToken(i, lineText.Length - i, ColorComment))
-                Exit While
-            End If
-            If i + 2 < lineText.Length AndAlso
-               Char.ToUpperInvariant(lineText(i)) = "R"c AndAlso
-               Char.ToUpperInvariant(lineText(i + 1)) = "E"c AndAlso
-               Char.ToUpperInvariant(lineText(i + 2)) = "M"c AndAlso
-               (i + 3 >= lineText.Length OrElse Not Char.IsLetterOrDigit(lineText(i + 3))) AndAlso
-               (i = 0 OrElse Not Char.IsLetterOrDigit(lineText(i - 1))) Then
                 tokens.Add(New ModernTextBox.SyntaxToken(i, lineText.Length - i, ColorComment))
                 Exit While
             End If
@@ -167,10 +130,15 @@ Public Class VbKeywordHighlighter
                (ch = "&"c AndAlso i + 1 < lineText.Length AndAlso "HhOoBb".Contains(lineText(i + 1))) Then
                 Dim start = i
                 If ch = "&"c Then
-                    i += 2  ' 跳过 &H / &O / &B
-                    While i < lineText.Length AndAlso IsHexDigit(lineText(i))
-                        i += 1
-                    End While
+                    Dim prefix As Char = Char.ToUpperInvariant(lineText(i + 1))
+                    i += 2
+                    If prefix = "H"c Then
+                        While i < lineText.Length AndAlso IsHexDigit(lineText(i)) : i += 1 : End While
+                    ElseIf prefix = "O"c Then
+                        While i < lineText.Length AndAlso lineText(i) >= "0"c AndAlso lineText(i) <= "7"c : i += 1 : End While
+                    ElseIf prefix = "B"c Then
+                        While i < lineText.Length AndAlso (lineText(i) = "0"c OrElse lineText(i) = "1"c) : i += 1 : End While
+                    End If
                 Else
                     While i < lineText.Length AndAlso (Char.IsDigit(lineText(i)) OrElse lineText(i) = "."c)
                         i += 1
@@ -184,13 +152,12 @@ Public Class VbKeywordHighlighter
                         End While
                     End If
                 End If
-                ' 类型后缀: D, F, L, S, US, UI, UL, %, &, !, #, @
+                ' 类型后缀
                 If i < lineText.Length AndAlso "DdFfLlSsUu%&!#@".Contains(lineText(i)) Then
                     i += 1
-                    If i < lineText.Length AndAlso (Char.ToUpperInvariant(lineText(i)) = "S"c OrElse
-                                                    Char.ToUpperInvariant(lineText(i)) = "I"c OrElse
-                                                    Char.ToUpperInvariant(lineText(i)) = "L"c) Then
-                        i += 1
+                    If i < lineText.Length Then
+                        Dim su = Char.ToUpperInvariant(lineText(i))
+                        If su = "S"c OrElse su = "I"c OrElse su = "L"c Then i += 1
                     End If
                 End If
                 tokens.Add(New ModernTextBox.SyntaxToken(start, i - start, ColorNumber))
@@ -204,6 +171,13 @@ Public Class VbKeywordHighlighter
                     i += 1
                 End While
                 Dim word = lineText.Substring(start, i - start)
+
+                ' REM 注释
+                If word.Equals("REM", StringComparison.OrdinalIgnoreCase) Then
+                    tokens.Add(New ModernTextBox.SyntaxToken(start, lineText.Length - start, ColorComment))
+                    Exit While
+                End If
+
                 Dim clr As Color = ResolveWordColor(word)
                 If clr <> Color.Empty Then
                     tokens.Add(New ModernTextBox.SyntaxToken(start, word.Length, clr))
@@ -237,21 +211,12 @@ Public Class VbKeywordHighlighter
             i += 1
         End While
 
-        ' 行尾续行符检测
-        Dim endState As Integer = STATE_NORMAL
-        Dim trimmed = lineText.TrimEnd()
-        If trimmed.Length > 0 AndAlso trimmed(trimmed.Length - 1) = "_"c Then
-            endState = STATE_IN_LINE_CONTINUATION
-        End If
-
-        Return New ModernTextBox.SyntaxHighlightResult(tokens, endState)
+        Return New ModernTextBox.SyntaxHighlightResult(tokens, 0)
     End Function
 
     Private Shared Function ResolveWordColor(word As String) As Color
-        If LiteralKeywords.Contains(word) Then Return ColorKeyword
-        If TypeNames.Contains(word) Then Return ColorTypeName
-        If OperatorWords.Contains(word) Then Return ColorOperatorWord
         If ControlFlowKeywords.Contains(word) Then Return ColorControlFlow
+        If TypeNames.Contains(word) Then Return ColorTypeName
         If Keywords.Contains(word) Then Return ColorKeyword
         Return Color.Empty
     End Function

@@ -22,10 +22,14 @@ Partial Class Form_ModernComboBox
     '不要使用代码编辑器修改它。
     <System.Diagnostics.DebuggerStepThrough()> _
     Private Sub InitializeComponent()
+        Dim ToolTipEntry1 As LakeUI.ModernComboBox.ToolTipEntry = New ModernComboBox.ToolTipEntry()
+        Dim ToolTipEntry2 As LakeUI.ModernComboBox.ToolTipEntry = New ModernComboBox.ToolTipEntry()
+        Dim ToolTipEntry3 As LakeUI.ModernComboBox.ToolTipEntry = New ModernComboBox.ToolTipEntry()
         Dim ToolTipEntry4 As LakeUI.ModernComboBox.ToolTipEntry = New ModernComboBox.ToolTipEntry()
-        Dim ToolTipEntry5 As LakeUI.ModernComboBox.ToolTipEntry = New ModernComboBox.ToolTipEntry()
-        Dim ToolTipEntry6 As LakeUI.ModernComboBox.ToolTipEntry = New ModernComboBox.ToolTipEntry()
         ModernPanel1 = New ModernPanel()
+        Panel5 = New Panel()
+        ModernComboBox4 = New ModernComboBox()
+        Label8 = New Label()
         Panel4 = New Panel()
         ModernComboBox3 = New ModernComboBox()
         Label7 = New Label()
@@ -45,6 +49,7 @@ Partial Class Form_ModernComboBox
         ModernButton1 = New ModernButton()
         Label1 = New Label()
         ModernPanel1.SuspendLayout()
+        Panel5.SuspendLayout()
         Panel4.SuspendLayout()
         Panel3.SuspendLayout()
         Panel2.SuspendLayout()
@@ -54,6 +59,8 @@ Partial Class Form_ModernComboBox
         ' ModernPanel1
         ' 
         ModernPanel1.BorderSize = 0
+        ModernPanel1.Controls.Add(Panel5)
+        ModernPanel1.Controls.Add(Label8)
         ModernPanel1.Controls.Add(Panel4)
         ModernPanel1.Controls.Add(Label7)
         ModernPanel1.Controls.Add(Panel3)
@@ -69,6 +76,62 @@ Partial Class Form_ModernComboBox
         ModernPanel1.Padding = New Padding(20)
         ModernPanel1.Size = New Size(742, 610)
         ModernPanel1.TabIndex = 36
+        ' 
+        ' Panel5
+        ' 
+        Panel5.Controls.Add(ModernComboBox4)
+        Panel5.Dock = DockStyle.Top
+        Panel5.Location = New Point(20, 425)
+        Panel5.Name = "Panel5"
+        Panel5.Size = New Size(702, 35)
+        Panel5.TabIndex = 46
+        ' 
+        ' ModernComboBox4
+        ' 
+        ModernComboBox4.ArrowSize = 13
+        ModernComboBox4.BackColor2 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernComboBox4.BorderSize = 2
+        ModernComboBox4.CaretColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
+        ModernComboBox4.Dock = DockStyle.Left
+        ModernComboBox4.DropDownAnimationDuration = 200
+        ModernComboBox4.DropDownAnimationFPS = 0
+        ModernComboBox4.DropDownBorderSize = 2
+        ModernComboBox4.DropDownMode = ModernComboBox.DropDownDisplayMode.Overlay
+        ModernComboBox4.DropDownPadding = New Padding(10)
+        ModernComboBox4.DropDownScrollBarHoverColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
+        ModernComboBox4.Font = New Font("Microsoft YaHei UI", 10.2F, FontStyle.Regular, GraphicsUnit.Point, CByte(134))
+        ModernComboBox4.HoverBackColor2 = Color.FromArgb(CByte(80), CByte(80), CByte(80))
+        ModernComboBox4.Items.Add("下拉选项1")
+        ModernComboBox4.Items.Add("下拉选项2")
+        ModernComboBox4.Items.Add("下拉选项3")
+        ModernComboBox4.Items.Add("下拉选项4")
+        ModernComboBox4.Items.Add("下拉选项5")
+        ToolTipEntry1.ItemText = "下拉选项1"
+        ToolTipEntry1.ToolTipText = "可以根据指定选项的文本来设置工具提示"
+        ModernComboBox4.ItemToolTips.Add(ToolTipEntry1)
+        ModernComboBox4.Location = New Point(0, 0)
+        ModernComboBox4.Margin = New Padding(2, 2, 2, 2)
+        ModernComboBox4.Name = "ModernComboBox4"
+        ModernComboBox4.Padding = New Padding(12, 0, 8, 0)
+        ModernComboBox4.PressedBackColor2 = SystemColors.WindowFrame
+        ModernComboBox4.Size = New Size(217, 35)
+        ModernComboBox4.TabIndex = 21
+        ModernComboBox4.Text = "ModernComboBox4"
+        ModernComboBox4.ToolTipBorderSize = 2
+        ModernComboBox4.ToolTipGap = 10
+        ModernComboBox4.WaterText = "水印文字"
+        ' 
+        ' Label8
+        ' 
+        Label8.AutoSize = True
+        Label8.Dock = DockStyle.Top
+        Label8.Font = New Font("Microsoft YaHei UI", 10F)
+        Label8.Location = New Point(20, 375)
+        Label8.Name = "Label8"
+        Label8.Padding = New Padding(0, 20, 0, 10)
+        Label8.Size = New Size(173, 50)
+        Label8.TabIndex = 45
+        Label8.Text = "Windows 10/11 展开模式"
         ' 
         ' Panel4
         ' 
@@ -99,9 +162,9 @@ Partial Class Form_ModernComboBox
         ModernComboBox3.Items.Add("下拉选项3")
         ModernComboBox3.Items.Add("下拉选项4")
         ModernComboBox3.Items.Add("下拉选项5")
-        ToolTipEntry4.ItemText = "下拉选项1"
-        ToolTipEntry4.ToolTipText = "可以根据指定选项的文本来设置工具提示"
-        ModernComboBox3.ItemToolTips.Add(ToolTipEntry4)
+        ToolTipEntry2.ItemText = "下拉选项1"
+        ToolTipEntry2.ToolTipText = "可以根据指定选项的文本来设置工具提示"
+        ModernComboBox3.ItemToolTips.Add(ToolTipEntry2)
         ModernComboBox3.Location = New Point(0, 0)
         ModernComboBox3.Margin = New Padding(2, 2, 2, 2)
         ModernComboBox3.Name = "ModernComboBox3"
@@ -156,9 +219,9 @@ Partial Class Form_ModernComboBox
         ModernComboBox2.Items.Add("下拉选项3")
         ModernComboBox2.Items.Add("下拉选项4")
         ModernComboBox2.Items.Add("下拉选项5")
-        ToolTipEntry5.ItemText = "下拉选项1"
-        ToolTipEntry5.ToolTipText = "可以根据指定选项的文本来设置工具提示"
-        ModernComboBox2.ItemToolTips.Add(ToolTipEntry5)
+        ToolTipEntry3.ItemText = "下拉选项1"
+        ToolTipEntry3.ToolTipText = "可以根据指定选项的文本来设置工具提示"
+        ModernComboBox2.ItemToolTips.Add(ToolTipEntry3)
         ModernComboBox2.Location = New Point(0, 0)
         ModernComboBox2.Margin = New Padding(2, 2, 2, 2)
         ModernComboBox2.Name = "ModernComboBox2"
@@ -212,9 +275,9 @@ Partial Class Form_ModernComboBox
         ModernComboBox1.Items.Add("下拉选项3")
         ModernComboBox1.Items.Add("下拉选项4")
         ModernComboBox1.Items.Add("下拉选项5")
-        ToolTipEntry6.ItemText = "下拉选项1"
-        ToolTipEntry6.ToolTipText = "可以根据指定选项的文本来设置工具提示"
-        ModernComboBox1.ItemToolTips.Add(ToolTipEntry6)
+        ToolTipEntry4.ItemText = "下拉选项1"
+        ToolTipEntry4.ToolTipText = "可以根据指定选项的文本来设置工具提示"
+        ModernComboBox1.ItemToolTips.Add(ToolTipEntry4)
         ModernComboBox1.Location = New Point(0, 0)
         ModernComboBox1.Margin = New Padding(2, 2, 2, 2)
         ModernComboBox1.Name = "ModernComboBox1"
@@ -372,6 +435,7 @@ Partial Class Form_ModernComboBox
         Text = "Form_ModernComboBox"
         ModernPanel1.ResumeLayout(False)
         ModernPanel1.PerformLayout()
+        Panel5.ResumeLayout(False)
         Panel4.ResumeLayout(False)
         Panel3.ResumeLayout(False)
         Panel2.ResumeLayout(False)
@@ -398,4 +462,7 @@ Partial Class Form_ModernComboBox
     Friend WithEvents Panel4 As Panel
     Friend WithEvents ModernComboBox3 As ModernComboBox
     Friend WithEvents Label7 As Label
+    Friend WithEvents Panel5 As Panel
+    Friend WithEvents ModernComboBox4 As ModernComboBox
+    Friend WithEvents Label8 As Label
 End Class

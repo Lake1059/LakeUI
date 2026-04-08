@@ -53,6 +53,8 @@ Partial Class Form1
         Dim ModernTabPage28 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
         Dim ModernTabPage29 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
         Dim ModernTabPage30 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
+        Dim ModernTabPage31 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
+        Dim ModernTabPage32 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
         Dim ModernMenuItem1 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
         Dim resources As System.ComponentModel.ComponentResourceManager = New System.ComponentModel.ComponentResourceManager(GetType(Form1))
         Dim ModernMenuItem2 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
@@ -102,6 +104,8 @@ Partial Class Form1
         ModernTabPage28.Text = "MarkDownViewer"
         ModernTabPage29.Text = "ProgressRing"
         ModernTabPage30.Text = "SysTaskBarProgress"
+        ModernTabPage31.Text = "PixelPictureBox"
+        ModernTabPage32.Text = "TaskbarThumbnailToolbar"
         ModernTabListControl1.Items.Add(ModernTabPage1)
         ModernTabListControl1.Items.Add(ModernTabPage2)
         ModernTabListControl1.Items.Add(ModernTabPage3)
@@ -132,6 +136,8 @@ Partial Class Form1
         ModernTabListControl1.Items.Add(ModernTabPage28)
         ModernTabListControl1.Items.Add(ModernTabPage29)
         ModernTabListControl1.Items.Add(ModernTabPage30)
+        ModernTabListControl1.Items.Add(ModernTabPage31)
+        ModernTabListControl1.Items.Add(ModernTabPage32)
         ModernTabListControl1.Location = New Point(0, 0)
         ModernTabListControl1.Name = "ModernTabListControl1"
         ModernTabListControl1.ScrollBarWidth = 10
@@ -206,10 +212,8 @@ Partial Class Form1
         ThisIsYourWindow1.CloseButtonGlyphColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
         ThisIsYourWindow1.IconPaddingLeft = 15
         ThisIsYourWindow1.IconSize = 20
-        ThisIsYourWindow1.CloseAnimation = ThisIsYourWindow.WindowCloseAnimationMode.DWM
-        ThisIsYourWindow1.ShowAnimation = ThisIsYourWindow.WindowShowAnimationMode.DWM
-        ThisIsYourWindow1.ResizeBorderWidth = 10
         ThisIsYourWindow1.LayerShadowColor = Color.MediumPurple
+        ThisIsYourWindow1.ResizeBorderWidth = 10
         ThisIsYourWindow1.ShadowMode = ThisIsYourWindow.ShadowModeEnum.Layer
         ThisIsYourWindow1.TitleAlign = ThisIsYourWindow.TitleAlignEnum.Center
         ' 
@@ -226,7 +230,7 @@ Partial Class Form1
         Name = "Form1"
         ShowIcon = False
         StartPosition = FormStartPosition.CenterScreen
-        Text = "LakeUI 1.1.1 DEMO"
+        Text = "LakeUI 1.2.0 DEMO"
         ModernTabListControl1.ResumeLayout(False)
         ResumeLayout(False)
     End Sub

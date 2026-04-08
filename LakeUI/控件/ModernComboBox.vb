@@ -783,6 +783,21 @@ Public Class ModernComboBox
         End Set
     End Property
 
+    Public Enum DropDownDisplayMode
+        Classic = 0
+        Overlay = 1
+    End Enum
+    Private 下拉显示模式 As DropDownDisplayMode = DropDownDisplayMode.Classic
+    <Category("LakeUI"), Description("下拉列表显示模式（Classic = 常规下拉；Overlay = 选中项与控件重合）"), DefaultValue(DropDownDisplayMode.Classic), Browsable(True)>
+    Public Property DropDownMode As DropDownDisplayMode
+        Get
+            Return 下拉显示模式
+        End Get
+        Set(value As DropDownDisplayMode)
+            SetValue(下拉显示模式, value)
+        End Set
+    End Property
+
     <DesignerSerializationVisibility(DesignerSerializationVisibility.Content),
      Editor("System.ComponentModel.Design.CollectionEditor, System.Design", "System.Drawing.Design.UITypeEditor, System.Drawing"),
      Category("LakeUI"), Description("下拉项工具提示映射（ItemText → ToolTipText）"), Browsable(True)>
@@ -970,13 +985,16 @@ Public Class ModernComboBox
         g.PixelOffsetMode = PixelOffsetMode.HighQuality
         g.InterpolationMode = InterpolationMode.HighQualityBicubic
         Dim s As Single = DpiScale()
+        Dim fillRect As New RectangleF(boundsRect.X, boundsRect.Y, boundsRect.Width + 1, boundsRect.Height + 1)
         If hasRadius Then
-            Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(boundsRect, 边框圆角半径 * s)
-                RectangleRenderer.绘制圆角背景(g, path, boundsRect, bgClr, bgClr2, 渐变方向)
-                RectangleRenderer.绘制圆角边框(g, path, borderClr, 边框宽度 * s)
+            Using fillPath As GraphicsPath = RectangleRenderer.创建圆角矩形路径(fillRect, 边框圆角半径 * s)
+                RectangleRenderer.绘制圆角背景(g, fillPath, fillRect, bgClr, bgClr2, 渐变方向)
+            End Using
+            Using borderPath As GraphicsPath = RectangleRenderer.创建圆角矩形路径(boundsRect, 边框圆角半径 * s)
+                RectangleRenderer.绘制圆角边框(g, borderPath, borderClr, 边框宽度 * s)
             End Using
         Else
-            RectangleRenderer.绘制矩形背景(g, boundsRect, bgClr, bgClr2, 渐变方向)
+            RectangleRenderer.绘制矩形背景(g, fillRect, bgClr, bgClr2, 渐变方向)
             RectangleRenderer.绘制矩形边框(g, boundsRect, borderClr, 边框宽度 * s)
         End If
     End Sub
@@ -1640,6 +1658,11 @@ Public Class ModernComboBox
         Private _originPt As Point
         Private _useIdle As Boolean = False
 
+        ' Overlay 模式
+        Private _overlayMode As Boolean = False
+        Private _alignItemScreenY As Integer = 0
+        Private _alignItemDropdownY As Integer = 0
+
         ' 展开/关闭动画
         Private ReadOnly 展开关闭秒表 As New Stopwatch()
         Private 展开关闭计时器 As Timer
@@ -1684,16 +1707,47 @@ Public Class ModernComboBox
             Dim itemH As Integer = CInt(owner.下拉项高度 * s)
             Dim pad As Padding = owner.下拉内边距
             _finalHeight = visCount * itemH + bw * 2 + pad.Top + pad.Bottom
-            _originPt = owner.PointToScreen(New Point(0, owner.Height + owner.下拉间距))
+            _overlayMode = (owner.下拉显示模式 = DropDownDisplayMode.Overlay)
             Dim scr As Screen = Screen.FromControl(owner)
-            If _originPt.Y + _finalHeight > scr.WorkingArea.Bottom Then
-                _originPt = owner.PointToScreen(New Point(0, -_finalHeight - owner.下拉间距))
+
+            If _overlayMode Then
+                Dim alignIndex As Integer = If(owner._selectedIndex >= 0, owner._selectedIndex, 0)
+                If alignIndex >= owner._items.Count Then alignIndex = 0
+
+                Dim maxOff As Integer = Math.Max(0, owner._items.Count - visCount)
+                _scrollOffset = Math.Max(0, Math.Min(maxOff, alignIndex - visCount \ 2))
+                If alignIndex < _scrollOffset Then _scrollOffset = alignIndex
+                If alignIndex >= _scrollOffset + visCount Then _scrollOffset = alignIndex - visCount + 1
+                _scrollOffset = Math.Max(0, Math.Min(maxOff, _scrollOffset))
+
+                Dim visIdx As Integer = alignIndex - _scrollOffset
+                _alignItemDropdownY = bw + pad.Top + visIdx * itemH
+
+                Dim comboScreenPt As Point = owner.PointToScreen(New Point(0, 0))
+                Dim centerOffset As Integer = (owner.Height - itemH) \ 2
+                _alignItemScreenY = comboScreenPt.Y + centerOffset
+                _originPt = New Point(comboScreenPt.X, _alignItemScreenY - _alignItemDropdownY)
+
+                If _originPt.Y < scr.WorkingArea.Top Then
+                    _originPt.Y = scr.WorkingArea.Top
+                    _alignItemScreenY = _originPt.Y + _alignItemDropdownY
+                End If
+                If _originPt.Y + _finalHeight > scr.WorkingArea.Bottom Then
+                    _originPt.Y = scr.WorkingArea.Bottom - _finalHeight
+                    _alignItemScreenY = _originPt.Y + _alignItemDropdownY
+                End If
+            Else
+                _originPt = owner.PointToScreen(New Point(0, owner.Height + owner.下拉间距))
+                If _originPt.Y + _finalHeight > scr.WorkingArea.Bottom Then
+                    _originPt = owner.PointToScreen(New Point(0, -_finalHeight - owner.下拉间距))
+                End If
             End If
+
             Me.Location = _originPt
             Me.Size = New Size(owner.Width, _finalHeight)
 
             _scrollBarVisible = owner._items.Count > owner.最大下拉项数
-            If owner._selectedIndex >= 0 Then
+            If Not _overlayMode AndAlso owner._selectedIndex >= 0 Then
                 Dim maxOff As Integer = Math.Max(0, owner._items.Count - visCount)
                 _scrollOffset = Math.Max(0, Math.Min(maxOff, owner._selectedIndex - visCount \ 2))
             End If
@@ -1709,6 +1763,9 @@ Public Class ModernComboBox
         Friend Sub ShowDropDown()
             Application.AddMessageFilter(Me)
             If _owner.下拉展开关闭动画时长 > 0 Then
+                If _overlayMode Then
+                    Me.Location = New Point(_originPt.X, _alignItemScreenY)
+                End If
                 Me.Size = New Size(Me.Width, 1)
                 Me.Show()
                 展开关闭动画中 = True
@@ -1764,6 +1821,7 @@ Public Class ModernComboBox
                 If 正在关闭动画 Then
                     完成关闭()
                 Else
+                    Me.Location = _originPt
                     Me.Size = New Size(Me.Width, _finalHeight)
                 End If
                 Return
@@ -1773,12 +1831,23 @@ Public Class ModernComboBox
             Dim t As Single = CSng(Math.Min(elapsed / duration, 1.0))
             Dim eased As Single = 1.0F - CSng(Math.Pow(1.0 - t, 3))
 
-            If 正在关闭动画 Then
-                Dim newH As Integer = Math.Max(1, CInt(_finalHeight * (1.0F - eased)))
-                Me.Size = New Size(Me.Width, newH)
+            If _overlayMode Then
+                Dim topDist As Integer = _alignItemScreenY - _originPt.Y
+                Dim bottomDist As Integer = _finalHeight - topDist
+                Dim progress As Single = If(正在关闭动画, 1.0F - eased, eased)
+                Dim curTop As Integer = CInt(topDist * progress)
+                Dim curBottom As Integer = CInt(bottomDist * progress)
+                Dim curH As Integer = Math.Max(1, curTop + curBottom)
+                Me.Location = New Point(_originPt.X, _alignItemScreenY - curTop)
+                Me.Size = New Size(Me.Width, curH)
             Else
-                Dim newH As Integer = Math.Max(1, CInt(_finalHeight * eased))
-                Me.Size = New Size(Me.Width, newH)
+                If 正在关闭动画 Then
+                    Dim newH As Integer = Math.Max(1, CInt(_finalHeight * (1.0F - eased)))
+                    Me.Size = New Size(Me.Width, newH)
+                Else
+                    Dim newH As Integer = Math.Max(1, CInt(_finalHeight * eased))
+                    Me.Size = New Size(Me.Width, newH)
+                End If
             End If
             Invalidate()
 
@@ -1788,6 +1857,7 @@ Public Class ModernComboBox
                 If 正在关闭动画 Then
                     完成关闭()
                 Else
+                    Me.Location = _originPt
                     Me.Size = New Size(Me.Width, _finalHeight)
                     Invalidate()
                 End If
@@ -1859,7 +1929,7 @@ Public Class ModernComboBox
             g.PixelOffsetMode = PixelOffsetMode.HighQuality
             g.InterpolationMode = InterpolationMode.HighQualityBicubic
             Using br As New SolidBrush(_owner.下拉背景颜色)
-                g.FillRectangle(br, boundsRect.X, boundsRect.Y, boundsRect.Width, boundsRect.Height)
+                g.FillRectangle(br, boundsRect.X, boundsRect.Y, boundsRect.Width + 1, boundsRect.Height + 1)
             End Using
             If bw > 0 Then
                 Using pen As New Pen(_owner.下拉边框颜色, bw)
