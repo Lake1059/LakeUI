@@ -172,8 +172,7 @@ Public Class MarkDownViewer
                     Continue While
                 End If
 
-                Dim cm = 代码块开始.Match(line)
-                If cm.Success Then
+                If 代码块开始.IsMatch(line) Then
                     currentAlertKind = AlertKind.None
                     Dim sb As New StringBuilder()
                     i += 1
@@ -184,7 +183,6 @@ Public Class MarkDownViewer
                     End While
                     If i < lines.Length Then i += 1
                     Dim b As New MarkdownBlock(BlockKind.CodeBlock, sb.ToString())
-                    b.Inlines.Add(New MarkdownInline(InlineKind.Text, sb.ToString()))
                     blocks.Add(b)
                     Continue While
                 End If
@@ -234,8 +232,29 @@ Public Class MarkDownViewer
                 End If
 
                 currentAlertKind = AlertKind.None
-                blocks.Add(New MarkdownBlock(BlockKind.Paragraph, line) With {
-                    .Inlines = ParseInlines(line)
+                Dim trimmedLine = line.TrimEnd()
+                Dim mergedInlines = ParseInlines(trimmedLine)
+                ' 末尾 2+ 空格视为硬换行
+                If line.Length >= 2 AndAlso line.EndsWith("  ") Then
+                    mergedInlines.Add(New MarkdownInline(InlineKind.LineBreak, ""))
+                End If
+                ' 只要当前段落以 LineBreak 结尾（<br> 或末尾空格），就与下一行合并为同一段落
+                While mergedInlines.Count > 0 AndAlso
+                      mergedInlines(mergedInlines.Count - 1).Kind = InlineKind.LineBreak AndAlso
+                      i + 1 < lines.Length
+                    Dim nextLine = lines(i + 1)
+                    If IsSpecialLine(nextLine) Then Exit While
+                    If nextLine.Contains("|"c) AndAlso i + 2 < lines.Length AndAlso 表格分隔匹配.IsMatch(lines(i + 2)) Then Exit While
+                    i += 1
+                    line = lines(i)
+                    trimmedLine = line.TrimEnd()
+                    mergedInlines.AddRange(ParseInlines(trimmedLine))
+                    If line.Length >= 2 AndAlso line.EndsWith("  ") Then
+                        mergedInlines.Add(New MarkdownInline(InlineKind.LineBreak, ""))
+                    End If
+                End While
+                blocks.Add(New MarkdownBlock(BlockKind.Paragraph, trimmedLine) With {
+                    .Inlines = mergedInlines
                 })
                 i += 1
             End While
@@ -296,8 +315,8 @@ Public Class MarkDownViewer
             Dim result As New List(Of TableAlignment)
             For Each cell In SplitTableCells(sepLine)
                 Dim t = cell.Trim()
-                Dim leftColon = t.StartsWith(":")
-                Dim rightColon = t.EndsWith(":")
+                Dim leftColon = t.StartsWith(":"c)
+                Dim rightColon = t.EndsWith(":"c)
                 If leftColon AndAlso rightColon Then
                     result.Add(TableAlignment.Center)
                 ElseIf rightColon Then
@@ -436,6 +455,18 @@ Public Class MarkDownViewer
                 Case Else : Return ""
             End Select
         End Function
+
+        ''' <summary>判断行是否为特殊块（标题/引用/列表/代码块/分隔线/空行），用于末尾空格合并判定。</summary>
+        Private Shared Function IsSpecialLine(line As String) As Boolean
+            If String.IsNullOrWhiteSpace(line) Then Return True
+            If 代码块开始.IsMatch(line) Then Return True
+            If 分隔线匹配.IsMatch(line.Trim()) Then Return True
+            If 标题匹配.IsMatch(line) Then Return True
+            If 引用匹配.IsMatch(line) Then Return True
+            If 无序列表匹配.IsMatch(line) Then Return True
+            If 有序列表匹配.IsMatch(line) Then Return True
+            Return False
+        End Function
     End Class
 
 #End Region
@@ -493,7 +524,6 @@ Public Class MarkDownViewer
         Public Top As Integer
         Public Right As Integer
         Public Bottom As Integer
-        Public ScaledBorder As Integer
     End Structure
 
 #End Region
@@ -575,6 +605,39 @@ Public Class MarkDownViewer
         End Set
     End Property
 
+    Private 标题分隔线颜色 As Color = Color.FromArgb(60, 60, 60)
+    <Category("LakeUI - Markdown"), Description("H1/H2 标题下方分隔线颜色"), DefaultValue(GetType(Color), "60, 60, 60"), Browsable(True)>
+    Public Property HeadingSeparatorColor As Color
+        Get
+            Return 标题分隔线颜色
+        End Get
+        Set(value As Color)
+            SetValue(标题分隔线颜色, value)
+        End Set
+    End Property
+
+    Private 标题分隔线粗细 As Integer = 1
+    <Category("LakeUI - Markdown"), Description("H1/H2 标题下方分隔线粗细（像素），0 则不显示"), DefaultValue(GetType(Integer), "1"), Browsable(True)>
+    Public Property HeadingSeparatorThickness As Integer
+        Get
+            Return 标题分隔线粗细
+        End Get
+        Set(value As Integer)
+            SetValue(标题分隔线粗细, Math.Max(0, value))
+        End Set
+    End Property
+
+    Private 标题分隔线间距 As Integer = 4
+    <Category("LakeUI - Markdown"), Description("H1/H2 标题文字与分隔线之间的间距（像素）"), DefaultValue(GetType(Integer), "4"), Browsable(True)>
+    Public Property HeadingSeparatorGap As Integer
+        Get
+            Return 标题分隔线间距
+        End Get
+        Set(value As Integer)
+            SetValue(标题分隔线间距, Math.Max(0, value))
+        End Set
+    End Property
+
     Private 粗体颜色 As Color = Color.Empty
     <Category("LakeUI - Markdown"), Description("粗体颜色，Empty 时跟随 ForeColor"), DefaultValue(GetType(Color), ""), Browsable(True)>
     Public Property BoldColor As Color
@@ -629,6 +692,25 @@ Public Class MarkDownViewer
             SetValue(代码块文字颜色, value)
         End Set
     End Property
+
+    Private 代码块内边距 As New Padding(5)
+    <Category("LakeUI - Markdown"), Description("代码块内边距（像素，自动缩放 DPI）"), Browsable(True)>
+    Public Property CodeBlockPadding As Padding
+        Get
+            Return 代码块内边距
+        End Get
+        Set(value As Padding)
+            SetValue(代码块内边距, value)
+        End Set
+    End Property
+
+    Private Function ShouldSerializeCodeBlockPadding() As Boolean
+        Return 代码块内边距 <> New Padding(5)
+    End Function
+
+    Private Sub ResetCodeBlockPadding()
+        CodeBlockPadding = New Padding(5)
+    End Sub
 
     Private 链接颜色 As Color = Color.FromArgb(86, 156, 214)
     <Category("LakeUI - Markdown"), Description("链接颜色"), DefaultValue(GetType(Color), "86, 156, 214"), Browsable(True)>
@@ -737,6 +819,28 @@ Public Class MarkDownViewer
         End Get
         Set(value As Color)
             SetValue(分隔线颜色, value)
+        End Set
+    End Property
+
+    Private 分隔线粗细 As Integer = 1
+    <Category("LakeUI - Markdown"), Description("分隔线粗细（像素）"), DefaultValue(GetType(Integer), "1"), Browsable(True)>
+    Public Property HorizontalRuleThickness As Integer
+        Get
+            Return 分隔线粗细
+        End Get
+        Set(value As Integer)
+            SetValue(分隔线粗细, Math.Max(1, value))
+        End Set
+    End Property
+
+    Private 分隔线上下边距 As Integer = 4
+    <Category("LakeUI - Markdown"), Description("分隔线上下内边距（像素）"), DefaultValue(GetType(Integer), "4"), Browsable(True)>
+    Public Property HorizontalRulePadding As Integer
+        Get
+            Return 分隔线上下边距
+        End Get
+        Set(value As Integer)
+            SetValue(分隔线上下边距, Math.Max(0, value))
         End Set
     End Property
 
@@ -1086,21 +1190,45 @@ Public Class MarkDownViewer
         Dim s As Single = DpiScale()
         Dim y As Integer = 0
 
+        Dim lastContentKind As BlockKind? = Nothing
+        Dim hadBlankLine As Boolean = False
+
         For bi As Integer = 0 To _document.Blocks.Count - 1
             Dim block = _document.Blocks(bi)
 
-            Select Case block.Kind
-                Case BlockKind.BlankLine
-                    y += 段落行距
+            If block.Kind = BlockKind.BlankLine Then
+                hadBlankLine = True
+                Continue For
+            End If
 
+            ' 在内容块之前添加间距
+            If lastContentKind.HasValue Then
+                Dim isHeading = (block.Kind >= BlockKind.Heading1 AndAlso block.Kind <= BlockKind.Heading6)
+                Dim prevIsHeading = (lastContentKind.Value >= BlockKind.Heading1 AndAlso lastContentKind.Value <= BlockKind.Heading6)
+                If Not hadBlankLine AndAlso Not isHeading AndAlso IsSameGroup(lastContentKind.Value, block.Kind) Then
+                    ' 同组块（连续列表项、连续引用）使用段落内部间距
+                    y += 行内行距
+                ElseIf prevIsHeading AndAlso Not isHeading Then
+                    ' 标题下方与其他元素：块间距的一半，但不小于段落内部间距
+                    y += Math.Max(行内行距, 段落行距 \ 2)
+                Else
+                    ' 标题上方 / 不同组块之间：完整块间距
+                    y += 段落行距
+                End If
+            End If
+            hadBlankLine = False
+
+            Select Case block.Kind
                 Case BlockKind.HorizontalRule
+                    Dim ruleThick As Integer = Math.Max(1, CInt(分隔线粗细 * s))
+                    Dim rulePad As Integer = CInt(分隔线上下边距 * s)
                     Dim vl As New VisualLine With {
                         .BlockIndex = bi, .Y = y,
-                        .Height = CInt(12 * s),
+                        .Height = ruleThick + rulePad * 2,
                         .Fragments = New List(Of VisualFragment)
                     }
                     _visualLines.Add(vl)
-                    y += vl.Height + 段落行距
+                    y += vl.Height
 
                 Case BlockKind.CodeBlock
                     y = LayoutCodeBlock(bi, block, areaW, y, s)
@@ -1111,6 +1239,8 @@ Public Class MarkDownViewer
                 Case Else
                     y = LayoutInlineBlock(bi, block, areaW, y, s)
             End Select
+
+            lastContentKind = block.Kind
         Next
 
         _totalContentHeight = y
@@ -1121,17 +1251,27 @@ Public Class MarkDownViewer
         End If
     End Sub
 
+    ''' <summary>判断两个相邻块是否属于同一元素组（使用行内行距而非段落行距）。</summary>
+    Private Shared Function IsSameGroup(prev As BlockKind, curr As BlockKind) As Boolean
+        Return prev = curr AndAlso
+               (curr = BlockKind.UnorderedListItem OrElse curr = BlockKind.OrderedListItem OrElse curr = BlockKind.BlockQuote)
+    End Function
+
     Private Function LayoutCodeBlock(bi As Integer, block As MarkdownBlock, areaW As Integer, y As Integer, s As Single) As Integer
         Dim cFont As Font = GetCodeFont()
         Dim codeLines = If(block.RawText, "").Split(vbLf)
-        Dim codePadding As Integer = CInt(8 * s)
-        y += CInt(4 * s)
+        Dim padT As Integer = CInt(代码块内边距.Top * s)
+        Dim padB As Integer = CInt(代码块内边距.Bottom * s)
+        Dim padL As Integer = CInt(代码块内边距.Left * s)
+        Dim padR As Integer = CInt(代码块内边距.Right * s)
+        Dim fontH As Integer = CInt(Math.Ceiling(cFont.GetHeight(DeviceDpi)))
+        y += padT
         For cli As Integer = 0 To codeLines.Length - 1
             Dim cText = codeLines(cli)
-            Dim lineH As Integer = CInt(Math.Ceiling(cFont.GetHeight(DeviceDpi))) + 行内行距
+            Dim lineH As Integer = If(cli < codeLines.Length - 1, fontH + 行内行距, fontH)
             Dim frag As New VisualFragment With {
                 .InlineIndex = 0, .CharStart = 0, .CharLength = cText.Length,
-                .X = codePadding, .Width = areaW - codePadding * 2,
+                .X = padL, .Width = areaW - padL - padR,
                 .Text = cText, .UseFont = cFont,
                 .ForeColor = 代码块文字颜色, .BackColor = 代码背景颜色,
                 .Kind = InlineKind.Code, .TableColIndex = -1
@@ -1143,7 +1283,7 @@ Public Class MarkDownViewer
             })
             y += lineH
         Next
-        Return y + CInt(4 * s) + 段落行距
+        Return y + padB
     End Function
 
     Private Function LayoutTable(bi As Integer, block As MarkdownBlock, areaW As Integer, y As Integer, s As Single) As Integer
@@ -1194,6 +1334,9 @@ Public Class MarkDownViewer
             Next
 
             ' 为该逻辑行的每个子行创建一个 VisualLine
+            Dim topPad As Integer = cellPadding \ 2
+            Dim bottomPad As Integer = cellPadding - topPad
+            y += topPad
             For sl As Integer = 0 To maxSubLines - 1
                 Dim fragments As New List(Of VisualFragment)
                 Dim x As Integer = 0
@@ -1216,10 +1359,10 @@ Public Class MarkDownViewer
                 })
                 y += lineH + 行内行距
             Next
-            ' 行间留出 cellPadding 的上下空白（上半部分已包含在首子行前，这里补充底部）
-            y += cellPadding
+            ' 行间留出 cellPadding 的上下空白（均匀分布在子行上下）
+            y += bottomPad
         Next
-        Return y + 段落行距
+        Return y
     End Function
 
     ''' <summary>将文本按指定宽度换行，返回每行的文本。</summary>
@@ -1237,12 +1380,12 @@ Public Class MarkDownViewer
             lines.Add(text.Substring(pos, fitLen))
             pos += fitLen
         End While
-        If lines.Count = 0 Then lines.Add("")
         Return lines
     End Function
 
     Private Function GetCellPlainText(cell As MarkdownTableCell) As String
-        If cell Is Nothing OrElse cell.Inlines Is Nothing Then Return ""
+        If cell Is Nothing OrElse cell.Inlines Is Nothing OrElse cell.Inlines.Count = 0 Then Return ""
+        If cell.Inlines.Count = 1 Then Return If(cell.Inlines(0).Text, "")
         Dim sb As New StringBuilder()
         For Each inl In cell.Inlines
             If inl.Text IsNot Nothing Then sb.Append(inl.Text)
@@ -1358,11 +1501,20 @@ Public Class MarkDownViewer
             Dim inlFore As Color = GetInlineForeColor(inl.Kind, blockFore)
             Dim inlText As String = If(inl.Text, "")
             Dim pos As Integer = 0
+            Dim isInlineCode As Boolean = (inl.Kind = InlineKind.Code)
+            Dim codePadL As Integer = If(isInlineCode, CInt(代码块内边距.Left * s), 0)
+            Dim codePadR As Integer = If(isInlineCode, CInt(代码块内边距.Right * s), 0)
+            Dim codePadV As Integer = If(isInlineCode, CInt((代码块内边距.Top + 代码块内边距.Bottom) * s), 0)
+            If isInlineCode Then
+                x += codePadL
+                currentLineH = Math.Max(currentLineH, textLineH + codePadV)
+            End If
 
             While pos < inlText.Length
                 Dim remaining = inlText.Substring(pos)
-                Dim fitLen As Integer = FindFitLength(remaining, inlFont, areaW - x, textLineH)
+                Dim fitLen As Integer = FindFitLength(remaining, inlFont, areaW - x - codePadR, textLineH)
                 If fitLen <= 0 AndAlso x > indent Then
+                    If isInlineCode Then x += codePadR
                     _visualLines.Add(New VisualLine With {
                         .BlockIndex = bi, .Y = y, .Height = currentLineH,
                         .Fragments = fragments
@@ -1370,6 +1522,7 @@ Public Class MarkDownViewer
                     y += currentLineH + 行内行距
                     fragments = New List(Of VisualFragment)
                     x = indent
+                    If isInlineCode Then x += codePadL
                     currentLineH = textLineH
                     firstLine = False
                     Continue While
@@ -1382,12 +1535,13 @@ Public Class MarkDownViewer
                     .X = x, .Width = segW, .Text = segText,
                     .UseFont = inlFont, .ForeColor = inlFore,
                     .Kind = inl.Kind, .Url = inl.Url,
-                    .BackColor = If(inl.Kind = InlineKind.Code, 代码背景颜色, Color.Empty)
+                    .BackColor = If(isInlineCode, 代码背景颜色, Color.Empty)
                 }
                 fragments.Add(frag)
                 x += segW
                 pos += fitLen
             End While
+            If isInlineCode Then x += codePadR
         Next
 
         If fragments.Count > 0 OrElse firstLine Then
@@ -1397,7 +1551,13 @@ Public Class MarkDownViewer
             })
             y += currentLineH
         End If
-        Return y + 段落行距
+
+        ' H1/H2 自带分割线：在文字下方预留间距 + 线粗空间
+        If (block.Kind = BlockKind.Heading1 OrElse block.Kind = BlockKind.Heading2) AndAlso 标题分隔线粗细 > 0 Then
+            y += CInt(标题分隔线间距 * s) + Math.Max(1, CInt(标题分隔线粗细 * s))
+        End If
+
+        Return y
     End Function
 
     Private Function GetBlockIndent(kind As BlockKind, s As Single) As Integer
@@ -1487,9 +1647,10 @@ Public Class MarkDownViewer
                                      textLeft As Integer, drawY As Integer, clipW As Integer, s As Single)
         Select Case block.Kind
             Case BlockKind.HorizontalRule
-                Using pen As New Pen(分隔线颜色, Math.Max(1, s))
-                    Dim ruleY As Integer = drawY + vl.Height \ 2
-                    g.DrawLine(pen, textLeft + CInt(4 * s), ruleY, textLeft + clipW - CInt(8 * s), ruleY)
+                Dim ruleThick As Integer = Math.Max(1, CInt(分隔线粗细 * s))
+                Dim ruleY As Integer = drawY + (vl.Height - ruleThick) \ 2
+                Using br As New SolidBrush(分隔线颜色)
+                    g.FillRectangle(br, textLeft + CInt(4 * s), ruleY, clipW - CInt(8 * s), ruleThick)
                 End Using
 
             Case BlockKind.BlockQuote
@@ -1508,8 +1669,14 @@ Public Class MarkDownViewer
                 End Using
 
             Case BlockKind.CodeBlock
+                Dim padT As Integer = CInt(代码块内边距.Top * s)
+                Dim padB As Integer = CInt(代码块内边距.Bottom * s)
+                Dim isFirstCodeLine = (vli = 0 OrElse _visualLines(vli - 1).BlockIndex <> vl.BlockIndex)
+                Dim isLastCodeLine = (vli = _visualLines.Count - 1 OrElse _visualLines(vli + 1).BlockIndex <> vl.BlockIndex)
+                Dim bgY = drawY - If(isFirstCodeLine, padT, 0)
+                Dim bgH = vl.Height + If(isFirstCodeLine, padT, 0) + If(isLastCodeLine, padB, 0)
                 Using br As New SolidBrush(代码背景颜色)
-                    g.FillRectangle(br, textLeft, drawY, clipW, vl.Height)
+                    g.FillRectangle(br, textLeft, bgY, clipW, bgH)
                 End Using
 
             Case BlockKind.UnorderedListItem
@@ -1525,51 +1692,65 @@ Public Class MarkDownViewer
 
             Case BlockKind.Table
                 DrawTableDecoration(g, block, vl, vli, textLeft, drawY, s)
+
+            Case BlockKind.Heading1, BlockKind.Heading2
+                ' H1/H2 自带分割线：仅在该标题块的最后一个视觉行绘制
+                If 标题分隔线粗细 > 0 Then
+                    Dim isLastLineOfBlock As Boolean =
+                        (vli + 1 >= _visualLines.Count OrElse _visualLines(vli + 1).BlockIndex <> vl.BlockIndex)
+                    If isLastLineOfBlock Then
+                        Dim sepThick As Integer = Math.Max(1, CInt(标题分隔线粗细 * s))
+                        Dim sepGap As Integer = CInt(标题分隔线间距 * s)
+                        Dim sepY As Integer = drawY + vl.Height + sepGap
+                        Using br As New SolidBrush(标题分隔线颜色)
+                            g.FillRectangle(br, textLeft, sepY, clipW, sepThick)
+                        End Using
+                    End If
+                End If
         End Select
     End Sub
 
     Private Sub DrawTableDecoration(g As Graphics, block As MarkdownBlock, vl As VisualLine, vli As Integer,
                                      textLeft As Integer, drawY As Integer, s As Single)
+        If vl.TableSubLine <> 0 Then Return
         Dim colWidths As Integer() = Nothing
         If Not _tableColumnWidths.TryGetValue(vl.BlockIndex, colWidths) Then Return
         Dim colCount As Integer = colWidths.Length
         Dim totalW As Integer = colWidths.Sum()
 
-        ' 计算当前逻辑行的完整高度（所有子行之和 + 底部 cellPadding）
+        ' 计算当前逻辑行的完整高度（所有子行之和 + cellPadding）
+        Dim cellPadding As Integer = CInt(6 * s)
         Dim logicalRowH As Integer = vl.Height
-        If vl.TableSubLine = 0 Then
-            Dim look As Integer = vli + 1
-            While look < _visualLines.Count
-                Dim nextVl = _visualLines(look)
-                If nextVl.BlockIndex <> vl.BlockIndex OrElse nextVl.TableRowIndex <> vl.TableRowIndex Then Exit While
-                logicalRowH += nextVl.Height
-                look += 1
-            End While
-            ' 加上布局时行尾的 cellPadding
-            Dim cellPadding As Integer = CInt(6 * s)
-            logicalRowH += cellPadding
-        End If
+        Dim look As Integer = vli + 1
+        While look < _visualLines.Count
+            Dim nextVl = _visualLines(look)
+            If nextVl.BlockIndex <> vl.BlockIndex OrElse nextVl.TableRowIndex <> vl.TableRowIndex Then Exit While
+            logicalRowH += nextVl.Height
+            look += 1
+        End While
+        logicalRowH += cellPadding
 
-        If vl.TableSubLine = 0 Then
-            ' 表头背景
-            If vl.TableRowIndex = 0 AndAlso block.HasHeader Then
-                Using br As New SolidBrush(表头背景颜色)
-                    g.FillRectangle(br, textLeft, drawY, totalW, logicalRowH)
-                End Using
-            End If
+        Dim topPad As Integer = cellPadding \ 2
+        Dim rowTop As Integer = drawY - topPad
 
-            ' 网格线：顶部横线 + 底部横线
-            Using pen As New Pen(表格边框颜色, Math.Max(1, s))
-                g.DrawLine(pen, textLeft, drawY, textLeft + totalW, drawY)
-                g.DrawLine(pen, textLeft, drawY + logicalRowH, textLeft + totalW, drawY + logicalRowH)
-                ' 竖线贯穿整个逻辑行
-                Dim x As Integer = textLeft
-                For ci As Integer = 0 To colCount
-                    g.DrawLine(pen, x, drawY, x, drawY + logicalRowH)
-                    If ci < colCount Then x += colWidths(ci)
-                Next
+        ' 表头背景
+        If vl.TableRowIndex = 0 AndAlso block.HasHeader Then
+            Using br As New SolidBrush(表头背景颜色)
+                g.FillRectangle(br, textLeft, rowTop, totalW, logicalRowH)
             End Using
         End If
+
+        ' 网格线：顶部横线 + 底部横线
+        Using pen As New Pen(表格边框颜色, Math.Max(1, s))
+            g.DrawLine(pen, textLeft, rowTop, textLeft + totalW, rowTop)
+            g.DrawLine(pen, textLeft, rowTop + logicalRowH, textLeft + totalW, rowTop + logicalRowH)
+            ' 竖线贯穿整个逻辑行
+            Dim x As Integer = textLeft
+            For ci As Integer = 0 To colCount
+                g.DrawLine(pen, x, rowTop, x, rowTop + logicalRowH)
+                If ci < colCount Then x += colWidths(ci)
+            Next
+        End Using
     End Sub
 
     Private Sub DrawFragments(g As Graphics, vl As VisualLine, vli As Integer,
@@ -1580,12 +1761,11 @@ Public Class MarkDownViewer
             Dim fragX As Integer = textLeft + frag.X
             Dim fragW As Integer = frag.Width
 
-            If _hasSelection Then
-                DrawFragmentSelection(g, vli, fi, frag, fragX, drawY, vl.Height, selStart, selEnd)
-            End If
-
             ' 图片渲染
             If frag.Kind = InlineKind.Image Then
+                If _hasSelection Then
+                    DrawFragmentSelection(g, vli, fi, frag, fragX, drawY, vl.Height, selStart, selEnd)
+                End If
                 Dim imgH As Integer = If(frag.FragmentHeight > 0, frag.FragmentHeight, vl.Height)
                 Dim imgRect As New Rectangle(fragX, drawY, frag.Width, imgH)
                 If frag.ImageObj IsNot Nothing Then
@@ -1607,17 +1787,24 @@ Public Class MarkDownViewer
                 Continue For
             End If
 
-            ' 行内代码背景
+            ' 行内代码背景（先于选中高亮绘制）
             If frag.BackColor <> Color.Empty AndAlso blockKind <> BlockKind.CodeBlock Then
+                Dim padL As Integer = CInt(代码块内边距.Left * s)
+                Dim padR As Integer = CInt(代码块内边距.Right * s)
                 Dim oldSmooth = g.SmoothingMode
                 g.SmoothingMode = SmoothingMode.AntiAlias
                 Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(
-                    New RectangleF(fragX - 2, drawY + 1, fragW + 4, vl.Height - 2), CInt(3 * s))
+                    New RectangleF(fragX - padL, drawY, fragW + padL + padR, vl.Height), CInt(3 * s))
                     Using br As New SolidBrush(frag.BackColor)
                         g.FillPath(br, path)
                     End Using
                 End Using
                 g.SmoothingMode = oldSmooth
+            End If
+
+            ' 选中高亮（在代码背景之后绘制，确保可见）
+            If _hasSelection Then
+                DrawFragmentSelection(g, vli, fi, frag, fragX, drawY, vl.Height, selStart, selEnd)
             End If
 
             If Not String.IsNullOrEmpty(frag.Text) Then
@@ -1626,7 +1813,7 @@ Public Class MarkDownViewer
                     Dim colWidths As Integer() = Nothing
                     Dim cellW As Integer = frag.Width
                     If _tableColumnWidths.TryGetValue(vl.BlockIndex, colWidths) AndAlso frag.TableColIndex < colWidths.Length Then
-                        Dim cellPadding As Integer = CInt(6 * DpiScale())
+                        Dim cellPadding As Integer = CInt(6 * s)
                         cellW = colWidths(frag.TableColIndex) - cellPadding * 2
                     End If
                     Dim flags As TextFormatFlags = TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine Or TextFormatFlags.VerticalCenter
@@ -1904,8 +2091,7 @@ Public Class MarkDownViewer
                 Return New SelectionPos(hit.vli, fi, charOff)
             End If
         Next
-        Dim lastFrag = vl.Fragments(vl.Fragments.Count - 1)
-        Return New SelectionPos(hit.vli, vl.Fragments.Count - 1, lastFrag.CharLength)
+        Return New SelectionPos(hit.vli, 0, 0)
     End Function
 
     Private Function HitTestLink(mx As Integer, my As Integer) As String
@@ -2246,7 +2432,6 @@ Public Class MarkDownViewer
     Private Function GetContentInsets() As ContentInsets
         Dim bi As Integer = CInt(Math.Round(边框宽度 * DpiScale()))
         Return New ContentInsets With {
-            .ScaledBorder = bi,
             .Left = Math.Max(Padding.Left, bi),
             .Top = Math.Max(Padding.Top, bi),
             .Right = Math.Max(Padding.Right, bi),

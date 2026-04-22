@@ -39,6 +39,14 @@ Public Class PixelPictureBox
         Return Me.DeviceDpi / 96.0F
     End Function
 
+    ''' <summary>如果启用了强制居中模式，则将框选矩形居中到图片中心；否则原样返回。</summary>
+    Private Function 应用强制居中(r As Rectangle) As Rectangle
+        If Not _selectionForceCenter OrElse _image Is Nothing Then Return r
+        Dim cx As Integer = (_image.Width - r.Width) \ 2
+        Dim cy As Integer = (_image.Height - r.Height) \ 2
+        Return New Rectangle(Math.Max(0, cx), Math.Max(0, cy), r.Width, r.Height)
+    End Function
+
 #End Region
 
 #Region "外观属性 - 背景"
@@ -264,14 +272,58 @@ Public Class PixelPictureBox
         End Set
     End Property
 
-    ''' <summary>获取或设置框选区域（图片像素坐标）。</summary>
+    Private _selectionAspectRatio As Single = 0
+    ''' <summary>框选矩形的固定宽高比（Width / Height）。0 表示自由比例，> 0 表示固定比例（例如 1.0 为正方形，1.778 为 16:9）。</summary>
+    <Category("LakeUI"), Description("框选矩形的固定宽高比（W/H），0 表示自由比例"), DefaultValue(GetType(Single), "0"), Browsable(True)>
+    Public Property SelectionAspectRatio As Single
+        Get
+            Return _selectionAspectRatio
+        End Get
+        Set(value As Single)
+            _selectionAspectRatio = Math.Max(0, value)
+        End Set
+    End Property
+
+    Private _selectionForceCenter As Boolean = False
+    ''' <summary>是否强制将框选矩形居中到图片中心。启用后移动操作被禁用，所有尺寸调整后自动居中。</summary>
+    <Category("LakeUI"), Description("是否强制框选居中到图片中心"), DefaultValue(GetType(Boolean), "False"), Browsable(True)>
+    Public Property SelectionForceCenter As Boolean
+        Get
+            Return _selectionForceCenter
+        End Get
+        Set(value As Boolean)
+            If _selectionForceCenter <> value Then
+                _selectionForceCenter = value
+                If value AndAlso HasSelection Then
+                    _selectionRect = 应用强制居中(_selectionRect)
+                End If
+                Me.Invalidate()
+            End If
+        End Set
+    End Property
+
+    ''' <summary>获取或设置框选区域（图片像素坐标）。启用强制居中时，设置的位置会被覆盖为居中位置。</summary>
     <Category("LakeUI"), Description("框选区域，以图片像素坐标表示"), Browsable(True), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
     Public Property SelectionRect As Rectangle
         Get
             Return _selectionRect
         End Get
         Set(value As Rectangle)
-            _selectionRect = value
+            _selectionRect = 应用强制居中(value)
+            Me.Invalidate()
+            RaiseEvent SelectionChanged(Me, EventArgs.Empty)
+        End Set
+    End Property
+
+    ''' <summary>获取或设置框选区域的尺寸（图片像素）。启用强制居中时自动居中，否则保持当前位置。</summary>
+    <Category("LakeUI"), Description("框选区域的尺寸"), Browsable(True), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+    Public Property SelectionSize As Size
+        Get
+            Return _selectionRect.Size
+        End Get
+        Set(value As Size)
+            Dim r As New Rectangle(_selectionRect.Location, value)
+            _selectionRect = 应用强制居中(约束矩形到图片(r))
             Me.Invalidate()
             RaiseEvent SelectionChanged(Me, EventArgs.Empty)
         End Set
@@ -564,12 +616,13 @@ Public Class PixelPictureBox
     Private Sub 计算视口偏移(ByRef originX As Single, ByRef originY As Single)
         Dim bw As Integer = CInt(Math.Round(边框宽度 * DpiScale()))
         Dim viewport As Size = 获取有效视口大小()
-        Dim scaledSize As Size = 获取缩放图片尺寸()
+        Dim exactW As Single = If(_image IsNot Nothing, _image.Width * _zoomFactor, 0)
+        Dim exactH As Single = If(_image IsNot Nothing, _image.Height * _zoomFactor, 0)
 
-        Dim offsetX As Single = If(scaledSize.Width < viewport.Width,
-            (viewport.Width - scaledSize.Width) / 2.0F, 0)
-        Dim offsetY As Single = If(scaledSize.Height < viewport.Height,
-            (viewport.Height - scaledSize.Height) / 2.0F, 0)
+        Dim offsetX As Single = If(exactW < viewport.Width,
+            (viewport.Width - exactW) / 2.0F, 0)
+        Dim offsetY As Single = If(exactH < viewport.Height,
+            (viewport.Height - exactH) / 2.0F, 0)
 
         originX = bw + offsetX - _scrollX
         originY = bw + offsetY - _scrollY
@@ -695,7 +748,7 @@ Public Class PixelPictureBox
 
     Private Sub 绘制背景与边框(g As Graphics)
         Dim s As Single = DpiScale()
-        Dim boundsRect As New RectangleF(0, 0, Me.Width - 1, Me.Height - 1)
+        Dim boundsRect As New RectangleF(0, 0, Me.Width, Me.Height)
         If 边框宽度 > 0 Then
             Dim half As Single = 边框宽度 * s / 2.0F
             boundsRect.Inflate(-half, -half)
@@ -713,20 +766,21 @@ Public Class PixelPictureBox
         Dim viewport As Size = 获取有效视口大小()
         If viewport.Width < 1 OrElse viewport.Height < 1 Then Return
 
-        Dim scaledSize As Size = 获取缩放图片尺寸()
+        Dim exactW As Single = _image.Width * _zoomFactor
+        Dim exactH As Single = _image.Height * _zoomFactor
 
         Dim offsetX As Single = 0
         Dim offsetY As Single = 0
-        If scaledSize.Width < viewport.Width Then
-            offsetX = (viewport.Width - scaledSize.Width) / 2.0F
+        If exactW < viewport.Width Then
+            offsetX = (viewport.Width - exactW) / 2.0F
         End If
-        If scaledSize.Height < viewport.Height Then
-            offsetY = (viewport.Height - scaledSize.Height) / 2.0F
+        If exactH < viewport.Height Then
+            offsetY = (viewport.Height - exactH) / 2.0F
         End If
 
         Dim destX As Single = bw + offsetX - _scrollX
         Dim destY As Single = bw + offsetY - _scrollY
-        Dim destRect As New RectangleF(destX, destY, scaledSize.Width, scaledSize.Height)
+        Dim destRect As New RectangleF(destX, destY, exactW, exactH)
 
         Dim clipRect As New Rectangle(bw, bw, viewport.Width, viewport.Height)
         Using oldClip As Region = g.Clip.Clone()
@@ -846,7 +900,7 @@ Public Class PixelPictureBox
                     Return
                 End If
 
-                If 命中测试框选边线(e.Location) Then
+                If 命中测试框选边线(e.Location) AndAlso Not _selectionForceCenter Then
                     _dragMode = DragMode.MoveSelection
                     _dragStart = e.Location
                     _dragSelectionStart = _selectionRect
@@ -905,7 +959,7 @@ Public Class PixelPictureBox
                 Me.Invalidate()
 
             Case DragMode.MoveSelection
-                If _image IsNot Nothing Then
+                If _image IsNot Nothing AndAlso Not _selectionForceCenter Then
                     Dim dx As Single = (e.X - _dragStart.X) / _zoomFactor
                     Dim dy As Single = (e.Y - _dragStart.Y) / _zoomFactor
                     Dim newX As Integer = CInt(Math.Round(_dragSelectionStart.X + dx))
@@ -933,7 +987,14 @@ Public Class PixelPictureBox
                     Dim ry As Integer = Math.Min(y1, y2)
                     Dim rw As Integer = Math.Abs(x2 - x1)
                     Dim rh As Integer = Math.Abs(y2 - y1)
-                    _selectionRect = 约束矩形到图片(New Rectangle(rx, ry, rw, rh))
+                    ' 固定比例约束
+                    If _selectionAspectRatio > 0 Then
+                        rh = CInt(Math.Round(rw / _selectionAspectRatio))
+                        If rh < 1 AndAlso rw >= 1 Then rh = 1
+                        ' 调整起始 Y 使矩形朝正确方向展开
+                        If y2 < y1 Then ry = y1 - rh
+                    End If
+                    _selectionRect = 应用强制居中(约束矩形到图片(New Rectangle(rx, ry, rw, rh)))
                     Me.Invalidate()
                 End If
 
@@ -1010,7 +1071,7 @@ Public Class PixelPictureBox
                 Me.Cursor = 获取手柄光标(hp)
                 Return
             End If
-            If 命中测试框选边线(clientPt) Then
+            If 命中测试框选边线(clientPt) AndAlso Not _selectionForceCenter Then
                 Me.Cursor = Cursors.SizeAll
                 Return
             End If
@@ -1064,7 +1125,33 @@ Public Class PixelPictureBox
             If newH < 1 Then newH = 1
         End If
 
-        _selectionRect = 约束矩形到图片(New Rectangle(newX, newY, newW, newH))
+        ' 固定比例约束
+        If _selectionAspectRatio > 0 Then
+            Dim isCorner As Boolean = (adjustLeft OrElse adjustRight) AndAlso (adjustTop OrElse adjustBottom)
+            Dim isHorizontalEdge As Boolean = (adjustTop OrElse adjustBottom) AndAlso Not adjustLeft AndAlso Not adjustRight
+            Dim isVerticalEdge As Boolean = (adjustLeft OrElse adjustRight) AndAlso Not adjustTop AndAlso Not adjustBottom
+
+            If isCorner OrElse isVerticalEdge Then
+                ' 以宽度为主，计算对应高度
+                newH = CInt(Math.Round(newW / _selectionAspectRatio))
+                If newH < 1 Then newH = 1
+                ' 固定对边
+                If adjustTop Then newY = r.Bottom - newH
+                If Not adjustTop AndAlso Not adjustBottom Then
+                    Dim centerY As Integer = r.Y + r.Height \ 2
+                    newY = centerY - newH \ 2
+                End If
+            ElseIf isHorizontalEdge Then
+                ' 以高度为主，计算对应宽度
+                newW = CInt(Math.Round(newH * _selectionAspectRatio))
+                If newW < 1 Then newW = 1
+                ' 水平方向居中
+                Dim centerX As Integer = r.X + r.Width \ 2
+                newX = centerX - newW \ 2
+            End If
+        End If
+
+        _selectionRect = 应用强制居中(约束矩形到图片(New Rectangle(newX, newY, newW, newH)))
         Me.Invalidate()
     End Sub
 

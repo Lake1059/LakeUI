@@ -4,8 +4,17 @@ Imports System.Drawing.Drawing2D
 <DefaultEvent("Click")>
 Public Class ModernButton
 #Region "绘制"
+    Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
+        ' 有圆角或半透明背景时由 OnPaint 负责绘制父容器背景，此处不做默认填充
+        If 边框圆角半径 > 0 OrElse 背景基础颜色.A < 255 Then Return
+        MyBase.OnPaintBackground(e)
+    End Sub
+
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
         Dim 是否有圆角 As Boolean = 边框圆角半径 > 0
+        If 是否有圆角 OrElse 背景基础颜色.A < 255 Then
+            绘制父容器背景(e.Graphics)
+        End If
         Dim 极限矩形区域 As New RectangleF(0, 0, Me.Width, Me.Height)
         If 边框宽度 > 0 Then
             Dim half As Single = 边框宽度 * DpiScale() / 2.0F
@@ -61,13 +70,17 @@ Public Class ModernButton
         Dim s As Single = DpiScale()
         If 是否有圆角 Then
             Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(极限矩形区域, 边框圆角半径 * s)
-                RectangleRenderer.绘制圆角背景(g, path, 极限矩形区域, 背景颜色缓存值, 渐变颜色缓存值, 渐变方向)
+                If 背景颜色缓存值.A > 0 OrElse 渐变颜色缓存值.A > 0 Then
+                    RectangleRenderer.绘制圆角背景(g, path, 极限矩形区域, 背景颜色缓存值, 渐变颜色缓存值, 渐变方向)
+                End If
                 绘制背景图片(g, 极限矩形区域, path)
                 绘制长按遮罩(g, 极限矩形区域, path)
                 RectangleRenderer.绘制圆角边框(g, path, 边框颜色缓存值, 边框宽度 * s)
             End Using
         Else
-            RectangleRenderer.绘制矩形背景(g, 极限矩形区域, 背景颜色缓存值, 渐变颜色缓存值, 渐变方向)
+            If 背景颜色缓存值.A > 0 OrElse 渐变颜色缓存值.A > 0 Then
+                RectangleRenderer.绘制矩形背景(g, 极限矩形区域, 背景颜色缓存值, 渐变颜色缓存值, 渐变方向)
+            End If
             绘制背景图片(g, 极限矩形区域, Nothing)
             绘制长按遮罩(g, 极限矩形区域, Nothing)
             RectangleRenderer.绘制矩形边框(g, 极限矩形区域, 边框颜色缓存值, 边框宽度 * s)
@@ -136,6 +149,19 @@ Public Class ModernButton
         End If
         g.DrawImage(背景图片, Rectangle.Round(极限矩形区域))
         g.Clip = oldClip
+    End Sub
+    Private Sub 绘制父容器背景(g As Graphics)
+        If Parent Is Nothing Then Return
+        Dim state = g.Save()
+        g.TranslateTransform(-Me.Left, -Me.Top)
+        Using pea As New PaintEventArgs(g, New Rectangle(Me.Left, Me.Top, Me.Width, Me.Height))
+            InvokePaintBackground(Parent, pea)
+            ' 仅 InvokePaintBackground 只能获取父容器的 BackColor 填充。
+            ' 对于 ModernPanel 等自绘控件，背景图片和圆角背景都在 OnPaint 中绘制，
+            ' 必须追加 InvokePaint 才能获取父容器的真实视觉内容（含背景图片）。
+            InvokePaint(Parent, pea)
+        End Using
+        g.Restore(state)
     End Sub
     Private Sub 绘制长按遮罩(g As Graphics, 极限矩形区域 As RectangleF, clipPath As GraphicsPath)
         If Not 长按确认已启用 Then Return
@@ -633,14 +659,6 @@ Public Class ModernButton
 #End Region
 
 #Region "禁用属性"
-    <Browsable(False), EditorBrowsable(EditorBrowsableState.Never), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
-    Public Shadows Property BackColor As Color
-        Get
-            Return Nothing
-        End Get
-        Set(value As Color)
-        End Set
-    End Property
     <Browsable(False), EditorBrowsable(EditorBrowsableState.Never), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
     Public Shadows Property AutoScroll As Boolean
         Get

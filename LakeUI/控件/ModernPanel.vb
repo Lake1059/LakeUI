@@ -23,6 +23,36 @@ Public Class ModernPanel
         Both = 3
     End Enum
 
+    ''' <summary>
+    ''' 背景图片填充模式枚举。
+    ''' </summary>
+    Public Enum ImageFillMode
+        ''' <summary>保持比例缩放，完整显示图片，可能留有空白（信箱模式）。</summary>
+        Zoom = 0
+        ''' <summary>保持比例缩放，以图片中心为基准撑满控件，超出部分裁切。</summary>
+        Fill = 1
+    End Enum
+
+    ''' <summary>
+    ''' 子控件排布模式。
+    ''' </summary>
+    Public Enum LayoutModeEnum
+        ''' <summary>绝对定位：使用子控件自身 Location，等同于原版 Panel。</summary>
+        Absolute = 0
+        ''' <summary>流式排布：按 FlowDirection 自动排列子控件，等同于 FlowLayoutPanel。</summary>
+        Flow = 1
+    End Enum
+
+    ''' <summary>
+    ''' 流式排布方向。
+    ''' </summary>
+    Public Enum FlowDirectionEnum
+        ''' <summary>从左到右排列，超出宽度时换到下一行。</summary>
+        LeftToRight = 0
+        ''' <summary>从上到下排列，超出高度时换到下一列。</summary>
+        TopDown = 1
+    End Enum
+
 #Region "构造"
 
     Public Sub New()
@@ -45,6 +75,7 @@ Public Class ModernPanel
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
+            _contentSizeDirty = True
             更新滚动区域()
             Me.PerformLayout()
             Me.Invalidate()
@@ -87,7 +118,8 @@ Public Class ModernPanel
         End Get
     End Property
 
-    ''' <summary>计算所有子控件的包围矩形（设计坐标系下的内容总大小）。</summary>
+    ''' <summary>计算所有子控件的包围矩形（设计坐标系下的内容总大小）。
+    ''' 不包含子控件 Margin，避免默认 Margin(3) 在子控件刚好填满视口时触发伪滚动条。</summary>
     Private Function 计算内容总大小() As Size
         Dim maxRight As Integer = 0
         Dim maxBottom As Integer = 0
@@ -103,15 +135,8 @@ Public Class ModernPanel
                 dl = ctrl.Left - ep.Left + _hScrollOffset
                 dt = ctrl.Top - ep.Top + _vScrollOffset
             End If
-            Dim r, b As Integer
-            If ctrl.Dock <> DockStyle.None Then
-                ' 停靠控件的尺寸已由布局引擎约束，不额外加 Margin
-                r = dl + ctrl.Width
-                b = dt + ctrl.Height
-            Else
-                r = dl + ctrl.Width + ctrl.Margin.Right
-                b = dt + ctrl.Height + ctrl.Margin.Bottom
-            End If
+            Dim r As Integer = dl + ctrl.Width
+            Dim b As Integer = dt + ctrl.Height
             If r > maxRight Then maxRight = r
             If b > maxBottom Then maxBottom = b
         Next
@@ -149,6 +174,7 @@ Public Class ModernPanel
             Return 边框宽度
         End Get
         Set(value As Integer)
+            清除图片缓存()
             SetValue(边框宽度, value)
         End Set
     End Property
@@ -160,9 +186,30 @@ Public Class ModernPanel
             Return 边框圆角半径
         End Get
         Set(value As Integer)
+            清除图片缓存()
             SetValue(边框圆角半径, value)
         End Set
     End Property
+
+    Private 圆角位置 As RoundCorners = RoundCorners.All
+    <Category("LakeUI"), Description("指定哪些角启用圆角，可展开分别设置四个角"), Browsable(True)>
+    Public Property BorderRoundCorners As RoundCorners
+        Get
+            Return 圆角位置
+        End Get
+        Set(value As RoundCorners)
+            清除图片缓存()
+            SetValue(圆角位置, value)
+        End Set
+    End Property
+
+    Private Function ShouldSerializeBorderRoundCorners() As Boolean
+        Return 圆角位置 <> RoundCorners.All
+    End Function
+
+    Private Sub ResetBorderRoundCorners()
+        BorderRoundCorners = RoundCorners.All
+    End Sub
 
 #End Region
 
@@ -184,15 +231,32 @@ Public Class ModernPanel
 #Region "外观属性 - 背景图片"
 
     Private _image As Image = Nothing
-    ''' <summary>面板背景图片，以原比例撑满绘制（Zoom），圆角区域自动裁切。</summary>
-    <Category("LakeUI"), Description("背景图片（Zoom 模式，自动圆角裁切）"), DefaultValue(GetType(Image), Nothing), Browsable(True)>
+    ''' <summary>面板背景图片，填充模式由 ImageMode 控制，圆角区域自动裁切。</summary>
+    <Category("LakeUI"), Description("背景图片（填充模式由 ImageMode 控制，自动圆角裁切）"), DefaultValue(GetType(Image), Nothing), Browsable(True)>
     Public Property Image As Image
         Get
             Return _image
         End Get
         Set(value As Image)
             _image = value
+            清除图片缓存()
             Me.Invalidate()
+        End Set
+    End Property
+
+    Private _imageFillMode As ImageFillMode = ImageFillMode.Fill
+    ''' <summary>背景图片填充模式：Zoom（完整显示）或 Fill（撑满裁切）。</summary>
+    <Category("LakeUI"), Description("背景图片填充模式：Zoom = 完整显示可能留白，Fill = 居中撑满裁切多余部分"), DefaultValue(GetType(ImageFillMode), "Fill"), Browsable(True)>
+    Public Property ImageMode As ImageFillMode
+        Get
+            Return _imageFillMode
+        End Get
+        Set(value As ImageFillMode)
+            If _imageFillMode <> value Then
+                _imageFillMode = value
+                清除图片缓存()
+                Me.Invalidate()
+            End If
         End Set
     End Property
 
@@ -213,6 +277,21 @@ Public Class ModernPanel
             Return ImageLayout.None
         End Get
         Set(value As ImageLayout)
+        End Set
+    End Property
+
+#End Region
+
+#Region "外观属性 - 遮罩"
+
+    Private 遮罩颜色 As Color = Color.Transparent
+    <Category("LakeUI"), Description("背景遮罩半透明颜色，绘制在背景与边框之间，对包括父容器背景图片在内的所有内容生效"), DefaultValue(GetType(Color), "Transparent"), Browsable(True)>
+    Public Property OverlayColor As Color
+        Get
+            Return 遮罩颜色
+        End Get
+        Set(value As Color)
+            SetValue(遮罩颜色, value)
         End Set
     End Property
 
@@ -316,6 +395,55 @@ Public Class ModernPanel
         End Set
     End Property
 
+    Private _layoutMode As LayoutModeEnum = LayoutModeEnum.Absolute
+    <Category("LakeUI"), Description("子控件排布模式：Absolute = 绝对定位（等同原版 Panel）；Flow = 流式排布（等同 FlowLayoutPanel）"), DefaultValue(GetType(LayoutModeEnum), "Absolute"), Browsable(True)>
+    Public Property LayoutMode As LayoutModeEnum
+        Get
+            Return _layoutMode
+        End Get
+        Set(value As LayoutModeEnum)
+            If _layoutMode <> value Then
+                _layoutMode = value
+                _childLayouts.Clear()
+                _contentSizeDirty = True
+                Me.PerformLayout()
+                Me.Invalidate()
+            End If
+        End Set
+    End Property
+
+    Private _flowDirection As FlowDirectionEnum = FlowDirectionEnum.LeftToRight
+    <Category("LakeUI"), Description("流式排布方向（仅在 LayoutMode=Flow 时生效）"), DefaultValue(GetType(FlowDirectionEnum), "LeftToRight"), Browsable(True)>
+    Public Property FlowDirection As FlowDirectionEnum
+        Get
+            Return _flowDirection
+        End Get
+        Set(value As FlowDirectionEnum)
+            If _flowDirection <> value Then
+                _flowDirection = value
+                _contentSizeDirty = True
+                Me.PerformLayout()
+                Me.Invalidate()
+            End If
+        End Set
+    End Property
+
+    Private _wrapContents As Boolean = True
+    <Category("LakeUI"), Description("流式排布是否自动换行/换列（仅在 LayoutMode=Flow 时生效）"), DefaultValue(True), Browsable(True)>
+    Public Property WrapContents As Boolean
+        Get
+            Return _wrapContents
+        End Get
+        Set(value As Boolean)
+            If _wrapContents <> value Then
+                _wrapContents = value
+                _contentSizeDirty = True
+                Me.PerformLayout()
+                Me.Invalidate()
+            End If
+        End Set
+    End Property
+
 #End Region
 
 #Region "内部状态"
@@ -327,6 +455,7 @@ Public Class ModernPanel
     Private ReadOnly _hScrollBar As New ScrollBarRenderer()
 
     Private _contentSize As Size = Size.Empty
+    Private _contentSizeDirty As Boolean = True
 
     Private _showVScroll As Boolean = False
     Private _showHScroll As Boolean = False
@@ -337,6 +466,31 @@ Public Class ModernPanel
 
     Private _lastDeviceDpi As Integer = 96
     Private _inDpiChange As Boolean = False
+
+    ' 背景图片缓存：避免每帧重新缩放+裁切
+    Private _cachedImageBmp As Bitmap = Nothing
+    Private _cacheKey As Long = 0
+
+    Private Function 计算图片缓存键(w As Integer, h As Integer, hasClip As Boolean) As Long
+        ' 将影响最终图片的参数压缩为单个 Long 便于快速比较
+        Dim hash As Long = CLng(w) << 32 Or (CLng(h) And &HFFFFFFFFL)
+        hash = hash Xor (CLng(_imageFillMode) << 16)
+        hash = hash Xor (CLng(If(hasClip, 1, 0)) << 17)
+        hash = hash Xor (CLng(边框圆角半径) << 18)
+        hash = hash Xor (CLng(边框宽度) << 26)
+        hash = hash Xor (CLng(Me.DeviceDpi) << 34)
+        hash = hash Xor (CLng(圆角位置.GetHashCode()) << 42)
+        If _image IsNot Nothing Then hash = hash Xor CLng(Runtime.CompilerServices.RuntimeHelpers.GetHashCode(_image)) << 40
+        Return hash
+    End Function
+
+    Private Sub 清除图片缓存()
+        If _cachedImageBmp IsNot Nothing Then
+            _cachedImageBmp.Dispose()
+            _cachedImageBmp = Nothing
+        End If
+        _cacheKey = 0
+    End Sub
 
 #End Region
 
@@ -360,8 +514,49 @@ Public Class ModernPanel
         End Try
     End Sub
 
+    ''' <summary>仅更新滚动偏移和子控件位置，不重新计算内容大小和滚动条可见性。用于拖动/滚轮等高频场景。</summary>
+    Private Sub 快速滚动更新()
+        If _inScrollUpdate OrElse _inDpiChange Then Return
+        _inScrollUpdate = True
+        Try
+            Dim s As Single = DpiScale()
+            Dim scaledBorderWidth As Integer = CInt(Math.Round(边框宽度 * s))
+            Dim scaledBorderRadius As Integer = CInt(Math.Round(边框圆角半径 * s))
+            Dim scaledScrollBarWidth As Integer = CInt(Math.Round(滚动条宽度 * s))
+            Dim inset As Integer = 获取边框内边距()
+            Dim ep As Padding = 获取有效内边距()
+            Dim sbReserve As Integer = scaledScrollBarWidth + ScrollBarRenderer.Margin
+            Dim viewW As Integer = Math.Max(0, Me.Width - ep.Horizontal - If(_showVScroll, sbReserve, 0))
+            Dim viewH As Integer = Math.Max(0, Me.Height - ep.Vertical - If(_showHScroll, sbReserve, 0))
+
+            If _showVScroll Then
+                Dim maxOff As Integer = Math.Max(0, _contentSize.Height - viewH)
+                _vScrollOffset = Math.Max(0, Math.Min(_vScrollOffset, maxOff))
+                _vScrollBar.ComputeLayout(Me.Width, Me.Height, scaledBorderWidth, scaledBorderRadius,
+                    ep.Top - inset, ep.Bottom - inset + If(_showHScroll, sbReserve, 0), scaledScrollBarWidth,
+                    _contentSize.Height, viewH, _vScrollOffset)
+            End If
+
+            If _showHScroll Then
+                Dim maxOff As Integer = Math.Max(0, _contentSize.Width - viewW)
+                _hScrollOffset = Math.Max(0, Math.Min(_hScrollOffset, maxOff))
+                Dim vsbReserved As Integer = If(_showVScroll, Me.Width - inset - _vScrollBar.VisualLeft, 0)
+                _hScrollBar.ComputeHorizontalLayout(Me.Width, Me.Height, scaledBorderWidth, scaledBorderRadius,
+                    ep.Left - inset, ep.Right - inset + vsbReserved, scaledScrollBarWidth,
+                    _contentSize.Width, viewW, _hScrollOffset)
+            End If
+
+            应用子控件偏移()
+        Finally
+            _inScrollUpdate = False
+        End Try
+    End Sub
+
     Private Sub 更新滚动区域Core()
-        _contentSize = 计算内容总大小()
+        If _contentSizeDirty Then
+            _contentSize = 计算内容总大小()
+            _contentSizeDirty = False
+        End If
 
         Dim s As Single = DpiScale()
         Dim scaledBorderWidth As Integer = CInt(Math.Round(边框宽度 * s))
@@ -447,8 +642,11 @@ Public Class ModernPanel
                     }
                     _childLayouts(ctrl) = tag
                 End If
-                ctrl.Left = ox + tag.DesignLeft
-                ctrl.Top = oy + tag.DesignTop
+                Dim newLeft As Integer = ox + tag.DesignLeft
+                Dim newTop As Integer = oy + tag.DesignTop
+                If ctrl.Left <> newLeft OrElse ctrl.Top <> newTop Then
+                    ctrl.SetBounds(newLeft, newTop, 0, 0, BoundsSpecified.Location)
+                End If
             Next
         Finally
             ResumeLayout(False)
@@ -465,11 +663,17 @@ Public Class ModernPanel
 
 #Region "绘制"
 
+    Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
+        If 边框圆角半径 > 0 OrElse 背景颜色.A < 255 Then Return
+        MyBase.OnPaintBackground(e)
+    End Sub
+
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
         If Me.Width < 1 OrElse Me.Height < 1 Then Return
+        If 边框圆角半径 > 0 OrElse 背景颜色.A < 255 Then
+            绘制父容器背景(e.Graphics)
+        End If
         Dim g As Graphics = e.Graphics
-
-        更新滚动区域()
 
         Dim _ssaa As Integer = If(Class1.GlobalSSAA > 1, Class1.GlobalSSAA, 超采样倍率)
         If _ssaa > 1 Then
@@ -478,7 +682,7 @@ Public Class ModernPanel
                     sg.ScaleTransform(_ssaa, _ssaa)
                     sg.SmoothingMode = Class1.GlobalSmoothingMode
                     sg.PixelOffsetMode = Class1.GlobalPixelOffsetMode
-                    绘制背景与边框(sg)
+                    绘制背景与边框(sg, 跳过图片:=True)
                     绘制垂直滚动条(sg)
                     绘制水平滚动条(sg)
                 End Using
@@ -486,6 +690,8 @@ Public Class ModernPanel
                 g.InterpolationMode = Class1.GlobalInterpolationMode
                 g.DrawImage(bmp, 0, 0, Me.Width, Me.Height)
             End Using
+            ' 图片直接绘制到 e.Graphics，不经过 SSAA（位图缩放无抗锯齿收益）
+            绘制独立背景图片(g)
         Else
             绘制背景与边框(g)
             绘制垂直滚动条(g)
@@ -493,7 +699,21 @@ Public Class ModernPanel
         End If
     End Sub
 
-    Private Sub 绘制背景与边框(g As Graphics)
+    Private Sub 绘制父容器背景(g As Graphics)
+        If Parent Is Nothing Then Return
+        Dim state = g.Save()
+        g.TranslateTransform(-Me.Left, -Me.Top)
+        Using pea As New PaintEventArgs(g, New Rectangle(Me.Left, Me.Top, Me.Width, Me.Height))
+            InvokePaintBackground(Parent, pea)
+            ' 仅 InvokePaintBackground 只能获取父容器的 BackColor 填充。
+            ' 对于 ModernPanel 等自绘控件，背景图片和圆角背景都在 OnPaint 中绘制，
+            ' 必须追加 InvokePaint 才能获取父容器的真实视觉内容（含背景图片）。
+            InvokePaint(Parent, pea)
+        End Using
+        g.Restore(state)
+    End Sub
+
+    Private Sub 绘制背景与边框(g As Graphics, Optional 跳过图片 As Boolean = False)
         g.SmoothingMode = Class1.GlobalSmoothingMode
         g.PixelOffsetMode = Class1.GlobalPixelOffsetMode
         Dim s As Single = DpiScale()
@@ -504,79 +724,166 @@ Public Class ModernPanel
         End If
         If 边框圆角半径 > 0 Then
             Dim scaledRadius As Single = 边框圆角半径 * s
-            Dim isCircle As Boolean = (scaledRadius * 2 >= boundsRect.Width) AndAlso
+            Dim isCircle As Boolean = 圆角位置.IsAll AndAlso
+                                       (scaledRadius * 2 >= boundsRect.Width) AndAlso
                                        (scaledRadius * 2 >= boundsRect.Height)
             If isCircle Then
                 ' 当圆角半径足以构成正圆/椭圆时，改用专门的椭圆绘制逻辑避免四弧拼接瑕疵
                 Using path As GraphicsPath = RectangleRenderer.创建椭圆路径(boundsRect)
-                    Using br As New SolidBrush(背景颜色)
-                        g.FillPath(br, path)
-                    End Using
-                    绘制背景图片(g, path)
+                    If 背景颜色.A > 0 Then
+                        Using br As New SolidBrush(背景颜色)
+                            g.FillPath(br, path)
+                        End Using
+                    End If
+                    If Not 跳过图片 Then 绘制背景图片(g, path)
+                    If 遮罩颜色.A > 0 Then
+                        Using br As New SolidBrush(遮罩颜色)
+                            g.FillPath(br, path)
+                        End Using
+                    End If
                     RectangleRenderer.绘制椭圆边框(g, boundsRect, 边框颜色, 边框宽度 * s)
                 End Using
             Else
-                Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(boundsRect, scaledRadius)
-                    Using br As New SolidBrush(背景颜色)
-                        g.FillPath(br, path)
-                    End Using
-                    绘制背景图片(g, path)
+                Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(boundsRect, scaledRadius, 圆角位置)
+                    If 背景颜色.A > 0 Then
+                        Using br As New SolidBrush(背景颜色)
+                            g.FillPath(br, path)
+                        End Using
+                    End If
+                    If Not 跳过图片 Then 绘制背景图片(g, path)
+                    If 遮罩颜色.A > 0 Then
+                        Using br As New SolidBrush(遮罩颜色)
+                            g.FillPath(br, path)
+                        End Using
+                    End If
                     RectangleRenderer.绘制圆角边框(g, path, 边框颜色, 边框宽度 * s)
                 End Using
             End If
         Else
-            Using br As New SolidBrush(背景颜色)
-                g.FillRectangle(br, boundsRect)
-            End Using
-            绘制背景图片(g, Nothing)
+            If 背景颜色.A > 0 Then
+                Using br As New SolidBrush(背景颜色)
+                    g.FillRectangle(br, boundsRect)
+                End Using
+            End If
+            If Not 跳过图片 Then 绘制背景图片(g, Nothing)
+            If 遮罩颜色.A > 0 Then
+                Using br As New SolidBrush(遮罩颜色)
+                    g.FillRectangle(br, boundsRect)
+                End Using
+            End If
             RectangleRenderer.绘制矩形边框(g, boundsRect, 边框颜色, 边框宽度 * s)
         End If
     End Sub
 
+    ''' <summary>独立绘制背景图片到指定 Graphics，不经过 SSAA 管线。</summary>
+    Private Sub 绘制独立背景图片(g As Graphics)
+        If _image Is Nothing Then Return
+        Dim s As Single = DpiScale()
+        Dim boundsRect As New RectangleF(0, 0, Me.Width - 1, Me.Height - 1)
+        If 边框宽度 > 0 Then
+            Dim half As Single = 边框宽度 * s / 2.0F
+            boundsRect.Inflate(-half, -half)
+        End If
+        If 边框圆角半径 > 0 Then
+            Dim scaledRadius As Single = 边框圆角半径 * s
+            Dim isCircle As Boolean = 圆角位置.IsAll AndAlso
+                                       (scaledRadius * 2 >= boundsRect.Width) AndAlso
+                                       (scaledRadius * 2 >= boundsRect.Height)
+            If isCircle Then
+                Using path As GraphicsPath = RectangleRenderer.创建椭圆路径(boundsRect)
+                    绘制背景图片(g, path)
+                End Using
+            Else
+                Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(boundsRect, scaledRadius, 圆角位置)
+                    绘制背景图片(g, path)
+                End Using
+            End If
+        Else
+            绘制背景图片(g, Nothing)
+        End If
+    End Sub
+
     ''' <summary>
-    ''' 主流圆形裁切方案：在一张独立的 32bpp ARGB 透明位图上，
-    ''' 用 TextureBrush(等大缩放图) + FillPath(圆角路径) 一步完成裁剪，
-    ''' 笔刷和路径在同一坐标系，无需任何 Transform，路径外像素天然透明。
+    ''' 绘制背景图片，使用缓存避免每帧重新缩放和裁切。
+    ''' 缓存在控件尺寸、图片源、填充模式、边框参数或 DPI 变化时自动失效。
     ''' </summary>
     Private Sub 绘制背景图片(g As Graphics, clipPath As GraphicsPath)
         If _image Is Nothing Then Return
-        Dim img As Image = _image
         Dim w As Integer = Me.Width
         Dim h As Integer = Me.Height
         If w < 1 OrElse h < 1 Then Return
 
-        ' 1) 把原图按 Zoom 缩放到与控件等大的位图上
-        Using scaled As New Bitmap(w, h, Imaging.PixelFormat.Format32bppArgb)
+        Dim hasClip As Boolean = clipPath IsNot Nothing
+        Dim key As Long = 计算图片缓存键(w, h, hasClip)
+
+        If _cachedImageBmp IsNot Nothing AndAlso _cacheKey = key Then
+            g.DrawImage(_cachedImageBmp, 0, 0, w, h)
+            Return
+        End If
+
+        ' 缓存未命中，重建
+        清除图片缓存()
+
+        Dim img As Image = _image
+
+        ' 1) 把原图按指定模式缩放到与控件等大的位图上
+        Dim scaled As New Bitmap(w, h, Imaging.PixelFormat.Format32bppArgb)
+        Try
             Using sg As Graphics = Graphics.FromImage(scaled)
                 sg.InterpolationMode = Class1.GlobalInterpolationMode
                 sg.CompositingQuality = Class1.GlobalCompositingQuality
                 Dim ratioW As Single = CSng(w) / img.Width
                 Dim ratioH As Single = CSng(h) / img.Height
-                Dim ratio As Single = Math.Min(ratioW, ratioH)
+                Dim ratio As Single = If(_imageFillMode = ImageFillMode.Fill,
+                                        Math.Max(ratioW, ratioH),
+                                        Math.Min(1.0F, Math.Min(ratioW, ratioH)))
                 Dim drawW As Single = img.Width * ratio
                 Dim drawH As Single = img.Height * ratio
+                If _imageFillMode = ImageFillMode.Zoom Then
+                    drawW = Math.Min(drawW, CSng(w))
+                    drawH = Math.Min(drawH, CSng(h))
+                End If
                 Dim dx As Single = (w - drawW) / 2.0F
                 Dim dy As Single = (h - drawH) / 2.0F
-                sg.DrawImage(img, New RectangleF(dx, dy, drawW, drawH))
+                Using attrs As New Imaging.ImageAttributes()
+                    attrs.SetWrapMode(WrapMode.TileFlipXY)
+                    sg.DrawImage(img,
+                        Rectangle.Round(New RectangleF(dx, dy, drawW, drawH)),
+                        0, 0, img.Width, img.Height,
+                        GraphicsUnit.Pixel, attrs)
+                End Using
             End Using
 
-            If clipPath IsNot Nothing Then
-                ' 2) 在一张全新的 ARGB 透明位图上，用 TextureBrush + FillPath 裁剪
-                '    笔刷和路径都是 (0,0)~(w,h)，坐标天然对齐，无需任何 Transform
-                Using result As New Bitmap(w, h, Imaging.PixelFormat.Format32bppArgb)
+            If hasClip Then
+                ' 2) 用 TextureBrush + FillPath 裁剪到圆角/椭圆路径
+                Dim result As New Bitmap(w, h, Imaging.PixelFormat.Format32bppArgb)
+                Try
                     Using rg As Graphics = Graphics.FromImage(result)
                         rg.SmoothingMode = Class1.GlobalSmoothingMode
                         Using tb As New TextureBrush(scaled)
                             rg.FillPath(tb, clipPath)
                         End Using
                     End Using
-                    ' 3) 覆盖到已绘制的 BackColor1 之上
-                    g.DrawImage(result, 0, 0, w, h)
-                End Using
+                    ' 缓存裁剪后的结果，释放中间 scaled
+                    scaled.Dispose()
+                    scaled = Nothing
+                    _cachedImageBmp = result
+                Catch
+                    result.Dispose()
+                    Throw
+                End Try
             Else
-                g.DrawImage(scaled, 0, 0, w, h)
+                ' 无裁剪，直接缓存 scaled
+                _cachedImageBmp = scaled
+                scaled = Nothing
             End If
-        End Using
+
+            _cacheKey = key
+            g.DrawImage(_cachedImageBmp, 0, 0, w, h)
+        Finally
+            ' 如果异常导致 scaled 未被转移到缓存，确保释放
+            scaled?.Dispose()
+        End Try
     End Sub
 
     Private Sub 绘制垂直滚动条(g As Graphics)
@@ -602,17 +909,23 @@ Public Class ModernPanel
 
         If _vScrollBar.IsDragging Then
             Dim viewport As Size = 获取有效视口大小()
-            _vScrollOffset = _vScrollBar.DragMove(e.Y, _contentSize.Height, viewport.Height)
-            更新滚动区域()
-            Me.Invalidate()
+            Dim newOff As Integer = _vScrollBar.DragMove(e.Y, _contentSize.Height, viewport.Height)
+            If newOff <> _vScrollOffset Then
+                _vScrollOffset = newOff
+                快速滚动更新()
+                Me.Invalidate()
+            End If
             Return
         End If
 
         If _hScrollBar.IsDragging Then
             Dim viewport As Size = 获取有效视口大小()
-            _hScrollOffset = _hScrollBar.DragMoveHorizontal(e.X, _contentSize.Width, viewport.Width)
-            更新滚动区域()
-            Me.Invalidate()
+            Dim newOff As Integer = _hScrollBar.DragMoveHorizontal(e.X, _contentSize.Width, viewport.Width)
+            If newOff <> _hScrollOffset Then
+                _hScrollOffset = newOff
+                快速滚动更新()
+                Me.Invalidate()
+            End If
             Return
         End If
 
@@ -632,7 +945,7 @@ Public Class ModernPanel
             Dim newOff = _vScrollBar.TrackClick(e.Location, _vScrollOffset, _contentSize.Height, viewport.Height)
             If newOff <> _vScrollOffset Then
                 _vScrollOffset = newOff
-                更新滚动区域()
+                快速滚动更新()
                 Me.Invalidate()
                 Return
             End If
@@ -643,7 +956,7 @@ Public Class ModernPanel
             Dim newHOff = _hScrollBar.TrackClickHorizontal(e.Location, _hScrollOffset, _contentSize.Width, viewport.Width)
             If newHOff <> _hScrollOffset Then
                 _hScrollOffset = newHOff
-                更新滚动区域()
+                快速滚动更新()
                 Me.Invalidate()
                 Return
             End If
@@ -674,7 +987,7 @@ Public Class ModernPanel
                 Dim newHOff = ScrollBarRenderer.HandleHorizontalWheel(e.Delta, _hScrollOffset, _contentSize.Width, viewport.Width, 水平滚动步长)
                 If newHOff <> _hScrollOffset Then
                     _hScrollOffset = newHOff
-                    更新滚动区域()
+                    快速滚动更新()
                     Me.Invalidate()
                 End If
             End If
@@ -685,7 +998,7 @@ Public Class ModernPanel
             Dim newOff = ScrollBarRenderer.HandleHorizontalWheel(e.Delta, _vScrollOffset, _contentSize.Height, viewport.Height, 垂直滚动步长)
             If newOff <> _vScrollOffset Then
                 _vScrollOffset = newOff
-                更新滚动区域()
+                快速滚动更新()
                 Me.Invalidate()
             End If
         End If
@@ -697,11 +1010,14 @@ Public Class ModernPanel
 
     Protected Overrides Sub OnPaddingChanged(e As EventArgs)
         MyBase.OnPaddingChanged(e)
+        _contentSizeDirty = True
         更新滚动区域()
     End Sub
 
     Protected Overrides Sub OnSizeChanged(e As EventArgs)
         MyBase.OnSizeChanged(e)
+        清除图片缓存()
+        _contentSizeDirty = True
         更新滚动区域()
         Me.Invalidate()
     End Sub
@@ -729,6 +1045,8 @@ Public Class ModernPanel
             _childLayouts.Clear()
         End If
 
+        清除图片缓存()
+        _contentSizeDirty = True
         _inDpiChange = False
         更新滚动区域()
         Me.PerformLayout()
@@ -747,6 +1065,7 @@ Public Class ModernPanel
         End If
         AddHandler e.Control.SizeChanged, AddressOf 子控件布局变更
         AddHandler e.Control.LocationChanged, AddressOf 子控件位置变更
+        _contentSizeDirty = True
         更新滚动区域()
         Me.Invalidate()
     End Sub
@@ -756,6 +1075,7 @@ Public Class ModernPanel
         _childLayouts.Remove(e.Control)
         RemoveHandler e.Control.SizeChanged, AddressOf 子控件布局变更
         RemoveHandler e.Control.LocationChanged, AddressOf 子控件位置变更
+        _contentSizeDirty = True
         更新滚动区域()
         Me.Invalidate()
     End Sub
@@ -764,6 +1084,7 @@ Public Class ModernPanel
 
     Private Sub 子控件布局变更(sender As Object, e As EventArgs)
         If _inScrollUpdate OrElse _inDpiChange Then Return
+        _contentSizeDirty = True
         更新滚动区域()
         Me.Invalidate()
     End Sub
@@ -772,6 +1093,11 @@ Public Class ModernPanel
         If _suppressLocationSync OrElse _inDpiChange Then Return
         Dim ctrl = DirectCast(sender, Control)
         If ctrl.Dock <> DockStyle.None Then Return
+        If _layoutMode = LayoutModeEnum.Flow Then
+            ' 流式模式下子控件位置由布局决定，用户拖动后重新排布
+            Me.PerformLayout()
+            Return
+        End If
         Dim tag As ChildLayoutInfo = Nothing
         If Not _childLayouts.TryGetValue(ctrl, tag) Then Return
         Dim ep As Padding = 获取有效内边距()
@@ -790,25 +1116,93 @@ Public Class ModernPanel
         ' DPI 变化期间跳过设计坐标捕获和滚动区域更新，由 OnDpiChangedAfterParent 统一处理
         If _inDpiChange Then Return
 
-        ' 布局引擎完成后，捕获停靠控件的设计坐标（此时它们处于未偏移的视口位置）
-        Dim ep As Padding = 获取有效内边距()
-        For Each ctrl As Control In Me.Controls
-            If ctrl.Dock = DockStyle.None Then Continue For
-            If Not ctrl.Visible Then Continue For
-            Dim tag As ChildLayoutInfo = Nothing
-            If Not _childLayouts.TryGetValue(ctrl, tag) Then
-                tag = New ChildLayoutInfo()
-                _childLayouts(ctrl) = tag
-            End If
-            tag.DesignLeft = ctrl.Left - ep.Left
-            tag.DesignTop = ctrl.Top - ep.Top
-        Next
+        If _layoutMode = LayoutModeEnum.Flow Then
+            执行流式排布()
+        Else
+            ' 布局引擎完成后，捕获停靠控件的设计坐标（此时它们处于未偏移的视口位置）
+            Dim ep As Padding = 获取有效内边距()
+            For Each ctrl As Control In Me.Controls
+                If ctrl.Dock = DockStyle.None Then Continue For
+                If Not ctrl.Visible Then Continue For
+                Dim tag As ChildLayoutInfo = Nothing
+                If Not _childLayouts.TryGetValue(ctrl, tag) Then
+                    tag = New ChildLayoutInfo()
+                    _childLayouts(ctrl) = tag
+                End If
+                tag.DesignLeft = ctrl.Left - ep.Left
+                tag.DesignTop = ctrl.Top - ep.Top
+            Next
+        End If
 
         更新滚动区域()
 
         If AutoSize Then
             PerformAutoSize()
         End If
+    End Sub
+
+    ''' <summary>按 FlowDirection/WrapContents 将子控件顺序摆放到 _childLayouts，供后续滚动/偏移管线使用。
+    ''' Dock != None 的子控件不参与流式排布。</summary>
+    Private Sub 执行流式排布()
+        Dim s As Single = DpiScale()
+        Dim scaledScrollBarWidth As Integer = CInt(Math.Round(滚动条宽度 * s))
+        Dim sbReserve As Integer = scaledScrollBarWidth + ScrollBarRenderer.Margin
+        Dim ep As Padding = 获取有效内边距()
+
+        ' 稳定的换行/换列边界：使用可能显示滚动条后的视口尺寸，避免布局-滚动条反馈环。
+        Dim wrapWidth As Integer = Math.Max(1, Me.Width - ep.Horizontal -
+            If((滚动模式 And ScrollMode.Vertical) <> 0, sbReserve, 0))
+        Dim wrapHeight As Integer = Math.Max(1, Me.Height - ep.Vertical -
+            If((滚动模式 And ScrollMode.Horizontal) <> 0, sbReserve, 0))
+
+        Dim x As Integer = 0
+        Dim y As Integer = 0
+        Dim rowMaxH As Integer = 0
+        Dim colMaxW As Integer = 0
+
+        ' 与原版 FlowLayoutPanel 行为一致：按 Controls 集合索引 0 → Count-1 正序排布。
+        ' Controls.Add 把新控件追加到末尾（Count-1，Z 序顶层），BringToFront 也移到 Count-1，
+        ' 因此新加入或 BringToFront 的控件会落在流式末尾；SendToBack 的则落在最前。
+        For Each ctrl As Control In Me.Controls
+            If ctrl.Dock <> DockStyle.None Then Continue For
+            If Not ctrl.Visible Then Continue For
+
+            Dim m As Padding = ctrl.Margin
+            Dim blockW As Integer = m.Left + ctrl.Width + m.Right
+            Dim blockH As Integer = m.Top + ctrl.Height + m.Bottom
+
+            If _flowDirection = FlowDirectionEnum.LeftToRight Then
+                If _wrapContents AndAlso x > 0 AndAlso (x + blockW) > wrapWidth Then
+                    x = 0
+                    y += rowMaxH
+                    rowMaxH = 0
+                End If
+            Else ' TopDown
+                If _wrapContents AndAlso y > 0 AndAlso (y + blockH) > wrapHeight Then
+                    y = 0
+                    x += colMaxW
+                    colMaxW = 0
+                End If
+            End If
+
+            Dim tag As ChildLayoutInfo = Nothing
+            If Not _childLayouts.TryGetValue(ctrl, tag) Then
+                tag = New ChildLayoutInfo()
+                _childLayouts(ctrl) = tag
+            End If
+            tag.DesignLeft = x + m.Left
+            tag.DesignTop = y + m.Top
+
+            If _flowDirection = FlowDirectionEnum.LeftToRight Then
+                x += blockW
+                If blockH > rowMaxH Then rowMaxH = blockH
+            Else
+                y += blockH
+                If blockW > colMaxW Then colMaxW = blockW
+            End If
+        Next
+
+        _contentSizeDirty = True
     End Sub
 
 #End Region

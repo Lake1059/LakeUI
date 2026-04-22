@@ -1,5 +1,5 @@
 ﻿<Global.Microsoft.VisualBasic.CompilerServices.DesignerGenerated()> _
-Partial Class Form_ModernTextBox
+Partial Class Form_RamMonitor
     Inherits System.Windows.Forms.Form
 
     'Form 重写 Dispose，以清理组件列表。
@@ -23,13 +23,8 @@ Partial Class Form_ModernTextBox
     <System.Diagnostics.DebuggerStepThrough()> _
     Private Sub InitializeComponent()
         ModernPanel1 = New ModernPanel()
-        Panel3 = New Panel()
-        ModernTextBox2 = New ModernTextBox()
-        Label5 = New Label()
-        Panel2 = New Panel()
-        ModernTextBox1 = New ModernTextBox()
+        RamMonitor1 = New RamMonitor()
         Label6 = New Label()
-        Label7 = New Label()
         Panel1 = New Panel()
         ModernButton4 = New ModernButton()
         Label4 = New Label()
@@ -40,19 +35,14 @@ Partial Class Form_ModernTextBox
         ModernButton1 = New ModernButton()
         Label1 = New Label()
         ModernPanel1.SuspendLayout()
-        Panel3.SuspendLayout()
-        Panel2.SuspendLayout()
         Panel1.SuspendLayout()
         SuspendLayout()
         ' 
         ' ModernPanel1
         ' 
         ModernPanel1.BorderSize = 0
-        ModernPanel1.Controls.Add(Panel3)
-        ModernPanel1.Controls.Add(Label5)
-        ModernPanel1.Controls.Add(Panel2)
+        ModernPanel1.Controls.Add(RamMonitor1)
         ModernPanel1.Controls.Add(Label6)
-        ModernPanel1.Controls.Add(Label7)
         ModernPanel1.Controls.Add(Panel1)
         ModernPanel1.Controls.Add(Label1)
         ModernPanel1.Dock = DockStyle.Fill
@@ -61,94 +51,29 @@ Partial Class Form_ModernTextBox
         ModernPanel1.Name = "ModernPanel1"
         ModernPanel1.Padding = New Padding(20)
         ModernPanel1.ScrollBarMode = ModernPanel.ScrollMode.None
-        ModernPanel1.Size = New Size(753, 604)
-        ModernPanel1.TabIndex = 35
+        ModernPanel1.Size = New Size(757, 624)
+        ModernPanel1.TabIndex = 39
         ' 
-        ' Panel3
+        ' RamMonitor1
         ' 
-        Panel3.Controls.Add(ModernTextBox2)
-        Panel3.Dock = DockStyle.Fill
-        Panel3.Location = New Point(20, 315)
-        Panel3.Name = "Panel3"
-        Panel3.Size = New Size(713, 269)
-        Panel3.TabIndex = 42
-        ' 
-        ' ModernTextBox2
-        ' 
-        ModernTextBox2.BorderRadius = 10
-        ModernTextBox2.BorderSize = 2
-        ModernTextBox2.Dock = DockStyle.Fill
-        ModernTextBox2.EnableSyntaxHighlight = True
-        ModernTextBox2.Font = New Font("Microsoft YaHei UI", 10F)
-        ModernTextBox2.LinkDetection = True
-        ModernTextBox2.Location = New Point(0, 0)
-        ModernTextBox2.Margin = New Padding(2, 2, 2, 2)
-        ModernTextBox2.MultiLine = True
-        ModernTextBox2.Name = "ModernTextBox2"
-        ModernTextBox2.Padding = New Padding(10)
-        ModernTextBox2.ShowLineNumbers = True
-        ModernTextBox2.Size = New Size(713, 269)
-        ModernTextBox2.TabIndex = 39
-        ModernTextBox2.WaterText = "ModernTextBox2"
-        ' 
-        ' Label5
-        ' 
-        Label5.AutoSize = True
-        Label5.Dock = DockStyle.Top
-        Label5.Font = New Font("Microsoft YaHei UI", 10F)
-        Label5.Location = New Point(20, 265)
-        Label5.Name = "Label5"
-        Label5.Padding = New Padding(0, 20, 0, 10)
-        Label5.Size = New Size(570, 50)
-        Label5.TabIndex = 41
-        Label5.Text = "多行模式 + 链接识别 + 行数显示 + VB.NET 基本语法高亮（实现过程请去看 Demo 源码）"
-        ' 
-        ' Panel2
-        ' 
-        Panel2.Controls.Add(ModernTextBox1)
-        Panel2.Dock = DockStyle.Top
-        Panel2.Location = New Point(20, 230)
-        Panel2.Name = "Panel2"
-        Panel2.Size = New Size(713, 35)
-        Panel2.TabIndex = 40
-        ' 
-        ' ModernTextBox1
-        ' 
-        ModernTextBox1.BorderRadius = 10
-        ModernTextBox1.BorderSize = 2
-        ModernTextBox1.Dock = DockStyle.Fill
-        ModernTextBox1.Font = New Font("Microsoft YaHei UI", 10F)
-        ModernTextBox1.Location = New Point(0, 0)
-        ModernTextBox1.Margin = New Padding(2, 2, 2, 2)
-        ModernTextBox1.Name = "ModernTextBox1"
-        ModernTextBox1.Padding = New Padding(10, 0, 10, 0)
-        ModernTextBox1.Size = New Size(713, 35)
-        ModernTextBox1.TabIndex = 39
-        ModernTextBox1.WaterText = "ModernTextBox1"
+        RamMonitor1.Dock = DockStyle.Fill
+        RamMonitor1.Location = New Point(20, 170)
+        RamMonitor1.Name = "RamMonitor1"
+        RamMonitor1.Running = True
+        RamMonitor1.Size = New Size(717, 434)
+        RamMonitor1.TabIndex = 39
         ' 
         ' Label6
         ' 
         Label6.AutoSize = True
         Label6.Dock = DockStyle.Top
         Label6.Font = New Font("Microsoft YaHei UI", 10F)
-        Label6.Location = New Point(20, 180)
+        Label6.Location = New Point(20, 120)
         Label6.Name = "Label6"
         Label6.Padding = New Padding(0, 20, 0, 10)
         Label6.Size = New Size(65, 50)
         Label6.TabIndex = 38
-        Label6.Text = "单行模式"
-        ' 
-        ' Label7
-        ' 
-        Label7.AutoSize = True
-        Label7.Dock = DockStyle.Top
-        Label7.Font = New Font("Microsoft YaHei UI", 10F)
-        Label7.Location = New Point(20, 120)
-        Label7.Name = "Label7"
-        Label7.Padding = New Padding(0, 20, 0, 0)
-        Label7.Size = New Size(345, 60)
-        Label7.TabIndex = 43
-        Label7.Text = "你知道从头做一个文本框要多少代码吗？超过两千行！" & vbCrLf & "Just try it, you will love it!"
+        Label6.Text = "默认样式"
         ' 
         ' Panel1
         ' 
@@ -162,7 +87,7 @@ Partial Class Form_ModernTextBox
         Panel1.Dock = DockStyle.Top
         Panel1.Location = New Point(20, 70)
         Panel1.Name = "Panel1"
-        Panel1.Size = New Size(713, 50)
+        Panel1.Size = New Size(717, 50)
         Panel1.TabIndex = 35
         ' 
         ' ModernButton4
@@ -172,14 +97,14 @@ Partial Class Form_ModernTextBox
         ModernButton4.BorderSize = 0
         ModernButton4.Dock = DockStyle.Left
         ModernButton4.Font = New Font("Microsoft YaHei UI", 10.8F, FontStyle.Bold, GraphicsUnit.Point, CByte(134))
-        ModernButton4.ForeColor = Color.Salmon
+        ModernButton4.ForeColor = Color.YellowGreen
         ModernButton4.Location = New Point(424, 0)
         ModernButton4.Margin = New Padding(2)
         ModernButton4.Name = "ModernButton4"
         ModernButton4.Size = New Size(80, 50)
         ModernButton4.SubText = "性能负载"
         ModernButton4.TabIndex = 6
-        ModernButton4.Text = "中"
+        ModernButton4.Text = "低"
         ModernButton4.TextAlign = ModernButton.TextAlignEnum.Left
         ' 
         ' Label4
@@ -229,7 +154,7 @@ Partial Class Form_ModernTextBox
         ModernButton2.Size = New Size(160, 50)
         ModernButton2.SubText = "技术偏好"
         ModernButton2.TabIndex = 2
-        ModernButton2.Text = "天顶星科技"
+        ModernButton2.Text = "微软科技"
         ModernButton2.TextAlign = ModernButton.TextAlignEnum.Left
         ' 
         ' Label2
@@ -266,29 +191,29 @@ Partial Class Form_ModernTextBox
         Label1.Location = New Point(20, 20)
         Label1.Name = "Label1"
         Label1.Padding = New Padding(0, 0, 0, 20)
-        Label1.Size = New Size(331, 50)
+        Label1.Size = New Size(292, 50)
         Label1.TabIndex = 34
-        Label1.Text = "现代化文本框 ModernTextBox"
+        Label1.Text = "内存条监控器 RamMonitor"
         ' 
-        ' Form_ModernTextBox
+        ' Form_RamMonitor
         ' 
         AutoScaleDimensions = New SizeF(96F, 96F)
         AutoScaleMode = AutoScaleMode.Dpi
         BackColor = Color.FromArgb(CByte(36), CByte(36), CByte(36))
-        ClientSize = New Size(753, 604)
+        ClientSize = New Size(757, 624)
         Controls.Add(ModernPanel1)
+        Font = New Font("Microsoft YaHei UI", 10F)
         ForeColor = Color.Silver
-        Name = "Form_ModernTextBox"
-        Text = "Form_ModernTextBox"
+        Name = "Form_RamMonitor"
+        Text = "RamMonitor"
         ModernPanel1.ResumeLayout(False)
         ModernPanel1.PerformLayout()
-        Panel3.ResumeLayout(False)
-        Panel2.ResumeLayout(False)
         Panel1.ResumeLayout(False)
         ResumeLayout(False)
     End Sub
 
     Friend WithEvents ModernPanel1 As ModernPanel
+    Friend WithEvents Label6 As Label
     Friend WithEvents Panel1 As Panel
     Friend WithEvents ModernButton4 As ModernButton
     Friend WithEvents Label4 As Label
@@ -298,11 +223,5 @@ Partial Class Form_ModernTextBox
     Friend WithEvents Label2 As Label
     Friend WithEvents ModernButton1 As ModernButton
     Friend WithEvents Label1 As Label
-    Friend WithEvents Label6 As Label
-    Friend WithEvents ModernTextBox1 As ModernTextBox
-    Friend WithEvents Panel3 As Panel
-    Friend WithEvents ModernTextBox2 As ModernTextBox
-    Friend WithEvents Label5 As Label
-    Friend WithEvents Panel2 As Panel
-    Friend WithEvents Label7 As Label
+    Friend WithEvents RamMonitor1 As RamMonitor
 End Class

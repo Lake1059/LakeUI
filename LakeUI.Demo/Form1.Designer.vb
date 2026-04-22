@@ -55,6 +55,10 @@ Partial Class Form1
         Dim ModernTabPage30 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
         Dim ModernTabPage31 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
         Dim ModernTabPage32 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
+        Dim ModernTabPage33 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
+        Dim ModernTabPage34 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
+        Dim ModernTabPage35 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
+        Dim ModernTabPage36 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
         Dim ModernMenuItem1 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
         Dim resources As System.ComponentModel.ComponentResourceManager = New System.ComponentModel.ComponentResourceManager(GetType(Form1))
         Dim ModernMenuItem2 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
@@ -106,6 +110,10 @@ Partial Class Form1
         ModernTabPage30.Text = "SysTaskBarProgress"
         ModernTabPage31.Text = "PixelPictureBox"
         ModernTabPage32.Text = "TaskbarThumbnailToolbar"
+        ModernTabPage33.Text = "MsgBox\InputBox\Tip"
+        ModernTabPage34.Text = "CpuMonitor"
+        ModernTabPage35.Text = "RamMonitor"
+        ModernTabPage36.Text = "GpuMonitor"
         ModernTabListControl1.Items.Add(ModernTabPage1)
         ModernTabListControl1.Items.Add(ModernTabPage2)
         ModernTabListControl1.Items.Add(ModernTabPage3)
@@ -138,6 +146,10 @@ Partial Class Form1
         ModernTabListControl1.Items.Add(ModernTabPage30)
         ModernTabListControl1.Items.Add(ModernTabPage31)
         ModernTabListControl1.Items.Add(ModernTabPage32)
+        ModernTabListControl1.Items.Add(ModernTabPage33)
+        ModernTabListControl1.Items.Add(ModernTabPage34)
+        ModernTabListControl1.Items.Add(ModernTabPage35)
+        ModernTabListControl1.Items.Add(ModernTabPage36)
         ModernTabListControl1.Location = New Point(0, 0)
         ModernTabListControl1.Name = "ModernTabListControl1"
         ModernTabListControl1.ScrollBarWidth = 10
@@ -230,7 +242,7 @@ Partial Class Form1
         Name = "Form1"
         ShowIcon = False
         StartPosition = FormStartPosition.CenterScreen
-        Text = "LakeUI 1.2.0 DEMO"
+        Text = "LakeUI 1.3.0 DEMO"
         ModernTabListControl1.ResumeLayout(False)
         ResumeLayout(False)
     End Sub

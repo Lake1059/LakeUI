@@ -362,6 +362,38 @@ Public Class ThisIsYourWindow
         End Set
     End Property
 
+    Private _标题栏背景图片 As Image = Nothing
+    ''' <summary>
+    ''' 标题栏背景图片。图片以居中裁切模式（CenterImage）绘制：
+    ''' 保持比例缩放至撑满标题栏区域，超出部分从中心裁切。
+    ''' 设为 Nothing 则不绘制背景图片。
+    ''' </summary>
+    <Category("LakeUI"), Description("标题栏背景图片（居中裁切模式）。"), DefaultValue(GetType(Image), Nothing)>
+    Public Property CaptionBackgroundImage As Image
+        Get
+            Return _标题栏背景图片
+        End Get
+        Set(value As Image)
+            _标题栏背景图片 = value : 通知重绘()
+        End Set
+    End Property
+
+    Private _标题栏遮罩颜色 As Color = Color.Transparent
+    ''' <summary>
+    ''' 标题栏遮罩颜色，绘制在背景图片之上、图标与文字之下。
+    ''' 可使用半透明颜色为背景图片添加色调或降低对比度，使标题文字更易读。
+    ''' 设为 Transparent 则不绘制遮罩。
+    ''' </summary>
+    <Category("LakeUI"), Description("标题栏半透明遮罩颜色，绘制在背景图片之上、图标与文字之下。"), DefaultValue(GetType(Color), "Transparent")>
+    Public Property CaptionOverlayColor As Color
+        Get
+            Return _标题栏遮罩颜色
+        End Get
+        Set(value As Color)
+            _标题栏遮罩颜色 = value : 通知重绘()
+        End Set
+    End Property
+
 #End Region
 
 #Region "属性 - 标题文字"
@@ -528,29 +560,7 @@ Public Class ThisIsYourWindow
         End Set
     End Property
 
-    Private _显示最大化按钮 As Boolean = True
-    <Category("LakeUI"), Description("是否显示最大化/还原按钮。"), DefaultValue(True)>
-    Public Property ShowMaximizeButton As Boolean
-        Get
-            Return _显示最大化按钮
-        End Get
-        Set(value As Boolean)
-            _显示最大化按钮 = value : 通知重绘()
-        End Set
-    End Property
-
-    Private _显示最小化按钮 As Boolean = True
-    <Category("LakeUI"), Description("是否显示最小化按钮。"), DefaultValue(True)>
-    Public Property ShowMinimizeButton As Boolean
-        Get
-            Return _显示最小化按钮
-        End Get
-        Set(value As Boolean)
-            _显示最小化按钮 = value : 通知重绘()
-        End Set
-    End Property
-
-    Private _按钮内边距 As Padding = Padding.Empty
+    Private _按钮内边距
     <Category("LakeUI"), Description("控制按钮的内边距。"), DefaultValue(GetType(Padding), "0, 0, 0, 0")>
     Public Property ButtonPadding As Padding
         Get
@@ -835,6 +845,28 @@ Public Class ThisIsYourWindow
         End Set
     End Property
 
+    Private _分层阴影调整宽度 As Integer = 0
+    ''' <summary>
+    ''' 分层阴影区域中可触发窗口大小调整的热区宽度（逻辑像素）。
+    ''' 表示从窗口本体边缘向外延伸多少像素的阴影区域可以拖动调整大小。
+    ''' 0 = 阴影区域不可调整大小（鼠标穿透）。仅 ShadowMode = Layer 时生效。
+    ''' </summary>
+    <Category("LakeUI"), Description("分层阴影中可触发大小调整的热区宽度（逻辑像素）。0 = 阴影不可调整大小。仅 ShadowMode = Layer 时生效。"), DefaultValue(0)>
+    Public Property LayerShadowResizeWidth As Integer
+        Get
+            Return _分层阴影调整宽度
+        End Get
+        Set(value As Integer)
+            _分层阴影调整宽度 = Math.Max(0, Math.Min(value, _分层阴影深度))
+            For Each s In _forms.Values
+                If s.ShadowForm IsNot Nothing Then
+                    s.ShadowForm.ResizeWidth = _分层阴影调整宽度
+                    s.ShadowForm.UpdateHitTestTransparency()
+                End If
+            Next
+        End Set
+    End Property
+
     Private Sub 更新阴影(s As PerFormState)
         If s Is Nothing OrElse s.HostForm Is Nothing Then Return
         Dim zoomed As Boolean = (s.HostForm.WindowState = FormWindowState.Maximized)
@@ -848,11 +880,19 @@ Public Class ThisIsYourWindow
         End If
 
         If s.ShadowForm Is Nothing Then
-            s.ShadowForm = New ShadowWindow()
+            s.ShadowForm = New ShadowWindow With {
+                .HostHandle = s.HostForm.Handle,
+                .ShadowDepth = _分层阴影深度,
+                .ResizeWidth = _分层阴影调整宽度
+            }
+            s.ShadowForm.UpdateHitTestTransparency()
             s.ShadowForm.Show()
         End If
 
         Dim bounds = s.HostForm.Bounds
+        s.ShadowForm.HostHandle = s.HostForm.Handle
+        s.ShadowForm.ShadowDepth = _分层阴影深度
+        s.ShadowForm.ResizeWidth = _分层阴影调整宽度
         s.ShadowForm.UpdateShadow(bounds, _分层阴影深度, _分层阴影颜色, _分层阴影不透明度, s.IsInSizeMove)
         s.ShadowForm.PlaceBehind(s.HostForm.Handle)
         If Not s.ShadowForm.Visible Then s.ShadowForm.Visible = True
@@ -979,8 +1019,8 @@ Public Class ThisIsYourWindow
 
         Dim 列表 As New List(Of Integer)
         If _按钮位置 = ButtonPositionEnum.Right Then
-            If _显示最小化按钮 Then 列表.Add(HTMINBUTTON)
-            If _显示最大化按钮 Then 列表.Add(HTMAXBUTTON)
+            If s.HostForm.MinimizeBox Then 列表.Add(HTMINBUTTON)
+            If s.HostForm.MaximizeBox Then 列表.Add(HTMAXBUTTON)
             列表.Add(HTCLOSE)
             Dim totalW As Integer = 列表.Count * bw + Math.Max(0, 列表.Count - 1) * sp
             Dim startX As Integer = w - totalW
@@ -990,15 +1030,15 @@ Public Class ThisIsYourWindow
             Next
         Else
             列表.Add(HTCLOSE)
-            If _显示最大化按钮 Then 列表.Add(HTMAXBUTTON)
-            If _显示最小化按钮 Then 列表.Add(HTMINBUTTON)
+            If s.HostForm.MaximizeBox Then 列表.Add(HTMAXBUTTON)
+            If s.HostForm.MinimizeBox Then 列表.Add(HTMINBUTTON)
             For i = 0 To 列表.Count - 1
                 Dim r As New Rectangle(i * (bw + sp), 0, bw, bh)
                 Select Case 列表(i) : Case HTCLOSE : s.CloseRect = r : Case HTMAXBUTTON : s.MaxRect = r : Case HTMINBUTTON : s.MinRect = r : End Select
             Next
         End If
-        If Not _显示最大化按钮 Then s.MaxRect = Rectangle.Empty
-        If Not _显示最小化按钮 Then s.MinRect = Rectangle.Empty
+        If Not s.HostForm.MaximizeBox Then s.MaxRect = Rectangle.Empty
+        If Not s.HostForm.MinimizeBox Then s.MinRect = Rectangle.Empty
 
         If _图标来源 <> IconSourceEnum.None Then
             Dim iconY As Integer = (_标题栏高度 - _图标大小) \ 2
@@ -1035,12 +1075,20 @@ Public Class ThisIsYourWindow
             g.FillRectangle(brush, captionRect)
         End Using
 
+        绘制标题栏背景图片(g, captionRect)
+
+        If _标题栏遮罩颜色.A > 0 Then
+            Using brush As New SolidBrush(_标题栏遮罩颜色)
+                g.FillRectangle(brush, captionRect)
+            End Using
+        End If
+
         绘制图标(g, s)
         绘制标题文字(g, s)
 
         绘制控制按钮(g, s, s.CloseRect, HTCLOSE)
-        If _显示最大化按钮 Then 绘制控制按钮(g, s, s.MaxRect, HTMAXBUTTON)
-        If _显示最小化按钮 Then 绘制控制按钮(g, s, s.MinRect, HTMINBUTTON)
+        If s.HostForm.MaximizeBox Then 绘制控制按钮(g, s, s.MaxRect, HTMAXBUTTON)
+        If s.HostForm.MinimizeBox Then 绘制控制按钮(g, s, s.MinRect, HTMINBUTTON)
 
         If _边框厚度 > 0 Then
             Dim bdr As Integer = _边框厚度
@@ -1053,6 +1101,28 @@ Public Class ThisIsYourWindow
         End If
 
         RaiseEvent CaptionPaint(Me, New CaptionPaintEventArgs(g, captionRect, active, s.HostForm))
+    End Sub
+
+    Private Sub 绘制标题栏背景图片(g As Graphics, captionRect As Rectangle)
+        If _标题栏背景图片 Is Nothing Then Return
+        Dim img As Image = _标题栏背景图片
+        Dim cw As Integer = captionRect.Width
+        Dim ch As Integer = captionRect.Height
+        If cw < 1 OrElse ch < 1 Then Return
+
+        Dim ratioW As Single = CSng(cw) / img.Width
+        Dim ratioH As Single = CSng(ch) / img.Height
+        Dim ratio As Single = Math.Max(ratioW, ratioH)
+        Dim drawW As Single = img.Width * ratio
+        Dim drawH As Single = img.Height * ratio
+        Dim dx As Single = captionRect.X + (cw - drawW) / 2.0F
+        Dim dy As Single = captionRect.Y + (ch - drawH) / 2.0F
+
+        Dim oldClip = g.Clip
+        g.SetClip(captionRect)
+        g.InterpolationMode = InterpolationMode.HighQualityBicubic
+        g.DrawImage(img, dx, dy, drawW, drawH)
+        g.Clip = oldClip
     End Sub
 
     Private Sub 绘制图标(g As Graphics, s As PerFormState)
@@ -1084,16 +1154,16 @@ Public Class ThisIsYourWindow
         If _按钮位置 = ButtonPositionEnum.Right Then
             leftEdge = If(Not s.IconRect.IsEmpty, s.IconRect.Right + _标题文字左边距, _标题文字左边距)
             Dim btnLeft As Integer = s.CloseRect.Left
-            If _显示最大化按钮 AndAlso Not s.MaxRect.IsEmpty Then btnLeft = Math.Min(btnLeft, s.MaxRect.Left)
-            If _显示最小化按钮 AndAlso Not s.MinRect.IsEmpty Then btnLeft = Math.Min(btnLeft, s.MinRect.Left)
+            If s.HostForm.MaximizeBox AndAlso Not s.MaxRect.IsEmpty Then btnLeft = Math.Min(btnLeft, s.MaxRect.Left)
+            If s.HostForm.MinimizeBox AndAlso Not s.MinRect.IsEmpty Then btnLeft = Math.Min(btnLeft, s.MinRect.Left)
             rightEdge = btnLeft - _标题文字右边距
         Else
             If Not s.IconRect.IsEmpty Then
                 leftEdge = s.IconRect.Right + _标题文字左边距
             Else
                 Dim btnRight As Integer = s.CloseRect.Right
-                If _显示最大化按钮 AndAlso Not s.MaxRect.IsEmpty Then btnRight = Math.Max(btnRight, s.MaxRect.Right)
-                If _显示最小化按钮 AndAlso Not s.MinRect.IsEmpty Then btnRight = Math.Max(btnRight, s.MinRect.Right)
+                If s.HostForm.MaximizeBox AndAlso Not s.MaxRect.IsEmpty Then btnRight = Math.Max(btnRight, s.MaxRect.Right)
+                If s.HostForm.MinimizeBox AndAlso Not s.MinRect.IsEmpty Then btnRight = Math.Max(btnRight, s.MinRect.Right)
                 leftEdge = btnRight + _标题文字左边距
             End If
             rightEdge = s.HostForm.ClientSize.Width - _标题文字右边距
@@ -1246,7 +1316,7 @@ Public Class ThisIsYourWindow
             Dim u3 = DwmExtendFrameIntoClientArea(hWnd, margins)
             If _显示动画模式 <> WindowShowAnimationMode.DWM Then
                 Dim disable As Integer = 1
-                DwmSetWindowAttribute(hWnd, DWMWA_TRANSITIONS_FORCEDISABLED, disable, 4)
+                Dim unused = DwmSetWindowAttribute(hWnd, DWMWA_TRANSITIONS_FORCEDISABLED, disable, 4)
             End If
         Catch
         End Try
@@ -1327,11 +1397,11 @@ Public Class ThisIsYourWindow
         ' ── 重新应用 DWM 属性 ──
         Try
             Dim pref As Integer = DWM_WINDOW_CORNER_PREFERENCE.DWMWCP_DONOTROUND
-            DwmSetWindowAttribute(hWnd, DWMWA_WINDOW_CORNER_PREFERENCE, pref, 4)
+            Dim unused1 = DwmSetWindowAttribute(hWnd, DWMWA_WINDOW_CORNER_PREFERENCE, pref, 4)
             Dim colorNone As Integer = DWMWA_COLOR_NONE
-            DwmSetWindowAttribute(hWnd, DWMWA_BORDER_COLOR, colorNone, 4)
+            Dim unused2 = DwmSetWindowAttribute(hWnd, DWMWA_BORDER_COLOR, colorNone, 4)
             Dim margins As MARGINS : margins.Bottom = 1
-            DwmExtendFrameIntoClientArea(hWnd, margins)
+            Dim unused3 = DwmExtendFrameIntoClientArea(hWnd, margins)
         Catch
         End Try
 
@@ -1618,7 +1688,7 @@ Public Class ThisIsYourWindow
                     If m.WParam <> IntPtr.Zero AndAlso _owner._显示动画模式 <> WindowShowAnimationMode.DWM Then
                         Try
                             Dim enable As Integer = 0
-                            DwmSetWindowAttribute(_state.HostForm.Handle, DWMWA_TRANSITIONS_FORCEDISABLED, enable, 4)
+                            Dim unused = DwmSetWindowAttribute(_state.HostForm.Handle, DWMWA_TRANSITIONS_FORCEDISABLED, enable, 4)
                         Catch
                         End Try
                     End If
@@ -1628,7 +1698,7 @@ Public Class ThisIsYourWindow
                     If _owner._关闭动画模式 <> WindowCloseAnimationMode.DWM Then
                         Try
                             Dim disable As Integer = 1
-                            DwmSetWindowAttribute(_state.HostForm.Handle, DWMWA_TRANSITIONS_FORCEDISABLED, disable, 4)
+                            Dim unused = DwmSetWindowAttribute(_state.HostForm.Handle, DWMWA_TRANSITIONS_FORCEDISABLED, disable, 4)
                         Catch
                         End Try
                     End If

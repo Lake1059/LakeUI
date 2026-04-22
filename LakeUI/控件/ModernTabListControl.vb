@@ -390,12 +390,21 @@ Public Class ModernTabListControl
             g.FillRectangle(brush, 获取内容区域矩形())
         End Using
 
+        Dim tabStripRect = 获取标签栏矩形()
         Using brush As New SolidBrush(标签栏背景颜色)
-            g.FillRectangle(brush, 获取标签栏矩形())
+            g.FillRectangle(brush, tabStripRect)
         End Using
 
+        绘制标签栏背景图片(g, tabStripRect)
+
+        If 标签栏遮罩颜色.A > 0 Then
+            Using brush As New SolidBrush(标签栏遮罩颜色)
+                g.FillRectangle(brush, tabStripRect)
+            End Using
+        End If
+
         Dim gState = g.Save()
-        Dim tabItemClip = 获取标签栏矩形()
+        Dim tabItemClip = tabStripRect
         Dim searchAreaH As Integer = CInt(获取搜索框区域高度())
         If searchAreaH > 0 Then
             tabItemClip = New Rectangle(tabItemClip.X, tabItemClip.Y + searchAreaH, tabItemClip.Width, Math.Max(0, tabItemClip.Height - searchAreaH))
@@ -470,6 +479,28 @@ Public Class ModernTabListControl
         End Using
     End Sub
 
+    Private Sub 绘制标签栏背景图片(g As Graphics, tabStripRect As Rectangle)
+        If 标签栏背景图片 Is Nothing Then Return
+        Dim img As Image = 标签栏背景图片
+        Dim cw As Integer = tabStripRect.Width
+        Dim ch As Integer = tabStripRect.Height
+        If cw < 1 OrElse ch < 1 Then Return
+
+        Dim ratioW As Single = CSng(cw) / img.Width
+        Dim ratioH As Single = CSng(ch) / img.Height
+        Dim ratio As Single = Math.Max(ratioW, ratioH)
+        Dim drawW As Single = img.Width * ratio
+        Dim drawH As Single = img.Height * ratio
+        Dim dx As Single = tabStripRect.X + (cw - drawW) / 2.0F
+        Dim dy As Single = tabStripRect.Y + (ch - drawH) / 2.0F
+
+        Dim oldClip = g.Clip
+        g.SetClip(tabStripRect)
+        g.InterpolationMode = InterpolationMode.HighQualityBicubic
+        g.DrawImage(img, dx, dy, drawW, drawH)
+        g.Clip = oldClip
+    End Sub
+
     Private Sub 绘制分割线(g As Graphics, index As Integer)
         Dim bounds = 获取标签页项矩形(index)
         Dim lineH As Single = Math.Max(1, DpiScale())
@@ -489,19 +520,21 @@ Public Class ModernTabListControl
         If isSelected Then
             bgColor = 选中标签页背景颜色
         Else
-            bgColor = 颜色插值(标签栏背景颜色, 悬停标签页背景颜色, hoverProgress)
+            bgColor = 颜色插值(Color.FromArgb(0, 悬停标签页背景颜色), 悬停标签页背景颜色, hoverProgress)
         End If
 
-        If 标签页圆角半径 > 0 Then
-            Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(bounds, 标签页圆角半径 * s)
-                Using brush As New SolidBrush(bgColor)
-                    g.FillPath(brush, path)
+        If isSelected OrElse hoverProgress > 0.001F Then
+            If 标签页圆角半径 > 0 Then
+                Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(bounds, 标签页圆角半径 * s)
+                    Using brush As New SolidBrush(bgColor)
+                        g.FillPath(brush, path)
+                    End Using
                 End Using
-            End Using
-        Else
-            Using brush As New SolidBrush(bgColor)
-                g.FillRectangle(brush, bounds)
-            End Using
+            Else
+                Using brush As New SolidBrush(bgColor)
+                    g.FillRectangle(brush, bounds)
+                End Using
+            End If
         End If
 
         If isSelected AndAlso 选中指示条宽度 > 0 Then
@@ -1103,6 +1136,39 @@ Public Class ModernTabListControl
         Set(value As Color)
             SetValue(标签栏背景颜色, value)
             If _搜索框控件 IsNot Nothing Then _搜索框控件.BackColor = value
+        End Set
+    End Property
+
+    Private 标签栏背景图片 As Image = Nothing
+    ''' <summary>
+    ''' 标签栏背景图片。图片以居中裁切模式（CenterImage）绘制：
+    ''' 保持比例缩放至撑满标签栏区域，超出部分从中心裁切。
+    ''' 设为 Nothing 则不绘制背景图片。
+    ''' </summary>
+    <Category("LakeUI"), Description("标签栏背景图片（居中裁切模式）。"), DefaultValue(GetType(Image), Nothing), Browsable(True)>
+    Public Property TabStripBackgroundImage As Image
+        Get
+            Return 标签栏背景图片
+        End Get
+        Set(value As Image)
+            标签栏背景图片 = value
+            Me.Invalidate()
+        End Set
+    End Property
+
+    Private 标签栏遮罩颜色 As Color = Color.Transparent
+    ''' <summary>
+    ''' 标签栏半透明遮罩颜色，绘制在背景图片之上、标签页项之下。
+    ''' 可使用半透明颜色为背景图片添加色调或降低对比度，使标签页文字更易读。
+    ''' 设为 Transparent 则不绘制遮罩。
+    ''' </summary>
+    <Category("LakeUI"), Description("标签栏半透明遮罩颜色，绘制在背景图片之上、标签页项之下。"), DefaultValue(GetType(Color), "Transparent"), Browsable(True)>
+    Public Property TabStripOverlayColor As Color
+        Get
+            Return 标签栏遮罩颜色
+        End Get
+        Set(value As Color)
+            SetValue(标签栏遮罩颜色, value)
         End Set
     End Property
 

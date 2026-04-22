@@ -929,6 +929,11 @@ Public Class ModernComboBox
 #End Region
 
 #Region "绘制"
+    Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
+        If 边框圆角半径 > 0 OrElse 背景颜色.A < 255 Then Return
+        MyBase.OnPaintBackground(e)
+    End Sub
+
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
         Dim w As Integer = ClientRectangle.Width
         Dim h As Integer = ClientRectangle.Height
@@ -953,6 +958,9 @@ Public Class ModernComboBox
                     If 鼠标按下时渐变颜色 <> Color.Empty Then effBg2 = 鼠标按下时渐变颜色
                     If 鼠标按下时边框颜色 <> Color.Empty Then bc = 鼠标按下时边框颜色
             End Select
+        End If
+        If hasRadius OrElse 背景颜色.A < 255 Then
+            绘制父容器背景(e.Graphics)
         End If
         Dim _ssaa As Integer = If(Class1.GlobalSSAA > 1, Class1.GlobalSSAA, 超采样倍率)
         If _ssaa > 1 Then
@@ -988,15 +996,30 @@ Public Class ModernComboBox
         Dim fillRect As New RectangleF(boundsRect.X, boundsRect.Y, boundsRect.Width + 1, boundsRect.Height + 1)
         If hasRadius Then
             Using fillPath As GraphicsPath = RectangleRenderer.创建圆角矩形路径(fillRect, 边框圆角半径 * s)
-                RectangleRenderer.绘制圆角背景(g, fillPath, fillRect, bgClr, bgClr2, 渐变方向)
+                If bgClr.A > 0 OrElse bgClr2.A > 0 Then
+                    RectangleRenderer.绘制圆角背景(g, fillPath, fillRect, bgClr, bgClr2, 渐变方向)
+                End If
             End Using
             Using borderPath As GraphicsPath = RectangleRenderer.创建圆角矩形路径(boundsRect, 边框圆角半径 * s)
                 RectangleRenderer.绘制圆角边框(g, borderPath, borderClr, 边框宽度 * s)
             End Using
         Else
-            RectangleRenderer.绘制矩形背景(g, fillRect, bgClr, bgClr2, 渐变方向)
+            If bgClr.A > 0 OrElse bgClr2.A > 0 Then
+                RectangleRenderer.绘制矩形背景(g, fillRect, bgClr, bgClr2, 渐变方向)
+            End If
             RectangleRenderer.绘制矩形边框(g, boundsRect, borderClr, 边框宽度 * s)
         End If
+    End Sub
+
+    Private Sub 绘制父容器背景(g As Graphics)
+        If Parent Is Nothing Then Return
+        Dim state = g.Save()
+        g.TranslateTransform(-Me.Left, -Me.Top)
+        Using pea As New PaintEventArgs(g, New Rectangle(Me.Left, Me.Top, Me.Width, Me.Height))
+            InvokePaintBackground(Parent, pea)
+            InvokePaint(Parent, pea)
+        End Using
+        g.Restore(state)
     End Sub
 
     Private Sub DrawTextContent(g As Graphics, w As Integer, h As Integer)
@@ -1662,6 +1685,7 @@ Public Class ModernComboBox
         Private _overlayMode As Boolean = False
         Private _alignItemScreenY As Integer = 0
         Private _alignItemDropdownY As Integer = 0
+        Private _closeCenterScreenY As Integer = 0
 
         ' 展开/关闭动画
         Private ReadOnly 展开关闭秒表 As New Stopwatch()
@@ -1691,7 +1715,7 @@ Public Class ModernComboBox
         Public Sub New(owner As ModernComboBox)
             _owner = owner
             Me.DoubleBuffered = True
-            Me.BackColor = owner.BackColor
+            Me.BackColor = owner.下拉背景颜色
             Me.AutoScaleMode = AutoScaleMode.Dpi
 
             _useIdle = (owner.下拉动画帧率 <= 0)
@@ -1726,6 +1750,7 @@ Public Class ModernComboBox
                 Dim comboScreenPt As Point = owner.PointToScreen(New Point(0, 0))
                 Dim centerOffset As Integer = (owner.Height - itemH) \ 2
                 _alignItemScreenY = comboScreenPt.Y + centerOffset
+                _closeCenterScreenY = comboScreenPt.Y + owner.Height \ 2
                 _originPt = New Point(comboScreenPt.X, _alignItemScreenY - _alignItemDropdownY)
 
                 If _originPt.Y < scr.WorkingArea.Top Then
@@ -1832,14 +1857,20 @@ Public Class ModernComboBox
             Dim eased As Single = 1.0F - CSng(Math.Pow(1.0 - t, 3))
 
             If _overlayMode Then
-                Dim topDist As Integer = _alignItemScreenY - _originPt.Y
-                Dim bottomDist As Integer = _finalHeight - topDist
-                Dim progress As Single = If(正在关闭动画, 1.0F - eased, eased)
-                Dim curTop As Integer = CInt(topDist * progress)
-                Dim curBottom As Integer = CInt(bottomDist * progress)
-                Dim curH As Integer = Math.Max(1, curTop + curBottom)
-                Me.Location = New Point(_originPt.X, _alignItemScreenY - curTop)
-                Me.Size = New Size(Me.Width, curH)
+                If 正在关闭动画 Then
+                    Dim curTopY As Integer = CInt(_originPt.Y + (_closeCenterScreenY - _originPt.Y) * eased)
+                    Dim curH As Integer = Math.Max(1, CInt(_finalHeight * (1.0F - eased)))
+                    Me.Location = New Point(_originPt.X, curTopY)
+                    Me.Size = New Size(Me.Width, curH)
+                Else
+                    Dim topDist As Integer = _alignItemScreenY - _originPt.Y
+                    Dim bottomDist As Integer = _finalHeight - topDist
+                    Dim curTop As Integer = CInt(topDist * eased)
+                    Dim curBottom As Integer = CInt(bottomDist * eased)
+                    Dim curH As Integer = Math.Max(1, curTop + curBottom)
+                    Me.Location = New Point(_originPt.X, _alignItemScreenY - curTop)
+                    Me.Size = New Size(Me.Width, curH)
+                End If
             Else
                 If 正在关闭动画 Then
                     Dim newH As Integer = Math.Max(1, CInt(_finalHeight * (1.0F - eased)))
@@ -1928,8 +1959,9 @@ Public Class ModernComboBox
             g.SmoothingMode = SmoothingMode.AntiAlias
             g.PixelOffsetMode = PixelOffsetMode.HighQuality
             g.InterpolationMode = InterpolationMode.HighQualityBicubic
+            ' 先用背景色填满整个客户区，防止边缘漏像素
             Using br As New SolidBrush(_owner.下拉背景颜色)
-                g.FillRectangle(br, boundsRect.X, boundsRect.Y, boundsRect.Width + 1, boundsRect.Height + 1)
+                g.FillRectangle(br, 0, 0, ClientRectangle.Width, ClientRectangle.Height)
             End Using
             If bw > 0 Then
                 Using pen As New Pen(_owner.下拉边框颜色, bw)

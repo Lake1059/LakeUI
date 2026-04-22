@@ -39,13 +39,18 @@ Public Class RoundDashBoard
         g.InterpolationMode = InterpolationMode.HighQualityBicubic
 
         Dim s As Single = DpiScale()
-        Dim 中心X As Single = Me.Width / 2.0F
-        Dim 中心Y As Single = Me.Height / 2.0F
+
+        ' 计算 Padding 后的内容区域，并保持正方形
+        Dim 内容宽 As Single = Me.Width - Padding.Left - Padding.Right
+        Dim 内容高 As Single = Me.Height - Padding.Top - Padding.Bottom
+        Dim 正方形边长 As Single = Math.Min(内容宽, 内容高)
+        Dim 中心X As Single = Padding.Left + 内容宽 / 2.0F
+        Dim 中心Y As Single = Padding.Top + 内容高 / 2.0F
         Dim 外径 As Single = 外圈半径
         Dim 厚度值 As Single = 圆弧厚度 * s
 
-        ' 确保半径不超出控件范围
-        Dim 最大半径 As Single = Math.Min(中心X, 中心Y) - 1
+        ' 确保半径不超出正方形内容区域
+        Dim 最大半径 As Single = 正方形边长 / 2.0F - 1
         If 外径 > 最大半径 Then 外径 = 最大半径
         If 外径 < 1 Then Return
 
@@ -111,14 +116,13 @@ Public Class RoundDashBoard
         Dim 文字内容 As String = 获取中心文字内容(progress)
         If String.IsNullOrEmpty(文字内容) Then Return
 
-        Using sf As New StringFormat()
-            sf.Alignment = StringAlignment.Center
-            sf.LineAlignment = StringAlignment.Center
-            Using brush As New SolidBrush(中心文字颜色值)
-                g.TextRenderingHint = Drawing.Text.TextRenderingHint.AntiAliasGridFit
-                g.DrawString(文字内容, 中心文字字体值, brush, 中心X, 中心Y, sf)
-            End Using
-        End Using
+        Dim textSize As SizeF = g.MeasureString(文字内容, Me.Font)
+        Dim textRect As New Rectangle(
+            CInt(中心X - textSize.Width / 2.0F),
+            CInt(中心Y - textSize.Height / 2.0F),
+            CInt(Math.Ceiling(textSize.Width)),
+            CInt(Math.Ceiling(textSize.Height)))
+        TextRenderer.DrawText(g, 文字内容, Me.Font, textRect, Me.ForeColor, TextFormatFlags.HorizontalCenter Or TextFormatFlags.VerticalCenter Or TextFormatFlags.NoPadding)
     End Sub
 
     Private Function 获取中心文字内容(progress As Single) As String
@@ -387,39 +391,6 @@ Public Class RoundDashBoard
         End Set
     End Property
 
-    Private 中心文字颜色值 As Color = Color.White
-    <Category("LakeUI"), Description("中心文字颜色"), DefaultValue(GetType(Color), "White"), Browsable(True)>
-    Public Property CenterTextColor As Color
-        Get
-            Return 中心文字颜色值
-        End Get
-        Set(value As Color)
-            SetValue(中心文字颜色值, value)
-        End Set
-    End Property
-
-    Private Shared ReadOnly 默认中心文字字体 As New Font("Segoe UI", 14, FontStyle.Bold)
-    Private 中心文字字体值 As Font = 默认中心文字字体
-    <Category("LakeUI"), Description("中心文字字体"), Browsable(True)>
-    Public Property CenterTextFont As Font
-        Get
-            Return 中心文字字体值
-        End Get
-        Set(value As Font)
-            If value IsNot Nothing Then
-                中心文字字体值 = value
-                Me.Invalidate()
-            End If
-        End Set
-    End Property
-
-    Private Function ShouldSerializeCenterTextFont() As Boolean
-        Return Not 中心文字字体值.Equals(默认中心文字字体)
-    End Function
-
-    Private Sub ResetCenterTextFont()
-        CenterTextFont = 默认中心文字字体
-    End Sub
 
     Private 显示指针 As Boolean = False
     <Category("LakeUI"), Description("是否绘制指针"), DefaultValue(False), Browsable(True)>

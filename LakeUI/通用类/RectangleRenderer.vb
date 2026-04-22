@@ -1,4 +1,158 @@
-﻿Imports System.Drawing.Drawing2D
+﻿Imports System.ComponentModel
+Imports System.ComponentModel.Design.Serialization
+Imports System.Drawing.Drawing2D
+Imports System.Globalization
+
+''' <summary>指定哪些角启用圆角，可在设计器属性面板中像 Padding 一样展开编辑。</summary>
+<TypeConverter(GetType(RoundCornersConverter))>
+Public Structure RoundCorners
+    Implements IEquatable(Of RoundCorners)
+
+    ''' <summary>全部四角启用圆角。</summary>
+    Public Shared ReadOnly All As New RoundCorners(True, True, True, True)
+    ''' <summary>全部四角禁用圆角。</summary>
+    Public Shared ReadOnly None As New RoundCorners(False, False, False, False)
+
+    Public Sub New(topLeft As Boolean, topRight As Boolean, bottomRight As Boolean, bottomLeft As Boolean)
+        Me.TopLeft = topLeft
+        Me.TopRight = topRight
+        Me.BottomRight = bottomRight
+        Me.BottomLeft = bottomLeft
+    End Sub
+
+    Public Sub New(all As Boolean)
+        Me.New(all, all, all, all)
+    End Sub
+
+    <Description("左上角是否启用圆角"), DefaultValue(True), NotifyParentProperty(True)>
+    Public Property TopLeft As Boolean
+
+    <Description("右上角是否启用圆角"), DefaultValue(True), NotifyParentProperty(True)>
+    Public Property TopRight As Boolean
+
+    <Description("右下角是否启用圆角"), DefaultValue(True), NotifyParentProperty(True)>
+    Public Property BottomRight As Boolean
+
+    <Description("左下角是否启用圆角"), DefaultValue(True), NotifyParentProperty(True)>
+    Public Property BottomLeft As Boolean
+
+    ''' <summary>是否全部角都启用了圆角。</summary>
+    <Browsable(False)>
+    Public ReadOnly Property IsAll As Boolean
+        Get
+            Return TopLeft AndAlso TopRight AndAlso BottomRight AndAlso BottomLeft
+        End Get
+    End Property
+
+    ''' <summary>是否全部角都未启用圆角。</summary>
+    <Browsable(False)>
+    Public ReadOnly Property IsNone As Boolean
+        Get
+            Return Not TopLeft AndAlso Not TopRight AndAlso Not BottomRight AndAlso Not BottomLeft
+        End Get
+    End Property
+
+    Public Overrides Function GetHashCode() As Integer
+        Return (If(TopLeft, 1, 0)) Or
+               (If(TopRight, 2, 0)) Or
+               (If(BottomRight, 4, 0)) Or
+               (If(BottomLeft, 8, 0))
+    End Function
+
+    Public Overrides Function Equals(obj As Object) As Boolean
+        If TypeOf obj Is RoundCorners Then Return Equals(DirectCast(obj, RoundCorners))
+        Return False
+    End Function
+
+    Public Overloads Function Equals(other As RoundCorners) As Boolean Implements IEquatable(Of RoundCorners).Equals
+        Return TopLeft = other.TopLeft AndAlso TopRight = other.TopRight AndAlso
+               BottomRight = other.BottomRight AndAlso BottomLeft = other.BottomLeft
+    End Function
+
+    Public Shared Operator =(a As RoundCorners, b As RoundCorners) As Boolean
+        Return a.Equals(b)
+    End Operator
+
+    Public Shared Operator <>(a As RoundCorners, b As RoundCorners) As Boolean
+        Return Not a.Equals(b)
+    End Operator
+
+    Public Overrides Function ToString() As String
+        If IsAll Then Return "All"
+        If IsNone Then Return "None"
+        Dim parts As New List(Of String)
+        If TopLeft Then parts.Add("TopLeft")
+        If TopRight Then parts.Add("TopRight")
+        If BottomRight Then parts.Add("BottomRight")
+        If BottomLeft Then parts.Add("BottomLeft")
+        Return String.Join(", ", parts)
+    End Function
+End Structure
+
+''' <summary>为 <see cref="RoundCorners"/> 提供 Padding 风格的属性面板展开/折叠交互。</summary>
+Friend Class RoundCornersConverter
+    Inherits ExpandableObjectConverter
+
+    Public Overrides Function CanConvertFrom(context As ITypeDescriptorContext, sourceType As Type) As Boolean
+        If sourceType Is GetType(String) Then Return True
+        Return MyBase.CanConvertFrom(context, sourceType)
+    End Function
+
+    Public Overrides Function ConvertFrom(context As ITypeDescriptorContext, culture As CultureInfo, value As Object) As Object
+        If TypeOf value Is String Then
+            Dim text = DirectCast(value, String).Trim()
+            If text.Equals("All", StringComparison.OrdinalIgnoreCase) Then Return RoundCorners.All
+            If text.Equals("None", StringComparison.OrdinalIgnoreCase) Then Return RoundCorners.None
+            Dim names = text.Split(","c).Select(Function(s) s.Trim().ToLowerInvariant()).ToArray()
+            Return New RoundCorners(
+                names.Contains("topleft"),
+                names.Contains("topright"),
+                names.Contains("bottomright"),
+                names.Contains("bottomleft"))
+        End If
+        Return MyBase.ConvertFrom(context, culture, value)
+    End Function
+
+    Public Overrides Function ConvertTo(context As ITypeDescriptorContext, culture As CultureInfo, value As Object, destinationType As Type) As Object
+        If destinationType Is GetType(String) AndAlso TypeOf value Is RoundCorners Then
+            Return DirectCast(value, RoundCorners).ToString()
+        End If
+        If destinationType Is GetType(InstanceDescriptor) AndAlso TypeOf value Is RoundCorners Then
+            Dim rc = DirectCast(value, RoundCorners)
+            Dim ctor = GetType(RoundCorners).GetConstructor({GetType(Boolean), GetType(Boolean), GetType(Boolean), GetType(Boolean)})
+            Return New InstanceDescriptor(ctor, New Object() {rc.TopLeft, rc.TopRight, rc.BottomRight, rc.BottomLeft})
+        End If
+        Return MyBase.ConvertTo(context, culture, value, destinationType)
+    End Function
+
+    Public Overrides Function CanConvertTo(context As ITypeDescriptorContext, destinationType As Type) As Boolean
+        If destinationType Is GetType(InstanceDescriptor) Then Return True
+        Return MyBase.CanConvertTo(context, destinationType)
+    End Function
+
+    Public Overrides Function CreateInstance(context As ITypeDescriptorContext, propertyValues As IDictionary) As Object
+        Return New RoundCorners(
+            CBool(propertyValues("TopLeft")),
+            CBool(propertyValues("TopRight")),
+            CBool(propertyValues("BottomRight")),
+            CBool(propertyValues("BottomLeft")))
+    End Function
+
+    Public Overrides Function GetCreateInstanceSupported(context As ITypeDescriptorContext) As Boolean
+        Return True
+    End Function
+
+    Friend Shared ReadOnly names As String() = New String() {"TopLeft", "TopRight", "BottomRight", "BottomLeft"}
+
+    Public Overrides Function GetProperties(context As ITypeDescriptorContext, value As Object, attributes() As Attribute) As PropertyDescriptorCollection
+        Dim props = TypeDescriptor.GetProperties(GetType(RoundCorners), attributes)
+        Return props.Sort(names)
+    End Function
+
+    Public Overrides Function GetPropertiesSupported(context As ITypeDescriptorContext) As Boolean
+        Return True
+    End Function
+End Class
 
 Public Class RectangleRenderer
 
@@ -8,6 +162,8 @@ Public Class RectangleRenderer
             path.AddRectangle(区域)
             Return path
         End If
+        ' 将半径限制在短边的一半以内，防止弧线重叠导致路径自交叉
+        半径 = Math.Min(半径, Math.Min(区域.Width / 2.0F, 区域.Height / 2.0F))
         Dim 直径 As Single = 半径 * 2.0F
         Dim arc As New RectangleF(区域.Location, New SizeF(直径, 直径))
         path.AddArc(arc, 180, 90) ' 左上角
@@ -17,6 +173,55 @@ Public Class RectangleRenderer
         path.AddArc(arc, 0, 90) ' 右下角
         arc.X = 区域.Left
         path.AddArc(arc, 90, 90) ' 左下角
+        path.CloseFigure()
+        Return path
+    End Function
+
+    ''' <summary>创建可按角选择圆角的矩形路径。未启用圆角的角以直角绘制。</summary>
+    Public Shared Function 创建圆角矩形路径(区域 As RectangleF, 半径 As Single, 圆角位置 As RoundCorners) As GraphicsPath
+        Dim path As New GraphicsPath()
+        If 半径 <= 0 OrElse 区域.Width < 1 OrElse 区域.Height < 1 OrElse 圆角位置.IsNone Then
+            path.AddRectangle(区域)
+            Return path
+        End If
+        If 圆角位置.IsAll Then
+            Return 创建圆角矩形路径(区域, 半径)
+        End If
+        半径 = Math.Min(半径, Math.Min(区域.Width / 2.0F, 区域.Height / 2.0F))
+        Dim 直径 As Single = 半径 * 2.0F
+
+        ' 左上角
+        If 圆角位置.TopLeft Then
+            path.AddArc(New RectangleF(区域.X, 区域.Y, 直径, 直径), 180, 90)
+        Else
+            path.AddLine(区域.X, 区域.Y + 半径, 区域.X, 区域.Y)
+            path.AddLine(区域.X, 区域.Y, 区域.X + 半径, 区域.Y)
+        End If
+
+        ' 右上角
+        If 圆角位置.TopRight Then
+            path.AddArc(New RectangleF(区域.Right - 直径, 区域.Y, 直径, 直径), 270, 90)
+        Else
+            path.AddLine(区域.Right - 半径, 区域.Y, 区域.Right, 区域.Y)
+            path.AddLine(区域.Right, 区域.Y, 区域.Right, 区域.Y + 半径)
+        End If
+
+        ' 右下角
+        If 圆角位置.BottomRight Then
+            path.AddArc(New RectangleF(区域.Right - 直径, 区域.Bottom - 直径, 直径, 直径), 0, 90)
+        Else
+            path.AddLine(区域.Right, 区域.Bottom - 半径, 区域.Right, 区域.Bottom)
+            path.AddLine(区域.Right, 区域.Bottom, 区域.Right - 半径, 区域.Bottom)
+        End If
+
+        ' 左下角
+        If 圆角位置.BottomLeft Then
+            path.AddArc(New RectangleF(区域.X, 区域.Bottom - 直径, 直径, 直径), 90, 90)
+        Else
+            path.AddLine(区域.X + 半径, 区域.Bottom, 区域.X, 区域.Bottom)
+            path.AddLine(区域.X, 区域.Bottom, 区域.X, 区域.Bottom - 半径)
+        End If
+
         path.CloseFigure()
         Return path
     End Function

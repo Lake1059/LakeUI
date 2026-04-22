@@ -1,3 +1,4 @@
+Imports System.ComponentModel
 Imports System.Drawing.Imaging
 Imports System.Runtime.InteropServices
 
@@ -80,10 +81,49 @@ Friend Class ShadowWindow
     Private Const SWP_NOMOVE As UInteger = &H2
     Private Const SWP_NOSIZE As UInteger = &H1
 
+    Private Const WM_NCHITTEST As Integer = &H84
+    Private Const HTTRANSPARENT As Integer = -1
+    Private Const HTLEFT As Integer = 10
+    Private Const HTRIGHT As Integer = 11
+    Private Const HTTOP As Integer = 12
+    Private Const HTTOPLEFT As Integer = 13
+    Private Const HTTOPRIGHT As Integer = 14
+    Private Const HTBOTTOM As Integer = 15
+    Private Const HTBOTTOMLEFT As Integer = 16
+    Private Const HTBOTTOMRIGHT As Integer = 17
+
+    <DllImport("user32.dll")>
+    Private Shared Function SendMessageW(hWnd As IntPtr, msg As Integer, wParam As IntPtr, lParam As IntPtr) As IntPtr
+    End Function
+
+    <DllImport("user32.dll", EntryPoint:="GetWindowLongPtrW")>
+    Private Shared Function GetWindowLongPtr(hWnd As IntPtr, nIndex As Integer) As IntPtr
+    End Function
+
+    <DllImport("user32.dll", EntryPoint:="SetWindowLongPtrW")>
+    Private Shared Function SetWindowLongPtr(hWnd As IntPtr, nIndex As Integer, dwNewLong As IntPtr) As IntPtr
+    End Function
+
+    Private Const GWL_EXSTYLE As Integer = -20
+    Private Const SWP_FRAMECHANGED As UInteger = &H20
+    Private Const SWP_NOZORDER As UInteger = &H4
+
 #End Region
 
     Private _lastHostSize As Size
     Private _globalAlpha As Byte = 255
+
+    ''' <summary>宿主窗口句柄，用于转发调整大小消息。</summary>
+    <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+    Public Property HostHandle As IntPtr = IntPtr.Zero
+
+    ''' <summary>阴影扩展深度（逻辑像素）。</summary>
+    <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+    Public Property ShadowDepth As Integer = 0
+
+    ''' <summary>阴影区域中可触发大小调整的热区宽度（逻辑像素）。0 = 鼠标穿透。</summary>
+    <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+    Public Property ResizeWidth As Integer = 0
 
     Public Sub New()
         Me.FormBorderStyle = FormBorderStyle.None
@@ -104,6 +144,79 @@ Friend Class ShadowWindow
             Return True
         End Get
     End Property
+
+    ''' <summary>根据 ResizeWidth 更新是否允许鼠标命中测试。</summary>
+    Public Sub UpdateHitTestTransparency()
+        If Not Me.IsHandleCreated Then Return
+        Dim exStyle As Long = GetWindowLongPtr(Me.Handle, GWL_EXSTYLE).ToInt64()
+        If ResizeWidth > 0 Then
+            exStyle = exStyle And Not CLng(WS_EX_TRANSPARENT)
+        Else
+            exStyle = exStyle Or WS_EX_TRANSPARENT
+        End If
+        SetWindowLongPtr(Me.Handle, GWL_EXSTYLE, New IntPtr(exStyle))
+        SetWindowPos(Me.Handle, IntPtr.Zero, 0, 0, 0, 0,
+                     SWP_FRAMECHANGED Or SWP_NOMOVE Or SWP_NOSIZE Or SWP_NOZORDER Or SWP_NOACTIVATE)
+    End Sub
+
+    Protected Overrides Sub WndProc(ByRef m As Message)
+        If m.Msg = WM_NCHITTEST AndAlso ResizeWidth > 0 AndAlso ShadowDepth > 0 AndAlso HostHandle <> IntPtr.Zero Then
+            Dim screenPt As Point = PointToScreen(New Point(CInt(m.LParam.ToInt64() And &HFFFF), CInt((m.LParam.ToInt64() >> 16) And &HFFFF)))
+            ' 使用屏幕坐标解析
+            Dim lp As Long = m.LParam.ToInt64()
+            Dim sx As Integer = CInt(lp And &HFFFF) : If sx > 32767 Then sx -= 65536
+            Dim sy As Integer = CInt((lp >> 16) And &HFFFF) : If sy > 32767 Then sy -= 65536
+
+            ' 阴影窗口的客户端坐标
+            Dim clientPt As Point = Me.PointToClient(New Point(sx, sy))
+            Dim totalW As Integer = Me.Width
+            Dim totalH As Integer = Me.Height
+            Dim d As Integer = ShadowDepth
+            Dim rw As Integer = ResizeWidth
+
+            ' 鼠标在阴影区域（窗口本体之外的部分）
+            Dim inLeft As Boolean = (clientPt.X < d)
+            Dim inRight As Boolean = (clientPt.X >= totalW - d)
+            Dim inTop As Boolean = (clientPt.Y < d)
+            Dim inBottom As Boolean = (clientPt.Y >= totalH - d)
+
+            ' 只有在距离窗口本体 rw 像素以内的阴影区域才触发调整
+            Dim nearLeft As Boolean = inLeft AndAlso (d - clientPt.X) <= rw
+            Dim nearRight As Boolean = inRight AndAlso (clientPt.X - (totalW - d - 1)) <= rw
+            Dim nearTop As Boolean = inTop AndAlso (d - clientPt.Y) <= rw
+            Dim nearBottom As Boolean = inBottom AndAlso (clientPt.Y - (totalH - d - 1)) <= rw
+
+            Dim hit As Integer = HTTRANSPARENT
+            If nearTop AndAlso nearLeft Then
+                hit = HTTOPLEFT
+            ElseIf nearTop AndAlso nearRight Then
+                hit = HTTOPRIGHT
+            ElseIf nearBottom AndAlso nearLeft Then
+                hit = HTBOTTOMLEFT
+            ElseIf nearBottom AndAlso nearRight Then
+                hit = HTBOTTOMRIGHT
+            ElseIf nearLeft Then
+                hit = HTLEFT
+            ElseIf nearRight Then
+                hit = HTRIGHT
+            ElseIf nearTop Then
+                hit = HTTOP
+            ElseIf nearBottom Then
+                hit = HTBOTTOM
+            End If
+
+            If hit <> HTTRANSPARENT Then
+                ' 将命中结果转发给宿主窗口
+                SendMessageW(HostHandle, WM_NCHITTEST, IntPtr.Zero, m.LParam)
+                m.Result = New IntPtr(hit)
+                Return
+            End If
+
+            m.Result = New IntPtr(HTTRANSPARENT)
+            Return
+        End If
+        MyBase.WndProc(m)
+    End Sub
 
     ''' <summary>
     ''' 更新阴影的位置与大小。如果宿主窗口尺寸未变则仅移动，否则重新渲染。

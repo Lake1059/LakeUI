@@ -38,11 +38,24 @@ Public Class ExcellentProgressBar
         Else
             绘制图形内容(e.Graphics, 极限矩形区域, 内容区域)
         End If
+        ' 文字直接绘制在 e.Graphics 上，避免 SSAA 缩放导致模糊，同时兼容 MacType
+        If Not String.IsNullOrEmpty(Me.Text) Then
+            绘制文字(e.Graphics)
+        End If
         If Not Enabled Then
             Using brush As New SolidBrush(Color.FromArgb(120, 0, 0, 0))
                 e.Graphics.FillRectangle(brush, 0, 0, Me.Width, Me.Height)
             End Using
         End If
+    End Sub
+
+    Private Sub 绘制文字(g As Graphics)
+        Dim p As Padding = 文字边距
+        Dim textRect As New Rectangle(p.Left, p.Top, Me.Width - p.Horizontal - 1, Me.Height - p.Vertical - 1)
+        If textRect.Width < 1 OrElse textRect.Height < 1 Then Return
+        ' 使用 TextRenderer（GDI）以兼容 MacType，避免 GDI+ 绘字绕过 MacType 钩子
+        Dim flags As TextFormatFlags = TextFormatFlags.Left Or TextFormatFlags.Bottom Or TextFormatFlags.SingleLine Or TextFormatFlags.EndEllipsis
+        TextRenderer.DrawText(g, Me.Text, Me.Font, textRect, Me.ForeColor, flags)
     End Sub
 
     Private Sub 绘制图形内容(g As Graphics, 极限矩形区域 As RectangleF, 内容区域 As RectangleF)
@@ -112,10 +125,11 @@ Public Class ExcellentProgressBar
     End Sub
 
     Private Sub 绘制填充内容(g As Graphics, 填充区域 As RectangleF, 渐变参考区域 As RectangleF,
-                           baseColor As Color, gradColor As Color, gradDir As Orientation,
+                           baseColor As Color, gradColor As Color, gradDir As BarOrientationEnum,
                            Optional fillPath As GraphicsPath = Nothing)
         If gradColor <> Color.Empty AndAlso 渐变参考区域.Width > 0 AndAlso 渐变参考区域.Height > 0 Then
-            Dim angle As Single = If(gradDir = BarOrientationEnum.Vertical, 90.0F, 0.0F)
+            ' 竖向时底部为主色、顶部为渐变色，使用 270° 让渐变从下到上
+            Dim angle As Single = If(gradDir = BarOrientationEnum.Vertical, 270.0F, 0.0F)
             Using brush As New LinearGradientBrush(渐变参考区域, baseColor, gradColor, angle)
                 If fillPath IsNot Nothing Then
                     g.FillPath(brush, fillPath)
@@ -439,6 +453,17 @@ Public Class ExcellentProgressBar
         End Set
     End Property
 
+    Private 文字边距 As New Padding(0)
+    <Category("LakeUI"), Description("文字的内边距"), Browsable(True), DesignerSerializationVisibility(DesignerSerializationVisibility.Visible)>
+    Public Property TextPadding As Padding
+        Get
+            Return 文字边距
+        End Get
+        Set(value As Padding)
+            SetValue(文字边距, value)
+        End Set
+    End Property
+
     Private 超采样倍率 As Integer = 1
     <Category("LakeUI"), Description(Class1.超采样抗锯齿描述词), DefaultValue(GetType(Class1.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
     Public Property SuperSamplingScale As Class1.SuperSamplingScaleEnum
@@ -447,6 +472,18 @@ Public Class ExcellentProgressBar
         End Get
         Set(value As Class1.SuperSamplingScaleEnum)
             SetValue(超采样倍率, value)
+        End Set
+    End Property
+
+    <Category("LakeUI"), Description("显示在进度条上的文字"), DefaultValue(""), Browsable(True)>
+    Public Overrides Property Text As String
+        Get
+            Return MyBase.Text
+        End Get
+        Set(value As String)
+            If MyBase.Text = value Then Return
+            MyBase.Text = value
+            Me.Invalidate()
         End Set
     End Property
 #End Region

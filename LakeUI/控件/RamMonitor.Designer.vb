@@ -1,16 +1,13 @@
 ﻿<Global.Microsoft.VisualBasic.CompilerServices.DesignerGenerated()> _
-Partial Class ModernPanel
-    Inherits System.Windows.Forms.Panel
+Partial Class RamMonitor
+    Inherits System.Windows.Forms.UserControl
 
-    'Panel 重写释放以清理组件列表。
+    'UserControl 重写释放以清理组件列表。
     <System.Diagnostics.DebuggerNonUserCode()> _
     Protected Overrides Sub Dispose(ByVal disposing As Boolean)
         Try
-            If disposing Then
-                清除图片缓存()
-                If components IsNot Nothing Then
-                    components.Dispose()
-                End If
+            If disposing AndAlso components IsNot Nothing Then
+                components.Dispose()
             End If
         Finally
             MyBase.Dispose(disposing)
@@ -27,10 +24,11 @@ Partial Class ModernPanel
     Private Sub InitializeComponent()
         SuspendLayout()
         ' 
-        ' ModernPanel
+        ' RamMonitor
         ' 
-        DoubleBuffered = True
-        Name = "ModernPanel"
+        AutoScaleDimensions = New SizeF(96F, 96F)
+        AutoScaleMode = AutoScaleMode.Dpi
+        Name = "RamMonitor"
         ResumeLayout(False)
     End Sub
 

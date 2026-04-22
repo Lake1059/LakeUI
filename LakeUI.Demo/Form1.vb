@@ -33,6 +33,10 @@
         Me.ModernTabListControl1.Items(29).BoundControl = Form_SysTaskBarProgress
         Me.ModernTabListControl1.Items(30).BoundControl = Form_PixelPictureBox
         Me.ModernTabListControl1.Items(31).BoundControl = Form_TaskbarThumbnailToolbar
+        Me.ModernTabListControl1.Items(32).BoundControl = Form_MsgBox_InputBox_Tip
+        Me.ModernTabListControl1.Items(33).BoundControl = Form_CpuMonitor
+        Me.ModernTabListControl1.Items(34).BoundControl = Form_RamMonitor
+        Me.ModernTabListControl1.Items(35).BoundControl = Form_GpuMonitor
     End Sub
 
     Private Sub Form1_Shown(sender As Object, e As EventArgs) Handles Me.Shown
@@ -43,4 +47,5 @@
     Private Sub Form1_FormClosing(sender As Object, e As FormClosingEventArgs) Handles Me.FormClosing
 
     End Sub
+
 End Class

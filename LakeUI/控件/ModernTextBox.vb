@@ -908,6 +908,7 @@ Public Class ModernTextBox
         Dim w As Integer = ClientRectangle.Width
         Dim h As Integer = ClientRectangle.Height
         Dim hasRadius As Boolean = 边框圆角半径 > 0
+        Dim fillRect As New RectangleF(0, 0, w, h)
         Dim boundsRect As New RectangleF(0, 0, w - 1, h - 1)
         Dim s As Single = DpiScale()
         If 边框宽度 > 0 Then
@@ -928,13 +929,13 @@ Public Class ModernTextBox
             Using g As Graphics = Graphics.FromImage(_ssaaBitmap)
                 g.Clear(Color.Transparent)
                 g.ScaleTransform(_ssaa, _ssaa)
-                DrawBackgroundFill(g, hasRadius, boundsRect)
+                DrawBackgroundFill(g, hasRadius, fillRect)
             End Using
             e.Graphics.CompositingQuality = CompositingQuality.HighQuality
             e.Graphics.InterpolationMode = InterpolationMode.HighQualityBicubic
             e.Graphics.DrawImage(_ssaaBitmap, 0, 0, w, h)
         Else
-            DrawBackgroundFill(e.Graphics, hasRadius, boundsRect)
+            DrawBackgroundFill(e.Graphics, hasRadius, fillRect)
         End If
         DrawTextContent(e.Graphics, w, h)
         ' 边框绘制在行号背景之上

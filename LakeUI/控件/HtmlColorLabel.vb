@@ -30,23 +30,38 @@ Public Class HtmlColorLabel
         Public 文本 As String
         Public 颜色 As Color
         Public 字号 As Single
+        Public 字体名称 As String
+        Public 字体样式 As FontStyle
     End Structure
 
     Private Structure 标签样式
         Public 颜色 As Color?
         Public 字号 As Single
+        Public 字体名称 As String
+        Public 字体样式 As FontStyle
     End Structure
 
     Private Shared ReadOnly 标签正则 As New Regex("<(/?)\s*(\w+)([^>]*)>", RegexOptions.IgnoreCase Or RegexOptions.Compiled)
     Private Shared ReadOnly fontColor正则 As New Regex("color\s*=\s*(?:""([^""]*)""|'([^']*)'|([^\s>]+))", RegexOptions.IgnoreCase Or RegexOptions.Compiled)
     Private Shared ReadOnly fontSize属性正则 As New Regex("size\s*=\s*(?:""([^""]*)""|'([^']*)'|([^\s>]+))", RegexOptions.IgnoreCase Or RegexOptions.Compiled)
+    Private Shared ReadOnly fontFace正则 As New Regex("face\s*=\s*(?:""([^""]*)""|'([^']*)'|([^\s>]+))", RegexOptions.IgnoreCase Or RegexOptions.Compiled)
     Private Shared ReadOnly style属性正则 As New Regex("style\s*=\s*(?:""([^""]*)""|'([^']*)')", RegexOptions.IgnoreCase Or RegexOptions.Compiled)
     Private Shared ReadOnly cssColor正则 As New Regex("(?:^|;\s*)color\s*:\s*([^;]+)", RegexOptions.IgnoreCase Or RegexOptions.Compiled)
     Private Shared ReadOnly cssFontSize正则 As New Regex("(?:^|;\s*)font-size\s*:\s*([^;]+)", RegexOptions.IgnoreCase Or RegexOptions.Compiled)
+    Private Shared ReadOnly cssFontFamily正则 As New Regex("(?:^|;\s*)font-family\s*:\s*([^;]+)", RegexOptions.IgnoreCase Or RegexOptions.Compiled)
+    Private Shared ReadOnly cssFontWeight正则 As New Regex("(?:^|;\s*)font-weight\s*:\s*([^;]+)", RegexOptions.IgnoreCase Or RegexOptions.Compiled)
+    Private Shared ReadOnly cssFontStyle正则 As New Regex("(?:^|;\s*)font-style\s*:\s*([^;]+)", RegexOptions.IgnoreCase Or RegexOptions.Compiled)
+    Private Shared ReadOnly cssTextDecoration正则 As New Regex("(?:^|;\s*)text-decoration\s*:\s*([^;]+)", RegexOptions.IgnoreCase Or RegexOptions.Compiled)
     Private Shared ReadOnly rgb正则 As New Regex("^rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$", RegexOptions.IgnoreCase Or RegexOptions.Compiled)
     Private Shared ReadOnly rgba正则 As New Regex("^rgba\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*([\d.]+)\s*\)$", RegexOptions.IgnoreCase Or RegexOptions.Compiled)
     Private Shared ReadOnly hsl正则 As New Regex("^hsl\(\s*([\d.]+)\s*,\s*([\d.]+)%?\s*,\s*([\d.]+)%?\s*\)$", RegexOptions.IgnoreCase Or RegexOptions.Compiled)
     Private Shared ReadOnly 字号数值正则 As New Regex("^([\d.]+)\s*(px|pt|em)?$", RegexOptions.IgnoreCase Or RegexOptions.Compiled)
+    Private Shared ReadOnly 已知标签集合 As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase) From {
+        "font", "span", "div", "p", "br",
+        "b", "i", "u", "s", "em", "strong", "del", "ins",
+        "sub", "sup", "small", "big", "mark",
+        "h1", "h2", "h3", "h4", "h5", "h6",
+        "a", "pre", "code"}
 
     Private Function 解析为片段列表(html As String) As List(Of 文本片段)
         Dim 结果 As New List(Of 文本片段)
@@ -55,20 +70,27 @@ Public Class HtmlColorLabel
         颜色栈.Push(文本颜色)
         Dim 字号栈 As New Stack(Of Single)
         字号栈.Push(0)
+        Dim 字体名称栈 As New Stack(Of String)
+        字体名称栈.Push(Nothing)
         Dim 推色记录 As New Stack(Of Boolean)
         Dim 推号记录 As New Stack(Of Boolean)
+        Dim 推名记录 As New Stack(Of Boolean)
+        Dim 字体样式栈 As New Stack(Of FontStyle)
+        字体样式栈.Push(Me.Font.Style)
+        Dim 推样式记录 As New Stack(Of Boolean)
         Dim 上次位置 As Integer = 0
         For Each m As Match In 标签正则.Matches(html)
+            Dim 标签名 = m.Groups(2).Value.ToLowerInvariant()
+            If Not 已知标签集合.Contains(标签名) Then Continue For
             If m.Index > 上次位置 Then
                 Dim t = 解码HTML实体(html.Substring(上次位置, m.Index - 上次位置))
-                If t.Length > 0 Then 结果.Add(New 文本片段 With {.文本 = t, .颜色 = 颜色栈.Peek(), .字号 = 字号栈.Peek()})
+                If t.Length > 0 Then 结果.Add(New 文本片段 With {.文本 = t, .颜色 = 颜色栈.Peek(), .字号 = 字号栈.Peek(), .字体名称 = 字体名称栈.Peek(), .字体样式 = 字体样式栈.Peek()})
             End If
             上次位置 = m.Index + m.Length
             Dim 是否闭合 = m.Groups(1).Value = "/"
-            Dim 标签名 = m.Groups(2).Value.ToLowerInvariant()
             Dim 属性 = m.Groups(3).Value
             If 标签名 = "br" AndAlso Not 是否闭合 Then
-                结果.Add(New 文本片段 With {.文本 = vbLf, .颜色 = 颜色栈.Peek(), .字号 = 字号栈.Peek()})
+                结果.Add(New 文本片段 With {.文本 = vbLf, .颜色 = 颜色栈.Peek(), .字号 = 字号栈.Peek(), .字体名称 = 字体名称栈.Peek(), .字体样式 = 字体样式栈.Peek()})
                 Continue For
             End If
             If 是否闭合 Then
@@ -77,6 +99,12 @@ Public Class HtmlColorLabel
                 End If
                 If 推号记录.Count > 0 AndAlso 推号记录.Pop() Then
                     If 字号栈.Count > 1 Then 字号栈.Pop()
+                End If
+                If 推名记录.Count > 0 AndAlso 推名记录.Pop() Then
+                    If 字体名称栈.Count > 1 Then 字体名称栈.Pop()
+                End If
+                If 推样式记录.Count > 0 AndAlso 推样式记录.Pop() Then
+                    If 字体样式栈.Count > 1 Then 字体样式栈.Pop()
                 End If
             Else
                 Dim 样式 = 提取标签样式(标签名, 属性)
@@ -92,11 +120,25 @@ Public Class HtmlColorLabel
                 Else
                     推号记录.Push(False)
                 End If
+                If 样式.字体名称 IsNot Nothing Then
+                    字体名称栈.Push(样式.字体名称)
+                    推名记录.Push(True)
+                Else
+                    推名记录.Push(False)
+                End If
+                Dim 隐含样式 = 获取标签隐含样式(标签名)
+                Dim 新增样式 = 隐含样式 Or 样式.字体样式
+                If 新增样式 <> FontStyle.Regular Then
+                    字体样式栈.Push(字体样式栈.Peek() Or 新增样式)
+                    推样式记录.Push(True)
+                Else
+                    推样式记录.Push(False)
+                End If
             End If
         Next
         If 上次位置 < html.Length Then
             Dim t = 解码HTML实体(html.Substring(上次位置))
-            If t.Length > 0 Then 结果.Add(New 文本片段 With {.文本 = t, .颜色 = 颜色栈.Peek(), .字号 = 字号栈.Peek()})
+            If t.Length > 0 Then 结果.Add(New 文本片段 With {.文本 = t, .颜色 = 颜色栈.Peek(), .字号 = 字号栈.Peek(), .字体名称 = 字体名称栈.Peek(), .字体样式 = 字体样式栈.Peek()})
         End If
         Return 结果
     End Function
@@ -120,6 +162,13 @@ Public Class HtmlColorLabel
                               sm.Groups(3).Value))
                     结果.字号 = 解析字号值(值.Trim())
                 End If
+                Dim fm = fontFace正则.Match(属性)
+                If fm.Success Then
+                    Dim 值 = If(fm.Groups(1).Success AndAlso fm.Groups(1).Length > 0, fm.Groups(1).Value,
+                              If(fm.Groups(2).Success AndAlso fm.Groups(2).Length > 0, fm.Groups(2).Value,
+                              fm.Groups(3).Value))
+                    结果.字体名称 = 解析字体名称(值.Trim())
+                End If
             Case "span", "div", "p"
                 Dim sm = style属性正则.Match(属性)
                 If sm.Success Then
@@ -128,9 +177,38 @@ Public Class HtmlColorLabel
                     If cm.Success Then 结果.颜色 = 解析颜色值(cm.Groups(1).Value.Trim())
                     Dim fm = cssFontSize正则.Match(styleVal)
                     If fm.Success Then 结果.字号 = 解析字号值(fm.Groups(1).Value.Trim())
+                    Dim ffm = cssFontFamily正则.Match(styleVal)
+                    If ffm.Success Then 结果.字体名称 = 解析字体名称(ffm.Groups(1).Value.Trim())
+                    Dim fwm = cssFontWeight正则.Match(styleVal)
+                    If fwm.Success Then
+                        Dim v = fwm.Groups(1).Value.Trim().ToLowerInvariant()
+                        Dim wt As Integer
+                        If v = "bold" OrElse v = "bolder" OrElse (Integer.TryParse(v, wt) AndAlso wt >= 700) Then 结果.字体样式 = 结果.字体样式 Or FontStyle.Bold
+                    End If
+                    Dim fsm = cssFontStyle正则.Match(styleVal)
+                    If fsm.Success Then
+                        Dim v = fsm.Groups(1).Value.Trim().ToLowerInvariant()
+                        If v = "italic" OrElse v = "oblique" Then 结果.字体样式 = 结果.字体样式 Or FontStyle.Italic
+                    End If
+                    Dim tdm = cssTextDecoration正则.Match(styleVal)
+                    If tdm.Success Then
+                        Dim v = tdm.Groups(1).Value.Trim().ToLowerInvariant()
+                        If v.Contains("underline") Then 结果.字体样式 = 结果.字体样式 Or FontStyle.Underline
+                        If v.Contains("line-through") Then 结果.字体样式 = 结果.字体样式 Or FontStyle.Strikeout
+                    End If
                 End If
         End Select
         Return 结果
+    End Function
+
+    Private Shared Function 获取标签隐含样式(标签名 As String) As FontStyle
+        Select Case 标签名
+            Case "b", "strong" : Return FontStyle.Bold
+            Case "i", "em" : Return FontStyle.Italic
+            Case "u", "ins" : Return FontStyle.Underline
+            Case "s", "del" : Return FontStyle.Strikeout
+            Case Else : Return FontStyle.Regular
+        End Select
     End Function
 
     Private Function 解析字号值(值 As String) As Single
@@ -151,6 +229,13 @@ Public Class HtmlColorLabel
             Case Else
                 Return 0
         End Select
+    End Function
+
+    Private Shared Function 解析字体名称(值 As String) As String
+        If String.IsNullOrWhiteSpace(值) Then Return Nothing
+        Dim 第一项 = 值.Split(","c)(0).Trim().Trim(""""c, "'"c).Trim()
+        If 第一项.Length = 0 Then Return Nothing
+        Return 第一项
     End Function
 
     Private Shared Function 解析颜色值(值 As String) As Color?
@@ -238,7 +323,15 @@ Public Class HtmlColorLabel
 
 #Region "绘制"
 
+    Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
+        If 边框圆角半径 > 0 OrElse MyBase.BackColor.A < 255 Then Return
+        MyBase.OnPaintBackground(e)
+    End Sub
+
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
+        If 边框圆角半径 > 0 OrElse MyBase.BackColor.A < 255 Then
+            绘制父容器背景(e.Graphics)
+        End If
         Dim 是否有圆角 As Boolean = 边框圆角半径 > 0
         Dim 极限矩形区域 As New RectangleF(0, 0, Me.Width - 1, Me.Height - 1)
         If 边框宽度 > 0 Then
@@ -272,11 +365,32 @@ Public Class HtmlColorLabel
         End If
     End Sub
 
+    Private Sub 绘制父容器背景(g As Graphics)
+        If Parent Is Nothing Then Return
+        Dim state = g.Save()
+        g.TranslateTransform(-Me.Left, -Me.Top)
+        Using pea As New PaintEventArgs(g, New Rectangle(Me.Left, Me.Top, Me.Width, Me.Height))
+            InvokePaintBackground(Parent, pea)
+            InvokePaint(Parent, pea)
+        End Using
+        g.Restore(state)
+    End Sub
+
     Private Sub 绘制图形内容(g As Graphics, 是否有圆角 As Boolean, 极限矩形区域 As RectangleF)
         g.SmoothingMode = Class1.GlobalSmoothingMode
         g.PixelOffsetMode = Class1.GlobalPixelOffsetMode
         g.InterpolationMode = Class1.GlobalInterpolationMode
         Dim s As Single = DpiScale()
+        If MyBase.BackColor.A = 0 Then
+            If 是否有圆角 Then
+                Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(极限矩形区域, 边框圆角半径 * s)
+                    RectangleRenderer.绘制圆角边框(g, path, 边框颜色, 边框宽度 * s)
+                End Using
+            Else
+                RectangleRenderer.绘制矩形边框(g, 极限矩形区域, 边框颜色, 边框宽度 * s)
+            End If
+            Return
+        End If
         If 是否有圆角 Then
             Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(极限矩形区域, 边框圆角半径 * s)
                 RectangleRenderer.绘制圆角背景(g, path, 极限矩形区域, MyBase.BackColor, Color.Empty, Orientation.Vertical)
@@ -292,6 +406,8 @@ Public Class HtmlColorLabel
         Public 文本 As String
         Public 颜色 As Color
         Public 字号 As Single
+        Public 字体名称 As String
+        Public 字体样式 As FontStyle
         Public X偏移 As Integer
         Public 宽度 As Integer
         Public 高度 As Integer
@@ -310,24 +426,31 @@ Public Class HtmlColorLabel
         Return TextRenderer.MeasureText(text, font, New Size(Integer.MaxValue, Integer.MaxValue), 文本测量格式)
     End Function
 
-    Private Function 获取缓存字体(缓存 As Dictionary(Of Single, Font), 字号 As Single) As Font
-        If 字号 <= 0 Then Return Me.Font
-        If Not 缓存.ContainsKey(字号) Then
-            缓存(字号) = New Font(Me.Font.FontFamily, 字号, Me.Font.Style, GraphicsUnit.Point)
+    Private Function 获取缓存字体(缓存 As Dictionary(Of String, Font), 字号 As Single, 字体名称 As String, 字体样式 As FontStyle) As Font
+        If 字号 <= 0 AndAlso String.IsNullOrEmpty(字体名称) AndAlso 字体样式 = Me.Font.Style Then Return Me.Font
+        Dim 实际字号 = If(字号 > 0, 字号, Me.Font.SizeInPoints)
+        Dim 实际字体 = If(String.IsNullOrEmpty(字体名称), Me.Font.FontFamily.Name, 字体名称)
+        Dim 缓存键 = 实际字体 & "|" & 实际字号.ToString(Globalization.CultureInfo.InvariantCulture) & "|" & CInt(字体样式).ToString()
+
+        Dim value As Font = Nothing
+
+        If Not 缓存.TryGetValue(缓存键, value) Then
+            value = New Font(实际字体, 实际字号, 字体样式, GraphicsUnit.Point)
+            缓存(缓存键) = value
         End If
-        Return 缓存(字号)
+        Return value
     End Function
 
     Private Function 计算文本布局(最大宽度 As Integer) As List(Of 渲染行)
         Dim 片段列表 = 解析为片段列表(MyBase.Text)
         Dim 行列表 As New List(Of 渲染行)
         If 片段列表.Count = 0 Then Return 行列表
-        Dim 字体缓存 As New Dictionary(Of Single, Font)
+        Dim 字体缓存 As New Dictionary(Of String, Font)
         Dim 默认行高 As Integer = 测量文本尺寸("A", Me.Font).Height
         Try
             Dim 当前行 As New 渲染行 With {.单元列表 = New List(Of 渲染单元), .行宽 = 0, .行高 = 0}
             For Each 片段 In 片段列表
-                Dim 片段字体 = 获取缓存字体(字体缓存, 片段.字号)
+                Dim 片段字体 = 获取缓存字体(字体缓存, 片段.字号, 片段.字体名称, 片段.字体样式)
                 Dim 行数组 = 片段.文本.Split({vbCrLf, vbLf, vbCr}, StringSplitOptions.None)
                 For 行索引 As Integer = 0 To 行数组.Length - 1
                     If 行索引 > 0 Then
@@ -359,14 +482,14 @@ Public Class HtmlColorLabel
                                     当前行 = New 渲染行 With {.单元列表 = New List(Of 渲染单元), .行宽 = 0, .行高 = 0}
                                 End If
                                 当前行.单元列表.Add(New 渲染单元 With {
-                                    .文本 = 字符文本, .颜色 = 片段.颜色, .字号 = 片段.字号,
+                                    .文本 = 字符文本, .颜色 = 片段.颜色, .字号 = 片段.字号, .字体名称 = 片段.字体名称, .字体样式 = 片段.字体样式,
                                     .X偏移 = 当前行.行宽, .宽度 = 字符宽度, .高度 = 字符高度})
                                 当前行.行宽 += 字符宽度
                                 当前行.行高 = Math.Max(当前行.行高, 字符高度)
                             Next
                         Else
                             当前行.单元列表.Add(New 渲染单元 With {
-                                .文本 = 单元, .颜色 = 片段.颜色, .字号 = 片段.字号,
+                                .文本 = 单元, .颜色 = 片段.颜色, .字号 = 片段.字号, .字体名称 = 片段.字体名称, .字体样式 = 片段.字体样式,
                                 .X偏移 = 当前行.行宽, .宽度 = 单元宽度, .高度 = 单元高度})
                             当前行.行宽 += 单元宽度
                             当前行.行高 = Math.Max(当前行.行高, 单元高度)
@@ -388,12 +511,13 @@ Public Class HtmlColorLabel
         Dim 内容区域 As Rectangle = Rectangle.Round(内容矩形区域)
         Dim 行列表 = 计算文本布局(内容区域.Width)
         If 行列表.Count = 0 Then Return
-        Dim 字体缓存 As New Dictionary(Of Single, Font)
+        Dim 字体缓存 As New Dictionary(Of String, Font)
         Try
             Dim 总高度 As Integer = 0
             For Each 行 In 行列表
                 总高度 += 行.行高
             Next
+            If 行列表.Count > 1 Then 总高度 += 行距 * (行列表.Count - 1)
             Dim 起始Y As Integer
             Select Case 文字对齐方位
                 Case TextAlignEnum.BottomLeft, TextAlignEnum.BottomRight
@@ -415,7 +539,7 @@ Public Class HtmlColorLabel
                         对齐偏移 = 0
                 End Select
                 For Each 单元 In 行.单元列表
-                    Dim 单元字体 = 获取缓存字体(字体缓存, 单元.字号)
+                    Dim 单元字体 = 获取缓存字体(字体缓存, 单元.字号, 单元.字体名称, 单元.字体样式)
                     Dim Y偏移 As Integer
                     Select Case 行内垂直对齐方式
                         Case InlineAlignEnum.Center
@@ -426,7 +550,7 @@ Public Class HtmlColorLabel
                     Dim 绘制位置 As New Point(内容区域.X + 对齐偏移 + 单元.X偏移, 当前Y + Y偏移)
                     TextRenderer.DrawText(g, 单元.文本, 单元字体, 绘制位置, 单元.颜色, 文本测量格式)
                 Next
-                当前Y += 行.行高
+                当前Y += 行.行高 + 行距
             Next
         Finally
             For Each f In 字体缓存.Values
@@ -539,6 +663,7 @@ Public Class HtmlColorLabel
             总高度 += 行.行高
             If 行.行宽 > 内容最大宽度 Then 内容最大宽度 = 行.行宽
         Next
+        If 行列表.Count > 1 Then 总高度 += 行距 * (行列表.Count - 1)
         If 总高度 = 0 Then 总高度 = 测量文本尺寸("A", Me.Font).Height
         Dim 新宽度 = 内容最大宽度 + Me.Padding.Horizontal + 边框额外
         Dim 新高度 = 总高度 + Me.Padding.Vertical + 边框额外
@@ -712,6 +837,17 @@ Public Class HtmlColorLabel
         End Get
         Set(value As InlineAlignEnum)
             SetValue(行内垂直对齐方式, value)
+        End Set
+    End Property
+
+    Private 行距 As Integer = 0
+    <Category("LakeUI"), Description("行与行之间的额外间距（像素），仅在多行时生效"), DefaultValue(GetType(Integer), "0"), Browsable(True)>
+    Public Property LineSpacing As Integer
+        Get
+            Return 行距
+        End Get
+        Set(value As Integer)
+            SetValue(行距, Math.Max(value, 0))
         End Set
     End Property
 

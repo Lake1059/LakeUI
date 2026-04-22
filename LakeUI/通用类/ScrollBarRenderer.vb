@@ -55,38 +55,42 @@ Public Class ScrollBarRenderer
         Dim oldSmooth = g.SmoothingMode
         g.SmoothingMode = SmoothingMode.AntiAlias
 
-        Dim oldClip As Region = g.Clip.Clone()
-        If borderRadius > 0 Then
-            Dim clipRect As New RectangleF(0, 0, containerW - 1, containerH - 1)
-            If borderWidth > 0 Then
-                Dim half As Single = borderWidth / 2.0F
-                clipRect.Inflate(-half, -half)
+        Dim oldClip As Region = g.Clip
+        Try
+            If borderRadius > 0 Then
+                Dim clipRect As New RectangleF(0, 0, containerW - 1, containerH - 1)
+                If borderWidth > 0 Then
+                    Dim half As Single = borderWidth / 2.0F
+                    clipRect.Inflate(-half, -half)
+                End If
+                Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(clipRect, borderRadius)
+                    g.SetClip(path, Drawing2D.CombineMode.Replace)
+                End Using
             End If
-            Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(clipRect, borderRadius)
-                g.SetClip(path, Drawing2D.CombineMode.Replace)
-            End Using
-        End If
 
-        Dim sbH As Integer = TrackRect.Height
-        If trackColor.A > 0 Then
-            Dim trackRadius As Integer = Math.Min(scrollBarWidth \ 2, sbH \ 2)
-            Using trackPath As GraphicsPath = RectangleRenderer.创建圆角矩形路径(New RectangleF(VisualLeft, TrackRect.Y, scrollBarWidth, sbH), trackRadius)
-                Using br As New SolidBrush(trackColor)
-                    g.FillPath(br, trackPath)
+            Dim sbH As Integer = TrackRect.Height
+            If trackColor.A > 0 Then
+                Dim trackRadius As Integer = Math.Min(scrollBarWidth \ 2, sbH \ 2)
+                Using trackPath As GraphicsPath = RectangleRenderer.创建圆角矩形路径(New RectangleF(VisualLeft, TrackRect.Y, scrollBarWidth, sbH), trackRadius)
+                    Using br As New SolidBrush(trackColor)
+                        g.FillPath(br, trackPath)
+                    End Using
+                End Using
+            End If
+
+            Dim activeColor As Color = If(IsDragging OrElse IsHover, thumbHoverColor, thumbColor)
+            Dim thumbH As Integer = ThumbRect.Height
+            Dim thumbRadius As Integer = Math.Min(scrollBarWidth \ 2, thumbH \ 2)
+            Using thumbPath As GraphicsPath = RectangleRenderer.创建圆角矩形路径(New RectangleF(VisualLeft, ThumbRect.Y, scrollBarWidth, thumbH), thumbRadius)
+                Using br As New SolidBrush(activeColor)
+                    g.FillPath(br, thumbPath)
                 End Using
             End Using
-        End If
 
-        Dim activeColor As Color = If(IsDragging OrElse IsHover, thumbHoverColor, thumbColor)
-        Dim thumbH As Integer = ThumbRect.Height
-        Dim thumbRadius As Integer = Math.Min(scrollBarWidth \ 2, thumbH \ 2)
-        Using thumbPath As GraphicsPath = RectangleRenderer.创建圆角矩形路径(New RectangleF(VisualLeft, ThumbRect.Y, scrollBarWidth, thumbH), thumbRadius)
-            Using br As New SolidBrush(activeColor)
-                g.FillPath(br, thumbPath)
-            End Using
-        End Using
-
-        g.Clip = oldClip
+            g.Clip = oldClip
+        Finally
+            oldClip.Dispose()
+        End Try
         g.SmoothingMode = oldSmooth
     End Sub
 
@@ -195,40 +199,44 @@ Public Class ScrollBarRenderer
         Dim oldSmooth = g.SmoothingMode
         g.SmoothingMode = SmoothingMode.AntiAlias
 
-        Dim oldClip As Region = g.Clip.Clone()
-        If borderRadius > 0 Then
-            Dim clipRect As New RectangleF(0, 0, containerW - 1, containerH - 1)
-            If borderWidth > 0 Then
-                Dim half As Single = borderWidth / 2.0F
-                clipRect.Inflate(-half, -half)
+        Dim oldClip As Region = g.Clip
+        Try
+            If borderRadius > 0 Then
+                Dim clipRect As New RectangleF(0, 0, containerW - 1, containerH - 1)
+                If borderWidth > 0 Then
+                    Dim half As Single = borderWidth / 2.0F
+                    clipRect.Inflate(-half, -half)
+                End If
+                Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(clipRect, borderRadius)
+                    g.SetClip(path, Drawing2D.CombineMode.Replace)
+                End Using
             End If
-            Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(clipRect, borderRadius)
-                g.SetClip(path, Drawing2D.CombineMode.Replace)
-            End Using
-        End If
 
-        Dim sbW As Integer = TrackRect.Width
-        If trackColor.A > 0 Then
-            Dim trackRadius As Integer = Math.Min(scrollBarHeight \ 2, sbW \ 2)
-            Using trackPath As GraphicsPath = RectangleRenderer.创建圆角矩形路径(
-                New RectangleF(TrackRect.X, VisualTop, sbW, scrollBarHeight), trackRadius)
-                Using br As New SolidBrush(trackColor)
-                    g.FillPath(br, trackPath)
+            Dim sbW As Integer = TrackRect.Width
+            If trackColor.A > 0 Then
+                Dim trackRadius As Integer = Math.Min(scrollBarHeight \ 2, sbW \ 2)
+                Using trackPath As GraphicsPath = RectangleRenderer.创建圆角矩形路径(
+                    New RectangleF(TrackRect.X, VisualTop, sbW, scrollBarHeight), trackRadius)
+                    Using br As New SolidBrush(trackColor)
+                        g.FillPath(br, trackPath)
+                    End Using
+                End Using
+            End If
+
+            Dim activeColor As Color = If(IsDragging OrElse IsHover, thumbHoverColor, thumbColor)
+            Dim thumbW As Integer = ThumbRect.Width
+            Dim thumbRadius As Integer = Math.Min(scrollBarHeight \ 2, thumbW \ 2)
+            Using thumbPath As GraphicsPath = RectangleRenderer.创建圆角矩形路径(
+                New RectangleF(ThumbRect.X, VisualTop, thumbW, scrollBarHeight), thumbRadius)
+                Using br As New SolidBrush(activeColor)
+                    g.FillPath(br, thumbPath)
                 End Using
             End Using
-        End If
 
-        Dim activeColor As Color = If(IsDragging OrElse IsHover, thumbHoverColor, thumbColor)
-        Dim thumbW As Integer = ThumbRect.Width
-        Dim thumbRadius As Integer = Math.Min(scrollBarHeight \ 2, thumbW \ 2)
-        Using thumbPath As GraphicsPath = RectangleRenderer.创建圆角矩形路径(
-            New RectangleF(ThumbRect.X, VisualTop, thumbW, scrollBarHeight), thumbRadius)
-            Using br As New SolidBrush(activeColor)
-                g.FillPath(br, thumbPath)
-            End Using
-        End Using
-
-        g.Clip = oldClip
+            g.Clip = oldClip
+        Finally
+            oldClip.Dispose()
+        End Try
         g.SmoothingMode = oldSmooth
     End Sub
 

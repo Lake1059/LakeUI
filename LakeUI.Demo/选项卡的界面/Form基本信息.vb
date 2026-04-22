@@ -15,4 +15,8 @@
 ✅ 字体和颜色属性支持自动跟随容器属性值
 ✅ 绝不凑数，专注质量和细节，绝大多数控件都是从头开发"
     End Sub
+
+    Private Sub Form基本信息_Click(sender As Object, e As EventArgs) Handles Me.Click
+
+    End Sub
 End Class
