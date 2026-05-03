@@ -23,12 +23,11 @@ Partial Class Form_ModernContextMenu
     <System.Diagnostics.DebuggerStepThrough()> _
     Private Sub InitializeComponent()
         Dim ModernMenuItem1 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
+        Dim resources As System.ComponentModel.ComponentResourceManager = New System.ComponentModel.ComponentResourceManager(GetType(Form_ModernContextMenu))
         Dim ModernMenuItem2 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
         Dim ModernMenuItem3 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
         Dim ModernMenuItem4 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
         Dim ModernMenuItem5 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
-        Dim ModernMenuItem6 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
-        Dim ModernMenuItem7 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
         ModernPanel1 = New ModernPanel()
         Label5 = New Label()
         Panel1 = New Panel()
@@ -196,38 +195,35 @@ Partial Class Form_ModernContextMenu
         ' 
         ' ModernContextMenu1
         ' 
+        ModernContextMenu1.DescriptionFont = New Font("MiSans Medium", 9F, FontStyle.Regular, GraphicsUnit.Point, CByte(134))
         ModernContextMenu1.HoverAnimationFPS = 0
         ModernContextMenu1.HoverRadius = 5
-        ModernContextMenu1.IconSize = 0
-        ModernContextMenu1.ItemPadding = New Padding(10, 0, 10, 0)
+        ModernContextMenu1.ItemHeight = 35
         ModernMenuItem1.Font = Nothing
-        ModernMenuItem1.Text = "ModernMenuItem"
+        ModernMenuItem1.Icon = CType(resources.GetObject("ModernMenuItem1.Icon"), Image)
+        ModernMenuItem1.Text = "完全自绘的上下文菜单"
         ModernMenuItem2.Font = Nothing
-        ModernMenuItem2.ForeColor = Color.CornflowerBlue
-        ModernMenuItem2.Text = "ModernMenuItem"
-        ModernMenuItem3.Font = New Font("华文中宋", 10.7999992F, FontStyle.Bold, GraphicsUnit.Point, CByte(134))
-        ModernMenuItem3.ForeColor = Color.IndianRed
-        ModernMenuItem3.Text = "ModernMenuItem"
+        ModernMenuItem2.Icon = CType(resources.GetObject("ModernMenuItem2.Icon"), Image)
+        ModernMenuItem2.Text = "更轻，更快，更舒适，更自由"
+        ModernMenuItem3.Font = Nothing
+        ModernMenuItem3.IsSeparator = True
         ModernMenuItem4.Font = Nothing
-        ModernMenuItem4.IsSeparator = True
-        ModernMenuItem5.Font = Nothing
-        ModernMenuItem5.IsDescription = True
-        ModernMenuItem5.Text = "小字说明"
-        ModernMenuItem6.Font = Nothing
-        ModernMenuItem6.Text = "ModernMenuItem"
-        ModernMenuItem7.Font = Nothing
-        ModernMenuItem7.Text = "ModernMenuItem"
+        ModernMenuItem4.IsDescription = True
+        ModernMenuItem4.Text = "支持设置小字说明"
+        ModernMenuItem5.Font = New Font("宋体", 10.2F, FontStyle.Regular, GraphicsUnit.Point, CByte(134))
+        ModernMenuItem5.ForeColor = Color.FromArgb(CByte(255), CByte(192), CByte(192))
+        ModernMenuItem5.Text = "每个菜单项都支持独立设置字体和颜色"
         ModernContextMenu1.Items.Add(ModernMenuItem1)
         ModernContextMenu1.Items.Add(ModernMenuItem2)
         ModernContextMenu1.Items.Add(ModernMenuItem3)
         ModernContextMenu1.Items.Add(ModernMenuItem4)
         ModernContextMenu1.Items.Add(ModernMenuItem5)
-        ModernContextMenu1.Items.Add(ModernMenuItem6)
-        ModernContextMenu1.Items.Add(ModernMenuItem7)
-        ModernContextMenu1.MenuFont = New Font("Microsoft YaHei UI", 10.2F, FontStyle.Regular, GraphicsUnit.Point, CByte(134))
+        ModernContextMenu1.MenuFont = New Font("MiSans Medium", 10.5F)
         ModernContextMenu1.MenuPadding = New Padding(10)
         ModernContextMenu1.PopupAnimationFPS = 0
+        ModernContextMenu1.PressedBackColor = SystemColors.WindowFrame
         ModernContextMenu1.SeparatorHeight = 20
+        ModernContextMenu1.SuperSamplingScale = Class1.SuperSamplingScaleEnum.x2
         ' 
         ' Form_ModernContextMenu
         ' 
@@ -256,6 +252,6 @@ Partial Class Form_ModernContextMenu
     Friend WithEvents Label2 As Label
     Friend WithEvents ModernButton1 As ModernButton
     Friend WithEvents Label1 As Label
-    Friend WithEvents ModernContextMenu1 As ModernContextMenu
     Friend WithEvents Label5 As Label
+    Friend WithEvents ModernContextMenu1 As ModernContextMenu
 End Class

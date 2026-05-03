@@ -59,15 +59,11 @@ Partial Class Form1
         Dim ModernTabPage34 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
         Dim ModernTabPage35 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
         Dim ModernTabPage36 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
-        Dim ModernMenuItem1 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
-        Dim resources As System.ComponentModel.ComponentResourceManager = New System.ComponentModel.ComponentResourceManager(GetType(Form1))
-        Dim ModernMenuItem2 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
-        Dim ModernMenuItem3 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
-        Dim ModernMenuItem4 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
-        Dim ModernMenuItem5 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
+        Dim ModernTabPage37 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
+        Dim ModernTabPage38 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
+        Dim ModernTabPage39 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
         ModernTabListControl1 = New ModernTabListControl()
         ModernTextBox1 = New ModernTextBox()
-        ModernContextMenu1 = New ModernContextMenu()
         ThisIsYourWindow1 = New ThisIsYourWindow(components)
         ModernTabListControl1.SuspendLayout()
         SuspendLayout()
@@ -114,6 +110,9 @@ Partial Class Form1
         ModernTabPage34.Text = "CpuMonitor"
         ModernTabPage35.Text = "RamMonitor"
         ModernTabPage36.Text = "GpuMonitor"
+        ModernTabPage37.Text = "BreadcrumbNavigationBar"
+        ModernTabPage38.Text = "PrecisionTimer"
+        ModernTabPage39.Text = "AgentRoom"
         ModernTabListControl1.Items.Add(ModernTabPage1)
         ModernTabListControl1.Items.Add(ModernTabPage2)
         ModernTabListControl1.Items.Add(ModernTabPage3)
@@ -150,6 +149,9 @@ Partial Class Form1
         ModernTabListControl1.Items.Add(ModernTabPage34)
         ModernTabListControl1.Items.Add(ModernTabPage35)
         ModernTabListControl1.Items.Add(ModernTabPage36)
+        ModernTabListControl1.Items.Add(ModernTabPage37)
+        ModernTabListControl1.Items.Add(ModernTabPage38)
+        ModernTabListControl1.Items.Add(ModernTabPage39)
         ModernTabListControl1.Location = New Point(0, 0)
         ModernTabListControl1.Name = "ModernTabListControl1"
         ModernTabListControl1.ScrollBarWidth = 10
@@ -176,42 +178,18 @@ Partial Class Form1
         ModernTextBox1.TabStop = False
         ModernTextBox1.WaterText = "搜索选项卡标题"
         ' 
-        ' ModernContextMenu1
-        ' 
-        ModernContextMenu1.DescriptionFont = New Font("MiSans Medium", 9F, FontStyle.Regular, GraphicsUnit.Point, CByte(134))
-        ModernContextMenu1.HoverAnimationFPS = 0
-        ModernContextMenu1.HoverRadius = 5
-        ModernContextMenu1.ItemHeight = 35
-        ModernMenuItem1.Font = Nothing
-        ModernMenuItem1.Icon = CType(resources.GetObject("ModernMenuItem1.Icon"), Image)
-        ModernMenuItem1.Text = "完全自绘的上下文菜单"
-        ModernMenuItem2.Font = Nothing
-        ModernMenuItem2.Icon = CType(resources.GetObject("ModernMenuItem2.Icon"), Image)
-        ModernMenuItem2.Text = "更轻，更快，更舒适，更自由"
-        ModernMenuItem3.Font = Nothing
-        ModernMenuItem3.IsSeparator = True
-        ModernMenuItem4.Font = Nothing
-        ModernMenuItem4.IsDescription = True
-        ModernMenuItem4.Text = "支持设置小字说明"
-        ModernMenuItem5.Font = New Font("宋体", 10.2F, FontStyle.Regular, GraphicsUnit.Point, CByte(134))
-        ModernMenuItem5.ForeColor = Color.FromArgb(CByte(255), CByte(192), CByte(192))
-        ModernMenuItem5.Text = "每个菜单项都支持独立设置字体和颜色"
-        ModernContextMenu1.Items.Add(ModernMenuItem1)
-        ModernContextMenu1.Items.Add(ModernMenuItem2)
-        ModernContextMenu1.Items.Add(ModernMenuItem3)
-        ModernContextMenu1.Items.Add(ModernMenuItem4)
-        ModernContextMenu1.Items.Add(ModernMenuItem5)
-        ModernContextMenu1.MenuFont = New Font("MiSans Medium", 10.5F)
-        ModernContextMenu1.MenuPadding = New Padding(10)
-        ModernContextMenu1.PopupAnimationFPS = 0
-        ModernContextMenu1.PressedBackColor = SystemColors.WindowFrame
-        ModernContextMenu1.SeparatorHeight = 20
-        ModernContextMenu1.SuperSamplingScale = Class1.SuperSamplingScaleEnum.x2
-        ' 
         ' ThisIsYourWindow1
         ' 
+        ThisIsYourWindow1.BackdropBlurRadius = 10
+        ThisIsYourWindow1.BackdropMaxParallelism = 6
+        ThisIsYourWindow1.BackdropMode = ThisIsYourWindow.BackdropModeEnum.CaptionOnly
+        ThisIsYourWindow1.BackdropNoiseScale = 0.5F
+        ThisIsYourWindow1.BackdropTintColor = Color.FromArgb(CByte(120), CByte(48), CByte(48), CByte(48))
+        ThisIsYourWindow1.BackdropTintInactiveColor = Color.FromArgb(CByte(80), CByte(48), CByte(48), CByte(48))
+        ThisIsYourWindow1.BorderAutoColor = True
         ThisIsYourWindow1.BorderColor = Color.MediumPurple
         ThisIsYourWindow1.BorderInactiveColor = Color.MediumPurple
+        ThisIsYourWindow1.BorderSize = 0
         ThisIsYourWindow1.ButtonCornerRadius = 5
         ThisIsYourWindow1.ButtonGlyphLineWidth = 2F
         ThisIsYourWindow1.ButtonGlyphSize = 12
@@ -224,7 +202,9 @@ Partial Class Form1
         ThisIsYourWindow1.CloseButtonGlyphColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
         ThisIsYourWindow1.IconPaddingLeft = 15
         ThisIsYourWindow1.IconSize = 20
+        ThisIsYourWindow1.LayerShadowAutoColor = True
         ThisIsYourWindow1.LayerShadowColor = Color.MediumPurple
+        ThisIsYourWindow1.LayerShadowResizeFullArea = True
         ThisIsYourWindow1.ResizeBorderWidth = 10
         ThisIsYourWindow1.ShadowMode = ThisIsYourWindow.ShadowModeEnum.Layer
         ThisIsYourWindow1.TitleAlign = ThisIsYourWindow.TitleAlignEnum.Center
@@ -240,14 +220,12 @@ Partial Class Form1
         ForeColor = SystemColors.Control
         MinimumSize = New Size(1000, 700)
         Name = "Form1"
-        ShowIcon = False
         StartPosition = FormStartPosition.CenterScreen
-        Text = "LakeUI 1.3.0 DEMO"
+        Text = "LakeUI 1.5.0 DEMO"
         ModernTabListControl1.ResumeLayout(False)
         ResumeLayout(False)
     End Sub
     Friend WithEvents ModernTabListControl1 As ModernTabListControl
-    Friend WithEvents ModernContextMenu1 As ModernContextMenu
     Friend WithEvents ModernTextBox1 As ModernTextBox
     Friend WithEvents ThisIsYourWindow1 As ThisIsYourWindow
 

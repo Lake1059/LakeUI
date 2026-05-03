@@ -9,13 +9,13 @@ Public Class ModernContextMenu
     Inherits Component
     Implements IExtenderProvider
 
-    Private ReadOnly ÏîÄ¿ÁĞ±í As New List(Of ModernMenuItem)
+    Private ReadOnly é¡¹ç›®åˆ—è¡¨ As New List(Of ModernMenuItem)
 
-    <Category("LakeUI"), Description("²Ëµ¥Ïî¼¯ºÏ"), Browsable(True)>
+    <Category("LakeUI"), Description("èœå•é¡¹é›†åˆ"), Browsable(True)>
     <DesignerSerializationVisibility(DesignerSerializationVisibility.Content)>
     Public ReadOnly Property Items As List(Of ModernMenuItem)
         Get
-            Return ÏîÄ¿ÁĞ±í
+            Return é¡¹ç›®åˆ—è¡¨
         End Get
     End Property
 
@@ -25,400 +25,400 @@ Public Class ModernContextMenu
         End If
     End Sub
 
-#Region "ÊôĞÔ"
+#Region "å±æ€§"
 
-    Private ±³¾°ÑÕÉ« As Color = Color.FromArgb(36, 36, 36)
-    <Category("LakeUI"), Description("±³¾°ÑÕÉ«"), DefaultValue(GetType(Color), "36, 36, 36"), Browsable(True)>
+    Private èƒŒæ™¯é¢œè‰² As Color = Color.FromArgb(36, 36, 36)
+    <Category("LakeUI"), Description("èƒŒæ™¯é¢œè‰²"), DefaultValue(GetType(Color), "36, 36, 36"), Browsable(True)>
     Public Property BackColor1 As Color
         Get
-            Return ±³¾°ÑÕÉ«
+            Return èƒŒæ™¯é¢œè‰²
         End Get
         Set(value As Color)
-            SetValue(±³¾°ÑÕÉ«, value)
+            SetValue(èƒŒæ™¯é¢œè‰², value)
         End Set
     End Property
 
-    Private ±ß¿òÑÕÉ« As Color = Color.FromArgb(80, 80, 80)
-    <Category("LakeUI"), Description("±ß¿òÑÕÉ«"), DefaultValue(GetType(Color), "80, 80, 80"), Browsable(True)>
+    Private è¾¹æ¡†é¢œè‰² As Color = Color.FromArgb(80, 80, 80)
+    <Category("LakeUI"), Description("è¾¹æ¡†é¢œè‰²"), DefaultValue(GetType(Color), "80, 80, 80"), Browsable(True)>
     Public Property BorderColor As Color
         Get
-            Return ±ß¿òÑÕÉ«
+            Return è¾¹æ¡†é¢œè‰²
         End Get
         Set(value As Color)
-            SetValue(±ß¿òÑÕÉ«, value)
+            SetValue(è¾¹æ¡†é¢œè‰², value)
         End Set
     End Property
 
-    Private ±ß¿ò¿í¶È As Integer = 1
-    <Category("LakeUI"), Description("±ß¿ò¿í¶È"), DefaultValue(GetType(Integer), "1"), Browsable(True)>
+    Private è¾¹æ¡†å®½åº¦ As Integer = 1
+    <Category("LakeUI"), Description("è¾¹æ¡†å®½åº¦"), DefaultValue(GetType(Integer), "1"), Browsable(True)>
     Public Property BorderSize As Integer
         Get
-            Return ±ß¿ò¿í¶È
+            Return è¾¹æ¡†å®½åº¦
         End Get
         Set(value As Integer)
             If value < 0 Then value = 0
-            SetValue(±ß¿ò¿í¶È, value)
+            SetValue(è¾¹æ¡†å®½åº¦, value)
         End Set
     End Property
 
-    Private ÏîÄ¿¸ß¶È As Integer = 30
-    <Category("LakeUI"), Description("ÏîÄ¿¸ß¶È"), DefaultValue(GetType(Integer), "30"), Browsable(True)>
+    Private é¡¹ç›®é«˜åº¦ As Integer = 30
+    <Category("LakeUI"), Description("é¡¹ç›®é«˜åº¦"), DefaultValue(GetType(Integer), "30"), Browsable(True)>
     Public Property ItemHeight As Integer
         Get
-            Return ÏîÄ¿¸ß¶È
+            Return é¡¹ç›®é«˜åº¦
         End Get
         Set(value As Integer)
             If value < 1 Then value = 1
-            SetValue(ÏîÄ¿¸ß¶È, value)
+            SetValue(é¡¹ç›®é«˜åº¦, value)
         End Set
     End Property
 
-    Private ËµÃ÷Ïî¸ß¶È As Integer = 22
-    <Category("LakeUI"), Description("Ğ¡×ÖËµÃ÷Ïî¸ß¶È"), DefaultValue(GetType(Integer), "22"), Browsable(True)>
+    Private è¯´æ˜é¡¹é«˜åº¦ As Integer = 22
+    <Category("LakeUI"), Description("å°å­—è¯´æ˜é¡¹é«˜åº¦"), DefaultValue(GetType(Integer), "22"), Browsable(True)>
     Public Property DescriptionItemHeight As Integer
         Get
-            Return ËµÃ÷Ïî¸ß¶È
+            Return è¯´æ˜é¡¹é«˜åº¦
         End Get
         Set(value As Integer)
             If value < 1 Then value = 1
-            SetValue(ËµÃ÷Ïî¸ß¶È, value)
+            SetValue(è¯´æ˜é¡¹é«˜åº¦, value)
         End Set
     End Property
 
-    Private Shared ReadOnly Ä¬ÈÏ×ÖÌå As New Font("Microsoft YaHei UI", 9)
-    Private ²Ëµ¥×ÖÌå As New Font("Microsoft YaHei UI", 9)
-    <Category("LakeUI"), Description("²Ëµ¥×ÖÌå"), Browsable(True)>
+    Private Shared ReadOnly é»˜è®¤å­—ä½“ As New Font("Microsoft YaHei UI", 9)
+    Private èœå•å­—ä½“ As New Font("Microsoft YaHei UI", 9)
+    <Category("LakeUI"), Description("èœå•å­—ä½“"), Browsable(True)>
     Public Property MenuFont As Font
         Get
-            Return ²Ëµ¥×ÖÌå
+            Return èœå•å­—ä½“
         End Get
         Set(value As Font)
             If value Is Nothing Then Return
-            SetValue(²Ëµ¥×ÖÌå, value)
+            SetValue(èœå•å­—ä½“, value)
         End Set
     End Property
     Private Function ShouldSerializeMenuFont() As Boolean
-        Return Not ²Ëµ¥×ÖÌå.Equals(Ä¬ÈÏ×ÖÌå)
+        Return Not èœå•å­—ä½“.Equals(é»˜è®¤å­—ä½“)
     End Function
     Public Sub ResetMenuFont()
         MenuFont = New Font("Microsoft YaHei UI", 9)
     End Sub
 
-    Private ÎÄ±¾ÑÕÉ« As Color = Color.Silver
-    <Category("LakeUI"), Description("ÎÄ±¾ÑÕÉ«"), DefaultValue(GetType(Color), "Silver"), Browsable(True)>
+    Private æ–‡æœ¬é¢œè‰² As Color = Color.Silver
+    <Category("LakeUI"), Description("æ–‡æœ¬é¢œè‰²"), DefaultValue(GetType(Color), "Silver"), Browsable(True)>
     Public Property MenuForeColor As Color
         Get
-            Return ÎÄ±¾ÑÕÉ«
+            Return æ–‡æœ¬é¢œè‰²
         End Get
         Set(value As Color)
-            SetValue(ÎÄ±¾ÑÕÉ«, value)
+            SetValue(æ–‡æœ¬é¢œè‰², value)
         End Set
     End Property
 
-    Private Shared ReadOnly Ä¬ÈÏËµÃ÷×ÖÌå As New Font("Microsoft YaHei UI", 8)
-    Private ËµÃ÷×ÖÌå As New Font("Microsoft YaHei UI", 8)
-    <Category("LakeUI"), Description("Ğ¡×ÖËµÃ÷ÏîµÄ×ÖÌå"), Browsable(True)>
+    Private Shared ReadOnly é»˜è®¤è¯´æ˜å­—ä½“ As New Font("Microsoft YaHei UI", 8)
+    Private è¯´æ˜å­—ä½“ As New Font("Microsoft YaHei UI", 8)
+    <Category("LakeUI"), Description("å°å­—è¯´æ˜é¡¹çš„å­—ä½“"), Browsable(True)>
     Public Property DescriptionFont As Font
         Get
-            Return ËµÃ÷×ÖÌå
+            Return è¯´æ˜å­—ä½“
         End Get
         Set(value As Font)
             If value Is Nothing Then Return
-            SetValue(ËµÃ÷×ÖÌå, value)
+            SetValue(è¯´æ˜å­—ä½“, value)
         End Set
     End Property
     Private Function ShouldSerializeDescriptionFont() As Boolean
-        Return Not ËµÃ÷×ÖÌå.Equals(Ä¬ÈÏËµÃ÷×ÖÌå)
+        Return Not è¯´æ˜å­—ä½“.Equals(é»˜è®¤è¯´æ˜å­—ä½“)
     End Function
     Public Sub ResetDescriptionFont()
         DescriptionFont = New Font("Microsoft YaHei UI", 8)
     End Sub
 
-    Private ËµÃ÷ÎÄ±¾ÑÕÉ« As Color = Color.CornflowerBlue
-    <Category("LakeUI"), Description("Ğ¡×ÖËµÃ÷ÏîµÄÎÄ±¾ÑÕÉ«"), DefaultValue(GetType(Color), "CornflowerBlue"), Browsable(True)>
+    Private è¯´æ˜æ–‡æœ¬é¢œè‰² As Color = Color.CornflowerBlue
+    <Category("LakeUI"), Description("å°å­—è¯´æ˜é¡¹çš„æ–‡æœ¬é¢œè‰²"), DefaultValue(GetType(Color), "CornflowerBlue"), Browsable(True)>
     Public Property DescriptionForeColor As Color
         Get
-            Return ËµÃ÷ÎÄ±¾ÑÕÉ«
+            Return è¯´æ˜æ–‡æœ¬é¢œè‰²
         End Get
         Set(value As Color)
-            SetValue(ËµÃ÷ÎÄ±¾ÑÕÉ«, value)
+            SetValue(è¯´æ˜æ–‡æœ¬é¢œè‰², value)
         End Set
     End Property
 
-    Private ĞüÍ£±³¾°ÑÕÉ« As Color = Color.FromArgb(64, 64, 64)
-    <Category("LakeUI"), Description("ĞüÍ£±³¾°ÑÕÉ«"), DefaultValue(GetType(Color), "64, 64, 64"), Browsable(True)>
+    Private æ‚¬åœèƒŒæ™¯é¢œè‰² As Color = Color.FromArgb(64, 64, 64)
+    <Category("LakeUI"), Description("æ‚¬åœèƒŒæ™¯é¢œè‰²"), DefaultValue(GetType(Color), "64, 64, 64"), Browsable(True)>
     Public Property HoverBackColor As Color
         Get
-            Return ĞüÍ£±³¾°ÑÕÉ«
+            Return æ‚¬åœèƒŒæ™¯é¢œè‰²
         End Get
         Set(value As Color)
-            SetValue(ĞüÍ£±³¾°ÑÕÉ«, value)
+            SetValue(æ‚¬åœèƒŒæ™¯é¢œè‰², value)
         End Set
     End Property
 
-    Private °´ÏÂ±³¾°ÑÕÉ« As Color = Color.FromArgb(80, 80, 80)
-    <Category("LakeUI"), Description("Êó±ê°´ÏÂ±³¾°ÑÕÉ«"), DefaultValue(GetType(Color), "80, 80, 80"), Browsable(True)>
+    Private æŒ‰ä¸‹èƒŒæ™¯é¢œè‰² As Color = Color.FromArgb(80, 80, 80)
+    <Category("LakeUI"), Description("é¼ æ ‡æŒ‰ä¸‹èƒŒæ™¯é¢œè‰²"), DefaultValue(GetType(Color), "80, 80, 80"), Browsable(True)>
     Public Property PressedBackColor As Color
         Get
-            Return °´ÏÂ±³¾°ÑÕÉ«
+            Return æŒ‰ä¸‹èƒŒæ™¯é¢œè‰²
         End Get
         Set(value As Color)
-            SetValue(°´ÏÂ±³¾°ÑÕÉ«, value)
+            SetValue(æŒ‰ä¸‹èƒŒæ™¯é¢œè‰², value)
         End Set
     End Property
 
-    Private ·Ö¸îÏßÑÕÉ« As Color = Color.FromArgb(80, 80, 80)
-    <Category("LakeUI"), Description("·Ö¸îÏßÑÕÉ«"), DefaultValue(GetType(Color), "80, 80, 80"), Browsable(True)>
+    Private åˆ†å‰²çº¿é¢œè‰² As Color = Color.FromArgb(80, 80, 80)
+    <Category("LakeUI"), Description("åˆ†å‰²çº¿é¢œè‰²"), DefaultValue(GetType(Color), "80, 80, 80"), Browsable(True)>
     Public Property SeparatorColor As Color
         Get
-            Return ·Ö¸îÏßÑÕÉ«
+            Return åˆ†å‰²çº¿é¢œè‰²
         End Get
         Set(value As Color)
-            SetValue(·Ö¸îÏßÑÕÉ«, value)
+            SetValue(åˆ†å‰²çº¿é¢œè‰², value)
         End Set
     End Property
 
-    Private ·Ö¸îÏß¸ß¶È As Integer = 2
-    <Category("LakeUI"), Description("·Ö¸îÏß¸ß¶È"), DefaultValue(GetType(Integer), "2"), Browsable(True)>
+    Private åˆ†å‰²çº¿é«˜åº¦ As Integer = 2
+    <Category("LakeUI"), Description("åˆ†å‰²çº¿é«˜åº¦"), DefaultValue(GetType(Integer), "2"), Browsable(True)>
     Public Property SeparatorHeight As Integer
         Get
-            Return ·Ö¸îÏß¸ß¶È
+            Return åˆ†å‰²çº¿é«˜åº¦
         End Get
         Set(value As Integer)
             If value < 1 Then value = 1
-            SetValue(·Ö¸îÏß¸ß¶È, value)
+            SetValue(åˆ†å‰²çº¿é«˜åº¦, value)
         End Set
     End Property
 
-    Private ¹´Ñ¡ÑÕÉ« As Color = Color.Silver
-    <Category("LakeUI"), Description("¹´Ñ¡±ê¼ÇÑÕÉ«"), DefaultValue(GetType(Color), "Silver"), Browsable(True)>
+    Private å‹¾é€‰é¢œè‰² As Color = Color.Silver
+    <Category("LakeUI"), Description("å‹¾é€‰æ ‡è®°é¢œè‰²"), DefaultValue(GetType(Color), "Silver"), Browsable(True)>
     Public Property CheckMarkColor As Color
         Get
-            Return ¹´Ñ¡ÑÕÉ«
+            Return å‹¾é€‰é¢œè‰²
         End Get
         Set(value As Color)
-            SetValue(¹´Ñ¡ÑÕÉ«, value)
+            SetValue(å‹¾é€‰é¢œè‰², value)
         End Set
     End Property
 
-    Private ¼ıÍ·ÑÕÉ« As Color = Color.Silver
-    <Category("LakeUI"), Description("×Ó²Ëµ¥¼ıÍ·ÑÕÉ«"), DefaultValue(GetType(Color), "Silver"), Browsable(True)>
+    Private ç®­å¤´é¢œè‰² As Color = Color.Silver
+    <Category("LakeUI"), Description("å­èœå•ç®­å¤´é¢œè‰²"), DefaultValue(GetType(Color), "Silver"), Browsable(True)>
     Public Property ArrowColor As Color
         Get
-            Return ¼ıÍ·ÑÕÉ«
+            Return ç®­å¤´é¢œè‰²
         End Get
         Set(value As Color)
-            SetValue(¼ıÍ·ÑÕÉ«, value)
+            SetValue(ç®­å¤´é¢œè‰², value)
         End Set
     End Property
 
-    Private ¼ıÍ·´óĞ¡ As Integer = 10
-    <Category("LakeUI"), Description("×Ó²Ëµ¥¼ıÍ·´óĞ¡"), DefaultValue(GetType(Integer), "10"), Browsable(True)>
+    Private ç®­å¤´å¤§å° As Integer = 10
+    <Category("LakeUI"), Description("å­èœå•ç®­å¤´å¤§å°"), DefaultValue(GetType(Integer), "10"), Browsable(True)>
     Public Property ArrowSize As Integer
         Get
-            Return ¼ıÍ·´óĞ¡
+            Return ç®­å¤´å¤§å°
         End Get
         Set(value As Integer)
             If value < 2 Then value = 2
-            SetValue(¼ıÍ·´óĞ¡, value)
+            SetValue(ç®­å¤´å¤§å°, value)
         End Set
     End Property
 
-    Private Í¼±ê´óĞ¡ As Integer = 24
-    <Category("LakeUI"), Description("Í¼±ê»æÖÆ´óĞ¡£¬Í¬Ê±¾ö¶¨Í¼±êÁĞ¿í¶È£»0 = ²»±£ÁôÍ¼±êÁĞ"), DefaultValue(GetType(Integer), "24"), Browsable(True)>
+    Private å›¾æ ‡å¤§å° As Integer = 24
+    <Category("LakeUI"), Description("å›¾æ ‡ç»˜åˆ¶å¤§å°ï¼ŒåŒæ—¶å†³å®šå›¾æ ‡åˆ—å®½åº¦ï¼›0 = ä¸ä¿ç•™å›¾æ ‡åˆ—"), DefaultValue(GetType(Integer), "24"), Browsable(True)>
     Public Property IconSize As Integer
         Get
-            Return Í¼±ê´óĞ¡
+            Return å›¾æ ‡å¤§å°
         End Get
         Set(value As Integer)
             If value < 0 Then value = 0
-            SetValue(Í¼±ê´óĞ¡, value)
+            SetValue(å›¾æ ‡å¤§å°, value)
         End Set
     End Property
 
-    Private Í¼±êÎÄ×Ö¼ä¾à As Integer = 10
-    <Category("LakeUI"), Description("Í¼±êÓëÎÄ×ÖÖ®¼äµÄ¼ä¾à"), DefaultValue(GetType(Integer), "10"), Browsable(True)>
+    Private å›¾æ ‡æ–‡å­—é—´è· As Integer = 10
+    <Category("LakeUI"), Description("å›¾æ ‡ä¸æ–‡å­—ä¹‹é—´çš„é—´è·"), DefaultValue(GetType(Integer), "10"), Browsable(True)>
     Public Property IconTextSpacing As Integer
         Get
-            Return Í¼±êÎÄ×Ö¼ä¾à
+            Return å›¾æ ‡æ–‡å­—é—´è·
         End Get
         Set(value As Integer)
             If value < 0 Then value = 0
-            SetValue(Í¼±êÎÄ×Ö¼ä¾à, value)
+            SetValue(å›¾æ ‡æ–‡å­—é—´è·, value)
         End Set
     End Property
 
-    Private Const ¹´Ñ¡×îĞ¡¿í¶È As Integer = 20
+    Private Const å‹¾é€‰æœ€å°å®½åº¦ As Integer = 20
 
-    Friend ReadOnly Property ÓĞĞ§Í¼±êÁĞ¿í¶È As Integer
+    Friend ReadOnly Property æœ‰æ•ˆå›¾æ ‡åˆ—å®½åº¦ As Integer
         Get
-            If Í¼±ê´óĞ¡ > 0 Then Return Í¼±ê´óĞ¡
-            For Each item In ÏîÄ¿ÁĞ±í
-                If Not item.IsSeparator AndAlso Not item.IsDescription AndAlso item.Checked Then Return ¹´Ñ¡×îĞ¡¿í¶È
+            If å›¾æ ‡å¤§å° > 0 Then Return å›¾æ ‡å¤§å°
+            For Each item In é¡¹ç›®åˆ—è¡¨
+                If Not item.IsSeparator AndAlso Not item.IsDescription AndAlso item.Checked Then Return å‹¾é€‰æœ€å°å®½åº¦
             Next
             Return 0
         End Get
     End Property
 
-    Private ÄÚ±ß¾à As New Padding(1)
-    <Category("LakeUI"), Description("²Ëµ¥ÄÚ±ß¾à"), DefaultValue(GetType(Padding), "1, 1, 1, 1"), Browsable(True)>
+    Private å†…è¾¹è· As New Padding(1)
+    <Category("LakeUI"), Description("èœå•å†…è¾¹è·"), DefaultValue(GetType(Padding), "1, 1, 1, 1"), Browsable(True)>
     Public Property MenuPadding As Padding
         Get
-            Return ÄÚ±ß¾à
+            Return å†…è¾¹è·
         End Get
         Set(value As Padding)
-            SetValue(ÄÚ±ß¾à, value)
+            SetValue(å†…è¾¹è·, value)
         End Set
     End Property
 
-    Private ³¬²ÉÑù±¶ÂÊ As Integer = 1
-    <Category("LakeUI"), Description(Class1.³¬²ÉÑù¿¹¾â³İÃèÊö´Ê), DefaultValue(GetType(Class1.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
+    Private è¶…é‡‡æ ·å€ç‡ As Integer = 1
+    <Category("LakeUI"), Description(Class1.è¶…é‡‡æ ·æŠ—é”¯é½¿æè¿°è¯), DefaultValue(GetType(Class1.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
     Public Property SuperSamplingScale As Class1.SuperSamplingScaleEnum
         Get
-            Return ³¬²ÉÑù±¶ÂÊ
+            Return è¶…é‡‡æ ·å€ç‡
         End Get
         Set(value As Class1.SuperSamplingScaleEnum)
-            SetValue(³¬²ÉÑù±¶ÂÊ, value)
+            SetValue(è¶…é‡‡æ ·å€ç‡, value)
         End Set
     End Property
 
-    Private ĞüÍ£Ô²½Ç°ë¾¶ As Integer = 0
-    <Category("LakeUI"), Description("ĞüÍ£¸ßÁÁÔ²½Ç°ë¾¶£¬0 = Ö±½Ç¾ØĞÎ"), DefaultValue(GetType(Integer), "0"), Browsable(True)>
+    Private æ‚¬åœåœ†è§’åŠå¾„ As Integer = 0
+    <Category("LakeUI"), Description("æ‚¬åœé«˜äº®åœ†è§’åŠå¾„ï¼Œ0 = ç›´è§’çŸ©å½¢"), DefaultValue(GetType(Integer), "0"), Browsable(True)>
     Public Property HoverRadius As Integer
         Get
-            Return ĞüÍ£Ô²½Ç°ë¾¶
+            Return æ‚¬åœåœ†è§’åŠå¾„
         End Get
         Set(value As Integer)
             If value < 0 Then value = 0
-            SetValue(ĞüÍ£Ô²½Ç°ë¾¶, value)
+            SetValue(æ‚¬åœåœ†è§’åŠå¾„, value)
         End Set
     End Property
 
-    Private ÏîÄ¿ÄÚ±ß¾à As New Padding(5, 0, 0, 0)
-    <Category("LakeUI"), Description("²Ëµ¥ÏîÄÚ±ß¾à"), DefaultValue(GetType(Padding), "5, 0, 0, 0"), Browsable(True)>
+    Private é¡¹ç›®å†…è¾¹è· As New Padding(5, 0, 0, 0)
+    <Category("LakeUI"), Description("èœå•é¡¹å†…è¾¹è·"), DefaultValue(GetType(Padding), "5, 0, 0, 0"), Browsable(True)>
     Public Property ItemPadding As Padding
         Get
-            Return ÏîÄ¿ÄÚ±ß¾à
+            Return é¡¹ç›®å†…è¾¹è·
         End Get
         Set(value As Padding)
-            SetValue(ÏîÄ¿ÄÚ±ß¾à, value)
+            SetValue(é¡¹ç›®å†…è¾¹è·, value)
         End Set
     End Property
 
-    Private ĞüÍ£¶¯»­Ê±³¤ As Integer = 200
-    <Category("LakeUI"), Description("ĞüÍ£¸ßÁÁÒÆ¶¯¶¯»­Ê±³¤£¨ºÁÃë£©£¬0 = ÎŞ¶¯»­"), DefaultValue(GetType(Integer), "200"), Browsable(True)>
+    Private æ‚¬åœåŠ¨ç”»æ—¶é•¿ As Integer = 200
+    <Category("LakeUI"), Description("æ‚¬åœé«˜äº®ç§»åŠ¨åŠ¨ç”»æ—¶é•¿ï¼ˆæ¯«ç§’ï¼‰ï¼Œ0 = æ— åŠ¨ç”»"), DefaultValue(GetType(Integer), "200"), Browsable(True)>
     Public Property HoverAnimationDuration As Integer
         Get
-            Return ĞüÍ£¶¯»­Ê±³¤
+            Return æ‚¬åœåŠ¨ç”»æ—¶é•¿
         End Get
         Set(value As Integer)
             If value < 0 Then value = 0
-            SetValue(ĞüÍ£¶¯»­Ê±³¤, value)
+            SetValue(æ‚¬åœåŠ¨ç”»æ—¶é•¿, value)
         End Set
     End Property
 
-    Private Õ¹¿ª¹Ø±Õ¶¯»­Ê±³¤ As Integer = 200
-    <Category("LakeUI"), Description("Õ¹¿ª/¹Ø±Õ¶¯»­Ê±³¤£¨ºÁÃë£©£¬0 = ÎŞ¶¯»­"), DefaultValue(GetType(Integer), "200"), Browsable(True)>
+    Private å±•å¼€å…³é—­åŠ¨ç”»æ—¶é•¿ As Integer = 200
+    <Category("LakeUI"), Description("å±•å¼€/å…³é—­åŠ¨ç”»æ—¶é•¿ï¼ˆæ¯«ç§’ï¼‰ï¼Œ0 = æ— åŠ¨ç”»"), DefaultValue(GetType(Integer), "200"), Browsable(True)>
     Public Property PopupAnimationDuration As Integer
         Get
-            Return Õ¹¿ª¹Ø±Õ¶¯»­Ê±³¤
+            Return å±•å¼€å…³é—­åŠ¨ç”»æ—¶é•¿
         End Get
         Set(value As Integer)
             If value < 0 Then value = 0
-            SetValue(Õ¹¿ª¹Ø±Õ¶¯»­Ê±³¤, value)
+            SetValue(å±•å¼€å…³é—­åŠ¨ç”»æ—¶é•¿, value)
         End Set
     End Property
 
-    Private ĞüÍ£¶¯»­Ö¡ÂÊ As Integer = 60
-    <Category("LakeUI"), Description("ĞüÍ£¶¯»­Ö¡ÂÊÉÏÏŞ£¬ÉèÎª 0 Ôò²»ÏŞÖÆ"), DefaultValue(60), Browsable(True)>
+    Private æ‚¬åœåŠ¨ç”»å¸§ç‡ As Integer = 60
+    <Category("LakeUI"), Description("æ‚¬åœåŠ¨ç”»å¸§ç‡ä¸Šé™ï¼Œè®¾ä¸º 0 åˆ™ä¸é™åˆ¶"), DefaultValue(60), Browsable(True)>
     Public Property HoverAnimationFPS As Integer
         Get
-            Return ĞüÍ£¶¯»­Ö¡ÂÊ
+            Return æ‚¬åœåŠ¨ç”»å¸§ç‡
         End Get
         Set(value As Integer)
-            ĞüÍ£¶¯»­Ö¡ÂÊ = Math.Max(0, value)
+            æ‚¬åœåŠ¨ç”»å¸§ç‡ = Math.Max(0, value)
         End Set
     End Property
 
-    Private Õ¹¿ª¹Ø±Õ¶¯»­Ö¡ÂÊ As Integer = 60
-    <Category("LakeUI"), Description("Õ¹¿ª/¹Ø±Õ¶¯»­Ö¡ÂÊÉÏÏŞ£¬ÉèÎª 0 Ôò²»ÏŞÖÆ"), DefaultValue(60), Browsable(True)>
+    Private å±•å¼€å…³é—­åŠ¨ç”»å¸§ç‡ As Integer = 60
+    <Category("LakeUI"), Description("å±•å¼€/å…³é—­åŠ¨ç”»å¸§ç‡ä¸Šé™ï¼Œè®¾ä¸º 0 åˆ™ä¸é™åˆ¶"), DefaultValue(60), Browsable(True)>
     Public Property PopupAnimationFPS As Integer
         Get
-            Return Õ¹¿ª¹Ø±Õ¶¯»­Ö¡ÂÊ
+            Return å±•å¼€å…³é—­åŠ¨ç”»å¸§ç‡
         End Get
         Set(value As Integer)
-            Õ¹¿ª¹Ø±Õ¶¯»­Ö¡ÂÊ = Math.Max(0, value)
+            å±•å¼€å…³é—­åŠ¨ç”»å¸§ç‡ = Math.Max(0, value)
         End Set
     End Property
 
 #End Region
 
-#Region "°ó¶¨¿Ø¼ş£¨IExtenderProvider£©"
+#Region "ç»‘å®šæ§ä»¶ï¼ˆIExtenderProviderï¼‰"
 
-    Private ReadOnly °ó¶¨¿Ø¼ş¼¯ºÏ As New Dictionary(Of Control, Boolean)
+    Private ReadOnly ç»‘å®šæ§ä»¶é›†åˆ As New Dictionary(Of Control, Boolean)
 
     Public Function CanExtend(extendee As Object) As Boolean Implements IExtenderProvider.CanExtend
         Return TypeOf extendee Is Control
     End Function
 
-    <Category("LakeUI"), Description("ÆôÓÃºóÓÒ¼ü¸Ã¿Ø¼ş½«×Ô¶¯µ¯³ö´Ë ModernContextMenu")>
+    <Category("LakeUI"), Description("å¯ç”¨åå³é”®è¯¥æ§ä»¶å°†è‡ªåŠ¨å¼¹å‡ºæ­¤ ModernContextMenu")>
     <DefaultValue(False)>
     Public Function GetEnableMenu(control As Control) As Boolean
         Dim result As Boolean = False
-        °ó¶¨¿Ø¼ş¼¯ºÏ.TryGetValue(control, result)
+        ç»‘å®šæ§ä»¶é›†åˆ.TryGetValue(control, result)
         Return result
     End Function
 
     Public Sub SetEnableMenu(control As Control, value As Boolean)
         If value Then
-            If Not °ó¶¨¿Ø¼ş¼¯ºÏ.ContainsKey(control) Then
-                AddHandler control.MouseUp, AddressOf °ó¶¨¿Ø¼ş_MouseUp
-                AddHandler control.Disposed, AddressOf °ó¶¨¿Ø¼ş_Disposed
+            If Not ç»‘å®šæ§ä»¶é›†åˆ.ContainsKey(control) Then
+                AddHandler control.MouseUp, AddressOf ç»‘å®šæ§ä»¶_MouseUp
+                AddHandler control.Disposed, AddressOf ç»‘å®šæ§ä»¶_Disposed
             End If
-            °ó¶¨¿Ø¼ş¼¯ºÏ(control) = True
+            ç»‘å®šæ§ä»¶é›†åˆ(control) = True
         Else
-            If °ó¶¨¿Ø¼ş¼¯ºÏ.ContainsKey(control) Then
-                RemoveHandler control.MouseUp, AddressOf °ó¶¨¿Ø¼ş_MouseUp
-                RemoveHandler control.Disposed, AddressOf °ó¶¨¿Ø¼ş_Disposed
-                °ó¶¨¿Ø¼ş¼¯ºÏ.Remove(control)
+            If ç»‘å®šæ§ä»¶é›†åˆ.ContainsKey(control) Then
+                RemoveHandler control.MouseUp, AddressOf ç»‘å®šæ§ä»¶_MouseUp
+                RemoveHandler control.Disposed, AddressOf ç»‘å®šæ§ä»¶_Disposed
+                ç»‘å®šæ§ä»¶é›†åˆ.Remove(control)
             End If
         End If
     End Sub
 
-    Private Sub °ó¶¨¿Ø¼ş_MouseUp(sender As Object, e As MouseEventArgs)
+    Private Sub ç»‘å®šæ§ä»¶_MouseUp(sender As Object, e As MouseEventArgs)
         If e.Button = MouseButtons.Right Then
             Dim ctrl = DirectCast(sender, Control)
             Show(ctrl, e.Location)
         End If
     End Sub
 
-    Private Sub °ó¶¨¿Ø¼ş_Disposed(sender As Object, e As EventArgs)
+    Private Sub ç»‘å®šæ§ä»¶_Disposed(sender As Object, e As EventArgs)
         Dim ctrl = DirectCast(sender, Control)
         SetEnableMenu(ctrl, False)
     End Sub
 
 #End Region
 
-#Region "ÊÂ¼ş"
+#Region "äº‹ä»¶"
 
     Public Event MenuClosed As EventHandler
 
-    Friend Sub Í¨Öª²Ëµ¥¹Ø±Õ()
-        µ±Ç°µ¯³ö´°¿Ú = Nothing
+    Friend Sub é€šçŸ¥èœå•å…³é—­()
+        å½“å‰å¼¹å‡ºçª—å£ = Nothing
         RaiseEvent MenuClosed(Me, EventArgs.Empty)
     End Sub
 
 #End Region
 
-#Region "ÏÔÊ¾Óë¹Ø±Õ"
+#Region "æ˜¾ç¤ºä¸å…³é—­"
 
-    Private µ±Ç°µ¯³ö´°¿Ú As MenuPopupForm = Nothing
+    Private å½“å‰å¼¹å‡ºçª—å£ As MenuPopupForm = Nothing
 
     Public Sub Show(x As Integer, y As Integer)
         Close()
-        If ÏîÄ¿ÁĞ±í.Count = 0 Then Return
-        µ±Ç°µ¯³ö´°¿Ú = New MenuPopupForm(Me, Nothing)
-        µ±Ç°µ¯³ö´°¿Ú.ShowAt(x, y)
+        If é¡¹ç›®åˆ—è¡¨.Count = 0 Then Return
+        å½“å‰å¼¹å‡ºçª—å£ = New MenuPopupForm(Me, Nothing)
+        å½“å‰å¼¹å‡ºçª—å£.ShowAt(x, y)
     End Sub
 
     Public Sub Show(control As Control, location As Point)
@@ -431,48 +431,48 @@ Public Class ModernContextMenu
     End Sub
 
     Public Sub Close()
-        If µ±Ç°µ¯³ö´°¿Ú IsNot Nothing AndAlso Not µ±Ç°µ¯³ö´°¿Ú.IsDisposed Then
-            µ±Ç°µ¯³ö´°¿Ú.¹Ø±ÕÈ«²¿()
+        If å½“å‰å¼¹å‡ºçª—å£ IsNot Nothing AndAlso Not å½“å‰å¼¹å‡ºçª—å£.IsDisposed Then
+            å½“å‰å¼¹å‡ºçª—å£.å…³é—­å…¨éƒ¨()
         End If
-        µ±Ç°µ¯³ö´°¿Ú = Nothing
+        å½“å‰å¼¹å‡ºçª—å£ = Nothing
     End Sub
 
 #End Region
 
-#Region "µ¯³ö´°¿Ú"
+#Region "å¼¹å‡ºçª—å£"
 
     Friend Class MenuPopupForm
         Inherits PopupForm
         Implements IMessageFilter
 
-        Private ReadOnly ²Ëµ¥ As ModernContextMenu
-        Private ReadOnly ¸¸µ¯´° As MenuPopupForm
-        Private ĞüÍ£Ë÷Òı As Integer = -1
-        Private ×Ó²Ëµ¥µ¯´° As MenuPopupForm = Nothing
-        Private ReadOnly ÏîÄ¿ÇøÓòÁĞ±í As New List(Of Rectangle)
-        Private ÕıÔÚ¹Ø±Õ As Boolean = False
-        Private Êó±ê°´ÏÂ As Boolean = False
+        Private ReadOnly èœå• As ModernContextMenu
+        Private ReadOnly çˆ¶å¼¹çª— As MenuPopupForm
+        Private æ‚¬åœç´¢å¼• As Integer = -1
+        Private å­èœå•å¼¹çª— As MenuPopupForm = Nothing
+        Private ReadOnly é¡¹ç›®åŒºåŸŸåˆ—è¡¨ As New List(Of Rectangle)
+        Private æ­£åœ¨å…³é—­ As Boolean = False
+        Private é¼ æ ‡æŒ‰ä¸‹ As Boolean = False
 
-        ' ĞüÍ£¶¯»­Ïà¹Ø
-        Private ReadOnly ¶¯»­Ãë±í As New Stopwatch()
-        Private ¶¯»­¼ÆÊ±Æ÷ As System.Windows.Forms.Timer
-        Private ĞüÍ£ÓÃIdle As Boolean = False
-        Private ¶¯»­ÆğÊ¼Y As Single = -1
-        Private ¶¯»­Ä¿±êY As Single = -1
-        Private ¶¯»­µ±Ç°Y As Single = -1
-        Private ¶¯»­ÆğÊ¼¸ß¶È As Single = 0
-        Private ¶¯»­Ä¿±ê¸ß¶È As Single = 0
-        Private ¶¯»­µ±Ç°¸ß¶È As Single = 0
-        Private ¶¯»­ÖĞ As Boolean = False
-        Private ¶¯»­ÏÔÊ¾¸ßÁÁ As Boolean = False
+        ' æ‚¬åœåŠ¨ç”»ç›¸å…³
+        Private ReadOnly åŠ¨ç”»ç§’è¡¨ As New Stopwatch()
+        Private åŠ¨ç”»è®¡æ—¶å™¨ As System.Windows.Forms.Timer
+        Private æ‚¬åœç”¨Idle As Boolean = False
+        Private åŠ¨ç”»èµ·å§‹Y As Single = -1
+        Private åŠ¨ç”»ç›®æ ‡Y As Single = -1
+        Private åŠ¨ç”»å½“å‰Y As Single = -1
+        Private åŠ¨ç”»èµ·å§‹é«˜åº¦ As Single = 0
+        Private åŠ¨ç”»ç›®æ ‡é«˜åº¦ As Single = 0
+        Private åŠ¨ç”»å½“å‰é«˜åº¦ As Single = 0
+        Private åŠ¨ç”»ä¸­ As Boolean = False
+        Private åŠ¨ç”»æ˜¾ç¤ºé«˜äº® As Boolean = False
 
-        ' Õ¹¿ª¹Ø±Õ¶¯»­Ïà¹Ø
-        Private ReadOnly Õ¹¿ª¹Ø±ÕÃë±í As New Stopwatch()
-        Private Õ¹¿ª¹Ø±Õ¼ÆÊ±Æ÷ As System.Windows.Forms.Timer
-        Private Õ¹¿ª¹Ø±ÕÓÃIdle As Boolean = False
-        Private Õ¹¿ª¹Ø±Õ¶¯»­ÖĞ As Boolean = False
-        Private ÕıÔÚ¹Ø±Õ¶¯»­ As Boolean = False
-        Private ×îÖÕ¸ß¶È As Integer
+        ' å±•å¼€å…³é—­åŠ¨ç”»ç›¸å…³
+        Private ReadOnly å±•å¼€å…³é—­ç§’è¡¨ As New Stopwatch()
+        Private å±•å¼€å…³é—­è®¡æ—¶å™¨ As System.Windows.Forms.Timer
+        Private å±•å¼€å…³é—­ç”¨Idle As Boolean = False
+        Private å±•å¼€å…³é—­åŠ¨ç”»ä¸­ As Boolean = False
+        Private æ­£åœ¨å…³é—­åŠ¨ç”» As Boolean = False
+        Private æœ€ç»ˆé«˜åº¦ As Integer
 
         Private Const WM_LBUTTONDOWN As Integer = &H201
         Private Const WM_RBUTTONDOWN As Integer = &H204
@@ -492,26 +492,26 @@ Public Class ModernContextMenu
         Protected Overrides Sub WndProc(ByRef m As Message)
             MyBase.WndProc(m)
             If m.Msg = WM_ACTIVATEAPP AndAlso m.WParam = IntPtr.Zero Then
-                If Not ÕıÔÚ¹Ø±Õ AndAlso Not ÕıÔÚ¹Ø±Õ¶¯»­ Then BeginInvoke(Sub() ¹Ø±ÕÈ«²¿())
+                If Not æ­£åœ¨å…³é—­ AndAlso Not æ­£åœ¨å…³é—­åŠ¨ç”» Then BeginInvoke(Sub() å…³é—­å…¨éƒ¨())
             End If
         End Sub
 
         Friend Sub New(menu As ModernContextMenu, parent As MenuPopupForm)
-            ²Ëµ¥ = menu
-            ¸¸µ¯´° = parent
+            èœå• = menu
+            çˆ¶å¼¹çª— = parent
             BackColor = menu.BackColor1
             SetStyle(ControlStyles.AllPaintingInWmPaint Or ControlStyles.UserPaint Or ControlStyles.OptimizedDoubleBuffer, True)
 
-            ĞüÍ£ÓÃIdle = (menu.ĞüÍ£¶¯»­Ö¡ÂÊ <= 0)
-            If Not ĞüÍ£ÓÃIdle Then
-                Dim interval As Integer = Math.Max(1, 1000 \ menu.ĞüÍ£¶¯»­Ö¡ÂÊ)
-                ¶¯»­¼ÆÊ±Æ÷ = New System.Windows.Forms.Timer() With {.Interval = interval}
+            æ‚¬åœç”¨Idle = (menu.æ‚¬åœåŠ¨ç”»å¸§ç‡ <= 0)
+            If Not æ‚¬åœç”¨Idle Then
+                Dim interval As Integer = Math.Max(1, 1000 \ menu.æ‚¬åœåŠ¨ç”»å¸§ç‡)
+                åŠ¨ç”»è®¡æ—¶å™¨ = New System.Windows.Forms.Timer() With {.Interval = interval}
             End If
 
-            Õ¹¿ª¹Ø±ÕÓÃIdle = (menu.Õ¹¿ª¹Ø±Õ¶¯»­Ö¡ÂÊ <= 0)
-            If Not Õ¹¿ª¹Ø±ÕÓÃIdle Then
-                Dim interval As Integer = Math.Max(1, 1000 \ menu.Õ¹¿ª¹Ø±Õ¶¯»­Ö¡ÂÊ)
-                Õ¹¿ª¹Ø±Õ¼ÆÊ±Æ÷ = New System.Windows.Forms.Timer() With {.Interval = interval}
+            å±•å¼€å…³é—­ç”¨Idle = (menu.å±•å¼€å…³é—­åŠ¨ç”»å¸§ç‡ <= 0)
+            If Not å±•å¼€å…³é—­ç”¨Idle Then
+                Dim interval As Integer = Math.Max(1, 1000 \ menu.å±•å¼€å…³é—­åŠ¨ç”»å¸§ç‡)
+                å±•å¼€å…³é—­è®¡æ—¶å™¨ = New System.Windows.Forms.Timer() With {.Interval = interval}
             End If
         End Sub
 
@@ -520,57 +520,57 @@ Public Class ModernContextMenu
         End Function
 
         Friend Sub ShowAt(x As Integer, y As Integer)
-            ¼ÆËã²¼¾Ö()
-            ×îÖÕ¸ß¶È = Me.Height
+            è®¡ç®—å¸ƒå±€()
+            æœ€ç»ˆé«˜åº¦ = Me.Height
             Me.Location = New Point(x, y)
             Dim scr = Screen.FromPoint(New Point(x, y)).WorkingArea
             If Me.Right > scr.Right Then Me.Left = scr.Right - Me.Width
             If Me.Bottom > scr.Bottom Then Me.Top = y - Me.Height
             If Me.Left < scr.Left Then Me.Left = scr.Left
             If Me.Top < scr.Top Then Me.Top = scr.Top
-            If ¸¸µ¯´° Is Nothing Then Application.AddMessageFilter(Me)
-            If ²Ëµ¥.Õ¹¿ª¹Ø±Õ¶¯»­Ê±³¤ > 0 Then
+            If çˆ¶å¼¹çª— Is Nothing Then Application.AddMessageFilter(Me)
+            If èœå•.å±•å¼€å…³é—­åŠ¨ç”»æ—¶é•¿ > 0 Then
                 Me.Size = New Size(Me.Width, 1)
                 Me.Show()
-                Õ¹¿ª¹Ø±Õ¶¯»­ÖĞ = True
-                ÕıÔÚ¹Ø±Õ¶¯»­ = False
-                Õ¹¿ª¹Ø±ÕÃë±í.Restart()
-                Æô¶¯Õ¹¿ª¹Ø±ÕÇı¶¯()
+                å±•å¼€å…³é—­åŠ¨ç”»ä¸­ = True
+                æ­£åœ¨å…³é—­åŠ¨ç”» = False
+                å±•å¼€å…³é—­ç§’è¡¨.Restart()
+                å¯åŠ¨å±•å¼€å…³é—­é©±åŠ¨()
             Else
                 Me.Show()
             End If
         End Sub
 
-        Private Sub ¼ÆËã²¼¾Ö()
+        Private Sub è®¡ç®—å¸ƒå±€()
             Dim s As Single = DpiScale()
-            Dim padL As Integer = CInt(²Ëµ¥.ÄÚ±ß¾à.Left * s)
-            Dim padR As Integer = CInt(²Ëµ¥.ÄÚ±ß¾à.Right * s)
-            Dim padT As Integer = CInt(²Ëµ¥.ÄÚ±ß¾à.Top * s)
-            Dim padB As Integer = CInt(²Ëµ¥.ÄÚ±ß¾à.Bottom * s)
-            Dim border As Integer = CInt(²Ëµ¥.±ß¿ò¿í¶È * s)
+            Dim padL As Integer = CInt(èœå•.å†…è¾¹è·.Left * s)
+            Dim padR As Integer = CInt(èœå•.å†…è¾¹è·.Right * s)
+            Dim padT As Integer = CInt(èœå•.å†…è¾¹è·.Top * s)
+            Dim padB As Integer = CInt(èœå•.å†…è¾¹è·.Bottom * s)
+            Dim border As Integer = CInt(èœå•.è¾¹æ¡†å®½åº¦ * s)
             Dim currentY As Integer = padT + border
             Dim maxContentWidth As Integer = CInt(80 * s)
-            ÏîÄ¿ÇøÓòÁĞ±í.Clear()
+            é¡¹ç›®åŒºåŸŸåˆ—è¡¨.Clear()
 
-            Dim iconCol As Integer = CInt(²Ëµ¥.ÓĞĞ§Í¼±êÁĞ¿í¶È * s)
-            Dim ipL As Integer = CInt(²Ëµ¥.ÏîÄ¿ÄÚ±ß¾à.Left * s)
-            Dim ipR As Integer = CInt(²Ëµ¥.ÏîÄ¿ÄÚ±ß¾à.Right * s)
-            Dim iconTextGap As Integer = If(iconCol > 0, CInt(²Ëµ¥.Í¼±êÎÄ×Ö¼ä¾à * s), 0)
+            Dim iconCol As Integer = CInt(èœå•.æœ‰æ•ˆå›¾æ ‡åˆ—å®½åº¦ * s)
+            Dim ipL As Integer = CInt(èœå•.é¡¹ç›®å†…è¾¹è·.Left * s)
+            Dim ipR As Integer = CInt(èœå•.é¡¹ç›®å†…è¾¹è·.Right * s)
+            Dim iconTextGap As Integer = If(iconCol > 0, CInt(èœå•.å›¾æ ‡æ–‡å­—é—´è· * s), 0)
             Dim arrowExtra As Integer = CInt(20 * s)
 
-            For Each item In ²Ëµ¥.ÏîÄ¿ÁĞ±í
+            For Each item In èœå•.é¡¹ç›®åˆ—è¡¨
                 If item.IsSeparator Then
-                    Dim sepH As Integer = CInt(²Ëµ¥.·Ö¸îÏß¸ß¶È * s)
-                    ÏîÄ¿ÇøÓòÁĞ±í.Add(New Rectangle(0, currentY, 0, sepH))
+                    Dim sepH As Integer = CInt(èœå•.åˆ†å‰²çº¿é«˜åº¦ * s)
+                    é¡¹ç›®åŒºåŸŸåˆ—è¡¨.Add(New Rectangle(0, currentY, 0, sepH))
                     currentY += sepH
                 Else
-                    Dim font = If(item.IsDescription, If(item.Font, ²Ëµ¥.ËµÃ÷×ÖÌå), If(item.Font, ²Ëµ¥.²Ëµ¥×ÖÌå))
+                    Dim font = If(item.IsDescription, If(item.Font, èœå•.è¯´æ˜å­—ä½“), If(item.Font, èœå•.èœå•å­—ä½“))
                     Dim textWidth = TextRenderer.MeasureText(item.Text, font).Width
                     Dim w = ipL + iconCol + iconTextGap + textWidth + ipR + arrowExtra
                     If Not item.IsDescription AndAlso item.SubMenu IsNot Nothing Then w += arrowExtra
                     maxContentWidth = Math.Max(maxContentWidth, w)
-                    Dim h As Integer = CInt(If(item.IsDescription, ²Ëµ¥.ËµÃ÷Ïî¸ß¶È, ²Ëµ¥.ÏîÄ¿¸ß¶È) * s)
-                    ÏîÄ¿ÇøÓòÁĞ±í.Add(New Rectangle(0, currentY, 0, h))
+                    Dim h As Integer = CInt(If(item.IsDescription, èœå•.è¯´æ˜é¡¹é«˜åº¦, èœå•.é¡¹ç›®é«˜åº¦) * s)
+                    é¡¹ç›®åŒºåŸŸåˆ—è¡¨.Add(New Rectangle(0, currentY, 0, h))
                     currentY += h
                 End If
             Next
@@ -581,47 +581,47 @@ Public Class ModernContextMenu
             Dim itemX = border + padL
             Dim itemWidth = totalWidth - border * 2 - padL - padR
 
-            For i = 0 To ÏîÄ¿ÇøÓòÁĞ±í.Count - 1
-                Dim r = ÏîÄ¿ÇøÓòÁĞ±í(i)
-                ÏîÄ¿ÇøÓòÁĞ±í(i) = New Rectangle(itemX, r.Y, itemWidth, r.Height)
+            For i = 0 To é¡¹ç›®åŒºåŸŸåˆ—è¡¨.Count - 1
+                Dim r = é¡¹ç›®åŒºåŸŸåˆ—è¡¨(i)
+                é¡¹ç›®åŒºåŸŸåˆ—è¡¨(i) = New Rectangle(itemX, r.Y, itemWidth, r.Height)
             Next
 
             Me.ClientSize = New Size(totalWidth + 1, totalHeight + 1)
         End Sub
 
-#Region "»æÖÆ"
+#Region "ç»˜åˆ¶"
 
         Protected Overrides Sub OnPaint(e As PaintEventArgs)
-            Dim _ssaa As Integer = If(Class1.GlobalSSAA > 1, Class1.GlobalSSAA, ²Ëµ¥.³¬²ÉÑù±¶ÂÊ)
+            Dim _ssaa As Integer = If(Class1.GlobalSSAA > 1, Class1.GlobalSSAA, èœå•.è¶…é‡‡æ ·å€ç‡)
             If _ssaa > 1 Then
                 Using bmp As New Bitmap(Me.Width * _ssaa, Me.Height * _ssaa)
                     Using g As Graphics = Graphics.FromImage(bmp)
                         g.ScaleTransform(_ssaa, _ssaa)
-                        »æÖÆÍ¼ĞÎÄÚÈİ(g)
+                        ç»˜åˆ¶å›¾å½¢å†…å®¹(g)
                     End Using
                     e.Graphics.CompositingQuality = Class1.GlobalCompositingQuality
                     e.Graphics.InterpolationMode = Class1.GlobalInterpolationMode
                     e.Graphics.DrawImage(bmp, 0, 0, Me.Width, Me.Height)
                 End Using
             Else
-                »æÖÆÍ¼ĞÎÄÚÈİ(e.Graphics)
+                ç»˜åˆ¶å›¾å½¢å†…å®¹(e.Graphics)
             End If
-            »æÖÆÈ«²¿ÎÄ±¾(e.Graphics)
+            ç»˜åˆ¶å…¨éƒ¨æ–‡æœ¬(e.Graphics)
         End Sub
 
-        Private Sub »æÖÆÍ¼ĞÎÄÚÈİ(g As Graphics)
+        Private Sub ç»˜åˆ¶å›¾å½¢å†…å®¹(g As Graphics)
             g.SmoothingMode = Class1.GlobalSmoothingMode
             g.InterpolationMode = Class1.GlobalInterpolationMode
 
-            Using brush As New SolidBrush(²Ëµ¥.±³¾°ÑÕÉ«)
+            Using brush As New SolidBrush(èœå•.èƒŒæ™¯é¢œè‰²)
                 g.FillRectangle(brush, ClientRectangle)
             End Using
 
-            If ²Ëµ¥.±ß¿ò¿í¶È > 0 Then
-                Dim bw As Integer = CInt(²Ëµ¥.±ß¿ò¿í¶È * DpiScale())
+            If èœå•.è¾¹æ¡†å®½åº¦ > 0 Then
+                Dim bw As Integer = CInt(èœå•.è¾¹æ¡†å®½åº¦ * DpiScale())
                 Dim cw = ClientSize.Width - 1
                 Dim ch = ClientSize.Height - 1
-                Using brush As New SolidBrush(²Ëµ¥.±ß¿òÑÕÉ«)
+                Using brush As New SolidBrush(èœå•.è¾¹æ¡†é¢œè‰²)
                     g.FillRectangle(brush, 0, 0, cw, bw)
                     g.FillRectangle(brush, 0, ch - bw, cw, bw)
                     g.FillRectangle(brush, 0, bw, bw, ch - bw * 2)
@@ -629,36 +629,36 @@ Public Class ModernContextMenu
                 End Using
             End If
 
-            »æÖÆĞüÍ£¸ßÁÁ(g)
+            ç»˜åˆ¶æ‚¬åœé«˜äº®(g)
 
-            For i = 0 To ²Ëµ¥.ÏîÄ¿ÁĞ±í.Count - 1
-                If i >= ÏîÄ¿ÇøÓòÁĞ±í.Count Then Exit For
-                Dim item = ²Ëµ¥.ÏîÄ¿ÁĞ±í(i)
-                Dim rect = ÏîÄ¿ÇøÓòÁĞ±í(i)
+            For i = 0 To èœå•.é¡¹ç›®åˆ—è¡¨.Count - 1
+                If i >= é¡¹ç›®åŒºåŸŸåˆ—è¡¨.Count Then Exit For
+                Dim item = èœå•.é¡¹ç›®åˆ—è¡¨(i)
+                Dim rect = é¡¹ç›®åŒºåŸŸåˆ—è¡¨(i)
                 If item.IsSeparator Then
-                    »æÖÆ·Ö¸îÏß(g, rect)
+                    ç»˜åˆ¶åˆ†å‰²çº¿(g, rect)
                 ElseIf Not item.IsDescription Then
-                    »æÖÆÏîÄ¿Í¼ĞÎ(g, item, rect)
+                    ç»˜åˆ¶é¡¹ç›®å›¾å½¢(g, item, rect)
                 End If
             Next
         End Sub
 
-        Private Sub »æÖÆ·Ö¸îÏß(g As Graphics, rect As Rectangle)
+        Private Sub ç»˜åˆ¶åˆ†å‰²çº¿(g As Graphics, rect As Rectangle)
             Dim lineY As Integer = rect.Y + (rect.Height - 1) \ 2
-            Using brush As New SolidBrush(²Ëµ¥.·Ö¸îÏßÑÕÉ«)
+            Using brush As New SolidBrush(èœå•.åˆ†å‰²çº¿é¢œè‰²)
                 g.FillRectangle(brush, rect.X, lineY, rect.Width, 1)
             End Using
         End Sub
 
-        Private Sub »æÖÆĞüÍ£¸ßÁÁ(g As Graphics)
-            If Not ¶¯»­ÏÔÊ¾¸ßÁÁ Then Return
+        Private Sub ç»˜åˆ¶æ‚¬åœé«˜äº®(g As Graphics)
+            If Not åŠ¨ç”»æ˜¾ç¤ºé«˜äº® Then Return
             Dim highlightRect As New RectangleF(
-                ÏîÄ¿ÇøÓòÁĞ±í(0).X, ¶¯»­µ±Ç°Y,
-                ÏîÄ¿ÇøÓòÁĞ±í(0).Width, ¶¯»­µ±Ç°¸ß¶È)
-            Dim highlightColor As Color = If(Êó±ê°´ÏÂ, ²Ëµ¥.°´ÏÂ±³¾°ÑÕÉ«, ²Ëµ¥.ĞüÍ£±³¾°ÑÕÉ«)
-            If ²Ëµ¥.ĞüÍ£Ô²½Ç°ë¾¶ > 0 Then
-                Dim radius As Integer = Math.Min(CInt(²Ëµ¥.ĞüÍ£Ô²½Ç°ë¾¶ * DpiScale()), CInt(highlightRect.Height) \ 2)
-                Using path As GraphicsPath = RectangleRenderer.´´½¨Ô²½Ç¾ØĞÎÂ·¾¶(highlightRect, radius)
+                é¡¹ç›®åŒºåŸŸåˆ—è¡¨(0).X, åŠ¨ç”»å½“å‰Y,
+                é¡¹ç›®åŒºåŸŸåˆ—è¡¨(0).Width, åŠ¨ç”»å½“å‰é«˜åº¦)
+            Dim highlightColor As Color = If(é¼ æ ‡æŒ‰ä¸‹, èœå•.æŒ‰ä¸‹èƒŒæ™¯é¢œè‰², èœå•.æ‚¬åœèƒŒæ™¯é¢œè‰²)
+            If èœå•.æ‚¬åœåœ†è§’åŠå¾„ > 0 Then
+                Dim radius As Integer = Math.Min(CInt(èœå•.æ‚¬åœåœ†è§’åŠå¾„ * DpiScale()), CInt(highlightRect.Height) \ 2)
+                Using path As GraphicsPath = RectangleRenderer.åˆ›å»ºåœ†è§’çŸ©å½¢è·¯å¾„(highlightRect, radius)
                     Using brush As New SolidBrush(highlightColor)
                         g.FillPath(brush, path)
                     End Using
@@ -670,17 +670,17 @@ Public Class ModernContextMenu
             End If
         End Sub
 
-        Private Sub »æÖÆÏîÄ¿Í¼ĞÎ(g As Graphics, item As ModernMenuItem, rect As Rectangle)
+        Private Sub ç»˜åˆ¶é¡¹ç›®å›¾å½¢(g As Graphics, item As ModernMenuItem, rect As Rectangle)
             Dim s As Single = DpiScale()
-            Dim ipL As Integer = CInt(²Ëµ¥.ÏîÄ¿ÄÚ±ß¾à.Left * s)
-            Dim iconCol As Integer = CInt(²Ëµ¥.ÓĞĞ§Í¼±êÁĞ¿í¶È * s)
+            Dim ipL As Integer = CInt(èœå•.é¡¹ç›®å†…è¾¹è·.Left * s)
+            Dim iconCol As Integer = CInt(èœå•.æœ‰æ•ˆå›¾æ ‡åˆ—å®½åº¦ * s)
 
             If iconCol > 0 Then
                 Dim iconX As Integer = rect.X + ipL
                 Dim iconY As Integer = rect.Y + (rect.Height - iconCol) \ 2
 
                 If item.Checked Then
-                    »æÖÆ¹´Ñ¡±ê¼Ç(g, New Rectangle(iconX, iconY, iconCol, iconCol))
+                    ç»˜åˆ¶å‹¾é€‰æ ‡è®°(g, New Rectangle(iconX, iconY, iconCol, iconCol))
                 End If
 
                 If item.Icon IsNot Nothing Then
@@ -690,33 +690,33 @@ Public Class ModernContextMenu
 
             If item.SubMenu IsNot Nothing Then
                 Dim arrowW As Integer = CInt(16 * s)
-                »æÖÆ¼ıÍ·(g, New Rectangle(rect.Right - arrowW, rect.Y, arrowW, rect.Height))
+                ç»˜åˆ¶ç®­å¤´(g, New Rectangle(rect.Right - arrowW, rect.Y, arrowW, rect.Height))
             End If
         End Sub
 
-        Private Sub »æÖÆÈ«²¿ÎÄ±¾(g As Graphics)
+        Private Sub ç»˜åˆ¶å…¨éƒ¨æ–‡æœ¬(g As Graphics)
             Dim s As Single = DpiScale()
-            Dim iconCol As Integer = CInt(²Ëµ¥.ÓĞĞ§Í¼±êÁĞ¿í¶È * s)
-            Dim ipL As Integer = CInt(²Ëµ¥.ÏîÄ¿ÄÚ±ß¾à.Left * s)
-            Dim ipR As Integer = CInt(²Ëµ¥.ÏîÄ¿ÄÚ±ß¾à.Right * s)
-            Dim ipT As Integer = CInt(²Ëµ¥.ÏîÄ¿ÄÚ±ß¾à.Top * s)
-            Dim ipB As Integer = CInt(²Ëµ¥.ÏîÄ¿ÄÚ±ß¾à.Bottom * s)
-            Dim iconTextGap As Integer = If(iconCol > 0, CInt(²Ëµ¥.Í¼±êÎÄ×Ö¼ä¾à * s), 0)
+            Dim iconCol As Integer = CInt(èœå•.æœ‰æ•ˆå›¾æ ‡åˆ—å®½åº¦ * s)
+            Dim ipL As Integer = CInt(èœå•.é¡¹ç›®å†…è¾¹è·.Left * s)
+            Dim ipR As Integer = CInt(èœå•.é¡¹ç›®å†…è¾¹è·.Right * s)
+            Dim ipT As Integer = CInt(èœå•.é¡¹ç›®å†…è¾¹è·.Top * s)
+            Dim ipB As Integer = CInt(èœå•.é¡¹ç›®å†…è¾¹è·.Bottom * s)
+            Dim iconTextGap As Integer = If(iconCol > 0, CInt(èœå•.å›¾æ ‡æ–‡å­—é—´è· * s), 0)
 
-            For i = 0 To ²Ëµ¥.ÏîÄ¿ÁĞ±í.Count - 1
-                If i >= ÏîÄ¿ÇøÓòÁĞ±í.Count Then Exit For
-                Dim item = ²Ëµ¥.ÏîÄ¿ÁĞ±í(i)
+            For i = 0 To èœå•.é¡¹ç›®åˆ—è¡¨.Count - 1
+                If i >= é¡¹ç›®åŒºåŸŸåˆ—è¡¨.Count Then Exit For
+                Dim item = èœå•.é¡¹ç›®åˆ—è¡¨(i)
                 If item.IsSeparator Then Continue For
-                Dim rect = ÏîÄ¿ÇøÓòÁĞ±í(i)
+                Dim rect = é¡¹ç›®åŒºåŸŸåˆ—è¡¨(i)
                 Dim x As Integer = rect.X + ipL + iconCol + iconTextGap
                 Dim font As Font
                 Dim foreColor As Color
                 If item.IsDescription Then
-                    font = If(item.Font, ²Ëµ¥.ËµÃ÷×ÖÌå)
-                    foreColor = If(item.ForeColor <> Color.Empty, item.ForeColor, ²Ëµ¥.ËµÃ÷ÎÄ±¾ÑÕÉ«)
+                    font = If(item.Font, èœå•.è¯´æ˜å­—ä½“)
+                    foreColor = If(item.ForeColor <> Color.Empty, item.ForeColor, èœå•.è¯´æ˜æ–‡æœ¬é¢œè‰²)
                 Else
-                    font = If(item.Font, ²Ëµ¥.²Ëµ¥×ÖÌå)
-                    foreColor = If(item.ForeColor <> Color.Empty, item.ForeColor, ²Ëµ¥.ÎÄ±¾ÑÕÉ«)
+                    font = If(item.Font, èœå•.èœå•å­—ä½“)
+                    foreColor = If(item.ForeColor <> Color.Empty, item.ForeColor, èœå•.æ–‡æœ¬é¢œè‰²)
                 End If
                 Dim arrowSpace As Integer = If(Not item.IsDescription AndAlso item.SubMenu IsNot Nothing, CInt(20 * s), 0)
                 Dim textRect As New Rectangle(x, rect.Y + ipT, rect.Width - ipL - iconCol - iconTextGap - ipR - arrowSpace, rect.Height - ipT - ipB)
@@ -725,7 +725,7 @@ Public Class ModernContextMenu
             Next
         End Sub
 
-        Private Sub »æÖÆ¹´Ñ¡±ê¼Ç(g As Graphics, rect As Rectangle)
+        Private Sub ç»˜åˆ¶å‹¾é€‰æ ‡è®°(g As Graphics, rect As Rectangle)
             Dim cx As Single = rect.X + rect.Width / 2.0F
             Dim cy As Single = rect.Y + rect.Height / 2.0F
             Dim s As Single = rect.Height * 0.18F
@@ -746,7 +746,7 @@ Public Class ModernContextMenu
                     wp.LineJoin = LineJoin.Round
                     path.Widen(wp)
                 End Using
-                Using brush As New SolidBrush(²Ëµ¥.¹´Ñ¡ÑÕÉ«)
+                Using brush As New SolidBrush(èœå•.å‹¾é€‰é¢œè‰²)
                     g.FillPath(brush, path)
                 End Using
             End Using
@@ -754,10 +754,10 @@ Public Class ModernContextMenu
             g.SmoothingMode = oldSmooth
         End Sub
 
-        Private Sub »æÖÆ¼ıÍ·(g As Graphics, rect As Rectangle)
+        Private Sub ç»˜åˆ¶ç®­å¤´(g As Graphics, rect As Rectangle)
             Dim cx As Single = rect.X + rect.Width / 2.0F
             Dim cy As Single = rect.Y + rect.Height / 2.0F
-            Dim arrSize As Single = ²Ëµ¥.¼ıÍ·´óĞ¡ * DpiScale()
+            Dim arrSize As Single = èœå•.ç®­å¤´å¤§å° * DpiScale()
             Dim arrH As Single = arrSize
             Dim arrW As Single = CSng(arrSize * Math.Sqrt(3.0) / 2.0)
 
@@ -788,7 +788,7 @@ Public Class ModernContextMenu
                     path.AddBezier(a, cp1, cp2, b)
                 Next
                 path.CloseFigure()
-                Using brush As New SolidBrush(²Ëµ¥.¼ıÍ·ÑÕÉ«)
+                Using brush As New SolidBrush(èœå•.ç®­å¤´é¢œè‰²)
                     g.FillPath(brush, path)
                 End Using
             End Using
@@ -798,44 +798,44 @@ Public Class ModernContextMenu
 
 #End Region
 
-#Region "Êó±ê½»»¥"
+#Region "é¼ æ ‡äº¤äº’"
 
         Protected Overrides Sub OnMouseMove(e As MouseEventArgs)
             MyBase.OnMouseMove(e)
-            Dim newIndex = »ñÈ¡ÏîÄ¿Ë÷Òı(e.Location)
-            If newIndex <> ĞüÍ£Ë÷Òı Then
-                ĞüÍ£Ë÷Òı = newIndex
-                ¸üĞÂĞüÍ£¶¯»­()
+            Dim newIndex = è·å–é¡¹ç›®ç´¢å¼•(e.Location)
+            If newIndex <> æ‚¬åœç´¢å¼• Then
+                æ‚¬åœç´¢å¼• = newIndex
+                æ›´æ–°æ‚¬åœåŠ¨ç”»()
                 Invalidate()
-                ´¦Àí×Ó²Ëµ¥ĞüÍ£()
+                å¤„ç†å­èœå•æ‚¬åœ()
             End If
         End Sub
 
         Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
             MyBase.OnMouseDown(e)
             If e.Button = MouseButtons.Left OrElse e.Button = MouseButtons.Right Then
-                Êó±ê°´ÏÂ = True
+                é¼ æ ‡æŒ‰ä¸‹ = True
                 Invalidate()
             End If
         End Sub
 
         Protected Overrides Sub OnMouseUp(e As MouseEventArgs)
             MyBase.OnMouseUp(e)
-            Êó±ê°´ÏÂ = False
+            é¼ æ ‡æŒ‰ä¸‹ = False
             Invalidate()
         End Sub
 
         Protected Overrides Sub OnMouseClick(e As MouseEventArgs)
             MyBase.OnMouseClick(e)
             If e.Button <> MouseButtons.Left AndAlso e.Button <> MouseButtons.Right Then Return
-            Dim index = »ñÈ¡ÏîÄ¿Ë÷Òı(e.Location)
-            If index < 0 OrElse index >= ²Ëµ¥.ÏîÄ¿ÁĞ±í.Count Then Return
-            Dim item = ²Ëµ¥.ÏîÄ¿ÁĞ±í(index)
+            Dim index = è·å–é¡¹ç›®ç´¢å¼•(e.Location)
+            If index < 0 OrElse index >= èœå•.é¡¹ç›®åˆ—è¡¨.Count Then Return
+            Dim item = èœå•.é¡¹ç›®åˆ—è¡¨(index)
             If item.IsSeparator Then Return
             If item.SubMenu IsNot Nothing Then Return
             item.PerformClick()
             If item.CloseOnClick Then
-                ¹Ø±ÕÈ«²¿()
+                å…³é—­å…¨éƒ¨()
             Else
                 Invalidate()
             End If
@@ -843,17 +843,17 @@ Public Class ModernContextMenu
 
         Protected Overrides Sub OnMouseLeave(e As EventArgs)
             MyBase.OnMouseLeave(e)
-            If ×Ó²Ëµ¥µ¯´° Is Nothing OrElse ×Ó²Ëµ¥µ¯´°.IsDisposed Then
-                ĞüÍ£Ë÷Òı = -1
-                ¸üĞÂĞüÍ£¶¯»­()
+            If å­èœå•å¼¹çª— Is Nothing OrElse å­èœå•å¼¹çª—.IsDisposed Then
+                æ‚¬åœç´¢å¼• = -1
+                æ›´æ–°æ‚¬åœåŠ¨ç”»()
                 Invalidate()
             End If
         End Sub
 
-        Private Function »ñÈ¡ÏîÄ¿Ë÷Òı(location As Point) As Integer
-            For i = 0 To ÏîÄ¿ÇøÓòÁĞ±í.Count - 1
-                If ÏîÄ¿ÇøÓòÁĞ±í(i).Contains(location) Then
-                    If i < ²Ëµ¥.ÏîÄ¿ÁĞ±í.Count AndAlso (²Ëµ¥.ÏîÄ¿ÁĞ±í(i).IsSeparator OrElse ²Ëµ¥.ÏîÄ¿ÁĞ±í(i).IsDescription) Then Return -1
+        Private Function è·å–é¡¹ç›®ç´¢å¼•(location As Point) As Integer
+            For i = 0 To é¡¹ç›®åŒºåŸŸåˆ—è¡¨.Count - 1
+                If é¡¹ç›®åŒºåŸŸåˆ—è¡¨(i).Contains(location) Then
+                    If i < èœå•.é¡¹ç›®åˆ—è¡¨.Count AndAlso (èœå•.é¡¹ç›®åˆ—è¡¨(i).IsSeparator OrElse èœå•.é¡¹ç›®åˆ—è¡¨(i).IsDescription) Then Return -1
                     Return i
                 End If
             Next
@@ -862,281 +862,281 @@ Public Class ModernContextMenu
 
 #End Region
 
-#Region "×Ó²Ëµ¥¹ÜÀí"
+#Region "å­èœå•ç®¡ç†"
 
-        Private Sub ´¦Àí×Ó²Ëµ¥ĞüÍ£()
-            If ×Ó²Ëµ¥µ¯´° IsNot Nothing AndAlso Not ×Ó²Ëµ¥µ¯´°.IsDisposed Then
-                ×Ó²Ëµ¥µ¯´°.¹Ø±Õ×ÔÉí¼°×Ó²Ëµ¥()
-                ×Ó²Ëµ¥µ¯´° = Nothing
+        Private Sub å¤„ç†å­èœå•æ‚¬åœ()
+            If å­èœå•å¼¹çª— IsNot Nothing AndAlso Not å­èœå•å¼¹çª—.IsDisposed Then
+                å­èœå•å¼¹çª—.å…³é—­è‡ªèº«åŠå­èœå•()
+                å­èœå•å¼¹çª— = Nothing
             End If
-            If ĞüÍ£Ë÷Òı < 0 OrElse ĞüÍ£Ë÷Òı >= ²Ëµ¥.ÏîÄ¿ÁĞ±í.Count Then Return
-            Dim item = ²Ëµ¥.ÏîÄ¿ÁĞ±í(ĞüÍ£Ë÷Òı)
+            If æ‚¬åœç´¢å¼• < 0 OrElse æ‚¬åœç´¢å¼• >= èœå•.é¡¹ç›®åˆ—è¡¨.Count Then Return
+            Dim item = èœå•.é¡¹ç›®åˆ—è¡¨(æ‚¬åœç´¢å¼•)
             If item.IsSeparator Then Return
             If item.SubMenu Is Nothing OrElse item.SubMenu.Items.Count = 0 Then Return
-            Dim rect = ÏîÄ¿ÇøÓòÁĞ±í(ĞüÍ£Ë÷Òı)
+            Dim rect = é¡¹ç›®åŒºåŸŸåˆ—è¡¨(æ‚¬åœç´¢å¼•)
             Dim screenPt = Me.PointToScreen(New Point(rect.Right, rect.Top))
-            ×Ó²Ëµ¥µ¯´° = New MenuPopupForm(item.SubMenu, Me)
-            ×Ó²Ëµ¥µ¯´°.ShowAt(screenPt.X, screenPt.Y)
+            å­èœå•å¼¹çª— = New MenuPopupForm(item.SubMenu, Me)
+            å­èœå•å¼¹çª—.ShowAt(screenPt.X, screenPt.Y)
         End Sub
 
 #End Region
 
-#Region "ĞüÍ£¶¯»­"
+#Region "æ‚¬åœåŠ¨ç”»"
 
-        Private Sub ¸üĞÂĞüÍ£¶¯»­()
-            If ĞüÍ£Ë÷Òı >= 0 AndAlso ĞüÍ£Ë÷Òı < ÏîÄ¿ÇøÓòÁĞ±í.Count Then
-                Dim rect = ÏîÄ¿ÇøÓòÁĞ±í(ĞüÍ£Ë÷Òı)
+        Private Sub æ›´æ–°æ‚¬åœåŠ¨ç”»()
+            If æ‚¬åœç´¢å¼• >= 0 AndAlso æ‚¬åœç´¢å¼• < é¡¹ç›®åŒºåŸŸåˆ—è¡¨.Count Then
+                Dim rect = é¡¹ç›®åŒºåŸŸåˆ—è¡¨(æ‚¬åœç´¢å¼•)
                 Dim targetY As Single = rect.Y
                 Dim targetH As Single = rect.Height
 
-                If ²Ëµ¥.ĞüÍ£¶¯»­Ê±³¤ <= 0 OrElse Not ¶¯»­ÏÔÊ¾¸ßÁÁ Then
-                    ' ÎŞ¶¯»­»òÊ×´Î³öÏÖ£¬Ö±½ÓÌøµ½Ä¿±ê
-                    ¶¯»­ÆğÊ¼Y = targetY
-                    ¶¯»­Ä¿±êY = targetY
-                    ¶¯»­µ±Ç°Y = targetY
-                    ¶¯»­ÆğÊ¼¸ß¶È = targetH
-                    ¶¯»­Ä¿±ê¸ß¶È = targetH
-                    ¶¯»­µ±Ç°¸ß¶È = targetH
-                    ¶¯»­ÏÔÊ¾¸ßÁÁ = True
-                    Í£Ö¹¶¯»­()
+                If èœå•.æ‚¬åœåŠ¨ç”»æ—¶é•¿ <= 0 OrElse Not åŠ¨ç”»æ˜¾ç¤ºé«˜äº® Then
+                    ' æ— åŠ¨ç”»æˆ–é¦–æ¬¡å‡ºç°ï¼Œç›´æ¥è·³åˆ°ç›®æ ‡
+                    åŠ¨ç”»èµ·å§‹Y = targetY
+                    åŠ¨ç”»ç›®æ ‡Y = targetY
+                    åŠ¨ç”»å½“å‰Y = targetY
+                    åŠ¨ç”»èµ·å§‹é«˜åº¦ = targetH
+                    åŠ¨ç”»ç›®æ ‡é«˜åº¦ = targetH
+                    åŠ¨ç”»å½“å‰é«˜åº¦ = targetH
+                    åŠ¨ç”»æ˜¾ç¤ºé«˜äº® = True
+                    åœæ­¢åŠ¨ç”»()
                     Return
                 End If
 
-                ¶¯»­ÆğÊ¼Y = ¶¯»­µ±Ç°Y
-                ¶¯»­Ä¿±êY = targetY
-                ¶¯»­ÆğÊ¼¸ß¶È = ¶¯»­µ±Ç°¸ß¶È
-                ¶¯»­Ä¿±ê¸ß¶È = targetH
-                ¶¯»­ÏÔÊ¾¸ßÁÁ = True
-                ¶¯»­Ãë±í.Restart()
-                If Not ¶¯»­ÖĞ Then
-                    ¶¯»­ÖĞ = True
-                    Æô¶¯ĞüÍ£Çı¶¯()
+                åŠ¨ç”»èµ·å§‹Y = åŠ¨ç”»å½“å‰Y
+                åŠ¨ç”»ç›®æ ‡Y = targetY
+                åŠ¨ç”»èµ·å§‹é«˜åº¦ = åŠ¨ç”»å½“å‰é«˜åº¦
+                åŠ¨ç”»ç›®æ ‡é«˜åº¦ = targetH
+                åŠ¨ç”»æ˜¾ç¤ºé«˜äº® = True
+                åŠ¨ç”»ç§’è¡¨.Restart()
+                If Not åŠ¨ç”»ä¸­ Then
+                    åŠ¨ç”»ä¸­ = True
+                    å¯åŠ¨æ‚¬åœé©±åŠ¨()
                 End If
             Else
-                ' ĞüÍ£Àë¿ª
-                ¶¯»­ÏÔÊ¾¸ßÁÁ = False
-                Í£Ö¹¶¯»­()
+                ' æ‚¬åœç¦»å¼€
+                åŠ¨ç”»æ˜¾ç¤ºé«˜äº® = False
+                åœæ­¢åŠ¨ç”»()
             End If
         End Sub
 
-        Private Sub ¶¯»­¸üĞÂÖ¡(sender As Object, e As EventArgs)
-            Dim duration = ²Ëµ¥.ĞüÍ£¶¯»­Ê±³¤
+        Private Sub åŠ¨ç”»æ›´æ–°å¸§(sender As Object, e As EventArgs)
+            Dim duration = èœå•.æ‚¬åœåŠ¨ç”»æ—¶é•¿
             If duration <= 0 Then
-                ¶¯»­µ±Ç°Y = ¶¯»­Ä¿±êY
-                ¶¯»­µ±Ç°¸ß¶È = ¶¯»­Ä¿±ê¸ß¶È
-                Í£Ö¹¶¯»­()
+                åŠ¨ç”»å½“å‰Y = åŠ¨ç”»ç›®æ ‡Y
+                åŠ¨ç”»å½“å‰é«˜åº¦ = åŠ¨ç”»ç›®æ ‡é«˜åº¦
+                åœæ­¢åŠ¨ç”»()
                 Invalidate()
                 Return
             End If
 
-            Dim elapsed As Double = ¶¯»­Ãë±í.Elapsed.TotalMilliseconds
+            Dim elapsed As Double = åŠ¨ç”»ç§’è¡¨.Elapsed.TotalMilliseconds
             Dim t As Single = CSng(Math.Min(elapsed / duration, 1.0))
             ' ease-out cubic
             Dim eased As Single = 1.0F - CSng(Math.Pow(1.0 - t, 3))
-            ¶¯»­µ±Ç°Y = ¶¯»­ÆğÊ¼Y + (¶¯»­Ä¿±êY - ¶¯»­ÆğÊ¼Y) * eased
-            ¶¯»­µ±Ç°¸ß¶È = ¶¯»­ÆğÊ¼¸ß¶È + (¶¯»­Ä¿±ê¸ß¶È - ¶¯»­ÆğÊ¼¸ß¶È) * eased
+            åŠ¨ç”»å½“å‰Y = åŠ¨ç”»èµ·å§‹Y + (åŠ¨ç”»ç›®æ ‡Y - åŠ¨ç”»èµ·å§‹Y) * eased
+            åŠ¨ç”»å½“å‰é«˜åº¦ = åŠ¨ç”»èµ·å§‹é«˜åº¦ + (åŠ¨ç”»ç›®æ ‡é«˜åº¦ - åŠ¨ç”»èµ·å§‹é«˜åº¦) * eased
 
             If t >= 1.0F Then
-                ¶¯»­µ±Ç°Y = ¶¯»­Ä¿±êY
-                ¶¯»­µ±Ç°¸ß¶È = ¶¯»­Ä¿±ê¸ß¶È
-                Í£Ö¹¶¯»­()
+                åŠ¨ç”»å½“å‰Y = åŠ¨ç”»ç›®æ ‡Y
+                åŠ¨ç”»å½“å‰é«˜åº¦ = åŠ¨ç”»ç›®æ ‡é«˜åº¦
+                åœæ­¢åŠ¨ç”»()
             End If
             Invalidate()
         End Sub
 
-        Private Sub Í£Ö¹¶¯»­()
-            If ¶¯»­ÖĞ Then
-                ¶¯»­ÖĞ = False
-                Í£Ö¹ĞüÍ£Çı¶¯()
-                ¶¯»­Ãë±í.Stop()
+        Private Sub åœæ­¢åŠ¨ç”»()
+            If åŠ¨ç”»ä¸­ Then
+                åŠ¨ç”»ä¸­ = False
+                åœæ­¢æ‚¬åœé©±åŠ¨()
+                åŠ¨ç”»ç§’è¡¨.Stop()
             End If
         End Sub
 
 #End Region
 
-#Region "Õ¹¿ª¹Ø±Õ¶¯»­"
+#Region "å±•å¼€å…³é—­åŠ¨ç”»"
 
-        Private Sub Õ¹¿ª¹Ø±ÕÖ¡¸üĞÂ(sender As Object, e As EventArgs)
-            Dim duration As Integer = ²Ëµ¥.Õ¹¿ª¹Ø±Õ¶¯»­Ê±³¤
+        Private Sub å±•å¼€å…³é—­å¸§æ›´æ–°(sender As Object, e As EventArgs)
+            Dim duration As Integer = èœå•.å±•å¼€å…³é—­åŠ¨ç”»æ—¶é•¿
             If duration <= 0 Then
-                Í£Ö¹Õ¹¿ª¹Ø±ÕÇı¶¯()
-                Õ¹¿ª¹Ø±Õ¶¯»­ÖĞ = False
-                If ÕıÔÚ¹Ø±Õ¶¯»­ Then
-                    Íê³É¹Ø±Õ()
+                åœæ­¢å±•å¼€å…³é—­é©±åŠ¨()
+                å±•å¼€å…³é—­åŠ¨ç”»ä¸­ = False
+                If æ­£åœ¨å…³é—­åŠ¨ç”» Then
+                    å®Œæˆå…³é—­()
                 Else
-                    Me.Size = New Size(Me.Width, ×îÖÕ¸ß¶È)
+                    Me.Size = New Size(Me.Width, æœ€ç»ˆé«˜åº¦)
                 End If
                 Return
             End If
 
-            Dim elapsed As Double = Õ¹¿ª¹Ø±ÕÃë±í.Elapsed.TotalMilliseconds
+            Dim elapsed As Double = å±•å¼€å…³é—­ç§’è¡¨.Elapsed.TotalMilliseconds
             Dim t As Single = CSng(Math.Min(elapsed / duration, 1.0))
             Dim eased As Single = 1.0F - CSng(Math.Pow(1.0 - t, 3))
 
-            If ÕıÔÚ¹Ø±Õ¶¯»­ Then
-                Dim newH As Integer = Math.Max(1, CInt(×îÖÕ¸ß¶È * (1.0F - eased)))
+            If æ­£åœ¨å…³é—­åŠ¨ç”» Then
+                Dim newH As Integer = Math.Max(1, CInt(æœ€ç»ˆé«˜åº¦ * (1.0F - eased)))
                 Me.Size = New Size(Me.Width, newH)
             Else
-                Dim newH As Integer = Math.Max(1, CInt(×îÖÕ¸ß¶È * eased))
+                Dim newH As Integer = Math.Max(1, CInt(æœ€ç»ˆé«˜åº¦ * eased))
                 Me.Size = New Size(Me.Width, newH)
             End If
             Invalidate()
 
             If t >= 1.0F Then
-                Í£Ö¹Õ¹¿ª¹Ø±ÕÇı¶¯()
-                Õ¹¿ª¹Ø±Õ¶¯»­ÖĞ = False
-                If ÕıÔÚ¹Ø±Õ¶¯»­ Then
-                    Íê³É¹Ø±Õ()
+                åœæ­¢å±•å¼€å…³é—­é©±åŠ¨()
+                å±•å¼€å…³é—­åŠ¨ç”»ä¸­ = False
+                If æ­£åœ¨å…³é—­åŠ¨ç”» Then
+                    å®Œæˆå…³é—­()
                 Else
-                    Me.Size = New Size(Me.Width, ×îÖÕ¸ß¶È)
+                    Me.Size = New Size(Me.Width, æœ€ç»ˆé«˜åº¦)
                     Invalidate()
                 End If
             End If
         End Sub
 
-        Private Sub ¿ªÊ¼¹Ø±Õ¶¯»­()
-            If ÕıÔÚ¹Ø±Õ¶¯»­ Then Return
-            ÕıÔÚ¹Ø±Õ¶¯»­ = True
-            Õ¹¿ª¹Ø±Õ¶¯»­ÖĞ = True
-            Õ¹¿ª¹Ø±ÕÃë±í.Restart()
-            Æô¶¯Õ¹¿ª¹Ø±ÕÇı¶¯()
+        Private Sub å¼€å§‹å…³é—­åŠ¨ç”»()
+            If æ­£åœ¨å…³é—­åŠ¨ç”» Then Return
+            æ­£åœ¨å…³é—­åŠ¨ç”» = True
+            å±•å¼€å…³é—­åŠ¨ç”»ä¸­ = True
+            å±•å¼€å…³é—­ç§’è¡¨.Restart()
+            å¯åŠ¨å±•å¼€å…³é—­é©±åŠ¨()
         End Sub
 
-        Private Sub Íê³É¹Ø±Õ()
-            ÕıÔÚ¹Ø±Õ¶¯»­ = False
-            Õ¹¿ª¹Ø±Õ¶¯»­ÖĞ = False
-            Ö´ĞĞ¹Ø±Õ()
-        End Sub
-
-#End Region
-
-#Region "¶¯»­Çı¶¯"
-
-        Private Sub Æô¶¯ĞüÍ£Çı¶¯()
-            If ĞüÍ£ÓÃIdle Then
-                AddHandler Application.Idle, AddressOf ¶¯»­¸üĞÂÖ¡
-            Else
-                AddHandler ¶¯»­¼ÆÊ±Æ÷.Tick, AddressOf ¶¯»­¸üĞÂÖ¡
-                ¶¯»­¼ÆÊ±Æ÷.Start()
-            End If
-        End Sub
-
-        Private Sub Í£Ö¹ĞüÍ£Çı¶¯()
-            If ĞüÍ£ÓÃIdle Then
-                RemoveHandler Application.Idle, AddressOf ¶¯»­¸üĞÂÖ¡
-            Else
-                ¶¯»­¼ÆÊ±Æ÷.Stop()
-                RemoveHandler ¶¯»­¼ÆÊ±Æ÷.Tick, AddressOf ¶¯»­¸üĞÂÖ¡
-            End If
-        End Sub
-
-        Private Sub Æô¶¯Õ¹¿ª¹Ø±ÕÇı¶¯()
-            If Õ¹¿ª¹Ø±ÕÓÃIdle Then
-                AddHandler Application.Idle, AddressOf Õ¹¿ª¹Ø±ÕÖ¡¸üĞÂ
-            Else
-                AddHandler Õ¹¿ª¹Ø±Õ¼ÆÊ±Æ÷.Tick, AddressOf Õ¹¿ª¹Ø±ÕÖ¡¸üĞÂ
-                Õ¹¿ª¹Ø±Õ¼ÆÊ±Æ÷.Start()
-            End If
-        End Sub
-
-        Private Sub Í£Ö¹Õ¹¿ª¹Ø±ÕÇı¶¯()
-            If Õ¹¿ª¹Ø±ÕÓÃIdle Then
-                RemoveHandler Application.Idle, AddressOf Õ¹¿ª¹Ø±ÕÖ¡¸üĞÂ
-            Else
-                Õ¹¿ª¹Ø±Õ¼ÆÊ±Æ÷.Stop()
-                RemoveHandler Õ¹¿ª¹Ø±Õ¼ÆÊ±Æ÷.Tick, AddressOf Õ¹¿ª¹Ø±ÕÖ¡¸üĞÂ
-            End If
+        Private Sub å®Œæˆå…³é—­()
+            æ­£åœ¨å…³é—­åŠ¨ç”» = False
+            å±•å¼€å…³é—­åŠ¨ç”»ä¸­ = False
+            æ‰§è¡Œå…³é—­()
         End Sub
 
 #End Region
 
-#Region "¹Ø±ÕÂß¼­"
+#Region "åŠ¨ç”»é©±åŠ¨"
+
+        Private Sub å¯åŠ¨æ‚¬åœé©±åŠ¨()
+            If æ‚¬åœç”¨Idle Then
+                AddHandler Application.Idle, AddressOf åŠ¨ç”»æ›´æ–°å¸§
+            Else
+                AddHandler åŠ¨ç”»è®¡æ—¶å™¨.Tick, AddressOf åŠ¨ç”»æ›´æ–°å¸§
+                åŠ¨ç”»è®¡æ—¶å™¨.Start()
+            End If
+        End Sub
+
+        Private Sub åœæ­¢æ‚¬åœé©±åŠ¨()
+            If æ‚¬åœç”¨Idle Then
+                RemoveHandler Application.Idle, AddressOf åŠ¨ç”»æ›´æ–°å¸§
+            Else
+                åŠ¨ç”»è®¡æ—¶å™¨.Stop()
+                RemoveHandler åŠ¨ç”»è®¡æ—¶å™¨.Tick, AddressOf åŠ¨ç”»æ›´æ–°å¸§
+            End If
+        End Sub
+
+        Private Sub å¯åŠ¨å±•å¼€å…³é—­é©±åŠ¨()
+            If å±•å¼€å…³é—­ç”¨Idle Then
+                AddHandler Application.Idle, AddressOf å±•å¼€å…³é—­å¸§æ›´æ–°
+            Else
+                AddHandler å±•å¼€å…³é—­è®¡æ—¶å™¨.Tick, AddressOf å±•å¼€å…³é—­å¸§æ›´æ–°
+                å±•å¼€å…³é—­è®¡æ—¶å™¨.Start()
+            End If
+        End Sub
+
+        Private Sub åœæ­¢å±•å¼€å…³é—­é©±åŠ¨()
+            If å±•å¼€å…³é—­ç”¨Idle Then
+                RemoveHandler Application.Idle, AddressOf å±•å¼€å…³é—­å¸§æ›´æ–°
+            Else
+                å±•å¼€å…³é—­è®¡æ—¶å™¨.Stop()
+                RemoveHandler å±•å¼€å…³é—­è®¡æ—¶å™¨.Tick, AddressOf å±•å¼€å…³é—­å¸§æ›´æ–°
+            End If
+        End Sub
+
+#End Region
+
+#Region "å…³é—­é€»è¾‘"
 
         Public Function PreFilterMessage(ByRef m As Message) As Boolean Implements IMessageFilter.PreFilterMessage
             Select Case m.Msg
                 Case WM_LBUTTONDOWN, WM_RBUTTONDOWN, WM_MBUTTONDOWN, WM_NCLBUTTONDOWN
-                    If Not µã»÷ÔÚ²Ëµ¥Á´ÄÚ(Control.MousePosition) Then
-                        BeginInvoke(Sub() ¹Ø±ÕÈ«²¿())
+                    If Not ç‚¹å‡»åœ¨èœå•é“¾å†…(Control.MousePosition) Then
+                        BeginInvoke(Sub() å…³é—­å…¨éƒ¨())
                     End If
                 Case WM_KEYDOWN
                     If CInt(m.WParam) = Keys.Escape Then
-                        BeginInvoke(Sub() ¹Ø±ÕÈ«²¿())
+                        BeginInvoke(Sub() å…³é—­å…¨éƒ¨())
                         Return True
                     End If
             End Select
             Return False
         End Function
 
-        Private Function µã»÷ÔÚ²Ëµ¥Á´ÄÚ(screenPos As Point) As Boolean
+        Private Function ç‚¹å‡»åœ¨èœå•é“¾å†…(screenPos As Point) As Boolean
             If Not IsDisposed AndAlso Bounds.Contains(screenPos) Then Return True
-            If ×Ó²Ëµ¥µ¯´° IsNot Nothing AndAlso Not ×Ó²Ëµ¥µ¯´°.IsDisposed Then
-                Return ×Ó²Ëµ¥µ¯´°.µã»÷ÔÚ²Ëµ¥Á´ÄÚ(screenPos)
+            If å­èœå•å¼¹çª— IsNot Nothing AndAlso Not å­èœå•å¼¹çª—.IsDisposed Then
+                Return å­èœå•å¼¹çª—.ç‚¹å‡»åœ¨èœå•é“¾å†…(screenPos)
             End If
             Return False
         End Function
 
-        Friend Sub ¹Ø±ÕÈ«²¿()
-            »ñÈ¡¸ùµ¯´°().¹Ø±Õ×ÔÉí¼°×Ó²Ëµ¥()
+        Friend Sub å…³é—­å…¨éƒ¨()
+            è·å–æ ¹å¼¹çª—().å…³é—­è‡ªèº«åŠå­èœå•()
         End Sub
 
-        Friend Sub ¹Ø±Õ×ÔÉí¼°×Ó²Ëµ¥()
-            If ÕıÔÚ¹Ø±Õ Then Return
-            If ×Ó²Ëµ¥µ¯´° IsNot Nothing AndAlso Not ×Ó²Ëµ¥µ¯´°.IsDisposed Then
-                ×Ó²Ëµ¥µ¯´°.¹Ø±Õ×ÔÉí¼°×Ó²Ëµ¥()
-                ×Ó²Ëµ¥µ¯´° = Nothing
+        Friend Sub å…³é—­è‡ªèº«åŠå­èœå•()
+            If æ­£åœ¨å…³é—­ Then Return
+            If å­èœå•å¼¹çª— IsNot Nothing AndAlso Not å­èœå•å¼¹çª—.IsDisposed Then
+                å­èœå•å¼¹çª—.å…³é—­è‡ªèº«åŠå­èœå•()
+                å­èœå•å¼¹çª— = Nothing
             End If
-            If Not ÕıÔÚ¹Ø±Õ¶¯»­ AndAlso ²Ëµ¥.Õ¹¿ª¹Ø±Õ¶¯»­Ê±³¤ > 0 AndAlso IsHandleCreated AndAlso Not IsDisposed Then
-                ¿ªÊ¼¹Ø±Õ¶¯»­()
+            If Not æ­£åœ¨å…³é—­åŠ¨ç”» AndAlso èœå•.å±•å¼€å…³é—­åŠ¨ç”»æ—¶é•¿ > 0 AndAlso IsHandleCreated AndAlso Not IsDisposed Then
+                å¼€å§‹å…³é—­åŠ¨ç”»()
                 Return
             End If
-            Ö´ĞĞ¹Ø±Õ()
+            æ‰§è¡Œå…³é—­()
         End Sub
 
-        Private Sub Ö´ĞĞ¹Ø±Õ()
-            If ÕıÔÚ¹Ø±Õ Then Return
-            ÕıÔÚ¹Ø±Õ = True
-            Í£Ö¹¶¯»­()
-            Í£Ö¹Õ¹¿ª¹Ø±ÕÇı¶¯()
-            If ¶¯»­¼ÆÊ±Æ÷ IsNot Nothing Then ¶¯»­¼ÆÊ±Æ÷.Dispose()
-            If Õ¹¿ª¹Ø±Õ¼ÆÊ±Æ÷ IsNot Nothing Then Õ¹¿ª¹Ø±Õ¼ÆÊ±Æ÷.Dispose()
-            If ¸¸µ¯´° Is Nothing Then
+        Private Sub æ‰§è¡Œå…³é—­()
+            If æ­£åœ¨å…³é—­ Then Return
+            æ­£åœ¨å…³é—­ = True
+            åœæ­¢åŠ¨ç”»()
+            åœæ­¢å±•å¼€å…³é—­é©±åŠ¨()
+            If åŠ¨ç”»è®¡æ—¶å™¨ IsNot Nothing Then åŠ¨ç”»è®¡æ—¶å™¨.Dispose()
+            If å±•å¼€å…³é—­è®¡æ—¶å™¨ IsNot Nothing Then å±•å¼€å…³é—­è®¡æ—¶å™¨.Dispose()
+            If çˆ¶å¼¹çª— Is Nothing Then
                 Application.RemoveMessageFilter(Me)
-                ²Ëµ¥.Í¨Öª²Ëµ¥¹Ø±Õ()
+                èœå•.é€šçŸ¥èœå•å…³é—­()
             End If
             If Not IsDisposed Then Close()
         End Sub
 
-        Private Function »ñÈ¡¸ùµ¯´°() As MenuPopupForm
-            If ¸¸µ¯´° IsNot Nothing Then Return ¸¸µ¯´°.»ñÈ¡¸ùµ¯´°()
+        Private Function è·å–æ ¹å¼¹çª—() As MenuPopupForm
+            If çˆ¶å¼¹çª— IsNot Nothing Then Return çˆ¶å¼¹çª—.è·å–æ ¹å¼¹çª—()
             Return Me
         End Function
 
         Protected Overrides Sub OnDeactivate(e As EventArgs)
             MyBase.OnDeactivate(e)
-            If ÕıÔÚ¹Ø±Õ OrElse ÕıÔÚ¹Ø±Õ¶¯»­ OrElse IsDisposed OrElse Not IsHandleCreated Then Return
+            If æ­£åœ¨å…³é—­ OrElse æ­£åœ¨å…³é—­åŠ¨ç”» OrElse IsDisposed OrElse Not IsHandleCreated Then Return
             Try
                 BeginInvoke(Sub()
-                                If ÕıÔÚ¹Ø±Õ OrElse ÕıÔÚ¹Ø±Õ¶¯»­ Then Return
-                                Dim root = »ñÈ¡¸ùµ¯´°()
-                                If Not root.Á´ÖĞÓĞ»î¶¯´°¿Ú() Then
-                                    root.¹Ø±Õ×ÔÉí¼°×Ó²Ëµ¥()
+                                If æ­£åœ¨å…³é—­ OrElse æ­£åœ¨å…³é—­åŠ¨ç”» Then Return
+                                Dim root = è·å–æ ¹å¼¹çª—()
+                                If Not root.é“¾ä¸­æœ‰æ´»åŠ¨çª—å£() Then
+                                    root.å…³é—­è‡ªèº«åŠå­èœå•()
                                 End If
                             End Sub)
             Catch ex As InvalidOperationException
             End Try
         End Sub
 
-        Private Function Á´ÖĞÓĞ»î¶¯´°¿Ú() As Boolean
+        Private Function é“¾ä¸­æœ‰æ´»åŠ¨çª—å£() As Boolean
             If Not IsDisposed AndAlso Me Is Form.ActiveForm Then Return True
-            If ×Ó²Ëµ¥µ¯´° IsNot Nothing AndAlso Not ×Ó²Ëµ¥µ¯´°.IsDisposed Then
-                Return ×Ó²Ëµ¥µ¯´°.Á´ÖĞÓĞ»î¶¯´°¿Ú()
+            If å­èœå•å¼¹çª— IsNot Nothing AndAlso Not å­èœå•å¼¹çª—.IsDisposed Then
+                Return å­èœå•å¼¹çª—.é“¾ä¸­æœ‰æ´»åŠ¨çª—å£()
             End If
             Return False
         End Function
 
         Protected Overrides Sub OnFormClosed(e As FormClosedEventArgs)
             MyBase.OnFormClosed(e)
-            If ¸¸µ¯´° Is Nothing AndAlso Not ÕıÔÚ¹Ø±Õ Then
+            If çˆ¶å¼¹çª— Is Nothing AndAlso Not æ­£åœ¨å…³é—­ Then
                 Application.RemoveMessageFilter(Me)
             End If
         End Sub
@@ -1147,23 +1147,23 @@ Public Class ModernContextMenu
 
 #End Region
 
-#Region "ÊÍ·Å×ÊÔ´"
+#Region "é‡Šæ”¾èµ„æº"
 
     Protected Overrides Sub Dispose(disposing As Boolean)
         If disposing Then
             Close()
-            For Each ctrl In °ó¶¨¿Ø¼ş¼¯ºÏ.Keys.ToList()
-                RemoveHandler ctrl.MouseUp, AddressOf °ó¶¨¿Ø¼ş_MouseUp
-                RemoveHandler ctrl.Disposed, AddressOf °ó¶¨¿Ø¼ş_Disposed
+            For Each ctrl In ç»‘å®šæ§ä»¶é›†åˆ.Keys.ToList()
+                RemoveHandler ctrl.MouseUp, AddressOf ç»‘å®šæ§ä»¶_MouseUp
+                RemoveHandler ctrl.Disposed, AddressOf ç»‘å®šæ§ä»¶_Disposed
             Next
-            °ó¶¨¿Ø¼ş¼¯ºÏ.Clear()
-            If ²Ëµ¥×ÖÌå IsNot Nothing Then
-                ²Ëµ¥×ÖÌå.Dispose()
-                ²Ëµ¥×ÖÌå = Nothing
+            ç»‘å®šæ§ä»¶é›†åˆ.Clear()
+            If èœå•å­—ä½“ IsNot Nothing Then
+                èœå•å­—ä½“.Dispose()
+                èœå•å­—ä½“ = Nothing
             End If
-            If ËµÃ÷×ÖÌå IsNot Nothing Then
-                ËµÃ÷×ÖÌå.Dispose()
-                ËµÃ÷×ÖÌå = Nothing
+            If è¯´æ˜å­—ä½“ IsNot Nothing Then
+                è¯´æ˜å­—ä½“.Dispose()
+                è¯´æ˜å­—ä½“ = Nothing
             End If
         End If
         MyBase.Dispose(disposing)
@@ -1173,34 +1173,34 @@ Public Class ModernContextMenu
 
     Public Class ModernMenuItem
 
-        <Category("LakeUI"), Description("ÊÇ·ñÊÇ·Ö¸îÏß"), DefaultValue(False), Browsable(True)>
+        <Category("LakeUI"), Description("æ˜¯å¦æ˜¯åˆ†å‰²çº¿"), DefaultValue(False), Browsable(True)>
         Public Property IsSeparator As Boolean = False
 
-        <Category("LakeUI"), Description("ÊÇ·ñÊÇÃèÊöÎÄ±¾"), DefaultValue(False), Browsable(True)>
+        <Category("LakeUI"), Description("æ˜¯å¦æ˜¯æè¿°æ–‡æœ¬"), DefaultValue(False), Browsable(True)>
         Public Property IsDescription As Boolean = False
 
-        <Category("LakeUI"), Description("ÎÄ±¾"), DefaultValue(GetType(String), ""), Browsable(True)>
+        <Category("LakeUI"), Description("æ–‡æœ¬"), DefaultValue(GetType(String), ""), Browsable(True)>
         Public Property Text As String = ""
 
-        <Category("LakeUI"), Description("×ÖÌå"), Browsable(True)>
+        <Category("LakeUI"), Description("å­—ä½“"), Browsable(True)>
         Public Property Font As Font = Nothing
 
-        <Category("LakeUI"), Description("ÎÄ±¾ÑÕÉ«"), DefaultValue(GetType(Color), ""), Browsable(True)>
+        <Category("LakeUI"), Description("æ–‡æœ¬é¢œè‰²"), DefaultValue(GetType(Color), ""), Browsable(True)>
         Public Property ForeColor As Color = Color.Empty
 
-        <Category("LakeUI"), Description("Í¼±ê"), DefaultValue(GetType(Image), Nothing), Browsable(True)>
+        <Category("LakeUI"), Description("å›¾æ ‡"), DefaultValue(GetType(Image), Nothing), Browsable(True)>
         Public Property Icon As Image = Nothing
 
-        <Category("LakeUI"), Description("ÊÇ·ñÑ¡ÖĞ"), DefaultValue(False), Browsable(True)>
+        <Category("LakeUI"), Description("æ˜¯å¦é€‰ä¸­"), DefaultValue(False), Browsable(True)>
         Public Property Checked As Boolean = False
 
-        <Category("LakeUI"), Description("µã»÷ºó×Ô¶¯ÇĞ»»¹´Ñ¡×´Ì¬"), DefaultValue(False), Browsable(True)>
+        <Category("LakeUI"), Description("ç‚¹å‡»åè‡ªåŠ¨åˆ‡æ¢å‹¾é€‰çŠ¶æ€"), DefaultValue(False), Browsable(True)>
         Public Property ToggleCheckOnClick As Boolean = False
 
-        <Category("LakeUI"), Description("µã»÷ºó¹Ø±ÕËùÔÚ²Ëµ¥"), DefaultValue(True), Browsable(True)>
+        <Category("LakeUI"), Description("ç‚¹å‡»åå…³é—­æ‰€åœ¨èœå•"), DefaultValue(True), Browsable(True)>
         Public Property CloseOnClick As Boolean = True
 
-        <Category("LakeUI"), Description("°ó¶¨µÄ×Ó²Ëµ¥"), DefaultValue(GetType(ModernContextMenu), Nothing), Browsable(True)>
+        <Category("LakeUI"), Description("ç»‘å®šçš„å­èœå•"), DefaultValue(GetType(ModernContextMenu), Nothing), Browsable(True)>
         Public Property SubMenu As ModernContextMenu = Nothing
 
         Public Event Click As EventHandler
@@ -1223,8 +1223,8 @@ Public Class ModernContextMenu
         End Sub
 
         Public Overrides Function ToString() As String
-            If IsSeparator Then Return "©¤©¤©¤ Separator ©¤©¤©¤"
-            If IsDescription Then Return $"[ËµÃ÷] {Text}"
+            If IsSeparator Then Return "â”€â”€â”€ Separator â”€â”€â”€"
+            If IsDescription Then Return $"[è¯´æ˜] {Text}"
             Return If(String.IsNullOrEmpty(Text), "ModernMenuItem", Text)
         End Function
 

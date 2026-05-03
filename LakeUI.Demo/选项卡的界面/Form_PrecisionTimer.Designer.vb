@@ -1,5 +1,5 @@
 ﻿<Global.Microsoft.VisualBasic.CompilerServices.DesignerGenerated()> _
-Partial Class Form_ModernTabControl
+Partial Class Form_PrecisionTimer
     Inherits System.Windows.Forms.Form
 
     'Form 重写 Dispose，以清理组件列表。
@@ -22,14 +22,12 @@ Partial Class Form_ModernTabControl
     '不要使用代码编辑器修改它。
     <System.Diagnostics.DebuggerStepThrough()> _
     Private Sub InitializeComponent()
-        Dim ModernTab1 As LakeUI.ModernTabControl.ModernTab = New ModernTabControl.ModernTab()
-        Dim ModernTab2 As LakeUI.ModernTabControl.ModernTab = New ModernTabControl.ModernTab()
-        Dim ModernTab3 As LakeUI.ModernTabControl.ModernTab = New ModernTabControl.ModernTab()
-        Dim ModernTab4 As LakeUI.ModernTabControl.ModernTab = New ModernTabControl.ModernTab()
-        Dim ModernTab5 As LakeUI.ModernTabControl.ModernTab = New ModernTabControl.ModernTab()
         ModernPanel1 = New ModernPanel()
         Label5 = New Label()
-        ModernTabControl1 = New ModernTabControl()
+        Panel7 = New Panel()
+        ModernButton6 = New ModernButton()
+        Label11 = New Label()
+        ModernButton5 = New ModernButton()
         Label6 = New Label()
         Panel1 = New Panel()
         ModernButton4 = New ModernButton()
@@ -40,7 +38,9 @@ Partial Class Form_ModernTabControl
         Label2 = New Label()
         ModernButton1 = New ModernButton()
         Label1 = New Label()
+        PrecisionTimer1 = New PrecisionTimer()
         ModernPanel1.SuspendLayout()
+        Panel7.SuspendLayout()
         Panel1.SuspendLayout()
         SuspendLayout()
         ' 
@@ -48,7 +48,7 @@ Partial Class Form_ModernTabControl
         ' 
         ModernPanel1.BorderSize = 0
         ModernPanel1.Controls.Add(Label5)
-        ModernPanel1.Controls.Add(ModernTabControl1)
+        ModernPanel1.Controls.Add(Panel7)
         ModernPanel1.Controls.Add(Label6)
         ModernPanel1.Controls.Add(Panel1)
         ModernPanel1.Controls.Add(Label1)
@@ -58,43 +58,70 @@ Partial Class Form_ModernTabControl
         ModernPanel1.Name = "ModernPanel1"
         ModernPanel1.Padding = New Padding(20)
         ModernPanel1.ScrollBarMode = ModernPanel.ScrollMode.None
-        ModernPanel1.Size = New Size(708, 592)
-        ModernPanel1.TabIndex = 39
+        ModernPanel1.Size = New Size(766, 581)
+        ModernPanel1.TabIndex = 38
         ' 
         ' Label5
         ' 
         Label5.AutoSize = True
         Label5.Dock = DockStyle.Top
-        Label5.Font = New Font("Microsoft YaHei UI", 10F)
-        Label5.Location = New Point(20, 390)
+        Label5.Font = New Font("Microsoft YaHei UI", 18F, FontStyle.Bold)
+        Label5.Location = New Point(20, 215)
         Label5.Name = "Label5"
-        Label5.Padding = New Padding(0, 20, 0, 20)
-        Label5.Size = New Size(501, 60)
-        Label5.TabIndex = 40
-        Label5.Text = "1.4 新增 Ribbon 模式，开启后显示三角按钮，逻辑与主流软件例如 Office 同步"
+        Label5.Padding = New Padding(0, 20, 0, 10)
+        Label5.Size = New Size(170, 61)
+        Label5.TabIndex = 54
+        Label5.Text = "00:00:00.000"
         ' 
-        ' ModernTabControl1
+        ' Panel7
         ' 
-        ModernTabControl1.ContentBackColor = Color.FromArgb(CByte(48), CByte(48), CByte(48))
-        ModernTabControl1.Dock = DockStyle.Top
-        ModernTab3.IsSeparator = True
-        ModernTabControl1.Items.Add(ModernTab1)
-        ModernTabControl1.Items.Add(ModernTab2)
-        ModernTabControl1.Items.Add(ModernTab3)
-        ModernTabControl1.Items.Add(ModernTab4)
-        ModernTabControl1.Items.Add(ModernTab5)
-        ModernTabControl1.Location = New Point(20, 220)
-        ModernTabControl1.Name = "ModernTabControl1"
-        ModernTabControl1.RibbonMode = True
-        ModernTabControl1.SelectedIndex = 0
-        ModernTabControl1.SelectedTab = ModernTab1
-        ModernTabControl1.Size = New Size(668, 170)
-        ModernTabControl1.TabAlignment = ModernTabControl.TabAlignmentEnum.Center
-        ModernTabControl1.TabIndex = 39
-        ModernTabControl1.TabItemHoverBackColor = Color.FromArgb(CByte(80), CByte(80), CByte(80))
-        ModernTabControl1.TabItemSelectedBackColor = SystemColors.WindowFrame
-        ModernTabControl1.TabStripBackColor = Color.FromArgb(CByte(64), CByte(64), CByte(64))
-        ModernTabControl1.TabStripHeight = 50
+        Panel7.Controls.Add(ModernButton6)
+        Panel7.Controls.Add(Label11)
+        Panel7.Controls.Add(ModernButton5)
+        Panel7.Dock = DockStyle.Top
+        Panel7.Location = New Point(20, 170)
+        Panel7.Name = "Panel7"
+        Panel7.Padding = New Padding(0, 10, 0, 0)
+        Panel7.Size = New Size(726, 45)
+        Panel7.TabIndex = 53
+        ' 
+        ' ModernButton6
+        ' 
+        ModernButton6.BackColor2 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton6.BorderRadius = 10
+        ModernButton6.BorderSize = 2
+        ModernButton6.Dock = DockStyle.Left
+        ModernButton6.HoverBorderColor = Color.CornflowerBlue
+        ModernButton6.Location = New Point(130, 10)
+        ModernButton6.Margin = New Padding(2)
+        ModernButton6.Name = "ModernButton6"
+        ModernButton6.PressedBorderColor = Color.MediumSlateBlue
+        ModernButton6.Size = New Size(120, 35)
+        ModernButton6.TabIndex = 9
+        ModernButton6.Text = "停止计时"
+        ' 
+        ' Label11
+        ' 
+        Label11.Dock = DockStyle.Left
+        Label11.Location = New Point(120, 10)
+        Label11.Name = "Label11"
+        Label11.Size = New Size(10, 35)
+        Label11.TabIndex = 10
+        ' 
+        ' ModernButton5
+        ' 
+        ModernButton5.BackColor2 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton5.BorderRadius = 10
+        ModernButton5.BorderSize = 2
+        ModernButton5.Dock = DockStyle.Left
+        ModernButton5.HoverBorderColor = Color.CornflowerBlue
+        ModernButton5.Location = New Point(0, 10)
+        ModernButton5.Margin = New Padding(2)
+        ModernButton5.Name = "ModernButton5"
+        ModernButton5.PressedBorderColor = Color.MediumSlateBlue
+        ModernButton5.Size = New Size(120, 35)
+        ModernButton5.TabIndex = 11
+        ModernButton5.Text = "开始计时"
         ' 
         ' Label6
         ' 
@@ -103,10 +130,10 @@ Partial Class Form_ModernTabControl
         Label6.Font = New Font("Microsoft YaHei UI", 10F)
         Label6.Location = New Point(20, 120)
         Label6.Name = "Label6"
-        Label6.Padding = New Padding(0, 20, 0, 20)
-        Label6.Size = New Size(443, 100)
+        Label6.Padding = New Padding(0, 20, 0, 10)
+        Label6.Size = New Size(334, 50)
         Label6.TabIndex = 38
-        Label6.Text = "与竖向的版本差不多，但没有小字说明功能" & vbCrLf & "相比原版选项卡，这个支持各种对齐和自动调整功能，人机功效更强大" & vbCrLf & "当然与竖向选项卡一样，不是容器，无法在设计器中添加选项卡内容"
+        Label6.Text = "1ms 极限精度测试（后台线程模式，任务排队模式）"
         ' 
         ' Panel1
         ' 
@@ -120,7 +147,7 @@ Partial Class Form_ModernTabControl
         Panel1.Dock = DockStyle.Top
         Panel1.Location = New Point(20, 70)
         Panel1.Name = "Panel1"
-        Panel1.Size = New Size(668, 50)
+        Panel1.Size = New Size(726, 50)
         Panel1.TabIndex = 35
         ' 
         ' ModernButton4
@@ -156,14 +183,13 @@ Partial Class Form_ModernTabControl
         ModernButton3.BorderSize = 0
         ModernButton3.Dock = DockStyle.Left
         ModernButton3.Font = New Font("Microsoft YaHei UI", 10.8F, FontStyle.Bold, GraphicsUnit.Point, CByte(134))
-        ModernButton3.ForeColor = Color.Orchid
         ModernButton3.Location = New Point(296, 0)
         ModernButton3.Margin = New Padding(2)
         ModernButton3.Name = "ModernButton3"
         ModernButton3.Size = New Size(120, 50)
         ModernButton3.SubText = "动画支持"
         ModernButton3.TabIndex = 4
-        ModernButton3.Text = "半数动画"
+        ModernButton3.Text = "N/A"
         ModernButton3.TextAlign = ModernButton.TextAlignEnum.Left
         ' 
         ' Label3
@@ -188,7 +214,7 @@ Partial Class Form_ModernTabControl
         ModernButton2.Size = New Size(160, 50)
         ModernButton2.SubText = "技术偏好"
         ModernButton2.TabIndex = 2
-        ModernButton2.Text = "人体工学科技"
+        ModernButton2.Text = "微软科技"
         ModernButton2.TextAlign = ModernButton.TextAlignEnum.Left
         ' 
         ' Label2
@@ -214,7 +240,7 @@ Partial Class Form_ModernTabControl
         ModernButton1.Size = New Size(120, 50)
         ModernButton1.SubText = "制作类型"
         ModernButton1.TabIndex = 0
-        ModernButton1.Text = "全新绘制"
+        ModernButton1.Text = "N/A"
         ModernButton1.TextAlign = ModernButton.TextAlignEnum.Left
         ' 
         ' Label1
@@ -225,23 +251,30 @@ Partial Class Form_ModernTabControl
         Label1.Location = New Point(20, 20)
         Label1.Name = "Label1"
         Label1.Padding = New Padding(0, 0, 0, 20)
-        Label1.Size = New Size(408, 50)
+        Label1.Size = New Size(317, 50)
         Label1.TabIndex = 34
-        Label1.Text = "现代化横向选项卡 ModernTabControl"
+        Label1.Text = "高精度计时器 PrecisionTimer"
         ' 
-        ' Form_ModernTabControl
+        ' PrecisionTimer1
+        ' 
+        PrecisionTimer1.DispatchMode = PrecisionTimer.DispatchModeEnum.NonBlocking
+        PrecisionTimer1.Interval = 1
+        PrecisionTimer1.SynchronizingObject = Me
+        ' 
+        ' Form_PrecisionTimer
         ' 
         AutoScaleDimensions = New SizeF(96F, 96F)
         AutoScaleMode = AutoScaleMode.Dpi
         BackColor = Color.FromArgb(CByte(36), CByte(36), CByte(36))
-        ClientSize = New Size(708, 592)
+        ClientSize = New Size(766, 581)
         Controls.Add(ModernPanel1)
-        Font = New Font("Microsoft YaHei UI", 10.2F, FontStyle.Regular, GraphicsUnit.Point, CByte(134))
+        Font = New Font("Microsoft YaHei UI", 10F)
         ForeColor = Color.Silver
-        Name = "Form_ModernTabControl"
-        Text = "Form_ModernTabControl"
+        Name = "Form_PrecisionTimer"
+        Text = "Form_PrecisionTimer"
         ModernPanel1.ResumeLayout(False)
         ModernPanel1.PerformLayout()
+        Panel7.ResumeLayout(False)
         Panel1.ResumeLayout(False)
         ResumeLayout(False)
     End Sub
@@ -257,6 +290,10 @@ Partial Class Form_ModernTabControl
     Friend WithEvents Label2 As Label
     Friend WithEvents ModernButton1 As ModernButton
     Friend WithEvents Label1 As Label
-    Friend WithEvents ModernTabControl1 As ModernTabControl
+    Friend WithEvents PrecisionTimer1 As PrecisionTimer
+    Friend WithEvents Panel7 As Panel
+    Friend WithEvents ModernButton6 As ModernButton
+    Friend WithEvents Label11 As Label
+    Friend WithEvents ModernButton5 As ModernButton
     Friend WithEvents Label5 As Label
 End Class

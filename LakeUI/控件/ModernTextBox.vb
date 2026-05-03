@@ -694,6 +694,27 @@ Public Class ModernTextBox
             End If
         End Set
     End Property
+
+    Private _backgroundSource As Control = Nothing
+    ''' <summary>
+    ''' 背景采样源（超容器背景映射）。透明背景模式下，控件会调用此控件的绘制流程取像素作为底图，
+    ''' 从而实现跨越任意层级的"穿透显示"效果。
+    ''' 为 Nothing 时自动沿祖先链查找首个不透明祖先（默认行为）。
+    ''' </summary>
+    <Category("LakeUI"),
+     Description("背景采样源（超容器背景映射）。设置后将跨越任意层级直接采样此控件的绘制内容作为透明背景；为空时自动选择首个不透明祖先。"),
+     DefaultValue(GetType(Control), Nothing), Browsable(True)>
+    Public Property BackgroundSource As Control
+        Get
+            Return _backgroundSource
+        End Get
+        Set(value As Control)
+            If _backgroundSource IsNot value Then
+                _backgroundSource = value
+                Me.Invalidate()
+            End If
+        End Set
+    End Property
 #End Region
 
 #Region "公共方法"
@@ -876,7 +897,8 @@ Public Class ModernTextBox
                  ControlStyles.AllPaintingInWmPaint Or
                  ControlStyles.UserPaint Or
                  ControlStyles.Selectable Or
-                 ControlStyles.StandardClick, True)
+                 ControlStyles.StandardClick Or
+                 ControlStyles.SupportsTransparentBackColor, True)
         UpdateStyles()
         AddHandler _caretBlinkTimer.Tick, Sub()
                                               _caretVisible = Not _caretVisible
@@ -904,12 +926,22 @@ Public Class ModernTextBox
 #End Region
 
 #Region "绘制"
+    Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
+        ' 圆角或半透明背景下不让基类填底，改由 OnPaint 头部走 TransparentBackgroundCache 贴底图。
+        If 边框圆角半径 > 0 OrElse 背景颜色.A < 255 Then Return
+        MyBase.OnPaintBackground(e)
+    End Sub
+
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
         Dim w As Integer = ClientRectangle.Width
         Dim h As Integer = ClientRectangle.Height
         Dim hasRadius As Boolean = 边框圆角半径 > 0
+        ' 透明背景：把背景源采样到自身区域；详见 TransparentBackgroundCache。
+        If hasRadius OrElse 背景颜色.A < 255 Then
+            TransparentBackgroundCache.PaintBackgroundFor(Me, e.Graphics, _backgroundSource)
+        End If
         Dim fillRect As New RectangleF(0, 0, w, h)
-        Dim boundsRect As New RectangleF(0, 0, w - 1, h - 1)
+        Dim boundsRect As New RectangleF(0, 0, w, h)
         Dim s As Single = DpiScale()
         If 边框宽度 > 0 Then
             Dim half As Single = 边框宽度 * s / 2.0F
@@ -1014,7 +1046,7 @@ Public Class ModernTextBox
                 Dim s As Single = DpiScale()
                 Dim gutterRect As New Rectangle(0, 0, bi + gutterW, h)
                 If 边框圆角半径 > 0 Then
-                    Dim boundsRect As New RectangleF(0, 0, w - 1, h - 1)
+                    Dim boundsRect As New RectangleF(0, 0, w, h)
                     If 边框宽度 > 0 Then
                         Dim half As Single = 边框宽度 * s / 2.0F
                         boundsRect.Inflate(-half, -half)
