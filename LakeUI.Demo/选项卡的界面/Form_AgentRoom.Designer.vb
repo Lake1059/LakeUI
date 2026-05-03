@@ -1,5 +1,5 @@
 ﻿<Global.Microsoft.VisualBasic.CompilerServices.DesignerGenerated()> _
-Partial Class Form_ModernTabControl
+Partial Class Form_AgentRoom
     Inherits System.Windows.Forms.Form
 
     'Form 重写 Dispose，以清理组件列表。
@@ -22,14 +22,8 @@ Partial Class Form_ModernTabControl
     '不要使用代码编辑器修改它。
     <System.Diagnostics.DebuggerStepThrough()> _
     Private Sub InitializeComponent()
-        Dim ModernTab1 As LakeUI.ModernTabControl.ModernTab = New ModernTabControl.ModernTab()
-        Dim ModernTab2 As LakeUI.ModernTabControl.ModernTab = New ModernTabControl.ModernTab()
-        Dim ModernTab3 As LakeUI.ModernTabControl.ModernTab = New ModernTabControl.ModernTab()
-        Dim ModernTab4 As LakeUI.ModernTabControl.ModernTab = New ModernTabControl.ModernTab()
-        Dim ModernTab5 As LakeUI.ModernTabControl.ModernTab = New ModernTabControl.ModernTab()
         ModernPanel1 = New ModernPanel()
-        Label5 = New Label()
-        ModernTabControl1 = New ModernTabControl()
+        AgentRoom1 = New AgentRoom()
         Label6 = New Label()
         Panel1 = New Panel()
         ModernButton4 = New ModernButton()
@@ -40,6 +34,7 @@ Partial Class Form_ModernTabControl
         Label2 = New Label()
         ModernButton1 = New ModernButton()
         Label1 = New Label()
+        ModernTextBox1 = New ModernTextBox()
         ModernPanel1.SuspendLayout()
         Panel1.SuspendLayout()
         SuspendLayout()
@@ -47,8 +42,7 @@ Partial Class Form_ModernTabControl
         ' ModernPanel1
         ' 
         ModernPanel1.BorderSize = 0
-        ModernPanel1.Controls.Add(Label5)
-        ModernPanel1.Controls.Add(ModernTabControl1)
+        ModernPanel1.Controls.Add(AgentRoom1)
         ModernPanel1.Controls.Add(Label6)
         ModernPanel1.Controls.Add(Panel1)
         ModernPanel1.Controls.Add(Label1)
@@ -58,43 +52,22 @@ Partial Class Form_ModernTabControl
         ModernPanel1.Name = "ModernPanel1"
         ModernPanel1.Padding = New Padding(20)
         ModernPanel1.ScrollBarMode = ModernPanel.ScrollMode.None
-        ModernPanel1.Size = New Size(708, 592)
-        ModernPanel1.TabIndex = 39
+        ModernPanel1.Size = New Size(731, 585)
+        ModernPanel1.TabIndex = 38
         ' 
-        ' Label5
+        ' AgentRoom1
         ' 
-        Label5.AutoSize = True
-        Label5.Dock = DockStyle.Top
-        Label5.Font = New Font("Microsoft YaHei UI", 10F)
-        Label5.Location = New Point(20, 390)
-        Label5.Name = "Label5"
-        Label5.Padding = New Padding(0, 20, 0, 20)
-        Label5.Size = New Size(501, 60)
-        Label5.TabIndex = 40
-        Label5.Text = "1.4 新增 Ribbon 模式，开启后显示三角按钮，逻辑与主流软件例如 Office 同步"
-        ' 
-        ' ModernTabControl1
-        ' 
-        ModernTabControl1.ContentBackColor = Color.FromArgb(CByte(48), CByte(48), CByte(48))
-        ModernTabControl1.Dock = DockStyle.Top
-        ModernTab3.IsSeparator = True
-        ModernTabControl1.Items.Add(ModernTab1)
-        ModernTabControl1.Items.Add(ModernTab2)
-        ModernTabControl1.Items.Add(ModernTab3)
-        ModernTabControl1.Items.Add(ModernTab4)
-        ModernTabControl1.Items.Add(ModernTab5)
-        ModernTabControl1.Location = New Point(20, 220)
-        ModernTabControl1.Name = "ModernTabControl1"
-        ModernTabControl1.RibbonMode = True
-        ModernTabControl1.SelectedIndex = 0
-        ModernTabControl1.SelectedTab = ModernTab1
-        ModernTabControl1.Size = New Size(668, 170)
-        ModernTabControl1.TabAlignment = ModernTabControl.TabAlignmentEnum.Center
-        ModernTabControl1.TabIndex = 39
-        ModernTabControl1.TabItemHoverBackColor = Color.FromArgb(CByte(80), CByte(80), CByte(80))
-        ModernTabControl1.TabItemSelectedBackColor = SystemColors.WindowFrame
-        ModernTabControl1.TabStripBackColor = Color.FromArgb(CByte(64), CByte(64), CByte(64))
-        ModernTabControl1.TabStripHeight = 50
+        AgentRoom1.AssistantBubbleForeColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
+        AgentRoom1.BackColor = Color.FromArgb(CByte(30), CByte(30), CByte(30))
+        AgentRoom1.CardForeColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
+        AgentRoom1.Dock = DockStyle.Fill
+        AgentRoom1.Location = New Point(20, 170)
+        AgentRoom1.Name = "AgentRoom1"
+        AgentRoom1.Padding = New Padding(20)
+        AgentRoom1.ScrollBarWidth = 8
+        AgentRoom1.Size = New Size(691, 395)
+        AgentRoom1.TabIndex = 39
+        AgentRoom1.Text = "AgentRoom1"
         ' 
         ' Label6
         ' 
@@ -103,10 +76,10 @@ Partial Class Form_ModernTabControl
         Label6.Font = New Font("Microsoft YaHei UI", 10F)
         Label6.Location = New Point(20, 120)
         Label6.Name = "Label6"
-        Label6.Padding = New Padding(0, 20, 0, 20)
-        Label6.Size = New Size(443, 100)
+        Label6.Padding = New Padding(0, 20, 0, 10)
+        Label6.Size = New Size(65, 50)
         Label6.TabIndex = 38
-        Label6.Text = "与竖向的版本差不多，但没有小字说明功能" & vbCrLf & "相比原版选项卡，这个支持各种对齐和自动调整功能，人机功效更强大" & vbCrLf & "当然与竖向选项卡一样，不是容器，无法在设计器中添加选项卡内容"
+        Label6.Text = "默认样式"
         ' 
         ' Panel1
         ' 
@@ -120,7 +93,7 @@ Partial Class Form_ModernTabControl
         Panel1.Dock = DockStyle.Top
         Panel1.Location = New Point(20, 70)
         Panel1.Name = "Panel1"
-        Panel1.Size = New Size(668, 50)
+        Panel1.Size = New Size(691, 50)
         Panel1.TabIndex = 35
         ' 
         ' ModernButton4
@@ -156,14 +129,13 @@ Partial Class Form_ModernTabControl
         ModernButton3.BorderSize = 0
         ModernButton3.Dock = DockStyle.Left
         ModernButton3.Font = New Font("Microsoft YaHei UI", 10.8F, FontStyle.Bold, GraphicsUnit.Point, CByte(134))
-        ModernButton3.ForeColor = Color.Orchid
         ModernButton3.Location = New Point(296, 0)
         ModernButton3.Margin = New Padding(2)
         ModernButton3.Name = "ModernButton3"
         ModernButton3.Size = New Size(120, 50)
         ModernButton3.SubText = "动画支持"
         ModernButton3.TabIndex = 4
-        ModernButton3.Text = "半数动画"
+        ModernButton3.Text = "无"
         ModernButton3.TextAlign = ModernButton.TextAlignEnum.Left
         ' 
         ' Label3
@@ -225,21 +197,38 @@ Partial Class Form_ModernTabControl
         Label1.Location = New Point(20, 20)
         Label1.Name = "Label1"
         Label1.Padding = New Padding(0, 0, 0, 20)
-        Label1.Size = New Size(408, 50)
+        Label1.Size = New Size(285, 50)
         Label1.TabIndex = 34
-        Label1.Text = "现代化横向选项卡 ModernTabControl"
+        Label1.Text = "智能体聊天室 AgentRoom"
         ' 
-        ' Form_ModernTabControl
+        ' ModernTextBox1
+        ' 
+        ModernTextBox1.BackColor = Color.FromArgb(CByte(48), CByte(48), CByte(48))
+        ModernTextBox1.BorderRadius = 10
+        ModernTextBox1.BorderSize = 0
+        ModernTextBox1.CaretColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
+        ModernTextBox1.Location = New Point(10, 271)
+        ModernTextBox1.Margin = New Padding(2, 2, 2, 2)
+        ModernTextBox1.MultiLine = True
+        ModernTextBox1.Name = "ModernTextBox1"
+        ModernTextBox1.Padding = New Padding(13, 0, 13, 0)
+        ModernTextBox1.ScrollBarHoverColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
+        ModernTextBox1.Size = New Size(671, 82)
+        ModernTextBox1.TabIndex = 40
+        ModernTextBox1.TabStop = False
+        ModernTextBox1.WaterText = "在此输入"
+        ' 
+        ' Form_AgentRoom
         ' 
         AutoScaleDimensions = New SizeF(96F, 96F)
         AutoScaleMode = AutoScaleMode.Dpi
         BackColor = Color.FromArgb(CByte(36), CByte(36), CByte(36))
-        ClientSize = New Size(708, 592)
+        ClientSize = New Size(731, 585)
         Controls.Add(ModernPanel1)
-        Font = New Font("Microsoft YaHei UI", 10.2F, FontStyle.Regular, GraphicsUnit.Point, CByte(134))
+        Font = New Font("Microsoft YaHei UI", 10F)
         ForeColor = Color.Silver
-        Name = "Form_ModernTabControl"
-        Text = "Form_ModernTabControl"
+        Name = "Form_AgentRoom"
+        Text = "Form_AgentRoom"
         ModernPanel1.ResumeLayout(False)
         ModernPanel1.PerformLayout()
         Panel1.ResumeLayout(False)
@@ -257,6 +246,6 @@ Partial Class Form_ModernTabControl
     Friend WithEvents Label2 As Label
     Friend WithEvents ModernButton1 As ModernButton
     Friend WithEvents Label1 As Label
-    Friend WithEvents ModernTabControl1 As ModernTabControl
-    Friend WithEvents Label5 As Label
+    Friend WithEvents ModernTextBox1 As ModernTextBox
+    Friend WithEvents AgentRoom1 As AgentRoom
 End Class
