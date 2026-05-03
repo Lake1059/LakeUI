@@ -44,16 +44,12 @@ Public Class ModernComboBox
         End Sub
 
         Protected Overrides Sub ClearItems()
-            Dim hadItems As Boolean = Count > 0
             MyBase.ClearItems()
             Dim hadSelection As Boolean = _owner._selectedIndex >= 0
             _owner._selectedIndex = -1
             If hadSelection Then
                 _owner._text = String.Empty
                 _owner.OnItemsTextChanged()
-            End If
-            If hadItems Then
-                _owner.OnSelectedIndexChangedExternal()
             End If
             _owner.Invalidate()
         End Sub
@@ -117,34 +113,6 @@ Public Class ModernComboBox
         Public Function TryGetToolTip(itemText As String, ByRef tipText As String) As Boolean
             Return _dict.TryGetValue(itemText, tipText)
         End Function
-
-        Public Overloads Sub AddRange(collection As IEnumerable(Of ToolTipEntry))
-            If collection Is Nothing Then Return
-            For Each entry In collection
-                If entry IsNot Nothing Then MyBase.Add(entry)
-            Next
-            RebuildDictionary()
-        End Sub
-
-        Public Overloads Sub AddRange(entries As IEnumerable(Of KeyValuePair(Of String, String)))
-            If entries Is Nothing Then Return
-            For Each kv In entries
-                MyBase.Add(New ToolTipEntry(kv.Key, kv.Value))
-            Next
-            RebuildDictionary()
-        End Sub
-
-        Public Overloads Sub AddRange(ParamArray entries As ToolTipEntry())
-            If entries Is Nothing Then Return
-            For Each entry In entries
-                If entry IsNot Nothing Then MyBase.Add(entry)
-            Next
-            RebuildDictionary()
-        End Sub
-
-        Public Overloads Sub Add(itemText As String, toolTipText As String)
-            MyBase.Add(New ToolTipEntry(itemText, toolTipText))
-        End Sub
 
         Private Sub RebuildDictionary()
             _dict.Clear()
@@ -218,19 +186,6 @@ Public Class ModernComboBox
             ClearSelection()
             Invalidate()
             RaiseEvent TextChanged(Me, EventArgs.Empty)
-            If _items IsNot Nothing Then
-                Dim matchIndex As Integer = -1
-                For i As Integer = 0 To _items.Count - 1
-                    If String.Equals(_items(i), v, StringComparison.Ordinal) Then
-                        matchIndex = i
-                        Exit For
-                    End If
-                Next
-                If matchIndex >= 0 AndAlso _selectedIndex <> matchIndex Then
-                    _selectedIndex = matchIndex
-                    RaiseEvent SelectedIndexChanged(Me, EventArgs.Empty)
-                End If
-            End If
         End Set
     End Property
     Private Function ShouldSerializeText() As Boolean
@@ -939,27 +894,6 @@ Public Class ModernComboBox
             提示间距 = value
         End Set
     End Property
-
-    Private _backgroundSource As Control = Nothing
-    ''' <summary>
-    ''' 背景采样源（超容器背景映射）。透明背景模式下，控件会调用此控件的绘制流程取像素作为底图，
-    ''' 从而实现跨越任意层级的"穿透显示"效果。
-    ''' 为 Nothing 时自动沿祖先链查找首个不透明祖先（默认行为）。
-    ''' </summary>
-    <Category("LakeUI"),
-                 Description("背景采样源（超容器背景映射）。设置后将跨越任意层级直接采样此控件的绘制内容作为透明背景；为空时自动选择首个不透明祖先。"),
-                 DefaultValue(GetType(Control), Nothing), Browsable(True)>
-    Public Property BackgroundSource As Control
-        Get
-            Return _backgroundSource
-        End Get
-        Set(value As Control)
-            If _backgroundSource IsNot value Then
-                _backgroundSource = value
-                Me.Invalidate()
-            End If
-        End Set
-    End Property
 #End Region
 
 #Region "初始化"
@@ -971,8 +905,7 @@ Public Class ModernComboBox
                  ControlStyles.AllPaintingInWmPaint Or
                  ControlStyles.UserPaint Or
                  ControlStyles.Selectable Or
-                 ControlStyles.StandardClick Or
-                 ControlStyles.SupportsTransparentBackColor, True)
+                 ControlStyles.StandardClick, True)
         UpdateStyles()
         AddHandler _caretBlinkTimer.Tick, Sub()
                                               _caretVisible = Not _caretVisible
@@ -1078,12 +1011,15 @@ Public Class ModernComboBox
         End If
     End Sub
 
-    ''' <summary>
-    ''' 透明背景贴底图：圆角或半透明背景下，由共享缓存把 BackgroundSource（或 Parent）
-    ''' 的内容采样到本控件区域。详见 TransparentBackgroundCache 的接入说明。
-    ''' </summary>
     Private Sub 绘制父容器背景(g As Graphics)
-        TransparentBackgroundCache.PaintBackgroundFor(Me, g, _backgroundSource)
+        If Parent Is Nothing Then Return
+        Dim state = g.Save()
+        g.TranslateTransform(-Me.Left, -Me.Top)
+        Using pea As New PaintEventArgs(g, New Rectangle(Me.Left, Me.Top, Me.Width, Me.Height))
+            InvokePaintBackground(Parent, pea)
+            InvokePaint(Parent, pea)
+        End Using
+        g.Restore(state)
     End Sub
 
     Private Sub DrawTextContent(g As Graphics, w As Integer, h As Integer)
@@ -2423,10 +2359,6 @@ Public Class ModernComboBox
     Friend Sub OnItemsTextChanged()
         Invalidate()
         RaiseEvent TextChanged(Me, EventArgs.Empty)
-    End Sub
-
-    Friend Sub OnSelectedIndexChangedExternal()
-        RaiseEvent SelectedIndexChanged(Me, EventArgs.Empty)
     End Sub
 
     Private Sub ResetCaretBlink()

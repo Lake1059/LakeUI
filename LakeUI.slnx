@@ -1,8 +1,4 @@
 <Solution>
-  <Project Path="LakeUI.Demo/LakeUI.Demo.vbproj">
-    <BuildType Project="Debug" />
-  </Project>
-  <Project Path="LakeUI/LakeUI.vbproj">
-    <BuildType Project="Debug" />
-  </Project>
+  <Project Path="LakeUI.Demo/LakeUI.Demo.vbproj" />
+  <Project Path="LakeUI/LakeUI.vbproj" />
 </Solution>

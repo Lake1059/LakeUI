@@ -121,41 +121,6 @@ Public Class ModernTabListControl
         Public 起始值 As Single = 0.0F
         Public 起始时刻 As Long = 0
     End Class
-
-    ''' <summary>
-    ''' 支持透明背景的内容承载面板。当 BackColor 的 Alpha 为 0 或为透明色时，
-    ''' 通过调用父级的 Paint 流程取真实像素作为背景。
-    ''' </summary>
-    Private Class 透明内容面板
-        Inherits Panel
-        Public Sub New()
-            SetStyle(ControlStyles.SupportsTransparentBackColor Or
-                     ControlStyles.OptimizedDoubleBuffer Or
-                     ControlStyles.AllPaintingInWmPaint Or
-                     ControlStyles.UserPaint Or
-                     ControlStyles.ResizeRedraw, True)
-            UpdateStyles()
-        End Sub
-        Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
-            If BackColor.A < 255 Then
-                ' 透明背景源显式指向 ModernTabListControl 的父容器（祖父级），
-                ' 而不是直接父级（ModernTabListControl 自身），否则会把标签栏等
-                ' 控件自身的绘制内容画进内容区域。
-                ' 通过 PaintBackgroundFor 走共享缓存：祖父级在祖先链上，由其内部
-                ' 自动按 Left/Top 累加得到正确偏移，无需手算。
-                Dim tabListCtrl As Control = Me.Parent
-                Dim grandParent As Control = If(tabListCtrl IsNot Nothing, tabListCtrl.Parent, Nothing)
-                TransparentBackgroundCache.PaintBackgroundFor(Me, e.Graphics, grandParent)
-                If BackColor.A > 0 Then
-                    Using brush As New SolidBrush(BackColor)
-                        e.Graphics.FillRectangle(brush, Me.ClientRectangle)
-                    End Using
-                End If
-            Else
-                MyBase.OnPaintBackground(e)
-            End If
-        End Sub
-    End Class
 #End Region
 
 #Region "构造"
@@ -164,7 +129,7 @@ Public Class ModernTabListControl
     Private _动画计时器 As Timer
     Private _动画用Idle As Boolean = False
     Private _动画中 As Boolean = False
-    Private ReadOnly _内容面板 As New 透明内容面板()
+    Private ReadOnly _内容面板 As New Panel()
     Private ReadOnly 项目列表 As New List(Of ModernTabPage)
     Private _滚动偏移 As Integer = 0
     Private ReadOnly _标签栏滚动条 As New ScrollBarRenderer()
@@ -182,11 +147,10 @@ Public Class ModernTabListControl
         SetStyle(ControlStyles.OptimizedDoubleBuffer, True)
         SetStyle(ControlStyles.ResizeRedraw, True)
         SetStyle(ControlStyles.Selectable, True)
-        SetStyle(ControlStyles.SupportsTransparentBackColor, True)
         DoubleBuffered = True
 
         _内容面板.Dock = DockStyle.None
-        _内容面板.BackColor = 获取内容面板有效背景色()
+        _内容面板.BackColor = 内容区域背景颜色
         Me.Controls.Add(_内容面板)
 
         _动画用Idle = (动画帧率值 <= 0)
@@ -369,38 +333,14 @@ Public Class ModernTabListControl
 
 #Region "绘制"
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
-        ' 所有绘制在 OnPaint 中完成；当背景透明时由 OnPaint 取父级像素。
+        ' 所有绘制在 OnPaint 中完成
     End Sub
-
-    Private Function 是否需要透明背景() As Boolean
-        Return 标签栏背景颜色.A < 255 OrElse 内容区域背景颜色.A < 255
-    End Function
-
-    Private Sub 绘制父容器背景(g As Graphics)
-        If Parent Is Nothing Then Return
-        Dim state = g.Save()
-        g.TranslateTransform(-Me.Left, -Me.Top)
-        Using pea As New PaintEventArgs(g, New Rectangle(Me.Left, Me.Top, Me.Width, Me.Height))
-            InvokePaintBackground(Parent, pea)
-            InvokePaint(Parent, pea)
-        End Using
-        g.Restore(state)
-    End Sub
-
-    Private Function 获取内容面板有效背景色() As Color
-        ' Panel 不支持完全透明的 BackColor 显示，需要使用 Transparent 触发透明背景路径。
-        If 内容区域背景颜色.A < 255 Then Return Color.Transparent
-        Return 内容区域背景颜色
-    End Function
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
         MyBase.OnPaint(e)
         确保Owner()
         If Me.Width <= 0 OrElse Me.Height <= 0 Then Return
         e.Graphics.SetClip(Me.ClientRectangle)
-        If 是否需要透明背景() Then
-            绘制父容器背景(e.Graphics)
-        End If
         Dim _ssaa As Integer = If(Class1.GlobalSSAA > 1, Class1.GlobalSSAA, 超采样倍率)
         If _ssaa > 1 Then
             Using bmp As New Bitmap(Me.Width * _ssaa, Me.Height * _ssaa)
@@ -447,18 +387,13 @@ Public Class ModernTabListControl
         g.InterpolationMode = InterpolationMode.HighQualityBicubic
 
         Using brush As New SolidBrush(内容区域背景颜色)
-            If 内容区域背景颜色.A = 255 Then
-                g.FillRectangle(brush, 获取内容区域矩形())
-            End If
-            ' 内容区域透明时不绘制遮罩，按用户要求保留底层真实像素。
+            g.FillRectangle(brush, 获取内容区域矩形())
         End Using
 
         Dim tabStripRect = 获取标签栏矩形()
-        If 标签栏背景颜色.A > 0 Then
-            Using brush As New SolidBrush(标签栏背景颜色)
-                g.FillRectangle(brush, tabStripRect)
-            End Using
-        End If
+        Using brush As New SolidBrush(标签栏背景颜色)
+            g.FillRectangle(brush, tabStripRect)
+        End Using
 
         绘制标签栏背景图片(g, tabStripRect)
 
@@ -528,21 +463,10 @@ Public Class ModernTabListControl
         End If
     End Sub
 
-    Private Function 获取指示器渐变基色() As Color
-        ' 透明背景下，标签栏背景颜色 的 RGB 不一定可见（例如 Color.Transparent 实为白色 RGB）。
-        ' 选择实际可见的不透明色，避免渐变出现白色或不匹配的色调。
-        If 标签栏背景颜色.A = 255 Then Return 标签栏背景颜色
-        If 标签栏遮罩颜色.A > 0 Then Return Color.FromArgb(255, 标签栏遮罩颜色)
-        If 标签栏背景颜色.A > 0 Then Return Color.FromArgb(255, 标签栏背景颜色)
-        If Parent IsNot Nothing Then Return Parent.BackColor
-        Return 标签栏背景颜色
-    End Function
-
     Private Sub 绘制更多指示器(g As Graphics, rect As RectangleF, isTop As Boolean)
         If rect.Height < 2 Then Return
-        Dim baseColor As Color = 获取指示器渐变基色()
-        Dim c1 As Color = Color.FromArgb(200, baseColor)
-        Dim c2 As Color = Color.FromArgb(0, baseColor)
+        Dim c1 As Color = Color.FromArgb(200, 标签栏背景颜色)
+        Dim c2 As Color = Color.FromArgb(0, 标签栏背景颜色)
         Dim pt1 As New PointF(rect.X, If(isTop, rect.Y, rect.Bottom - 1))
         Dim pt2 As New PointF(rect.X, If(isTop, rect.Bottom - 1, rect.Y))
         Using br As New LinearGradientBrush(pt1, pt2, c1, c2)
@@ -759,7 +683,7 @@ Public Class ModernTabListControl
     Private Sub 同步内容面板布局()
         Dim contentRect = 获取内容区域矩形()
         _内容面板.Bounds = contentRect
-        _内容面板.BackColor = 获取内容面板有效背景色()
+        _内容面板.BackColor = 内容区域背景颜色
         同步搜索框布局()
     End Sub
 
@@ -1501,7 +1425,7 @@ Public Class ModernTabListControl
         End Get
         Set(value As Color)
             SetValue(内容区域背景颜色, value)
-            _内容面板.BackColor = 获取内容面板有效背景色()
+            _内容面板.BackColor = value
         End Set
     End Property
 

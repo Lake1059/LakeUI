@@ -1,4 +1,4 @@
-Imports System.Collections.ObjectModel
+﻿Imports System.Collections.ObjectModel
 Imports System.ComponentModel
 Imports System.Drawing.Design
 Imports System.Drawing.Drawing2D
@@ -155,12 +155,6 @@ Public Class UltraDetailListView
         Public Property BottomLines As New List(Of TextLine)
 
         Friend CachedHeight As Integer = -1
-        ''' <summary>计算项高度时的"上部"内容高度（不含 BottomLines、不含 ItemPadding.Vertical）。</summary>
-        Friend CachedUpperPartHeight As Integer = 0
-        ''' <summary>BottomLines 整体所占高度（含 BottomLinesSpacing 与逐行间距）。</summary>
-        Friend CachedBottomLinesHeight As Integer = 0
-        ''' <summary>用于无效化校验：缓存计算时所依据的 (列宽签名 + DPI + Font hash) 的 hash。</summary>
-        Friend CachedSignature As Long = 0
 
         Public Sub New()
         End Sub
@@ -169,9 +163,6 @@ Public Class UltraDetailListView
         End Sub
         Public Sub InvalidateCache()
             CachedHeight = -1
-            CachedUpperPartHeight = 0
-            CachedBottomLinesHeight = 0
-            CachedSignature = 0
         End Sub
 
         Private Function ShouldSerializeIcon() As Boolean
@@ -237,9 +228,6 @@ Public Class UltraDetailListView
 
         <DefaultValue(False), Description("是否允许慢速单击编辑此列的子项主文本")>
         Public Property AllowLabelEdit As Boolean = False
-
-        <DefaultValue(False), Description("自动换行时是否固定高度（不参与项高度计算）；启用后此列内容超出由其他列决定的行高时以省略号截断")>
-        Public Property WordWrapHeightFixed As Boolean = False
 
         Public Sub New()
         End Sub
@@ -374,165 +362,83 @@ Public Class UltraDetailListView
         Public Group As ListGroup
         Public Item As ListItem
         Public Height As Integer
-        ''' <summary>当 Type=Item 时，此项在 _items 中的索引；GroupHeader 时为 -1。</summary>
-        Public ItemIndex As Integer
-        ''' <summary>该行内容顶部相对内容区域 Top（已含本行前 spacing）的累计 Y。
-        ''' 由 重建显示行布局() 一次性计算，命中测试与定位走二分。</summary>
-        Public Top As Integer
-        ''' <summary>本行前的 spacing 高度（项间距 + 分组前后的 ContentPadding）。</summary>
-        Public Spacing As Integer
     End Class
 
     Private _displayRows As New List(Of DisplayRow)
-    ''' <summary>所有显示行 Top 的副本，仅 Item 行用于二分。结构见 重建显示行布局()。</summary>
-    Private _rowTops As Integer() = Array.Empty(Of Integer)()
-    ''' <summary>所有显示行 (Top + Spacing + Height) = 下一行可用 Y 起点。</summary>
-    Private _rowBottoms As Integer() = Array.Empty(Of Integer)()
 
     Private Sub 重建显示列表()
         取消标签编辑等待()
         If _editTextBox IsNot Nothing Then 结束标签编辑(True)
 
         ' 记录当前选中的项引用，用于重建后重新映射
-        Dim prevSelectedItems As List(Of ListItem) = Nothing
+        Dim prevSelectedItems As New List(Of ListItem)
         Dim prevAnchorItem As ListItem = Nothing
-        If _selectedIndices.Count > 0 OrElse _selectionAnchor >= 0 Then
-            prevSelectedItems = New List(Of ListItem)(_selectedIndices.Count)
-            For Each idx In _selectedIndices
-                If idx >= 0 AndAlso idx < _displayRows.Count AndAlso _displayRows(idx).Type = DisplayRowType.Item Then
-                    prevSelectedItems.Add(_displayRows(idx).Item)
-                End If
-            Next
-            If _selectionAnchor >= 0 AndAlso _selectionAnchor < _displayRows.Count AndAlso
-               _displayRows(_selectionAnchor).Type = DisplayRowType.Item Then
-                prevAnchorItem = _displayRows(_selectionAnchor).Item
+        For Each idx In _selectedIndices
+            If idx >= 0 AndAlso idx < _displayRows.Count AndAlso _displayRows(idx).Type = DisplayRowType.Item Then
+                prevSelectedItems.Add(_displayRows(idx).Item)
             End If
+        Next
+        If _selectionAnchor >= 0 AndAlso _selectionAnchor < _displayRows.Count AndAlso
+           _displayRows(_selectionAnchor).Type = DisplayRowType.Item Then
+            prevAnchorItem = _displayRows(_selectionAnchor).Item
         End If
 
         _displayRows.Clear()
-        Dim groupHeaderH As Integer = Dpi(分组标题高度)
 
-        ' 按 GroupName 分桶（O(N)），避免按分组重新遍历整个 _items 集合 (原 O(G·N))
-        Dim ungrouped As New List(Of Integer)(_items.Count)
-        Dim grouped As Dictionary(Of String, List(Of Integer)) = Nothing
-        If _groups.Count > 0 Then
-            grouped = New Dictionary(Of String, List(Of Integer))(_groups.Count, StringComparer.Ordinal)
-            For Each grp In _groups
-                If Not grouped.ContainsKey(grp.Name) Then grouped(grp.Name) = New List(Of Integer)()
-            Next
-        End If
-        For i As Integer = 0 To _items.Count - 1
-            Dim it = _items(i)
-            Dim gn = it.GroupName
-            If String.IsNullOrEmpty(gn) Then
-                ungrouped.Add(i)
-            ElseIf grouped IsNot Nothing AndAlso grouped.ContainsKey(gn) Then
-                grouped(gn).Add(i)
-            Else
-                ungrouped.Add(i)
+        ' 无分组的项
+        For Each itm In _items
+            If String.IsNullOrEmpty(itm.GroupName) Then
+                _displayRows.Add(New DisplayRow With {
+                    .Type = DisplayRowType.Item,
+                    .Item = itm,
+                    .Height = 计算项高度(itm)
+                })
             End If
         Next
 
-        ' 输出无分组项
-        For Each idx In ungrouped
-            Dim it = _items(idx)
+        ' 按分组输出
+        For Each grp In _groups
             _displayRows.Add(New DisplayRow With {
-                .Type = DisplayRowType.Item,
-                .Item = it,
-                .ItemIndex = idx,
-                .Height = 计算项高度(it)
+                .Type = DisplayRowType.GroupHeader,
+                .Group = grp,
+                .Height = Dpi(分组标题高度)
             })
-        Next
-
-        ' 输出各分组
-        If grouped IsNot Nothing Then
-            For Each grp In _groups
-                _displayRows.Add(New DisplayRow With {
-                    .Type = DisplayRowType.GroupHeader,
-                    .Group = grp,
-                    .ItemIndex = -1,
-                    .Height = groupHeaderH
-                })
-                If Not grp.IsCollapsed Then
-                    For Each idx In grouped(grp.Name)
-                        Dim it = _items(idx)
+            If Not grp.IsCollapsed Then
+                For Each itm In _items
+                    If String.Equals(itm.GroupName, grp.Name, StringComparison.Ordinal) Then
                         _displayRows.Add(New DisplayRow With {
                             .Type = DisplayRowType.Item,
-                            .Item = it,
-                            .ItemIndex = idx,
-                            .Height = 计算项高度(it)
+                            .Item = itm,
+                            .Height = 计算项高度(itm)
                         })
-                    Next
+                    End If
+                Next
+            End If
+        Next
+
+        ' 重新映射选中索引
+        _selectedIndices.Clear()
+        If prevSelectedItems.Count > 0 Then
+            For i = 0 To _displayRows.Count - 1
+                If _displayRows(i).Type = DisplayRowType.Item AndAlso prevSelectedItems.Contains(_displayRows(i).Item) Then
+                    _selectedIndices.Add(i)
                 End If
             Next
         End If
-
-        ' 重建 (Spacing/Top) 布局缓存 —— 命中测试与可见行估算依赖此结构
-        重建显示行布局()
-
-        ' 重新映射选中索引：用 Item -> 显示行索引 一次性查询表，避免 O(N²)
-        _selectedIndices.Clear()
-        _selectedMin = -1
-        If prevSelectedItems IsNot Nothing AndAlso (prevSelectedItems.Count > 0 OrElse prevAnchorItem IsNot Nothing) Then
-            Dim itemToRow As New Dictionary(Of ListItem, Integer)(_displayRows.Count)
-            For i As Integer = 0 To _displayRows.Count - 1
-                If _displayRows(i).Type = DisplayRowType.Item Then itemToRow(_displayRows(i).Item) = i
-            Next
-            For Each it In prevSelectedItems
-                Dim ri As Integer
-                If itemToRow.TryGetValue(it, ri) Then
-                    If _selectedIndices.Add(ri) Then
-                        If _selectedMin = -1 OrElse ri < _selectedMin Then _selectedMin = ri
-                    End If
+        If prevAnchorItem IsNot Nothing Then
+            _selectionAnchor = -1
+            For i = 0 To _displayRows.Count - 1
+                If _displayRows(i).Type = DisplayRowType.Item AndAlso _displayRows(i).Item Is prevAnchorItem Then
+                    _selectionAnchor = i
+                    Exit For
                 End If
             Next
-            _selectionAnchor = -1
-            If prevAnchorItem IsNot Nothing Then
-                Dim ai As Integer
-                If itemToRow.TryGetValue(prevAnchorItem, ai) Then _selectionAnchor = ai
-            End If
         End If
 
         校正滚动偏移()
         校正横向滚动偏移()
         _hoverAnimActive = False
         _hoverRowIndex = -1
-        _columnXDirty = True
-    End Sub
-
-    ''' <summary>计算每行 Top/Spacing 并填充 _rowTops/_rowBottoms 数组。
-    ''' Top 表示"行内容（不含前 spacing）"相对内容区域上沿（已减去 _scrollOffset 的 0 起点）的位置，
-    ''' 因为 Spacing 与 _scrollOffset 相关，重建显示行布局() 必须在 _scrollOffset 变化后再次调用以更新偏移敏感的 spacing。
-    ''' 但为了能进行二分查找，我们选择"假设 _scrollOffset = 0"的稳定坐标系，命中测试时再加上当前 _scrollOffset 决定的偏移量。</summary>
-    Private Sub 重建显示行布局()
-        Dim n = _displayRows.Count
-        If _rowTops.Length < n Then
-            ReDim _rowTops(Math.Max(n, 16) - 1)
-            ReDim _rowBottoms(Math.Max(n, 16) - 1)
-        End If
-        Dim spacing As Integer = Dpi(项间距)
-        Dim contentTopPad As Integer = 获取有效内容上边距()
-        Dim contentBotPad As Integer = 获取有效内容下边距()
-        Dim y As Integer = 0
-        For i As Integer = 0 To n - 1
-            Dim row = _displayRows(i)
-            Dim s As Integer = 0
-            If i > 0 Then
-                s = spacing
-                Dim prev = _displayRows(i - 1)
-                If prev.Type = DisplayRowType.GroupHeader AndAlso row.Type = DisplayRowType.Item Then
-                    s += contentTopPad
-                ElseIf prev.Type = DisplayRowType.Item AndAlso row.Type = DisplayRowType.GroupHeader Then
-                    s += contentBotPad
-                End If
-            End If
-            row.Spacing = s
-            y += s
-            row.Top = y
-            _rowTops(i) = y
-            y += row.Height
-            _rowBottoms(i) = y
-        Next
     End Sub
 
     Private Sub 校正滚动偏移()
@@ -666,75 +572,6 @@ Public Class UltraDetailListView
         Next
         Return range
     End Function
-
-    ''' <summary>取/创建按 ARGB 颜色键缓存的 SolidBrush。控件级生命周期，颜色变更不需主动失效（不同 ARGB 即不同键）。</summary>
-    Private Function 获取画刷(color As Color) As SolidBrush
-        Dim key = color.ToArgb()
-        Dim br As SolidBrush = Nothing
-        If Not _brushCache.TryGetValue(key, br) Then
-            br = New SolidBrush(color)
-            _brushCache(key) = br
-        End If
-        Return br
-    End Function
-
-    ''' <summary>取/创建按 (ARGB, 宽度*100) 键缓存的 Pen。宽度精度到 0.01。</summary>
-    Private Function 获取画笔(color As Color, width As Single) As Pen
-        Dim w As Integer = CInt(Math.Max(0F, width) * 100.0F)
-        Dim key As Long = (CLng(color.ToArgb()) And &HFFFFFFFFL) Or (CLng(w) << 32)
-        Dim p As Pen = Nothing
-        If Not _penCache.TryGetValue(key, p) Then
-            p = New Pen(color, Math.Max(1.0F, width))
-            _penCache(key) = p
-        End If
-        Return p
-    End Function
-
-    Private Sub 释放GDI缓存()
-        For Each br In _brushCache.Values
-            br.Dispose()
-        Next
-        _brushCache.Clear()
-        For Each p In _penCache.Values
-            p.Dispose()
-        Next
-        _penCache.Clear()
-        _moreSymbolFont?.Dispose()
-        _moreSymbolFont = Nothing
-        _moreSymbolFontKey = 0F
-        _ssaaBufferGraphics?.Dispose()
-        _ssaaBufferGraphics = Nothing
-        _ssaaBuffer?.Dispose()
-        _ssaaBuffer = Nothing
-        _ssaaBufferScale = 0
-    End Sub
-
-    ''' <summary>确保 _columnXCache 是最新的。所有需要列 X 的路径调用此方法后用 _columnXCache 数组与 _columnXCount。
-    ''' 通过比较"期望首列 X"与缓存首列 X 自检失效，避免外部分散地维护脏标记。</summary>
-    Private Sub 确保列X缓存()
-        Dim n = _columns.Count
-        Dim contentRect = 获取内容区域()
-        Dim expectedFirst As Integer = If(n = 0, contentRect.X, contentRect.X - _hScrollOffset)
-        If Not _columnXDirty AndAlso _columnXCount = Math.Max(n, 1) AndAlso
-           _columnXCache.Length >= _columnXCount AndAlso _columnXCache(0) = expectedFirst Then
-            Return
-        End If
-        If _columnXCache.Length < Math.Max(n, 1) Then
-            ReDim _columnXCache(Math.Max(n, 4) - 1)
-        End If
-        If n = 0 Then
-            _columnXCache(0) = contentRect.X
-            _columnXCount = 1
-        Else
-            Dim x As Integer = contentRect.X - _hScrollOffset
-            For i As Integer = 0 To n - 1
-                _columnXCache(i) = x
-                x += _columns(i).Width
-            Next
-            _columnXCount = n
-        End If
-        _columnXDirty = False
-    End Sub
 
 #End Region
 
@@ -1286,10 +1123,9 @@ Public Class UltraDetailListView
             If 允许多选 = value Then Return
             允许多选 = value
             If Not value AndAlso _selectedIndices.Count > 1 Then
-                Dim first = _selectedMin
+                Dim first = _selectedIndices.Min()
                 _selectedIndices.Clear()
                 _selectedIndices.Add(first)
-                _selectedMin = first
                 Me.Invalidate()
                 RaiseEvent SelectedIndexChanged(Me, EventArgs.Empty)
             End If
@@ -1327,26 +1163,8 @@ Public Class UltraDetailListView
     Private _hScrollOffset As Integer = 0
     Private ReadOnly _hScrollBar As New ScrollBarRenderer()
     Private ReadOnly _selectedIndices As New HashSet(Of Integer)
-    ''' <summary>选中集合中的最小索引；-1 表示无选中。维护此值避免 SelectedIndex 每次 O(N) 扫描。</summary>
-    Private _selectedMin As Integer = -1
     Private _selectionAnchor As Integer = -1
     Private _hoverRowIndex As Integer = -1
-
-    ' --- 帧级缓存：列 X 坐标 ---
-    Private _columnXCache As Integer() = Array.Empty(Of Integer)()
-    Private _columnXCount As Integer = 0
-    Private _columnXDirty As Boolean = True
-
-    ' --- 帧级缓存：GDI 资源（按颜色/规格键复用） ---
-    Private ReadOnly _brushCache As New Dictionary(Of Integer, SolidBrush)
-    Private ReadOnly _penCache As New Dictionary(Of Long, Pen)
-    Private _moreSymbolFont As Font = Nothing
-    Private _moreSymbolFontKey As Single = 0F
-
-    ' --- SSAA 离屏缓冲 ---
-    Private _ssaaBuffer As Bitmap = Nothing
-    Private _ssaaBufferGraphics As Graphics = Nothing
-    Private _ssaaBufferScale As Integer = 0
 
     Private _columnResizeIndex As Integer = -1
     Private _columnResizeStartX As Integer = 0
@@ -1391,14 +1209,13 @@ Public Class UltraDetailListView
     <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
     Public Property SelectedIndex As Integer
         Get
-            Return _selectedMin
+            If _selectedIndices.Count = 0 Then Return -1
+            Return _selectedIndices.Min()
         End Get
         Set(value As Integer)
             _selectedIndices.Clear()
-            _selectedMin = -1
             If value >= 0 AndAlso value < _displayRows.Count Then
                 _selectedIndices.Add(value)
-                _selectedMin = value
             End If
             _selectionAnchor = value
             Me.Invalidate()
@@ -1427,18 +1244,8 @@ Public Class UltraDetailListView
     <Browsable(False)>
     Public ReadOnly Property SelectedItems As List(Of ListItem)
         Get
-            Dim n = _selectedIndices.Count
-            Dim result As New List(Of ListItem)(n)
-            If n = 0 Then Return result
-            ' 用一个数组排序避免 OrderBy 的 IEnumerable 分配
-            Dim arr(n - 1) As Integer
-            Dim i As Integer = 0
-            For Each idx In _selectedIndices
-                arr(i) = idx
-                i += 1
-            Next
-            Array.Sort(arr)
-            For Each idx In arr
+            Dim result As New List(Of ListItem)
+            For Each idx In _selectedIndices.OrderBy(Function(x) x)
                 If idx >= 0 AndAlso idx < _displayRows.Count Then
                     Dim row = _displayRows(idx)
                     If row.Type = DisplayRowType.Item Then result.Add(row.Item)
@@ -1474,11 +1281,8 @@ Public Class UltraDetailListView
         Dim newSet As New HashSet(Of Integer)(indices)
         If newSet.Count <> _selectedIndices.Count OrElse Not newSet.SetEquals(_selectedIndices) Then
             _selectedIndices.Clear()
-            _selectedMin = -1
             For Each idx In newSet
-                If _selectedIndices.Add(idx) Then
-                    If _selectedMin = -1 OrElse idx < _selectedMin Then _selectedMin = idx
-                End If
+                _selectedIndices.Add(idx)
             Next
             changed = True
         End If
@@ -1488,46 +1292,34 @@ Public Class UltraDetailListView
         End If
     End Sub
 
-    Private Sub 同步选中最小()
-        _selectedMin = -1
-        For Each i In _selectedIndices
-            If _selectedMin = -1 OrElse i < _selectedMin Then _selectedMin = i
-        Next
-    End Sub
-
 #End Region
 
 #Region "高度计算"
 
     Private Function 计算项高度(item As ListItem) As Integer
-        ' 缓存签名：列宽序列 + DPI + Font hash + 自动换行。任何影响测量的因素改动都通过 全部项高度缓存失效() 显式清空。
         If item.CachedHeight >= 0 Then Return item.CachedHeight
         Dim iconAreaW As Integer = 获取图标区域宽度(item)
         Dim scaledPadding As Padding = Dpi(项内边距)
         Dim maxSubH As Integer = 0
-        Dim colCount = _columns.Count
-        Dim contentW As Integer = If(colCount > 0, 0, 获取内容区域().Width)
         For i As Integer = 0 To item.SubItems.Count - 1
             Dim sub_ = item.SubItems(i)
-            Dim colW As Integer = If(colCount > 0 AndAlso i < colCount, _columns(i).Width, contentW)
+            Dim colW As Integer
+            If _columns.Count > 0 AndAlso i < _columns.Count Then
+                colW = _columns(i).Width
+            Else
+                colW = 获取内容区域().Width
+            End If
             Dim availW As Integer = colW - scaledPadding.Horizontal
             If i = 0 Then availW -= iconAreaW
-            Dim isFixed As Boolean = (colCount > 0 AndAlso i < colCount AndAlso _columns(i).WordWrapHeightFixed)
-            If Not isFixed Then
-                Dim subH As Integer = 计算子项内容高度(sub_, availW)
-                If subH > maxSubH Then maxSubH = subH
-            End If
+            Dim subH As Integer = 计算子项内容高度(sub_, availW)
+            If subH > maxSubH Then maxSubH = subH
         Next
         If maxSubH = 0 Then
             maxSubH = TextRenderer.MeasureText("Ag", Me.Font).Height
         End If
-        Dim scaledIconH As Integer = If(iconAreaW > 0, Dpi(图标尺寸).Height, 0)
-        If scaledIconH > maxSubH Then maxSubH = scaledIconH
-        Dim rowFullW As Integer = If(colCount > 0, 获取总列宽(), 获取内容区域().Width)
-        Dim bottomH As Integer = 计算底部文本行高度(item, rowFullW)
-        item.CachedUpperPartHeight = maxSubH
-        item.CachedBottomLinesHeight = bottomH
-        item.CachedHeight = maxSubH + bottomH + scaledPadding.Vertical
+        If iconAreaW > 0 AndAlso Dpi(图标尺寸).Height > maxSubH Then maxSubH = Dpi(图标尺寸).Height
+        maxSubH += 计算底部文本行高度(item, If(_columns.Count > 0, 获取总列宽(), 获取内容区域().Width))
+        item.CachedHeight = maxSubH + scaledPadding.Vertical
         Return item.CachedHeight
     End Function
 
@@ -1582,16 +1374,16 @@ Public Class UltraDetailListView
     End Function
 
     Private Function 估算可见行数() As Integer
-        If _displayRows.Count = 0 Then Return 1
         Dim contentRect = 获取内容区域()
         Dim availH As Integer = contentRect.Height
         If _scrollOffset > 0 Then availH -= Dpi(更多指示器高度)
         availH -= 获取有效内容上边距() + 获取有效内容下边距()
-        Dim baseTop As Integer = If(_scrollOffset >= 0 AndAlso _scrollOffset < _displayRows.Count, _rowTops(_scrollOffset), 0)
         Dim count As Integer = 0
+        Dim usedH As Integer = 0
         For i As Integer = _scrollOffset To _displayRows.Count - 1
-            Dim usedH As Integer = _rowBottoms(i) - baseTop
-            If usedH > availH Then Exit For
+            Dim rowH As Integer = _displayRows(i).Height + 获取行前间距(i)
+            If usedH + rowH > availH Then Exit For
+            usedH += rowH
             count += 1
         Next
         Return Math.Max(1, count)
@@ -1601,19 +1393,25 @@ Public Class UltraDetailListView
         If rowIndex < _scrollOffset OrElse rowIndex >= _displayRows.Count Then Return -1
         Dim contentRect = 获取内容区域()
         Dim hasMoreAbove As Boolean = _scrollOffset > 0
-        Dim baseY As Integer = contentRect.Y + If(hasMoreAbove, Dpi(更多指示器高度), 0) + 获取有效内容上边距()
-        Dim baseTop As Integer = _rowTops(_scrollOffset)
-        Dim y As Integer = baseY + (_rowTops(rowIndex) - baseTop)
+        Dim y As Integer = contentRect.Y + If(hasMoreAbove, Dpi(更多指示器高度), 0) + 获取有效内容上边距()
+        For i As Integer = _scrollOffset To rowIndex - 1
+            y += _displayRows(i).Height + 获取行前间距(i + 1)
+        Next
         If y >= contentRect.Bottom Then Return -1
         Return y
     End Function
 
     Private Function 获取列X列表() As List(Of Integer)
-        ' 兼容性包装：仅供必须返回 List 的极少路径使用，热路径请用 确保列X缓存() + _columnXCache。
-        确保列X缓存()
-        Dim result As New List(Of Integer)(_columnXCount)
-        For i As Integer = 0 To _columnXCount - 1
-            result.Add(_columnXCache(i))
+        Dim result As New List(Of Integer)
+        Dim contentRect = 获取内容区域()
+        If _columns.Count = 0 Then
+            result.Add(contentRect.X)
+            Return result
+        End If
+        Dim x As Integer = contentRect.X - _hScrollOffset
+        For Each col In _columns
+            result.Add(x)
+            x += col.Width
         Next
         Return result
     End Function
@@ -1670,29 +1468,19 @@ Public Class UltraDetailListView
 
         Dim _ssaa As Integer = If(Class1.GlobalSSAA > 1, Class1.GlobalSSAA, 超采样倍率)
         If _ssaa > 1 Then
-            Dim w = Me.Width * _ssaa
-            Dim h = Me.Height * _ssaa
-            ' 复用持久化离屏 Bitmap，仅在尺寸/SSAA 变更时重建
-            If _ssaaBuffer Is Nothing OrElse _ssaaBufferScale <> _ssaa OrElse
-               _ssaaBuffer.Width <> w OrElse _ssaaBuffer.Height <> h Then
-                _ssaaBufferGraphics?.Dispose()
-                _ssaaBuffer?.Dispose()
-                _ssaaBuffer = New Bitmap(w, h)
-                _ssaaBufferGraphics = Graphics.FromImage(_ssaaBuffer)
-                _ssaaBufferScale = _ssaa
-            End If
-            Dim sg As Graphics = _ssaaBufferGraphics
-            sg.ResetTransform()
-            sg.Clear(Color.Transparent)
-            sg.ScaleTransform(_ssaa, _ssaa)
-            sg.SmoothingMode = SmoothingMode.AntiAlias
-            sg.PixelOffsetMode = PixelOffsetMode.HighQuality
-            绘制背景与边框(sg)
-            绘制滚动条(sg)
-            绘制横向滚动条(sg)
-            g.CompositingQuality = CompositingQuality.HighQuality
-            g.InterpolationMode = InterpolationMode.HighQualityBicubic
-            g.DrawImage(_ssaaBuffer, 0, 0, Me.Width, Me.Height)
+            Using bmp As New Bitmap(Me.Width * _ssaa, Me.Height * _ssaa)
+                Using sg As Graphics = Graphics.FromImage(bmp)
+                    sg.ScaleTransform(_ssaa, _ssaa)
+                    sg.SmoothingMode = SmoothingMode.AntiAlias
+                    sg.PixelOffsetMode = PixelOffsetMode.HighQuality
+                    绘制背景与边框(sg)
+                    绘制滚动条(sg)
+                    绘制横向滚动条(sg)
+                End Using
+                g.CompositingQuality = CompositingQuality.HighQuality
+                g.InterpolationMode = InterpolationMode.HighQualityBicubic
+                g.DrawImage(bmp, 0, 0, Me.Width, Me.Height)
+            End Using
         Else
             绘制背景与边框(g)
         End If
@@ -1736,11 +1524,15 @@ Public Class UltraDetailListView
         End If
         If 边框圆角半径 > 0 Then
             Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(boundsRect, 边框圆角半径 * s)
-                g.FillPath(获取画刷(背景颜色), path)
+                Using br As New SolidBrush(背景颜色)
+                    g.FillPath(br, path)
+                End Using
                 RectangleRenderer.绘制圆角边框(g, path, 边框颜色, 边框宽度 * s)
             End Using
         Else
-            g.FillRectangle(获取画刷(背景颜色), boundsRect)
+            Using br As New SolidBrush(背景颜色)
+                g.FillRectangle(br, boundsRect)
+            End Using
             RectangleRenderer.绘制矩形边框(g, boundsRect, 边框颜色, 边框宽度 * s)
         End If
     End Sub
@@ -1799,24 +1591,23 @@ Public Class UltraDetailListView
 
     Private Sub 绘制列标题(g As Graphics)
         Dim headerRect As Rectangle = 获取列标题区域()
-        g.FillRectangle(获取画刷(列标题背景颜色), headerRect)
+        Using br As New SolidBrush(列标题背景颜色)
+            g.FillRectangle(br, headerRect)
+        End Using
 
-        确保列X缓存()
-        Dim dpiS As Single = DpiScale()
-        Dim pen As Pen = 获取画笔(列标题分隔线颜色, 列标题分隔线宽度 * dpiS)
-        Dim foreColor As Color = 列标题文字颜色
-        Dim font As Font = Me.Font
-        Dim flags As TextFormatFlags = TextFormatFlags.Left Or TextFormatFlags.VerticalCenter Or TextFormatFlags.EndEllipsis Or TextFormatFlags.NoPadding
-        Dim n = _columns.Count
-        For i As Integer = 0 To n - 1
-            Dim col = _columns(i)
-            Dim x As Integer = _columnXCache(i)
-            Dim pad As Padding = Dpi(col.HeaderPadding)
-            Dim textRect As New Rectangle(x + pad.Left, headerRect.Y + pad.Top, col.Width - pad.Horizontal, headerRect.Height - pad.Vertical)
-            TextRenderer.DrawText(g, col.Text, font, textRect, foreColor, flags)
-            g.DrawLine(pen, x + col.Width - 1, headerRect.Y + 4, x + col.Width - 1, headerRect.Bottom - 4)
-        Next
-        g.DrawLine(pen, headerRect.X, headerRect.Bottom - 1, headerRect.Right, headerRect.Bottom - 1)
+        Dim colXList = 获取列X列表()
+        Using pen As New Pen(列标题分隔线颜色, 列标题分隔线宽度 * DpiScale())
+            For i As Integer = 0 To _columns.Count - 1
+                Dim col = _columns(i)
+                Dim x As Integer = colXList(i)
+                Dim pad As Padding = Dpi(col.HeaderPadding)
+                Dim textRect As New Rectangle(x + pad.Left, headerRect.Y + pad.Top, col.Width - pad.Horizontal, headerRect.Height - pad.Vertical)
+                TextRenderer.DrawText(g, col.Text, Me.Font, textRect, 列标题文字颜色,
+                    TextFormatFlags.Left Or TextFormatFlags.VerticalCenter Or TextFormatFlags.EndEllipsis Or TextFormatFlags.NoPadding)
+                g.DrawLine(pen, x + col.Width - 1, headerRect.Y + 4, x + col.Width - 1, headerRect.Bottom - 4)
+            Next
+            g.DrawLine(pen, headerRect.X, headerRect.Bottom - 1, headerRect.Right, headerRect.Bottom - 1)
+        End Using
     End Sub
 
     Private Sub 绘制全部行(g As Graphics)
@@ -1834,53 +1625,53 @@ Public Class UltraDetailListView
         Dim scrollW As Integer = If(Not _scrollBar.TrackRect.IsEmpty, Me.Width - inset - _scrollBar.VisualLeft, 0)
         Dim availW As Integer = contentRect.Width - scrollW
         If _columns.Count > 0 Then availW = Math.Max(availW, 获取总列宽())
-        确保列X缓存()
-        ' 兼容签名：构造一次 List 给 绘制项行（其内部仍按 List 索引访问；下方传入 colXListLocal 复用一份）
-        Dim colXListLocal As List(Of Integer) = 获取列X列表()
-        Dim dpiS As Single = DpiScale()
+        Dim colXList = 获取列X列表()
 
-        Dim selectedBr As SolidBrush = 获取画刷(项选中背景颜色)
-        Dim hoverBr As SolidBrush = 获取画刷(项悬停背景颜色)
-        Dim checkedPen As Pen = 获取画笔(项高亮边框颜色, 项高亮边框宽度 * dpiS)
+        ' 绘制悬停动画高亮
+        Using selectedBr As New SolidBrush(项选中背景颜色),
+              hoverBr As New SolidBrush(项悬停背景颜色),
+              checkedPen As New Pen(项高亮边框颜色, 项高亮边框宽度 * DpiScale())
 
-        If _hoverAnimActive AndAlso _hoverRowIndex >= 0 AndAlso Not _selectedIndices.Contains(_hoverRowIndex) Then
-            Dim t As Single = _hoverAnim.Progress
-            Dim animY As Single = _hoverAnimFromY + (_hoverAnimToY - _hoverAnimFromY) * t
-            Dim animH As Single = _hoverAnimFromH + (_hoverAnimToH - _hoverAnimFromH) * t
-            g.FillRectangle(hoverBr, New RectangleF(contentRect.X, animY, availW, animH))
-        End If
-
-        For i As Integer = _scrollOffset To _displayRows.Count - 1
-            Dim row = _displayRows(i)
-            Dim rowH As Integer = row.Height
-            Dim spacing As Integer = If(i = _scrollOffset, 0, row.Spacing)
-            If currentY + spacing + rowH > bottomLimit Then Exit For
-
-            currentY += spacing
-            Dim rowRect As New Rectangle(contentRect.X, currentY, availW, rowH)
-
-            If _selectedIndices.Contains(i) Then
-                g.FillRectangle(selectedBr, rowRect)
-            ElseIf i = _hoverRowIndex AndAlso Not _hoverAnimActive Then
-                g.FillRectangle(hoverBr, rowRect)
+            If _hoverAnimActive AndAlso _hoverRowIndex >= 0 AndAlso Not _selectedIndices.Contains(_hoverRowIndex) Then
+                Dim t As Single = _hoverAnim.Progress
+                Dim animY As Single = _hoverAnimFromY + (_hoverAnimToY - _hoverAnimFromY) * t
+                Dim animH As Single = _hoverAnimFromH + (_hoverAnimToH - _hoverAnimFromH) * t
+                g.FillRectangle(hoverBr, New RectangleF(contentRect.X, animY, availW, animH))
             End If
 
-            If row.Type = DisplayRowType.GroupHeader Then
-                绘制分组标题行(g, row.Group, rowRect)
-            Else
-                绘制项行(g, row.Item, rowRect, colXListLocal)
-                If row.Item.Checked AndAlso 项高亮边框宽度 > 0 Then
-                    Dim scaledCheckedBorder As Single = 项高亮边框宽度 * dpiS
-                    Dim half As Single = scaledCheckedBorder / 2.0F
-                    g.DrawRectangle(checkedPen,
-                        rowRect.X + half, rowRect.Y + half,
-                        rowRect.Width - scaledCheckedBorder, rowRect.Height - scaledCheckedBorder)
+            For i As Integer = _scrollOffset To _displayRows.Count - 1
+                Dim row = _displayRows(i)
+                Dim rowH As Integer = row.Height
+                Dim spacing As Integer = 获取行前间距(i)
+                If currentY + spacing + rowH > bottomLimit Then Exit For
+
+                currentY += spacing
+                Dim rowRect As New Rectangle(contentRect.X, currentY, availW, rowH)
+
+                If _selectedIndices.Contains(i) Then
+                    g.FillRectangle(selectedBr, rowRect)
+                ElseIf i = _hoverRowIndex AndAlso Not _hoverAnimActive Then
+                    g.FillRectangle(hoverBr, rowRect)
                 End If
-            End If
 
-            currentY += rowH
-            lastDrawnIndex = i
-        Next
+                If row.Type = DisplayRowType.GroupHeader Then
+                    绘制分组标题行(g, row.Group, rowRect)
+                Else
+                    绘制项行(g, row.Item, rowRect, colXList)
+                    If row.Item.Checked AndAlso 项高亮边框宽度 > 0 Then
+                        Dim scaledCheckedBorder As Single = 项高亮边框宽度 * DpiScale()
+                        Dim half As Single = scaledCheckedBorder / 2.0F
+                        Dim borderRect As New RectangleF(
+                            rowRect.X + half, rowRect.Y + half,
+                            rowRect.Width - scaledCheckedBorder, rowRect.Height - scaledCheckedBorder)
+                        g.DrawRectangle(checkedPen, borderRect.X, borderRect.Y, borderRect.Width, borderRect.Height)
+                    End If
+                End If
+
+                currentY += rowH
+                lastDrawnIndex = i
+            Next
+        End Using
 
         Dim hasMoreBelow As Boolean = lastDrawnIndex < _displayRows.Count - 1
         If hasMoreBelow AndAlso currentY < bottomLimit Then
@@ -1892,7 +1683,9 @@ Public Class UltraDetailListView
     End Sub
 
     Private Sub 绘制分组标题行(g As Graphics, grp As ListGroup, rect As Rectangle)
-        g.FillRectangle(获取画刷(分组背景颜色), rect)
+        Using br As New SolidBrush(分组背景颜色)
+            g.FillRectangle(br, rect)
+        End Using
 
         Dim arrowSize As Integer = Dpi(12)
         Dim arrowMargin As Integer = Dpi(10)
@@ -1907,7 +1700,9 @@ Public Class UltraDetailListView
             pts = {New PointF(arrowX, arrowY), New PointF(arrowX + arrowSize, arrowY), New PointF(arrowX + arrowSize \ 2, arrowY + arrowSize)}
         End If
         Dim effectiveColor As Color = If(grp.ForeColor <> Color.Empty, grp.ForeColor, 分组文字颜色)
-        g.FillPolygon(获取画刷(effectiveColor), pts)
+        Using br As New SolidBrush(effectiveColor)
+            g.FillPolygon(br, pts)
+        End Using
         g.SmoothingMode = prevSmooth
 
         Dim textX As Integer = arrowX + arrowSize + Dpi(6)
@@ -1915,7 +1710,9 @@ Public Class UltraDetailListView
         TextRenderer.DrawText(g, grp.Text, Me.Font, textRect, effectiveColor,
             TextFormatFlags.Left Or TextFormatFlags.VerticalCenter Or TextFormatFlags.EndEllipsis Or TextFormatFlags.NoPadding)
 
-        g.DrawLine(获取画笔(分组分隔线颜色, 1.0F), rect.X, rect.Bottom - 1, rect.Right, rect.Bottom - 1)
+        Using pen As New Pen(分组分隔线颜色)
+            g.DrawLine(pen, rect.X, rect.Bottom - 1, rect.Right, rect.Bottom - 1)
+        End Using
     End Sub
 
     Private Sub 绘制项行(g As Graphics, item As ListItem, rowRect As Rectangle, colXList As List(Of Integer))
@@ -1923,18 +1720,9 @@ Public Class UltraDetailListView
         Dim hasIcon As Boolean = iconAreaW > 0
         Dim scaledPadding As Padding = Dpi(项内边距)
         Dim scaledIconSize As Size = Dpi(图标尺寸)
-        ' 直接复用 计算项高度 时填充的缓存，避免重复 MeasureText
-        Dim bottomLinesH As Integer = item.CachedBottomLinesHeight
-        Dim upperPartH As Integer = item.CachedUpperPartHeight
-        If bottomLinesH = 0 AndAlso upperPartH = 0 Then
-            ' 防御：若缓存未填充，按需求重算（极少路径）
-            Dim rowFullW As Integer = If(_columns.Count > 0, 获取总列宽(), rowRect.Width)
-            bottomLinesH = 计算底部文本行高度(item, rowFullW)
-            upperPartH = rowRect.Height - scaledPadding.Vertical - bottomLinesH
-        End If
+        Dim bottomLinesH As Integer = 计算底部文本行高度(item, rowRect.Width)
+        Dim upperPartH As Integer = rowRect.Height - scaledPadding.Vertical - bottomLinesH
         Dim flags As TextFormatFlags = 获取文本格式标志()
-        Dim lineSpacing As Integer = Dpi(文本行间距)
-        Dim bottomSpacing As Integer = Dpi(底部文本行间距)
 
         Dim colCount As Integer = If(_columns.Count > 0, _columns.Count, 1)
         For colIdx As Integer = 0 To colCount - 1
@@ -1942,12 +1730,6 @@ Public Class UltraDetailListView
             Dim sub_ = item.SubItems(colIdx)
             Dim colX As Integer = colXList(Math.Min(colIdx, colXList.Count - 1))
             Dim colW As Integer = If(_columns.Count > 0, _columns(colIdx).Width, rowRect.Width)
-
-            ' WordWrapHeightFixed 列：已知列高由其他列决定，此列内容超高时需省略
-            Dim colFixed As Boolean = (_columns.Count > 0 AndAlso colIdx < _columns.Count AndAlso _columns(colIdx).WordWrapHeightFixed)
-            Dim cellFlags As TextFormatFlags = If(colFixed AndAlso 自动换行,
-                (flags And Not TextFormatFlags.WordBreak) Or TextFormatFlags.EndEllipsis,
-                flags)
 
             Dim cellRect As New Rectangle(
                 colX + scaledPadding.Left, rowRect.Y + scaledPadding.Top,
@@ -1966,8 +1748,6 @@ Public Class UltraDetailListView
             If cellRect.Width <= 0 OrElse cellRect.Height <= 0 Then Continue For
 
             Dim contentH As Integer = 计算子项内容高度(sub_, cellRect.Width)
-            ' WordWrapHeightFixed 列内容高度上限为单元格高度（超出时省略）
-            If colFixed Then contentH = Math.Min(contentH, cellRect.Height)
             Dim startY As Integer = cellRect.Y + Math.Max(0, (cellRect.Height - contentH) \ 2)
             Dim lineY As Integer = startY
             Dim proposed As New Size(cellRect.Width, Integer.MaxValue)
@@ -1975,12 +1755,9 @@ Public Class UltraDetailListView
             ' 主文本
             Dim mf As Font = If(sub_.Font, Me.Font)
             Dim mc As Color = If(sub_.ForeColor <> Color.Empty, sub_.ForeColor, 项文本颜色)
-            Dim mh As Integer = TextRenderer.MeasureText(If(String.IsNullOrEmpty(sub_.Text), "Ag", sub_.Text), mf, proposed, cellFlags).Height
+            Dim mh As Integer = TextRenderer.MeasureText(If(String.IsNullOrEmpty(sub_.Text), "Ag", sub_.Text), mf, proposed, flags).Height
             If Not String.IsNullOrEmpty(sub_.Text) Then
-                Dim remainH As Integer = cellRect.Bottom - lineY
-                If remainH > 0 Then
-                    TextRenderer.DrawText(g, sub_.Text, mf, New Rectangle(cellRect.X, lineY, cellRect.Width, Math.Min(mh, remainH)), mc, cellFlags)
-                End If
+                TextRenderer.DrawText(g, sub_.Text, mf, New Rectangle(cellRect.X, lineY, cellRect.Width, mh), mc, flags)
             End If
             lineY += mh
 
@@ -1989,12 +1766,9 @@ Public Class UltraDetailListView
                 lineY += Dpi(文本行间距)
                 Dim lf As Font = If(line_.Font, Me.Font)
                 Dim lc As Color = If(line_.ForeColor <> Color.Empty, line_.ForeColor, 项文本颜色)
-                Dim lh As Integer = TextRenderer.MeasureText(If(String.IsNullOrEmpty(line_.Text), "Ag", line_.Text), lf, proposed, cellFlags).Height
+                Dim lh As Integer = TextRenderer.MeasureText(If(String.IsNullOrEmpty(line_.Text), "Ag", line_.Text), lf, proposed, flags).Height
                 If Not String.IsNullOrEmpty(line_.Text) Then
-                    Dim remainH As Integer = cellRect.Bottom - lineY
-                    If remainH > 0 Then
-                        TextRenderer.DrawText(g, line_.Text, lf, New Rectangle(cellRect.X, lineY, cellRect.Width, Math.Min(lh, remainH)), lc, cellFlags)
-                    End If
+                    TextRenderer.DrawText(g, line_.Text, lf, New Rectangle(cellRect.X, lineY, cellRect.Width, lh), lc, flags)
                 End If
                 lineY += lh
             Next
@@ -2029,14 +1803,10 @@ Public Class UltraDetailListView
             g.FillRectangle(br, rect)
         End Using
         Dim symbol As String = If(isTop, "▲", "▼")
-        Dim symbolSize As Single = Math.Max(7, Me.Font.Size - 1)
-        If _moreSymbolFont Is Nothing OrElse _moreSymbolFontKey <> symbolSize Then
-            _moreSymbolFont?.Dispose()
-            _moreSymbolFont = New Font(Me.Font.FontFamily, symbolSize, FontStyle.Regular)
-            _moreSymbolFontKey = symbolSize
-        End If
-        TextRenderer.DrawText(g, symbol, _moreSymbolFont, rect, 更多指示器颜色,
-            TextFormatFlags.HorizontalCenter Or TextFormatFlags.VerticalCenter Or TextFormatFlags.NoPadding)
+        Using symbolFont As New Font(Me.Font.FontFamily, Math.Max(7, Me.Font.Size - 1), FontStyle.Regular)
+            TextRenderer.DrawText(g, symbol, symbolFont, rect, 更多指示器颜色,
+                TextFormatFlags.HorizontalCenter Or TextFormatFlags.VerticalCenter Or TextFormatFlags.NoPadding)
+        End Using
     End Sub
 
     Private Sub 绘制滚动条(g As Graphics)
@@ -2050,8 +1820,12 @@ Public Class UltraDetailListView
         If Not _isDragSelecting Then Return
         Dim rect As Rectangle = 获取拖选矩形()
         If rect.Width <= 0 OrElse rect.Height <= 0 Then Return
-        g.FillRectangle(获取画刷(选框填充颜色), rect)
-        g.DrawRectangle(获取画笔(选框边框颜色, 1.0F), rect)
+        Using br As New SolidBrush(选框填充颜色)
+            g.FillRectangle(br, rect)
+        End Using
+        Using pen As New Pen(选框边框颜色)
+            g.DrawRectangle(pen, rect)
+        End Using
     End Sub
 
     Private Sub 绘制拖动排序指示线(g As Graphics)
@@ -2072,8 +1846,9 @@ Public Class UltraDetailListView
             If lineY < 0 Then Return
             lineY += _displayRows(lastIdx).Height
         End If
-        g.DrawLine(获取画笔(拖动排序指示线颜色, 拖动排序指示线宽 * DpiScale()),
-                   contentRect.X, lineY, contentRect.X + availW, lineY)
+        Using pen As New Pen(拖动排序指示线颜色, 拖动排序指示线宽 * DpiScale())
+            g.DrawLine(pen, contentRect.X, lineY, contentRect.X + availW, lineY)
+        End Using
     End Sub
 
 #End Region
@@ -2564,9 +2339,28 @@ Public Class UltraDetailListView
         End If
     End Sub
 
-    Private Function 命中测试矩形顺序(dragRect As Rectangle) As List(Of Integer)
-        ' 已被前缀和版本取代，保留占位以避免外部调用，但实际不会被调用。
-        Return 命中测试矩形(dragRect)
+    Private Function 命中测试矩形(dragRect As Rectangle) As List(Of Integer)
+        Dim result As New List(Of Integer)
+        Dim contentRect = 获取内容区域()
+        Dim hasMoreAbove As Boolean = _scrollOffset > 0
+        Dim topOffset As Integer = If(hasMoreAbove, Dpi(更多指示器高度), 0)
+        Dim currentY As Integer = contentRect.Y + topOffset + 获取有效内容上边距()
+        Dim bottomLimit As Integer = contentRect.Bottom - 获取有效内容下边距()
+        Dim rowW As Integer = contentRect.Width
+        If _columns.Count > 0 Then rowW = Math.Max(rowW, 获取总列宽())
+
+        For i As Integer = _scrollOffset To _displayRows.Count - 1
+            Dim spacing As Integer = 获取行前间距(i)
+            Dim rowH As Integer = _displayRows(i).Height
+            If currentY + spacing + rowH > bottomLimit Then Exit For
+            currentY += spacing
+            Dim rowRect As New Rectangle(contentRect.X, currentY, rowW, rowH)
+            If dragRect.IntersectsWith(rowRect) AndAlso _displayRows(i).Type = DisplayRowType.Item Then
+                result.Add(i)
+            End If
+            currentY += rowH
+        Next
+        Return result
     End Function
 
 #End Region
@@ -2667,15 +2461,12 @@ Public Class UltraDetailListView
         EndUpdate()
 
         _selectedIndices.Clear()
-        _selectedMin = -1
         For i = 0 To _displayRows.Count - 1
             If _displayRows(i).Type = DisplayRowType.Item AndAlso movedItems.Contains(_displayRows(i).Item) Then
-                If _selectedIndices.Add(i) Then
-                    If _selectedMin = -1 OrElse i < _selectedMin Then _selectedMin = i
-                End If
+                _selectedIndices.Add(i)
             End If
         Next
-        _selectionAnchor = _selectedMin
+        _selectionAnchor = If(_selectedIndices.Count > 0, _selectedIndices.Min(), -1)
         RaiseEvent ItemOrderChanged(Me, EventArgs.Empty)
         RaiseEvent SelectedIndexChanged(Me, EventArgs.Empty)
     End Sub
@@ -2832,61 +2623,30 @@ Public Class UltraDetailListView
     Private Function 命中测试行(pt As Point) As Integer
         Dim contentRect = 获取内容区域()
         If Not contentRect.Contains(pt) Then Return -1
-        If _displayRows.Count = 0 OrElse _scrollOffset >= _displayRows.Count Then Return -1
         Dim hasMoreAbove As Boolean = _scrollOffset > 0
-        Dim baseY As Integer = contentRect.Y + If(hasMoreAbove, Dpi(更多指示器高度), 0) + 获取有效内容上边距()
+        Dim topOffset As Integer = If(hasMoreAbove, Dpi(更多指示器高度), 0)
+        Dim currentY As Integer = contentRect.Y + topOffset + 获取有效内容上边距()
         Dim bottomLimit As Integer = contentRect.Bottom - 获取有效内容下边距()
-        Dim baseTop As Integer = _rowTops(_scrollOffset)
-        Dim ptOffset As Integer = pt.Y - baseY + baseTop  ' 转换到稳定坐标系
-        If pt.Y < baseY Then Return -1
-        ' 在 _rowTops[_scrollOffset .. count-1] 中二分查找首个 _rowBottoms(i) > ptOffset 的 i
-        Dim lo As Integer = _scrollOffset, hi As Integer = _displayRows.Count - 1
-        While lo <= hi
-            Dim mid As Integer = (lo + hi) >> 1
-            If _rowBottoms(mid) <= ptOffset Then
-                lo = mid + 1
-            Else
-                hi = mid - 1
-            End If
-        End While
-        If lo >= _displayRows.Count Then Return -1
-        ' 行 lo 的内容范围: [_rowTops(lo), _rowBottoms(lo))；ptOffset 落在其内即命中
-        If ptOffset < _rowTops(lo) Then Return -1
-        ' 同时校验该行在屏幕上未越过底部限制
-        Dim rowScreenBottom As Integer = baseY + (_rowBottoms(lo) - baseTop)
-        If rowScreenBottom > bottomLimit Then Return -1
-        Return lo
-    End Function
 
-    Private Function 命中测试矩形(dragRect As Rectangle) As List(Of Integer)
-        Dim result As New List(Of Integer)
-        If _displayRows.Count = 0 OrElse _scrollOffset >= _displayRows.Count Then Return result
-        Dim contentRect = 获取内容区域()
-        Dim hasMoreAbove As Boolean = _scrollOffset > 0
-        Dim baseY As Integer = contentRect.Y + If(hasMoreAbove, Dpi(更多指示器高度), 0) + 获取有效内容上边距()
-        Dim bottomLimit As Integer = contentRect.Bottom - 获取有效内容下边距()
-        Dim baseTop As Integer = _rowTops(_scrollOffset)
-        Dim rowW As Integer = contentRect.Width
-        If _columns.Count > 0 Then rowW = Math.Max(rowW, 获取总列宽())
         For i As Integer = _scrollOffset To _displayRows.Count - 1
-            Dim rowScreenTop As Integer = baseY + (_rowTops(i) - baseTop)
-            Dim rowScreenBottom As Integer = baseY + (_rowBottoms(i) - baseTop)
-            If rowScreenBottom > bottomLimit Then Exit For
-            Dim rowRect As New Rectangle(contentRect.X, rowScreenTop, rowW, rowScreenBottom - rowScreenTop)
-            If dragRect.IntersectsWith(rowRect) AndAlso _displayRows(i).Type = DisplayRowType.Item Then
-                result.Add(i)
+            Dim spacing As Integer = 获取行前间距(i)
+            Dim rowH As Integer = _displayRows(i).Height
+            If currentY + spacing + rowH > bottomLimit Then Exit For
+            currentY += spacing
+            If pt.Y >= currentY AndAlso pt.Y < currentY + rowH Then
+                Return i
             End If
+            currentY += rowH
         Next
-        Return result
+        Return -1
     End Function
 
     Private Function 检测列分隔线(mouseX As Integer) As Integer
         If _columns.Count < 1 Then Return -1
-        确保列X缓存()
-        Dim hit As Integer = Dpi(ColumnResizeHitZone)
+        Dim colXList = 获取列X列表()
         For i As Integer = 0 To _columns.Count - 1
-            Dim sepX As Integer = _columnXCache(i) + _columns(i).Width
-            If Math.Abs(mouseX - sepX) <= hit Then
+            Dim sepX As Integer = colXList(i) + _columns(i).Width
+            If Math.Abs(mouseX - sepX) <= Dpi(ColumnResizeHitZone) Then
                 Return i
             End If
         Next
@@ -2895,9 +2655,9 @@ Public Class UltraDetailListView
 
     Private Function 命中测试列(pt As Point) As Integer
         If _columns.Count = 0 Then Return -1
-        确保列X缓存()
+        Dim colXList = 获取列X列表()
         For i = 0 To _columns.Count - 1
-            Dim colX = _columnXCache(i)
+            Dim colX = colXList(i)
             If pt.X >= colX AndAlso pt.X < colX + _columns(i).Width Then
                 Return i
             End If
@@ -3206,9 +2966,6 @@ Public Class UltraDetailListView
     Protected Overrides Sub OnFontChanged(e As EventArgs)
         MyBase.OnFontChanged(e)
         全部项高度缓存失效()
-        _moreSymbolFont?.Dispose()
-        _moreSymbolFont = Nothing
-        _moreSymbolFontKey = 0F
         重建显示列表()
         Me.Invalidate()
     End Sub
@@ -3216,15 +2973,6 @@ Public Class UltraDetailListView
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
         全部项高度缓存失效()
-        ' DPI 改变会影响所有以 DpiScale 计算的 Pen 宽度，统一释放缓存以触发按新尺寸的重建
-        For Each p In _penCache.Values
-            p.Dispose()
-        Next
-        _penCache.Clear()
-        _moreSymbolFont?.Dispose()
-        _moreSymbolFont = Nothing
-        _moreSymbolFontKey = 0F
-        _columnXDirty = True
         重建显示列表()
         Me.Invalidate()
     End Sub
@@ -3250,7 +2998,6 @@ Public Class UltraDetailListView
             _truncTooltip.Dispose()
             _truncTooltip = Nothing
         End If
-        释放GDI缓存()
     End Sub
 
 #End Region

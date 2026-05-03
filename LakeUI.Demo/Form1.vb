@@ -37,9 +37,6 @@
         Me.ModernTabListControl1.Items(33).BoundControl = Form_CpuMonitor
         Me.ModernTabListControl1.Items(34).BoundControl = Form_RamMonitor
         Me.ModernTabListControl1.Items(35).BoundControl = Form_GpuMonitor
-
-        Me.ModernTabListControl1.Items(37).BoundControl = Form_PrecisionTimer
-        Me.ModernTabListControl1.Items(38).BoundControl = Form_AgentRoom
     End Sub
 
     Private Sub Form1_Shown(sender As Object, e As EventArgs) Handles Me.Shown

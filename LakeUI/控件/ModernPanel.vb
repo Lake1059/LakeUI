@@ -297,33 +297,6 @@ Public Class ModernPanel
 
 #End Region
 
-#Region "外观属性 - 透明背景源"
-
-    Private _backgroundSource As Control = Nothing
-    ''' <summary>
-    ''' 背景采样源（超容器背景映射）。透明背景模式下，控件会调用此控件的绘制流程取像素作为底图，
-    ''' 从而实现跨越任意层级的"穿透显示"效果。
-    ''' 典型场景：当本控件位于一个不透明的祖先（如 ModernTabListControl 的 BoundControl 独立窗体）内，
-    ''' 但希望透出更外层（如顶层窗体）的内容时，将其设置为目标控件即可。
-    ''' 为 Nothing 时自动沿祖先链查找首个不透明祖先（默认行为）。
-    ''' </summary>
-    <Category("LakeUI"),
-     Description("背景采样源（超容器背景映射）。设置后将跨越任意层级直接采样此控件的绘制内容作为透明背景；为空时自动选择首个不透明祖先。"),
-     DefaultValue(GetType(Control), Nothing), Browsable(True)>
-    Public Property BackgroundSource As Control
-        Get
-            Return _backgroundSource
-        End Get
-        Set(value As Control)
-            If _backgroundSource IsNot value Then
-                _backgroundSource = value
-                Me.Invalidate()
-            End If
-        End Set
-    End Property
-
-#End Region
-
 #Region "外观属性 - 滚动条"
 
     Private 滚动条宽度 As Integer = 10
@@ -690,20 +663,14 @@ Public Class ModernPanel
 
 #Region "绘制"
 
-    Private Function 需要自绘背景() As Boolean
-        ' 圆角 / 半透明背景色 / 半透明 BackColor（基类）任一成立都不能交给基类绘制背景，
-        ' 否则圆角外角落或基类透明处理会出现错误填充。
-        Return 边框圆角半径 > 0 OrElse 背景颜色.A < 255 OrElse MyBase.BackColor.A < 255
-    End Function
-
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
-        If 需要自绘背景() Then Return
+        If 边框圆角半径 > 0 OrElse 背景颜色.A < 255 Then Return
         MyBase.OnPaintBackground(e)
     End Sub
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
         If Me.Width < 1 OrElse Me.Height < 1 Then Return
-        If 需要自绘背景() Then
+        If 边框圆角半径 > 0 OrElse 背景颜色.A < 255 Then
             绘制父容器背景(e.Graphics)
         End If
         Dim g As Graphics = e.Graphics
@@ -732,14 +699,18 @@ Public Class ModernPanel
         End If
     End Sub
 
-    ''' <summary>
-    ''' 透明背景贴底图：圆角 / 半透明背景 / 透明 BackColor 时，由共享缓存把
-    ''' BackgroundSource（或 Parent）的内容采样到本控件区域。
-    ''' 设计器中背景源为透明控件时可能出现"鬼影"叠加，运行时不会出现。
-    ''' 详见 TransparentBackgroundCache 的接入说明。
-    ''' </summary>
     Private Sub 绘制父容器背景(g As Graphics)
-        TransparentBackgroundCache.PaintBackgroundFor(Me, g, _backgroundSource)
+        If Parent Is Nothing Then Return
+        Dim state = g.Save()
+        g.TranslateTransform(-Me.Left, -Me.Top)
+        Using pea As New PaintEventArgs(g, New Rectangle(Me.Left, Me.Top, Me.Width, Me.Height))
+            InvokePaintBackground(Parent, pea)
+            ' 仅 InvokePaintBackground 只能获取父容器的 BackColor 填充。
+            ' 对于 ModernPanel 等自绘控件，背景图片和圆角背景都在 OnPaint 中绘制，
+            ' 必须追加 InvokePaint 才能获取父容器的真实视觉内容（含背景图片）。
+            InvokePaint(Parent, pea)
+        End Using
+        g.Restore(state)
     End Sub
 
     Private Sub 绘制背景与边框(g As Graphics, Optional 跳过图片 As Boolean = False)
@@ -861,39 +832,24 @@ Public Class ModernPanel
             Using sg As Graphics = Graphics.FromImage(scaled)
                 sg.InterpolationMode = Class1.GlobalInterpolationMode
                 sg.CompositingQuality = Class1.GlobalCompositingQuality
-                sg.PixelOffsetMode = Drawing2D.PixelOffsetMode.HighQuality
-                ' 使用图片原始像素尺寸（包含透明像素），不做透明边界裁剪
-                Dim srcW As Integer = img.Width
-                Dim srcH As Integer = img.Height
-                Dim ratioW As Single = CSng(w) / srcW
-                Dim ratioH As Single = CSng(h) / srcH
-                ' Zoom：按比例完整显示（取较小比例，允许放大或缩小以 fit 控件）
-                ' Fill：按比例撑满控件（取较大比例，超出部分裁切）
+                Dim ratioW As Single = CSng(w) / img.Width
+                Dim ratioH As Single = CSng(h) / img.Height
                 Dim ratio As Single = If(_imageFillMode = ImageFillMode.Fill,
-                                         Math.Max(ratioW, ratioH),
-                                         Math.Min(ratioW, ratioH))
-                Dim drawW As Single = srcW * ratio
-                Dim drawH As Single = srcH * ratio
-                ' 计算整数化的目标矩形：用 left/top + (right-left)/(bottom-top) 保证宽高一致性，
-                ' 避免对 X 和 Width 分别 Round 造成右/下边界少 1 像素的累积误差。
-                Dim left As Integer = CInt(Math.Round((w - drawW) / 2.0F))
-                Dim top As Integer = CInt(Math.Round((h - drawH) / 2.0F))
-                Dim right As Integer = CInt(Math.Round((w - drawW) / 2.0F + drawW))
-                Dim bottom As Integer = CInt(Math.Round((h - drawH) / 2.0F + drawH))
-                ' Zoom 模式下确保不越界（理论上 ratio<=ratioW/H 已保证，这里做最终保险）
+                                        Math.Max(ratioW, ratioH),
+                                        Math.Min(1.0F, Math.Min(ratioW, ratioH)))
+                Dim drawW As Single = img.Width * ratio
+                Dim drawH As Single = img.Height * ratio
                 If _imageFillMode = ImageFillMode.Zoom Then
-                    If left < 0 Then left = 0
-                    If top < 0 Then top = 0
-                    If right > w Then right = w
-                    If bottom > h Then bottom = h
+                    drawW = Math.Min(drawW, CSng(w))
+                    drawH = Math.Min(drawH, CSng(h))
                 End If
-                Dim destRect As New Rectangle(left, top, Math.Max(0, right - left), Math.Max(0, bottom - top))
+                Dim dx As Single = (w - drawW) / 2.0F
+                Dim dy As Single = (h - drawH) / 2.0F
                 Using attrs As New Imaging.ImageAttributes()
-                    ' 使用 Clamp 避免边缘半像素采样镜像扩展到 destRect 之外（Zoom 模式下右/下边可能与控件边贴齐）
                     attrs.SetWrapMode(WrapMode.TileFlipXY)
                     sg.DrawImage(img,
-                        destRect,
-                        0, 0, srcW, srcH,
+                        Rectangle.Round(New RectangleF(dx, dy, drawW, drawH)),
+                        0, 0, img.Width, img.Height,
                         GraphicsUnit.Pixel, attrs)
                 End Using
             End Using

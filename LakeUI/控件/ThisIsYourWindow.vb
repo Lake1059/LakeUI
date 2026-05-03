@@ -1,4 +1,4 @@
-﻿Imports System.ComponentModel
+Imports System.ComponentModel
 Imports System.Drawing.Drawing2D
 Imports System.Reflection
 Imports System.Runtime.InteropServices
@@ -112,33 +112,6 @@ Public Class ThisIsYourWindow
                                                        bAlpha As Byte, dwFlags As Integer) As <MarshalAs(UnmanagedType.Bool)> Boolean
     End Function
 
-    Private Const WDA_NONE As Integer = &H0
-    Private Const WDA_EXCLUDEFROMCAPTURE As Integer = &H11
-
-    <DllImport("user32.dll")>
-    Private Shared Function SetWindowDisplayAffinity(hWnd As IntPtr, dwAffinity As Integer) As <MarshalAs(UnmanagedType.Bool)> Boolean
-    End Function
-
-    <StructLayout(LayoutKind.Sequential)>
-    Private Structure OSVERSIONINFOEX
-        Public dwOSVersionInfoSize As Integer
-        Public dwMajorVersion As Integer
-        Public dwMinorVersion As Integer
-        Public dwBuildNumber As Integer
-        Public dwPlatformId As Integer
-        <MarshalAs(UnmanagedType.ByValTStr, SizeConst:=128)>
-        Public szCSDVersion As String
-        Public wServicePackMajor As UShort
-        Public wServicePackMinor As UShort
-        Public wSuiteMask As UShort
-        Public wProductType As Byte
-        Public wReserved As Byte
-    End Structure
-
-    <DllImport("ntdll.dll")>
-    Private Shared Function RtlGetVersion(ByRef versionInfo As OSVERSIONINFOEX) As Integer
-    End Function
-
     <StructLayout(LayoutKind.Sequential)>
     Private Structure RECT
         Public Left, Top, Right, Bottom As Integer
@@ -173,25 +146,14 @@ Public Class ThisIsYourWindow
         Public IsInSizeMove As Boolean = False
         Public AnimatingShow As Boolean = False
         Public AnimatingClose As Boolean = False
-        ' 上一次记录的最小化状态：用于在 WM_SIZE 中检测"从最小化恢复"事件并强制刷新毛玻璃。
-        Public WasMinimized As Boolean = False
         Public OriginalOpacity As Double = 1.0
         Public PendingFirstPaintRestore As Boolean = False
-        ' ── 布局缓存签名：仅当窗口宽度/按钮可见性/相关属性变化时重新计算按钮位置 ──
-        Public LayoutSignature As Long = -1
-        ' ── 毛玻璃 ──
-        Public Renderer As BackdropRenderer
-        Public BackdropTimer As Timer
         Public Sub New(form As Form)
             HostForm = form
         End Sub
     End Class
 
     Private ReadOnly _forms As New Dictionary(Of IntPtr, PerFormState)
-
-    ' ── 绘制热路径共享缓存：避免每帧 New SolidBrush/Pen 造成 GC 压力 ──
-    Private ReadOnly _共享画刷 As New SolidBrush(Color.Black)
-    Private ReadOnly _共享画笔 As New Pen(Color.Black, 1.0F)
 
     Private Function 查找状态(form As Form) As PerFormState
         Dim s As PerFormState = Nothing
@@ -238,55 +200,6 @@ Public Class ThisIsYourWindow
         Layer = 2
     End Enum
 
-    ''' <summary>
-    ''' 毛玻璃 / 亚克力背景模式。
-    ''' None — 关闭。
-    ''' Auto — 抓取窗口背后的桌面区域并模糊后绘制为窗体背景。默认仅在事件驱动时刷新（移动 / 调整大小结束 / 显示 / 激活），
-    '''        系统截图工具能截到本窗口；如需常态周期刷新，请同时开启 <see cref="BackdropExcludeFromCapture"/>，
-    '''        此时启用 WDA_EXCLUDEFROMCAPTURE 防止抓自身（要求 Win10 build 19041+），副作用：系统截图 / 录屏均无法捕获本窗口。
-    ''' Image — 使用 <see cref="BackdropImage"/> 作为虚拟背景源（按 cover 撑满窗口）后再做模糊；
-    '''         不抓屏、不影响系统截图，可在任意 Windows 版本工作。
-    ''' CaptionOnly — 与 Auto 类似但仅对标题栏区域抓屏 / 模糊 / 绘制；
-    '''         由于抓屏与模糊数据量大幅减少，性能开销远低于 Auto。
-    ''' </summary>
-    Public Enum BackdropModeEnum
-        None = 0
-        Auto = 1
-        Image = 2
-        CaptionOnly = 3
-    End Enum
-
-#End Region
-
-#Region "OS 检测"
-
-    Private Shared _backdropSupportedCached As Integer = -1
-
-    ''' <summary>当前 OS 是否支持真正的"不含自身"抓屏（Win10 build 19041+）。</summary>
-    <Browsable(False)>
-    Public Shared ReadOnly Property IsBackdropSupported As Boolean
-        Get
-            Dim v As Integer = _backdropSupportedCached
-            If v = -1 Then
-                Dim info As New OSVERSIONINFOEX With {
-                    .dwOSVersionInfoSize = Marshal.SizeOf(Of OSVERSIONINFOEX)()
-                }
-                Try
-                    If RtlGetVersion(info) = 0 Then
-                        v = If(info.dwMajorVersion > 10 OrElse
-                               (info.dwMajorVersion = 10 AndAlso info.dwBuildNumber >= 19041), 1, 0)
-                    Else
-                        v = 0
-                    End If
-                Catch
-                    v = 0
-                End Try
-                _backdropSupportedCached = v
-            End If
-            Return v = 1
-        End Get
-    End Property
-
 #End Region
 
 #Region "通用辅助"
@@ -296,21 +209,6 @@ Public Class ThisIsYourWindow
             s.HostForm?.Invalidate()
         Next
     End Sub
-
-    ''' <summary>
-    ''' 计算毛玻璃 Renderer 实际需要抓取 / 渲染的桌面区域。
-    ''' Auto / Image — 整个窗口；CaptionOnly — 仅标题栏区域，可显著减小抓屏与模糊计算量。
-    ''' </summary>
-    Friend Function 获取毛玻璃捕获区域(form As Form) As Rectangle
-        If form Is Nothing Then Return Rectangle.Empty
-        Dim b As Rectangle = form.Bounds
-        If _毛玻璃模式 = BackdropModeEnum.CaptionOnly Then
-            Dim ch As Integer = Math.Max(1, _标题栏高度)
-            If ch > b.Height Then ch = b.Height
-            Return New Rectangle(b.X, b.Y, b.Width, ch)
-        End If
-        Return b
-    End Function
 
     Friend Sub 切换动画样式(hWnd As IntPtr, enable As Boolean)
         Dim style As Long = GetWindowLongPtr(hWnd, GWL_STYLE).ToInt64()
@@ -391,7 +289,6 @@ Public Class ThisIsYourWindow
 #Region "属性 - 边框"
 
     Private _边框颜色 As Color = Color.FromArgb(60, 60, 60)
-    ''' <summary>窗口处于激活状态时的边框绘制颜色。</summary>
     <Category("LakeUI"), Description("窗口边框颜色。"), DefaultValue(GetType(Color), "60,60,60")>
     Public Property BorderColor As Color
         Get
@@ -403,7 +300,6 @@ Public Class ThisIsYourWindow
     End Property
 
     Private _边框失焦颜色 As Color = Color.FromArgb(40, 40, 40)
-    ''' <summary>窗口失去焦点时的边框绘制颜色。</summary>
     <Category("LakeUI"), Description("窗口失去焦点时的边框颜色。"), DefaultValue(GetType(Color), "40,40,40")>
     Public Property BorderInactiveColor As Color
         Get
@@ -415,7 +311,6 @@ Public Class ThisIsYourWindow
     End Property
 
     Private _边框厚度 As Integer = 1
-    ''' <summary>窗口边框的绘制厚度（逻辑像素）。设为 0 表示不绘制边框；该值会同步影响窗体内边距以避免内容被边框遮挡。</summary>
     <Category("LakeUI"), Description("窗口边框的绘制厚度（逻辑像素）。0 = 不绘制边框。"), DefaultValue(1)>
     Public Property BorderSize As Integer
         Get
@@ -433,7 +328,6 @@ Public Class ThisIsYourWindow
 #Region "属性 - 标题栏"
 
     Private _标题栏高度 As Integer = 32
-    ''' <summary>标题栏区域的高度（逻辑像素）。改变此值会同步重算按钮布局并调整窗体内边距。</summary>
     <Category("LakeUI"), Description("标题栏区域的高度（逻辑像素）。"), DefaultValue(32)>
     Public Property CaptionHeight As Integer
         Get
@@ -447,7 +341,6 @@ Public Class ThisIsYourWindow
     End Property
 
     Private _标题栏背景颜色 As Color = Color.FromArgb(32, 32, 32)
-    ''' <summary>标题栏在窗口激活时的背景填充颜色。</summary>
     <Category("LakeUI"), Description("标题栏的背景颜色。"), DefaultValue(GetType(Color), "32,32,32")>
     Public Property CaptionBackColor As Color
         Get
@@ -459,7 +352,6 @@ Public Class ThisIsYourWindow
     End Property
 
     Private _标题栏失焦背景颜色 As Color = Color.FromArgb(28, 28, 28)
-    ''' <summary>窗口失去焦点时标题栏的背景填充颜色。</summary>
     <Category("LakeUI"), Description("窗口失去焦点时标题栏的背景颜色。"), DefaultValue(GetType(Color), "28,28,28")>
     Public Property CaptionInactiveBackColor As Color
         Get
@@ -507,7 +399,6 @@ Public Class ThisIsYourWindow
 #Region "属性 - 标题文字"
 
     Private _标题文字颜色 As Color = Color.FromArgb(230, 230, 230)
-    ''' <summary>窗口激活时的标题文字颜色。</summary>
     <Category("LakeUI"), Description("标题文字颜色。"), DefaultValue(GetType(Color), "230,230,230")>
     Public Property TitleForeColor As Color
         Get
@@ -519,7 +410,6 @@ Public Class ThisIsYourWindow
     End Property
 
     Private _标题文字失焦颜色 As Color = Color.FromArgb(140, 140, 140)
-    ''' <summary>窗口失去焦点时的标题文字颜色。</summary>
     <Category("LakeUI"), Description("窗口失去焦点时标题文字颜色。"), DefaultValue(GetType(Color), "140,140,140")>
     Public Property TitleInactiveForeColor As Color
         Get
@@ -531,7 +421,6 @@ Public Class ThisIsYourWindow
     End Property
 
     Private _标题文字对齐 As TitleAlignEnum = TitleAlignEnum.Left
-    ''' <summary>标题文字在可用区域内的水平对齐方式（左 / 居中 / 右）。</summary>
     <Category("LakeUI"), Description("标题文字的水平对齐方式。"), DefaultValue(GetType(TitleAlignEnum), "Left")>
     Public Property TitleAlign As TitleAlignEnum
         Get
@@ -543,7 +432,6 @@ Public Class ThisIsYourWindow
     End Property
 
     Private _标题文字字体 As Font = Nothing
-    ''' <summary>标题文字使用的字体。设为 Nothing 时使用宿主窗体的 <see cref="Control.Font"/>。</summary>
     <Category("LakeUI"), Description("标题文字的字体。留空则使用宿主窗口的 Font。"), DefaultValue(GetType(Font), "")>
     Public Property TitleFont As Font
         Get
@@ -555,7 +443,6 @@ Public Class ThisIsYourWindow
     End Property
 
     Private _标题文字左边距 As Integer = 10
-    ''' <summary>标题文字距离其左侧元素（图标右边缘或窗口左边缘）的水平间距（逻辑像素）。</summary>
     <Category("LakeUI"), Description("标题文字距离左侧（或图标右侧）的间距。"), DefaultValue(10)>
     Public Property TitlePaddingLeft As Integer
         Get
@@ -567,7 +454,6 @@ Public Class ThisIsYourWindow
     End Property
 
     Private _标题文字右边距 As Integer = 10
-    ''' <summary>标题文字距离其右侧元素（按钮左边缘或窗口右边缘）的水平间距（逻辑像素）。</summary>
     <Category("LakeUI"), Description("标题文字距离右侧（或按钮左侧）的间距。"), DefaultValue(10)>
     Public Property TitlePaddingRight As Integer
         Get
@@ -583,7 +469,6 @@ Public Class ThisIsYourWindow
 #Region "属性 - 图标"
 
     Private _图标来源 As IconSourceEnum = IconSourceEnum.FormIcon
-    ''' <summary>标题栏图标的来源：None 不显示、FormIcon 使用窗体 <see cref="Form.Icon"/>、Custom 使用 <see cref="CustomIcon"/>。</summary>
     <Category("LakeUI"), Description("标题栏图标来源。"), DefaultValue(GetType(IconSourceEnum), "FormIcon")>
     Public Property IconSource As IconSourceEnum
         Get
@@ -595,7 +480,6 @@ Public Class ThisIsYourWindow
     End Property
 
     Private _自定义图标 As Image = Nothing
-    ''' <summary>当 <see cref="IconSource"/> 设为 Custom 时使用的自定义图像；其它来源下被忽略。</summary>
     <Category("LakeUI"), Description("IconSource 为 Custom 时使用的图像。"), DefaultValue(GetType(Image), "")>
     Public Property CustomIcon As Image
         Get
@@ -607,7 +491,6 @@ Public Class ThisIsYourWindow
     End Property
 
     Private _图标大小 As Integer = 16
-    ''' <summary>图标显示尺寸（正方形，逻辑像素）。</summary>
     <Category("LakeUI"), Description("图标的显示尺寸（逻辑像素，正方形）。"), DefaultValue(16)>
     Public Property IconSize As Integer
         Get
@@ -619,7 +502,6 @@ Public Class ThisIsYourWindow
     End Property
 
     Private _图标左边距 As Integer = 8
-    ''' <summary>图标距离其外侧（按钮组左侧或窗口左边缘）的水平间距（逻辑像素）。</summary>
     <Category("LakeUI"), Description("图标距离窗口左边缘的间距。"), DefaultValue(8)>
     Public Property IconPaddingLeft As Integer
         Get
@@ -635,7 +517,6 @@ Public Class ThisIsYourWindow
 #Region "属性 - 控制按钮"
 
     Private _按钮位置 As ButtonPositionEnum = ButtonPositionEnum.Right
-    ''' <summary>最小化 / 最大化 / 关闭按钮组在标题栏中的水平位置。</summary>
     <Category("LakeUI"), Description("控制按钮的布局位置。"), DefaultValue(GetType(ButtonPositionEnum), "Right")>
     Public Property ButtonPosition As ButtonPositionEnum
         Get
@@ -647,7 +528,6 @@ Public Class ThisIsYourWindow
     End Property
 
     Private _按钮宽度 As Integer = 46
-    ''' <summary>每个控制按钮的命中与绘制宽度（逻辑像素），最小为 16。</summary>
     <Category("LakeUI"), Description("每个控制按钮的宽度（逻辑像素）。"), DefaultValue(46)>
     Public Property ButtonWidth As Integer
         Get
@@ -659,7 +539,6 @@ Public Class ThisIsYourWindow
     End Property
 
     Private _按钮符号大小 As Integer = 10
-    ''' <summary>按钮内绘制的符号（×、□、—）的边长（逻辑像素），最小为 4。</summary>
     <Category("LakeUI"), Description("按钮符号的逻辑尺寸。"), DefaultValue(10)>
     Public Property ButtonGlyphSize As Integer
         Get
@@ -671,7 +550,6 @@ Public Class ThisIsYourWindow
     End Property
 
     Private _按钮符号线宽 As Single = 1.0F
-    ''' <summary>按钮符号线条的画笔宽度（逻辑像素），最小为 0.5。</summary>
     <Category("LakeUI"), Description("按钮符号线条宽度。"), DefaultValue(1.0F)>
     Public Property ButtonGlyphLineWidth As Single
         Get
@@ -682,8 +560,7 @@ Public Class ThisIsYourWindow
         End Set
     End Property
 
-    Private _按钮内边距 As Padding
-    ''' <summary>每个控制按钮内部的留白；可视化背景与符号绘制区域将在按钮命中区基础上向内收缩。</summary>
+    Private _按钮内边距
     <Category("LakeUI"), Description("控制按钮的内边距。"), DefaultValue(GetType(Padding), "0, 0, 0, 0")>
     Public Property ButtonPadding As Padding
         Get
@@ -695,7 +572,6 @@ Public Class ThisIsYourWindow
     End Property
 
     Private _按钮圆角半径 As Integer = 0
-    ''' <summary>控制按钮背景填充的圆角半径（逻辑像素）；0 表示矩形填充。</summary>
     <Category("LakeUI"), Description("控制按钮背景圆角半径。"), DefaultValue(0)>
     Public Property ButtonCornerRadius As Integer
         Get
@@ -707,7 +583,6 @@ Public Class ThisIsYourWindow
     End Property
 
     Private _按钮间距 As Integer = 0
-    ''' <summary>相邻控制按钮之间的水平间隔（逻辑像素）。</summary>
     <Category("LakeUI"), Description("控制按钮之间的间距。"), DefaultValue(0)>
     Public Property ButtonSpacing As Integer
         Get
@@ -723,8 +598,7 @@ Public Class ThisIsYourWindow
 #Region "属性 - 关闭按钮颜色"
 
     Private _关闭按钮背景颜色 As Color = Color.Transparent
-    ''' <summary>关闭按钮默认（非悬停 / 非按下）状态下的背景颜色。</summary>
-    <Category("LakeUI"), Description("关闭按钮默认状态背景颜色。"), DefaultValue(GetType(Color), "Transparent")>
+    <Category("LakeUI"), DefaultValue(GetType(Color), "Transparent")>
     Public Property CloseButtonBackColor As Color
         Get
             Return _关闭按钮背景颜色
@@ -735,8 +609,7 @@ Public Class ThisIsYourWindow
     End Property
 
     Private _关闭按钮悬停背景颜色 As Color = Color.FromArgb(232, 17, 35)
-    ''' <summary>关闭按钮鼠标悬停状态下的背景颜色。</summary>
-    <Category("LakeUI"), Description("关闭按钮悬停状态背景颜色。"), DefaultValue(GetType(Color), "232,17,35")>
+    <Category("LakeUI"), DefaultValue(GetType(Color), "232,17,35")>
     Public Property CloseButtonHoverBackColor As Color
         Get
             Return _关闭按钮悬停背景颜色
@@ -747,8 +620,7 @@ Public Class ThisIsYourWindow
     End Property
 
     Private _关闭按钮按下背景颜色 As Color = Color.FromArgb(200, 15, 30)
-    ''' <summary>关闭按钮被鼠标按下且仍处于悬停状态时的背景颜色。</summary>
-    <Category("LakeUI"), Description("关闭按钮按下状态背景颜色。"), DefaultValue(GetType(Color), "200,15,30")>
+    <Category("LakeUI"), DefaultValue(GetType(Color), "200,15,30")>
     Public Property CloseButtonPressedBackColor As Color
         Get
             Return _关闭按钮按下背景颜色
@@ -759,8 +631,7 @@ Public Class ThisIsYourWindow
     End Property
 
     Private _关闭按钮符号颜色 As Color = Color.FromArgb(200, 200, 200)
-    ''' <summary>关闭按钮默认状态下的“×”符号线条颜色。</summary>
-    <Category("LakeUI"), Description("关闭按钮默认状态符号颜色。"), DefaultValue(GetType(Color), "200,200,200")>
+    <Category("LakeUI"), DefaultValue(GetType(Color), "200,200,200")>
     Public Property CloseButtonGlyphColor As Color
         Get
             Return _关闭按钮符号颜色
@@ -771,8 +642,7 @@ Public Class ThisIsYourWindow
     End Property
 
     Private _关闭按钮悬停符号颜色 As Color = Color.White
-    ''' <summary>关闭按钮悬停 / 按下状态下的符号颜色。</summary>
-    <Category("LakeUI"), Description("关闭按钮悬停状态符号颜色。"), DefaultValue(GetType(Color), "White")>
+    <Category("LakeUI"), DefaultValue(GetType(Color), "White")>
     Public Property CloseButtonHoverGlyphColor As Color
         Get
             Return _关闭按钮悬停符号颜色
@@ -787,8 +657,7 @@ Public Class ThisIsYourWindow
 #Region "属性 - 最大化/最小化按钮颜色"
 
     Private _功能按钮背景颜色 As Color = Color.Transparent
-    ''' <summary>最小化 / 最大化 / 还原按钮默认状态下的背景颜色。</summary>
-    <Category("LakeUI"), Description("最小化/最大化按钮默认背景颜色。"), DefaultValue(GetType(Color), "Transparent")>
+    <Category("LakeUI"), DefaultValue(GetType(Color), "Transparent")>
     Public Property CaptionButtonBackColor As Color
         Get
             Return _功能按钮背景颜色
@@ -799,8 +668,7 @@ Public Class ThisIsYourWindow
     End Property
 
     Private _功能按钮悬停背景颜色 As Color = Color.FromArgb(55, 55, 55)
-    ''' <summary>最小化/最大化按钮鼠标悬停状态下的背景颜色。</summary>
-    <Category("LakeUI"), Description("最小化/最大化按钮悬停状态背景颜色。"), DefaultValue(GetType(Color), "55,55,55")>
+    <Category("LakeUI"), DefaultValue(GetType(Color), "55,55,55")>
     Public Property CaptionButtonHoverBackColor As Color
         Get
             Return _功能按钮悬停背景颜色
@@ -811,8 +679,7 @@ Public Class ThisIsYourWindow
     End Property
 
     Private _功能按钮按下背景颜色 As Color = Color.FromArgb(70, 70, 70)
-    ''' <summary>最小化/最大化按钮被按下且处于悬停状态时的背景颜色。</summary>
-    <Category("LakeUI"), Description("最小化/最大化按钮按下状态背景颜色。"), DefaultValue(GetType(Color), "70,70,70")>
+    <Category("LakeUI"), DefaultValue(GetType(Color), "70,70,70")>
     Public Property CaptionButtonPressedBackColor As Color
         Get
             Return _功能按钮按下背景颜色
@@ -823,8 +690,7 @@ Public Class ThisIsYourWindow
     End Property
 
     Private _功能按钮符号颜色 As Color = Color.FromArgb(200, 200, 200)
-    ''' <summary>最小化/最大化按钮默认状态下的符号线条颜色。</summary>
-    <Category("LakeUI"), Description("最小化/最大化按钮默认状态符号颜色。"), DefaultValue(GetType(Color), "200,200,200")>
+    <Category("LakeUI"), DefaultValue(GetType(Color), "200,200,200")>
     Public Property CaptionButtonGlyphColor As Color
         Get
             Return _功能按钮符号颜色
@@ -835,8 +701,7 @@ Public Class ThisIsYourWindow
     End Property
 
     Private _功能按钮悬停符号颜色 As Color = Color.White
-    ''' <summary>最小化/最大化按钮悬停 / 按下状态下的符号颜色。</summary>
-    <Category("LakeUI"), Description("最小化/最大化按钮悬停状态符号颜色。"), DefaultValue(GetType(Color), "White")>
+    <Category("LakeUI"), DefaultValue(GetType(Color), "White")>
     Public Property CaptionButtonHoverGlyphColor As Color
         Get
             Return _功能按钮悬停符号颜色
@@ -851,7 +716,6 @@ Public Class ThisIsYourWindow
 #Region "属性 - 调整大小"
 
     Private _调整边框宽度 As Integer = 6
-    ''' <summary>窗口边缘可触发拖拽改变大小的热区宽度（逻辑像素）。</summary>
     <Category("LakeUI"), Description("窗口边缘的调整大小热区宽度。"), DefaultValue(6)>
     Public Property ResizeBorderWidth As Integer
         Get
@@ -863,8 +727,7 @@ Public Class ThisIsYourWindow
     End Property
 
     Private _允许调整大小 As Boolean = True
-    ''' <summary>是否允许通过拖拽窗口边缘调整大小。设为 False 时禁用所有 Resize 命中测试。</summary>
-    <Category("LakeUI"), Description("是否允许通过拖拽窗口边缘调整大小。"), DefaultValue(True)>
+    <Category("LakeUI"), DefaultValue(True)>
     Public Property AllowResize As Boolean
         Get
             Return _允许调整大小
@@ -875,8 +738,7 @@ Public Class ThisIsYourWindow
     End Property
 
     Private _最大化时隐藏调整边框 As Boolean = True
-    ''' <summary>窗口最大化时是否禁用边缘调整大小热区（推荐 True，避免最大化下边缘穿透到次屏）。</summary>
-    <Category("LakeUI"), Description("窗口最大化时是否禁用调整大小边框。"), DefaultValue(True)>
+    <Category("LakeUI"), DefaultValue(True)>
     Public Property HideResizeBorderWhenMaximized As Boolean
         Get
             Return _最大化时隐藏调整边框
@@ -891,10 +753,6 @@ Public Class ThisIsYourWindow
 #Region "属性 - 高级 (排除区域)"
 
     Private _标题栏排除区域 As New List(Of Rectangle)
-    ''' <summary>
-    ''' 标题栏内的排除区域列表（客户端坐标）。位于这些矩形内的鼠标命中将返回 HTCLIENT 而非 HTCAPTION，
-    ''' 以便放置可交互控件（如菜单、搜索框）而不被窗口拖动逻辑拦截。
-    ''' </summary>
     <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
     Public Property CaptionExcludeBounds As List(Of Rectangle)
         Get
@@ -1009,29 +867,6 @@ Public Class ThisIsYourWindow
         End Set
     End Property
 
-    Private _分层阴影整区可调 As Boolean = False
-    ''' <summary>
-    ''' 是否将整个分层阴影绘制区域作为窗口大小调整热区。
-    ''' 启用后阴影绘制范围内的任意位置都可触发尺寸调整，<see cref="LayerShadowResizeWidth"/> 上限被忽略。
-    ''' 仅 ShadowMode = Layer 时生效。
-    ''' </summary>
-    <Category("LakeUI"), Description("是否将整个分层阴影绘制区域作为窗口大小调整热区。仅 ShadowMode = Layer 时生效。"), DefaultValue(False)>
-    Public Property LayerShadowResizeFullArea As Boolean
-        Get
-            Return _分层阴影整区可调
-        End Get
-        Set(value As Boolean)
-            If _分层阴影整区可调 = value Then Return
-            _分层阴影整区可调 = value
-            For Each s In _forms.Values
-                If s.ShadowForm IsNot Nothing Then
-                    s.ShadowForm.ResizeFullArea = value
-                    s.ShadowForm.UpdateHitTestTransparency()
-                End If
-            Next
-        End Set
-    End Property
-
     Private Sub 更新阴影(s As PerFormState)
         If s Is Nothing OrElse s.HostForm Is Nothing Then Return
         Dim zoomed As Boolean = (s.HostForm.WindowState = FormWindowState.Maximized)
@@ -1048,8 +883,7 @@ Public Class ThisIsYourWindow
             s.ShadowForm = New ShadowWindow With {
                 .HostHandle = s.HostForm.Handle,
                 .ShadowDepth = _分层阴影深度,
-                .ResizeWidth = _分层阴影调整宽度,
-                .ResizeFullArea = _分层阴影整区可调
+                .ResizeWidth = _分层阴影调整宽度
             }
             s.ShadowForm.UpdateHitTestTransparency()
             s.ShadowForm.Show()
@@ -1059,13 +893,7 @@ Public Class ThisIsYourWindow
         s.ShadowForm.HostHandle = s.HostForm.Handle
         s.ShadowForm.ShadowDepth = _分层阴影深度
         s.ShadowForm.ResizeWidth = _分层阴影调整宽度
-        s.ShadowForm.ResizeFullArea = _分层阴影整区可调
-        s.ShadowForm.UpdateHitTestTransparency()
-        Dim shadowColor As Color = _分层阴影颜色
-        If _分层阴影自动颜色 AndAlso _毛玻璃模式 <> BackdropModeEnum.None AndAlso s.Renderer IsNot Nothing Then
-            shadowColor = s.Renderer.DeriveShadowColor(_分层阴影颜色)
-        End If
-        s.ShadowForm.UpdateShadow(bounds, _分层阴影深度, shadowColor, _分层阴影不透明度, s.IsInSizeMove)
+        s.ShadowForm.UpdateShadow(bounds, _分层阴影深度, _分层阴影颜色, _分层阴影不透明度, s.IsInSizeMove)
         s.ShadowForm.PlaceBehind(s.HostForm.Handle)
         If Not s.ShadowForm.Visible Then s.ShadowForm.Visible = True
 
@@ -1080,313 +908,6 @@ Public Class ThisIsYourWindow
             s.ShadowForm.Dispose()
             s.ShadowForm = Nothing
         End If
-    End Sub
-
-#End Region
-
-#Region "属性 - 毛玻璃"
-
-    Private _毛玻璃模式 As BackdropModeEnum = BackdropModeEnum.None
-    ''' <summary>
-    ''' 毛玻璃 / 亚克力背景模式。启用后窗体背景将由"源 + 模糊 + tint + 噪点"组成。
-    ''' 该模式（非 None）下 <see cref="CaptionBackColor"/> / <see cref="CaptionInactiveBackColor"/> 不再生效。
-    ''' </summary>
-    <Category("LakeUI - Backdrop"), Description("毛玻璃 / 亚克力背景模式。"), DefaultValue(GetType(BackdropModeEnum), "None")>
-    Public Property BackdropMode As BackdropModeEnum
-        Get
-            Return _毛玻璃模式
-        End Get
-        Set(value As BackdropModeEnum)
-            If _毛玻璃模式 = value Then Return
-            _毛玻璃模式 = value
-            For Each s In _forms.Values
-                应用毛玻璃状态(s)
-            Next
-            通知重绘()
-        End Set
-    End Property
-
-    Private _毛玻璃图片 As Image = Nothing
-    ''' <summary>
-    ''' 当 <see cref="BackdropMode"/> = <see cref="BackdropModeEnum.Image"/> 时使用的虚拟背景图。
-    ''' 图片以 cover 模式（保持比例放大撑满后居中裁切）适配窗口尺寸，再做模糊。
-    ''' </summary>
-    <Category("LakeUI - Backdrop"), Description("Image 模式下作为模糊源的图片（cover 撑满窗口）。"), DefaultValue(GetType(Image), Nothing)>
-    Public Property BackdropImage As Image
-        Get
-            Return _毛玻璃图片
-        End Get
-        Set(value As Image)
-            _毛玻璃图片 = value
-            For Each s In _forms.Values
-                If s.Renderer IsNot Nothing AndAlso _毛玻璃模式 = BackdropModeEnum.Image Then
-                    s.Renderer.SetSource(True, value)
-                    s.Renderer.RequestFrame(s.HostForm.Bounds, True)
-                End If
-            Next
-            通知重绘()
-        End Set
-    End Property
-
-    Private _毛玻璃Tint颜色 As Color = Color.FromArgb(120, 32, 32, 32)
-    <Category("LakeUI - Backdrop"), Description("毛玻璃模式下激活窗口的 tint 叠加颜色（含 Alpha）。"), DefaultValue(GetType(Color), "120, 32, 32, 32")>
-    Public Property BackdropTintColor As Color
-        Get
-            Return _毛玻璃Tint颜色
-        End Get
-        Set(value As Color)
-            _毛玻璃Tint颜色 = value : 通知重绘()
-        End Set
-    End Property
-
-    Private _毛玻璃Tint失焦颜色 As Color = Color.FromArgb(140, 24, 24, 24)
-    <Category("LakeUI - Backdrop"), Description("毛玻璃模式下失活窗口的 tint 叠加颜色。"), DefaultValue(GetType(Color), "140, 24, 24, 24")>
-    Public Property BackdropTintInactiveColor As Color
-        Get
-            Return _毛玻璃Tint失焦颜色
-        End Get
-        Set(value As Color)
-            _毛玻璃Tint失焦颜色 = value : 通知重绘()
-        End Set
-    End Property
-
-    Private _毛玻璃模糊半径 As Integer = 24
-    <Category("LakeUI - Backdrop"), Description("毛玻璃模糊半径（逻辑像素）。1 - 96。"), DefaultValue(24)>
-    Public Property BackdropBlurRadius As Integer
-        Get
-            Return _毛玻璃模糊半径
-        End Get
-        Set(value As Integer)
-            _毛玻璃模糊半径 = Math.Max(1, Math.Min(96, value))
-            应用毛玻璃参数()
-        End Set
-    End Property
-
-    Private _毛玻璃模糊次数 As Integer = 3
-    <Category("LakeUI - Backdrop"), Description("box blur 通过次数（1=方框, 3≈高斯）。"), DefaultValue(3)>
-    Public Property BackdropBlurPasses As Integer
-        Get
-            Return _毛玻璃模糊次数
-        End Get
-        Set(value As Integer)
-            _毛玻璃模糊次数 = Math.Max(1, Math.Min(5, value))
-            应用毛玻璃参数()
-        End Set
-    End Property
-
-    Private _毛玻璃下采样 As Integer = 4
-    <Category("LakeUI - Backdrop"), Description("下采样倍率（建议 1/2/4/6/8，越大越快越糊）。"), DefaultValue(4)>
-    Public Property BackdropDownsampleFactor As Integer
-        Get
-            Return _毛玻璃下采样
-        End Get
-        Set(value As Integer)
-            _毛玻璃下采样 = Math.Max(1, value)
-            应用毛玻璃参数()
-        End Set
-    End Property
-
-    Private _毛玻璃并行度 As Integer = Environment.ProcessorCount
-    <Category("LakeUI - Backdrop"), Description("模糊计算最大并行度。"), DefaultValue(0)>
-    Public Property BackdropMaxParallelism As Integer
-        Get
-            Return _毛玻璃并行度
-        End Get
-        Set(value As Integer)
-            _毛玻璃并行度 = If(value <= 0, Environment.ProcessorCount, value)
-            应用毛玻璃参数()
-        End Set
-    End Property
-
-    Private _毛玻璃噪点不透明度 As Byte = 18
-    <Category("LakeUI - Backdrop"), Description("噪点叠加层不透明度 (0-255)。0 = 关闭噪点。"), DefaultValue(CByte(18))>
-    Public Property BackdropNoiseOpacity As Byte
-        Get
-            Return _毛玻璃噪点不透明度
-        End Get
-        Set(value As Byte)
-            _毛玻璃噪点不透明度 = value : 通知重绘()
-        End Set
-    End Property
-
-    Private _毛玻璃噪点缩放 As Single = 1.0F
-    <Category("LakeUI - Backdrop"), Description("噪点 tile 缩放（>1 颗粒变粗）。"), DefaultValue(1.0F)>
-    Public Property BackdropNoiseScale As Single
-        Get
-            Return _毛玻璃噪点缩放
-        End Get
-        Set(value As Single)
-            _毛玻璃噪点缩放 = Math.Max(0.1F, value)
-            应用毛玻璃参数()
-        End Set
-    End Property
-
-    Private _毛玻璃帧率 As Integer = 15
-    <Category("LakeUI - Backdrop"), Description("Auto 模式常态刷新帧率 (0-60)。0 = 仅事件驱动（窗口移动 / 调整大小结束 / 显示 / 激活）。仅在 BackdropExcludeFromCapture=True 时生效；关闭该开关时强制纯事件驱动。"), DefaultValue(15)>
-    Public Property BackdropFrameRate As Integer
-        Get
-            Return _毛玻璃帧率
-        End Get
-        Set(value As Integer)
-            _毛玻璃帧率 = Math.Max(0, Math.Min(60, value))
-            For Each s In _forms.Values : 重置毛玻璃Tick(s) : Next
-        End Set
-    End Property
-
-    Private _毛玻璃排除截屏 As Boolean = False
-    ''' <summary>
-    ''' Auto 模式下是否启用 <c>WDA_EXCLUDEFROMCAPTURE</c> 把本窗口排除在抓屏之外。
-    ''' True — 安全防自照，可启用常态周期刷新；副作用：系统截图、屏幕共享、录屏均无法捕获本窗口。
-    ''' False（默认） — 不启用 WDA，截图工具可以正常截到窗口；为防止"自己抓自己"产生递归反馈纹路，
-    ''' 强制使用纯事件驱动刷新（窗口移动 / 调整大小结束 / 显示 / 激活），<see cref="BackdropFrameRate"/> 被忽略。
-    ''' Image 模式与本属性无关：永远不抓屏、永远不启用 WDA。
-    ''' </summary>
-    <Category("LakeUI - Backdrop"), Description("Auto 模式下启用 WDA_EXCLUDEFROMCAPTURE 防自照（True 才允许周期刷新；副作用：系统截图截不到本窗口）。"), DefaultValue(False)>
-    Public Property BackdropExcludeFromCapture As Boolean
-        Get
-            Return _毛玻璃排除截屏
-        End Get
-        Set(value As Boolean)
-            If _毛玻璃排除截屏 = value Then Return
-            _毛玻璃排除截屏 = value
-            For Each s In _forms.Values
-                应用毛玻璃状态(s)
-            Next
-        End Set
-    End Property
-
-    Private _边框自动颜色 As Boolean = False
-    <Category("LakeUI - Backdrop"), Description("是否在毛玻璃模式下从背景平均色自动派生边框颜色（覆盖 BorderColor / BorderInactiveColor）。"), DefaultValue(False)>
-    Public Property BorderAutoColor As Boolean
-        Get
-            Return _边框自动颜色
-        End Get
-        Set(value As Boolean)
-            _边框自动颜色 = value : 通知重绘()
-        End Set
-    End Property
-
-    Private _分层阴影自动颜色 As Boolean = False
-    <Category("LakeUI - Backdrop"), Description("是否在毛玻璃模式下从背景平均色自动派生分层阴影颜色（覆盖 LayerShadowColor）。"), DefaultValue(False)>
-    Public Property LayerShadowAutoColor As Boolean
-        Get
-            Return _分层阴影自动颜色
-        End Get
-        Set(value As Boolean)
-            _分层阴影自动颜色 = value
-            For Each s In _forms.Values
-                If s.ShadowForm IsNot Nothing Then s.ShadowForm.ForceReset()
-                更新阴影(s)
-            Next
-        End Set
-    End Property
-
-    Private Sub 应用毛玻璃参数()
-        For Each s In _forms.Values
-            s.Renderer?.ApplyParameters(_毛玻璃模糊半径, _毛玻璃模糊次数, _毛玻璃下采样,
-                                         _毛玻璃并行度, _毛玻璃噪点缩放)
-        Next
-        通知重绘()
-    End Sub
-
-    Private Sub 应用毛玻璃状态(s As PerFormState)
-        If s Is Nothing OrElse s.HostForm Is Nothing OrElse Not s.HostForm.IsHandleCreated Then Return
-        Dim mode As BackdropModeEnum = _毛玻璃模式
-        ' Auto / CaptionOnly 模式需要 OS 支持 WDA_EXCLUDEFROMCAPTURE，否则降级为 None
-        Dim shouldEnable As Boolean = (mode = BackdropModeEnum.Image) OrElse
-                                      ((mode = BackdropModeEnum.Auto OrElse mode = BackdropModeEnum.CaptionOnly) AndAlso IsBackdropSupported)
-
-        If shouldEnable Then
-            ' WDA_EXCLUDEFROMCAPTURE 仅在 Auto / CaptionOnly 模式且用户显式开启 BackdropExcludeFromCapture 时启用：
-            '   - Image 模式不抓屏，永远不需要 WDA。
-            '   - Auto / CaptionOnly + 关闭 WDA：截图工具能截到本窗口，但若开启周期刷新会出现"递归自照"纹路 ⇒ 强制纯事件驱动。
-            '   - Auto / CaptionOnly + 开启 WDA：可安全周期刷新，但系统截图 / 录屏均无法捕获本窗口。
-            If (mode = BackdropModeEnum.Auto OrElse mode = BackdropModeEnum.CaptionOnly) AndAlso _毛玻璃排除截屏 Then
-                SetWindowDisplayAffinity(s.HostForm.Handle, WDA_EXCLUDEFROMCAPTURE)
-            Else
-                SetWindowDisplayAffinity(s.HostForm.Handle, WDA_NONE)
-            End If
-            If s.Renderer Is Nothing Then
-                s.Renderer = New BackdropRenderer(s.HostForm)
-                s.Renderer.ApplyParameters(_毛玻璃模糊半径, _毛玻璃模糊次数, _毛玻璃下采样,
-                                            _毛玻璃并行度, _毛玻璃噪点缩放)
-                AddHandler s.Renderer.AverageCommitted, Sub(sender2, ev2)
-                                                            If _分层阴影自动颜色 Then
-                                                                If s.ShadowForm IsNot Nothing Then s.ShadowForm.ForceReset()
-                                                                更新阴影(s)
-                                                            End If
-                                                        End Sub
-            End If
-            ' 配置源
-            s.Renderer.SetSource(mode = BackdropModeEnum.Image, _毛玻璃图片)
-            ' Auto / CaptionOnly 模式且未长期启用 WDA 时，让 Renderer 在每次 BitBlt 瞬间临时排除自身，
-            ' 避免事件驱动抓屏抓到自己产生镜像反馈。
-            s.Renderer.SetTransientExcludeOnCapture(
-                (mode = BackdropModeEnum.Auto OrElse mode = BackdropModeEnum.CaptionOnly) AndAlso Not _毛玻璃排除截屏)
-            ' 首帧
-            s.Renderer.RequestFrame(获取毛玻璃捕获区域(s.HostForm), True)
-            重置毛玻璃Tick(s)
-        Else
-            SetWindowDisplayAffinity(s.HostForm.Handle, WDA_NONE)
-            If s.BackdropTimer IsNot Nothing Then
-                s.BackdropTimer.Stop()
-                s.BackdropTimer.Dispose()
-                s.BackdropTimer = Nothing
-            End If
-            If s.Renderer IsNot Nothing Then
-                s.Renderer.Dispose()
-                s.Renderer = Nothing
-            End If
-        End If
-    End Sub
-
-    Private Sub 重置毛玻璃Tick(s As PerFormState)
-        If s Is Nothing Then Return
-
-        ' 周期 Tick 仅在 Auto 模式 + 启用 BackdropExcludeFromCapture + 帧率 > 0 时启用：
-        '   - None：未启用毛玻璃。
-        '   - Image：源是静态图片，输出帧只取决于窗口尺寸（事件驱动即可：尺寸变化、显示、激活）。
-        '   - Auto 但未启用 BackdropExcludeFromCapture：抓屏依赖瞬时 WDA 切换防自照，
-        '     而 SetWindowDisplayAffinity 的状态恢复需要数个 DWM 合成帧才能完成；高频翻转会
-        '     让 DWM 长时间处于 EXCLUDE 状态，导致系统截图整体失效，违背开关初衷 ⇒ 强制纯事件驱动。
-        '   - Auto + 长期 WDA + 帧率=0：用户显式选择纯事件驱动。
-        Dim needTick As Boolean = (_毛玻璃模式 = BackdropModeEnum.Auto OrElse _毛玻璃模式 = BackdropModeEnum.CaptionOnly) AndAlso
-                                  IsBackdropSupported AndAlso
-                                  _毛玻璃排除截屏 AndAlso
-                                  s.Renderer IsNot Nothing AndAlso
-                                  _毛玻璃帧率 > 0
-
-        If Not needTick Then
-            If s.BackdropTimer IsNot Nothing Then
-                s.BackdropTimer.Stop()
-                s.BackdropTimer.Dispose()
-                s.BackdropTimer = Nothing
-            End If
-            Return
-        End If
-
-        Dim interval As Integer = Math.Max(16, 1000 \ _毛玻璃帧率)
-        If s.BackdropTimer Is Nothing Then
-            s.BackdropTimer = New Timer() With {.Interval = interval}
-            AddHandler s.BackdropTimer.Tick, Sub(sender, ev) 毛玻璃Tick(s)
-            s.BackdropTimer.Start()
-        Else
-            s.BackdropTimer.Interval = interval
-            If Not s.BackdropTimer.Enabled Then s.BackdropTimer.Start()
-        End If
-    End Sub
-
-    Private Sub 毛玻璃Tick(s As PerFormState)
-        If s Is Nothing OrElse s.Renderer Is Nothing OrElse s.HostForm Is Nothing Then Return
-        ' 防御性早返：仅 Auto / CaptionOnly 模式才需要常态周期重抓屏 + 重模糊。
-        ' Image 模式源不变，理论上不会到达此处（重置毛玻璃Tick 已停 Timer），
-        ' 但保留这层保护以防止模式切换时残留的 Timer Tick 触发无意义的重模糊。
-        If _毛玻璃模式 <> BackdropModeEnum.Auto AndAlso _毛玻璃模式 <> BackdropModeEnum.CaptionOnly Then Return
-        Dim frm = s.HostForm
-        If frm.IsDisposed OrElse Not frm.Visible Then Return
-        If frm.WindowState = FormWindowState.Minimized Then Return
-        If s.IsInSizeMove Then Return
-        s.Renderer.RequestFrame(获取毛玻璃捕获区域(frm), False)
     End Sub
 
 #End Region
@@ -1428,7 +949,6 @@ Public Class ThisIsYourWindow
     End Property
 
     Private _动画持续时间 As Integer = 200
-    ''' <summary>Win32 自定义渐入 / 渐出动画的持续时间（毫秒），最小 50 毫秒。</summary>
     <Category("LakeUI"), Description("渐入/渐出动画的持续时间（毫秒）。"), DefaultValue(200)>
     Public Property AnimationDuration As Integer
         Get
@@ -1443,11 +963,8 @@ Public Class ThisIsYourWindow
 
 #Region "事件"
 
-    ''' <summary>当标题栏完成默认绘制后触发，便于宿主在标题栏上叠加自定义内容（例如徽章、标签）。</summary>
     Public Event CaptionPaint(sender As Object, e As CaptionPaintEventArgs)
-    ''' <summary>当窗口的激活状态发生变化时触发，可用于联动外部 UI 的高亮 / 低亮显示。</summary>
     Public Event ActiveChanged(sender As Object, e As ActiveChangedEventArgs)
-    ''' <summary>当默认命中测试结果为 HTCLIENT 时触发，允许将客户区某些区域识别为标题、按钮或调整边框。</summary>
     Public Event CustomHitTest(sender As Object, e As CustomHitTestEventArgs)
 
     Public Class CaptionPaintEventArgs : Inherits EventArgs
@@ -1482,15 +999,10 @@ Public Class ThisIsYourWindow
 
 #Region "只读属性"
 
-    ''' <summary>当前已附加（通过 <see cref="Attach"/>）的所有窗体的只读快照集合。</summary>
     <Browsable(False)>
     Public ReadOnly Property AttachedForms As IReadOnlyList(Of Form)
         Get
-            Dim list As New List(Of Form)(_forms.Count)
-            For Each s In _forms.Values
-                list.Add(s.HostForm)
-            Next
-            Return list
+            Return _forms.Values.Select(Function(s) s.HostForm).ToList()
         End Get
     End Property
 
@@ -1504,54 +1016,34 @@ Public Class ThisIsYourWindow
         Dim bw As Integer = _按钮宽度
         Dim bh As Integer = _标题栏高度
         Dim sp As Integer = _按钮间距
-        Dim hasMin As Boolean = s.HostForm.MinimizeBox
-        Dim hasMax As Boolean = s.HostForm.MaximizeBox
-        Dim posRight As Boolean = (_按钮位置 = ButtonPositionEnum.Right)
-        Dim iconNone As Boolean = (_图标来源 = IconSourceEnum.None)
 
-        ' 布局签名：所有影响按钮/图标位置的输入打包到一个 Long，命中即跳过重算。
-        Dim sig As Long = (CLng(w) And &HFFFFL) Or
-                          (CLng(bw And &HFFF) << 16) Or
-                          (CLng(bh And &HFFF) << 28) Or
-                          (CLng(sp And &HFF) << 40) Or
-                          (CLng(_图标大小 And &HFF) << 48) Or
-                          (If(hasMin, 1L, 0L) << 56) Or
-                          (If(hasMax, 1L, 0L) << 57) Or
-                          (If(posRight, 1L, 0L) << 58) Or
-                          (If(iconNone, 1L, 0L) << 59) Or
-                          (CLng(_图标左边距 And &HF) << 60)
-        If s.LayoutSignature = sig Then Return
-        s.LayoutSignature = sig
-
-        ' 用栈数组替代 List(Of Integer)，避免装箱 + 集合分配。
-        Dim 列表(2) As Integer
-        Dim 数量 As Integer = 0
-        If posRight Then
-            If hasMin Then 列表(数量) = HTMINBUTTON : 数量 += 1
-            If hasMax Then 列表(数量) = HTMAXBUTTON : 数量 += 1
-            列表(数量) = HTCLOSE : 数量 += 1
-            Dim totalW As Integer = 数量 * bw + Math.Max(0, 数量 - 1) * sp
+        Dim 列表 As New List(Of Integer)
+        If _按钮位置 = ButtonPositionEnum.Right Then
+            If s.HostForm.MinimizeBox Then 列表.Add(HTMINBUTTON)
+            If s.HostForm.MaximizeBox Then 列表.Add(HTMAXBUTTON)
+            列表.Add(HTCLOSE)
+            Dim totalW As Integer = 列表.Count * bw + Math.Max(0, 列表.Count - 1) * sp
             Dim startX As Integer = w - totalW
-            For i = 0 To 数量 - 1
+            For i = 0 To 列表.Count - 1
                 Dim r As New Rectangle(startX + i * (bw + sp), 0, bw, bh)
                 Select Case 列表(i) : Case HTCLOSE : s.CloseRect = r : Case HTMAXBUTTON : s.MaxRect = r : Case HTMINBUTTON : s.MinRect = r : End Select
             Next
         Else
-            列表(数量) = HTCLOSE : 数量 += 1
-            If hasMax Then 列表(数量) = HTMAXBUTTON : 数量 += 1
-            If hasMin Then 列表(数量) = HTMINBUTTON : 数量 += 1
-            For i = 0 To 数量 - 1
+            列表.Add(HTCLOSE)
+            If s.HostForm.MaximizeBox Then 列表.Add(HTMAXBUTTON)
+            If s.HostForm.MinimizeBox Then 列表.Add(HTMINBUTTON)
+            For i = 0 To 列表.Count - 1
                 Dim r As New Rectangle(i * (bw + sp), 0, bw, bh)
                 Select Case 列表(i) : Case HTCLOSE : s.CloseRect = r : Case HTMAXBUTTON : s.MaxRect = r : Case HTMINBUTTON : s.MinRect = r : End Select
             Next
         End If
-        If Not hasMax Then s.MaxRect = Rectangle.Empty
-        If Not hasMin Then s.MinRect = Rectangle.Empty
+        If Not s.HostForm.MaximizeBox Then s.MaxRect = Rectangle.Empty
+        If Not s.HostForm.MinimizeBox Then s.MinRect = Rectangle.Empty
 
-        If Not iconNone Then
-            Dim iconY As Integer = (bh - _图标大小) \ 2
-            If Not posRight Then
-                Dim totalBtnW As Integer = 数量 * bw + Math.Max(0, 数量 - 1) * sp
+        If _图标来源 <> IconSourceEnum.None Then
+            Dim iconY As Integer = (_标题栏高度 - _图标大小) \ 2
+            If _按钮位置 = ButtonPositionEnum.Left Then
+                Dim totalBtnW As Integer = 列表.Count * bw + Math.Max(0, 列表.Count - 1) * sp
                 s.IconRect = New Rectangle(totalBtnW + _图标左边距, iconY, _图标大小, _图标大小)
             Else
                 s.IconRect = New Rectangle(_图标左边距, iconY, _图标大小, _图标大小)
@@ -1574,42 +1066,21 @@ Public Class ThisIsYourWindow
         Dim w As Integer = s.HostForm.ClientSize.Width
         Dim h As Integer = s.HostForm.ClientSize.Height
         Dim active As Boolean = s.Activated
-        Dim brush As SolidBrush = _共享画刷
 
         g.SmoothingMode = SmoothingMode.Default
         g.PixelOffsetMode = PixelOffsetMode.Default
 
-        Dim useBackdrop As Boolean = (_毛玻璃模式 <> BackdropModeEnum.None) AndAlso
-                                      s.Renderer IsNot Nothing AndAlso
-                                      s.Renderer.HasFrame
-        Dim captionOnly As Boolean = (_毛玻璃模式 = BackdropModeEnum.CaptionOnly)
-        Dim fullRect As New Rectangle(0, 0, w, h)
-        Dim backdropRect As Rectangle = If(captionOnly,
-                                           New Rectangle(0, 0, w, Math.Min(h, _标题栏高度)),
-                                           fullRect)
-        If useBackdrop Then
-            s.Renderer.DrawTo(g, backdropRect)
-            Dim tint = If(active, _毛玻璃Tint颜色, _毛玻璃Tint失焦颜色)
-            If tint.A > 0 Then
-                brush.Color = tint
-                g.FillRectangle(brush, backdropRect)
-            End If
-            If _毛玻璃噪点不透明度 > 0 Then
-                s.Renderer.DrawNoise(g, backdropRect, _毛玻璃噪点不透明度)
-            End If
-        End If
-
         Dim captionRect As New Rectangle(0, 0, w, _标题栏高度)
-        If Not useBackdrop Then
-            brush.Color = If(active, _标题栏背景颜色, _标题栏失焦背景颜色)
+        Using brush As New SolidBrush(If(active, _标题栏背景颜色, _标题栏失焦背景颜色))
             g.FillRectangle(brush, captionRect)
-        End If
+        End Using
 
         绘制标题栏背景图片(g, captionRect)
 
         If _标题栏遮罩颜色.A > 0 Then
-            brush.Color = _标题栏遮罩颜色
-            g.FillRectangle(brush, captionRect)
+            Using brush As New SolidBrush(_标题栏遮罩颜色)
+                g.FillRectangle(brush, captionRect)
+            End Using
         End If
 
         绘制图标(g, s)
@@ -1621,20 +1092,12 @@ Public Class ThisIsYourWindow
 
         If _边框厚度 > 0 Then
             Dim bdr As Integer = _边框厚度
-            Dim bdrColor As Color
-            If useBackdrop AndAlso _边框自动颜色 Then
-                bdrColor = s.Renderer.DeriveBorderColor(active, If(active, _边框颜色, _边框失焦颜色))
-            Else
-                bdrColor = If(active, _边框颜色, _边框失焦颜色)
-            End If
-            brush.Color = bdrColor
-            ' 单次 GDI+ 调用绘制四条边，节省状态切换
-            Dim borderRects(3) As Rectangle
-            borderRects(0) = New Rectangle(0, 0, w, bdr)
-            borderRects(1) = New Rectangle(0, h - bdr, w, bdr)
-            borderRects(2) = New Rectangle(0, bdr, bdr, h - bdr * 2)
-            borderRects(3) = New Rectangle(w - bdr, bdr, bdr, h - bdr * 2)
-            g.FillRectangles(brush, borderRects)
+            Using brush As New SolidBrush(If(active, _边框颜色, _边框失焦颜色))
+                g.FillRectangle(brush, 0, 0, w, bdr)
+                g.FillRectangle(brush, 0, h - bdr, w, bdr)
+                g.FillRectangle(brush, 0, bdr, bdr, h - bdr * 2)
+                g.FillRectangle(brush, w - bdr, bdr, bdr, h - bdr * 2)
+            End Using
         End If
 
         RaiseEvent CaptionPaint(Me, New CaptionPaintEventArgs(g, captionRect, active, s.HostForm))
@@ -1745,13 +1208,11 @@ Public Class ThisIsYourWindow
                                   rect.Width - _按钮内边距.Horizontal, rect.Height - _按钮内边距.Vertical)
         If vis.Width <= 0 OrElse vis.Height <= 0 Then Return
 
-        Dim brush As SolidBrush = _共享画刷
         If bgColor <> Color.Transparent AndAlso bgColor.A > 0 Then
             Dim r As Integer = Math.Min(_按钮圆角半径, Math.Min(vis.Width, vis.Height) \ 2)
-            brush.Color = bgColor
             If r > 0 Then
                 g.SmoothingMode = SmoothingMode.AntiAlias
-                Using path As New GraphicsPath()
+                Using brush As New SolidBrush(bgColor), path As New GraphicsPath()
                     Dim d As Integer = r * 2
                     path.AddArc(vis.X, vis.Y, d, d, 180, 90)
                     path.AddArc(vis.Right - d, vis.Y, d, d, 270, 90)
@@ -1762,32 +1223,31 @@ Public Class ThisIsYourWindow
                 End Using
                 g.SmoothingMode = SmoothingMode.Default
             Else
-                g.FillRectangle(brush, vis)
+                Using brush As New SolidBrush(bgColor) : g.FillRectangle(brush, vis) : End Using
             End If
         End If
 
         Dim sz As Integer = _按钮符号大小
         Dim cx As Integer = vis.X + (vis.Width - sz) \ 2
         Dim cy As Integer = vis.Y + (vis.Height - sz) \ 2
-        Dim pen As Pen = _共享画笔
-        pen.Color = symColor
-        pen.Width = _按钮符号线宽
         g.SmoothingMode = SmoothingMode.AntiAlias
-        Select Case htValue
-            Case HTCLOSE
-                g.DrawLine(pen, cx, cy, cx + sz, cy + sz)
-                g.DrawLine(pen, cx + sz, cy, cx, cy + sz)
-            Case HTMAXBUTTON
-                If s.HostForm.WindowState = FormWindowState.Maximized Then
-                    Dim off As Integer = CInt(sz * 0.25)
-                    g.DrawRectangle(pen, cx + off, cy, sz - off, sz - off)
-                    g.DrawRectangle(pen, cx, cy + off, sz - off, sz - off)
-                Else
-                    g.DrawRectangle(pen, cx, cy, sz, sz)
-                End If
-            Case HTMINBUTTON
-                g.DrawLine(pen, cx, cy + sz \ 2, cx + sz, cy + sz \ 2)
-        End Select
+        Using pen As New Pen(symColor, _按钮符号线宽)
+            Select Case htValue
+                Case HTCLOSE
+                    g.DrawLine(pen, cx, cy, cx + sz, cy + sz)
+                    g.DrawLine(pen, cx + sz, cy, cx, cy + sz)
+                Case HTMAXBUTTON
+                    If s.HostForm.WindowState = FormWindowState.Maximized Then
+                        Dim off As Integer = CInt(sz * 0.25)
+                        g.DrawRectangle(pen, cx + off, cy, sz - off, sz - off)
+                        g.DrawRectangle(pen, cx, cy + off, sz - off, sz - off)
+                    Else
+                        g.DrawRectangle(pen, cx, cy, sz, sz)
+                    End If
+                Case HTMINBUTTON
+                    g.DrawLine(pen, cx, cy + sz \ 2, cx + sz, cy + sz \ 2)
+            End Select
+        End Using
         g.SmoothingMode = SmoothingMode.Default
     End Sub
 
@@ -1879,7 +1339,6 @@ Public Class ThisIsYourWindow
         更新窗口内边距(s)
         targetForm.Invalidate()
         更新阴影(s)
-        应用毛玻璃状态(s)
     End Sub
 
     ''' <summary>从指定窗体分离。</summary>
@@ -1892,19 +1351,6 @@ Public Class ThisIsYourWindow
         s.CachedIconBitmap?.Dispose()
         s.Interceptor?.ReleaseHandle()
         销毁阴影(s)
-        If s.BackdropTimer IsNot Nothing Then
-            s.BackdropTimer.Stop()
-            s.BackdropTimer.Dispose()
-            s.BackdropTimer = Nothing
-        End If
-        If s.Renderer IsNot Nothing Then
-            Try
-                SetWindowDisplayAffinity(targetForm.Handle, WDA_NONE)
-            Catch
-            End Try
-            s.Renderer.Dispose()
-            s.Renderer = Nothing
-        End If
         RemoveHandler targetForm.Paint, AddressOf 宿主窗口_Paint
         RemoveHandler targetForm.FormClosed, AddressOf 宿主窗口_FormClosed
         targetForm.Padding = s.OriginalPadding
@@ -2110,14 +1556,6 @@ Public Class ThisIsYourWindow
                     _owner.RecalculateButtonBounds(_state)
                     _state.HostForm?.Invalidate()
                     _owner.更新阴影(_state)
-                    ' 检测"从最小化恢复"：此时桌面 DC 与上一次抓屏所在的位置可能已完全不同，
-                    ' 必须强制刷新一次毛玻璃帧（同时 commit 平均色，刷新阴影自动颜色）。
-                    Dim minimizedNow As Boolean = (_state.HostForm IsNot Nothing AndAlso
-                                                   _state.HostForm.WindowState = FormWindowState.Minimized)
-                    If _state.WasMinimized AndAlso Not minimizedNow Then
-                        _state.Renderer?.RequestFrame(_owner.获取毛玻璃捕获区域(_state.HostForm), True)
-                    End If
-                    _state.WasMinimized = minimizedNow
                     Return
 
                 Case WM_ACTIVATE
@@ -2127,14 +1565,6 @@ Public Class ThisIsYourWindow
                     _owner.触发激活状态改变(activated, _state.HostForm)
                     _state.HostForm?.Invalidate()
                     If activated Then _owner.更新阴影(_state)
-                    ' 获得焦点时强制刷新一次毛玻璃帧：
-                    '   - 焦点切换间隔通常远大于 DWM 恢复 WDA_NONE 所需时间，瞬时切换安全；
-                    '   - 用户期望切回窗口时看到最新桌面背景。
-                    If activated AndAlso _state.Renderer IsNot Nothing AndAlso
-                       _state.HostForm IsNot Nothing AndAlso _state.HostForm.Visible AndAlso
-                       _state.HostForm.WindowState <> FormWindowState.Minimized Then
-                        _state.Renderer.RequestFrame(_owner.获取毛玻璃捕获区域(_state.HostForm), True)
-                    End If
                     Return
 
                 Case WM_MOVE
@@ -2144,25 +1574,12 @@ Public Class ThisIsYourWindow
 
                 Case WM_ENTERSIZEMOVE
                     _state.IsInSizeMove = True
-                    ' 暂停常态 Tick
-                    _state.BackdropTimer?.Stop()
-                    ' Auto / CaptionOnly 模式下触发"动作开始"首帧（抓一次当前桌面，拖动期间复用）。
-                    ' Image 模式源是静态图，进入 sizemove 不需要重模糊。
-                    If (_owner._毛玻璃模式 = BackdropModeEnum.Auto OrElse _owner._毛玻璃模式 = BackdropModeEnum.CaptionOnly) AndAlso _state.Renderer IsNot Nothing Then
-                        _state.Renderer.RequestFrame(_owner.获取毛玻璃捕获区域(_state.HostForm), False)
-                    End If
                     MyBase.WndProc(m)
                     Return
 
                 Case WM_EXITSIZEMOVE
                     _state.IsInSizeMove = False
                     _owner.更新阴影(_state)
-                    ' 触发"鼠标抬起"末帧 + commit 平均色：
-                    '   Auto 模式 — 按最终位置重新抓屏 + 模糊。
-                    '   Image 模式 — 按最终窗口尺寸重新执行 cover + 模糊。
-                    _state.Renderer?.RequestFrame(_owner.获取毛玻璃捕获区域(_state.HostForm), True)
-                    ' 恢复常态 Tick（Image 模式下 重置毛玻璃Tick 内部直接判定不启动）
-                    _owner.重置毛玻璃Tick(_state)
                     MyBase.WndProc(m)
                     Return
 
@@ -2274,9 +1691,6 @@ Public Class ThisIsYourWindow
                             Dim unused = DwmSetWindowAttribute(_state.HostForm.Handle, DWMWA_TRANSITIONS_FORCEDISABLED, enable, 4)
                         Catch
                         End Try
-                    End If
-                    If m.WParam <> IntPtr.Zero AndAlso _state.Renderer IsNot Nothing AndAlso Not _state.Renderer.HasFrame Then
-                        _state.Renderer.RequestFrame(_owner.获取毛玻璃捕获区域(_state.HostForm), True)
                     End If
                     Return
 

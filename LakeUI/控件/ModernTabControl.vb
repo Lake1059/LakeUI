@@ -134,14 +134,6 @@ Public Class ModernTabControl
         BottomCenter
     End Enum
 
-    ''' <summary>Ribbon 模式下折叠按钮的对齐方位</summary>
-    Public Enum CollapseButtonAlignmentEnum
-        ''' <summary>折叠按钮位于标签栏最左侧</summary>
-        Left
-        ''' <summary>折叠按钮位于标签栏最右侧</summary>
-        Right
-    End Enum
-
     Private Class TabAnimState
         Public 当前值 As Single = 0.0F
         Public 目标值 As Single = 0.0F
@@ -169,36 +161,6 @@ Public Class ModernTabControl
     Private _滚动条IsDragging As Boolean = False
     Private _滚动条DragStartX As Integer = 0
     Private _滚动条DragStartOffset As Integer = 0
-
-    ' Ribbon 模式 / 折叠按钮状态
-    Private _折叠按钮悬停 As Boolean = False
-    Private _折叠按钮动画 As New TabAnimState()
-    Private _折叠按钮缓存矩形 As RectangleF = RectangleF.Empty
-    Private _浮层显示 As Boolean = False
-    Private _鼠标过滤器 As RibbonMouseFilter = Nothing
-
-    Private Class RibbonMouseFilter
-        Implements IMessageFilter
-        Private ReadOnly _owner As ModernTabControl
-        Public Sub New(owner As ModernTabControl)
-            _owner = owner
-        End Sub
-        Public Function PreFilterMessage(ByRef m As Message) As Boolean Implements IMessageFilter.PreFilterMessage
-            Const WM_MOUSEMOVE As Integer = &H200
-            Const WM_NCMOUSEMOVE As Integer = &HA0
-            Const WM_LBUTTONDOWN As Integer = &H201
-            Const WM_RBUTTONDOWN As Integer = &H204
-            Const WM_MBUTTONDOWN As Integer = &H207
-            Const WM_NCLBUTTONDOWN As Integer = &HA1
-            Select Case m.Msg
-                Case WM_MOUSEMOVE, WM_NCMOUSEMOVE
-                    _owner.检查浮层是否需要关闭(False)
-                Case WM_LBUTTONDOWN, WM_RBUTTONDOWN, WM_MBUTTONDOWN, WM_NCLBUTTONDOWN
-                    _owner.检查浮层是否需要关闭(True)
-            End Select
-            Return False
-        End Function
-    End Class
 
     Public Sub New()
         InitializeComponent()
@@ -384,9 +346,6 @@ Public Class ModernTabControl
         For i As Integer = 0 To 项目列表.Count - 1
             绘制标签页文本(e.Graphics, i)
         Next
-        If Ribbon模式值 Then
-            绘制折叠按钮文本(e.Graphics)
-        End If
         e.Graphics.Restore(tabClipState)
     End Sub
 
@@ -417,10 +376,6 @@ Public Class ModernTabControl
                 绘制标签页项图形(g, i)
             End If
         Next
-
-        If Ribbon模式值 Then
-            绘制折叠按钮图形(g)
-        End If
 
         g.Restore(gState)
 
@@ -527,6 +482,7 @@ Public Class ModernTabControl
         Dim bounds As Rectangle = Rectangle.Round(获取标签页项矩形(index))
         Dim item = 项目列表(index)
         If item.IsSeparator Then Return
+
         Dim isSelected As Boolean = (_selectedIndex = index)
         Dim textColor As Color
         Dim textFont As Font
@@ -548,61 +504,6 @@ Public Class ModernTabControl
             bounds.Width - _标签页文本内边距 * 2 - iconOffset,
             bounds.Height)
         TextRenderer.DrawText(g, item.Text, textFont, textRect, textColor,
-            TextFormatFlags.HorizontalCenter Or TextFormatFlags.VerticalCenter Or TextFormatFlags.EndEllipsis Or TextFormatFlags.NoPadding)
-    End Sub
-
-    Private Sub 绘制折叠按钮图形(g As Graphics)
-        Dim bounds = 获取折叠按钮矩形()
-        If bounds.IsEmpty Then Return
-        _折叠按钮缓存矩形 = bounds
-        Dim s As Single = DpiScale()
-        Dim hoverProgress As Single = _折叠按钮动画.当前值
-        Dim bgColor As Color = 颜色插值(标签栏背景颜色, 悬停标签页背景颜色, hoverProgress)
-        Dim _圆角半径 As Single = 标签页圆角半径 * s
-        If _圆角半径 > 0 Then
-            Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(bounds, _圆角半径)
-                Using brush As New SolidBrush(bgColor)
-                    g.FillPath(brush, path)
-                End Using
-            End Using
-        Else
-            Using brush As New SolidBrush(bgColor)
-                g.FillRectangle(brush, bounds)
-            End Using
-        End If
-
-        If 折叠按钮图标值 IsNot Nothing Then
-            Dim _图标尺寸 As Single = 图标尺寸 * s
-            Dim _标签页文本内边距 As Single = 标签页文本内边距 * s
-            Dim iconX As Single = bounds.X + _标签页文本内边距
-            Dim iconY As Single = bounds.Y + (bounds.Height - _图标尺寸) / 2.0F
-            g.DrawImage(折叠按钮图标值, New RectangleF(iconX, iconY, _图标尺寸, _图标尺寸))
-        End If
-    End Sub
-
-    Private Sub 绘制折叠按钮文本(g As Graphics)
-        Dim bounds As Rectangle = Rectangle.Round(获取折叠按钮矩形())
-        If bounds.Width <= 0 OrElse bounds.Height <= 0 Then Return
-        Dim caption As String = If(已折叠值, 折叠按钮展开文本值, 折叠按钮折叠文本值)
-        If String.IsNullOrEmpty(caption) AndAlso 折叠按钮图标值 Is Nothing Then Return
-        Dim textColor As Color = If(已折叠值,
-            If(折叠按钮选中文本颜色值 <> Color.Empty, 折叠按钮选中文本颜色值, 选中标签页文本颜色),
-            If(折叠按钮文本颜色值 <> Color.Empty, 折叠按钮文本颜色值, 标签页默认文本颜色))
-        Dim textFont As Font = If(折叠按钮字体值, Me.Font)
-
-        Dim s As Single = DpiScale()
-        Dim _标签页文本内边距 As Integer = CInt(标签页文本内边距 * s)
-        Dim iconOffset As Integer = 0
-        If 折叠按钮图标值 IsNot Nothing Then
-            iconOffset = CInt(图标尺寸 * s + 图标与文本间距 * s)
-        End If
-
-        Dim textRect As New Rectangle(
-            bounds.X + _标签页文本内边距 + iconOffset,
-            bounds.Y,
-            bounds.Width - _标签页文本内边距 * 2 - iconOffset,
-            bounds.Height)
-        TextRenderer.DrawText(g, caption, textFont, textRect, textColor,
             TextFormatFlags.HorizontalCenter Or TextFormatFlags.VerticalCenter Or TextFormatFlags.EndEllipsis Or TextFormatFlags.NoPadding)
     End Sub
 
@@ -655,15 +556,10 @@ Public Class ModernTabControl
     Private Function 获取内容区域矩形() As Rectangle
         Dim s As Single = DpiScale()
         Dim h As Integer = CInt(标签栏高度 * s)
-        If Ribbon模式值 AndAlso 已折叠值 Then
-            ' 折叠时控件本体只占标签栏，无内部内容区
-            Return Rectangle.Empty
-        End If
-        Dim contentH As Integer = Math.Max(0, Me.Height - h)
         If 标签页位置 = TabPositionEnum.Top Then
-            Return New Rectangle(0, h, Me.Width, contentH)
+            Return New Rectangle(0, h, Me.Width, Math.Max(0, Me.Height - h))
         Else
-            Return New Rectangle(0, Me.Height - h - contentH, Me.Width, contentH)
+            Return New Rectangle(0, 0, Me.Width, Math.Max(0, Me.Height - h))
         End If
     End Function
 
@@ -677,17 +573,7 @@ Public Class ModernTabControl
         Dim fullH As Single = stripRect.Height - _标签栏内边距.Top - _标签栏内边距.Bottom
         Dim y As Single = stripRect.Y + _标签栏内边距.Top
         Dim h As Single = fullH
-        Dim 折叠按钮宽 As Single = 计算折叠按钮宽度()
-        Dim 左侧让出 As Single = 0
-        Dim 右侧让出 As Single = 0
-        If Ribbon模式值 AndAlso 折叠按钮宽 > 0 Then
-            If 折叠按钮对齐值 = CollapseButtonAlignmentEnum.Left Then
-                左侧让出 = 折叠按钮宽 + _标签页项间距
-            Else
-                右侧让出 = 折叠按钮宽 + _标签页项间距
-            End If
-        End If
-        Dim availableWidth As Single = stripRect.Width - _标签栏内边距.Left - _标签栏内边距.Right - 左侧让出 - 右侧让出
+        Dim availableWidth As Single = stripRect.Width - _标签栏内边距.Left - _标签栏内边距.Right
 
         Dim widths = 计算所有标签页宽度(availableWidth)
         If widths.Length = 0 Then Return RectangleF.Empty
@@ -717,7 +603,7 @@ Public Class ModernTabControl
             End Select
         End If
 
-        Dim x As Single = _标签栏内边距.Left + 左侧让出 + alignOffset - _滚动偏移
+        Dim x As Single = _标签栏内边距.Left + alignOffset - _滚动偏移
         For i As Integer = 0 To index - 1
             x += widths(i) + _标签页项间距
         Next
@@ -782,11 +668,9 @@ Public Class ModernTabControl
         Dim stripRect = 获取标签栏矩形()
         Dim _标签栏内边距L As Single = 标签栏内边距.Left * s
         Dim _标签栏内边距R As Single = 标签栏内边距.Right * s
-        Dim 折叠按钮宽 As Single = 计算折叠按钮宽度()
-        Dim 折叠按钮空间 As Single = If(Ribbon模式值 AndAlso 折叠按钮宽 > 0, 折叠按钮宽 + _标签页项间距, 0)
-        Dim availableWidth As Single = stripRect.Width - _标签栏内边距L - _标签栏内边距R - 折叠按钮空间
+        Dim availableWidth As Single = stripRect.Width - _标签栏内边距L - _标签栏内边距R
         Dim widths = 计算所有标签页宽度(availableWidth)
-        Dim total As Single = _标签栏内边距L + 折叠按钮空间
+        Dim total As Single = _标签栏内边距L
         For i As Integer = 0 To widths.Length - 1
             total += widths(i)
             If i < widths.Length - 1 Then total += _标签页项间距
@@ -796,97 +680,9 @@ Public Class ModernTabControl
     End Function
 
     Private Sub 同步内容面板布局()
-        If Ribbon模式值 Then
-            Dim s As Single = DpiScale()
-            Dim 标签栏H As Integer = CInt(标签栏高度 * s)
-            Dim 内容H As Integer = CInt(Ribbon内容高度值 * s)
-
-            If 已折叠值 Then
-                ' 折叠：控件本体只占标签栏；内容面板浮层化于 Parent 上
-                If Me.Height <> 标签栏H Then Me.Height = 标签栏H
-                Dim hostParent As Control = Me.Parent
-                If hostParent Is Nothing Then
-                    _内容面板.Visible = False
-                    Return
-                End If
-                If _内容面板.Parent IsNot hostParent Then
-                    If _内容面板.Parent IsNot Nothing Then _内容面板.Parent.Controls.Remove(_内容面板)
-                    hostParent.Controls.Add(_内容面板)
-                End If
-                Dim x As Integer = Me.Left
-                Dim w As Integer = Me.Width
-                Dim y As Integer = If(标签页位置 = TabPositionEnum.Top, Me.Bottom, Me.Top - 内容H)
-                _内容面板.Bounds = New Rectangle(x, y, w, 内容H)
-                _内容面板.Visible = _浮层显示
-                If _浮层显示 Then _内容面板.BringToFront()
-            Else
-                ' 固定（Pinned）：内容区常驻于本控件内部，控件占完整高度
-                If _内容面板.Parent IsNot Me Then
-                    If _内容面板.Parent IsNot Nothing Then _内容面板.Parent.Controls.Remove(_内容面板)
-                    Me.Controls.Add(_内容面板)
-                End If
-                Dim 期望H As Integer = 标签栏H + 内容H
-                If Me.Height <> 期望H Then Me.Height = 期望H
-                Dim y As Integer = If(标签页位置 = TabPositionEnum.Top, 标签栏H, 0)
-                _内容面板.Bounds = New Rectangle(0, y, Me.Width, 内容H)
-                _内容面板.Visible = True
-            End If
-            _内容面板.BackColor = 内容区域背景颜色
-            更新鼠标过滤器()
-        Else
-            停用鼠标过滤器()
-            If _内容面板.Parent IsNot Me Then
-                If _内容面板.Parent IsNot Nothing Then _内容面板.Parent.Controls.Remove(_内容面板)
-                Me.Controls.Add(_内容面板)
-            End If
-            Dim contentRect = 获取内容区域矩形()
-            _内容面板.Bounds = contentRect
-            _内容面板.BackColor = 内容区域背景颜色
-            _内容面板.Visible = (contentRect.Height > 0)
-        End If
-    End Sub
-
-    Private Sub 更新鼠标过滤器()
-        Dim 应当启用 As Boolean = Ribbon模式值 AndAlso 已折叠值 AndAlso _浮层显示
-        If 应当启用 Then
-            If _鼠标过滤器 Is Nothing Then
-                _鼠标过滤器 = New RibbonMouseFilter(Me)
-                Application.AddMessageFilter(_鼠标过滤器)
-            End If
-        Else
-            停用鼠标过滤器()
-        End If
-    End Sub
-
-    Friend Sub 停用鼠标过滤器()
-        If _鼠标过滤器 IsNot Nothing Then
-            Application.RemoveMessageFilter(_鼠标过滤器)
-            _鼠标过滤器 = Nothing
-        End If
-    End Sub
-
-    Friend Sub 检查浮层是否需要关闭(isClick As Boolean)
-        If Not (Ribbon模式值 AndAlso 已折叠值 AndAlso _浮层显示) Then Return
-        Dim mp As Point = Cursor.Position
-        Dim inSelf As Boolean = Me.IsHandleCreated AndAlso Me.RectangleToScreen(Me.ClientRectangle).Contains(mp)
-        Dim inPanel As Boolean = _内容面板.Visible AndAlso _内容面板.IsHandleCreated AndAlso _内容面板.RectangleToScreen(_内容面板.ClientRectangle).Contains(mp)
-        If inSelf OrElse inPanel Then Return
-        ' 鼠标在控件与浮层之外
-        关闭浮层()
-    End Sub
-
-    Private Sub 显示浮层()
-        If Not (Ribbon模式值 AndAlso 已折叠值) Then Return
-        If _浮层显示 Then Return
-        _浮层显示 = True
-        同步内容面板布局()
-    End Sub
-
-    Private Sub 关闭浮层()
-        If Not _浮层显示 Then Return
-        _浮层显示 = False
-        同步内容面板布局()
-        Me.Invalidate()
+        Dim contentRect = 获取内容区域矩形()
+        _内容面板.Bounds = contentRect
+        _内容面板.BackColor = 内容区域背景颜色
     End Sub
 
     Private Sub 限制滚动范围()
@@ -900,12 +696,10 @@ Public Class ModernTabControl
         Dim s As Single = DpiScale()
         Dim _标签页项间距 As Single = 标签页项间距 * s
         Dim stripRect = 获取标签栏矩形()
-        Dim 折叠按钮宽 As Single = 计算折叠按钮宽度()
-        Dim 折叠按钮空间 As Single = If(Ribbon模式值 AndAlso 折叠按钮宽 > 0, 折叠按钮宽 + _标签页项间距, 0)
-        Dim availableWidth As Single = stripRect.Width - 标签栏内边距.Left * s - 标签栏内边距.Right * s - 折叠按钮空间
+        Dim availableWidth As Single = stripRect.Width - 标签栏内边距.Left * s - 标签栏内边距.Right * s
         Dim widths = 计算所有标签页宽度(availableWidth)
 
-        Dim absX As Single = 标签栏内边距.Left * s + If(折叠按钮对齐值 = CollapseButtonAlignmentEnum.Left, 折叠按钮空间, 0)
+        Dim absX As Single = 标签栏内边距.Left * s
         For i As Integer = 0 To _selectedIndex - 1
             absX += widths(i) + _标签页项间距
         Next
@@ -975,42 +769,6 @@ Public Class ModernTabControl
         MyBase.OnInvalidated(e)
     End Sub
 
-    Private _上一个父级 As Control = Nothing
-    Protected Overrides Sub OnParentChanged(e As EventArgs)
-        MyBase.OnParentChanged(e)
-        If _上一个父级 IsNot Nothing Then
-            RemoveHandler _上一个父级.Resize, AddressOf 父级几何变更
-            If _内容面板.Parent Is _上一个父级 Then
-                _上一个父级.Controls.Remove(_内容面板)
-            End If
-        End If
-        _上一个父级 = Me.Parent
-        If _上一个父级 IsNot Nothing Then
-            AddHandler _上一个父级.Resize, AddressOf 父级几何变更
-        End If
-        同步内容面板布局()
-    End Sub
-
-    Private Sub 父级几何变更(sender As Object, e As EventArgs)
-        If Ribbon模式值 Then 同步内容面板布局()
-    End Sub
-
-    Protected Overrides Sub OnLocationChanged(e As EventArgs)
-        MyBase.OnLocationChanged(e)
-        If Ribbon模式值 Then 同步内容面板布局()
-    End Sub
-
-    Protected Overrides Sub OnVisibleChanged(e As EventArgs)
-        MyBase.OnVisibleChanged(e)
-        If Ribbon模式值 Then
-            If Not Me.Visible Then
-                _内容面板.Visible = False
-            Else
-                同步内容面板布局()
-            End If
-        End If
-    End Sub
-
     Private Shared Function 颜色插值(c1 As Color, c2 As Color, t As Single) As Color
         Return Color.FromArgb(
             字节插值(c1.A, c2.A, t),
@@ -1021,44 +779,6 @@ Public Class ModernTabControl
 
     Private Shared Function 字节插值(a As Integer, b As Integer, t As Single) As Integer
         Return Math.Clamp(CInt(a + (b - a) * t), 0, 255)
-    End Function
-
-    Private Function 计算折叠按钮宽度() As Single
-        If Not Ribbon模式值 Then Return 0
-        Dim s As Single = DpiScale()
-        Dim _标签页文本内边距 As Single = 标签页文本内边距 * s
-        Dim _图标尺寸 As Single = 图标尺寸 * s
-        Dim _图标与文本间距 As Single = 图标与文本间距 * s
-        Dim _标签页最小宽度 As Single = 标签页最小宽度 * s
-        Dim caption As String = If(已折叠值, 折叠按钮展开文本值, 折叠按钮折叠文本值)
-        Dim font = If(折叠按钮字体值, Me.Font)
-        Dim textW As Single = 0
-        If Not String.IsNullOrEmpty(caption) Then
-            textW = TextRenderer.MeasureText(caption, font, New Size(Integer.MaxValue, Integer.MaxValue), TextFormatFlags.NoPadding).Width
-        End If
-        Dim iconW As Single = If(折叠按钮图标值 IsNot Nothing, _图标尺寸 + If(textW > 0, _图标与文本间距, 0.0F), 0)
-        Dim w As Single = textW + iconW + _标签页文本内边距 * 2
-        Return Math.Max(_标签页最小宽度, w)
-    End Function
-
-    Private Function 获取折叠按钮矩形() As RectangleF
-        If Not Ribbon模式值 Then Return RectangleF.Empty
-        Dim s As Single = DpiScale()
-        Dim _标签栏内边距 As New Padding(
-            CInt(标签栏内边距.Left * s), CInt(标签栏内边距.Top * s),
-            CInt(标签栏内边距.Right * s), CInt(标签栏内边距.Bottom * s))
-        Dim stripRect = 获取标签栏矩形()
-        Dim fullH As Single = stripRect.Height - _标签栏内边距.Top - _标签栏内边距.Bottom
-        Dim y As Single = stripRect.Y + _标签栏内边距.Top
-        Dim w As Single = 计算折叠按钮宽度()
-        If w <= 0 Then Return RectangleF.Empty
-        Dim x As Single
-        If 折叠按钮对齐值 = CollapseButtonAlignmentEnum.Left Then
-            x = stripRect.X + _标签栏内边距.Left
-        Else
-            x = stripRect.Right - _标签栏内边距.Right - w
-        End If
-        Return New RectangleF(x, y, w, fullH)
     End Function
 #End Region
 
@@ -1081,14 +801,6 @@ Public Class ModernTabControl
         state.起始值 = state.当前值
         state.目标值 = target
         state.起始时刻 = Stopwatch.GetTimestamp()
-        启动动画驱动()
-    End Sub
-
-    Private Sub 设置折叠按钮动画目标(target As Single)
-        If Math.Abs(_折叠按钮动画.目标值 - target) < 0.001F Then Return
-        _折叠按钮动画.起始值 = _折叠按钮动画.当前值
-        _折叠按钮动画.目标值 = target
-        _折叠按钮动画.起始时刻 = Stopwatch.GetTimestamp()
         启动动画驱动()
     End Sub
 
@@ -1115,24 +827,6 @@ Public Class ModernTabControl
                 state.当前值 = state.目标值
             End If
         Next
-
-        ' 折叠按钮动画
-        Dim btn = _折叠按钮动画
-        If Math.Abs(btn.当前值 - btn.目标值) > 0.001F Then
-            Dim elapsed As Double = (now - btn.起始时刻) / freq * 1000.0
-            Dim totalDuration As Double = 动画时长值 * CDbl(Math.Abs(btn.目标值 - btn.起始值))
-            If totalDuration <= 0 Then
-                btn.当前值 = btn.目标值
-            Else
-                Dim t As Single = CSng(Math.Min(elapsed / totalDuration, 1.0))
-                Dim eased As Single = 1.0F - CSng(Math.Pow(1.0 - t, 3))
-                btn.当前值 = btn.起始值 + (btn.目标值 - btn.起始值) * eased
-                If t >= 1.0F Then btn.当前值 = btn.目标值
-            End If
-            有活跃动画 = True
-        Else
-            btn.当前值 = btn.目标值
-        End If
 
         If Not 有活跃动画 Then
             停止动画驱动()
@@ -1186,15 +880,6 @@ Public Class ModernTabControl
 
         Dim needInvalidate As Boolean = 滚动条UpdateHover(e.Location)
 
-        ' 折叠按钮悬停
-        Dim btnRect = 获取折叠按钮矩形()
-        Dim newBtnHover As Boolean = (Not btnRect.IsEmpty) AndAlso btnRect.Contains(e.Location.X, e.Location.Y)
-        If newBtnHover <> _折叠按钮悬停 Then
-            _折叠按钮悬停 = newBtnHover
-            设置折叠按钮动画目标(If(newBtnHover, 1.0F, 0.0F))
-            needInvalidate = True
-        End If
-
         Dim newHover As Integer = -1
         For i As Integer = 0 To 项目列表.Count - 1
             If 获取标签页项矩形(i).Contains(e.Location.X, e.Location.Y) Then
@@ -1205,7 +890,7 @@ Public Class ModernTabControl
                 Exit For
             End If
         Next
-        Me.Cursor = If(newHover >= 0 OrElse newBtnHover, Cursors.Hand, Cursors.Default)
+        Me.Cursor = If(newHover >= 0, Cursors.Hand, Cursors.Default)
         If newHover <> _悬停索引 Then
             If _悬停索引 >= 0 Then
                 设置动画目标(_悬停索引, 0.0F)
@@ -1228,11 +913,6 @@ Public Class ModernTabControl
             _悬停索引 = -1
             needInvalidate = True
         End If
-        If _折叠按钮悬停 Then
-            _折叠按钮悬停 = False
-            设置折叠按钮动画目标(0.0F)
-            needInvalidate = True
-        End If
         If _滚动条IsHover Then
             _滚动条IsHover = False
             needInvalidate = True
@@ -1244,14 +924,6 @@ Public Class ModernTabControl
         MyBase.OnMouseDown(e)
         If e.Button = MouseButtons.Left Then
             Me.Focus()
-            ' 折叠按钮命中（优先于滚动条与标签页）
-            If Ribbon模式值 Then
-                Dim btnRect = 获取折叠按钮矩形()
-                If Not btnRect.IsEmpty AndAlso btnRect.Contains(e.Location.X, e.Location.Y) Then
-                    IsCollapsed = Not IsCollapsed
-                    Return
-                End If
-            End If
             If Not _滚动条ThumbRect.IsEmpty AndAlso _滚动条ThumbRect.Contains(e.Location) Then
                 _滚动条IsDragging = True
                 _滚动条DragStartX = e.X
@@ -1272,26 +944,7 @@ Public Class ModernTabControl
             End If
             Dim hit = HitTestTab(e.Location)
             If hit >= 0 Then
-                If Ribbon模式值 Then
-                    If 已折叠值 Then
-                        ' 折叠态：点击标签显示浮层；若点击的是当前选中标签且浮层已显示，则关闭浮层
-                        If hit = _selectedIndex AndAlso _浮层显示 Then
-                            关闭浮层()
-                        Else
-                            SelectedIndex = hit
-                            显示浮层()
-                        End If
-                    Else
-                        ' 固定态：点击当前选中标签 => 切换为折叠
-                        If hit = _selectedIndex Then
-                            IsCollapsed = True
-                        Else
-                            SelectedIndex = hit
-                        End If
-                    End If
-                Else
-                    SelectedIndex = hit
-                End If
+                SelectedIndex = hit
             End If
         End If
     End Sub
@@ -1836,148 +1489,6 @@ Public Class ModernTabControl
         Set(value As Integer)
             If value < 1 Then value = 1
             SetValue(分割线宽度值, value)
-        End Set
-    End Property
-#End Region
-
-#Region "Ribbon 模式属性"
-    Private Ribbon模式值 As Boolean = False
-    <Category("LakeUI"), Description("启用 Ribbon 模式：内容区域使用固定高度，且支持折叠/展开切换"), DefaultValue(False), Browsable(True)>
-    Public Property RibbonMode As Boolean
-        Get
-            Return Ribbon模式值
-        End Get
-        Set(value As Boolean)
-            If Ribbon模式值 <> value Then
-                Ribbon模式值 = value
-                _浮层显示 = False
-                同步内容面板布局()
-                限制滚动范围()
-                Me.Invalidate()
-            End If
-        End Set
-    End Property
-
-    Private Ribbon内容高度值 As Integer = 120
-    <Category("LakeUI"), Description("Ribbon 模式下展开时内容区域的固定高度"), DefaultValue(120), Browsable(True)>
-    Public Property RibbonContentHeight As Integer
-        Get
-            Return Ribbon内容高度值
-        End Get
-        Set(value As Integer)
-            value = Math.Max(0, value)
-            If Ribbon内容高度值 <> value Then
-                Ribbon内容高度值 = value
-                If Ribbon模式值 Then 同步内容面板布局()
-                Me.Invalidate()
-            End If
-        End Set
-    End Property
-
-    Private 已折叠值 As Boolean = False
-    <Category("LakeUI"), Description("Ribbon 模式下当前是否处于折叠状态"), DefaultValue(False), Browsable(True)>
-    Public Property IsCollapsed As Boolean
-        Get
-            Return 已折叠值
-        End Get
-        Set(value As Boolean)
-            If 已折叠值 <> value Then
-                已折叠值 = value
-                ' 状态切换时清空浮层显示标记
-                _浮层显示 = False
-                If Ribbon模式值 Then 同步内容面板布局()
-                Me.Invalidate()
-                RaiseEvent CollapsedChanged(Me, EventArgs.Empty)
-            End If
-        End Set
-    End Property
-
-    Public Event CollapsedChanged As EventHandler
-
-    Private 折叠按钮对齐值 As CollapseButtonAlignmentEnum = CollapseButtonAlignmentEnum.Right
-    <Category("LakeUI"), Description("Ribbon 模式下折叠按钮的对齐方位（最左 / 最右）"), DefaultValue(GetType(CollapseButtonAlignmentEnum), "Right"), Browsable(True)>
-    Public Property CollapseButtonAlignment As CollapseButtonAlignmentEnum
-        Get
-            Return 折叠按钮对齐值
-        End Get
-        Set(value As CollapseButtonAlignmentEnum)
-            If 折叠按钮对齐值 <> value Then
-                折叠按钮对齐值 = value
-                Me.Invalidate()
-            End If
-        End Set
-    End Property
-
-    Private 折叠按钮折叠文本值 As String = "▲"
-    <Category("LakeUI"), Description("Ribbon 模式下折叠按钮在【展开状态】时显示的文本（点击后会折叠）"), DefaultValue("▲"), Browsable(True)>
-    Public Property CollapseButtonCollapseText As String
-        Get
-            Return 折叠按钮折叠文本值
-        End Get
-        Set(value As String)
-            折叠按钮折叠文本值 = If(value, "")
-            Me.Invalidate()
-        End Set
-    End Property
-
-    Private 折叠按钮展开文本值 As String = "▼"
-    <Category("LakeUI"), Description("Ribbon 模式下折叠按钮在【折叠状态】时显示的文本（点击后会展开）"), DefaultValue("▼"), Browsable(True)>
-    Public Property CollapseButtonExpandText As String
-        Get
-            Return 折叠按钮展开文本值
-        End Get
-        Set(value As String)
-            折叠按钮展开文本值 = If(value, "")
-            Me.Invalidate()
-        End Set
-    End Property
-
-    Private 折叠按钮字体值 As Font = Nothing
-    <Category("LakeUI"), Description("Ribbon 模式下折叠按钮使用的字体，为 Nothing 时使用控件默认字体"), Browsable(True)>
-    Public Property CollapseButtonFont As Font
-        Get
-            Return 折叠按钮字体值
-        End Get
-        Set(value As Font)
-            折叠按钮字体值 = value
-            Me.Invalidate()
-        End Set
-    End Property
-    Private Function ShouldSerializeCollapseButtonFont() As Boolean
-        Return 折叠按钮字体值 IsNot Nothing
-    End Function
-
-    Private 折叠按钮文本颜色值 As Color = Color.Empty
-    <Category("LakeUI"), Description("Ribbon 模式下折叠按钮在【展开状态】时的文本颜色，为 Empty 时跟随标签页默认文本颜色"), DefaultValue(GetType(Color), ""), Browsable(True)>
-    Public Property CollapseButtonForeColor As Color
-        Get
-            Return 折叠按钮文本颜色值
-        End Get
-        Set(value As Color)
-            SetValue(折叠按钮文本颜色值, value)
-        End Set
-    End Property
-
-    Private 折叠按钮选中文本颜色值 As Color = Color.Empty
-    <Category("LakeUI"), Description("Ribbon 模式下折叠按钮在【折叠状态】时的文本颜色，为 Empty 时跟随选中标签页文本颜色"), DefaultValue(GetType(Color), ""), Browsable(True)>
-    Public Property CollapseButtonActiveForeColor As Color
-        Get
-            Return 折叠按钮选中文本颜色值
-        End Get
-        Set(value As Color)
-            SetValue(折叠按钮选中文本颜色值, value)
-        End Set
-    End Property
-
-    Private 折叠按钮图标值 As Image = Nothing
-    <Category("LakeUI"), Description("Ribbon 模式下折叠按钮使用的图标"), DefaultValue(GetType(Image), Nothing), Browsable(True)>
-    Public Property CollapseButtonIcon As Image
-        Get
-            Return 折叠按钮图标值
-        End Get
-        Set(value As Image)
-            折叠按钮图标值 = value
-            Me.Invalidate()
         End Set
     End Property
 #End Region

@@ -150,14 +150,19 @@ Public Class ModernButton
         g.DrawImage(背景图片, Rectangle.Round(极限矩形区域))
         g.Clip = oldClip
     End Sub
-    ''' <summary>
-    ''' 透明背景贴底图：圆角或半透明背景下，由共享缓存把 BackgroundSource（或 Parent）
-    ''' 的内容采样到本控件区域。具体实现与接入注意事项见 TransparentBackgroundCache。
-    ''' </summary>
     Private Sub 绘制父容器背景(g As Graphics)
-        TransparentBackgroundCache.PaintBackgroundFor(Me, g, _backgroundSource)
+        If Parent Is Nothing Then Return
+        Dim state = g.Save()
+        g.TranslateTransform(-Me.Left, -Me.Top)
+        Using pea As New PaintEventArgs(g, New Rectangle(Me.Left, Me.Top, Me.Width, Me.Height))
+            InvokePaintBackground(Parent, pea)
+            ' 仅 InvokePaintBackground 只能获取父容器的 BackColor 填充。
+            ' 对于 ModernPanel 等自绘控件，背景图片和圆角背景都在 OnPaint 中绘制，
+            ' 必须追加 InvokePaint 才能获取父容器的真实视觉内容（含背景图片）。
+            InvokePaint(Parent, pea)
+        End Using
+        g.Restore(state)
     End Sub
-
     Private Sub 绘制长按遮罩(g As Graphics, 极限矩形区域 As RectangleF, clipPath As GraphicsPath)
         If Not 长按确认已启用 Then Return
         Dim progress As Single = 长按动画助手.Progress
@@ -342,27 +347,6 @@ Public Class ModernButton
         End Get
         Set(value As Integer)
             动画助手.FPS = Math.Max(0, value)
-        End Set
-    End Property
-
-    Private _backgroundSource As Control = Nothing
-    ''' <summary>
-    ''' 背景采样源（超容器背景映射）。透明背景模式下，控件会调用此控件的绘制流程取像素作为底图，
-    ''' 从而实现跨越任意层级的"穿透显示"效果。
-    ''' 为 Nothing 时自动沿祖先链查找首个不透明祖先（默认行为）。
-    ''' </summary>
-    <Category("LakeUI"),
-     Description("背景采样源（超容器背景映射）。设置后将跨越任意层级直接采样此控件的绘制内容作为透明背景；为空时自动选择首个不透明祖先。"),
-     DefaultValue(GetType(Control), Nothing), Browsable(True)>
-    Public Property BackgroundSource As Control
-        Get
-            Return _backgroundSource
-        End Get
-        Set(value As Control)
-            If _backgroundSource IsNot value Then
-                _backgroundSource = value
-                Me.Invalidate()
-            End If
         End Set
     End Property
 #End Region

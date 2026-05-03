@@ -28,7 +28,6 @@ Partial Class Form_ModernTabControl
         Dim ModernTab4 As LakeUI.ModernTabControl.ModernTab = New ModernTabControl.ModernTab()
         Dim ModernTab5 As LakeUI.ModernTabControl.ModernTab = New ModernTabControl.ModernTab()
         ModernPanel1 = New ModernPanel()
-        Label5 = New Label()
         ModernTabControl1 = New ModernTabControl()
         Label6 = New Label()
         Panel1 = New Panel()
@@ -47,7 +46,6 @@ Partial Class Form_ModernTabControl
         ' ModernPanel1
         ' 
         ModernPanel1.BorderSize = 0
-        ModernPanel1.Controls.Add(Label5)
         ModernPanel1.Controls.Add(ModernTabControl1)
         ModernPanel1.Controls.Add(Label6)
         ModernPanel1.Controls.Add(Panel1)
@@ -57,26 +55,13 @@ Partial Class Form_ModernTabControl
         ModernPanel1.Margin = New Padding(2)
         ModernPanel1.Name = "ModernPanel1"
         ModernPanel1.Padding = New Padding(20)
-        ModernPanel1.ScrollBarMode = ModernPanel.ScrollMode.None
         ModernPanel1.Size = New Size(708, 592)
         ModernPanel1.TabIndex = 39
-        ' 
-        ' Label5
-        ' 
-        Label5.AutoSize = True
-        Label5.Dock = DockStyle.Top
-        Label5.Font = New Font("Microsoft YaHei UI", 10F)
-        Label5.Location = New Point(20, 390)
-        Label5.Name = "Label5"
-        Label5.Padding = New Padding(0, 20, 0, 20)
-        Label5.Size = New Size(501, 60)
-        Label5.TabIndex = 40
-        Label5.Text = "1.4 新增 Ribbon 模式，开启后显示三角按钮，逻辑与主流软件例如 Office 同步"
         ' 
         ' ModernTabControl1
         ' 
         ModernTabControl1.ContentBackColor = Color.FromArgb(CByte(48), CByte(48), CByte(48))
-        ModernTabControl1.Dock = DockStyle.Top
+        ModernTabControl1.Dock = DockStyle.Fill
         ModernTab3.IsSeparator = True
         ModernTabControl1.Items.Add(ModernTab1)
         ModernTabControl1.Items.Add(ModernTab2)
@@ -85,10 +70,9 @@ Partial Class Form_ModernTabControl
         ModernTabControl1.Items.Add(ModernTab5)
         ModernTabControl1.Location = New Point(20, 220)
         ModernTabControl1.Name = "ModernTabControl1"
-        ModernTabControl1.RibbonMode = True
         ModernTabControl1.SelectedIndex = 0
         ModernTabControl1.SelectedTab = ModernTab1
-        ModernTabControl1.Size = New Size(668, 170)
+        ModernTabControl1.Size = New Size(668, 352)
         ModernTabControl1.TabAlignment = ModernTabControl.TabAlignmentEnum.Center
         ModernTabControl1.TabIndex = 39
         ModernTabControl1.TabItemHoverBackColor = Color.FromArgb(CByte(80), CByte(80), CByte(80))
@@ -258,5 +242,4 @@ Partial Class Form_ModernTabControl
     Friend WithEvents ModernButton1 As ModernButton
     Friend WithEvents Label1 As Label
     Friend WithEvents ModernTabControl1 As ModernTabControl
-    Friend WithEvents Label5 As Label
 End Class
