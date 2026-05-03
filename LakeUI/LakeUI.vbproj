@@ -55,7 +55,6 @@
 
   <ItemGroup>
     <Folder Include="My Project\新文件夹\" />
-    <Folder Include="D2D 引擎\" />
   </ItemGroup>
 
 </Project>
