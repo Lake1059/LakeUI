@@ -112,6 +112,14 @@ Public Class PrecisionTimer
     Private _未命中计数 As Long = 0
     Private _最后偏差毫秒 As Double = 0.0
 
+    ''' <summary>一次启动周期的私有上下文：调度线程 / worker 在闭包里捕获它，避免读已被 Stop 清空的字段。</summary>
+    Private NotInheritable Class 运行上下文
+        Public 停止信号 As ManualResetEvent
+        Public 高精度句柄 As SafeWaitHandle
+        Public 定时器等待 As Win32等待句柄
+        Public 工作队列 As BlockingCollection(Of Object)
+    End Class
+
 #End Region
 
 #Region "公开属性"
@@ -298,13 +306,21 @@ Public Class PrecisionTimer
             启用高精度时钟()
             _高精度引用已加 = True
 
+            Dim ctx As New 运行上下文 With {
+                .停止信号 = _停止信号,
+                .高精度句柄 = _高精度句柄,
+                .定时器等待 = _定时器等待
+            }
+
             If _分发模式 = DispatchModeEnum.NonBlocking AndAlso _同步对象 Is Nothing Then
                 ' 仅在 NonBlocking + 未设 SynchronizingObject 时需要 worker 池。
                 ' 设置了 SynchronizingObject 时，Tick 会被 BeginInvoke 到它所在线程异步执行，不需额外线程。
                 _工作队列 = New BlockingCollection(Of Object)()
+                ctx.工作队列 = _工作队列
                 _工作线程组 = New List(Of Thread)()
+                Dim 工作队列局部 = _工作队列
                 For i As Integer = 0 To _工作线程数 - 1
-                    Dim t As New Thread(AddressOf 工作线程主循环) With {
+                    Dim t As New Thread(Sub() 工作线程主循环(工作队列局部)) With {
                         .IsBackground = True,
                         .Name = "LakeUI.PrecisionTimer.Worker#" & i.ToString()
                     }
@@ -317,7 +333,7 @@ Public Class PrecisionTimer
             Interlocked.Exchange(_正在执行计数, 0)
             _最后偏差毫秒 = 0.0
 
-            _调度线程 = New Thread(AddressOf 调度线程主循环) With {
+            _调度线程 = New Thread(Sub() 调度线程主循环(ctx)) With {
                 .IsBackground = True,
                 .Name = "LakeUI.PrecisionTimer.Scheduler",
                 .Priority = ThreadPriority.AboveNormal
@@ -325,7 +341,12 @@ Public Class PrecisionTimer
             _调度线程.Start()
         Catch
             Interlocked.Exchange(_运行中, 0)
-            清理资源()
+            清理资源(_工作队列, _停止信号, _高精度句柄, _定时器等待, _高精度引用已加)
+            _工作队列 = Nothing
+            _停止信号 = Nothing
+            _高精度句柄 = Nothing
+            _定时器等待 = Nothing
+            _高精度引用已加 = False
             Throw
         End Try
     End Sub
@@ -340,8 +361,25 @@ Public Class PrecisionTimer
     Public Sub [Stop]()
         If Interlocked.CompareExchange(_运行中, 0, 1) <> 1 Then Return
 
+        ' 先抓取快照并清空字段，避免后续 Start 复用同一实例时旧的异步清理回调误伤新资源
+        Dim 调度 = _调度线程
+        Dim 工作组 = _工作线程组
+        Dim 队列 = _工作队列
+        Dim 停止 = _停止信号
+        Dim 引用已加 = _高精度引用已加
+        Dim 句柄 = _高精度句柄
+        Dim 等待 = _定时器等待
+
+        _调度线程 = Nothing
+        _工作线程组 = Nothing
+        _工作队列 = Nothing
+        _停止信号 = Nothing
+        _高精度引用已加 = False
+        _高精度句柄 = Nothing
+        _定时器等待 = Nothing
+
         Try
-            _停止信号?.Set()
+            停止?.Set()
         Catch
         End Try
 
@@ -355,9 +393,6 @@ Public Class PrecisionTimer
             OrElse TypeOf SynchronizationContext.Current Is System.Windows.Forms.WindowsFormsSynchronizationContext
 
         If 需要异步Join Then
-            Dim 调度 = _调度线程
-            Dim 工作组 = _工作线程组
-            Dim 队列 = _工作队列
             ThreadPool.QueueUserWorkItem(
                 Sub()
                     Try
@@ -375,20 +410,20 @@ Public Class PrecisionTimer
                             Next
                         End If
                     Finally
-                        清理资源()
+                        清理资源(队列, 停止, 句柄, 等待, 引用已加)
                     End Try
                 End Sub)
         Else
             Try
-                If _调度线程 IsNot Nothing AndAlso _调度线程.IsAlive AndAlso Thread.CurrentThread IsNot _调度线程 Then
-                    _调度线程.Join()
+                If 调度 IsNot Nothing AndAlso 调度.IsAlive AndAlso Thread.CurrentThread IsNot 调度 Then
+                     调度.Join()
                 End If
                 Try
-                    _工作队列?.CompleteAdding()
+                    队列?.CompleteAdding()
                 Catch
                 End Try
-                If _工作线程组 IsNot Nothing Then
-                    For Each t In _工作线程组
+                If 工作组 IsNot Nothing Then
+                    For Each t In 工作组
                         Try
                             If t.IsAlive AndAlso Thread.CurrentThread IsNot t Then t.Join()
                         Catch
@@ -396,41 +431,38 @@ Public Class PrecisionTimer
                     Next
                 End If
             Finally
-                清理资源()
+                清理资源(队列, 停止, 句柄, 等待, 引用已加)
             End Try
         End If
     End Sub
 
-    Private Sub 清理资源()
+    Private Sub 清理资源(队列 As BlockingCollection(Of Object),
+                     停止 As ManualResetEvent,
+                     句柄 As SafeWaitHandle,
+                     等待 As Win32等待句柄,
+                     引用已加 As Boolean)
         Try
-            If _高精度引用已加 Then
+            If 引用已加 Then
                 关闭高精度时钟()
-                _高精度引用已加 = False
             End If
         Catch
         End Try
 
         Try
-            _工作队列?.Dispose()
+            队列?.Dispose()
         Catch
         End Try
-        _工作队列 = Nothing
-        _工作线程组 = Nothing
-        _调度线程 = Nothing
 
         Try
-            _停止信号?.Dispose()
+            停止?.Dispose()
         Catch
         End Try
-        _停止信号 = Nothing
 
-        ' Win32等待句柄 与 _高精度句柄 共享同一个 SafeWaitHandle，关闭其一即可
+        ' Win32等待句柄 与 SafeWaitHandle 共享同一个底层句柄，关闭其一即可
         Try
-            _定时器等待?.Close()
+            等待?.Close()
         Catch
         End Try
-        _定时器等待 = Nothing
-        _高精度句柄 = Nothing
     End Sub
 
     Protected Overrides Sub Dispose(disposing As Boolean)
@@ -447,14 +479,17 @@ Public Class PrecisionTimer
 
 #Region "调度线程"
 
-    Private Sub 调度线程主循环()
+    Private Sub 调度线程主循环(ctx As 运行上下文)
+        Dim 停止信号本地 = ctx.停止信号
+        Dim 高精度句柄本地 = ctx.高精度句柄
+        Dim 定时器等待本地 = ctx.定时器等待
         Try
             Dim 频率 As Long = Stopwatch.Frequency
             Dim 间隔Tick As Long = CLng(频率 * (_间隔毫秒 / 1000.0))
             If 间隔Tick < 1 Then 间隔Tick = 1
             Dim 起始Tick As Long = Stopwatch.GetTimestamp()
             Dim 已触发次数 As Long = 0
-            Dim 等待句柄() As WaitHandle = {_停止信号, _定时器等待}
+            Dim 等待句柄() As WaitHandle = {停止信号本地, 定时器等待本地}
             ' 自旋阈值：剩余时间小于约 0.5 ms 时切换到 SpinWait 精磨
             Dim 自旋阈值Tick As Long = 频率 \ 2000
 
@@ -482,7 +517,7 @@ Public Class PrecisionTimer
                     Dim 剩余100ns As Long = CLng(等待Tick * (10000000.0 / 频率))
                     If 剩余100ns < 1 Then 剩余100ns = 1
                     Dim 到期 As Long = -剩余100ns
-                    Dim 设置成功 As Boolean = SetWaitableTimer(_高精度句柄.DangerousGetHandle(), 到期, 0, IntPtr.Zero, IntPtr.Zero, False)
+                    Dim 设置成功 As Boolean = SetWaitableTimer(高精度句柄本地.DangerousGetHandle(), 到期, 0, IntPtr.Zero, IntPtr.Zero, False)
                     If 设置成功 Then
                         Dim idx As Integer = WaitHandle.WaitAny(等待句柄)
                         If idx = 0 Then Return
@@ -490,13 +525,13 @@ Public Class PrecisionTimer
                         ' 极少数情况：可等待计时器无法设置，降级为可被停止信号唤醒的睡眠
                         Dim 睡眠毫秒 As Integer = CInt(Math.Min(Integer.MaxValue, 等待Tick * 1000.0 / 频率))
                         If 睡眠毫秒 < 1 Then 睡眠毫秒 = 1
-                        If _停止信号.WaitOne(睡眠毫秒) Then Return
+                        If 停止信号本地.WaitOne(睡眠毫秒) Then Return
                     End If
                 End If
 
                 ' SpinWait 精磨到目标
                 Do While Stopwatch.GetTimestamp() < 目标Tick
-                    If _停止信号.WaitOne(0) Then Return
+                    If 停止信号本地.WaitOne(0) Then Return
                     Thread.SpinWait(40)
                 Loop
 
@@ -506,7 +541,7 @@ Public Class PrecisionTimer
                 ' 派发 Tick
                 If _分发模式 = DispatchModeEnum.Blocking Then
                     派发Blocking()
-                    If _停止信号.WaitOne(0) Then Return
+                    If 停止信号本地.WaitOne(0) Then Return
                     ' Blocking 下若处理时长 > 1 个间隔，重设基准避免堆积赶工
                     Dim 结束Tick As Long = Stopwatch.GetTimestamp()
                     If 结束Tick - 目标Tick > 间隔Tick Then
@@ -514,7 +549,7 @@ Public Class PrecisionTimer
                         已触发次数 = 0
                     End If
                 Else
-                    派发NonBlocking()
+                    派发NonBlocking(ctx.工作队列)
                 End If
 
                 If Not _自动重置 Then
@@ -546,7 +581,7 @@ Public Class PrecisionTimer
         End Try
     End Sub
 
-    Private Sub 派发NonBlocking()
+    Private Sub 派发NonBlocking(队列 As BlockingCollection(Of Object))
         Dim sync = _同步对象
         Try
             ' Drop 策略：根据"正在执行或排队中"的 Tick 数决定是否丢弃；
@@ -587,7 +622,7 @@ Public Class PrecisionTimer
                 ' NonBlocking + 未设 SyncObj：走 worker 池。Queue / Concurrent / Drop 都入队；
                 ' 差异在消费并发度 (worker 线程数) 与 Drop 阈值。
                 Try
-                    _工作队列.Add(Nothing)
+                    队列?.Add(Nothing)
                 Catch
                     If _溢出策略 = OverrunPolicyEnum.Drop Then
                         Interlocked.Decrement(_正在执行计数)
@@ -598,9 +633,9 @@ Public Class PrecisionTimer
         End Try
     End Sub
 
-    Private Sub 工作线程主循环()
+    Private Sub 工作线程主循环(队列 As BlockingCollection(Of Object))
         Try
-            For Each item In _工作队列.GetConsumingEnumerable()
+            For Each item In 队列.GetConsumingEnumerable()
                 Try
                     RaiseEvent Tick(Me, EventArgs.Empty)
                 Catch
