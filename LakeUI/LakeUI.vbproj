@@ -57,4 +57,8 @@
     <Folder Include="My Project\新文件夹\" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="Vortice.Direct2D1" Version="3.8.3" />
+  </ItemGroup>
+
 </Project>

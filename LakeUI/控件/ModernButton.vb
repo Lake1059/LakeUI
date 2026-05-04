@@ -1,8 +1,37 @@
 ﻿Imports System.ComponentModel
-Imports System.Drawing.Drawing2D
+Imports System.Numerics
+Imports Vortice.Direct2D1
+Imports Vortice.DirectWrite
 
 <DefaultEvent("Click")>
 Public Class ModernButton
+#Region "D2D 资源"
+    ''' <summary>控件级 DC RenderTarget。与窗口 DC 强相关，无法跨控件共享，由控件持有。</summary>
+    Private _dcRT As ID2D1DCRenderTarget
+    ''' <summary>跨帧复用的 SSAA 离屏 BitmapRT，按 (Width, Height, ssaa) 命中。</summary>
+    Private ReadOnly _ssaaCache As New D2DHelper.BitmapRTCache()
+    ''' <summary>背景图缓存。</summary>
+    Private ReadOnly _backImageCache As New D2DHelper.D2DBitmapCache()
+    ''' <summary>图标缓存。</summary>
+    Private ReadOnly _iconCache As New D2DHelper.D2DBitmapCache()
+
+    Private Function GetOrCreateDCRenderTarget() As ID2D1DCRenderTarget
+        If _dcRT Is Nothing Then _dcRT = D2DHelper.CreateDCRenderTarget()
+        Return _dcRT
+    End Function
+
+    Protected Overrides Sub OnHandleDestroyed(e As EventArgs)
+        Try : _ssaaCache.Dispose() : Catch : End Try
+        Try : _backImageCache.Dispose() : Catch : End Try
+        Try : _iconCache.Dispose() : Catch : End Try
+        If _dcRT IsNot Nothing Then
+            Try : _dcRT.Dispose() : Catch : End Try
+            _dcRT = Nothing
+        End If
+        MyBase.OnHandleDestroyed(e)
+    End Sub
+#End Region
+
 #Region "绘制"
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
         ' 有圆角或半透明背景时由 OnPaint 负责绘制父容器背景，此处不做默认填充
@@ -12,9 +41,11 @@ Public Class ModernButton
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
         Dim 是否有圆角 As Boolean = 边框圆角半径 > 0
+        ' 透明背景采样：保留对共享缓存的调用（GDI 路径），随后再切换到 D2D 绘制
         If 是否有圆角 OrElse 背景基础颜色.A < 255 Then
-            绘制父容器背景(e.Graphics)
+            TransparentBackgroundCache.PaintBackgroundFor(Me, e.Graphics, _backgroundSource)
         End If
+
         Dim 极限矩形区域 As New RectangleF(0, 0, Me.Width, Me.Height)
         If 边框宽度 > 0 Then
             Dim half As Single = 边框宽度 * DpiScale() / 2.0F
@@ -25,35 +56,36 @@ Public Class ModernButton
             极限矩形区域.Y + Me.Padding.Top,
             极限矩形区域.Width - Me.Padding.Horizontal,
             极限矩形区域.Height - Me.Padding.Vertical)
-        Dim _ssaa As Integer = If(Class1.GlobalSSAA > 1, Class1.GlobalSSAA, 超采样倍率)
-        If _ssaa > 1 Then
-            Using bmp As New Bitmap(Me.Width * _ssaa, Me.Height * _ssaa)
-                Using g As Graphics = Graphics.FromImage(bmp)
-                    g.ScaleTransform(_ssaa, _ssaa)
-                    绘制图形内容(g, 是否有圆角, 极限矩形区域, 内容矩形区域)
+
+        Dim ssaa As Integer = Math.Max(1, CInt(超采样倍率))
+        If Class1.GlobalSSAA <> Class1.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(Class1.GlobalSSAA))
+
+        Using scope = D2DHelper.BeginPaint(e, Me, GetOrCreateDCRenderTarget(), ssaa, _ssaaCache)
+            Dim gRT As ID2D1RenderTarget = scope.GraphicsRenderTarget
+            Dim dcRT As ID2D1DCRenderTarget = scope.DCRenderTarget
+
+            ' 1) 图形层（享受 SSAA）
+            绘制图形内容_D2D(gRT, 是否有圆角, 极限矩形区域, 内容矩形区域)
+
+            ' 2) 把图形层（如果是 BitmapRT）回采到 DC，然后在 DC 上画文字（保留 ClearType 子像素）
+            scope.FlushGraphics()
+            绘制文本_D2D(dcRT, 内容矩形区域, 计算图标占用的水平宽度(内容矩形区域))
+
+            ' 3) 禁用遮罩（直接覆盖整个 DC，不需要 SSAA）
+            If Not Enabled Then
+                Using mb = dcRT.CreateSolidColorBrush(D2DHelper.ToColor4(Color.FromArgb(120, 0, 0, 0)))
+                    dcRT.FillRectangle(New Vortice.Mathematics.Rect(0, 0, Me.Width, Me.Height), mb)
                 End Using
-                e.Graphics.CompositingQuality = Class1.GlobalCompositingQuality
-                e.Graphics.InterpolationMode = Class1.GlobalInterpolationMode
-                e.Graphics.DrawImage(bmp, 0, 0, Me.Width, Me.Height)
-            End Using
-        Else
-            绘制图形内容(e.Graphics, 是否有圆角, 极限矩形区域, 内容矩形区域)
-        End If
-        绘制文本(e.Graphics, 内容矩形区域, 计算图标占用的水平宽度(内容矩形区域))
-        If Not Enabled Then
-            Using brush As New SolidBrush(Color.FromArgb(120, 0, 0, 0))
-                e.Graphics.FillRectangle(brush, 0, 0, Me.Width, Me.Height)
-            End Using
-        End If
+            End If
+        End Using
+
         If 长按正在进行 AndAlso 长按动画助手.Progress >= 1.0F Then
             长按正在进行 = False
             BeginInvoke(Sub() MyBase.OnClick(EventArgs.Empty))
         End If
     End Sub
-    Private Sub 绘制图形内容(g As Graphics, 是否有圆角 As Boolean, 极限矩形区域 As RectangleF, 内容矩形区域 As RectangleF)
-        g.SmoothingMode = Class1.GlobalSmoothingMode
-        g.PixelOffsetMode = Class1.GlobalPixelOffsetMode
-        g.InterpolationMode = Class1.GlobalInterpolationMode
+
+    Private Sub 绘制图形内容_D2D(rt As ID2D1RenderTarget, 是否有圆角 As Boolean, 极限矩形区域 As RectangleF, 内容矩形区域 As RectangleF)
         Dim 背景颜色缓存值 As Color
         Dim 渐变颜色缓存值 As Color
         Dim 边框颜色缓存值 As Color
@@ -68,25 +100,148 @@ Public Class ModernButton
             根据鼠标状态分配颜色(背景颜色缓存值, 渐变颜色缓存值, 边框颜色缓存值)
         End If
         Dim s As Single = DpiScale()
+        Dim r As Single = 边框圆角半径 * s
+
         If 是否有圆角 Then
-            Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(极限矩形区域, 边框圆角半径 * s)
+            Using geo = RectangleRenderer.创建圆角矩形几何(极限矩形区域, r)
                 If 背景颜色缓存值.A > 0 OrElse 渐变颜色缓存值.A > 0 Then
-                    RectangleRenderer.绘制圆角背景(g, path, 极限矩形区域, 背景颜色缓存值, 渐变颜色缓存值, 渐变方向)
+                    RectangleRenderer.绘制圆角背景_D2D(rt, geo, 极限矩形区域, 背景颜色缓存值, 渐变颜色缓存值, 渐变方向)
                 End If
-                绘制背景图片(g, 极限矩形区域, path)
-                绘制长按遮罩(g, 极限矩形区域, path)
-                RectangleRenderer.绘制圆角边框(g, path, 边框颜色缓存值, 边框宽度 * s)
+                绘制背景图片_D2D(rt, 极限矩形区域, geo)
+                绘制长按遮罩_D2D(rt, 极限矩形区域, geo)
+                If 边框颜色缓存值.A > 0 AndAlso 边框宽度 > 0 Then
+                    RectangleRenderer.绘制圆角边框_D2D(rt, geo, 边框颜色缓存值, 边框宽度 * s)
+                End If
             End Using
         Else
             If 背景颜色缓存值.A > 0 OrElse 渐变颜色缓存值.A > 0 Then
-                RectangleRenderer.绘制矩形背景(g, 极限矩形区域, 背景颜色缓存值, 渐变颜色缓存值, 渐变方向)
+                RectangleRenderer.绘制矩形背景_D2D(rt, 极限矩形区域, 背景颜色缓存值, 渐变颜色缓存值, 渐变方向)
             End If
-            绘制背景图片(g, 极限矩形区域, Nothing)
-            绘制长按遮罩(g, 极限矩形区域, Nothing)
-            RectangleRenderer.绘制矩形边框(g, 极限矩形区域, 边框颜色缓存值, 边框宽度 * s)
+            绘制背景图片_D2D(rt, 极限矩形区域, Nothing)
+            绘制长按遮罩_D2D(rt, 极限矩形区域, Nothing)
+            If 边框颜色缓存值.A > 0 AndAlso 边框宽度 > 0 Then
+                RectangleRenderer.绘制矩形边框_D2D(rt, 极限矩形区域, 边框颜色缓存值, 边框宽度 * s)
+            End If
         End If
-        绘制图标(g, 内容矩形区域)
+
+        绘制图标_D2D(rt, 内容矩形区域)
     End Sub
+
+    Private Sub 绘制背景图片_D2D(rt As ID2D1RenderTarget, area As RectangleF, geo As ID2D1Geometry)
+        If 背景图片 Is Nothing Then Return
+        Dim hasMask As Boolean = geo IsNot Nothing
+        If hasMask Then D2DHelper.PushGeometryClip(rt, geo, area)
+        Try
+            Dim bmp = _backImageCache.GetBitmap(rt, 背景图片)
+            If bmp IsNot Nothing Then
+                rt.DrawBitmap(bmp, D2DHelper.ToD2DRect(area), 1.0F, BitmapInterpolationMode.Linear, Nothing)
+            End If
+        Finally
+            If hasMask Then rt.PopLayer()
+        End Try
+    End Sub
+
+    Private Sub 绘制长按遮罩_D2D(rt As ID2D1RenderTarget, area As RectangleF, geo As ID2D1Geometry)
+        If Not 长按确认已启用 Then Return
+        Dim progress As Single = 长按动画助手.Progress
+        If progress < 0.001F Then Return
+        Dim maskRect As RectangleF
+        If 长按遮罩方向 = HoldClickDirectionEnum.LeftToRight Then
+            maskRect = New RectangleF(area.X, area.Y, area.Width * progress, area.Height)
+        Else
+            Dim w As Single = area.Width * progress
+            maskRect = New RectangleF(area.Right - w, area.Y, w, area.Height)
+        End If
+        Dim hasMask As Boolean = geo IsNot Nothing
+        If hasMask Then D2DHelper.PushGeometryClip(rt, geo, area)
+        Try
+            Using brush = rt.CreateSolidColorBrush(D2DHelper.ToColor4(长按遮罩颜色))
+                rt.FillRectangle(D2DHelper.ToD2DRect(maskRect), brush)
+            End Using
+        Finally
+            If hasMask Then rt.PopLayer()
+        End Try
+    End Sub
+
+    Private Sub 绘制图标_D2D(rt As ID2D1RenderTarget, 内容矩形区域 As RectangleF)
+        If 图标 Is Nothing Then Return
+        Dim iconSize As Single = 计算图标占用的水平宽度(内容矩形区域)
+        Dim iconX As Single = 内容矩形区域.X + 图标边距 * DpiScale()
+        Dim iconY As Single = 内容矩形区域.Y + (内容矩形区域.Height - iconSize) / 2.0F
+        Dim bmp = _iconCache.GetBitmap(rt, 图标)
+        If bmp IsNot Nothing Then
+            rt.DrawBitmap(bmp, New Vortice.Mathematics.Rect(iconX, iconY, iconSize, iconSize), 1.0F, BitmapInterpolationMode.Linear, Nothing)
+        End If
+    End Sub
+
+    Private Sub 绘制文本_D2D(rt As ID2D1DCRenderTarget, 内容矩形区域 As RectangleF, 图标宽度 As Single)
+        Dim s As Single = DpiScale()
+        Dim _图标边距 As Single = 图标边距 * s
+        Dim _边框圆角半径 As Single = 边框圆角半径 * s
+        Dim 图标占用总宽度 As Single = If(图标宽度 > 0, 图标宽度 + _图标边距, 0)
+        Dim 文本绘制区域 As New RectangleF(
+            内容矩形区域.X + 图标占用总宽度 + _边框圆角半径,
+            内容矩形区域.Y,
+            内容矩形区域.Width - 图标占用总宽度 - _边框圆角半径 * 2,
+            内容矩形区域.Height)
+        If 文本绘制区域.Width <= 0 OrElse 文本绘制区域.Height <= 0 Then Return
+
+        Dim align As Vortice.DirectWrite.TextAlignment
+        Select Case 文字对齐方位
+            Case TextAlignEnum.Left : align = Vortice.DirectWrite.TextAlignment.Leading
+            Case TextAlignEnum.Right : align = Vortice.DirectWrite.TextAlignment.Trailing
+            Case Else : align = Vortice.DirectWrite.TextAlignment.Center
+        End Select
+
+        Dim mainText As String = If(MyBase.Text, "")
+        Dim mainSizePx As Single = Me.Font.SizeInPoints * (96.0F / 72.0F) * s
+        Dim mainWeight As Vortice.DirectWrite.FontWeight = If(Me.Font.Bold, Vortice.DirectWrite.FontWeight.Bold, Vortice.DirectWrite.FontWeight.Normal)
+        Dim mainStyle As Vortice.DirectWrite.FontStyle = If(Me.Font.Italic, Vortice.DirectWrite.FontStyle.Italic, Vortice.DirectWrite.FontStyle.Normal)
+        Dim familyName As String = Me.Font.FontFamily.Name
+
+        Dim dw = D2DHelper.GetDWriteFactory()
+
+        If Not String.IsNullOrEmpty(次要文本) Then
+            Dim subSizePx As Single = 次要文本字号 * (96.0F / 72.0F) * s
+            Using mainFmt = dw.CreateTextFormat(familyName, Nothing, mainWeight, mainStyle, Vortice.DirectWrite.FontStretch.Normal, mainSizePx)
+                Using subFmt = dw.CreateTextFormat(familyName, Nothing, Vortice.DirectWrite.FontWeight.Normal, Vortice.DirectWrite.FontStyle.Normal, Vortice.DirectWrite.FontStretch.Normal, subSizePx)
+                    mainFmt.TextAlignment = align
+                    mainFmt.WordWrapping = WordWrapping.NoWrap
+                    mainFmt.ParagraphAlignment = ParagraphAlignment.Near
+                    subFmt.TextAlignment = align
+                    subFmt.WordWrapping = WordWrapping.NoWrap
+                    subFmt.ParagraphAlignment = ParagraphAlignment.Near
+
+                    Using mainLayout = dw.CreateTextLayout(mainText, mainFmt, 文本绘制区域.Width, 文本绘制区域.Height)
+                        Using subLayout = dw.CreateTextLayout(次要文本, subFmt, 文本绘制区域.Width, 文本绘制区域.Height)
+                            Dim mm = mainLayout.Metrics
+                            Dim sm = subLayout.Metrics
+                            Dim _主次文本间距 As Single = 主次文本间距 * s
+                            Dim totalH As Single = mm.Height + _主次文本间距 + sm.Height
+                            Dim startY As Single = 文本绘制区域.Y + (文本绘制区域.Height - totalH) / 2.0F
+
+                            Using fb1 = rt.CreateSolidColorBrush(D2DHelper.ToColor4(文本颜色))
+                                rt.DrawTextLayout(New Vector2(文本绘制区域.X, startY), mainLayout, fb1)
+                            End Using
+                            Using fb2 = rt.CreateSolidColorBrush(D2DHelper.ToColor4(次要文本颜色))
+                                rt.DrawTextLayout(New Vector2(文本绘制区域.X, startY + mm.Height + _主次文本间距), subLayout, fb2)
+                            End Using
+                        End Using
+                    End Using
+                End Using
+            End Using
+        Else
+            Using mainFmt = dw.CreateTextFormat(familyName, Nothing, mainWeight, mainStyle, Vortice.DirectWrite.FontStretch.Normal, mainSizePx)
+                mainFmt.TextAlignment = align
+                mainFmt.ParagraphAlignment = ParagraphAlignment.Center
+                mainFmt.WordWrapping = WordWrapping.NoWrap
+                Using fb = rt.CreateSolidColorBrush(D2DHelper.ToColor4(文本颜色))
+                    rt.DrawText(mainText, mainFmt, D2DHelper.ToD2DRect(文本绘制区域), fb)
+                End Using
+            End Using
+        End If
+    End Sub
+
     Private Function 计算图标占用的水平宽度(内容矩形区域 As RectangleF) As Single
         If 图标 Is Nothing Then Return 0
         Return Math.Min(内容矩形区域.Height - 图标边距 * DpiScale() * 2, 内容矩形区域.Width * 0.3F)
@@ -138,95 +293,6 @@ Public Class ModernButton
     Private Shared Function 字节插值(a As Integer, b As Integer, t As Single) As Integer
         Return Math.Clamp(CInt(a + (b - a) * t), 0, 255)
     End Function
-
-    Private Sub 绘制背景图片(g As Graphics, 极限矩形区域 As RectangleF, clipPath As GraphicsPath)
-        If 背景图片 Is Nothing Then Return
-        Dim oldClip As Region = g.Clip
-        If clipPath IsNot Nothing Then
-            g.SetClip(clipPath, CombineMode.Intersect)
-        Else
-            g.SetClip(极限矩形区域, CombineMode.Intersect)
-        End If
-        g.DrawImage(背景图片, Rectangle.Round(极限矩形区域))
-        g.Clip = oldClip
-    End Sub
-    ''' <summary>
-    ''' 透明背景贴底图：圆角或半透明背景下，由共享缓存把 BackgroundSource（或 Parent）
-    ''' 的内容采样到本控件区域。具体实现与接入注意事项见 TransparentBackgroundCache。
-    ''' </summary>
-    Private Sub 绘制父容器背景(g As Graphics)
-        TransparentBackgroundCache.PaintBackgroundFor(Me, g, _backgroundSource)
-    End Sub
-
-    Private Sub 绘制长按遮罩(g As Graphics, 极限矩形区域 As RectangleF, clipPath As GraphicsPath)
-        If Not 长按确认已启用 Then Return
-        Dim progress As Single = 长按动画助手.Progress
-        If progress < 0.001F Then Return
-        Dim maskRect As RectangleF
-        If 长按遮罩方向 = HoldClickDirectionEnum.LeftToRight Then
-            maskRect = New RectangleF(极限矩形区域.X, 极限矩形区域.Y, 极限矩形区域.Width * progress, 极限矩形区域.Height)
-        Else
-            Dim w As Single = 极限矩形区域.Width * progress
-            maskRect = New RectangleF(极限矩形区域.Right - w, 极限矩形区域.Y, w, 极限矩形区域.Height)
-        End If
-        Dim state = g.Save()
-        If clipPath IsNot Nothing Then
-            g.SetClip(clipPath, CombineMode.Intersect)
-        End If
-        g.SetClip(maskRect, CombineMode.Intersect)
-        Using brush As New SolidBrush(长按遮罩颜色)
-            If clipPath IsNot Nothing Then
-                g.FillPath(brush, clipPath)
-            Else
-                g.FillRectangle(brush, 极限矩形区域)
-            End If
-        End Using
-        g.Restore(state)
-    End Sub
-    Private Sub 绘制图标(g As Graphics, 内容矩形区域 As RectangleF)
-        If 图标 Is Nothing Then Return
-        Dim iconSize As Single = 计算图标占用的水平宽度(内容矩形区域)
-        Dim iconX As Single = 内容矩形区域.X + 图标边距 * DpiScale()
-        Dim iconY As Single = 内容矩形区域.Y + (内容矩形区域.Height - iconSize) / 2.0F
-        g.DrawImage(图标, New RectangleF(iconX, iconY, iconSize, iconSize))
-    End Sub
-    Private Sub 绘制文本(g As Graphics, 内容矩形区域 As RectangleF, 图标宽度 As Single)
-        Dim s As Single = DpiScale()
-        Dim _图标边距 As Single = 图标边距 * s
-        Dim _边框圆角半径 As Single = 边框圆角半径 * s
-        Dim 图标占用总宽度 As Single = If(图标宽度 > 0, 图标宽度 + _图标边距, 0)
-        Dim 文本绘制区域 As Rectangle = Rectangle.Round(New RectangleF(
-            内容矩形区域.X + 图标占用总宽度 + _边框圆角半径,
-            内容矩形区域.Y,
-            内容矩形区域.Width - 图标占用总宽度 - _边框圆角半径 * 2,
-            内容矩形区域.Height))
-        Dim 文本格式1 As TextFormatFlags
-        Select Case 文字对齐方位
-            Case TextAlignEnum.Left
-                文本格式1 = TextFormatFlags.Left
-            Case TextAlignEnum.Right
-                文本格式1 = TextFormatFlags.Right
-            Case Else
-                文本格式1 = TextFormatFlags.HorizontalCenter
-        End Select
-        Dim 文本格式2 As TextFormatFlags = 文本格式1 Or TextFormatFlags.EndEllipsis Or TextFormatFlags.NoPadding
-        If Not String.IsNullOrEmpty(次要文本) Then
-            Using 次要文本字体 As New Font(Me.Font.FontFamily, 次要文本字号, FontStyle.Regular)
-                Dim 主要文本尺寸 As Size = TextRenderer.MeasureText(g, MyBase.Text, Me.Font, 文本绘制区域.Size, 文本格式2)
-                Dim 次要文本尺寸 As Size = TextRenderer.MeasureText(g, 次要文本, 次要文本字体, 文本绘制区域.Size, 文本格式2)
-                Dim _主次文本间距 As Integer = CInt(Math.Round(主次文本间距 * s))
-                Dim 文本极限高度 As Integer = 主要文本尺寸.Height + _主次文本间距 + 次要文本尺寸.Height
-                Dim 高度起始 As Integer = 文本绘制区域.Y + (文本绘制区域.Height - 文本极限高度) \ 2
-                Dim 主要文本区域 As New Rectangle(文本绘制区域.X, 高度起始, 文本绘制区域.Width, 主要文本尺寸.Height)
-                TextRenderer.DrawText(g, MyBase.Text, Me.Font, 主要文本区域, 文本颜色, 文本格式2)
-                Dim 次要文本区域 As New Rectangle(文本绘制区域.X, 高度起始 + 主要文本尺寸.Height + _主次文本间距, 文本绘制区域.Width, 次要文本尺寸.Height)
-                TextRenderer.DrawText(g, 次要文本, 次要文本字体, 次要文本区域, 次要文本颜色, 文本格式2)
-            End Using
-        Else
-            Dim 文本格式3 As TextFormatFlags = 文本格式2 Or TextFormatFlags.VerticalCenter
-            TextRenderer.DrawText(g, MyBase.Text, Me.Font, 文本绘制区域, 文本颜色, 文本格式3)
-        End If
-    End Sub
 
 #End Region
 
@@ -421,13 +487,13 @@ Public Class ModernButton
             SetValue(背景渐变颜色, value)
         End Set
     End Property
-    Private 渐变方向 As Orientation = Orientation.Vertical
-    <Category("LakeUI"), Description("渐变方向"), DefaultValue(GetType(Orientation), "Vertical"), Browsable(True)>
-    Public Property BackColorOrientation As Orientation
+    Private 渐变方向 As System.Windows.Forms.Orientation = System.Windows.Forms.Orientation.Vertical
+    <Category("LakeUI"), Description("渐变方向"), DefaultValue(GetType(System.Windows.Forms.Orientation), "Vertical"), Browsable(True)>
+    Public Property BackColorOrientation As System.Windows.Forms.Orientation
         Get
             Return 渐变方向
         End Get
-        Set(value As Orientation)
+        Set(value As System.Windows.Forms.Orientation)
             SetValue(渐变方向, value)
         End Set
     End Property

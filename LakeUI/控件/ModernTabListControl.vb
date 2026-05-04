@@ -1,5 +1,8 @@
 Imports System.ComponentModel
 Imports System.Drawing.Drawing2D
+Imports System.Numerics
+Imports Vortice.Direct2D1
+Imports Vortice.DirectWrite
 
 ''' <summary>
 ''' 现代化选项卡列表控件。
@@ -159,15 +162,100 @@ Public Class ModernTabListControl
 #End Region
 
 #Region "构造"
+    Private Shared ReadOnly _共享Stopwatch As Stopwatch = Stopwatch.StartNew()
     Private ReadOnly _标签页动画 As New Dictionary(Of Integer, TabAnimState)
     Private _悬停索引 As Integer = -1
-    Private _动画计时器 As Timer
+    Private _动画计时器 As PrecisionTimer
     Private _动画用Idle As Boolean = False
-    Private _动画中 As Boolean = False
+    Private _hover动画激活 As Boolean = False
+    Private _帧驱动激活 As Boolean = False
     Private ReadOnly _内容面板 As New 透明内容面板()
     Private ReadOnly 项目列表 As New List(Of ModernTabPage)
-    Private _滚动偏移 As Integer = 0
+    Private _滚动偏移 As Single = 0
+    Private _滚动目标 As Single = 0
+    Private _滚动速度 As Single = 0
+    Private _滚动动画中 As Boolean = False
     Private ReadOnly _标签栏滚动条 As New ScrollBarRenderer()
+
+    ' D2D 资源
+    Private _dcRT As ID2D1DCRenderTarget
+    Private ReadOnly _ssaaCache As New D2DHelper.BitmapRTCache()
+    Private ReadOnly _stripBackImageCache As New D2DHelper.D2DBitmapCache()
+    Private ReadOnly _iconCaches As New Dictionary(Of ModernTabPage, D2DHelper.D2DBitmapCache)
+
+    ' --- 渲染层缓存（统一 1 秒 TTL）---
+    Private Const 缓存有效期Ms As Integer = 1000
+
+    ' 布局缓存：把 O(n²) 的项位置累加压缩成一帧一次的 O(n) 预计算。
+    Private _布局项高度数组 As Single() = Array.Empty(Of Single)()
+    Private _布局项AbsY数组 As Single() = Array.Empty(Of Single)()
+    Private _布局项可见数组 As Boolean() = Array.Empty(Of Boolean)()
+    Private _布局总高度 As Single
+    Private _布局视口高度 As Single
+    Private _布局搜索区高度 As Single
+    Private _布局项X As Single
+    Private _布局项W As Single
+    Private _布局有滚动条 As Boolean
+    Private _布局标签栏矩形 As Rectangle
+    Private _布局内容区矩形 As Rectangle
+    Private _布局签名 As Integer = 0
+    Private _布局已生成 As Boolean = False
+    Private _布局时刻Ms As Long = 0
+
+    ' DirectWrite TextFormat 缓存
+    Private Class TextFormatEntry
+        Public Format As IDWriteTextFormat
+        Public Ellipsis As IDWriteInlineObject
+        Public LastUseMs As Long
+    End Class
+    Private ReadOnly _textFormatCache As New Dictionary(Of String, TextFormatEntry)
+    Private _textFormatLastSweepMs As Long = 0
+
+    Private Function GetOrCreateDCRenderTarget() As ID2D1DCRenderTarget
+        If _dcRT Is Nothing Then _dcRT = D2DHelper.CreateDCRenderTarget()
+        Return _dcRT
+    End Function
+
+    Private Function 获取项图标缓存(item As ModernTabPage) As D2DHelper.D2DBitmapCache
+        Dim cache As D2DHelper.D2DBitmapCache = Nothing
+        If Not _iconCaches.TryGetValue(item, cache) Then
+            cache = New D2DHelper.D2DBitmapCache()
+            _iconCaches(item) = cache
+        End If
+        Return cache
+    End Function
+
+    Protected Overrides Sub OnHandleDestroyed(e As EventArgs)
+        Try : 停止帧驱动() : Catch : End Try
+        Try : _动画计时器?.Dispose() : Catch : End Try
+        _动画计时器 = Nothing
+        Try : _ssaaCache.Dispose() : Catch : End Try
+        Try : _stripBackImageCache.Dispose() : Catch : End Try
+        Try
+            For Each kv In _iconCaches
+                Try : kv.Value.Dispose() : Catch : End Try
+            Next
+            _iconCaches.Clear()
+        Catch
+        End Try
+        If _moreIndicatorFont IsNot Nothing Then
+            Try : _moreIndicatorFont.Dispose() : Catch : End Try
+            _moreIndicatorFont = Nothing
+        End If
+        Try
+            For Each kv In _textFormatCache
+                Try : kv.Value.Ellipsis?.Dispose() : Catch : End Try
+                Try : kv.Value.Format?.Dispose() : Catch : End Try
+            Next
+            _textFormatCache.Clear()
+        Catch
+        End Try
+        If _dcRT IsNot Nothing Then
+            Try : _dcRT.Dispose() : Catch : End Try
+            _dcRT = Nothing
+        End If
+        MyBase.OnHandleDestroyed(e)
+    End Sub
     Private _搜索框控件 As Control = Nothing
     Private _搜索文本 As String = ""
     Private _搜索框高度 As Integer = 30
@@ -191,7 +279,13 @@ Public Class ModernTabListControl
 
         _动画用Idle = (动画帧率值 <= 0)
         If Not _动画用Idle Then
-            _动画计时器 = New Timer() With {.Interval = Math.Max(1, CInt(1000.0 / 动画帧率值))}
+            _动画计时器 = New PrecisionTimer() With {
+                .Interval = Math.Max(1, CInt(1000.0 / 动画帧率值)),
+                .DispatchMode = PrecisionTimer.DispatchModeEnum.NonBlocking,
+                .OverrunPolicy = PrecisionTimer.OverrunPolicyEnum.Drop,
+                .WorkerThreadCount = 1,
+                .SynchronizingObject = Me
+            }
         End If
         同步内容面板布局()
     End Sub
@@ -214,6 +308,7 @@ Public Class ModernTabListControl
         End If
         _标签页动画.Clear()
         _悬停索引 = -1
+        失效布局缓存()
         限制滚动范围()
         切换绑定控件()
         Invalidate()
@@ -224,20 +319,6 @@ Public Class ModernTabListControl
             If item.Owner IsNot Me Then item.Owner = Me
         Next
     End Sub
-
-    Private Function 项目是否可见(index As Integer) As Boolean
-        If index < 0 OrElse index >= 项目列表.Count Then Return False
-        If String.IsNullOrEmpty(_搜索文本) Then Return True
-        Dim item = 项目列表(index)
-        If item.IsSeparator OrElse item.IsDescription Then Return True
-        Return item.Text IsNot Nothing AndAlso item.Text.IndexOf(_搜索文本, StringComparison.OrdinalIgnoreCase) >= 0
-    End Function
-
-    Private Function 获取搜索框区域高度() As Single
-        If _搜索框控件 Is Nothing Then Return 0
-        Dim s As Single = DpiScale()
-        Return 标签栏内边距.Top * s + _搜索框高度 * s
-    End Function
 
     Private Sub 同步搜索框布局()
         If _搜索框控件 Is Nothing Then Return
@@ -378,13 +459,9 @@ Public Class ModernTabListControl
 
     Private Sub 绘制父容器背景(g As Graphics)
         If Parent Is Nothing Then Return
-        Dim state = g.Save()
-        g.TranslateTransform(-Me.Left, -Me.Top)
-        Using pea As New PaintEventArgs(g, New Rectangle(Me.Left, Me.Top, Me.Width, Me.Height))
-            InvokePaintBackground(Parent, pea)
-            InvokePaint(Parent, pea)
-        End Using
-        g.Restore(state)
+        ' 走共享缓存：以 Parent 为采样源，TTL 内多控件共享同一张底图，
+        ' 不会像 InvokePaint(Parent) 那样把整棵父级子控件树每帧重画。
+        TransparentBackgroundCache.PaintBackgroundFor(Me, g, Parent)
     End Sub
 
     Private Function 获取内容面板有效背景色() As Color
@@ -397,79 +474,63 @@ Public Class ModernTabListControl
         MyBase.OnPaint(e)
         确保Owner()
         If Me.Width <= 0 OrElse Me.Height <= 0 Then Return
-        e.Graphics.SetClip(Me.ClientRectangle)
+
+        ' 透明背景：先在 GDI Graphics 上画父级背景，再交给 D2D 绘制其余内容
         If 是否需要透明背景() Then
+            e.Graphics.SetClip(Me.ClientRectangle)
             绘制父容器背景(e.Graphics)
+            e.Graphics.ResetClip()
         End If
-        Dim _ssaa As Integer = If(Class1.GlobalSSAA > 1, Class1.GlobalSSAA, 超采样倍率)
-        If _ssaa > 1 Then
-            Using bmp As New Bitmap(Me.Width * _ssaa, Me.Height * _ssaa)
-                Using g As Graphics = Graphics.FromImage(bmp)
-                    g.ScaleTransform(_ssaa, _ssaa)
-                    绘制图形内容(g)
-                End Using
-                e.Graphics.CompositingQuality = CompositingQuality.HighQuality
-                e.Graphics.InterpolationMode = InterpolationMode.HighQualityBicubic
-                e.Graphics.DrawImage(bmp, 0, 0, Me.Width, Me.Height)
-            End Using
-        Else
-            绘制图形内容(e.Graphics)
-        End If
-        Dim tabClipState = e.Graphics.Save()
-        Dim tabScrollableClip = 获取标签栏矩形()
-        Dim searchH As Integer = CInt(获取搜索框区域高度())
-        If searchH > 0 Then
-            tabScrollableClip = New Rectangle(tabScrollableClip.X, tabScrollableClip.Y + searchH, tabScrollableClip.Width, Math.Max(0, tabScrollableClip.Height - searchH))
-        End If
-        Dim totalTabH2 As Integer = CInt(获取标签页总高度())
-        Dim viewportTabH2 As Integer = CInt(获取可滚动视口高度())
-        Dim scaledIndH As Integer = CInt(更多指示器高度 * DpiScale())
-        If _滚动偏移 > 0 Then
-            tabScrollableClip = New Rectangle(tabScrollableClip.X, tabScrollableClip.Y + scaledIndH, tabScrollableClip.Width, Math.Max(0, tabScrollableClip.Height - scaledIndH))
-        End If
-        If (totalTabH2 > viewportTabH2) AndAlso (totalTabH2 - _滚动偏移 > viewportTabH2) Then
-            tabScrollableClip = New Rectangle(tabScrollableClip.X, tabScrollableClip.Y, tabScrollableClip.Width, Math.Max(0, tabScrollableClip.Height - scaledIndH))
-        End If
-        e.Graphics.SetClip(tabScrollableClip, CombineMode.Intersect)
-        For i As Integer = 0 To 项目列表.Count - 1
-            If Not 项目是否可见(i) Then Continue For
-            Dim itemRect = 获取标签页项矩形(i)
-            If itemRect.Top >= tabScrollableClip.Bottom Then Exit For
-            If itemRect.Top < tabScrollableClip.Top OrElse itemRect.Bottom > tabScrollableClip.Bottom Then Continue For
-            绘制标签页文本(e.Graphics, i, tabScrollableClip)
-        Next
-        e.Graphics.Restore(tabClipState)
+
+        Dim ssaa As Integer = Math.Max(1, CInt(超采样倍率))
+        If Class1.GlobalSSAA <> Class1.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(Class1.GlobalSSAA))
+
+        Using scope = D2DHelper.BeginPaint(e, Me, GetOrCreateDCRenderTarget(), ssaa, _ssaaCache)
+            Dim gRT As ID2D1RenderTarget = scope.GraphicsRenderTarget
+            Dim dcRT As ID2D1DCRenderTarget = scope.DCRenderTarget
+
+            ' 1) 图形层（享受 SSAA）
+            绘制图形内容_D2D(gRT)
+
+            ' 2) 把图形层回采到 DC，然后在 DC RT 上绘制文字（DirectWrite 子像素质量）
+            scope.FlushGraphics()
+            绘制文本与指示器符号_D2D(dcRT)
+
+            ' 3) 滚动条直接画在 DC RT 上（无需 SSAA）
+            If Not _标签栏滚动条.TrackRect.IsEmpty Then
+                Dim sbContainerW As Integer = If(标签页位置 = TabSideEnum.Left, CInt(标签栏宽度 * DpiScale()), Me.Width)
+                _标签栏滚动条.Draw_D2D(dcRT, sbContainerW, Me.Height, 0, 0, CInt(滚动条宽度 * DpiScale()), 滚动条轨道颜色, 滚动条滑块颜色, 滚动条悬停颜色)
+            End If
+        End Using
     End Sub
 
-    Private Sub 绘制图形内容(g As Graphics)
-        g.SmoothingMode = SmoothingMode.AntiAlias
-        g.PixelOffsetMode = PixelOffsetMode.HighQuality
-        g.InterpolationMode = InterpolationMode.HighQualityBicubic
-
-        Using brush As New SolidBrush(内容区域背景颜色)
-            If 内容区域背景颜色.A = 255 Then
-                g.FillRectangle(brush, 获取内容区域矩形())
-            End If
-            ' 内容区域透明时不绘制遮罩，按用户要求保留底层真实像素。
-        End Using
+    Private Sub 绘制图形内容_D2D(rt As ID2D1RenderTarget)
+        ' 内容区域背景
+        If 内容区域背景颜色.A = 255 Then
+            Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(内容区域背景颜色))
+                rt.FillRectangle(D2DHelper.ToD2DRect(获取内容区域矩形()), br)
+            End Using
+        End If
 
         Dim tabStripRect = 获取标签栏矩形()
+        ' 标签栏背景
         If 标签栏背景颜色.A > 0 Then
-            Using brush As New SolidBrush(标签栏背景颜色)
-                g.FillRectangle(brush, tabStripRect)
+            Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(标签栏背景颜色))
+                rt.FillRectangle(D2DHelper.ToD2DRect(tabStripRect), br)
             End Using
         End If
 
-        绘制标签栏背景图片(g, tabStripRect)
+        ' 标签栏背景图片（居中裁切）
+        绘制标签栏背景图片_D2D(rt, tabStripRect)
 
+        ' 标签栏遮罩
         If 标签栏遮罩颜色.A > 0 Then
-            Using brush As New SolidBrush(标签栏遮罩颜色)
-                g.FillRectangle(brush, tabStripRect)
+            Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(标签栏遮罩颜色))
+                rt.FillRectangle(D2DHelper.ToD2DRect(tabStripRect), br)
             End Using
         End If
 
-        Dim gState = g.Save()
-        Dim tabItemClip = tabStripRect
+        Dim tabItemClip As Rectangle = tabStripRect
         Dim searchAreaH As Integer = CInt(获取搜索框区域高度())
         If searchAreaH > 0 Then
             tabItemClip = New Rectangle(tabItemClip.X, tabItemClip.Y + searchAreaH, tabItemClip.Width, Math.Max(0, tabItemClip.Height - searchAreaH))
@@ -477,8 +538,8 @@ Public Class ModernTabListControl
 
         Dim totalTabH As Integer = CInt(获取标签页总高度())
         Dim viewportTabH As Integer = CInt(获取可滚动视口高度())
-        Dim hasMoreAbove As Boolean = _滚动偏移 > 0
-        Dim hasMoreBelow As Boolean = (totalTabH > viewportTabH) AndAlso (totalTabH - _滚动偏移 > viewportTabH)
+        Dim hasMoreAbove As Boolean = _滚动偏移 > 0.5F
+        Dim hasMoreBelow As Boolean = (totalTabH > viewportTabH) AndAlso (totalTabH - _滚动偏移 > viewportTabH + 0.5F)
         Dim scaledIndicatorH As Integer = CInt(更多指示器高度 * DpiScale())
         Dim topIndicatorH As Integer = If(hasMoreAbove, scaledIndicatorH, 0)
         Dim bottomIndicatorH As Integer = If(hasMoreBelow, scaledIndicatorH, 0)
@@ -490,41 +551,157 @@ Public Class ModernTabListControl
         If bottomIndicatorH > 0 Then
             clippedTabItemClip = New Rectangle(clippedTabItemClip.X, clippedTabItemClip.Y, clippedTabItemClip.Width, Math.Max(0, clippedTabItemClip.Height - bottomIndicatorH))
         End If
-        g.SetClip(clippedTabItemClip, CombineMode.Intersect)
 
-        For i As Integer = 0 To 项目列表.Count - 1
-            If Not 项目是否可见(i) Then Continue For
-            Dim itemRect = 获取标签页项矩形(i)
-            If itemRect.Top >= clippedTabItemClip.Bottom Then Exit For
-            If itemRect.Top < clippedTabItemClip.Top OrElse itemRect.Bottom > clippedTabItemClip.Bottom Then Continue For
-            Dim item = 项目列表(i)
-            If item.IsSeparator Then
-                绘制分割线(g, i)
-            ElseIf Not item.IsDescription Then
-                绘制标签页项图形(g, i)
-            End If
-        Next
+        ' 标签项裁剪绘制
+        If clippedTabItemClip.Width > 0 AndAlso clippedTabItemClip.Height > 0 Then
+            rt.PushAxisAlignedClip(New Vortice.RawRectF(clippedTabItemClip.Left, clippedTabItemClip.Top, clippedTabItemClip.Right, clippedTabItemClip.Bottom), AntialiasMode.Aliased)
+            Try
+                For i As Integer = 0 To 项目列表.Count - 1
+                    If Not 项目是否可见(i) Then Continue For
+                    Dim itemRect = 获取标签页项矩形(i)
+                    If itemRect.Top >= clippedTabItemClip.Bottom Then Exit For
+                    If itemRect.Bottom <= clippedTabItemClip.Top Then Continue For
+                    Dim item = 项目列表(i)
+                    If item.IsSeparator Then
+                        绘制分割线_D2D(rt, i)
+                    ElseIf Not item.IsDescription Then
+                        绘制标签页项图形_D2D(rt, i)
+                    End If
+                Next
+            Finally
+                rt.PopAxisAlignedClip()
+            End Try
+        End If
 
-        g.Restore(gState)
-
+        ' 上/下"更多内容"渐变指示器（图形层）
         If hasMoreAbove Then
-            绘制更多指示器(g, New RectangleF(tabItemClip.X, tabItemClip.Y, tabItemClip.Width, topIndicatorH), True)
+            绘制更多指示器渐变_D2D(rt, New RectangleF(tabItemClip.X, tabItemClip.Y, tabItemClip.Width, topIndicatorH), True)
         End If
         If hasMoreBelow Then
-            绘制更多指示器(g, New RectangleF(tabItemClip.X, tabItemClip.Bottom - bottomIndicatorH, tabItemClip.Width, bottomIndicatorH), False)
+            绘制更多指示器渐变_D2D(rt, New RectangleF(tabItemClip.X, tabItemClip.Bottom - bottomIndicatorH, tabItemClip.Width, bottomIndicatorH), False)
         End If
 
+        ' 同步滚动条布局（绘制留到 OnPaint 末尾，画在 DC RT 上）
         更新滚动条布局()
-        If Not _标签栏滚动条.TrackRect.IsEmpty Then
-            Dim sbContainerW As Integer = If(标签页位置 = TabSideEnum.Left, CInt(标签栏宽度 * DpiScale()), Me.Width)
-            _标签栏滚动条.Draw(g, sbContainerW, Me.Height, 0, 0, CInt(滚动条宽度 * DpiScale()), 滚动条轨道颜色, 滚动条滑块颜色, 滚动条悬停颜色)
-        End If
 
+        ' 内容区域边框
         If 内容区域边框宽度 > 0 Then
             Dim contentRect = 获取内容区域矩形()
-            Using pen As New Pen(内容区域边框颜色, 内容区域边框宽度 * DpiScale())
-                g.DrawRectangle(pen, contentRect.X, contentRect.Y, contentRect.Width - 1, contentRect.Height - 1)
-            End Using
+            Dim r As New RectangleF(contentRect.X, contentRect.Y, contentRect.Width - 1, contentRect.Height - 1)
+            RectangleRenderer.绘制矩形边框_D2D(rt, r, 内容区域边框颜色, 内容区域边框宽度 * DpiScale())
+        End If
+    End Sub
+
+    Private Sub 绘制标签栏背景图片_D2D(rt As ID2D1RenderTarget, tabStripRect As Rectangle)
+        If 标签栏背景图片 Is Nothing Then Return
+        Dim img As Image = 标签栏背景图片
+        Dim cw As Integer = tabStripRect.Width
+        Dim ch As Integer = tabStripRect.Height
+        If cw < 1 OrElse ch < 1 Then Return
+
+        Dim bmp = _stripBackImageCache.GetBitmap(rt, img)
+        If bmp Is Nothing Then Return
+
+        Dim ratioW As Single = CSng(cw) / img.Width
+        Dim ratioH As Single = CSng(ch) / img.Height
+        Dim ratio As Single = Math.Max(ratioW, ratioH)
+        Dim drawW As Single = img.Width * ratio
+        Dim drawH As Single = img.Height * ratio
+        Dim dx As Single = tabStripRect.X + (cw - drawW) / 2.0F
+        Dim dy As Single = tabStripRect.Y + (ch - drawH) / 2.0F
+
+        rt.PushAxisAlignedClip(New Vortice.RawRectF(tabStripRect.Left, tabStripRect.Top, tabStripRect.Right, tabStripRect.Bottom), AntialiasMode.Aliased)
+        Try
+            rt.DrawBitmap(bmp, New Vortice.Mathematics.Rect(dx, dy, drawW, drawH), 1.0F, BitmapInterpolationMode.Linear, Nothing)
+        Finally
+            rt.PopAxisAlignedClip()
+        End Try
+    End Sub
+
+    Private Sub 绘制分割线_D2D(rt As ID2D1RenderTarget, index As Integer)
+        Dim bounds = 获取标签页项矩形(index)
+        Dim lineH As Single = Math.Max(1, DpiScale())
+        Dim lineY As Single = bounds.Y + (bounds.Height - lineH) / 2.0F
+        Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(分割线颜色值))
+            rt.FillRectangle(New Vortice.Mathematics.Rect(bounds.X, lineY, bounds.Width, lineH), br)
+        End Using
+    End Sub
+
+    Private Sub 绘制标签页项图形_D2D(rt As ID2D1RenderTarget, index As Integer)
+        Dim s As Single = DpiScale()
+        Dim bounds As RectangleF = 获取标签页项矩形(index)
+        Dim isSelected As Boolean = (_selectedIndex = index)
+        Dim hoverProgress As Single = 获取动画进度(index)
+
+        Dim bgColor As Color
+        If isSelected Then
+            bgColor = 选中标签页背景颜色
+        Else
+            bgColor = 颜色插值(Color.FromArgb(0, 悬停标签页背景颜色), 悬停标签页背景颜色, hoverProgress)
+        End If
+
+        If (isSelected OrElse hoverProgress > 0.001F) AndAlso bgColor.A > 0 Then
+            If 标签页圆角半径 > 0 Then
+                Using geo = RectangleRenderer.创建圆角矩形几何(bounds, 标签页圆角半径 * s)
+                    Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(bgColor))
+                        rt.FillGeometry(geo, br)
+                    End Using
+                End Using
+            Else
+                Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(bgColor))
+                    rt.FillRectangle(D2DHelper.ToD2DRect(bounds), br)
+                End Using
+            End If
+        End If
+
+        If isSelected AndAlso 选中指示条宽度 > 0 Then
+            Dim indicatorRect As RectangleF
+            If 标签页位置 = TabSideEnum.Left Then
+                indicatorRect = New RectangleF(bounds.X, bounds.Y + 选中指示条边距 * s, 选中指示条宽度 * s, bounds.Height - 选中指示条边距 * s * 2)
+            Else
+                indicatorRect = New RectangleF(bounds.Right - 选中指示条宽度 * s, bounds.Y + 选中指示条边距 * s, 选中指示条宽度 * s, bounds.Height - 选中指示条边距 * s * 2)
+            End If
+            If 选中指示条圆角半径 > 0 Then
+                Using geo = RectangleRenderer.创建圆角矩形几何(indicatorRect, 选中指示条圆角半径 * s)
+                    Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(选中指示条颜色))
+                        rt.FillGeometry(geo, br)
+                    End Using
+                End Using
+            Else
+                Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(选中指示条颜色))
+                    rt.FillRectangle(D2DHelper.ToD2DRect(indicatorRect), br)
+                End Using
+            End If
+        End If
+
+        If isSelected AndAlso Me.Focused AndAlso 焦点边框颜色 <> Color.Empty Then
+            Dim focusBounds = bounds
+            focusBounds.Inflate(-s, -s)
+            If 标签页圆角半径 > 0 Then
+                Using geo = RectangleRenderer.创建圆角矩形几何(focusBounds, Math.Max(1, 标签页圆角半径 * s - s))
+                    RectangleRenderer.绘制圆角边框_D2D(rt, geo, 焦点边框颜色, s)
+                End Using
+            Else
+                RectangleRenderer.绘制矩形边框_D2D(rt, focusBounds, 焦点边框颜色, s)
+            End If
+        End If
+
+        绘制标签页图标_D2D(rt, index, bounds)
+    End Sub
+
+    Private Sub 绘制标签页图标_D2D(rt As ID2D1RenderTarget, index As Integer, bounds As RectangleF)
+        If index >= 项目列表.Count Then Return
+        Dim item = 项目列表(index)
+        If item.TabIcon Is Nothing Then Return
+
+        Dim s As Single = DpiScale()
+        Dim scaledIconSize As Single = 图标尺寸 * s
+        Dim iconX As Single = bounds.X + 标签页文本左边距 * s
+        Dim iconY As Single = bounds.Y + (bounds.Height - scaledIconSize) / 2.0F
+        Dim cache = 获取项图标缓存(item)
+        Dim bmp = cache.GetBitmap(rt, item.TabIcon)
+        If bmp IsNot Nothing Then
+            rt.DrawBitmap(bmp, New Vortice.Mathematics.Rect(iconX, iconY, scaledIconSize, scaledIconSize), 1.0F, BitmapInterpolationMode.Linear, Nothing)
         End If
     End Sub
 
@@ -538,223 +715,390 @@ Public Class ModernTabListControl
         Return 标签栏背景颜色
     End Function
 
-    Private Sub 绘制更多指示器(g As Graphics, rect As RectangleF, isTop As Boolean)
+    Private Sub 绘制更多指示器渐变_D2D(rt As ID2D1RenderTarget, rect As RectangleF, isTop As Boolean)
         If rect.Height < 2 Then Return
         Dim baseColor As Color = 获取指示器渐变基色()
         Dim c1 As Color = Color.FromArgb(200, baseColor)
         Dim c2 As Color = Color.FromArgb(0, baseColor)
-        Dim pt1 As New PointF(rect.X, If(isTop, rect.Y, rect.Bottom - 1))
-        Dim pt2 As New PointF(rect.X, If(isTop, rect.Bottom - 1, rect.Y))
-        Using br As New LinearGradientBrush(pt1, pt2, c1, c2)
-            g.FillRectangle(br, rect)
-        End Using
-        Dim symbol As String = If(isTop, "▲", "▼")
-        Using symbolFont As New Font(Me.Font.FontFamily, Math.Max(7, Me.Font.Size - 1), FontStyle.Regular)
-            TextRenderer.DrawText(g, symbol, symbolFont, Rectangle.Round(rect), 更多指示器颜色,
-                TextFormatFlags.HorizontalCenter Or TextFormatFlags.VerticalCenter Or TextFormatFlags.NoPadding)
-        End Using
-    End Sub
-
-    Private Sub 绘制标签栏背景图片(g As Graphics, tabStripRect As Rectangle)
-        If 标签栏背景图片 Is Nothing Then Return
-        Dim img As Image = 标签栏背景图片
-        Dim cw As Integer = tabStripRect.Width
-        Dim ch As Integer = tabStripRect.Height
-        If cw < 1 OrElse ch < 1 Then Return
-
-        Dim ratioW As Single = CSng(cw) / img.Width
-        Dim ratioH As Single = CSng(ch) / img.Height
-        Dim ratio As Single = Math.Max(ratioW, ratioH)
-        Dim drawW As Single = img.Width * ratio
-        Dim drawH As Single = img.Height * ratio
-        Dim dx As Single = tabStripRect.X + (cw - drawW) / 2.0F
-        Dim dy As Single = tabStripRect.Y + (ch - drawH) / 2.0F
-
-        Dim oldClip = g.Clip
-        g.SetClip(tabStripRect)
-        g.InterpolationMode = InterpolationMode.HighQualityBicubic
-        g.DrawImage(img, dx, dy, drawW, drawH)
-        g.Clip = oldClip
-    End Sub
-
-    Private Sub 绘制分割线(g As Graphics, index As Integer)
-        Dim bounds = 获取标签页项矩形(index)
-        Dim lineH As Single = Math.Max(1, DpiScale())
-        Dim lineY As Single = bounds.Y + (bounds.Height - lineH) / 2.0F
-        Using brush As New SolidBrush(分割线颜色值)
-            g.FillRectangle(brush, bounds.X, lineY, bounds.Width, lineH)
+        Dim startPt As New Vector2(rect.X, If(isTop, rect.Y, rect.Bottom - 1))
+        Dim endPt As New Vector2(rect.X, If(isTop, rect.Bottom - 1, rect.Y))
+        Dim stops As GradientStop() = {
+            New GradientStop With {.Position = 0.0F, .Color = D2DHelper.ToColor4(c1)},
+            New GradientStop With {.Position = 1.0F, .Color = D2DHelper.ToColor4(c2)}
+        }
+        Using stopCol = rt.CreateGradientStopCollection(stops)
+            Using br = rt.CreateLinearGradientBrush(
+                New LinearGradientBrushProperties With {.StartPoint = startPt, .EndPoint = endPt},
+                stopCol)
+                rt.FillRectangle(D2DHelper.ToD2DRect(rect), br)
+            End Using
         End Using
     End Sub
 
-    Private Sub 绘制标签页项图形(g As Graphics, index As Integer)
-        Dim s As Single = DpiScale()
-        Dim bounds As RectangleF = 获取标签页项矩形(index)
-        Dim isSelected As Boolean = (_selectedIndex = index)
-        Dim hoverProgress As Single = 获取动画进度(index)
-
-        Dim bgColor As Color
-        If isSelected Then
-            bgColor = 选中标签页背景颜色
-        Else
-            bgColor = 颜色插值(Color.FromArgb(0, 悬停标签页背景颜色), 悬停标签页背景颜色, hoverProgress)
+    ''' <summary>在 DC RT 上绘制所有文字（标签项 / 说明项 / "更多" 三角符号）。</summary>
+    Private Sub 绘制文本与指示器符号_D2D(rt As ID2D1DCRenderTarget)
+        Dim tabStripRect = 获取标签栏矩形()
+        Dim tabItemClip As Rectangle = tabStripRect
+        Dim searchAreaH As Integer = CInt(获取搜索框区域高度())
+        If searchAreaH > 0 Then
+            tabItemClip = New Rectangle(tabItemClip.X, tabItemClip.Y + searchAreaH, tabItemClip.Width, Math.Max(0, tabItemClip.Height - searchAreaH))
         End If
 
-        If isSelected OrElse hoverProgress > 0.001F Then
-            If 标签页圆角半径 > 0 Then
-                Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(bounds, 标签页圆角半径 * s)
-                    Using brush As New SolidBrush(bgColor)
-                        g.FillPath(brush, path)
-                    End Using
-                End Using
-            Else
-                Using brush As New SolidBrush(bgColor)
-                    g.FillRectangle(brush, bounds)
-                End Using
-            End If
+        Dim totalTabH As Integer = CInt(获取标签页总高度())
+        Dim viewportTabH As Integer = CInt(获取可滚动视口高度())
+        Dim hasMoreAbove As Boolean = _滚动偏移 > 0.5F
+        Dim hasMoreBelow As Boolean = (totalTabH > viewportTabH) AndAlso (totalTabH - _滚动偏移 > viewportTabH + 0.5F)
+        Dim scaledIndicatorH As Integer = CInt(更多指示器高度 * DpiScale())
+        Dim topIndicatorH As Integer = If(hasMoreAbove, scaledIndicatorH, 0)
+        Dim bottomIndicatorH As Integer = If(hasMoreBelow, scaledIndicatorH, 0)
+        Dim clippedTabItemClip As Rectangle = tabItemClip
+        If topIndicatorH > 0 Then
+            clippedTabItemClip = New Rectangle(clippedTabItemClip.X, clippedTabItemClip.Y + topIndicatorH, clippedTabItemClip.Width, Math.Max(0, clippedTabItemClip.Height - topIndicatorH))
+        End If
+        If bottomIndicatorH > 0 Then
+            clippedTabItemClip = New Rectangle(clippedTabItemClip.X, clippedTabItemClip.Y, clippedTabItemClip.Width, Math.Max(0, clippedTabItemClip.Height - bottomIndicatorH))
         End If
 
-        If isSelected AndAlso 选中指示条宽度 > 0 Then
-            Dim indicatorRect As RectangleF
-            If 标签页位置 = TabSideEnum.Left Then
-                indicatorRect = New RectangleF(bounds.X, bounds.Y + 选中指示条边距 * s, 选中指示条宽度 * s, bounds.Height - 选中指示条边距 * s * 2)
-            Else
-                indicatorRect = New RectangleF(bounds.Right - 选中指示条宽度 * s, bounds.Y + 选中指示条边距 * s, 选中指示条宽度 * s, bounds.Height - 选中指示条边距 * s * 2)
-            End If
-            If 选中指示条圆角半径 > 0 Then
-                Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(indicatorRect, 选中指示条圆角半径 * s)
-                    Using brush As New SolidBrush(选中指示条颜色)
-                        g.FillPath(brush, path)
-                    End Using
-                End Using
-            Else
-                Using brush As New SolidBrush(选中指示条颜色)
-                    g.FillRectangle(brush, indicatorRect)
-                End Using
-            End If
+        Dim dw = D2DHelper.GetDWriteFactory()
+
+        ' 绘制标签项与说明项文本
+        If clippedTabItemClip.Width > 0 AndAlso clippedTabItemClip.Height > 0 Then
+            rt.PushAxisAlignedClip(New Vortice.RawRectF(clippedTabItemClip.Left, clippedTabItemClip.Top, clippedTabItemClip.Right, clippedTabItemClip.Bottom), AntialiasMode.Aliased)
+            Try
+                For i As Integer = 0 To 项目列表.Count - 1
+                    If Not 项目是否可见(i) Then Continue For
+                    Dim itemRect = 获取标签页项矩形(i)
+                    If itemRect.Top >= clippedTabItemClip.Bottom Then Exit For
+                    If itemRect.Bottom <= clippedTabItemClip.Top Then Continue For
+                    绘制标签页文本_D2D(rt, dw, i)
+                Next
+            Finally
+                rt.PopAxisAlignedClip()
+            End Try
         End If
 
-        If isSelected AndAlso Me.Focused AndAlso 焦点边框颜色 <> Color.Empty Then
-            Dim focusBounds = bounds
-            focusBounds.Inflate(-s, -s)
-            If 标签页圆角半径 > 0 Then
-                Using focusPath As GraphicsPath = RectangleRenderer.创建圆角矩形路径(focusBounds, Math.Max(1, 标签页圆角半径 * s - s))
-                    RectangleRenderer.绘制圆角边框(g, focusPath, 焦点边框颜色, s)
-                End Using
-            Else
-                RectangleRenderer.绘制矩形边框(g, focusBounds, 焦点边框颜色, s)
-            End If
+        ' "更多内容"指示符号
+        If hasMoreAbove Then
+            绘制更多指示器符号_D2D(rt, dw, New RectangleF(tabItemClip.X, tabItemClip.Y, tabItemClip.Width, topIndicatorH), True)
         End If
-
-        绘制标签页图标(g, index, bounds)
+        If hasMoreBelow Then
+            绘制更多指示器符号_D2D(rt, dw, New RectangleF(tabItemClip.X, tabItemClip.Bottom - bottomIndicatorH, tabItemClip.Width, bottomIndicatorH), False)
+        End If
     End Sub
 
-    Private Sub 绘制标签页图标(g As Graphics, index As Integer, bounds As RectangleF)
+    Private Sub 绘制标签页文本_D2D(rt As ID2D1RenderTarget, dw As IDWriteFactory, index As Integer)
         If index >= 项目列表.Count Then Return
-        Dim item = 项目列表(index)
-        If item.TabIcon Is Nothing Then Return
-
-        Dim s As Single = DpiScale()
-        Dim scaledIconSize As Single = 图标尺寸 * s
-        Dim iconX As Single = bounds.X + 标签页文本左边距 * s
-        Dim iconY As Single = bounds.Y + (bounds.Height - scaledIconSize) / 2.0F
-        g.DrawImage(item.TabIcon, New RectangleF(iconX, iconY, scaledIconSize, scaledIconSize))
-    End Sub
-
-    Private Sub 绘制标签页文本(g As Graphics, index As Integer, visibleClip As Rectangle)
-        If index >= 项目列表.Count Then Return
-        Dim bounds As Rectangle = Rectangle.Round(获取标签页项矩形(index))
-        If Not bounds.IntersectsWith(visibleClip) Then Return
         Dim item = 项目列表(index)
         If item.IsSeparator Then Return
 
         Dim s As Single = DpiScale()
-        Dim _textPad As Integer = CInt(标签页文本左边距 * s)
+        Dim bounds As RectangleF = 获取标签页项矩形(index)
+        Dim _textPad As Single = 标签页文本左边距 * s
 
         If item.IsDescription Then
-            Dim descFont = If(item.TabFont, 说明字体值)
-            Dim descColor = If(item.NormalForeColor <> Color.Empty, item.NormalForeColor, 说明文本颜色值)
-            Dim textRect As Rectangle = Rectangle.Intersect(New Rectangle(
-                bounds.X + _textPad,
-                bounds.Y,
-                bounds.Width - _textPad * 2,
-                bounds.Height), visibleClip)
-            If textRect.IsEmpty Then Return
-            TextRenderer.DrawText(g, item.Text, descFont, textRect, descColor,
-                TextFormatFlags.Left Or TextFormatFlags.VerticalCenter Or TextFormatFlags.EndEllipsis Or TextFormatFlags.NoPadding)
+            Dim descFont As Font = If(item.TabFont, 说明字体值)
+            Dim descColor As Color = If(item.NormalForeColor <> Color.Empty, item.NormalForeColor, 说明文本颜色值)
+            Dim r As New RectangleF(bounds.X + _textPad, bounds.Y, bounds.Width - _textPad * 2, bounds.Height)
+            If r.Width <= 0 OrElse r.Height <= 0 Then Return
+            画文本_D2D(rt, dw, item.Text, descFont, r, descColor, Vortice.DirectWrite.TextAlignment.Leading)
             Return
         End If
 
         Dim isSelected As Boolean = (_selectedIndex = index)
-        Dim textColor As Color
-        Dim textFont As Font
-        textColor = If(isSelected,
+        Dim textColor As Color = If(isSelected,
             If(item.SelectedForeColor <> Color.Empty, item.SelectedForeColor, 选中标签页文本颜色),
             If(item.NormalForeColor <> Color.Empty, item.NormalForeColor, 标签页默认文本颜色))
-        textFont = If(item.TabFont, Me.Font)
-        Dim iconOffset As Integer = 0
+        Dim textFont As Font = If(item.TabFont, Me.Font)
+        Dim iconOffset As Single = 0
         If item.TabIcon IsNot Nothing Then
-            iconOffset = CInt((图标尺寸 + 图标与文本间距) * s)
+            iconOffset = (图标尺寸 + 图标与文本间距) * s
         End If
+        Dim r2 As New RectangleF(bounds.X + _textPad + iconOffset, bounds.Y, bounds.Width - _textPad * 2 - iconOffset, bounds.Height)
+        If r2.Width <= 0 OrElse r2.Height <= 0 Then Return
+        画文本_D2D(rt, dw, item.Text, textFont, r2, textColor, Vortice.DirectWrite.TextAlignment.Leading)
+    End Sub
 
-        Dim textRect2 As Rectangle = Rectangle.Intersect(New Rectangle(
-            bounds.X + _textPad + iconOffset,
-            bounds.Y,
-            bounds.Width - _textPad * 2 - iconOffset,
-            bounds.Height), visibleClip)
-        If textRect2.IsEmpty Then Return
-        TextRenderer.DrawText(g, item.Text, textFont, textRect2, textColor,
-            TextFormatFlags.Left Or TextFormatFlags.VerticalCenter Or TextFormatFlags.EndEllipsis Or TextFormatFlags.NoPadding)
+    Private _moreIndicatorFont As Font
+    Private _moreIndicatorFontKey As Single
+
+    Private Function 获取更多指示器字体() As Font
+        Dim sz As Single = Math.Max(7, Me.Font.Size - 1)
+        Dim key As Single = sz * 1000.0F + Me.Font.FontFamily.Name.GetHashCode() Mod 1000
+        If _moreIndicatorFont IsNot Nothing AndAlso _moreIndicatorFontKey = key Then
+            Return _moreIndicatorFont
+        End If
+        If _moreIndicatorFont IsNot Nothing Then
+            Try : _moreIndicatorFont.Dispose() : Catch : End Try
+        End If
+        _moreIndicatorFont = New Font(Me.Font.FontFamily, sz, System.Drawing.FontStyle.Regular)
+        _moreIndicatorFontKey = key
+        Return _moreIndicatorFont
+    End Function
+
+    Private Sub 绘制更多指示器符号_D2D(rt As ID2D1RenderTarget, dw As IDWriteFactory, rect As RectangleF, isTop As Boolean)
+        If rect.Height < 2 Then Return
+        Dim symbol As String = If(isTop, "▲", "▼")
+        画文本_D2D(rt, dw, symbol, 获取更多指示器字体(), rect, 更多指示器颜色, Vortice.DirectWrite.TextAlignment.Center)
+    End Sub
+
+    ''' <summary>DirectWrite 单行文本绘制（垂直居中、末尾省略号）。</summary>
+    Private Sub 画文本_D2D(rt As ID2D1RenderTarget, dw As IDWriteFactory,
+                          text As String, font As Font, rect As RectangleF, color As Color,
+                          hAlign As Vortice.DirectWrite.TextAlignment)
+        If String.IsNullOrEmpty(text) OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        Dim s As Single = DpiScale()
+        Dim sizePx As Single = font.SizeInPoints * (96.0F / 72.0F) * s
+        Dim weight As Vortice.DirectWrite.FontWeight = If(font.Bold, Vortice.DirectWrite.FontWeight.Bold, Vortice.DirectWrite.FontWeight.Normal)
+        Dim style As Vortice.DirectWrite.FontStyle = If(font.Italic, Vortice.DirectWrite.FontStyle.Italic, Vortice.DirectWrite.FontStyle.Normal)
+        Dim familyName As String = font.FontFamily.Name
+        Dim entry = 获取或创建TextFormat(dw, familyName, sizePx, weight, style, hAlign)
+        Dim fmt = entry.Format
+        Using layout = dw.CreateTextLayout(text, fmt, rect.Width, rect.Height)
+            If entry.Ellipsis IsNot Nothing Then
+                Try
+                    Dim trim As New Trimming With {.Granularity = TrimmingGranularity.Character, .Delimiter = 0, .DelimiterCount = 0}
+                    layout.SetTrimming(trim, entry.Ellipsis)
+                Catch
+                End Try
+            End If
+            Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(color))
+                rt.DrawTextLayout(New Vector2(rect.X, rect.Y), layout, br)
+            End Using
+        End Using
+    End Sub
+
+    ''' <summary>
+    ''' 缓存按 (family/sizePx/weight/style/align) 命中的 TextFormat 与 ellipsis trimming sign。
+    ''' 1 秒未使用即清扫，避免长期持有冷条目。
+    ''' </summary>
+    Private Function 获取或创建TextFormat(dw As IDWriteFactory,
+                                          family As String, sizePx As Single,
+                                          weight As Vortice.DirectWrite.FontWeight,
+                                          style As Vortice.DirectWrite.FontStyle,
+                                          hAlign As Vortice.DirectWrite.TextAlignment) As TextFormatEntry
+        Dim now As Long = _共享Stopwatch.ElapsedMilliseconds
+        Dim key As String = $"{family}|{sizePx:F2}|{CInt(weight)}|{CInt(style)}|{CInt(hAlign)}"
+        Dim entry As TextFormatEntry = Nothing
+        If _textFormatCache.TryGetValue(key, entry) Then
+            entry.LastUseMs = now
+            清扫TextFormat缓存(now)
+            Return entry
+        End If
+        Dim fmt = dw.CreateTextFormat(family, Nothing, weight, style, Vortice.DirectWrite.FontStretch.Normal, sizePx)
+        fmt.TextAlignment = hAlign
+        fmt.WordWrapping = WordWrapping.NoWrap
+        fmt.ParagraphAlignment = ParagraphAlignment.Center
+        Dim ellipsis As IDWriteInlineObject = Nothing
+        Try : ellipsis = dw.CreateEllipsisTrimmingSign(fmt) : Catch : End Try
+        entry = New TextFormatEntry With {.Format = fmt, .Ellipsis = ellipsis, .LastUseMs = now}
+        _textFormatCache(key) = entry
+        清扫TextFormat缓存(now)
+        Return entry
+    End Function
+
+    Private Sub 清扫TextFormat缓存(now As Long)
+        If now - _textFormatLastSweepMs < 缓存有效期Ms Then Return
+        _textFormatLastSweepMs = now
+        Dim toRemove As List(Of String) = Nothing
+        For Each kv In _textFormatCache
+            If now - kv.Value.LastUseMs > 缓存有效期Ms Then
+                If toRemove Is Nothing Then toRemove = New List(Of String)()
+                toRemove.Add(kv.Key)
+            End If
+        Next
+        If toRemove IsNot Nothing Then
+            For Each k In toRemove
+                Dim e = _textFormatCache(k)
+                Try : e.Ellipsis?.Dispose() : Catch : End Try
+                Try : e.Format?.Dispose() : Catch : End Try
+                _textFormatCache.Remove(k)
+            Next
+        End If
     End Sub
 #End Region
 
 #Region "布局"
-    Private Function 获取标签栏矩形() As Rectangle
-        Dim w As Integer = CInt(标签栏宽度 * DpiScale())
-        If 标签页位置 = TabSideEnum.Left Then
-            Return New Rectangle(0, 0, w, Me.Height)
+    ''' <summary>
+    ''' 计算"会影响布局"的内容签名。任何会改变项位置/可见性/容器尺寸的字段变化都需要纳入。
+    ''' 注意：仅用于"已生成的本帧布局缓存还能复用一帧"的判断，TTL 内若签名一致就直接返回。
+    ''' </summary>
+    Private Shared Sub 混入哈希(ByRef h As Integer, v As Integer)
+        ' VB 的 Integer/UInteger 算术都会做溢出检查，这里走 Long 再按 32 位裁剪。
+        Dim hl As Long = CLng(h) And &HFFFFFFFFL
+        Dim vl As Long = CLng(v) And &HFFFFFFFFL
+        Dim mixed As Long = ((hl * 31L) Xor vl) And &HFFFFFFFFL
+        ' 转回 Int32（保留位模式，不抛溢出）
+        If mixed > Integer.MaxValue Then
+            h = CInt(mixed - &H100000000L)
         Else
-            Return New Rectangle(Me.Width - w, 0, w, Me.Height)
+            h = CInt(mixed)
         End If
+    End Sub
+
+    Private Function 计算布局签名() As Integer
+        Dim h As Integer = 17
+        混入哈希(h, Me.Width)
+        混入哈希(h, Me.Height)
+        混入哈希(h, 项目列表.Count)
+        混入哈希(h, 标签页项高度)
+        混入哈希(h, 标签页项间距)
+        混入哈希(h, 标签栏宽度)
+        混入哈希(h, 标签栏内边距.GetHashCode())
+        混入哈希(h, 分割线高度值)
+        混入哈希(h, 说明项高度值)
+        混入哈希(h, _搜索框高度)
+        混入哈希(h, If(_搜索框控件 Is Nothing, 0, 1))
+        混入哈希(h, 标签页位置.GetHashCode())
+        混入哈希(h, 滚动条宽度)
+        混入哈希(h, If(_搜索文本, "").GetHashCode())
+        混入哈希(h, Me.DeviceDpi)
+        ' 项是否分隔/说明会影响项高
+        For i = 0 To 项目列表.Count - 1
+            Dim it = 项目列表(i)
+            Dim flag As Integer = If(it.IsSeparator, 1, 0) Or If(it.IsDescription, 2, 0)
+            混入哈希(h, flag)
+            ' 搜索文本生效时，项是否可见取决于文本内容
+            If Not String.IsNullOrEmpty(_搜索文本) Then
+                混入哈希(h, If(it.Text, "").GetHashCode())
+            End If
+        Next
+        Return h
+    End Function
+
+    ''' <summary>
+    ''' 一帧的开始处调用：在 TTL(1s) 内若签名一致则复用上一帧的布局数组；否则重算 O(n)。
+    ''' 把所有"几何派生"集中到一处，避免外部 O(n²) 累加。
+    ''' </summary>
+    Private Sub 确保布局缓存()
+        Dim now As Long = _共享Stopwatch.ElapsedMilliseconds
+        Dim sig As Integer = 计算布局签名()
+        If _布局已生成 AndAlso _布局签名 = sig AndAlso (now - _布局时刻Ms) <= 缓存有效期Ms Then
+            Return
+        End If
+
+        Dim s As Single = DpiScale()
+        Dim count As Integer = 项目列表.Count
+
+        ' 标签栏 / 内容区矩形
+        Dim w As Integer = CInt(标签栏宽度 * s)
+        If 标签页位置 = TabSideEnum.Left Then
+            _布局标签栏矩形 = New Rectangle(0, 0, w, Me.Height)
+            _布局内容区矩形 = New Rectangle(w, 0, Math.Max(0, Me.Width - w), Me.Height)
+        Else
+            _布局标签栏矩形 = New Rectangle(Me.Width - w, 0, w, Me.Height)
+            _布局内容区矩形 = New Rectangle(0, 0, Math.Max(0, Me.Width - w), Me.Height)
+        End If
+
+        _布局搜索区高度 = If(_搜索框控件 Is Nothing, 0, 标签栏内边距.Top * s + _搜索框高度 * s)
+        _布局视口高度 = Math.Max(0, Me.Height - _布局搜索区高度)
+
+        ' 项可见 / 高度 / 总高
+        If _布局项高度数组.Length < count Then ReDim _布局项高度数组(Math.Max(count, 4) - 1)
+        If _布局项AbsY数组.Length < count Then ReDim _布局项AbsY数组(Math.Max(count, 4) - 1)
+        If _布局项可见数组.Length < count Then ReDim _布局项可见数组(Math.Max(count, 4) - 1)
+
+        Dim hasSearch As Boolean = Not String.IsNullOrEmpty(_搜索文本)
+        Dim total As Single = 标签栏内边距.Top * s
+        Dim visibleCount As Integer = 0
+        For i = 0 To count - 1
+            Dim it = 项目列表(i)
+            Dim visible As Boolean
+            If Not hasSearch Then
+                visible = True
+            ElseIf it.IsSeparator OrElse it.IsDescription Then
+                visible = True
+            Else
+                visible = it.Text IsNot Nothing AndAlso it.Text.IndexOf(_搜索文本, StringComparison.OrdinalIgnoreCase) >= 0
+            End If
+            _布局项可见数组(i) = visible
+
+            Dim itemH As Single
+            If it.IsSeparator Then
+                itemH = 分割线高度值 * s
+            ElseIf it.IsDescription Then
+                itemH = 说明项高度值 * s
+            Else
+                itemH = 标签页项高度 * s
+            End If
+            _布局项高度数组(i) = itemH
+
+            If visible Then
+                If visibleCount > 0 Then total += 标签页项间距 * s
+                _布局项AbsY数组(i) = total
+                total += itemH
+                visibleCount += 1
+            Else
+                _布局项AbsY数组(i) = total
+            End If
+        Next
+        total += 标签栏内边距.Bottom * s
+        _布局总高度 = total
+
+        _布局有滚动条 = (count > 0 AndAlso _布局总高度 > _布局视口高度)
+
+        Dim x As Single = _布局标签栏矩形.X + 标签栏内边距.Left * s
+        Dim itemW As Single = _布局标签栏矩形.Width - (标签栏内边距.Left + 标签栏内边距.Right) * s
+        If _布局有滚动条 Then itemW -= 滚动条宽度 * s
+        _布局项X = x
+        _布局项W = itemW
+
+        _布局签名 = sig
+        _布局时刻Ms = now
+        _布局已生成 = True
+    End Sub
+
+    ''' <summary>使布局缓存立即失效（增删项、项内 IsSeparator/IsDescription 变更等）。</summary>
+    Private Sub 失效布局缓存()
+        _布局已生成 = False
+    End Sub
+
+    Private Function 项目是否可见(index As Integer) As Boolean
+        If index < 0 OrElse index >= 项目列表.Count Then Return False
+        确保布局缓存()
+        Return _布局项可见数组(index)
+    End Function
+
+    Private Function 获取标签栏矩形() As Rectangle
+        确保布局缓存()
+        Return _布局标签栏矩形
     End Function
 
     Private Function 获取内容区域矩形() As Rectangle
-        Dim w As Integer = CInt(标签栏宽度 * DpiScale())
-        If 标签页位置 = TabSideEnum.Left Then
-            Return New Rectangle(w, 0, Math.Max(0, Me.Width - w), Me.Height)
-        Else
-            Return New Rectangle(0, 0, Math.Max(0, Me.Width - w), Me.Height)
-        End If
-    End Function
-
-    Private Function 获取标签页项矩形(index As Integer) As RectangleF
-        Dim s As Single = DpiScale()
-        Dim tabStripRect = 获取标签栏矩形()
-        Dim x As Single = tabStripRect.X + 标签栏内边距.Left * s
-        Dim w As Single = tabStripRect.Width - (标签栏内边距.Left + 标签栏内边距.Right) * s
-        If 项目列表.Count > 0 AndAlso 获取标签页总高度() > 获取可滚动视口高度() Then
-            w -= 滚动条宽度 * s
-        End If
-        Dim y As Single = 获取搜索框区域高度() + 标签栏内边距.Top * s - _滚动偏移
-        Dim visibleCount As Integer = 0
-        For i As Integer = 0 To index - 1
-            If 项目是否可见(i) Then
-                If visibleCount > 0 Then y += 标签页项间距 * s
-                y += 获取项高度(i)
-                visibleCount += 1
-            End If
-        Next
-        If 项目是否可见(index) AndAlso visibleCount > 0 Then y += 标签页项间距 * s
-        Return New RectangleF(x, y, w, 获取项高度(index))
+        确保布局缓存()
+        Return _布局内容区矩形
     End Function
 
     Private Function 获取项高度(index As Integer) As Single
-        Dim s As Single = DpiScale()
-        If index < 0 OrElse index >= 项目列表.Count Then Return 标签页项高度 * s
-        Dim item = 项目列表(index)
-        If item.IsSeparator Then Return 分割线高度值 * s
-        If item.IsDescription Then Return 说明项高度值 * s
-        Return 标签页项高度 * s
+        If index < 0 OrElse index >= 项目列表.Count Then Return 标签页项高度 * DpiScale()
+        确保布局缓存()
+        Return _布局项高度数组(index)
     End Function
+
+    Private Function 获取标签页项矩形(index As Integer) As RectangleF
+        确保布局缓存()
+        If index < 0 OrElse index >= 项目列表.Count Then
+            Return New RectangleF(_布局项X, _布局搜索区高度 - _滚动偏移, _布局项W, 标签页项高度 * DpiScale())
+        End If
+        Dim y As Single = _布局搜索区高度 + _布局项AbsY数组(index) - _滚动偏移
+        Return New RectangleF(_布局项X, y, _布局项W, _布局项高度数组(index))
+    End Function
+
+    Private Function 获取标签页总高度() As Single
+        确保布局缓存()
+        Return _布局总高度
+    End Function
+
+    Private Function 获取可滚动视口高度() As Single
+        确保布局缓存()
+        Return _布局视口高度
+    End Function
+
+    Private Function 获取搜索框区域高度() As Single
+        确保布局缓存()
+        Return _布局搜索区高度
+    End Function
+
+
 
     Private Sub 同步内容面板布局()
         Dim contentRect = 获取内容区域矩形()
@@ -763,53 +1107,30 @@ Public Class ModernTabListControl
         同步搜索框布局()
     End Sub
 
-    Private Function 获取标签页总高度() As Single
-        Dim s As Single = DpiScale()
-        If 项目列表.Count = 0 Then Return 0
-        Dim h As Single = 标签栏内边距.Top * s
-        Dim visibleCount As Integer = 0
-        For i As Integer = 0 To 项目列表.Count - 1
-            If 项目是否可见(i) Then
-                If visibleCount > 0 Then h += 标签页项间距 * s
-                h += 获取项高度(i)
-                visibleCount += 1
-            End If
-        Next
-        h += 标签栏内边距.Bottom * s
-        Return h
-    End Function
-
-    Private Function 获取可滚动视口高度() As Single
-        Return Math.Max(0, Me.Height - 获取搜索框区域高度())
-    End Function
-
     Private Sub 限制滚动范围()
-        Dim totalHeight = CInt(获取标签页总高度())
-        Dim maxScroll = Math.Max(0, totalHeight - CInt(获取可滚动视口高度()))
-        _滚动偏移 = Math.Clamp(_滚动偏移, 0, maxScroll)
+        Dim totalHeight As Single = 获取标签页总高度()
+        Dim maxScroll As Single = Math.Max(0.0F, totalHeight - 获取可滚动视口高度())
+        If _滚动偏移 < 0 Then _滚动偏移 = 0
+        If _滚动偏移 > maxScroll Then _滚动偏移 = maxScroll
+        If _滚动目标 < 0 Then _滚动目标 = 0
+        If _滚动目标 > maxScroll Then _滚动目标 = maxScroll
     End Sub
 
     Private Sub 确保选中项可见()
         If _selectedIndex < 0 OrElse _selectedIndex >= 项目列表.Count Then Return
         If Not 项目是否可见(_selectedIndex) Then Return
-        Dim s As Single = DpiScale()
-        Dim absY As Single = 标签栏内边距.Top * s
-        Dim visibleCount As Integer = 0
-        For i As Integer = 0 To _selectedIndex - 1
-            If 项目是否可见(i) Then
-                If visibleCount > 0 Then absY += 标签页项间距 * s
-                absY += 获取项高度(i)
-                visibleCount += 1
-            End If
-        Next
-        If visibleCount > 0 Then absY += 标签页项间距 * s
-        Dim itemH As Single = 获取项高度(_selectedIndex)
-        Dim viewportH As Single = 获取可滚动视口高度()
+        确保布局缓存()
+        Dim absY As Single = _布局项AbsY数组(_selectedIndex)
+        Dim itemH As Single = _布局项高度数组(_selectedIndex)
+        Dim viewportH As Single = _布局视口高度
         If absY < _滚动偏移 Then
-            _滚动偏移 = CInt(absY)
+            _滚动偏移 = absY
+            _滚动目标 = absY
         ElseIf absY + itemH > _滚动偏移 + viewportH Then
-            _滚动偏移 = CInt(absY + itemH - viewportH)
+            _滚动偏移 = absY + itemH - viewportH
+            _滚动目标 = _滚动偏移
         End If
+        停止滚动动画()
         限制滚动范围()
     End Sub
 
@@ -824,7 +1145,7 @@ Public Class ModernTabListControl
             Return
         End If
         Dim sbContainerW As Integer = If(标签页位置 = TabSideEnum.Left, CInt(标签栏宽度 * s), Me.Width)
-        _标签栏滚动条.ComputeLayout(sbContainerW, Me.Height, 0, 0, CInt(标签栏内边距.Top * s) + searchAreaH, CInt(标签栏内边距.Bottom * s), CInt(滚动条宽度 * s), totalH, visibleH, _滚动偏移)
+        _标签栏滚动条.ComputeLayout(sbContainerW, Me.Height, 0, 0, CInt(标签栏内边距.Top * s) + searchAreaH, CInt(标签栏内边距.Bottom * s), CInt(滚动条宽度 * s), totalH, visibleH, CInt(_滚动偏移))
     End Sub
 
     Protected Overrides Sub OnResize(e As EventArgs)
@@ -875,56 +1196,128 @@ Public Class ModernTabListControl
         启动动画驱动()
     End Sub
 
-    Private Sub 动画帧更新(sender As Object, e As EventArgs)
-        Dim 有活跃动画 As Boolean = False
+    ''' <summary>
+    ''' 统一动画帧 Tick：聚合"hover/选中插值"和"标签栏滚动"两类动画，由同一个调度源驱动。
+    ''' 所有计算都使用 Stopwatch 真实 dt，保证帧率改变时缓动手感一致。
+    ''' </summary>
+    Private Sub 帧Tick(sender As Object, e As EventArgs)
+        If IsDisposed OrElse Disposing OrElse Not IsHandleCreated Then Return
+
         Dim now As Long = Stopwatch.GetTimestamp()
         Dim freq As Double = Stopwatch.Frequency
 
-        For Each kvp In _标签页动画
-            Dim state = kvp.Value
-            If Math.Abs(state.当前值 - state.目标值) > 0.001F Then
-                Dim elapsed As Double = (now - state.起始时刻) / freq * 1000.0
-                Dim totalDuration As Double = 动画时长值 * CDbl(Math.Abs(state.目标值 - state.起始值))
-                If totalDuration <= 0 Then
-                    state.当前值 = state.目标值
+        ' ---------- 1) hover / 选中淡入淡出动画 ----------
+        Dim hoverActive As Boolean = False
+        If _hover动画激活 Then
+            For Each kvp In _标签页动画
+                Dim state = kvp.Value
+                If Math.Abs(state.当前值 - state.目标值) > 0.001F Then
+                    Dim elapsed As Double = (now - state.起始时刻) / freq * 1000.0
+                    Dim totalDuration As Double = 动画时长值 * CDbl(Math.Abs(state.目标值 - state.起始值))
+                    If totalDuration <= 0 Then
+                        state.当前值 = state.目标值
+                    Else
+                        Dim t As Single = CSng(Math.Min(elapsed / totalDuration, 1.0))
+                        Dim eased As Single = 1.0F - CSng(Math.Pow(1.0 - t, 3))
+                        state.当前值 = state.起始值 + (state.目标值 - state.起始值) * eased
+                        If t >= 1.0F Then state.当前值 = state.目标值
+                    End If
+                    hoverActive = True
                 Else
-                    Dim t As Single = CSng(Math.Min(elapsed / totalDuration, 1.0))
-                    Dim eased As Single = 1.0F - CSng(Math.Pow(1.0 - t, 3))
-                    state.当前值 = state.起始值 + (state.目标值 - state.起始值) * eased
-                    If t >= 1.0F Then state.当前值 = state.目标值
+                    state.当前值 = state.目标值
                 End If
-                有活跃动画 = True
-            Else
-                state.当前值 = state.目标值
-            End If
-        Next
-
-        If Not 有活跃动画 Then
-            停止动画驱动()
+            Next
+            If Not hoverActive Then _hover动画激活 = False
         End If
-        Me.Invalidate()
+
+        ' ---------- 2) 标签栏平滑滚动 ----------
+        Dim scrollActive As Boolean = False
+        If _滚动动画中 Then
+            Dim dt As Single = CSng((now - _滚动动画上次时刻Ticks) / freq)
+            If dt < 0.001F Then dt = 0.001F
+            If dt > 0.05F Then dt = 0.05F
+            _滚动动画上次时刻Ticks = now
+
+            Dim totalH As Single = 获取标签页总高度()
+            Dim viewportH As Single = 获取可滚动视口高度()
+            Dim maxScroll As Single = Math.Max(0.0F, totalH - viewportH)
+            Dim coef As Single = 滚动平滑系数
+            If _滚动目标 < 0 Then
+                _滚动目标 = 0
+                coef = 滚动回弹系数
+            ElseIf _滚动目标 > maxScroll Then
+                _滚动目标 = maxScroll
+                coef = 滚动回弹系数
+            End If
+
+            Dim diff As Single = _滚动目标 - _滚动偏移
+            Dim alpha As Single = 1.0F - CSng(Math.Exp(-coef * dt))
+            _滚动偏移 += diff * alpha
+
+            If Math.Abs(diff) < 滚动停止阈值 Then
+                _滚动偏移 = _滚动目标
+                _滚动动画中 = False
+                _滚动速度 = 0
+            Else
+                scrollActive = True
+            End If
+            限制滚动范围()
+        End If
+
+        ' ---------- 3) 失活时停掉调度源 ----------
+        If hoverActive OrElse scrollActive Then
+            ' 滚动只刷标签栏；hover 涉及整体内容（指示器等），需要全控件刷新。
+            If hoverActive Then
+                Me.Invalidate()
+            Else
+                Me.Invalidate(获取标签栏矩形())
+            End If
+        Else
+            停止帧驱动()
+        End If
     End Sub
 
-    Private Sub 启动动画驱动()
-        If _动画中 Then Return
-        _动画中 = True
+    ''' <summary>启动统一帧驱动。重复调用幂等。</summary>
+    Private Sub 启动帧驱动()
+        If _帧驱动激活 Then Return
+        _帧驱动激活 = True
         If _动画用Idle Then
-            AddHandler Application.Idle, AddressOf 动画帧更新
+            AddHandler Application.Idle, AddressOf 帧Tick_Idle
         Else
-            AddHandler _动画计时器.Tick, AddressOf 动画帧更新
+            AddHandler _动画计时器.Tick, AddressOf 帧Tick
             _动画计时器.Start()
         End If
     End Sub
 
-    Friend Sub 停止动画驱动()
-        If Not _动画中 Then Return
-        _动画中 = False
+    Friend Sub 停止帧驱动()
+        If Not _帧驱动激活 Then Return
+        _帧驱动激活 = False
         If _动画用Idle Then
-            RemoveHandler Application.Idle, AddressOf 动画帧更新
+            RemoveHandler Application.Idle, AddressOf 帧Tick_Idle
         Else
-            _动画计时器?.Stop()
-            RemoveHandler _动画计时器.Tick, AddressOf 动画帧更新
+            Try : _动画计时器?.Stop() : Catch : End Try
+            Try : RemoveHandler _动画计时器.Tick, AddressOf 帧Tick : Catch : End Try
         End If
+    End Sub
+
+    ''' <summary>
+    ''' Idle 模式下一次只推进一帧后让出，调用 Application.DoEvents 让消息循环回到 idle 时再继续。
+    ''' 不再使用 PeekMessage 自旋——那会导致 CPU 跑满。
+    ''' </summary>
+    Private Sub 帧Tick_Idle(sender As Object, e As EventArgs)
+        帧Tick(sender, e)
+        ' Idle 处理后控件 Invalidate 会推送 WM_PAINT，处理完后会再次进入 idle，自然形成 V-Blank 等价节拍。
+    End Sub
+
+    ' 兼容旧调用入口：hover 动画的启动/停止改为对统一帧驱动的请求。
+    Private Sub 启动动画驱动()
+        _hover动画激活 = True
+        启动帧驱动()
+    End Sub
+
+    Friend Sub 停止动画驱动()
+        _hover动画激活 = False
+        ' 帧驱动是否真停由 帧Tick 内部决定（可能滚动动画仍在跑）。
     End Sub
 
     Private Function HitTestTab(clientPoint As Point) As Integer
@@ -945,6 +1338,9 @@ Public Class ModernTabListControl
         If _标签栏滚动条.IsDragging Then
             Dim totalH = CInt(获取标签页总高度())
             _滚动偏移 = _标签栏滚动条.DragMove(e.Y, totalH, CInt(获取可滚动视口高度()))
+            _滚动目标 = _滚动偏移
+            _滚动速度 = 0
+            停止滚动动画()
             Me.Invalidate()
             Return
         End If
@@ -993,14 +1389,16 @@ Public Class ModernTabListControl
         MyBase.OnMouseDown(e)
         If e.Button = MouseButtons.Left Then
             Me.Focus()
-            If _标签栏滚动条.BeginDrag(e.Location, _滚动偏移) Then Return
+            If _标签栏滚动条.BeginDrag(e.Location, CInt(_滚动偏移)) Then
+                停止滚动动画()
+                Return
+            End If
             If Not _标签栏滚动条.TrackRect.IsEmpty Then
                 Dim totalH = CInt(获取标签页总高度())
-                Dim newOff = _标签栏滚动条.TrackClick(e.Location, _滚动偏移, totalH, CInt(获取可滚动视口高度()))
-                If newOff <> _滚动偏移 Then
-                    _滚动偏移 = newOff
-                    限制滚动范围()
-                    Me.Invalidate()
+                Dim newOff = _标签栏滚动条.TrackClick(e.Location, CInt(_滚动偏移), totalH, CInt(获取可滚动视口高度()))
+                If newOff <> CInt(_滚动偏移) Then
+                    _滚动目标 = newOff
+                    启动滚动动画()
                     Return
                 End If
             End If
@@ -1024,13 +1422,44 @@ Public Class ModernTabListControl
         If 项目列表.Count = 0 Then Return
         Dim stripRect = 获取标签栏矩形()
         If Not stripRect.Contains(e.Location) Then Return
-        Dim totalHeight = CInt(获取标签页总高度())
-        If totalHeight <= CInt(获取可滚动视口高度()) Then Return
-        Dim scrollAmount As Integer = Math.Max(1, CInt(SystemInformation.MouseWheelScrollLines * 标签页项高度 * DpiScale() / 3))
-        _滚动偏移 -= Math.Sign(e.Delta) * scrollAmount
-        限制滚动范围()
-        Me.Invalidate()
+        Dim totalHeight As Single = 获取标签页总高度()
+        Dim viewportH As Single = 获取可滚动视口高度()
+        If totalHeight <= viewportH Then Return
+        Dim scrollAmount As Single = Math.Max(1.0F, SystemInformation.MouseWheelScrollLines * 标签页项高度 * DpiScale() / 3.0F)
+        Dim delta As Single = -Math.Sign(e.Delta) * scrollAmount
+        Dim maxScroll As Single = Math.Max(0.0F, totalHeight - viewportH)
+        ' 允许在边界处轻微过冲，由动画 Tick 中的更强阻尼系数实现"终点回弹"的橡皮筋手感。
+        Dim overshoot As Single = 标签页项高度 * DpiScale() * 0.6F
+        Dim newTarget As Single = _滚动目标 + delta
+        If newTarget < -overshoot Then newTarget = -overshoot
+        If newTarget > maxScroll + overshoot Then newTarget = maxScroll + overshoot
+        _滚动目标 = newTarget
+        启动滚动动画()
     End Sub
+
+#Region "标签栏平滑滚动"
+    ''' <summary>滚动平滑系数（每秒回归到目标的比率，越大越快）。</summary>
+    Private Const 滚动平滑系数 As Single = 14.0F
+    ''' <summary>越界回弹阻尼（每秒回归比率）。</summary>
+    Private Const 滚动回弹系数 As Single = 18.0F
+    ''' <summary>视为停止的阈值（像素）。</summary>
+    Private Const 滚动停止阈值 As Single = 0.25F
+
+    Private Sub 启动滚动动画()
+        _滚动动画上次时刻Ticks = Stopwatch.GetTimestamp()
+        _滚动动画中 = True
+        启动帧驱动()
+        Me.Invalidate(获取标签栏矩形())
+    End Sub
+
+    Private Sub 停止滚动动画()
+        _滚动动画中 = False
+        _滚动速度 = 0
+        ' 帧驱动是否要彻底停由 帧Tick 内部决定（hover 动画可能仍在跑）。
+    End Sub
+
+    Private _滚动动画上次时刻Ticks As Long = 0
+#End Region
 
     Protected Overrides Function IsInputKey(keyData As Keys) As Boolean
         Select Case keyData And Keys.KeyCode
@@ -1154,20 +1583,25 @@ Public Class ModernTabListControl
         Set(value As Integer)
             value = Math.Max(0, value)
             If 动画帧率值 = value Then Return
-            Dim wasRunning = _动画中
-            If wasRunning Then 停止动画驱动()
+            Dim wasRunning = _帧驱动激活
+            If wasRunning Then 停止帧驱动()
             动画帧率值 = value
             _动画用Idle = (动画帧率值 <= 0)
             If _动画用Idle Then
-                _动画计时器?.Dispose()
+                Try : _动画计时器?.Dispose() : Catch : End Try
                 _动画计时器 = Nothing
             Else
                 If _动画计时器 Is Nothing Then
-                    _动画计时器 = New Timer()
+                    _动画计时器 = New PrecisionTimer() With {
+                        .DispatchMode = PrecisionTimer.DispatchModeEnum.NonBlocking,
+                        .OverrunPolicy = PrecisionTimer.OverrunPolicyEnum.Drop,
+                        .WorkerThreadCount = 1,
+                        .SynchronizingObject = Me
+                    }
                 End If
                 _动画计时器.Interval = Math.Max(1, CInt(1000.0 / 动画帧率值))
             End If
-            If wasRunning Then 启动动画驱动()
+            If wasRunning Then 启动帧驱动()
         End Set
     End Property
 #End Region

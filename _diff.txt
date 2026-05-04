@@ -1,0 +1,1127 @@
+﻿diff --git "a/LakeUI/\346\216\247\344\273\266/ThisIsYourWindow.vb" "b/LakeUI/\346\216\247\344\273\266/ThisIsYourWindow.vb"
+index b0a2e9d..43cf707 100644
+--- "a/LakeUI/\346\216\247\344\273\266/ThisIsYourWindow.vb"
++++ "b/LakeUI/\346\216\247\344\273\266/ThisIsYourWindow.vb"
+@@ -1,4 +1,4 @@
+-Imports System.ComponentModel
++锘縄mports System.ComponentModel
+ Imports System.Drawing.Drawing2D
+ Imports System.Reflection
+ Imports System.Runtime.InteropServices
+@@ -112,6 +112,33 @@ Public Class ThisIsYourWindow
+                                                        bAlpha As Byte, dwFlags As Integer) As <MarshalAs(UnmanagedType.Bool)> Boolean
+     End Function
+ 
++    Private Const WDA_NONE As Integer = &H0
++    Private Const WDA_EXCLUDEFROMCAPTURE As Integer = &H11
++
++    <DllImport("user32.dll")>
++    Private Shared Function SetWindowDisplayAffinity(hWnd As IntPtr, dwAffinity As Integer) As <MarshalAs(UnmanagedType.Bool)> Boolean
++    End Function
++
++    <StructLayout(LayoutKind.Sequential)>
++    Private Structure OSVERSIONINFOEX
++        Public dwOSVersionInfoSize As Integer
++        Public dwMajorVersion As Integer
++        Public dwMinorVersion As Integer
++        Public dwBuildNumber As Integer
++        Public dwPlatformId As Integer
++        <MarshalAs(UnmanagedType.ByValTStr, SizeConst:=128)>
++        Public szCSDVersion As String
++        Public wServicePackMajor As UShort
++        Public wServicePackMinor As UShort
++        Public wSuiteMask As UShort
++        Public wProductType As Byte
++        Public wReserved As Byte
++    End Structure
++
++    <DllImport("ntdll.dll")>
++    Private Shared Function RtlGetVersion(ByRef versionInfo As OSVERSIONINFOEX) As Integer
++    End Function
++
+     <StructLayout(LayoutKind.Sequential)>
+     Private Structure RECT
+         Public Left, Top, Right, Bottom As Integer
+@@ -146,8 +173,15 @@ Public Class ThisIsYourWindow
+         Public IsInSizeMove As Boolean = False
+         Public AnimatingShow As Boolean = False
+         Public AnimatingClose As Boolean = False
++        ' 涓婁竴娆¤褰曠殑鏈€灏忓寲鐘舵€侊細鐢ㄤ簬鍦?WM_SIZE 涓娴?浠庢渶灏忓寲鎭㈠"浜嬩欢骞跺己鍒跺埛鏂版瘺鐜荤拑銆?+        Public WasMinimized As Boolean = False
+         Public OriginalOpacity As Double = 1.0
+         Public PendingFirstPaintRestore As Boolean = False
++        ' 鈹€鈹€ 甯冨眬缂撳瓨绛惧悕锛氫粎褰撶獥鍙ｅ搴?鎸夐挳鍙鎬?鐩稿叧灞炴€у彉鍖栨椂閲嶆柊璁＄畻鎸夐挳浣嶇疆 鈹€鈹€
++        Public LayoutSignature As Long = -1
++        ' 鈹€鈹€ 姣涚幓鐠?鈹€鈹€
++        Public Renderer As BackdropRenderer
++        Public BackdropTimer As Timer
+         Public Sub New(form As Form)
+             HostForm = form
+         End Sub
+@@ -155,6 +189,10 @@ Public Class ThisIsYourWindow
+ 
+     Private ReadOnly _forms As New Dictionary(Of IntPtr, PerFormState)
+ 
++    ' 鈹€鈹€ 缁樺埗鐑矾寰勫叡浜紦瀛橈細閬垮厤姣忓抚 New SolidBrush/Pen 閫犳垚 GC 鍘嬪姏 鈹€鈹€
++    Private ReadOnly _鍏变韩鐢诲埛 As New SolidBrush(Color.Black)
++    Private ReadOnly _鍏变韩鐢荤瑪 As New Pen(Color.Black, 1.0F)
++
+     Private Function 鏌ユ壘鐘舵€?form As Form) As PerFormState
+         Dim s As PerFormState = Nothing
+         If form IsNot Nothing AndAlso form.IsHandleCreated Then _forms.TryGetValue(form.Handle, s)
+@@ -200,6 +238,55 @@ Public Class ThisIsYourWindow
+         Layer = 2
+     End Enum
+ 
++    ''' <summary>
++    ''' 姣涚幓鐠?/ 浜氬厠鍔涜儗鏅ā寮忋€?+    ''' None 鈥?鍏抽棴銆?+    ''' Auto 鈥?鎶撳彇绐楀彛鑳屽悗鐨勬闈㈠尯鍩熷苟妯＄硦鍚庣粯鍒朵负绐椾綋鑳屾櫙銆傞粯璁や粎鍦ㄤ簨浠堕┍鍔ㄦ椂鍒锋柊锛堢Щ鍔?/ 璋冩暣澶у皬缁撴潫 / 鏄剧ず / 婵€娲伙級锛?+    '''        绯荤粺鎴浘宸ュ叿鑳芥埅鍒版湰绐楀彛锛涘闇€甯告€佸懆鏈熷埛鏂帮紝璇峰悓鏃跺紑鍚?<see cref="BackdropExcludeFromCapture"/>锛?+    '''        姝ゆ椂鍚敤 WDA_EXCLUDEFROMCAPTURE 闃叉鎶撹嚜韬紙瑕佹眰 Win10 build 19041+锛夛紝鍓綔鐢細绯荤粺鎴浘 / 褰曞睆鍧囨棤娉曟崟鑾锋湰绐楀彛銆?+    ''' Image 鈥?浣跨敤 <see cref="BackdropImage"/> 浣滀负铏氭嫙鑳屾櫙婧愶紙鎸?cover 鎾戞弧绐楀彛锛夊悗鍐嶅仛妯＄硦锛?+    '''         涓嶆姄灞忋€佷笉褰卞搷绯荤粺鎴浘锛屽彲鍦ㄤ换鎰?Windows 鐗堟湰宸ヤ綔銆?+    ''' CaptionOnly 鈥?涓?Auto 绫讳技浣嗕粎瀵规爣棰樻爮鍖哄煙鎶撳睆 / 妯＄硦 / 缁樺埗锛?+    '''         鐢变簬鎶撳睆涓庢ā绯婃暟鎹噺澶у箙鍑忓皯锛屾€ц兘寮€閿€杩滀綆浜?Auto銆?+    ''' </summary>
++    Public Enum BackdropModeEnum
++        None = 0
++        Auto = 1
++        Image = 2
++        CaptionOnly = 3
++    End Enum
++
++#End Region
++
++#Region "OS 妫€娴?
++
++    Private Shared _backdropSupportedCached As Integer = -1
++
++    ''' <summary>褰撳墠 OS 鏄惁鏀寔鐪熸鐨?涓嶅惈鑷韩"鎶撳睆锛圵in10 build 19041+锛夈€?/summary>
++    <Browsable(False)>
++    Public Shared ReadOnly Property IsBackdropSupported As Boolean
++        Get
++            Dim v As Integer = _backdropSupportedCached
++            If v = -1 Then
++                Dim info As New OSVERSIONINFOEX With {
++                    .dwOSVersionInfoSize = Marshal.SizeOf(Of OSVERSIONINFOEX)()
++                }
++                Try
++                    If RtlGetVersion(info) = 0 Then
++                        v = If(info.dwMajorVersion > 10 OrElse
++                               (info.dwMajorVersion = 10 AndAlso info.dwBuildNumber >= 19041), 1, 0)
++                    Else
++                        v = 0
++                    End If
++                Catch
++                    v = 0
++                End Try
++                _backdropSupportedCached = v
++            End If
++            Return v = 1
++        End Get
++    End Property
++
+ #End Region
+ 
+ #Region "閫氱敤杈呭姪"
+@@ -210,6 +297,21 @@ Public Class ThisIsYourWindow
+         Next
+     End Sub
+ 
++    ''' <summary>
++    ''' 璁＄畻姣涚幓鐠?Renderer 瀹為檯闇€瑕佹姄鍙?/ 娓叉煋鐨勬闈㈠尯鍩熴€?+    ''' Auto / Image 鈥?鏁翠釜绐楀彛锛汣aptionOnly 鈥?浠呮爣棰樻爮鍖哄煙锛屽彲鏄捐憲鍑忓皬鎶撳睆涓庢ā绯婅绠楅噺銆?+    ''' </summary>
++    Friend Function 鑾峰彇姣涚幓鐠冩崟鑾峰尯鍩?form As Form) As Rectangle
++        If form Is Nothing Then Return Rectangle.Empty
++        Dim b As Rectangle = form.Bounds
++        If _姣涚幓鐠冩ā寮?= BackdropModeEnum.CaptionOnly Then
++            Dim ch As Integer = Math.Max(1, _鏍囬鏍忛珮搴?
++            If ch > b.Height Then ch = b.Height
++            Return New Rectangle(b.X, b.Y, b.Width, ch)
++        End If
++        Return b
++    End Function
++
+     Friend Sub 鍒囨崲鍔ㄧ敾鏍峰紡(hWnd As IntPtr, enable As Boolean)
+         Dim style As Long = GetWindowLongPtr(hWnd, GWL_STYLE).ToInt64()
+         Dim has As Boolean = (style And WS_CAPTION) = WS_CAPTION
+@@ -289,6 +391,7 @@ Public Class ThisIsYourWindow
+ #Region "灞炴€?- 杈规"
+ 
+     Private _杈规棰滆壊 As Color = Color.FromArgb(60, 60, 60)
++    ''' <summary>绐楀彛澶勪簬婵€娲荤姸鎬佹椂鐨勮竟妗嗙粯鍒堕鑹层€?/summary>
+     <Category("LakeUI"), Description("绐楀彛杈规棰滆壊銆?), DefaultValue(GetType(Color), "60,60,60")>
+     Public Property BorderColor As Color
+         Get
+@@ -300,6 +403,7 @@ Public Class ThisIsYourWindow
+     End Property
+ 
+     Private _杈规澶辩劍棰滆壊 As Color = Color.FromArgb(40, 40, 40)
++    ''' <summary>绐楀彛澶卞幓鐒︾偣鏃剁殑杈规缁樺埗棰滆壊銆?/summary>
+     <Category("LakeUI"), Description("绐楀彛澶卞幓鐒︾偣鏃剁殑杈规棰滆壊銆?), DefaultValue(GetType(Color), "40,40,40")>
+     Public Property BorderInactiveColor As Color
+         Get
+@@ -311,6 +415,7 @@ Public Class ThisIsYourWindow
+     End Property
+ 
+     Private _杈规鍘氬害 As Integer = 1
++    ''' <summary>绐楀彛杈规鐨勭粯鍒跺帤搴︼紙閫昏緫鍍忕礌锛夈€傝涓?0 琛ㄧず涓嶇粯鍒惰竟妗嗭紱璇ュ€间細鍚屾褰卞搷绐椾綋鍐呰竟璺濅互閬垮厤鍐呭琚竟妗嗛伄鎸°€?/summary>
+     <Category("LakeUI"), Description("绐楀彛杈规鐨勭粯鍒跺帤搴︼紙閫昏緫鍍忕礌锛夈€? = 涓嶇粯鍒惰竟妗嗐€?), DefaultValue(1)>
+     Public Property BorderSize As Integer
+         Get
+@@ -328,6 +433,7 @@ Public Class ThisIsYourWindow
+ #Region "灞炴€?- 鏍囬鏍?
+ 
+     Private _鏍囬鏍忛珮搴?As Integer = 32
++    ''' <summary>鏍囬鏍忓尯鍩熺殑楂樺害锛堥€昏緫鍍忕礌锛夈€傛敼鍙樻鍊间細鍚屾閲嶇畻鎸夐挳甯冨眬骞惰皟鏁寸獥浣撳唴杈硅窛銆?/summary>
+     <Category("LakeUI"), Description("鏍囬鏍忓尯鍩熺殑楂樺害锛堥€昏緫鍍忕礌锛夈€?), DefaultValue(32)>
+     Public Property CaptionHeight As Integer
+         Get
+@@ -341,6 +447,7 @@ Public Class ThisIsYourWindow
+     End Property
+ 
+     Private _鏍囬鏍忚儗鏅鑹?As Color = Color.FromArgb(32, 32, 32)
++    ''' <summary>鏍囬鏍忓湪绐楀彛婵€娲绘椂鐨勮儗鏅～鍏呴鑹层€?/summary>
+     <Category("LakeUI"), Description("鏍囬鏍忕殑鑳屾櫙棰滆壊銆?), DefaultValue(GetType(Color), "32,32,32")>
+     Public Property CaptionBackColor As Color
+         Get
+@@ -352,6 +459,7 @@ Public Class ThisIsYourWindow
+     End Property
+ 
+     Private _鏍囬鏍忓け鐒﹁儗鏅鑹?As Color = Color.FromArgb(28, 28, 28)
++    ''' <summary>绐楀彛澶卞幓鐒︾偣鏃舵爣棰樻爮鐨勮儗鏅～鍏呴鑹层€?/summary>
+     <Category("LakeUI"), Description("绐楀彛澶卞幓鐒︾偣鏃舵爣棰樻爮鐨勮儗鏅鑹层€?), DefaultValue(GetType(Color), "28,28,28")>
+     Public Property CaptionInactiveBackColor As Color
+         Get
+@@ -399,6 +507,7 @@ Public Class ThisIsYourWindow
+ #Region "灞炴€?- 鏍囬鏂囧瓧"
+ 
+     Private _鏍囬鏂囧瓧棰滆壊 As Color = Color.FromArgb(230, 230, 230)
++    ''' <summary>绐楀彛婵€娲绘椂鐨勬爣棰樻枃瀛楅鑹层€?/summary>
+     <Category("LakeUI"), Description("鏍囬鏂囧瓧棰滆壊銆?), DefaultValue(GetType(Color), "230,230,230")>
+     Public Property TitleForeColor As Color
+         Get
+@@ -410,6 +519,7 @@ Public Class ThisIsYourWindow
+     End Property
+ 
+     Private _鏍囬鏂囧瓧澶辩劍棰滆壊 As Color = Color.FromArgb(140, 140, 140)
++    ''' <summary>绐楀彛澶卞幓鐒︾偣鏃剁殑鏍囬鏂囧瓧棰滆壊銆?/summary>
+     <Category("LakeUI"), Description("绐楀彛澶卞幓鐒︾偣鏃舵爣棰樻枃瀛楅鑹层€?), DefaultValue(GetType(Color), "140,140,140")>
+     Public Property TitleInactiveForeColor As Color
+         Get
+@@ -421,6 +531,7 @@ Public Class ThisIsYourWindow
+     End Property
+ 
+     Private _鏍囬鏂囧瓧瀵归綈 As TitleAlignEnum = TitleAlignEnum.Left
++    ''' <summary>鏍囬鏂囧瓧鍦ㄥ彲鐢ㄥ尯鍩熷唴鐨勬按骞冲榻愭柟寮忥紙宸?/ 灞呬腑 / 鍙筹級銆?/summary>
+     <Category("LakeUI"), Description("鏍囬鏂囧瓧鐨勬按骞冲榻愭柟寮忋€?), DefaultValue(GetType(TitleAlignEnum), "Left")>
+     Public Property TitleAlign As TitleAlignEnum
+         Get
+@@ -432,6 +543,7 @@ Public Class ThisIsYourWindow
+     End Property
+ 
+     Private _鏍囬鏂囧瓧瀛椾綋 As Font = Nothing
++    ''' <summary>鏍囬鏂囧瓧浣跨敤鐨勫瓧浣撱€傝涓?Nothing 鏃朵娇鐢ㄥ涓荤獥浣撶殑 <see cref="Control.Font"/>銆?/summary>
+     <Category("LakeUI"), Description("鏍囬鏂囧瓧鐨勫瓧浣撱€傜暀绌哄垯浣跨敤瀹夸富绐楀彛鐨?Font銆?), DefaultValue(GetType(Font), "")>
+     Public Property TitleFont As Font
+         Get
+@@ -443,6 +555,7 @@ Public Class ThisIsYourWindow
+     End Property
+ 
+     Private _鏍囬鏂囧瓧宸﹁竟璺?As Integer = 10
++    ''' <summary>鏍囬鏂囧瓧璺濈鍏跺乏渚у厓绱狅紙鍥炬爣鍙宠竟缂樻垨绐楀彛宸﹁竟缂橈級鐨勬按骞抽棿璺濓紙閫昏緫鍍忕礌锛夈€?/summary>
+     <Category("LakeUI"), Description("鏍囬鏂囧瓧璺濈宸︿晶锛堟垨鍥炬爣鍙充晶锛夌殑闂磋窛銆?), DefaultValue(10)>
+     Public Property TitlePaddingLeft As Integer
+         Get
+@@ -454,6 +567,7 @@ Public Class ThisIsYourWindow
+     End Property
+ 
+     Private _鏍囬鏂囧瓧鍙宠竟璺?As Integer = 10
++    ''' <summary>鏍囬鏂囧瓧璺濈鍏跺彸渚у厓绱狅紙鎸夐挳宸﹁竟缂樻垨绐楀彛鍙宠竟缂橈級鐨勬按骞抽棿璺濓紙閫昏緫鍍忕礌锛夈€?/summary>
+     <Category("LakeUI"), Description("鏍囬鏂囧瓧璺濈鍙充晶锛堟垨鎸夐挳宸︿晶锛夌殑闂磋窛銆?), DefaultValue(10)>
+     Public Property TitlePaddingRight As Integer
+         Get
+@@ -469,6 +583,7 @@ Public Class ThisIsYourWindow
+ #Region "灞炴€?- 鍥炬爣"
+ 
+     Private _鍥炬爣鏉ユ簮 As IconSourceEnum = IconSourceEnum.FormIcon
++    ''' <summary>鏍囬鏍忓浘鏍囩殑鏉ユ簮锛歂one 涓嶆樉绀恒€丗ormIcon 浣跨敤绐椾綋 <see cref="Form.Icon"/>銆丆ustom 浣跨敤 <see cref="CustomIcon"/>銆?/summary>
+     <Category("LakeUI"), Description("鏍囬鏍忓浘鏍囨潵婧愩€?), DefaultValue(GetType(IconSourceEnum), "FormIcon")>
+     Public Property IconSource As IconSourceEnum
+         Get
+@@ -480,6 +595,7 @@ Public Class ThisIsYourWindow
+     End Property
+ 
+     Private _鑷畾涔夊浘鏍?As Image = Nothing
++    ''' <summary>褰?<see cref="IconSource"/> 璁句负 Custom 鏃朵娇鐢ㄧ殑鑷畾涔夊浘鍍忥紱鍏跺畠鏉ユ簮涓嬭蹇界暐銆?/summary>
+     <Category("LakeUI"), Description("IconSource 涓?Custom 鏃朵娇鐢ㄧ殑鍥惧儚銆?), DefaultValue(GetType(Image), "")>
+     Public Property CustomIcon As Image
+         Get
+@@ -491,6 +607,7 @@ Public Class ThisIsYourWindow
+     End Property
+ 
+     Private _鍥炬爣澶у皬 As Integer = 16
++    ''' <summary>鍥炬爣鏄剧ず灏哄锛堟鏂瑰舰锛岄€昏緫鍍忕礌锛夈€?/summary>
+     <Category("LakeUI"), Description("鍥炬爣鐨勬樉绀哄昂瀵革紙閫昏緫鍍忕礌锛屾鏂瑰舰锛夈€?), DefaultValue(16)>
+     Public Property IconSize As Integer
+         Get
+@@ -502,6 +619,7 @@ Public Class ThisIsYourWindow
+     End Property
+ 
+     Private _鍥炬爣宸﹁竟璺?As Integer = 8
++    ''' <summary>鍥炬爣璺濈鍏跺渚э紙鎸夐挳缁勫乏渚ф垨绐楀彛宸﹁竟缂橈級鐨勬按骞抽棿璺濓紙閫昏緫鍍忕礌锛夈€?/summary>
+     <Category("LakeUI"), Description("鍥炬爣璺濈绐楀彛宸﹁竟缂樼殑闂磋窛銆?), DefaultValue(8)>
+     Public Property IconPaddingLeft As Integer
+         Get
+@@ -517,6 +635,7 @@ Public Class ThisIsYourWindow
+ #Region "灞炴€?- 鎺у埗鎸夐挳"
+ 
+     Private _鎸夐挳浣嶇疆 As ButtonPositionEnum = ButtonPositionEnum.Right
++    ''' <summary>鏈€灏忓寲 / 鏈€澶у寲 / 鍏抽棴鎸夐挳缁勫湪鏍囬鏍忎腑鐨勬按骞充綅缃€?/summary>
+     <Category("LakeUI"), Description("鎺у埗鎸夐挳鐨勫竷灞€浣嶇疆銆?), DefaultValue(GetType(ButtonPositionEnum), "Right")>
+     Public Property ButtonPosition As ButtonPositionEnum
+         Get
+@@ -528,6 +647,7 @@ Public Class ThisIsYourWindow
+     End Property
+ 
+     Private _鎸夐挳瀹藉害 As Integer = 46
++    ''' <summary>姣忎釜鎺у埗鎸夐挳鐨勫懡涓笌缁樺埗瀹藉害锛堥€昏緫鍍忕礌锛夛紝鏈€灏忎负 16銆?/summary>
+     <Category("LakeUI"), Description("姣忎釜鎺у埗鎸夐挳鐨勫搴︼紙閫昏緫鍍忕礌锛夈€?), DefaultValue(46)>
+     Public Property ButtonWidth As Integer
+         Get
+@@ -539,6 +659,7 @@ Public Class ThisIsYourWindow
+     End Property
+ 
+     Private _鎸夐挳绗﹀彿澶у皬 As Integer = 10
++    ''' <summary>鎸夐挳鍐呯粯鍒剁殑绗﹀彿锛埫椼€佲枴銆佲€旓級鐨勮竟闀匡紙閫昏緫鍍忕礌锛夛紝鏈€灏忎负 4銆?/summary>
+     <Category("LakeUI"), Description("鎸夐挳绗﹀彿鐨勯€昏緫灏哄銆?), DefaultValue(10)>
+     Public Property ButtonGlyphSize As Integer
+         Get
+@@ -550,6 +671,7 @@ Public Class ThisIsYourWindow
+     End Property
+ 
+     Private _鎸夐挳绗﹀彿绾垮 As Single = 1.0F
++    ''' <summary>鎸夐挳绗﹀彿绾挎潯鐨勭敾绗斿搴︼紙閫昏緫鍍忕礌锛夛紝鏈€灏忎负 0.5銆?/summary>
+     <Category("LakeUI"), Description("鎸夐挳绗﹀彿绾挎潯瀹藉害銆?), DefaultValue(1.0F)>
+     Public Property ButtonGlyphLineWidth As Single
+         Get
+@@ -560,7 +682,8 @@ Public Class ThisIsYourWindow
+         End Set
+     End Property
+ 
+-    Private _鎸夐挳鍐呰竟璺?+    Private _鎸夐挳鍐呰竟璺?As Padding
++    ''' <summary>姣忎釜鎺у埗鎸夐挳鍐呴儴鐨勭暀鐧斤紱鍙鍖栬儗鏅笌绗﹀彿缁樺埗鍖哄煙灏嗗湪鎸夐挳鍛戒腑鍖哄熀纭€涓婂悜鍐呮敹缂┿€?/summary>
+     <Category("LakeUI"), Description("鎺у埗鎸夐挳鐨勫唴杈硅窛銆?), DefaultValue(GetType(Padding), "0, 0, 0, 0")>
+     Public Property ButtonPadding As Padding
+         Get
+@@ -572,6 +695,7 @@ Public Class ThisIsYourWindow
+     End Property
+ 
+     Private _鎸夐挳鍦嗚鍗婂緞 As Integer = 0
++    ''' <summary>鎺у埗鎸夐挳鑳屾櫙濉厖鐨勫渾瑙掑崐寰勶紙閫昏緫鍍忕礌锛夛紱0 琛ㄧず鐭╁舰濉厖銆?/summary>
+     <Category("LakeUI"), Description("鎺у埗鎸夐挳鑳屾櫙鍦嗚鍗婂緞銆?), DefaultValue(0)>
+     Public Property ButtonCornerRadius As Integer
+         Get
+@@ -583,6 +707,7 @@ Public Class ThisIsYourWindow
+     End Property
+ 
+     Private _鎸夐挳闂磋窛 As Integer = 0
++    ''' <summary>鐩搁偦鎺у埗鎸夐挳涔嬮棿鐨勬按骞抽棿闅旓紙閫昏緫鍍忕礌锛夈€?/summary>
+     <Category("LakeUI"), Description("鎺у埗鎸夐挳涔嬮棿鐨勯棿璺濄€?), DefaultValue(0)>
+     Public Property ButtonSpacing As Integer
+         Get
+@@ -598,7 +723,8 @@ Public Class ThisIsYourWindow
+ #Region "灞炴€?- 鍏抽棴鎸夐挳棰滆壊"
+ 
+     Private _鍏抽棴鎸夐挳鑳屾櫙棰滆壊 As Color = Color.Transparent
+-    <Category("LakeUI"), DefaultValue(GetType(Color), "Transparent")>
++    ''' <summary>鍏抽棴鎸夐挳榛樿锛堥潪鎮仠 / 闈炴寜涓嬶級鐘舵€佷笅鐨勮儗鏅鑹层€?/summary>
++    <Category("LakeUI"), Description("鍏抽棴鎸夐挳榛樿鐘舵€佽儗鏅鑹层€?), DefaultValue(GetType(Color), "Transparent")>
+     Public Property CloseButtonBackColor As Color
+         Get
+             Return _鍏抽棴鎸夐挳鑳屾櫙棰滆壊
+@@ -609,7 +735,8 @@ Public Class ThisIsYourWindow
+     End Property
+ 
+     Private _鍏抽棴鎸夐挳鎮仠鑳屾櫙棰滆壊 As Color = Color.FromArgb(232, 17, 35)
+-    <Category("LakeUI"), DefaultValue(GetType(Color), "232,17,35")>
++    ''' <summary>鍏抽棴鎸夐挳榧犳爣鎮仠鐘舵€佷笅鐨勮儗鏅鑹层€?/summary>
++    <Category("LakeUI"), Description("鍏抽棴鎸夐挳鎮仠鐘舵€佽儗鏅鑹层€?), DefaultValue(GetType(Color), "232,17,35")>
+     Public Property CloseButtonHoverBackColor As Color
+         Get
+             Return _鍏抽棴鎸夐挳鎮仠鑳屾櫙棰滆壊
+@@ -620,7 +747,8 @@ Public Class ThisIsYourWindow
+     End Property
+ 
+     Private _鍏抽棴鎸夐挳鎸変笅鑳屾櫙棰滆壊 As Color = Color.FromArgb(200, 15, 30)
+-    <Category("LakeUI"), DefaultValue(GetType(Color), "200,15,30")>
++    ''' <summary>鍏抽棴鎸夐挳琚紶鏍囨寜涓嬩笖浠嶅浜庢偓鍋滅姸鎬佹椂鐨勮儗鏅鑹层€?/summary>
++    <Category("LakeUI"), Description("鍏抽棴鎸夐挳鎸変笅鐘舵€佽儗鏅鑹层€?), DefaultValue(GetType(Color), "200,15,30")>
+     Public Property CloseButtonPressedBackColor As Color
+         Get
+             Return _鍏抽棴鎸夐挳鎸変笅鑳屾櫙棰滆壊
+@@ -631,7 +759,8 @@ Public Class ThisIsYourWindow
+     End Property
+ 
+     Private _鍏抽棴鎸夐挳绗﹀彿棰滆壊 As Color = Color.FromArgb(200, 200, 200)
+-    <Category("LakeUI"), DefaultValue(GetType(Color), "200,200,200")>
++    ''' <summary>鍏抽棴鎸夐挳榛樿鐘舵€佷笅鐨勨€溍椻€濈鍙风嚎鏉￠鑹层€?/summary>
++    <Category("LakeUI"), Description("鍏抽棴鎸夐挳榛樿鐘舵€佺鍙烽鑹层€?), DefaultValue(GetType(Color), "200,200,200")>
+     Public Property CloseButtonGlyphColor As Color
+         Get
+             Return _鍏抽棴鎸夐挳绗﹀彿棰滆壊
+@@ -642,7 +771,8 @@ Public Class ThisIsYourWindow
+     End Property
+ 
+     Private _鍏抽棴鎸夐挳鎮仠绗﹀彿棰滆壊 As Color = Color.White
+-    <Category("LakeUI"), DefaultValue(GetType(Color), "White")>
++    ''' <summary>鍏抽棴鎸夐挳鎮仠 / 鎸変笅鐘舵€佷笅鐨勭鍙烽鑹层€?/summary>
++    <Category("LakeUI"), Description("鍏抽棴鎸夐挳鎮仠鐘舵€佺鍙烽鑹层€?), DefaultValue(GetType(Color), "White")>
+     Public Property CloseButtonHoverGlyphColor As Color
+         Get
+             Return _鍏抽棴鎸夐挳鎮仠绗﹀彿棰滆壊
+@@ -657,7 +787,8 @@ Public Class ThisIsYourWindow
+ #Region "灞炴€?- 鏈€澶у寲/鏈€灏忓寲鎸夐挳棰滆壊"
+ 
+     Private _鍔熻兘鎸夐挳鑳屾櫙棰滆壊 As Color = Color.Transparent
+-    <Category("LakeUI"), DefaultValue(GetType(Color), "Transparent")>
++    ''' <summary>鏈€灏忓寲 / 鏈€澶у寲 / 杩樺師鎸夐挳榛樿鐘舵€佷笅鐨勮儗鏅鑹层€?/summary>
++    <Category("LakeUI"), Description("鏈€灏忓寲/鏈€澶у寲鎸夐挳榛樿鑳屾櫙棰滆壊銆?), DefaultValue(GetType(Color), "Transparent")>
+     Public Property CaptionButtonBackColor As Color
+         Get
+             Return _鍔熻兘鎸夐挳鑳屾櫙棰滆壊
+@@ -668,7 +799,8 @@ Public Class ThisIsYourWindow
+     End Property
+ 
+     Private _鍔熻兘鎸夐挳鎮仠鑳屾櫙棰滆壊 As Color = Color.FromArgb(55, 55, 55)
+-    <Category("LakeUI"), DefaultValue(GetType(Color), "55,55,55")>
++    ''' <summary>鏈€灏忓寲/鏈€澶у寲鎸夐挳榧犳爣鎮仠鐘舵€佷笅鐨勮儗鏅鑹层€?/summary>
++    <Category("LakeUI"), Description("鏈€灏忓寲/鏈€澶у寲鎸夐挳鎮仠鐘舵€佽儗鏅鑹层€?), DefaultValue(GetType(Color), "55,55,55")>
+     Public Property CaptionButtonHoverBackColor As Color
+         Get
+             Return _鍔熻兘鎸夐挳鎮仠鑳屾櫙棰滆壊
+@@ -679,7 +811,8 @@ Public Class ThisIsYourWindow
+     End Property
+ 
+     Private _鍔熻兘鎸夐挳鎸変笅鑳屾櫙棰滆壊 As Color = Color.FromArgb(70, 70, 70)
+-    <Category("LakeUI"), DefaultValue(GetType(Color), "70,70,70")>
++    ''' <summary>鏈€灏忓寲/鏈€澶у寲鎸夐挳琚寜涓嬩笖澶勪簬鎮仠鐘舵€佹椂鐨勮儗鏅鑹层€?/summary>
++    <Category("LakeUI"), Description("鏈€灏忓寲/鏈€澶у寲鎸夐挳鎸変笅鐘舵€佽儗鏅鑹层€?), DefaultValue(GetType(Color), "70,70,70")>
+     Public Property CaptionButtonPressedBackColor As Color
+         Get
+             Return _鍔熻兘鎸夐挳鎸変笅鑳屾櫙棰滆壊
+@@ -690,7 +823,8 @@ Public Class ThisIsYourWindow
+     End Property
+ 
+     Private _鍔熻兘鎸夐挳绗﹀彿棰滆壊 As Color = Color.FromArgb(200, 200, 200)
+-    <Category("LakeUI"), DefaultValue(GetType(Color), "200,200,200")>
++    ''' <summary>鏈€灏忓寲/鏈€澶у寲鎸夐挳榛樿鐘舵€佷笅鐨勭鍙风嚎鏉￠鑹层€?/summary>
++    <Category("LakeUI"), Description("鏈€灏忓寲/鏈€澶у寲鎸夐挳榛樿鐘舵€佺鍙烽鑹层€?), DefaultValue(GetType(Color), "200,200,200")>
+     Public Property CaptionButtonGlyphColor As Color
+         Get
+             Return _鍔熻兘鎸夐挳绗﹀彿棰滆壊
+@@ -701,7 +835,8 @@ Public Class ThisIsYourWindow
+     End Property
+ 
+     Private _鍔熻兘鎸夐挳鎮仠绗﹀彿棰滆壊 As Color = Color.White
+-    <Category("LakeUI"), DefaultValue(GetType(Color), "White")>
++    ''' <summary>鏈€灏忓寲/鏈€澶у寲鎸夐挳鎮仠 / 鎸変笅鐘舵€佷笅鐨勭鍙烽鑹层€?/summary>
++    <Category("LakeUI"), Description("鏈€灏忓寲/鏈€澶у寲鎸夐挳鎮仠鐘舵€佺鍙烽鑹层€?), DefaultValue(GetType(Color), "White")>
+     Public Property CaptionButtonHoverGlyphColor As Color
+         Get
+             Return _鍔熻兘鎸夐挳鎮仠绗﹀彿棰滆壊
+@@ -716,6 +851,7 @@ Public Class ThisIsYourWindow
+ #Region "灞炴€?- 璋冩暣澶у皬"
+ 
+     Private _璋冩暣杈规瀹藉害 As Integer = 6
++    ''' <summary>绐楀彛杈圭紭鍙Е鍙戞嫋鎷芥敼鍙樺ぇ灏忕殑鐑尯瀹藉害锛堥€昏緫鍍忕礌锛夈€?/summary>
+     <Category("LakeUI"), Description("绐楀彛杈圭紭鐨勮皟鏁村ぇ灏忕儹鍖哄搴︺€?), DefaultValue(6)>
+     Public Property ResizeBorderWidth As Integer
+         Get
+@@ -727,7 +863,8 @@ Public Class ThisIsYourWindow
+     End Property
+ 
+     Private _鍏佽璋冩暣澶у皬 As Boolean = True
+-    <Category("LakeUI"), DefaultValue(True)>
++    ''' <summary>鏄惁鍏佽閫氳繃鎷栨嫿绐楀彛杈圭紭璋冩暣澶у皬銆傝涓?False 鏃剁鐢ㄦ墍鏈?Resize 鍛戒腑娴嬭瘯銆?/summary>
++    <Category("LakeUI"), Description("鏄惁鍏佽閫氳繃鎷栨嫿绐楀彛杈圭紭璋冩暣澶у皬銆?), DefaultValue(True)>
+     Public Property AllowResize As Boolean
+         Get
+             Return _鍏佽璋冩暣澶у皬
+@@ -738,7 +875,8 @@ Public Class ThisIsYourWindow
+     End Property
+ 
+     Private _鏈€澶у寲鏃堕殣钘忚皟鏁磋竟妗?As Boolean = True
+-    <Category("LakeUI"), DefaultValue(True)>
++    ''' <summary>绐楀彛鏈€澶у寲鏃舵槸鍚︾鐢ㄨ竟缂樿皟鏁村ぇ灏忕儹鍖猴紙鎺ㄨ崘 True锛岄伩鍏嶆渶澶у寲涓嬭竟缂樼┛閫忓埌娆″睆锛夈€?/summary>
++    <Category("LakeUI"), Description("绐楀彛鏈€澶у寲鏃舵槸鍚︾鐢ㄨ皟鏁村ぇ灏忚竟妗嗐€?), DefaultValue(True)>
+     Public Property HideResizeBorderWhenMaximized As Boolean
+         Get
+             Return _鏈€澶у寲鏃堕殣钘忚皟鏁磋竟妗?@@ -753,6 +891,10 @@ Public Class ThisIsYourWindow
+ #Region "灞炴€?- 楂樼骇 (鎺掗櫎鍖哄煙)"
+ 
+     Private _鏍囬鏍忔帓闄ゅ尯鍩?As New List(Of Rectangle)
++    ''' <summary>
++    ''' 鏍囬鏍忓唴鐨勬帓闄ゅ尯鍩熷垪琛紙瀹㈡埛绔潗鏍囷級銆備綅浜庤繖浜涚煩褰㈠唴鐨勯紶鏍囧懡涓皢杩斿洖 HTCLIENT 鑰岄潪 HTCAPTION锛?+    ''' 浠ヤ究鏀剧疆鍙氦浜掓帶浠讹紙濡傝彍鍗曘€佹悳绱㈡锛夎€屼笉琚獥鍙ｆ嫋鍔ㄩ€昏緫鎷︽埅銆?+    ''' </summary>
+     <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+     Public Property CaptionExcludeBounds As List(Of Rectangle)
+         Get
+@@ -867,6 +1009,29 @@ Public Class ThisIsYourWindow
+         End Set
+     End Property
+ 
++    Private _鍒嗗眰闃村奖鏁村尯鍙皟 As Boolean = False
++    ''' <summary>
++    ''' 鏄惁灏嗘暣涓垎灞傞槾褰辩粯鍒跺尯鍩熶綔涓虹獥鍙ｅぇ灏忚皟鏁寸儹鍖恒€?+    ''' 鍚敤鍚庨槾褰辩粯鍒惰寖鍥村唴鐨勪换鎰忎綅缃兘鍙Е鍙戝昂瀵歌皟鏁达紝<see cref="LayerShadowResizeWidth"/> 涓婇檺琚拷鐣ャ€?+    ''' 浠?ShadowMode = Layer 鏃剁敓鏁堛€?+    ''' </summary>
++    <Category("LakeUI"), Description("鏄惁灏嗘暣涓垎灞傞槾褰辩粯鍒跺尯鍩熶綔涓虹獥鍙ｅぇ灏忚皟鏁寸儹鍖恒€備粎 ShadowMode = Layer 鏃剁敓鏁堛€?), DefaultValue(False)>
++    Public Property LayerShadowResizeFullArea As Boolean
++        Get
++            Return _鍒嗗眰闃村奖鏁村尯鍙皟
++        End Get
++        Set(value As Boolean)
++            If _鍒嗗眰闃村奖鏁村尯鍙皟 = value Then Return
++            _鍒嗗眰闃村奖鏁村尯鍙皟 = value
++            For Each s In _forms.Values
++                If s.ShadowForm IsNot Nothing Then
++                    s.ShadowForm.ResizeFullArea = value
++                    s.ShadowForm.UpdateHitTestTransparency()
++                End If
++            Next
++        End Set
++    End Property
++
+     Private Sub 鏇存柊闃村奖(s As PerFormState)
+         If s Is Nothing OrElse s.HostForm Is Nothing Then Return
+         Dim zoomed As Boolean = (s.HostForm.WindowState = FormWindowState.Maximized)
+@@ -883,7 +1048,8 @@ Public Class ThisIsYourWindow
+             s.ShadowForm = New ShadowWindow With {
+                 .HostHandle = s.HostForm.Handle,
+                 .ShadowDepth = _鍒嗗眰闃村奖娣卞害,
+-                .ResizeWidth = _鍒嗗眰闃村奖璋冩暣瀹藉害
++                .ResizeWidth = _鍒嗗眰闃村奖璋冩暣瀹藉害,
++                .ResizeFullArea = _鍒嗗眰闃村奖鏁村尯鍙皟
+             }
+             s.ShadowForm.UpdateHitTestTransparency()
+             s.ShadowForm.Show()
+@@ -893,7 +1059,13 @@ Public Class ThisIsYourWindow
+         s.ShadowForm.HostHandle = s.HostForm.Handle
+         s.ShadowForm.ShadowDepth = _鍒嗗眰闃村奖娣卞害
+         s.ShadowForm.ResizeWidth = _鍒嗗眰闃村奖璋冩暣瀹藉害
+-        s.ShadowForm.UpdateShadow(bounds, _鍒嗗眰闃村奖娣卞害, _鍒嗗眰闃村奖棰滆壊, _鍒嗗眰闃村奖涓嶉€忔槑搴? s.IsInSizeMove)
++        s.ShadowForm.ResizeFullArea = _鍒嗗眰闃村奖鏁村尯鍙皟
++        s.ShadowForm.UpdateHitTestTransparency()
++        Dim shadowColor As Color = _鍒嗗眰闃村奖棰滆壊
++        If _鍒嗗眰闃村奖鑷姩棰滆壊 AndAlso _姣涚幓鐠冩ā寮?<> BackdropModeEnum.None AndAlso s.Renderer IsNot Nothing Then
++            shadowColor = s.Renderer.DeriveShadowColor(_鍒嗗眰闃村奖棰滆壊)
++        End If
++        s.ShadowForm.UpdateShadow(bounds, _鍒嗗眰闃村奖娣卞害, shadowColor, _鍒嗗眰闃村奖涓嶉€忔槑搴? s.IsInSizeMove)
+         s.ShadowForm.PlaceBehind(s.HostForm.Handle)
+         If Not s.ShadowForm.Visible Then s.ShadowForm.Visible = True
+ 
+@@ -912,6 +1084,313 @@ Public Class ThisIsYourWindow
+ 
+ #End Region
+ 
++#Region "灞炴€?- 姣涚幓鐠?
++
++    Private _姣涚幓鐠冩ā寮?As BackdropModeEnum = BackdropModeEnum.None
++    ''' <summary>
++    ''' 姣涚幓鐠?/ 浜氬厠鍔涜儗鏅ā寮忋€傚惎鐢ㄥ悗绐椾綋鑳屾櫙灏嗙敱"婧?+ 妯＄硦 + tint + 鍣偣"缁勬垚銆?+    ''' 璇ユā寮忥紙闈?None锛変笅 <see cref="CaptionBackColor"/> / <see cref="CaptionInactiveBackColor"/> 涓嶅啀鐢熸晥銆?+    ''' </summary>
++    <Category("LakeUI - Backdrop"), Description("姣涚幓鐠?/ 浜氬厠鍔涜儗鏅ā寮忋€?), DefaultValue(GetType(BackdropModeEnum), "None")>
++    Public Property BackdropMode As BackdropModeEnum
++        Get
++            Return _姣涚幓鐠冩ā寮?+        End Get
++        Set(value As BackdropModeEnum)
++            If _姣涚幓鐠冩ā寮?= value Then Return
++            _姣涚幓鐠冩ā寮?= value
++            For Each s In _forms.Values
++                搴旂敤姣涚幓鐠冪姸鎬?s)
++            Next
++            閫氱煡閲嶇粯()
++        End Set
++    End Property
++
++    Private _姣涚幓鐠冨浘鐗?As Image = Nothing
++    ''' <summary>
++    ''' 褰?<see cref="BackdropMode"/> = <see cref="BackdropModeEnum.Image"/> 鏃朵娇鐢ㄧ殑铏氭嫙鑳屾櫙鍥俱€?+    ''' 鍥剧墖浠?cover 妯″紡锛堜繚鎸佹瘮渚嬫斁澶ф拺婊″悗灞呬腑瑁佸垏锛夐€傞厤绐楀彛灏哄锛屽啀鍋氭ā绯娿€?+    ''' </summary>
++    <Category("LakeUI - Backdrop"), Description("Image 妯″紡涓嬩綔涓烘ā绯婃簮鐨勫浘鐗囷紙cover 鎾戞弧绐楀彛锛夈€?), DefaultValue(GetType(Image), Nothing)>
++    Public Property BackdropImage As Image
++        Get
++            Return _姣涚幓鐠冨浘鐗?+        End Get
++        Set(value As Image)
++            _姣涚幓鐠冨浘鐗?= value
++            For Each s In _forms.Values
++                If s.Renderer IsNot Nothing AndAlso _姣涚幓鐠冩ā寮?= BackdropModeEnum.Image Then
++                    s.Renderer.SetSource(True, value)
++                    s.Renderer.RequestFrame(s.HostForm.Bounds, True)
++                End If
++            Next
++            閫氱煡閲嶇粯()
++        End Set
++    End Property
++
++    Private _姣涚幓鐠僒int棰滆壊 As Color = Color.FromArgb(120, 32, 32, 32)
++    <Category("LakeUI - Backdrop"), Description("姣涚幓鐠冩ā寮忎笅婵€娲荤獥鍙ｇ殑 tint 鍙犲姞棰滆壊锛堝惈 Alpha锛夈€?), DefaultValue(GetType(Color), "120, 32, 32, 32")>
++    Public Property BackdropTintColor As Color
++        Get
++            Return _姣涚幓鐠僒int棰滆壊
++        End Get
++        Set(value As Color)
++            _姣涚幓鐠僒int棰滆壊 = value : 閫氱煡閲嶇粯()
++        End Set
++    End Property
++
++    Private _姣涚幓鐠僒int澶辩劍棰滆壊 As Color = Color.FromArgb(140, 24, 24, 24)
++    <Category("LakeUI - Backdrop"), Description("姣涚幓鐠冩ā寮忎笅澶辨椿绐楀彛鐨?tint 鍙犲姞棰滆壊銆?), DefaultValue(GetType(Color), "140, 24, 24, 24")>
++    Public Property BackdropTintInactiveColor As Color
++        Get
++            Return _姣涚幓鐠僒int澶辩劍棰滆壊
++        End Get
++        Set(value As Color)
++            _姣涚幓鐠僒int澶辩劍棰滆壊 = value : 閫氱煡閲嶇粯()
++        End Set
++    End Property
++
++    Private _姣涚幓鐠冩ā绯婂崐寰?As Integer = 24
++    <Category("LakeUI - Backdrop"), Description("姣涚幓鐠冩ā绯婂崐寰勶紙閫昏緫鍍忕礌锛夈€? - 96銆?), DefaultValue(24)>
++    Public Property BackdropBlurRadius As Integer
++        Get
++            Return _姣涚幓鐠冩ā绯婂崐寰?+        End Get
++        Set(value As Integer)
++            _姣涚幓鐠冩ā绯婂崐寰?= Math.Max(1, Math.Min(96, value))
++            搴旂敤姣涚幓鐠冨弬鏁?)
++        End Set
++    End Property
++
++    Private _姣涚幓鐠冩ā绯婃鏁?As Integer = 3
++    <Category("LakeUI - Backdrop"), Description("box blur 閫氳繃娆℃暟锛?=鏂规, 3鈮堥珮鏂級銆?), DefaultValue(3)>
++    Public Property BackdropBlurPasses As Integer
++        Get
++            Return _姣涚幓鐠冩ā绯婃鏁?+        End Get
++        Set(value As Integer)
++            _姣涚幓鐠冩ā绯婃鏁?= Math.Max(1, Math.Min(5, value))
++            搴旂敤姣涚幓鐠冨弬鏁?)
++        End Set
++    End Property
++
++    Private _姣涚幓鐠冧笅閲囨牱 As Integer = 4
++    <Category("LakeUI - Backdrop"), Description("涓嬮噰鏍峰€嶇巼锛堝缓璁?1/2/4/6/8锛岃秺澶ц秺蹇秺绯婏級銆?), DefaultValue(4)>
++    Public Property BackdropDownsampleFactor As Integer
++        Get
++            Return _姣涚幓鐠冧笅閲囨牱
++        End Get
++        Set(value As Integer)
++            _姣涚幓鐠冧笅閲囨牱 = Math.Max(1, value)
++            搴旂敤姣涚幓鐠冨弬鏁?)
++        End Set
++    End Property
++
++    Private _姣涚幓鐠冨苟琛屽害 As Integer = Environment.ProcessorCount
++    <Category("LakeUI - Backdrop"), Description("妯＄硦璁＄畻鏈€澶у苟琛屽害銆?), DefaultValue(0)>
++    Public Property BackdropMaxParallelism As Integer
++        Get
++            Return _姣涚幓鐠冨苟琛屽害
++        End Get
++        Set(value As Integer)
++            _姣涚幓鐠冨苟琛屽害 = If(value <= 0, Environment.ProcessorCount, value)
++            搴旂敤姣涚幓鐠冨弬鏁?)
++        End Set
++    End Property
++
++    Private _姣涚幓鐠冨櫔鐐逛笉閫忔槑搴?As Byte = 18
++    <Category("LakeUI - Backdrop"), Description("鍣偣鍙犲姞灞備笉閫忔槑搴?(0-255)銆? = 鍏抽棴鍣偣銆?), DefaultValue(CByte(18))>
++    Public Property BackdropNoiseOpacity As Byte
++        Get
++            Return _姣涚幓鐠冨櫔鐐逛笉閫忔槑搴?+        End Get
++        Set(value As Byte)
++            _姣涚幓鐠冨櫔鐐逛笉閫忔槑搴?= value : 閫氱煡閲嶇粯()
++        End Set
++    End Property
++
++    Private _姣涚幓鐠冨櫔鐐圭缉鏀?As Single = 1.0F
++    <Category("LakeUI - Backdrop"), Description("鍣偣 tile 缂╂斁锛?1 棰楃矑鍙樼矖锛夈€?), DefaultValue(1.0F)>
++    Public Property BackdropNoiseScale As Single
++        Get
++            Return _姣涚幓鐠冨櫔鐐圭缉鏀?+        End Get
++        Set(value As Single)
++            _姣涚幓鐠冨櫔鐐圭缉鏀?= Math.Max(0.1F, value)
++            搴旂敤姣涚幓鐠冨弬鏁?)
++        End Set
++    End Property
++
++    Private _姣涚幓鐠冨抚鐜?As Integer = 15
++    <Category("LakeUI - Backdrop"), Description("Auto 妯″紡甯告€佸埛鏂板抚鐜?(0-60)銆? = 浠呬簨浠堕┍鍔紙绐楀彛绉诲姩 / 璋冩暣澶у皬缁撴潫 / 鏄剧ず / 婵€娲伙級銆備粎鍦?BackdropExcludeFromCapture=True 鏃剁敓鏁堬紱鍏抽棴璇ュ紑鍏虫椂寮哄埗绾簨浠堕┍鍔ㄣ€?), DefaultValue(15)>
++    Public Property BackdropFrameRate As Integer
++        Get
++            Return _姣涚幓鐠冨抚鐜?+        End Get
++        Set(value As Integer)
++            _姣涚幓鐠冨抚鐜?= Math.Max(0, Math.Min(60, value))
++            For Each s In _forms.Values : 閲嶇疆姣涚幓鐠僒ick(s) : Next
++        End Set
++    End Property
++
++    Private _姣涚幓鐠冩帓闄ゆ埅灞?As Boolean = False
++    ''' <summary>
++    ''' Auto 妯″紡涓嬫槸鍚﹀惎鐢?<c>WDA_EXCLUDEFROMCAPTURE</c> 鎶婃湰绐楀彛鎺掗櫎鍦ㄦ姄灞忎箣澶栥€?+    ''' True 鈥?瀹夊叏闃茶嚜鐓э紝鍙惎鐢ㄥ父鎬佸懆鏈熷埛鏂帮紱鍓綔鐢細绯荤粺鎴浘銆佸睆骞曞叡浜€佸綍灞忓潎鏃犳硶鎹曡幏鏈獥鍙ｃ€?+    ''' False锛堥粯璁わ級 鈥?涓嶅惎鐢?WDA锛屾埅鍥惧伐鍏峰彲浠ユ甯告埅鍒扮獥鍙ｏ紱涓洪槻姝?鑷繁鎶撹嚜宸?浜х敓閫掑綊鍙嶉绾硅矾锛?+    ''' 寮哄埗浣跨敤绾簨浠堕┍鍔ㄥ埛鏂帮紙绐楀彛绉诲姩 / 璋冩暣澶у皬缁撴潫 / 鏄剧ず / 婵€娲伙級锛?see cref="BackdropFrameRate"/> 琚拷鐣ャ€?+    ''' Image 妯″紡涓庢湰灞炴€ф棤鍏筹細姘歌繙涓嶆姄灞忋€佹案杩滀笉鍚敤 WDA銆?+    ''' </summary>
++    <Category("LakeUI - Backdrop"), Description("Auto 妯″紡涓嬪惎鐢?WDA_EXCLUDEFROMCAPTURE 闃茶嚜鐓э紙True 鎵嶅厑璁稿懆鏈熷埛鏂帮紱鍓綔鐢細绯荤粺鎴浘鎴笉鍒版湰绐楀彛锛夈€?), DefaultValue(False)>
++    Public Property BackdropExcludeFromCapture As Boolean
++        Get
++            Return _姣涚幓鐠冩帓闄ゆ埅灞?+        End Get
++        Set(value As Boolean)
++            If _姣涚幓鐠冩帓闄ゆ埅灞?= value Then Return
++            _姣涚幓鐠冩帓闄ゆ埅灞?= value
++            For Each s In _forms.Values
++                搴旂敤姣涚幓鐠冪姸鎬?s)
++            Next
++        End Set
++    End Property
++
++    Private _杈规鑷姩棰滆壊 As Boolean = False
++    <Category("LakeUI - Backdrop"), Description("鏄惁鍦ㄦ瘺鐜荤拑妯″紡涓嬩粠鑳屾櫙骞冲潎鑹茶嚜鍔ㄦ淳鐢熻竟妗嗛鑹诧紙瑕嗙洊 BorderColor / BorderInactiveColor锛夈€?), DefaultValue(False)>
++    Public Property BorderAutoColor As Boolean
++        Get
++            Return _杈规鑷姩棰滆壊
++        End Get
++        Set(value As Boolean)
++            _杈规鑷姩棰滆壊 = value : 閫氱煡閲嶇粯()
++        End Set
++    End Property
++
++    Private _鍒嗗眰闃村奖鑷姩棰滆壊 As Boolean = False
++    <Category("LakeUI - Backdrop"), Description("鏄惁鍦ㄦ瘺鐜荤拑妯″紡涓嬩粠鑳屾櫙骞冲潎鑹茶嚜鍔ㄦ淳鐢熷垎灞傞槾褰遍鑹诧紙瑕嗙洊 LayerShadowColor锛夈€?), DefaultValue(False)>
++    Public Property LayerShadowAutoColor As Boolean
++        Get
++            Return _鍒嗗眰闃村奖鑷姩棰滆壊
++        End Get
++        Set(value As Boolean)
++            _鍒嗗眰闃村奖鑷姩棰滆壊 = value
++            For Each s In _forms.Values
++                If s.ShadowForm IsNot Nothing Then s.ShadowForm.ForceReset()
++                鏇存柊闃村奖(s)
++            Next
++        End Set
++    End Property
++
++    Private Sub 搴旂敤姣涚幓鐠冨弬鏁?)
++        For Each s In _forms.Values
++            s.Renderer?.ApplyParameters(_姣涚幓鐠冩ā绯婂崐寰? _姣涚幓鐠冩ā绯婃鏁? _姣涚幓鐠冧笅閲囨牱,
++                                         _姣涚幓鐠冨苟琛屽害, _姣涚幓鐠冨櫔鐐圭缉鏀?
++        Next
++        閫氱煡閲嶇粯()
++    End Sub
++
++    Private Sub 搴旂敤姣涚幓鐠冪姸鎬?s As PerFormState)
++        If s Is Nothing OrElse s.HostForm Is Nothing OrElse Not s.HostForm.IsHandleCreated Then Return
++        Dim mode As BackdropModeEnum = _姣涚幓鐠冩ā寮?+        ' Auto / CaptionOnly 妯″紡闇€瑕?OS 鏀寔 WDA_EXCLUDEFROMCAPTURE锛屽惁鍒欓檷绾т负 None
++        Dim shouldEnable As Boolean = (mode = BackdropModeEnum.Image) OrElse
++                                      ((mode = BackdropModeEnum.Auto OrElse mode = BackdropModeEnum.CaptionOnly) AndAlso IsBackdropSupported)
++
++        If shouldEnable Then
++            ' WDA_EXCLUDEFROMCAPTURE 浠呭湪 Auto / CaptionOnly 妯″紡涓旂敤鎴锋樉寮忓紑鍚?BackdropExcludeFromCapture 鏃跺惎鐢細
++            '   - Image 妯″紡涓嶆姄灞忥紝姘歌繙涓嶉渶瑕?WDA銆?+            '   - Auto / CaptionOnly + 鍏抽棴 WDA锛氭埅鍥惧伐鍏疯兘鎴埌鏈獥鍙ｏ紝浣嗚嫢寮€鍚懆鏈熷埛鏂颁細鍑虹幇"閫掑綊鑷収"绾硅矾 鈬?寮哄埗绾簨浠堕┍鍔ㄣ€?+            '   - Auto / CaptionOnly + 寮€鍚?WDA锛氬彲瀹夊叏鍛ㄦ湡鍒锋柊锛屼絾绯荤粺鎴浘 / 褰曞睆鍧囨棤娉曟崟鑾锋湰绐楀彛銆?+            If (mode = BackdropModeEnum.Auto OrElse mode = BackdropModeEnum.CaptionOnly) AndAlso _姣涚幓鐠冩帓闄ゆ埅灞?Then
++                SetWindowDisplayAffinity(s.HostForm.Handle, WDA_EXCLUDEFROMCAPTURE)
++            Else
++                SetWindowDisplayAffinity(s.HostForm.Handle, WDA_NONE)
++            End If
++            If s.Renderer Is Nothing Then
++                s.Renderer = New BackdropRenderer(s.HostForm)
++                s.Renderer.ApplyParameters(_姣涚幓鐠冩ā绯婂崐寰? _姣涚幓鐠冩ā绯婃鏁? _姣涚幓鐠冧笅閲囨牱,
++                                            _姣涚幓鐠冨苟琛屽害, _姣涚幓鐠冨櫔鐐圭缉鏀?
++                AddHandler s.Renderer.AverageCommitted, Sub(sender2, ev2)
++                                                            If _鍒嗗眰闃村奖鑷姩棰滆壊 Then
++                                                                If s.ShadowForm IsNot Nothing Then s.ShadowForm.ForceReset()
++                                                                鏇存柊闃村奖(s)
++                                                            End If
++                                                        End Sub
++            End If
++            ' 閰嶇疆婧?+            s.Renderer.SetSource(mode = BackdropModeEnum.Image, _姣涚幓鐠冨浘鐗?
++            ' Auto / CaptionOnly 妯″紡涓旀湭闀挎湡鍚敤 WDA 鏃讹紝璁?Renderer 鍦ㄦ瘡娆?BitBlt 鐬棿涓存椂鎺掗櫎鑷韩锛?+            ' 閬垮厤浜嬩欢椹卞姩鎶撳睆鎶撳埌鑷繁浜х敓闀滃儚鍙嶉銆?+            s.Renderer.SetTransientExcludeOnCapture(
++                (mode = BackdropModeEnum.Auto OrElse mode = BackdropModeEnum.CaptionOnly) AndAlso Not _姣涚幓鐠冩帓闄ゆ埅灞?
++            ' 棣栧抚
++            s.Renderer.RequestFrame(鑾峰彇姣涚幓鐠冩崟鑾峰尯鍩?s.HostForm), True)
++            閲嶇疆姣涚幓鐠僒ick(s)
++        Else
++            SetWindowDisplayAffinity(s.HostForm.Handle, WDA_NONE)
++            If s.BackdropTimer IsNot Nothing Then
++                s.BackdropTimer.Stop()
++                s.BackdropTimer.Dispose()
++                s.BackdropTimer = Nothing
++            End If
++            If s.Renderer IsNot Nothing Then
++                s.Renderer.Dispose()
++                s.Renderer = Nothing
++            End If
++        End If
++    End Sub
++
++    Private Sub 閲嶇疆姣涚幓鐠僒ick(s As PerFormState)
++        If s Is Nothing Then Return
++
++        ' 鍛ㄦ湡 Tick 浠呭湪 Auto 妯″紡 + 鍚敤 BackdropExcludeFromCapture + 甯х巼 > 0 鏃跺惎鐢細
++        '   - None锛氭湭鍚敤姣涚幓鐠冦€?+        '   - Image锛氭簮鏄潤鎬佸浘鐗囷紝杈撳嚭甯у彧鍙栧喅浜庣獥鍙ｅ昂瀵革紙浜嬩欢椹卞姩鍗冲彲锛氬昂瀵稿彉鍖栥€佹樉绀恒€佹縺娲伙級銆?+        '   - Auto 浣嗘湭鍚敤 BackdropExcludeFromCapture锛氭姄灞忎緷璧栫灛鏃?WDA 鍒囨崲闃茶嚜鐓э紝
++        '     鑰?SetWindowDisplayAffinity 鐨勭姸鎬佹仮澶嶉渶瑕佹暟涓?DWM 鍚堟垚甯ф墠鑳藉畬鎴愶紱楂橀缈昏浆浼?+        '     璁?DWM 闀挎椂闂村浜?EXCLUDE 鐘舵€侊紝瀵艰嚧绯荤粺鎴浘鏁翠綋澶辨晥锛岃繚鑳屽紑鍏冲垵琛?鈬?寮哄埗绾簨浠堕┍鍔ㄣ€?+        '   - Auto + 闀挎湡 WDA + 甯х巼=0锛氱敤鎴锋樉寮忛€夋嫨绾簨浠堕┍鍔ㄣ€?+        Dim needTick As Boolean = (_姣涚幓鐠冩ā寮?= BackdropModeEnum.Auto OrElse _姣涚幓鐠冩ā寮?= BackdropModeEnum.CaptionOnly) AndAlso
++                                  IsBackdropSupported AndAlso
++                                  _姣涚幓鐠冩帓闄ゆ埅灞?AndAlso
++                                  s.Renderer IsNot Nothing AndAlso
++                                  _姣涚幓鐠冨抚鐜?> 0
++
++        If Not needTick Then
++            If s.BackdropTimer IsNot Nothing Then
++                s.BackdropTimer.Stop()
++                s.BackdropTimer.Dispose()
++                s.BackdropTimer = Nothing
++            End If
++            Return
++        End If
++
++        Dim interval As Integer = Math.Max(16, 1000 \ _姣涚幓鐠冨抚鐜?
++        If s.BackdropTimer Is Nothing Then
++            s.BackdropTimer = New Timer() With {.Interval = interval}
++            AddHandler s.BackdropTimer.Tick, Sub(sender, ev) 姣涚幓鐠僒ick(s)
++            s.BackdropTimer.Start()
++        Else
++            s.BackdropTimer.Interval = interval
++            If Not s.BackdropTimer.Enabled Then s.BackdropTimer.Start()
++        End If
++    End Sub
++
++    Private Sub 姣涚幓鐠僒ick(s As PerFormState)
++        If s Is Nothing OrElse s.Renderer Is Nothing OrElse s.HostForm Is Nothing Then Return
++        ' 闃插尽鎬ф棭杩旓細浠?Auto / CaptionOnly 妯″紡鎵嶉渶瑕佸父鎬佸懆鏈熼噸鎶撳睆 + 閲嶆ā绯娿€?+        ' Image 妯″紡婧愪笉鍙橈紝鐞嗚涓婁笉浼氬埌杈炬澶勶紙閲嶇疆姣涚幓鐠僒ick 宸插仠 Timer锛夛紝
++        ' 浣嗕繚鐣欒繖灞備繚鎶や互闃叉妯″紡鍒囨崲鏃舵畫鐣欑殑 Timer Tick 瑙﹀彂鏃犳剰涔夌殑閲嶆ā绯娿€?+        If _姣涚幓鐠冩ā寮?<> BackdropModeEnum.Auto AndAlso _姣涚幓鐠冩ā寮?<> BackdropModeEnum.CaptionOnly Then Return
++        Dim frm = s.HostForm
++        If frm.IsDisposed OrElse Not frm.Visible Then Return
++        If frm.WindowState = FormWindowState.Minimized Then Return
++        If s.IsInSizeMove Then Return
++        s.Renderer.RequestFrame(鑾峰彇姣涚幓鐠冩崟鑾峰尯鍩?frm), False)
++    End Sub
++
++#End Region
++
+ #Region "灞炴€?- 鍔ㄧ敾"
+ 
+     Private _鏄剧ず鍔ㄧ敾妯″紡 As WindowShowAnimationMode = WindowShowAnimationMode.DWM
+@@ -949,6 +1428,7 @@ Public Class ThisIsYourWindow
+     End Property
+ 
+     Private _鍔ㄧ敾鎸佺画鏃堕棿 As Integer = 200
++    ''' <summary>Win32 鑷畾涔夋笎鍏?/ 娓愬嚭鍔ㄧ敾鐨勬寔缁椂闂达紙姣锛夛紝鏈€灏?50 姣銆?/summary>
+     <Category("LakeUI"), Description("娓愬叆/娓愬嚭鍔ㄧ敾鐨勬寔缁椂闂达紙姣锛夈€?), DefaultValue(200)>
+     Public Property AnimationDuration As Integer
+         Get
+@@ -963,8 +1443,11 @@ Public Class ThisIsYourWindow
+ 
+ #Region "浜嬩欢"
+ 
++    ''' <summary>褰撴爣棰樻爮瀹屾垚榛樿缁樺埗鍚庤Е鍙戯紝渚夸簬瀹夸富鍦ㄦ爣棰樻爮涓婂彔鍔犺嚜瀹氫箟鍐呭锛堜緥濡傚窘绔犮€佹爣绛撅級銆?/summary>
+     Public Event CaptionPaint(sender As Object, e As CaptionPaintEventArgs)
++    ''' <summary>褰撶獥鍙ｇ殑婵€娲荤姸鎬佸彂鐢熷彉鍖栨椂瑙﹀彂锛屽彲鐢ㄤ簬鑱斿姩澶栭儴 UI 鐨勯珮浜?/ 浣庝寒鏄剧ず銆?/summary>
+     Public Event ActiveChanged(sender As Object, e As ActiveChangedEventArgs)
++    ''' <summary>褰撻粯璁ゅ懡涓祴璇曠粨鏋滀负 HTCLIENT 鏃惰Е鍙戯紝鍏佽灏嗗鎴峰尯鏌愪簺鍖哄煙璇嗗埆涓烘爣棰樸€佹寜閽垨璋冩暣杈规銆?/summary>
+     Public Event CustomHitTest(sender As Object, e As CustomHitTestEventArgs)
+ 
+     Public Class CaptionPaintEventArgs : Inherits EventArgs
+@@ -999,10 +1482,15 @@ Public Class ThisIsYourWindow
+ 
+ #Region "鍙灞炴€?
+ 
++    ''' <summary>褰撳墠宸查檮鍔狅紙閫氳繃 <see cref="Attach"/>锛夌殑鎵€鏈夌獥浣撶殑鍙蹇収闆嗗悎銆?/summary>
+     <Browsable(False)>
+     Public ReadOnly Property AttachedForms As IReadOnlyList(Of Form)
+         Get
+-            Return _forms.Values.Select(Function(s) s.HostForm).ToList()
++            Dim list As New List(Of Form)(_forms.Count)
++            For Each s In _forms.Values
++                list.Add(s.HostForm)
++            Next
++            Return list
+         End Get
+     End Property
+ 
+@@ -1016,34 +1504,54 @@ Public Class ThisIsYourWindow
+         Dim bw As Integer = _鎸夐挳瀹藉害
+         Dim bh As Integer = _鏍囬鏍忛珮搴?         Dim sp As Integer = _鎸夐挳闂磋窛
+-
+-        Dim 鍒楄〃 As New List(Of Integer)
+-        If _鎸夐挳浣嶇疆 = ButtonPositionEnum.Right Then
+-            If s.HostForm.MinimizeBox Then 鍒楄〃.Add(HTMINBUTTON)
+-            If s.HostForm.MaximizeBox Then 鍒楄〃.Add(HTMAXBUTTON)
+-            鍒楄〃.Add(HTCLOSE)
+-            Dim totalW As Integer = 鍒楄〃.Count * bw + Math.Max(0, 鍒楄〃.Count - 1) * sp
++        Dim hasMin As Boolean = s.HostForm.MinimizeBox
++        Dim hasMax As Boolean = s.HostForm.MaximizeBox
++        Dim posRight As Boolean = (_鎸夐挳浣嶇疆 = ButtonPositionEnum.Right)
++        Dim iconNone As Boolean = (_鍥炬爣鏉ユ簮 = IconSourceEnum.None)
++
++        ' 甯冨眬绛惧悕锛氭墍鏈夊奖鍝嶆寜閽?鍥炬爣浣嶇疆鐨勮緭鍏ユ墦鍖呭埌涓€涓?Long锛屽懡涓嵆璺宠繃閲嶇畻銆?+        Dim sig As Long = (CLng(w) And &HFFFFL) Or
++                          (CLng(bw And &HFFF) << 16) Or
++                          (CLng(bh And &HFFF) << 28) Or
++                          (CLng(sp And &HFF) << 40) Or
++                          (CLng(_鍥炬爣澶у皬 And &HFF) << 48) Or
++                          (If(hasMin, 1L, 0L) << 56) Or
++                          (If(hasMax, 1L, 0L) << 57) Or
++                          (If(posRight, 1L, 0L) << 58) Or
++                          (If(iconNone, 1L, 0L) << 59) Or
++                          (CLng(_鍥炬爣宸﹁竟璺?And &HF) << 60)
++        If s.LayoutSignature = sig Then Return
++        s.LayoutSignature = sig
++
++        ' 鐢ㄦ爤鏁扮粍鏇夸唬 List(Of Integer)锛岄伩鍏嶈绠?+ 闆嗗悎鍒嗛厤銆?+        Dim 鍒楄〃(2) As Integer
++        Dim 鏁伴噺 As Integer = 0
++        If posRight Then
++            If hasMin Then 鍒楄〃(鏁伴噺) = HTMINBUTTON : 鏁伴噺 += 1
++            If hasMax Then 鍒楄〃(鏁伴噺) = HTMAXBUTTON : 鏁伴噺 += 1
++            鍒楄〃(鏁伴噺) = HTCLOSE : 鏁伴噺 += 1
++            Dim totalW As Integer = 鏁伴噺 * bw + Math.Max(0, 鏁伴噺 - 1) * sp
+             Dim startX As Integer = w - totalW
+-            For i = 0 To 鍒楄〃.Count - 1
++            For i = 0 To 鏁伴噺 - 1
+                 Dim r As New Rectangle(startX + i * (bw + sp), 0, bw, bh)
+                 Select Case 鍒楄〃(i) : Case HTCLOSE : s.CloseRect = r : Case HTMAXBUTTON : s.MaxRect = r : Case HTMINBUTTON : s.MinRect = r : End Select
+             Next
+         Else
+-            鍒楄〃.Add(HTCLOSE)
+-            If s.HostForm.MaximizeBox Then 鍒楄〃.Add(HTMAXBUTTON)
+-            If s.HostForm.MinimizeBox Then 鍒楄〃.Add(HTMINBUTTON)
+-            For i = 0 To 鍒楄〃.Count - 1
++            鍒楄〃(鏁伴噺) = HTCLOSE : 鏁伴噺 += 1
++            If hasMax Then 鍒楄〃(鏁伴噺) = HTMAXBUTTON : 鏁伴噺 += 1
++            If hasMin Then 鍒楄〃(鏁伴噺) = HTMINBUTTON : 鏁伴噺 += 1
++            For i = 0 To 鏁伴噺 - 1
+                 Dim r As New Rectangle(i * (bw + sp), 0, bw, bh)
+                 Select Case 鍒楄〃(i) : Case HTCLOSE : s.CloseRect = r : Case HTMAXBUTTON : s.MaxRect = r : Case HTMINBUTTON : s.MinRect = r : End Select
+             Next
+         End If
+-        If Not s.HostForm.MaximizeBox Then s.MaxRect = Rectangle.Empty
+-        If Not s.HostForm.MinimizeBox Then s.MinRect = Rectangle.Empty
++        If Not hasMax Then s.MaxRect = Rectangle.Empty
++        If Not hasMin Then s.MinRect = Rectangle.Empty
+ 
+-        If _鍥炬爣鏉ユ簮 <> IconSourceEnum.None Then
+-            Dim iconY As Integer = (_鏍囬鏍忛珮搴?- _鍥炬爣澶у皬) \ 2
+-            If _鎸夐挳浣嶇疆 = ButtonPositionEnum.Left Then
+-                Dim totalBtnW As Integer = 鍒楄〃.Count * bw + Math.Max(0, 鍒楄〃.Count - 1) * sp
++        If Not iconNone Then
++            Dim iconY As Integer = (bh - _鍥炬爣澶у皬) \ 2
++            If Not posRight Then
++                Dim totalBtnW As Integer = 鏁伴噺 * bw + Math.Max(0, 鏁伴噺 - 1) * sp
+                 s.IconRect = New Rectangle(totalBtnW + _鍥炬爣宸﹁竟璺? iconY, _鍥炬爣澶у皬, _鍥炬爣澶у皬)
+             Else
+                 s.IconRect = New Rectangle(_鍥炬爣宸﹁竟璺? iconY, _鍥炬爣澶у皬, _鍥炬爣澶у皬)
+@@ -1066,21 +1574,42 @@ Public Class ThisIsYourWindow
+         Dim w As Integer = s.HostForm.ClientSize.Width
+         Dim h As Integer = s.HostForm.ClientSize.Height
+         Dim active As Boolean = s.Activated
++        Dim brush As SolidBrush = _鍏变韩鐢诲埛
+ 
+         g.SmoothingMode = SmoothingMode.Default
+         g.PixelOffsetMode = PixelOffsetMode.Default
+ 
++        Dim useBackdrop As Boolean = (_姣涚幓鐠冩ā寮?<> BackdropModeEnum.None) AndAlso
++                                      s.Renderer IsNot Nothing AndAlso
++                                      s.Renderer.HasFrame
++        Dim captionOnly As Boolean = (_姣涚幓鐠冩ā寮?= BackdropModeEnum.CaptionOnly)
++        Dim fullRect As New Rectangle(0, 0, w, h)
++        Dim backdropRect As Rectangle = If(captionOnly,
++                                           New Rectangle(0, 0, w, Math.Min(h, _鏍囬鏍忛珮搴?),
++                                           fullRect)
++        If useBackdrop Then
++            s.Renderer.DrawTo(g, backdropRect)
++            Dim tint = If(active, _姣涚幓鐠僒int棰滆壊, _姣涚幓鐠僒int澶辩劍棰滆壊)
++            If tint.A > 0 Then
++                brush.Color = tint
++                g.FillRectangle(brush, backdropRect)
++            End If
++            If _姣涚幓鐠冨櫔鐐逛笉閫忔槑搴?> 0 Then
++                s.Renderer.DrawNoise(g, backdropRect, _姣涚幓鐠冨櫔鐐逛笉閫忔槑搴?
++            End If
++        End If
++
+         Dim captionRect As New Rectangle(0, 0, w, _鏍囬鏍忛珮搴?
+-        Using brush As New SolidBrush(If(active, _鏍囬鏍忚儗鏅鑹? _鏍囬鏍忓け鐒﹁儗鏅鑹?)
++        If Not useBackdrop Then
++            brush.Color = If(active, _鏍囬鏍忚儗鏅鑹? _鏍囬鏍忓け鐒﹁儗鏅鑹?
+             g.FillRectangle(brush, captionRect)
+-        End Using
++        End If
+ 
+         缁樺埗鏍囬鏍忚儗鏅浘鐗?g, captionRect)
+ 
+         If _鏍囬鏍忛伄缃╅鑹?A > 0 Then
+-            Using brush As New SolidBrush(_鏍囬鏍忛伄缃╅鑹?
+-                g.FillRectangle(brush, captionRect)
+-            End Using
++            brush.Color = _鏍囬鏍忛伄缃╅鑹?+            g.FillRectangle(brush, captionRect)
+         End If
+ 
+         缁樺埗鍥炬爣(g, s)
+@@ -1092,12 +1621,20 @@ Public Class ThisIsYourWindow
+ 
+         If _杈规鍘氬害 > 0 Then
+             Dim bdr As Integer = _杈规鍘氬害
+-            Using brush As New SolidBrush(If(active, _杈规棰滆壊, _杈规澶辩劍棰滆壊))
+-                g.FillRectangle(brush, 0, 0, w, bdr)
+-                g.FillRectangle(brush, 0, h - bdr, w, bdr)
+-                g.FillRectangle(brush, 0, bdr, bdr, h - bdr * 2)
+-                g.FillRectangle(brush, w - bdr, bdr, bdr, h - bdr * 2)
+-            End Using
++            Dim bdrColor As Color
++            If useBackdrop AndAlso _杈规鑷姩棰滆壊 Then
++                bdrColor = s.Renderer.DeriveBorderColor(active, If(active, _杈规棰滆壊, _杈规澶辩劍棰滆壊))
++            Else
++                bdrColor = If(active, _杈规棰滆壊, _杈规澶辩劍棰滆壊)
++            End If
++            brush.Color = bdrColor
++            ' 鍗曟 GDI+ 璋冪敤缁樺埗鍥涙潯杈癸紝鑺傜渷鐘舵€佸垏鎹?+            Dim borderRects(3) As Rectangle
++            borderRects(0) = New Rectangle(0, 0, w, bdr)
++            borderRects(1) = New Rectangle(0, h - bdr, w, bdr)
++            borderRects(2) = New Rectangle(0, bdr, bdr, h - bdr * 2)
++            borderRects(3) = New Rectangle(w - bdr, bdr, bdr, h - bdr * 2)
++            g.FillRectangles(brush, borderRects)
+         End If
+ 
+         RaiseEvent CaptionPaint(Me, New CaptionPaintEventArgs(g, captionRect, active, s.HostForm))
+@@ -1208,11 +1745,13 @@ Public Class ThisIsYourWindow
+                                   rect.Width - _鎸夐挳鍐呰竟璺?Horizontal, rect.Height - _鎸夐挳鍐呰竟璺?Vertical)
+         If vis.Width <= 0 OrElse vis.Height <= 0 Then Return
+ 
++        Dim brush As SolidBrush = _鍏变韩鐢诲埛
+         If bgColor <> Color.Transparent AndAlso bgColor.A > 0 Then
+             Dim r As Integer = Math.Min(_鎸夐挳鍦嗚鍗婂緞, Math.Min(vis.Width, vis.Height) \ 2)
++            brush.Color = bgColor
+             If r > 0 Then
+                 g.SmoothingMode = SmoothingMode.AntiAlias
+-                Using brush As New SolidBrush(bgColor), path As New GraphicsPath()
++                Using path As New GraphicsPath()
+                     Dim d As Integer = r * 2
+                     path.AddArc(vis.X, vis.Y, d, d, 180, 90)
+                     path.AddArc(vis.Right - d, vis.Y, d, d, 270, 90)
+@@ -1223,31 +1762,32 @@ Public Class ThisIsYourWindow
+                 End Using
+                 g.SmoothingMode = SmoothingMode.Default
+             Else
+-                Using brush As New SolidBrush(bgColor) : g.FillRectangle(brush, vis) : End Using
++                g.FillRectangle(brush, vis)
+             End If
+         End If
+ 
+         Dim sz As Integer = _鎸夐挳绗﹀彿澶у皬
+         Dim cx As Integer = vis.X + (vis.Width - sz) \ 2
+         Dim cy As Integer = vis.Y + (vis.Height - sz) \ 2
++        Dim pen As Pen = _鍏变韩鐢荤瑪
++        pen.Color = symColor
++        pen.Width = _鎸夐挳绗﹀彿绾垮
+         g.SmoothingMode = SmoothingMode.AntiAlias
+-        Using pen As New Pen(symColor, _鎸夐挳绗﹀彿绾垮)
+-            Select Case htValue
+-                Case HTCLOSE
+-                    g.DrawLine(pen, cx, cy, cx + sz, cy + sz)
+-                    g.DrawLine(pen, cx + sz, cy, cx, cy + sz)
+-                Case HTMAXBUTTON
+-                    If s.HostForm.WindowState = FormWindowState.Maximized Then
+-                        Dim off As Integer = CInt(sz * 0.25)
+-                        g.DrawRectangle(pen, cx + off, cy, sz - off, sz - off)
+-                        g.DrawRectangle(pen, cx, cy + off, sz - off, sz - off)
+-                    Else
+-                        g.DrawRectangle(pen, cx, cy, sz, sz)
+-                    End If
+-                Case HTMINBUTTON
+-                    g.DrawLine(pen, cx, cy + sz \ 2, cx + sz, cy + sz \ 2)
+-            End Select
+-        End Using
++        Select Case htValue
++            Case HTCLOSE
++                g.DrawLine(pen, cx, cy, cx + sz, cy + sz)
++                g.DrawLine(pen, cx + sz, cy, cx, cy + sz)
++            Case HTMAXBUTTON
++                If s.HostForm.WindowState = FormWindowState.Maximized Then
++                    Dim off As Integer = CInt(sz * 0.25)
++                    g.DrawRectangle(pen, cx + off, cy, sz - off, sz - off)
++                    g.DrawRectangle(pen, cx, cy + off, sz - off, sz - off)
++                Else
++                    g.DrawRectangle(pen, cx, cy, sz, sz)
++                End If
++            Case HTMINBUTTON
++                g.DrawLine(pen, cx, cy + sz \ 2, cx + sz, cy + sz \ 2)
++        End Select
+         g.SmoothingMode = SmoothingMode.Default
+     End Sub
+ 
+@@ -1339,6 +1879,7 @@ Public Class ThisIsYourWindow
+         鏇存柊绐楀彛鍐呰竟璺?s)
+         targetForm.Invalidate()
+         鏇存柊闃村奖(s)
++        搴旂敤姣涚幓鐠冪姸鎬?s)
+     End Sub
+ 
+     ''' <summary>浠庢寚瀹氱獥浣撳垎绂汇€?/summary>
+@@ -1351,6 +1892,19 @@ Public Class ThisIsYourWindow
+         s.CachedIconBitmap?.Dispose()
+         s.Interceptor?.ReleaseHandle()
+         閿€姣侀槾褰?s)
++        If s.BackdropTimer IsNot Nothing Then
++            s.BackdropTimer.Stop()
++            s.BackdropTimer.Dispose()
++            s.BackdropTimer = Nothing
++        End If
++        If s.Renderer IsNot Nothing Then
++            Try
++                SetWindowDisplayAffinity(targetForm.Handle, WDA_NONE)
++            Catch
++            End Try
++            s.Renderer.Dispose()
++            s.Renderer = Nothing
++        End If
+         RemoveHandler targetForm.Paint, AddressOf 瀹夸富绐楀彛_Paint
+         RemoveHandler targetForm.FormClosed, AddressOf 瀹夸富绐楀彛_FormClosed
+         targetForm.Padding = s.OriginalPadding
+@@ -1556,6 +2110,14 @@ Public Class ThisIsYourWindow
+                     _owner.RecalculateButtonBounds(_state)
+                     _state.HostForm?.Invalidate()
+                     _owner.鏇存柊闃村奖(_state)
++                    ' 妫€娴?浠庢渶灏忓寲鎭㈠"锛氭鏃舵闈?DC 涓庝笂涓€娆℃姄灞忔墍鍦ㄧ殑浣嶇疆鍙兘宸插畬鍏ㄤ笉鍚岋紝
++                    ' 蹇呴』寮哄埗鍒锋柊涓€娆℃瘺鐜荤拑甯э紙鍚屾椂 commit 骞冲潎鑹诧紝鍒锋柊闃村奖鑷姩棰滆壊锛夈€?+                    Dim minimizedNow As Boolean = (_state.HostForm IsNot Nothing AndAlso
++                                                   _state.HostForm.WindowState = FormWindowState.Minimized)
++                    If _state.WasMinimized AndAlso Not minimizedNow Then
++                        _state.Renderer?.RequestFrame(_owner.鑾峰彇姣涚幓鐠冩崟鑾峰尯鍩?_state.HostForm), True)
++                    End If
++                    _state.WasMinimized = minimizedNow
+                     Return
+ 
+                 Case WM_ACTIVATE
+@@ -1565,6 +2127,14 @@ Public Class ThisIsYourWindow
+                     _owner.瑙﹀彂婵€娲荤姸鎬佹敼鍙?activated, _state.HostForm)
+                     _state.HostForm?.Invalidate()
+                     If activated Then _owner.鏇存柊闃村奖(_state)
++                    ' 鑾峰緱鐒︾偣鏃跺己鍒跺埛鏂颁竴娆℃瘺鐜荤拑甯э細
++                    '   - 鐒︾偣鍒囨崲闂撮殧閫氬父杩滃ぇ浜?DWM 鎭㈠ WDA_NONE 鎵€闇€鏃堕棿锛岀灛鏃跺垏鎹㈠畨鍏紱
++                    '   - 鐢ㄦ埛鏈熸湜鍒囧洖绐楀彛鏃剁湅鍒版渶鏂版闈㈣儗鏅€?+                    If activated AndAlso _state.Renderer IsNot Nothing AndAlso
++                       _state.HostForm IsNot Nothing AndAlso _state.HostForm.Visible AndAlso
++                       _state.HostForm.WindowState <> FormWindowState.Minimized Then
++                        _state.Renderer.RequestFrame(_owner.鑾峰彇姣涚幓鐠冩崟鑾峰尯鍩?_state.HostForm), True)
++                    End If
+                     Return
+ 
+                 Case WM_MOVE
+@@ -1574,12 +2144,25 @@ Public Class ThisIsYourWindow
+ 
+                 Case WM_ENTERSIZEMOVE
+                     _state.IsInSizeMove = True
++                    ' 鏆傚仠甯告€?Tick
++                    _state.BackdropTimer?.Stop()
++                    ' Auto / CaptionOnly 妯″紡涓嬭Е鍙?鍔ㄤ綔寮€濮?棣栧抚锛堟姄涓€娆″綋鍓嶆闈紝鎷栧姩鏈熼棿澶嶇敤锛夈€?+                    ' Image 妯″紡婧愭槸闈欐€佸浘锛岃繘鍏?sizemove 涓嶉渶瑕侀噸妯＄硦銆?+                    If (_owner._姣涚幓鐠冩ā寮?= BackdropModeEnum.Auto OrElse _owner._姣涚幓鐠冩ā寮?= BackdropModeEnum.CaptionOnly) AndAlso _state.Renderer IsNot Nothing Then
++                        _state.Renderer.RequestFrame(_owner.鑾峰彇姣涚幓鐠冩崟鑾峰尯鍩?_state.HostForm), False)
++                    End If
+                     MyBase.WndProc(m)
+                     Return
+ 
+                 Case WM_EXITSIZEMOVE
+                     _state.IsInSizeMove = False
+                     _owner.鏇存柊闃村奖(_state)
++                    ' 瑙﹀彂"榧犳爣鎶捣"鏈抚 + commit 骞冲潎鑹诧細
++                    '   Auto 妯″紡 鈥?鎸夋渶缁堜綅缃噸鏂版姄灞?+ 妯＄硦銆?+                    '   Image 妯″紡 鈥?鎸夋渶缁堢獥鍙ｅ昂瀵搁噸鏂版墽琛?cover + 妯＄硦銆?+                    _state.Renderer?.RequestFrame(_owner.鑾峰彇姣涚幓鐠冩崟鑾峰尯鍩?_state.HostForm), True)
++                    ' 鎭㈠甯告€?Tick锛圛mage 妯″紡涓?閲嶇疆姣涚幓鐠僒ick 鍐呴儴鐩存帴鍒ゅ畾涓嶅惎鍔級
++                    _owner.閲嶇疆姣涚幓鐠僒ick(_state)
+                     MyBase.WndProc(m)
+                     Return
+ 
+@@ -1692,6 +2275,9 @@ Public Class ThisIsYourWindow
+                         Catch
+                         End Try
+                     End If
++                    If m.WParam <> IntPtr.Zero AndAlso _state.Renderer IsNot Nothing AndAlso Not _state.Renderer.HasFrame Then
++                        _state.Renderer.RequestFrame(_owner.鑾峰彇姣涚幓鐠冩崟鑾峰尯鍩?_state.HostForm), True)
++                    End If
+                     Return
+ 
+                 Case WM_CLOSE

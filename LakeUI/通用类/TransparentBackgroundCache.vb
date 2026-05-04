@@ -35,16 +35,35 @@ Imports System.Drawing.Imaging
 ''' </summary>
 Friend Module TransparentBackgroundCache
 
-    ''' <summary>缓存有效时长（毫秒）。约一帧时间，足以让同一帧内多控件共享，又不至于显示陈旧数据。</summary>
-    Private Const CacheTtlMs As Integer = 16
+    ''' <summary>
+    ''' 缓存最长有效时长（毫秒）：达到此时间后无论是否 Dirty 都强制刷新一次，作为兜底。
+    ''' 把它放大到 1 秒级是为了让 hover/动画这类频繁但视觉上无关的 Invalidated 不会拖累透明子控件。
+    ''' </summary>
+    Private Const CacheTtlMs As Integer = 1000
+
+    ''' <summary>
+    ''' Dirty 节流：source 触发 Invalidated 后，距上次实际重建至少要等这么久才允许真正重建底图。
+    ''' 用于过滤"鼠标进入兄弟控件"这种与底图无关的高频脏标记。设得偏大可显著降低 CPU；
+    ''' 同时由于切换选项卡 / Resize 都会显式 Invalidate，视觉滞后基本无感。
+    ''' </summary>
+    Private Const DirtyMinIntervalMs As Integer = 120
 
     Private Class Entry
         Public Bmp As Bitmap
         Public Width As Integer
         Public Height As Integer
         Public Stamp As Long
+        ''' <summary>事件驱动的"脏"标记：source.Invalidated / Resize 触发后置 True，下次取样重建。</summary>
+        Public Dirty As Boolean = True
+        ''' <summary>高优先级脏标记：Resize 或显式 Invalidate(source) 时置位，绕过 DirtyMinIntervalMs 节流。</summary>
+        Public ForceDirty As Boolean = True
         ''' <summary>正在重建该 source 的位图：用于阻断递归（child 的 BackgroundSource 指向自身祖先时）。</summary>
         Public Painting As Boolean
+        ''' <summary>跨帧缓存的 D2D 位图（与 Bmp 同步重建），避免每帧 LockBits + CreateBitmap 上传。</summary>
+        Public D2DBmp As Vortice.Direct2D1.ID2D1Bitmap
+        Public D2DStamp As Long
+        ''' <summary>D2DBmp 来源的 RT，用于校验是否兼容（不同控件 RT 不能复用）。</summary>
+        Public D2DOwnerRT As WeakReference
     End Class
 
     Private ReadOnly _cache As New Dictionary(Of Control, Entry)
@@ -75,46 +94,105 @@ Friend Module TransparentBackgroundCache
     ''' 一般控件应使用 <see cref="PaintBackgroundFor"/>；此方法保留给需要自定义偏移/裁切的特殊场景。
     ''' </summary>
     Public Sub DrawSourceRegion(g As Graphics, source As Control, srcRect As Rectangle, destRect As Rectangle)
+        Dim bmp As Bitmap = AcquireSourceBitmap(source)
+        If bmp Is Nothing Then Return
+        g.DrawImage(bmp, destRect, srcRect, GraphicsUnit.Pixel)
+    End Sub
+
+    ''' <summary>
+    ''' D2D 版高层 API：把背景源采样位图绘制到 D2D RenderTarget 上指定子控件位置。
+    ''' 内部复用与 GDI 路径相同的位图缓存。
+    ''' </summary>
+    Public Sub PaintBackgroundFor_D2D(child As Control, rt As Vortice.Direct2D1.ID2D1RenderTarget, explicitSource As Control)
+        If child Is Nothing OrElse rt Is Nothing Then Return
+        Dim source As Control = ResolveSource(child, explicitSource)
         If source Is Nothing Then Return
         Dim sw As Integer = source.Width, sh As Integer = source.Height
         If sw <= 0 OrElse sh <= 0 Then Return
+        Dim offset As Point = ComputeOffset(child, source)
+        DrawSourceRegion_D2D(rt, source,
+            New Rectangle(offset.X, offset.Y, child.Width, child.Height),
+            New Rectangle(0, 0, child.Width, child.Height))
+    End Sub
+
+    ''' <summary>D2D 低层 API：跨帧缓存 ID2D1Bitmap，仅在 GDI 位图刷新时才重新上传。</summary>
+    Public Sub DrawSourceRegion_D2D(rt As Vortice.Direct2D1.ID2D1RenderTarget, source As Control,
+                                     srcRect As Rectangle, destRect As Rectangle)
+        If rt Is Nothing OrElse source Is Nothing Then Return
+        Dim bmp As Bitmap = AcquireSourceBitmap(source)
+        If bmp Is Nothing Then Return
+
+        Dim entry As Entry = Nothing
+        SyncLock _cache
+            _cache.TryGetValue(source, entry)
+        End SyncLock
+        If entry Is Nothing Then Return
+
+        Dim d2dBmp As Vortice.Direct2D1.ID2D1Bitmap = Nothing
+        Dim ownerRtAlive As Boolean =
+            entry.D2DOwnerRT IsNot Nothing AndAlso ReferenceEquals(entry.D2DOwnerRT.Target, rt)
+        If entry.D2DBmp IsNot Nothing AndAlso ownerRtAlive AndAlso entry.D2DStamp = entry.Stamp Then
+            d2dBmp = entry.D2DBmp
+        Else
+            ' GDI 位图已刷新或 RT 改变 → 重新上传一次。
+            If entry.D2DBmp IsNot Nothing Then
+                Try : entry.D2DBmp.Dispose() : Catch : End Try
+                entry.D2DBmp = Nothing
+            End If
+            d2dBmp = D2DHelper.CreateBitmapFromGdi(rt, bmp)
+            If d2dBmp Is Nothing Then Return
+            entry.D2DBmp = d2dBmp
+            entry.D2DStamp = entry.Stamp
+            entry.D2DOwnerRT = New WeakReference(rt)
+        End If
+
+        rt.DrawBitmap(d2dBmp,
+            D2DHelper.ToD2DRect(destRect),
+            1.0F,
+            Vortice.Direct2D1.BitmapInterpolationMode.Linear,
+            D2DHelper.ToD2DRect(srcRect))
+    End Sub
+
+    ''' <summary>取得 source 的最新缓存位图（按 TTL 重建）。返回 Nothing 表示当前不可采样。</summary>
+    Private Function AcquireSourceBitmap(source As Control) As Bitmap
+        If source Is Nothing Then Return Nothing
+        Dim sw As Integer = source.Width, sh As Integer = source.Height
+        If sw <= 0 OrElse sh <= 0 Then Return Nothing
 
         Dim now As Long = _sw.ElapsedMilliseconds
         Dim entry As Entry = Nothing
         Dim hit As Boolean = False
         SyncLock _cache
             If _cache.TryGetValue(source, entry) Then
-                If entry.Painting Then
-                    ' 递归：child 的 BackgroundSource 指向了正在被采样的 source（或其祖先在被采样）。
-                    ' 直接返回，等价于该层贴一张透明底图，避免 StackOverflow。
-                    Return
-                End If
-                If entry.Width = sw AndAlso entry.Height = sh AndAlso
-                   entry.Bmp IsNot Nothing AndAlso (now - entry.Stamp) <= CacheTtlMs Then
+                If entry.Painting Then Return Nothing
+                Dim sizeOk As Boolean = (entry.Width = sw AndAlso entry.Height = sh AndAlso entry.Bmp IsNot Nothing)
+                If Not sizeOk Then entry.Dirty = True
+                ' 节流：Dirty 但距上次重建不到 DirtyMinIntervalMs 时仍视为命中（继续用旧底图）。
+                ' 这样即便 source 因兄弟控件 hover 而频繁 Invalidated，也不会每帧都重采样。
+                ' 尺寸变化 / 显式 Invalidate(source) 是高优先级，绕开节流。
+                Dim canSkipDirty As Boolean = entry.Dirty AndAlso sizeOk AndAlso Not entry.ForceDirty AndAlso
+                    (now - entry.Stamp) < DirtyMinIntervalMs
+                If sizeOk AndAlso (Not entry.Dirty OrElse canSkipDirty) AndAlso (now - entry.Stamp) <= CacheTtlMs Then
                     hit = True
                 End If
             Else
                 entry = New Entry()
                 _cache(source) = entry
-                ' 首次见到该控件，挂一次 Disposed 钩子做缓存清理（Bitmap/字典都释放）。
                 AddHandler source.Disposed, AddressOf OnSourceDisposed
+                AddHandler source.Invalidated, AddressOf OnSourceInvalidated
+                AddHandler source.Resize, AddressOf OnSourceResized
             End If
             If Not hit Then entry.Painting = True
         End SyncLock
 
         If Not hit Then
             Try
-                ' 重建位图（仅当尺寸变化时才重新分配）
                 If entry.Bmp Is Nothing OrElse entry.Width <> sw OrElse entry.Height <> sh Then
                     entry.Bmp?.Dispose()
                     entry.Bmp = New Bitmap(sw, sh, PixelFormat.Format32bppPArgb)
                     entry.Width = sw
                     entry.Height = sh
                 End If
-                ' 把 source 完整绘制到位图：以 source 自身 (0,0) 为原点，
-                ' 这样 GDI（TextRenderer）等不遵循 Transform 的绘制 API 也能落在正确位置。
-                ' 注意：这里只调用 source 自身的 InvokePaintBackground/InvokePaint，
-                ' 不递归其子控件——避免 N 个透明控件相互渲染造成 N×N 爆炸。
                 Using bg As Graphics = Graphics.FromImage(entry.Bmp)
                     bg.Clear(Color.Transparent)
                     Using pea As New PaintEventArgs(bg, New Rectangle(0, 0, sw, sh))
@@ -123,6 +201,8 @@ Friend Module TransparentBackgroundCache
                     End Using
                 End Using
                 entry.Stamp = now
+                entry.Dirty = False
+                entry.ForceDirty = False
             Finally
                 SyncLock _cache
                     entry.Painting = False
@@ -130,19 +210,51 @@ Friend Module TransparentBackgroundCache
             End Try
         End If
 
-        g.DrawImage(entry.Bmp, destRect, srcRect, GraphicsUnit.Pixel)
-    End Sub
+        Return entry.Bmp
+    End Function
 
     ''' <summary>
     ''' 显式使指定控件的缓存失效。背景源自身的视觉重大变化（如换图/换主题）时调用，
     ''' 普通的子控件位置/状态变化不需要调用本方法，让常规 Invalidate + TTL 处理即可。
+    ''' </summary>
+    ''' <summary>
+    ''' 显式使指定控件的缓存立即失效。背景源自身的视觉重大变化（如选项卡切换、换图、换主题）时调用，
+    ''' 会绕过 DirtyMinIntervalMs 节流，下次绘制立即重采样。
+    ''' 普通的子控件 hover/状态变化不需要调用本方法。
     ''' </summary>
     Public Sub Invalidate(source As Control)
         If source Is Nothing Then Return
         SyncLock _cache
             Dim entry As Entry = Nothing
             If _cache.TryGetValue(source, entry) Then
-                entry.Stamp = 0
+                entry.Dirty = True
+                entry.ForceDirty = True
+            End If
+        End SyncLock
+    End Sub
+
+    ''' <summary>
+    ''' 来自 source.Invalidated 的低优先级脏标记：仅打 Dirty，由 DirtyMinIntervalMs 节流决定是否真正重建。
+    ''' 这样兄弟控件 hover 引起的 Invalidated 风暴不会拖累透明子控件。
+    ''' </summary>
+    Private Sub OnSourceInvalidated(sender As Object, e As EventArgs)
+        Dim source = TryCast(sender, Control)
+        If source Is Nothing Then Return
+        SyncLock _cache
+            Dim entry As Entry = Nothing
+            If _cache.TryGetValue(source, entry) Then entry.Dirty = True
+        End SyncLock
+    End Sub
+
+    ''' <summary>Resize 是高优先级失效，必须立即重建（尺寸变化下旧底图直接错位）。</summary>
+    Private Sub OnSourceResized(sender As Object, e As EventArgs)
+        Dim source = TryCast(sender, Control)
+        If source Is Nothing Then Return
+        SyncLock _cache
+            Dim entry As Entry = Nothing
+            If _cache.TryGetValue(source, entry) Then
+                entry.Dirty = True
+                entry.ForceDirty = True
             End If
         End SyncLock
     End Sub
@@ -151,10 +263,15 @@ Friend Module TransparentBackgroundCache
         Dim source = TryCast(sender, Control)
         If source Is Nothing Then Return
         RemoveHandler source.Disposed, AddressOf OnSourceDisposed
+        RemoveHandler source.Invalidated, AddressOf OnSourceInvalidated
+        RemoveHandler source.Resize, AddressOf OnSourceResized
         SyncLock _cache
             Dim entry As Entry = Nothing
             If _cache.TryGetValue(source, entry) Then
                 entry.Bmp?.Dispose()
+                If entry.D2DBmp IsNot Nothing Then
+                    Try : entry.D2DBmp.Dispose() : Catch : End Try
+                End If
                 _cache.Remove(source)
             End If
         End SyncLock

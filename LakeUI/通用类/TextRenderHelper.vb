@@ -40,4 +40,53 @@ Friend Module TextRenderHelper
         Return lo
     End Function
 
+#Region "DirectWrite 度量"
+
+    ''' <summary>使用 DirectWrite 创建一个 TextFormat（调用方负责 Dispose）。</summary>
+    Friend Function CreateDWriteTextFormat(font As Font, dpiScale As Single) As Vortice.DirectWrite.IDWriteTextFormat
+        Dim sizePx As Single = font.SizeInPoints * (96.0F / 72.0F) * dpiScale
+        Dim weight As Vortice.DirectWrite.FontWeight = If(font.Bold, Vortice.DirectWrite.FontWeight.Bold, Vortice.DirectWrite.FontWeight.Normal)
+        Dim style As Vortice.DirectWrite.FontStyle = If(font.Italic, Vortice.DirectWrite.FontStyle.Italic, Vortice.DirectWrite.FontStyle.Normal)
+        Return D2DHelper.GetDWriteFactory().CreateTextFormat(
+            font.FontFamily.Name, Nothing, weight, style,
+            Vortice.DirectWrite.FontStretch.Normal, sizePx)
+    End Function
+
+    ''' <summary>使用 DirectWrite 测量单行文本宽度（像素）。</summary>
+    Friend Function MeasureTextWidth_D2D(text As String, font As Font, dpiScale As Single) As Single
+        If String.IsNullOrEmpty(text) Then Return 0
+        Using fmt = CreateDWriteTextFormat(font, dpiScale)
+            fmt.WordWrapping = Vortice.DirectWrite.WordWrapping.NoWrap
+            Using layout = D2DHelper.GetDWriteFactory().CreateTextLayout(text, fmt, Single.MaxValue, Single.MaxValue)
+                Return layout.Metrics.WidthIncludingTrailingWhitespace
+            End Using
+        End Using
+    End Function
+
+    ''' <summary>使用 DirectWrite 命中测试，根据 X 坐标返回最近字符列索引（基于 TextLayout 二分测量）。</summary>
+    Friend Function FindColFromX_D2D(lineStr As String, x As Single, font As Font, dpiScale As Single) As Integer
+        If String.IsNullOrEmpty(lineStr) OrElse x <= 0 Then Return 0
+        Dim n As Integer = lineStr.Length
+        Dim totalW As Single = MeasureTextWidth_D2D(lineStr, font, dpiScale)
+        If x >= totalW Then Return n
+        Dim lo As Integer = 0
+        Dim hi As Integer = n
+        While lo < hi
+            Dim mid As Integer = (lo + hi + 1) \ 2
+            If MeasureTextWidth_D2D(lineStr.Substring(0, mid), font, dpiScale) <= x Then
+                lo = mid
+            Else
+                hi = mid - 1
+            End If
+        End While
+        If lo < n Then
+            Dim wLo As Single = MeasureTextWidth_D2D(lineStr.Substring(0, lo), font, dpiScale)
+            Dim wNext As Single = MeasureTextWidth_D2D(lineStr.Substring(0, lo + 1), font, dpiScale)
+            If x - wLo > wNext - x Then Return lo + 1
+        End If
+        Return lo
+    End Function
+
+#End Region
+
 End Module

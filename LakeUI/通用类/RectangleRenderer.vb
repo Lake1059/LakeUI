@@ -2,6 +2,8 @@
 Imports System.ComponentModel.Design.Serialization
 Imports System.Drawing.Drawing2D
 Imports System.Globalization
+Imports System.Numerics
+Imports Vortice.Direct2D1
 
 ''' <summary>指定哪些角启用圆角，可在设计器属性面板中像 Padding 一样展开编辑。</summary>
 <TypeConverter(GetType(RoundCornersConverter))>
@@ -226,9 +228,9 @@ Public Class RectangleRenderer
         Return path
     End Function
 
-    Public Shared Sub 绘制圆角背景(g As Graphics, 路径 As GraphicsPath, 极限矩形区域 As RectangleF, 背景颜色 As Color, 渐变颜色 As Color, 渐变方向 As Orientation)
+    Public Shared Sub 绘制圆角背景(g As Graphics, 路径 As GraphicsPath, 极限矩形区域 As RectangleF, 背景颜色 As Color, 渐变颜色 As Color, 渐变方向 As System.Windows.Forms.Orientation)
         If 渐变颜色 <> Color.Empty Then
-            Dim angle As Single = If(渐变方向 = Orientation.Vertical, 90.0F, 0.0F)
+            Dim angle As Single = If(渐变方向 = System.Windows.Forms.Orientation.Vertical, 90.0F, 0.0F)
             Using brush As New LinearGradientBrush(极限矩形区域, 背景颜色, 渐变颜色, angle)
                 g.FillPath(brush, 路径)
             End Using
@@ -239,9 +241,9 @@ Public Class RectangleRenderer
         End If
     End Sub
 
-    Public Shared Sub 绘制矩形背景(g As Graphics, 区域 As RectangleF, 背景颜色 As Color, 渐变颜色 As Color, 渐变方向 As Orientation)
+    Public Shared Sub 绘制矩形背景(g As Graphics, 区域 As RectangleF, 背景颜色 As Color, 渐变颜色 As Color, 渐变方向 As System.Windows.Forms.Orientation)
         If 渐变颜色 <> Color.Empty Then
-            Dim angle As Single = If(渐变方向 = Orientation.Vertical, 90.0F, 0.0F)
+            Dim angle As Single = If(渐变方向 = System.Windows.Forms.Orientation.Vertical, 90.0F, 0.0F)
             Using brush As New LinearGradientBrush(区域, 背景颜色, 渐变颜色, angle)
                 g.FillRectangle(brush, 区域)
             End Using
@@ -256,7 +258,7 @@ Public Class RectangleRenderer
         If 边框宽度 > 0 Then
             Using pen As New Pen(边框颜色, 边框宽度)
                 pen.Alignment = PenAlignment.Center
-                pen.LineJoin = LineJoin.Round
+                pen.LineJoin = Drawing2D.LineJoin.Round
                 g.DrawPath(pen, 路径)
             End Using
         End If
@@ -287,5 +289,146 @@ Public Class RectangleRenderer
             End Using
         End If
     End Sub
+
+#Region "D2D 渲染（Vortice）"
+
+    ''' <summary>创建一个统一圆角的 D2D 几何（调用方负责 Dispose）。</summary>
+    Public Shared Function 创建圆角矩形几何(区域 As RectangleF, 半径 As Single) As ID2D1Geometry
+        If 半径 <= 0 OrElse 区域.Width < 1 OrElse 区域.Height < 1 Then
+            Return D2DHelper.GetD2DFactory().CreateRectangleGeometry(区域)
+        End If
+        半径 = Math.Min(半径, Math.Min(区域.Width / 2.0F, 区域.Height / 2.0F))
+        Return D2DHelper.GetD2DFactory().CreateRoundedRectangleGeometry(
+            New RoundedRectangle(区域, 半径, 半径))
+    End Function
+
+    ''' <summary>创建可按角选择的 D2D 圆角矩形几何（PathGeometry，调用方负责 Dispose）。</summary>
+    Public Shared Function 创建圆角矩形几何(区域 As RectangleF, 半径 As Single, 圆角位置 As RoundCorners) As ID2D1Geometry
+        If 半径 <= 0 OrElse 区域.Width < 1 OrElse 区域.Height < 1 OrElse 圆角位置.IsNone Then
+            Return D2DHelper.GetD2DFactory().CreateRectangleGeometry(区域)
+        End If
+        If 圆角位置.IsAll Then
+            Return 创建圆角矩形几何(区域, 半径)
+        End If
+        半径 = Math.Min(半径, Math.Min(区域.Width / 2.0F, 区域.Height / 2.0F))
+        Dim path As ID2D1PathGeometry = D2DHelper.GetD2DFactory().CreatePathGeometry()
+        Dim sink As ID2D1GeometrySink = path.Open()
+        Try
+            Dim left As Single = 区域.X, top As Single = 区域.Y
+            Dim right As Single = 区域.Right, bottom As Single = 区域.Bottom
+
+            Dim startPt As New Vector2(left + If(圆角位置.TopLeft, 半径, 0F), top)
+            sink.BeginFigure(startPt, FigureBegin.Filled)
+
+            ' 顶边 → 右上角
+            sink.AddLine(New Vector2(right - If(圆角位置.TopRight, 半径, 0F), top))
+            If 圆角位置.TopRight Then
+                sink.AddArc(New ArcSegment With {
+                    .Point = New Vector2(right, top + 半径),
+                    .Size = New Vortice.Mathematics.Size(半径, 半径),
+                    .RotationAngle = 0,
+                    .SweepDirection = SweepDirection.Clockwise,
+                    .ArcSize = ArcSize.Small})
+            End If
+
+            ' 右边 → 右下角
+            sink.AddLine(New Vector2(right, bottom - If(圆角位置.BottomRight, 半径, 0F)))
+            If 圆角位置.BottomRight Then
+                sink.AddArc(New ArcSegment With {
+                    .Point = New Vector2(right - 半径, bottom),
+                    .Size = New Vortice.Mathematics.Size(半径, 半径),
+                    .RotationAngle = 0,
+                    .SweepDirection = SweepDirection.Clockwise,
+                    .ArcSize = ArcSize.Small})
+            End If
+
+            ' 底边 → 左下角
+            sink.AddLine(New Vector2(left + If(圆角位置.BottomLeft, 半径, 0F), bottom))
+            If 圆角位置.BottomLeft Then
+                sink.AddArc(New ArcSegment With {
+                    .Point = New Vector2(left, bottom - 半径),
+                    .Size = New Vortice.Mathematics.Size(半径, 半径),
+                    .RotationAngle = 0,
+                    .SweepDirection = SweepDirection.Clockwise,
+                    .ArcSize = ArcSize.Small})
+            End If
+
+            ' 左边 → 左上角
+            sink.AddLine(New Vector2(left, top + If(圆角位置.TopLeft, 半径, 0F)))
+            If 圆角位置.TopLeft Then
+                sink.AddArc(New ArcSegment With {
+                    .Point = New Vector2(left + 半径, top),
+                    .Size = New Vortice.Mathematics.Size(半径, 半径),
+                    .RotationAngle = 0,
+                    .SweepDirection = SweepDirection.Clockwise,
+                    .ArcSize = ArcSize.Small})
+            End If
+
+            sink.EndFigure(FigureEnd.Closed)
+            sink.Close()
+        Finally
+            sink.Dispose()
+        End Try
+        Return path
+    End Function
+
+    ''' <summary>D2D 圆角背景填充（支持纯色 / 双色线性渐变）。</summary>
+    Public Shared Sub 绘制圆角背景_D2D(rt As ID2D1RenderTarget, 几何 As ID2D1Geometry, 极限矩形区域 As RectangleF,
+                                  背景颜色 As Color, 渐变颜色 As Color, 渐变方向 As System.Windows.Forms.Orientation)
+        If 几何 Is Nothing Then Return
+        Using brush = 创建背景画刷(rt, 极限矩形区域, 背景颜色, 渐变颜色, 渐变方向)
+            rt.FillGeometry(几何, brush)
+        End Using
+    End Sub
+
+    ''' <summary>D2D 直角矩形背景填充（支持纯色 / 双色线性渐变）。</summary>
+    Public Shared Sub 绘制矩形背景_D2D(rt As ID2D1RenderTarget, 区域 As RectangleF,
+                                  背景颜色 As Color, 渐变颜色 As Color, 渐变方向 As System.Windows.Forms.Orientation)
+        Using brush = 创建背景画刷(rt, 区域, 背景颜色, 渐变颜色, 渐变方向)
+            rt.FillRectangle(D2DHelper.ToD2DRect(区域), brush)
+        End Using
+    End Sub
+
+    ''' <summary>D2D 圆角边框描边。</summary>
+    Public Shared Sub 绘制圆角边框_D2D(rt As ID2D1RenderTarget, 几何 As ID2D1Geometry, 边框颜色 As Color, 边框宽度 As Single)
+        If 几何 Is Nothing OrElse 边框宽度 <= 0 OrElse 边框颜色.A = 0 Then Return
+        Using b = rt.CreateSolidColorBrush(D2DHelper.ToColor4(边框颜色))
+            rt.DrawGeometry(几何, b, 边框宽度)
+        End Using
+    End Sub
+
+    ''' <summary>D2D 直角矩形边框描边。</summary>
+    Public Shared Sub 绘制矩形边框_D2D(rt As ID2D1RenderTarget, 区域 As RectangleF, 边框颜色 As Color, 边框宽度 As Single)
+        If 边框宽度 <= 0 OrElse 边框颜色.A = 0 Then Return
+        Using b = rt.CreateSolidColorBrush(D2DHelper.ToColor4(边框颜色))
+            rt.DrawRectangle(D2DHelper.ToD2DRect(区域), b, 边框宽度)
+        End Using
+    End Sub
+
+    Private Shared Function 创建背景画刷(rt As ID2D1RenderTarget, 区域 As RectangleF,
+                                   背景颜色 As Color, 渐变颜色 As Color, 渐变方向 As System.Windows.Forms.Orientation) As ID2D1Brush
+        If 渐变颜色 = Color.Empty OrElse 渐变颜色.A = 0 Then
+            Return rt.CreateSolidColorBrush(D2DHelper.ToColor4(背景颜色))
+        End If
+        Dim startPt As Vector2, endPt As Vector2
+        If 渐变方向 = System.Windows.Forms.Orientation.Vertical Then
+            startPt = New Vector2(区域.X, 区域.Y)
+            endPt = New Vector2(区域.X, 区域.Bottom)
+        Else
+            startPt = New Vector2(区域.X, 区域.Y)
+            endPt = New Vector2(区域.Right, 区域.Y)
+        End If
+        Dim stops = {
+            New GradientStop(0.0F, D2DHelper.ToColor4(背景颜色)),
+            New GradientStop(1.0F, D2DHelper.ToColor4(渐变颜色))}
+        Dim gsc = rt.CreateGradientStopCollection(stops)
+        Try
+            Return rt.CreateLinearGradientBrush(New LinearGradientBrushProperties(startPt, endPt), gsc)
+        Finally
+            gsc.Dispose()
+        End Try
+    End Function
+
+#End Region
 
 End Class

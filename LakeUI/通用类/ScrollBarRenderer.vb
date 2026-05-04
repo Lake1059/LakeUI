@@ -284,4 +284,126 @@ Public Class ScrollBarRenderer
 
 #End Region
 
+#Region "D2D 渲染"
+
+    ''' <summary>D2D 版竖向滚动条绘制；Layout 仍用 ComputeLayout，由调用方先行调用。</summary>
+    Public Sub Draw_D2D(rt As Vortice.Direct2D1.ID2D1RenderTarget,
+                         containerW As Integer, containerH As Integer,
+                         borderWidth As Integer, borderRadius As Integer,
+                         scrollBarWidth As Integer,
+                         trackColor As Color, thumbColor As Color, thumbHoverColor As Color)
+        If TrackRect.IsEmpty Then Return
+        If TrackRect.Width < 1 OrElse TrackRect.Height < 1 OrElse scrollBarWidth < 1 Then Return
+
+        Dim layer As Vortice.Direct2D1.ID2D1Layer = Nothing
+        Dim clipGeo As Vortice.Direct2D1.ID2D1Geometry = Nothing
+        If borderRadius > 0 Then
+            Dim clipRect As New RectangleF(0, 0, containerW - 1, containerH - 1)
+            If borderWidth > 0 Then
+                Dim half As Single = borderWidth / 2.0F
+                clipRect.Inflate(-half, -half)
+            End If
+            clipGeo = RectangleRenderer.创建圆角矩形几何(clipRect, borderRadius)
+            layer = rt.CreateLayer(Nothing)
+            rt.PushLayer(New Vortice.Direct2D1.LayerParameters With {
+                .ContentBounds = New Vortice.RawRectF(0, 0, containerW, containerH),
+                .GeometricMask = clipGeo,
+                .MaskAntialiasMode = Vortice.Direct2D1.AntialiasMode.PerPrimitive,
+                .MaskTransform = System.Numerics.Matrix3x2.Identity,
+                .Opacity = 1.0F,
+                .OpacityBrush = Nothing,
+                .LayerOptions = Vortice.Direct2D1.LayerOptions.None
+            }, layer)
+        End If
+        Try
+            Dim sbH As Integer = TrackRect.Height
+            If trackColor.A > 0 Then
+                Dim trackRadius As Integer = Math.Min(scrollBarWidth \ 2, sbH \ 2)
+                Dim trackArea As New RectangleF(VisualLeft, TrackRect.Y, scrollBarWidth, sbH)
+                Using geo = RectangleRenderer.创建圆角矩形几何(trackArea, trackRadius)
+                    Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(trackColor))
+                        rt.FillGeometry(geo, br)
+                    End Using
+                End Using
+            End If
+
+            Dim activeColor As Color = If(IsDragging OrElse IsHover, thumbHoverColor, thumbColor)
+            Dim thumbH As Integer = ThumbRect.Height
+            Dim thumbRadius As Integer = Math.Min(scrollBarWidth \ 2, thumbH \ 2)
+            Dim thumbArea As New RectangleF(VisualLeft, ThumbRect.Y, scrollBarWidth, thumbH)
+            Using geo = RectangleRenderer.创建圆角矩形几何(thumbArea, thumbRadius)
+                Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(activeColor))
+                    rt.FillGeometry(geo, br)
+                End Using
+            End Using
+        Finally
+            If layer IsNot Nothing Then
+                rt.PopLayer()
+                layer.Dispose()
+            End If
+            If clipGeo IsNot Nothing Then clipGeo.Dispose()
+        End Try
+    End Sub
+
+    ''' <summary>D2D 版横向滚动条绘制；Layout 仍用 ComputeHorizontalLayout，由调用方先行调用。</summary>
+    Public Sub DrawHorizontal_D2D(rt As Vortice.Direct2D1.ID2D1RenderTarget,
+                                   containerW As Integer, containerH As Integer,
+                                   borderWidth As Integer, borderRadius As Integer,
+                                   scrollBarHeight As Integer,
+                                   trackColor As Color, thumbColor As Color, thumbHoverColor As Color)
+        If TrackRect.IsEmpty Then Return
+        If TrackRect.Width < 1 OrElse TrackRect.Height < 1 OrElse scrollBarHeight < 1 Then Return
+
+        Dim layer As Vortice.Direct2D1.ID2D1Layer = Nothing
+        Dim clipGeo As Vortice.Direct2D1.ID2D1Geometry = Nothing
+        If borderRadius > 0 Then
+            Dim clipRect As New RectangleF(0, 0, containerW - 1, containerH - 1)
+            If borderWidth > 0 Then
+                Dim half As Single = borderWidth / 2.0F
+                clipRect.Inflate(-half, -half)
+            End If
+            clipGeo = RectangleRenderer.创建圆角矩形几何(clipRect, borderRadius)
+            layer = rt.CreateLayer(Nothing)
+            rt.PushLayer(New Vortice.Direct2D1.LayerParameters With {
+                .ContentBounds = New Vortice.RawRectF(0, 0, containerW, containerH),
+                .GeometricMask = clipGeo,
+                .MaskAntialiasMode = Vortice.Direct2D1.AntialiasMode.PerPrimitive,
+                .MaskTransform = System.Numerics.Matrix3x2.Identity,
+                .Opacity = 1.0F,
+                .OpacityBrush = Nothing,
+                .LayerOptions = Vortice.Direct2D1.LayerOptions.None
+            }, layer)
+        End If
+        Try
+            Dim sbW As Integer = TrackRect.Width
+            If trackColor.A > 0 Then
+                Dim trackRadius As Integer = Math.Min(scrollBarHeight \ 2, sbW \ 2)
+                Dim trackArea As New RectangleF(TrackRect.X, VisualTop, sbW, scrollBarHeight)
+                Using geo = RectangleRenderer.创建圆角矩形几何(trackArea, trackRadius)
+                    Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(trackColor))
+                        rt.FillGeometry(geo, br)
+                    End Using
+                End Using
+            End If
+
+            Dim activeColor As Color = If(IsDragging OrElse IsHover, thumbHoverColor, thumbColor)
+            Dim thumbW As Integer = ThumbRect.Width
+            Dim thumbRadius As Integer = Math.Min(scrollBarHeight \ 2, thumbW \ 2)
+            Dim thumbArea As New RectangleF(ThumbRect.X, VisualTop, thumbW, scrollBarHeight)
+            Using geo = RectangleRenderer.创建圆角矩形几何(thumbArea, thumbRadius)
+                Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(activeColor))
+                    rt.FillGeometry(geo, br)
+                End Using
+            End Using
+        Finally
+            If layer IsNot Nothing Then
+                rt.PopLayer()
+                layer.Dispose()
+            End If
+            If clipGeo IsNot Nothing Then clipGeo.Dispose()
+        End Try
+    End Sub
+
+#End Region
+
 End Class

@@ -1,7 +1,10 @@
 ﻿Imports System.ComponentModel
 Imports System.Drawing.Drawing2D
+Imports System.Numerics
 Imports System.Reflection
 Imports System.Runtime.InteropServices
+Imports Vortice.Direct2D1
+Imports Vortice.DirectWrite
 
 ''' <summary>
 ''' 无界面组件，用于完全自定义窗口的标题栏与边框外观，
@@ -182,6 +185,11 @@ Public Class ThisIsYourWindow
         ' ── 毛玻璃 ──
         Public Renderer As BackdropRenderer
         Public BackdropTimer As Timer
+        ' ── D2D 资源（每窗体一份；DC RT 与窗口 HDC 强相关，无法跨窗体共享）──
+        Public DcRT As ID2D1DCRenderTarget
+        Public ReadOnly SsaaCache As New D2DHelper.BitmapRTCache()
+        Public ReadOnly CaptionImageCache As New D2DHelper.D2DBitmapCache()
+        Public ReadOnly IconBitmapCache As New D2DHelper.D2DBitmapCache()
         Public Sub New(form As Form)
             HostForm = form
         End Sub
@@ -1573,11 +1581,8 @@ Public Class ThisIsYourWindow
 
         Dim w As Integer = s.HostForm.ClientSize.Width
         Dim h As Integer = s.HostForm.ClientSize.Height
+        If w <= 0 OrElse h <= 0 Then Return
         Dim active As Boolean = s.Activated
-        Dim brush As SolidBrush = _共享画刷
-
-        g.SmoothingMode = SmoothingMode.Default
-        g.PixelOffsetMode = PixelOffsetMode.Default
 
         Dim useBackdrop As Boolean = (_毛玻璃模式 <> BackdropModeEnum.None) AndAlso
                                       s.Renderer IsNot Nothing AndAlso
@@ -1587,65 +1592,111 @@ Public Class ThisIsYourWindow
         Dim backdropRect As Rectangle = If(captionOnly,
                                            New Rectangle(0, 0, w, Math.Min(h, _标题栏高度)),
                                            fullRect)
+
+        ' ── 1) 毛玻璃层（GDI 路径，BackdropRenderer 仅暴露 GDI 接口）──
         If useBackdrop Then
+            g.SmoothingMode = SmoothingMode.Default
+            g.PixelOffsetMode = PixelOffsetMode.Default
             s.Renderer.DrawTo(g, backdropRect)
             Dim tint = If(active, _毛玻璃Tint颜色, _毛玻璃Tint失焦颜色)
             If tint.A > 0 Then
-                brush.Color = tint
-                g.FillRectangle(brush, backdropRect)
+                _共享画刷.Color = tint
+                g.FillRectangle(_共享画刷, backdropRect)
             End If
             If _毛玻璃噪点不透明度 > 0 Then
                 s.Renderer.DrawNoise(g, backdropRect, _毛玻璃噪点不透明度)
             End If
         End If
 
-        Dim captionRect As New Rectangle(0, 0, w, _标题栏高度)
-        If Not useBackdrop Then
-            brush.Color = If(active, _标题栏背景颜色, _标题栏失焦背景颜色)
-            g.FillRectangle(brush, captionRect)
-        End If
+        ' ── 2) D2D scope：标题栏背景 / 图片 / 遮罩 / 图标 / 按钮 / 边框 / 标题文字 ──
+        Dim ssaa As Integer = 1
+        If Class1.GlobalSSAA <> Class1.SuperSamplingScaleEnum.OFF Then ssaa = CInt(Class1.GlobalSSAA)
+        If s.DcRT Is Nothing Then s.DcRT = D2DHelper.CreateDCRenderTarget()
+        Dim ssaaScale As Integer = Math.Max(1, ssaa)
+        Dim hdc As IntPtr = g.GetHdc()
+        Dim scope As D2DHelper.PaintScope = Nothing
+        Try
+            scope = New D2DHelper.PaintScope(g, hdc, s.DcRT, w, h, ssaaScale, s.SsaaCache)
+        Catch
+            Try : g.ReleaseHdc(hdc) : Catch : End Try
+            Throw
+        End Try
+        Using scope
+            Dim gRT As ID2D1RenderTarget = scope.GraphicsRenderTarget
+            Dim dcRT As ID2D1DCRenderTarget = scope.DCRenderTarget
 
-        绘制标题栏背景图片(g, captionRect)
+            Dim captionRect As New Rectangle(0, 0, w, _标题栏高度)
 
-        If _标题栏遮罩颜色.A > 0 Then
-            brush.Color = _标题栏遮罩颜色
-            g.FillRectangle(brush, captionRect)
-        End If
-
-        绘制图标(g, s)
-        绘制标题文字(g, s)
-
-        绘制控制按钮(g, s, s.CloseRect, HTCLOSE)
-        If s.HostForm.MaximizeBox Then 绘制控制按钮(g, s, s.MaxRect, HTMAXBUTTON)
-        If s.HostForm.MinimizeBox Then 绘制控制按钮(g, s, s.MinRect, HTMINBUTTON)
-
-        If _边框厚度 > 0 Then
-            Dim bdr As Integer = _边框厚度
-            Dim bdrColor As Color
-            If useBackdrop AndAlso _边框自动颜色 Then
-                bdrColor = s.Renderer.DeriveBorderColor(active, If(active, _边框颜色, _边框失焦颜色))
-            Else
-                bdrColor = If(active, _边框颜色, _边框失焦颜色)
+            ' 2.1 标题栏底色（仅在没有毛玻璃时绘制）
+            If Not useBackdrop AndAlso _标题栏高度 > 0 Then
+                Dim capColor As Color = If(active, _标题栏背景颜色, _标题栏失焦背景颜色)
+                If capColor.A > 0 Then
+                    Using b = gRT.CreateSolidColorBrush(D2DHelper.ToColor4(capColor))
+                        gRT.FillRectangle(D2DHelper.ToD2DRect(captionRect), b)
+                    End Using
+                End If
             End If
-            brush.Color = bdrColor
-            ' 单次 GDI+ 调用绘制四条边，节省状态切换
-            Dim borderRects(3) As Rectangle
-            borderRects(0) = New Rectangle(0, 0, w, bdr)
-            borderRects(1) = New Rectangle(0, h - bdr, w, bdr)
-            borderRects(2) = New Rectangle(0, bdr, bdr, h - bdr * 2)
-            borderRects(3) = New Rectangle(w - bdr, bdr, bdr, h - bdr * 2)
-            g.FillRectangles(brush, borderRects)
-        End If
 
-        RaiseEvent CaptionPaint(Me, New CaptionPaintEventArgs(g, captionRect, active, s.HostForm))
+            ' 2.2 标题栏背景图片（cover 居中裁切）
+            If _标题栏背景图片 IsNot Nothing AndAlso _标题栏高度 > 0 Then
+                绘制标题栏背景图片_D2D(gRT, s, captionRect)
+            End If
+
+            ' 2.3 标题栏遮罩
+            If _标题栏遮罩颜色.A > 0 AndAlso _标题栏高度 > 0 Then
+                Using b = gRT.CreateSolidColorBrush(D2DHelper.ToColor4(_标题栏遮罩颜色))
+                    gRT.FillRectangle(D2DHelper.ToD2DRect(captionRect), b)
+                End Using
+            End If
+
+            ' 2.4 图标
+            绘制图标_D2D(gRT, s)
+
+            ' 2.5 控制按钮（背景与符号）
+            绘制控制按钮_D2D(gRT, s, s.CloseRect, HTCLOSE)
+            If s.HostForm.MaximizeBox Then 绘制控制按钮_D2D(gRT, s, s.MaxRect, HTMAXBUTTON)
+            If s.HostForm.MinimizeBox Then 绘制控制按钮_D2D(gRT, s, s.MinRect, HTMINBUTTON)
+
+            ' 2.6 外边框
+            If _边框厚度 > 0 Then
+                Dim bdrColor As Color
+                If useBackdrop AndAlso _边框自动颜色 Then
+                    bdrColor = s.Renderer.DeriveBorderColor(active, If(active, _边框颜色, _边框失焦颜色))
+                Else
+                    bdrColor = If(active, _边框颜色, _边框失焦颜色)
+                End If
+                If bdrColor.A > 0 Then
+                    Dim bdr As Integer = _边框厚度
+                    Using b = gRT.CreateSolidColorBrush(D2DHelper.ToColor4(bdrColor))
+                        gRT.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(0, 0, w, bdr)), b)
+                        gRT.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(0, h - bdr, w, bdr)), b)
+                        gRT.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(0, bdr, bdr, h - bdr * 2)), b)
+                        gRT.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(w - bdr, bdr, bdr, h - bdr * 2)), b)
+                    End Using
+                End If
+            End If
+
+            ' 2.7 把图形层 SSAA 结果回采到 DC
+            scope.FlushGraphics()
+
+            ' 2.8 标题文字（DirectWrite，保留 ClearType 子像素）
+            绘制标题文字_D2D(dcRT, s)
+        End Using
+
+        ' ── 3) 触发外部自定义绘制事件（仍以 GDI Graphics 暴露，保持兼容）──
+        Dim captionRect2 As New Rectangle(0, 0, w, _标题栏高度)
+        RaiseEvent CaptionPaint(Me, New CaptionPaintEventArgs(g, captionRect2, active, s.HostForm))
     End Sub
 
-    Private Sub 绘制标题栏背景图片(g As Graphics, captionRect As Rectangle)
-        If _标题栏背景图片 Is Nothing Then Return
+    Private Sub 绘制标题栏背景图片_D2D(rt As ID2D1RenderTarget, s As PerFormState, captionRect As Rectangle)
         Dim img As Image = _标题栏背景图片
+        If img Is Nothing Then Return
         Dim cw As Integer = captionRect.Width
         Dim ch As Integer = captionRect.Height
         If cw < 1 OrElse ch < 1 Then Return
+
+        Dim bmp = s.CaptionImageCache.GetBitmap(rt, img)
+        If bmp Is Nothing Then Return
 
         Dim ratioW As Single = CSng(cw) / img.Width
         Dim ratioH As Single = CSng(ch) / img.Height
@@ -1655,14 +1706,22 @@ Public Class ThisIsYourWindow
         Dim dx As Single = captionRect.X + (cw - drawW) / 2.0F
         Dim dy As Single = captionRect.Y + (ch - drawH) / 2.0F
 
-        Dim oldClip = g.Clip
-        g.SetClip(captionRect)
-        g.InterpolationMode = InterpolationMode.HighQualityBicubic
-        g.DrawImage(img, dx, dy, drawW, drawH)
-        g.Clip = oldClip
+        ' 用 captionRect 做矩形几何裁剪，避免图像溢出标题栏。
+        Using clipGeo = D2DHelper.GetD2DFactory().CreateRectangleGeometry(New RectangleF(captionRect.X, captionRect.Y, cw, ch))
+            D2DHelper.PushGeometryClip(rt, clipGeo, New RectangleF(captionRect.X, captionRect.Y, cw, ch))
+            Try
+                rt.DrawBitmap(bmp,
+                              New Vortice.Mathematics.Rect(dx, dy, drawW, drawH),
+                              1.0F,
+                              BitmapInterpolationMode.Linear,
+                              Nothing)
+            Finally
+                rt.PopLayer()
+            End Try
+        End Using
     End Sub
 
-    Private Sub 绘制图标(g As Graphics, s As PerFormState)
+    Private Sub 绘制图标_D2D(rt As ID2D1RenderTarget, s As PerFormState)
         If _图标来源 = IconSourceEnum.None OrElse s.IconRect.IsEmpty Then Return
         Dim img As Image = Nothing
         If _图标来源 = IconSourceEnum.Custom Then
@@ -1672,51 +1731,22 @@ Public Class ThisIsYourWindow
                 s.CachedIconBitmap?.Dispose()
                 s.CachedIconBitmap = s.HostForm.Icon.ToBitmap()
                 s.CachedIconSource = s.HostForm.Icon
+                s.IconBitmapCache.Invalidate()
             End If
             img = s.CachedIconBitmap
         End If
-        If img IsNot Nothing Then
-            g.InterpolationMode = InterpolationMode.HighQualityBicubic
-            g.DrawImage(img, s.IconRect)
-        End If
+        If img Is Nothing Then Return
+        Dim bmp = s.IconBitmapCache.GetBitmap(rt, img)
+        If bmp Is Nothing Then Return
+        Dim r = s.IconRect
+        rt.DrawBitmap(bmp,
+                      New Vortice.Mathematics.Rect(r.X, r.Y, r.Width, r.Height),
+                      1.0F,
+                      BitmapInterpolationMode.Linear,
+                      Nothing)
     End Sub
 
-    Private Sub 绘制标题文字(g As Graphics, s As PerFormState)
-        Dim text As String = s.HostForm.Text
-        If String.IsNullOrEmpty(text) Then Return
-        Dim font As Font = If(_标题文字字体, s.HostForm.Font)
-        Dim fgColor As Color = If(s.Activated, _标题文字颜色, _标题文字失焦颜色)
-        Dim leftEdge, rightEdge As Integer
-
-        If _按钮位置 = ButtonPositionEnum.Right Then
-            leftEdge = If(Not s.IconRect.IsEmpty, s.IconRect.Right + _标题文字左边距, _标题文字左边距)
-            Dim btnLeft As Integer = s.CloseRect.Left
-            If s.HostForm.MaximizeBox AndAlso Not s.MaxRect.IsEmpty Then btnLeft = Math.Min(btnLeft, s.MaxRect.Left)
-            If s.HostForm.MinimizeBox AndAlso Not s.MinRect.IsEmpty Then btnLeft = Math.Min(btnLeft, s.MinRect.Left)
-            rightEdge = btnLeft - _标题文字右边距
-        Else
-            If Not s.IconRect.IsEmpty Then
-                leftEdge = s.IconRect.Right + _标题文字左边距
-            Else
-                Dim btnRight As Integer = s.CloseRect.Right
-                If s.HostForm.MaximizeBox AndAlso Not s.MaxRect.IsEmpty Then btnRight = Math.Max(btnRight, s.MaxRect.Right)
-                If s.HostForm.MinimizeBox AndAlso Not s.MinRect.IsEmpty Then btnRight = Math.Max(btnRight, s.MinRect.Right)
-                leftEdge = btnRight + _标题文字左边距
-            End If
-            rightEdge = s.HostForm.ClientSize.Width - _标题文字右边距
-        End If
-
-        Dim textRect As New Rectangle(leftEdge, 0, Math.Max(0, rightEdge - leftEdge), _标题栏高度)
-        Dim flags As TextFormatFlags = TextFormatFlags.VerticalCenter Or TextFormatFlags.EndEllipsis Or TextFormatFlags.SingleLine Or TextFormatFlags.NoPadding
-        Select Case _标题文字对齐
-            Case TitleAlignEnum.Left : flags = flags Or TextFormatFlags.Left
-            Case TitleAlignEnum.Center : flags = flags Or TextFormatFlags.HorizontalCenter
-            Case TitleAlignEnum.Right : flags = flags Or TextFormatFlags.Right
-        End Select
-        TextRenderer.DrawText(g, text, font, textRect, fgColor, flags)
-    End Sub
-
-    Private Sub 绘制控制按钮(g As Graphics, s As PerFormState, rect As Rectangle, htValue As Integer)
+    Private Sub 绘制控制按钮_D2D(rt As ID2D1RenderTarget, s As PerFormState, rect As Rectangle, htValue As Integer)
         If rect.IsEmpty Then Return
         Dim isClose As Boolean = (htValue = HTCLOSE)
         Dim isHover As Boolean = (s.HoverHit = htValue)
@@ -1741,54 +1771,107 @@ Public Class ThisIsYourWindow
             End If
         End If
 
-        Dim vis As New Rectangle(rect.X + _按钮内边距.Left, rect.Y + _按钮内边距.Top,
+        Dim vis As New RectangleF(rect.X + _按钮内边距.Left, rect.Y + _按钮内边距.Top,
                                   rect.Width - _按钮内边距.Horizontal, rect.Height - _按钮内边距.Vertical)
         If vis.Width <= 0 OrElse vis.Height <= 0 Then Return
 
-        Dim brush As SolidBrush = _共享画刷
-        If bgColor <> Color.Transparent AndAlso bgColor.A > 0 Then
-            Dim r As Integer = Math.Min(_按钮圆角半径, Math.Min(vis.Width, vis.Height) \ 2)
-            brush.Color = bgColor
+        ' 背景
+        If bgColor.A > 0 Then
+            Dim r As Integer = Math.Min(_按钮圆角半径, CInt(Math.Min(vis.Width, vis.Height)) \ 2)
             If r > 0 Then
-                g.SmoothingMode = SmoothingMode.AntiAlias
-                Using path As New GraphicsPath()
-                    Dim d As Integer = r * 2
-                    path.AddArc(vis.X, vis.Y, d, d, 180, 90)
-                    path.AddArc(vis.Right - d, vis.Y, d, d, 270, 90)
-                    path.AddArc(vis.Right - d, vis.Bottom - d, d, d, 0, 90)
-                    path.AddArc(vis.X, vis.Bottom - d, d, d, 90, 90)
-                    path.CloseFigure()
-                    g.FillPath(brush, path)
+                Using geo = RectangleRenderer.创建圆角矩形几何(vis, r)
+                    Using b = rt.CreateSolidColorBrush(D2DHelper.ToColor4(bgColor))
+                        rt.FillGeometry(geo, b)
+                    End Using
                 End Using
-                g.SmoothingMode = SmoothingMode.Default
             Else
-                g.FillRectangle(brush, vis)
+                Using b = rt.CreateSolidColorBrush(D2DHelper.ToColor4(bgColor))
+                    rt.FillRectangle(D2DHelper.ToD2DRect(vis), b)
+                End Using
             End If
         End If
 
+        ' 符号
+        If symColor.A = 0 Then Return
         Dim sz As Integer = _按钮符号大小
-        Dim cx As Integer = vis.X + (vis.Width - sz) \ 2
-        Dim cy As Integer = vis.Y + (vis.Height - sz) \ 2
-        Dim pen As Pen = _共享画笔
-        pen.Color = symColor
-        pen.Width = _按钮符号线宽
-        g.SmoothingMode = SmoothingMode.AntiAlias
-        Select Case htValue
-            Case HTCLOSE
-                g.DrawLine(pen, cx, cy, cx + sz, cy + sz)
-                g.DrawLine(pen, cx + sz, cy, cx, cy + sz)
-            Case HTMAXBUTTON
-                If s.HostForm.WindowState = FormWindowState.Maximized Then
-                    Dim off As Integer = CInt(sz * 0.25)
-                    g.DrawRectangle(pen, cx + off, cy, sz - off, sz - off)
-                    g.DrawRectangle(pen, cx, cy + off, sz - off, sz - off)
-                Else
-                    g.DrawRectangle(pen, cx, cy, sz, sz)
-                End If
-            Case HTMINBUTTON
-                g.DrawLine(pen, cx, cy + sz \ 2, cx + sz, cy + sz \ 2)
+        Dim cx As Single = vis.X + (vis.Width - sz) / 2.0F
+        Dim cy As Single = vis.Y + (vis.Height - sz) / 2.0F
+        Dim lw As Single = Math.Max(0.5F, _按钮符号线宽)
+        Using pen = rt.CreateSolidColorBrush(D2DHelper.ToColor4(symColor))
+            Select Case htValue
+                Case HTCLOSE
+                    rt.DrawLine(New Vector2(cx, cy), New Vector2(cx + sz, cy + sz), pen, lw)
+                    rt.DrawLine(New Vector2(cx + sz, cy), New Vector2(cx, cy + sz), pen, lw)
+                Case HTMAXBUTTON
+                    If s.HostForm.WindowState = FormWindowState.Maximized Then
+                        Dim off As Single = sz * 0.25F
+                        rt.DrawRectangle(New Vortice.Mathematics.Rect(cx + off, cy, sz - off, sz - off), pen, lw)
+                        rt.DrawRectangle(New Vortice.Mathematics.Rect(cx, cy + off, sz - off, sz - off), pen, lw)
+                    Else
+                        rt.DrawRectangle(New Vortice.Mathematics.Rect(cx, cy, sz, sz), pen, lw)
+                    End If
+                Case HTMINBUTTON
+                    Dim mid As Single = cy + sz / 2.0F
+                    rt.DrawLine(New Vector2(cx, mid), New Vector2(cx + sz, mid), pen, lw)
+            End Select
+        End Using
+    End Sub
+
+    Private Sub 绘制标题文字_D2D(rt As ID2D1DCRenderTarget, s As PerFormState)
+        Dim text As String = s.HostForm.Text
+        If String.IsNullOrEmpty(text) Then Return
+        Dim font As Font = If(_标题文字字体, s.HostForm.Font)
+        If font Is Nothing Then Return
+        Dim fgColor As Color = If(s.Activated, _标题文字颜色, _标题文字失焦颜色)
+        If fgColor.A = 0 Then Return
+
+        Dim leftEdge, rightEdge As Integer
+        If _按钮位置 = ButtonPositionEnum.Right Then
+            leftEdge = If(Not s.IconRect.IsEmpty, s.IconRect.Right + _标题文字左边距, _标题文字左边距)
+            Dim btnLeft As Integer = s.CloseRect.Left
+            If s.HostForm.MaximizeBox AndAlso Not s.MaxRect.IsEmpty Then btnLeft = Math.Min(btnLeft, s.MaxRect.Left)
+            If s.HostForm.MinimizeBox AndAlso Not s.MinRect.IsEmpty Then btnLeft = Math.Min(btnLeft, s.MinRect.Left)
+            rightEdge = btnLeft - _标题文字右边距
+        Else
+            If Not s.IconRect.IsEmpty Then
+                leftEdge = s.IconRect.Right + _标题文字左边距
+            Else
+                Dim btnRight As Integer = s.CloseRect.Right
+                If s.HostForm.MaximizeBox AndAlso Not s.MaxRect.IsEmpty Then btnRight = Math.Max(btnRight, s.MaxRect.Right)
+                If s.HostForm.MinimizeBox AndAlso Not s.MinRect.IsEmpty Then btnRight = Math.Max(btnRight, s.MinRect.Right)
+                leftEdge = btnRight + _标题文字左边距
+            End If
+            rightEdge = s.HostForm.ClientSize.Width - _标题文字右边距
+        End If
+
+        Dim textRect As New RectangleF(leftEdge, 0, Math.Max(0, rightEdge - leftEdge), _标题栏高度)
+        If textRect.Width <= 0 OrElse textRect.Height <= 0 Then Return
+
+        Dim align As Vortice.DirectWrite.TextAlignment
+        Select Case _标题文字对齐
+            Case TitleAlignEnum.Center : align = Vortice.DirectWrite.TextAlignment.Center
+            Case TitleAlignEnum.Right : align = Vortice.DirectWrite.TextAlignment.Trailing
+            Case Else : align = Vortice.DirectWrite.TextAlignment.Leading
         End Select
-        g.SmoothingMode = SmoothingMode.Default
+
+        Dim sizePx As Single = font.SizeInPoints * (96.0F / 72.0F)
+        Dim weight As Vortice.DirectWrite.FontWeight = If(font.Bold, Vortice.DirectWrite.FontWeight.Bold, Vortice.DirectWrite.FontWeight.Normal)
+        Dim style As Vortice.DirectWrite.FontStyle = If(font.Italic, Vortice.DirectWrite.FontStyle.Italic, Vortice.DirectWrite.FontStyle.Normal)
+
+        Dim dw = D2DHelper.GetDWriteFactory()
+        Using fmt = dw.CreateTextFormat(font.FontFamily.Name, Nothing, weight, style, Vortice.DirectWrite.FontStretch.Normal, sizePx)
+            fmt.TextAlignment = align
+            fmt.ParagraphAlignment = ParagraphAlignment.Center
+            fmt.WordWrapping = WordWrapping.NoWrap
+            Try
+                fmt.SetTrimming(New Trimming With {.Granularity = TrimmingGranularity.Character}, Nothing)
+            Catch
+            End Try
+            Using brush = rt.CreateSolidColorBrush(D2DHelper.ToColor4(fgColor))
+                rt.DrawText(text, fmt, D2DHelper.ToD2DRect(textRect), brush,
+                            DrawTextOptions.Clip, Vortice.DCommon.MeasuringMode.Natural)
+            End Using
+        End Using
     End Sub
 
     ''' <summary>请求指定窗体重绘标题栏区域。</summary>
@@ -1890,6 +1973,13 @@ Public Class ThisIsYourWindow
         _forms.Remove(targetForm.Handle)
 
         s.CachedIconBitmap?.Dispose()
+        Try : s.SsaaCache.Dispose() : Catch : End Try
+        Try : s.CaptionImageCache.Dispose() : Catch : End Try
+        Try : s.IconBitmapCache.Dispose() : Catch : End Try
+        If s.DcRT IsNot Nothing Then
+            Try : s.DcRT.Dispose() : Catch : End Try
+            s.DcRT = Nothing
+        End If
         s.Interceptor?.ReleaseHandle()
         销毁阴影(s)
         If s.BackdropTimer IsNot Nothing Then

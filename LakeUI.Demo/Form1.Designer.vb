@@ -70,6 +70,7 @@ Partial Class Form1
         ' 
         ' ModernTabListControl1
         ' 
+        ModernTabListControl1.AnimationFPS = 120
         ModernTabListControl1.Controls.Add(ModernTextBox1)
         ModernTabListControl1.Dock = DockStyle.Fill
         ModernTabPage1.IsDescription = True
@@ -160,11 +161,12 @@ Partial Class Form1
         ModernTabListControl1.Size = New Size(984, 661)
         ModernTabListControl1.TabIndex = 11
         ModernTabListControl1.TabItemHeight = 30
+        ModernTabListControl1.TabStripBackColor = Color.Transparent
         ModernTabListControl1.TabStripWidth = 250
         ' 
         ' ModernTextBox1
         ' 
-        ModernTextBox1.BackColor = Color.FromArgb(CByte(48), CByte(48), CByte(48))
+        ModernTextBox1.BackColor = Color.Transparent
         ModernTextBox1.BorderRadius = 10
         ModernTextBox1.BorderSize = 2
         ModernTextBox1.CaretColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
@@ -182,8 +184,8 @@ Partial Class Form1
         ' 
         ThisIsYourWindow1.BackdropBlurRadius = 10
         ThisIsYourWindow1.BackdropMaxParallelism = 6
-        ThisIsYourWindow1.BackdropMode = ThisIsYourWindow.BackdropModeEnum.CaptionOnly
-        ThisIsYourWindow1.BackdropNoiseScale = 0.5F
+        ThisIsYourWindow1.BackdropMode = ThisIsYourWindow.BackdropModeEnum.Auto
+        ThisIsYourWindow1.BackdropNoiseOpacity = CByte(0)
         ThisIsYourWindow1.BackdropTintColor = Color.FromArgb(CByte(120), CByte(48), CByte(48), CByte(48))
         ThisIsYourWindow1.BackdropTintInactiveColor = Color.FromArgb(CByte(80), CByte(48), CByte(48), CByte(48))
         ThisIsYourWindow1.BorderAutoColor = True

@@ -72,6 +72,7 @@ Partial Class Form_ModernButton
         ModernPanel1.Margin = New Padding(2)
         ModernPanel1.Name = "ModernPanel1"
         ModernPanel1.Padding = New Padding(20)
+        ModernPanel1.ScrollBarMode = ModernPanel.ScrollMode.None
         ModernPanel1.Size = New Size(683, 629)
         ModernPanel1.TabIndex = 34
         ' 
