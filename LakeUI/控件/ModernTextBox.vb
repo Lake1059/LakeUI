@@ -3,9 +3,21 @@ Imports System.Drawing.Drawing2D
 Imports System.Runtime.InteropServices
 Imports System.Text
 Imports System.Text.RegularExpressions
+Imports Vortice.Direct2D1
 
 <DefaultEvent("TextChanged")>
 Public Class ModernTextBox
+#Region "D2D 资源"
+    ''' <summary>控件级 DC RenderTarget。与窗口 DC 强相关，无法跨控件共享，由控件持有。</summary>
+    Private _dcRT As ID2D1DCRenderTarget
+    ''' <summary>跨帧复用的 SSAA 离屏 BitmapRT，按 (Width, Height, ssaa) 命中。</summary>
+    Private ReadOnly _ssaaCache As New D2DHelper.BitmapRTCache()
+
+    Private Function GetOrCreateDCRenderTarget() As ID2D1DCRenderTarget
+        If _dcRT Is Nothing Then _dcRT = D2DHelper.CreateDCRenderTarget()
+        Return _dcRT
+    End Function
+#End Region
     Public Shadows Event TextChanged As EventHandler
     Public Event LinkClicked As EventHandler(Of LinkClickedEventArgs)
 
@@ -921,6 +933,11 @@ Public Class ModernTextBox
         _ssaaBitmap = Nothing
         _underlineFontCache?.Dispose()
         _underlineFontCache = Nothing
+        Try : _ssaaCache.Dispose() : Catch : End Try
+        If _dcRT IsNot Nothing Then
+            Try : _dcRT.Dispose() : Catch : End Try
+            _dcRT = Nothing
+        End If
         MyBase.OnHandleDestroyed(e)
     End Sub
 #End Region
@@ -935,11 +952,8 @@ Public Class ModernTextBox
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
         Dim w As Integer = ClientRectangle.Width
         Dim h As Integer = ClientRectangle.Height
+        If w <= 0 OrElse h <= 0 Then Return
         Dim hasRadius As Boolean = 边框圆角半径 > 0
-        ' 透明背景：把背景源采样到自身区域；详见 TransparentBackgroundCache。
-        If hasRadius OrElse 背景颜色.A < 255 Then
-            TransparentBackgroundCache.PaintBackgroundFor(Me, e.Graphics, _backgroundSource)
-        End If
         Dim fillRect As New RectangleF(0, 0, w, h)
         Dim boundsRect As New RectangleF(0, 0, w, h)
         Dim s As Single = DpiScale()
@@ -948,42 +962,76 @@ Public Class ModernTextBox
             boundsRect.Inflate(-half, -half)
         End If
         Dim bc As Color = If(Focused, 有焦点时边框颜色, 边框颜色)
-        Dim _ssaa As Integer = If(Class1.GlobalSSAA > 1, Class1.GlobalSSAA, 超采样倍率)
-        If _ssaa > 1 Then
-            Dim bmpW As Integer = w * _ssaa
-            Dim bmpH As Integer = h * _ssaa
-            If _ssaaBitmap Is Nothing OrElse _ssaaBitmapW <> bmpW OrElse _ssaaBitmapH <> bmpH Then
-                _ssaaBitmap?.Dispose()
-                _ssaaBitmap = New Bitmap(bmpW, bmpH)
-                _ssaaBitmapW = bmpW
-                _ssaaBitmapH = bmpH
+        Dim ssaa As Integer = Math.Max(1, CInt(超采样倍率))
+        If Class1.GlobalSSAA <> Class1.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(Class1.GlobalSSAA))
+
+        ' 1) D2D 图形层：背景（先在图形 RT 上贴透明底图，避免 dcRT.EndDraw 把圆角外区域擦黑）
+        Using scope = D2DHelper.BeginPaint(e, Me, GetOrCreateDCRenderTarget(), ssaa, _ssaaCache)
+            Dim gRT As ID2D1RenderTarget = scope.GraphicsRenderTarget
+            If hasRadius OrElse MyBase.BackColor.A < 255 Then
+                TransparentBackgroundCache.PaintBackgroundFor_D2D(Me, gRT, _backgroundSource)
             End If
-            Using g As Graphics = Graphics.FromImage(_ssaaBitmap)
-                g.Clear(Color.Transparent)
-                g.ScaleTransform(_ssaa, _ssaa)
-                DrawBackgroundFill(g, hasRadius, fillRect)
-            End Using
-            e.Graphics.CompositingQuality = CompositingQuality.HighQuality
-            e.Graphics.InterpolationMode = InterpolationMode.HighQualityBicubic
-            e.Graphics.DrawImage(_ssaaBitmap, 0, 0, w, h)
-        Else
-            DrawBackgroundFill(e.Graphics, hasRadius, fillRect)
-        End If
+            绘制背景_D2D(gRT, hasRadius, fillRect)
+            scope.FlushGraphics()
+        End Using
+
+        ' 2) GDI 文本层（保留 TextRenderer 测量与现有渲染逻辑，兼容 MacType）
         DrawTextContent(e.Graphics, w, h)
-        ' 边框绘制在行号背景之上
-        If _ssaa > 1 Then
-            Using g As Graphics = Graphics.FromImage(_ssaaBitmap)
-                g.Clear(Color.Transparent)
-                g.ScaleTransform(_ssaa, _ssaa)
-                DrawBorderOnly(g, hasRadius, boundsRect, bc)
+
+        ' 3) D2D 图形层：边框 + 滚动条
+        Using scope = D2DHelper.BeginPaint(e, Me, GetOrCreateDCRenderTarget(), ssaa, _ssaaCache)
+            Dim gRT As ID2D1RenderTarget = scope.GraphicsRenderTarget
+            绘制边框_D2D(gRT, hasRadius, boundsRect, bc)
+            DrawScrollBar_D2D(gRT, w, h)
+            scope.FlushGraphics()
+        End Using
+    End Sub
+
+    Private Sub 绘制背景_D2D(rt As ID2D1RenderTarget, hasRadius As Boolean, fillRect As RectangleF)
+        ' BackColor 半透明遮罩层：位于采样底图之上、BackColor1（=背景颜色）之下。A=255 不走本路径。
+        Dim backColorMask As Color = MyBase.BackColor
+        Dim s As Single = DpiScale()
+        If hasRadius Then
+            Using geo = RectangleRenderer.创建圆角矩形几何(fillRect, 边框圆角半径 * s)
+                If backColorMask.A > 0 AndAlso backColorMask.A < 255 Then
+                    RectangleRenderer.绘制圆角背景_D2D(rt, geo, fillRect, backColorMask, Color.Empty, System.Windows.Forms.Orientation.Horizontal)
+                End If
+                If 背景颜色.A > 0 Then
+                    RectangleRenderer.绘制圆角背景_D2D(rt, geo, fillRect, 背景颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal)
+                End If
             End Using
-            e.Graphics.CompositingQuality = CompositingQuality.HighQuality
-            e.Graphics.InterpolationMode = InterpolationMode.HighQualityBicubic
-            e.Graphics.DrawImage(_ssaaBitmap, 0, 0, w, h)
         Else
-            DrawBorderOnly(e.Graphics, hasRadius, boundsRect, bc)
+            If backColorMask.A > 0 AndAlso backColorMask.A < 255 Then
+                RectangleRenderer.绘制矩形背景_D2D(rt, fillRect, backColorMask, Color.Empty, System.Windows.Forms.Orientation.Horizontal)
+            End If
+            If 背景颜色.A > 0 Then
+                RectangleRenderer.绘制矩形背景_D2D(rt, fillRect, 背景颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal)
+            End If
         End If
-        DrawScrollBar(e.Graphics, w, h)
+    End Sub
+
+    Private Sub 绘制边框_D2D(rt As ID2D1RenderTarget, hasRadius As Boolean, boundsRect As RectangleF, borderClr As Color)
+        If 边框宽度 <= 0 OrElse borderClr.A = 0 Then Return
+        Dim s As Single = DpiScale()
+        If hasRadius Then
+            Using geo = RectangleRenderer.创建圆角矩形几何(boundsRect, 边框圆角半径 * s)
+                RectangleRenderer.绘制圆角边框_D2D(rt, geo, borderClr, 边框宽度 * s)
+            End Using
+        Else
+            RectangleRenderer.绘制矩形边框_D2D(rt, boundsRect, borderClr, 边框宽度 * s)
+        End If
+    End Sub
+
+    Private Sub DrawScrollBar_D2D(rt As ID2D1RenderTarget, w As Integer, h As Integer)
+        If Not _scrollBarVisible Then Return
+        Dim s As Single = DpiScale()
+        Dim scaledBorder As Integer = CInt(Math.Round(边框宽度 * s))
+        Dim scaledRadius As Integer = CInt(Math.Round(边框圆角半径 * s))
+        Dim scaledScrollW As Integer = CInt(Math.Round(滚动条宽度 * s))
+        _scrollBar.ComputeLayout(w, h, scaledBorder, scaledRadius, 0, 0, scaledScrollW,
+            _visualLines.Count, VisibleLineCount(), _scrollLineOffset)
+        _scrollBar.Draw_D2D(rt, w, h, scaledBorder, scaledRadius, scaledScrollW,
+            滚动条轨道颜色, 滚动条颜色, 滚动条悬停颜色)
     End Sub
 
     Private Sub DrawBackgroundFill(g As Graphics, hasRadius As Boolean, boundsRect As RectangleF)
@@ -991,10 +1039,10 @@ Public Class ModernTextBox
         Dim s As Single = DpiScale()
         If hasRadius Then
             Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(boundsRect, 边框圆角半径 * s)
-                RectangleRenderer.绘制圆角背景(g, path, boundsRect, 背景颜色, Color.Empty, Orientation.Horizontal)
+                RectangleRenderer.绘制圆角背景(g, path, boundsRect, 背景颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal)
             End Using
         Else
-            RectangleRenderer.绘制矩形背景(g, boundsRect, 背景颜色, Color.Empty, Orientation.Horizontal)
+            RectangleRenderer.绘制矩形背景(g, boundsRect, 背景颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal)
         End If
     End Sub
 
@@ -1013,7 +1061,7 @@ Public Class ModernTextBox
     Private Shared Sub SetHighQualityGraphics(g As Graphics)
         g.SmoothingMode = SmoothingMode.AntiAlias
         g.PixelOffsetMode = PixelOffsetMode.HighQuality
-        g.InterpolationMode = InterpolationMode.HighQualityBicubic
+        g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic
     End Sub
 
     Private Sub DrawTextContent(g As Graphics, w As Integer, h As Integer)

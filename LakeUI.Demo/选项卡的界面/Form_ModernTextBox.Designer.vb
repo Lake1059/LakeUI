@@ -75,11 +75,15 @@ Partial Class Form_ModernTextBox
         ' 
         ' ModernTextBox2
         ' 
+        ModernTextBox2.BackColor1 = Color.FromArgb(CByte(120), CByte(0), CByte(0), CByte(0))
+        ModernTextBox2.BorderColor = Color.FromArgb(CByte(80), CByte(220), CByte(220), CByte(220))
+        ModernTextBox2.BorderColorFocus = Color.FromArgb(CByte(120), CByte(220), CByte(220), CByte(220))
         ModernTextBox2.BorderRadius = 10
         ModernTextBox2.BorderSize = 2
         ModernTextBox2.Dock = DockStyle.Fill
         ModernTextBox2.EnableSyntaxHighlight = True
         ModernTextBox2.Font = New Font("Microsoft YaHei UI", 10F)
+        ModernTextBox2.LineNumberBackColor = Color.FromArgb(CByte(20), CByte(220), CByte(220), CByte(220))
         ModernTextBox2.LinkDetection = True
         ModernTextBox2.Location = New Point(0, 0)
         ModernTextBox2.Margin = New Padding(2, 2, 2, 2)
@@ -114,6 +118,9 @@ Partial Class Form_ModernTextBox
         ' 
         ' ModernTextBox1
         ' 
+        ModernTextBox1.BackColor1 = Color.FromArgb(CByte(120), CByte(0), CByte(0), CByte(0))
+        ModernTextBox1.BorderColor = Color.FromArgb(CByte(80), CByte(220), CByte(220), CByte(220))
+        ModernTextBox1.BorderColorFocus = Color.FromArgb(CByte(120), CByte(220), CByte(220), CByte(220))
         ModernTextBox1.BorderRadius = 10
         ModernTextBox1.BorderSize = 2
         ModernTextBox1.Dock = DockStyle.Fill
@@ -167,7 +174,7 @@ Partial Class Form_ModernTextBox
         ' 
         ' ModernButton4
         ' 
-        ModernButton4.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton4.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton4.BorderRadius = 10
         ModernButton4.BorderSize = 0
         ModernButton4.Dock = DockStyle.Left
@@ -193,7 +200,7 @@ Partial Class Form_ModernTextBox
         ' 
         ' ModernButton3
         ' 
-        ModernButton3.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton3.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton3.BorderRadius = 10
         ModernButton3.BorderSize = 0
         ModernButton3.Dock = DockStyle.Left
@@ -218,7 +225,7 @@ Partial Class Form_ModernTextBox
         ' 
         ' ModernButton2
         ' 
-        ModernButton2.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton2.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton2.BorderRadius = 10
         ModernButton2.BorderSize = 0
         ModernButton2.Dock = DockStyle.Left
@@ -243,7 +250,7 @@ Partial Class Form_ModernTextBox
         ' 
         ' ModernButton1
         ' 
-        ModernButton1.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton1.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton1.BorderRadius = 10
         ModernButton1.BorderSize = 0
         ModernButton1.Dock = DockStyle.Left

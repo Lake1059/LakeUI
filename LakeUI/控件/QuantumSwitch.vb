@@ -1,10 +1,29 @@
 ﻿Imports System.ComponentModel
-Imports System.Drawing.Drawing2D
+Imports Vortice.Direct2D1
 
 <DefaultEvent("StateChanged")>
 Public Class QuantumSwitch
 
     Public Event StateChanged As EventHandler
+
+#Region "D2D 资源"
+    Private _dcRT As ID2D1DCRenderTarget
+    Private ReadOnly _ssaaCache As New D2DHelper.BitmapRTCache()
+
+    Private Function GetOrCreateDCRenderTarget() As ID2D1DCRenderTarget
+        If _dcRT Is Nothing Then _dcRT = D2DHelper.CreateDCRenderTarget()
+        Return _dcRT
+    End Function
+
+    Protected Overrides Sub OnHandleDestroyed(e As EventArgs)
+        Try : _ssaaCache.Dispose() : Catch : End Try
+        If _dcRT IsNot Nothing Then
+            Try : _dcRT.Dispose() : Catch : End Try
+            _dcRT = Nothing
+        End If
+        MyBase.OnHandleDestroyed(e)
+    End Sub
+#End Region
 
 #Region "状态枚举"
     Public Enum QuantumStateEnum
@@ -21,108 +40,117 @@ Public Class QuantumSwitch
 
 #Region "绘制"
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
+        If Me.Width <= 0 OrElse Me.Height <= 0 Then Return
+
         Dim 极限矩形区域 As New RectangleF(0, 0, Me.Width - 1, Me.Height - 1)
         Dim s As Single = DpiScale()
         If 边框宽度 > 0 Then
             Dim half As Single = 边框宽度 * s / 2.0F
             极限矩形区域.Inflate(-half, -half)
         End If
-        Dim _ssaa As Integer = If(Class1.GlobalSSAA > 1, Class1.GlobalSSAA, 超采样倍率)
-        If _ssaa > 1 Then
-            Using bmp As New Bitmap(Me.Width * _ssaa, Me.Height * _ssaa)
-                Using g As Graphics = Graphics.FromImage(bmp)
-                    g.ScaleTransform(_ssaa, _ssaa)
-                    绘制图形内容(g, 极限矩形区域)
+
+        Dim ssaa As Integer = Math.Max(1, CInt(超采样倍率))
+        If Class1.GlobalSSAA <> Class1.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(Class1.GlobalSSAA))
+
+        Using scope = D2DHelper.BeginPaint(e, Me, GetOrCreateDCRenderTarget(), ssaa, _ssaaCache)
+            绘制图形内容_D2D(scope.GraphicsRenderTarget, 极限矩形区域)
+            scope.FlushGraphics()
+
+            If Not Enabled Then
+                Using brush = scope.DCRenderTarget.CreateSolidColorBrush(D2DHelper.ToColor4(Color.FromArgb(120, 0, 0, 0)))
+                    scope.DCRenderTarget.FillRectangle(New Vortice.Mathematics.Rect(0, 0, Me.Width, Me.Height), brush)
                 End Using
-                e.Graphics.CompositingQuality = Class1.GlobalCompositingQuality
-                e.Graphics.InterpolationMode = Class1.GlobalInterpolationMode
-                e.Graphics.DrawImage(bmp, 0, 0, Me.Width, Me.Height)
-            End Using
-        Else
-            绘制图形内容(e.Graphics, 极限矩形区域)
-        End If
-        If Not Enabled Then
-            Using brush As New SolidBrush(Color.FromArgb(120, 0, 0, 0))
-                e.Graphics.FillRectangle(brush, 0, 0, Me.Width, Me.Height)
-            End Using
-        End If
+            End If
+        End Using
     End Sub
 
-    Private Sub 绘制图形内容(g As Graphics, 极限矩形区域 As RectangleF)
-        g.SmoothingMode = Class1.GlobalSmoothingMode
-        g.PixelOffsetMode = Class1.GlobalPixelOffsetMode
-        g.InterpolationMode = Class1.GlobalInterpolationMode
-
+    Private Sub 绘制图形内容_D2D(rt As ID2D1RenderTarget, 极限矩形区域 As RectangleF)
         Dim 是未观测状态 As Boolean = 观测者模式 AndAlso 鼠标状态 = MouseStateEnum.Normal
 
         If 是未观测状态 Then
             ' 未被观测：绘制不确定态外观
-            绘制不确定态(g, 极限矩形区域)
+            绘制不确定态_D2D(rt, 极限矩形区域)
         Else
             ' 被观测：绘制正常状态
-            绘制正常态(g, 极限矩形区域)
+            绘制正常态_D2D(rt, 极限矩形区域)
         End If
     End Sub
 
-    Private Sub 绘制正常态(g As Graphics, 极限矩形区域 As RectangleF)
+    Private Sub 绘制正常态_D2D(rt As ID2D1RenderTarget, 极限矩形区域 As RectangleF)
         Dim 轨道颜色 As Color = 获取当前轨道颜色()
         Dim 滑块颜色 As Color = 获取当前滑块颜色()
         Dim 当前边框颜色 As Color = 获取当前边框颜色()
 
         ' 绘制轨道（药丸形状）
-        Dim 圆角半径 As Integer = CInt(Math.Floor(极限矩形区域.Height / 2))
-        Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(极限矩形区域, 圆角半径)
-            Using brush As New SolidBrush(轨道颜色)
-                g.FillPath(brush, path)
+        Dim 圆角半径 As Single = CSng(Math.Floor(极限矩形区域.Height / 2.0F))
+        Using geo = RectangleRenderer.创建圆角矩形几何(极限矩形区域, 圆角半径)
+            Using brush = rt.CreateSolidColorBrush(D2DHelper.ToColor4(轨道颜色))
+                rt.FillGeometry(geo, brush)
             End Using
             Dim s As Single = DpiScale()
-            RectangleRenderer.绘制圆角边框(g, path, 当前边框颜色, 边框宽度 * s)
+            RectangleRenderer.绘制圆角边框_D2D(rt, geo, 当前边框颜色, 边框宽度 * s)
         End Using
 
         ' 绘制滑块（圆形）
         Dim _滑块边距 As Single = 滑块边距值 * DpiScale()
         Dim 滑块直径 As Single = 极限矩形区域.Height - _滑块边距 * 2
+        If 滑块直径 <= 0 Then Return
         Dim 滑块最小X As Single = 极限矩形区域.X + _滑块边距
         Dim 滑块最大X As Single = 极限矩形区域.Right - _滑块边距 - 滑块直径
         Dim 滑块X As Single = 滑块最小X + (滑块最大X - 滑块最小X) * 动画助手.Progress
         Dim 滑块Y As Single = 极限矩形区域.Y + _滑块边距
-        Using brush As New SolidBrush(滑块颜色)
-            g.FillEllipse(brush, 滑块X, 滑块Y, 滑块直径, 滑块直径)
+        Dim 滑块区域 As New RectangleF(滑块X, 滑块Y, 滑块直径, 滑块直径)
+        Using geo = RectangleRenderer.创建圆角矩形几何(滑块区域, 滑块直径 / 2.0F)
+            Using brush = rt.CreateSolidColorBrush(D2DHelper.ToColor4(滑块颜色))
+                rt.FillGeometry(geo, brush)
+            End Using
         End Using
     End Sub
 
-    Private Sub 绘制不确定态(g As Graphics, 极限矩形区域 As RectangleF)
+    Private Sub 绘制不确定态_D2D(rt As ID2D1RenderTarget, 极限矩形区域 As RectangleF)
         ' 绘制轨道（药丸形状）- 使用不确定态颜色
-        Dim 圆角半径 As Integer = CInt(Math.Floor(极限矩形区域.Height / 2))
-        Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(极限矩形区域, 圆角半径)
-            Using brush As New SolidBrush(不确定态轨道颜色值)
-                g.FillPath(brush, path)
+        Dim 圆角半径 As Single = CSng(Math.Floor(极限矩形区域.Height / 2.0F))
+        Using geo = RectangleRenderer.创建圆角矩形几何(极限矩形区域, 圆角半径)
+            Using brush = rt.CreateSolidColorBrush(D2DHelper.ToColor4(不确定态轨道颜色值))
+                rt.FillGeometry(geo, brush)
             End Using
             Dim s As Single = DpiScale()
-            RectangleRenderer.绘制圆角边框(g, path, 获取当前边框颜色(), 边框宽度 * s)
+            RectangleRenderer.绘制圆角边框_D2D(rt, geo, 获取当前边框颜色(), 边框宽度 * s)
         End Using
 
         ' 绘制滑块固定在中间位置
         Dim _滑块边距 As Single = 滑块边距值 * DpiScale()
         Dim 滑块直径 As Single = 极限矩形区域.Height - _滑块边距 * 2
+        If 滑块直径 <= 0 Then Return
         Dim 滑块最小X As Single = 极限矩形区域.X + _滑块边距
         Dim 滑块最大X As Single = 极限矩形区域.Right - _滑块边距 - 滑块直径
         Dim 滑块X As Single = 滑块最小X + (滑块最大X - 滑块最小X) * 0.5F
         Dim 滑块Y As Single = 极限矩形区域.Y + _滑块边距
-        Using brush As New SolidBrush(不确定态滑块颜色值)
-            g.FillEllipse(brush, 滑块X, 滑块Y, 滑块直径, 滑块直径)
+        Dim 滑块区域 As New RectangleF(滑块X, 滑块Y, 滑块直径, 滑块直径)
+        Using geo = RectangleRenderer.创建圆角矩形几何(滑块区域, 滑块直径 / 2.0F)
+            Using brush = rt.CreateSolidColorBrush(D2DHelper.ToColor4(不确定态滑块颜色值))
+                rt.FillGeometry(geo, brush)
+            End Using
         End Using
 
         ' 绘制问号符号
         Dim 字体大小 As Single = 滑块直径 * 0.55F
         Using f As New Font("Segoe UI", 字体大小, FontStyle.Bold, GraphicsUnit.Pixel)
             Dim 文字 As String = "?"
-            Dim 文字尺寸 As SizeF = g.MeasureString(文字, f)
-            Dim tx As Single = 滑块X + (滑块直径 - 文字尺寸.Width) / 2.0F
-            Dim ty As Single = 滑块Y + (滑块直径 - 文字尺寸.Height) / 2.0F
-            g.TextRenderingHint = Drawing.Text.TextRenderingHint.AntiAliasGridFit
-            Using brush As New SolidBrush(不确定态轨道颜色值)
-                g.DrawString(文字, f, brush, tx, ty)
+            Using textBmp As New Bitmap(Math.Max(1, CInt(Math.Ceiling(滑块直径))), Math.Max(1, CInt(Math.Ceiling(滑块直径))))
+                Using g As Graphics = Graphics.FromImage(textBmp)
+                    g.Clear(Color.Transparent)
+                    g.TextRenderingHint = Drawing.Text.TextRenderingHint.AntiAliasGridFit
+                    Dim 文字尺寸 As SizeF = g.MeasureString(文字, f)
+                    Dim tx As Single = (滑块直径 - 文字尺寸.Width) / 2.0F
+                    Dim ty As Single = (滑块直径 - 文字尺寸.Height) / 2.0F
+                    Using brush As New SolidBrush(不确定态轨道颜色值)
+                        g.DrawString(文字, f, brush, tx, ty)
+                    End Using
+                End Using
+                Using d2dBmp = D2DHelper.CreateBitmapFromGdi(rt, textBmp)
+                    rt.DrawBitmap(d2dBmp, D2DHelper.ToD2DRect(滑块区域), 1.0F, BitmapInterpolationMode.Linear, New Vortice.Mathematics.Rect(0, 0, textBmp.Width, textBmp.Height))
+                End Using
             End Using
         End Using
     End Sub

@@ -165,8 +165,7 @@ Public Class ModernTabListControl
     Private Shared ReadOnly _共享Stopwatch As Stopwatch = Stopwatch.StartNew()
     Private ReadOnly _标签页动画 As New Dictionary(Of Integer, TabAnimState)
     Private _悬停索引 As Integer = -1
-    Private _动画计时器 As PrecisionTimer
-    Private _动画用Idle As Boolean = False
+    Private ReadOnly _动画助手 As New AnimationHelper(Me)
     Private _hover动画激活 As Boolean = False
     Private _帧驱动激活 As Boolean = False
     Private ReadOnly _内容面板 As New 透明内容面板()
@@ -227,8 +226,7 @@ Public Class ModernTabListControl
 
     Protected Overrides Sub OnHandleDestroyed(e As EventArgs)
         Try : 停止帧驱动() : Catch : End Try
-        Try : _动画计时器?.Dispose() : Catch : End Try
-        _动画计时器 = Nothing
+        Try : _动画助手.Dispose() : Catch : End Try
         Try : _ssaaCache.Dispose() : Catch : End Try
         Try : _stripBackImageCache.Dispose() : Catch : End Try
         Try
@@ -277,16 +275,7 @@ Public Class ModernTabListControl
         _内容面板.BackColor = 获取内容面板有效背景色()
         Me.Controls.Add(_内容面板)
 
-        _动画用Idle = (动画帧率值 <= 0)
-        If Not _动画用Idle Then
-            _动画计时器 = New PrecisionTimer() With {
-                .Interval = Math.Max(1, CInt(1000.0 / 动画帧率值)),
-                .DispatchMode = PrecisionTimer.DispatchModeEnum.NonBlocking,
-                .OverrunPolicy = PrecisionTimer.OverrunPolicyEnum.Drop,
-                .WorkerThreadCount = 1,
-                .SynchronizingObject = Me
-            }
-        End If
+        _动画助手.FPS = 动画帧率值
         同步内容面板布局()
     End Sub
 
@@ -573,13 +562,7 @@ Public Class ModernTabListControl
             End Try
         End If
 
-        ' 上/下"更多内容"渐变指示器（图形层）
-        If hasMoreAbove Then
-            绘制更多指示器渐变_D2D(rt, New RectangleF(tabItemClip.X, tabItemClip.Y, tabItemClip.Width, topIndicatorH), True)
-        End If
-        If hasMoreBelow Then
-            绘制更多指示器渐变_D2D(rt, New RectangleF(tabItemClip.X, tabItemClip.Bottom - bottomIndicatorH, tabItemClip.Width, bottomIndicatorH), False)
-        End If
+        ' 上/下"更多内容"指示器仅绘制箭头符号（在文本层），此处不再绘制背景
 
         ' 同步滚动条布局（绘制留到 OnPaint 末尾，画在 DC RT 上）
         更新滚动条布局()
@@ -703,36 +686,6 @@ Public Class ModernTabListControl
         If bmp IsNot Nothing Then
             rt.DrawBitmap(bmp, New Vortice.Mathematics.Rect(iconX, iconY, scaledIconSize, scaledIconSize), 1.0F, BitmapInterpolationMode.Linear, Nothing)
         End If
-    End Sub
-
-    Private Function 获取指示器渐变基色() As Color
-        ' 透明背景下，标签栏背景颜色 的 RGB 不一定可见（例如 Color.Transparent 实为白色 RGB）。
-        ' 选择实际可见的不透明色，避免渐变出现白色或不匹配的色调。
-        If 标签栏背景颜色.A = 255 Then Return 标签栏背景颜色
-        If 标签栏遮罩颜色.A > 0 Then Return Color.FromArgb(255, 标签栏遮罩颜色)
-        If 标签栏背景颜色.A > 0 Then Return Color.FromArgb(255, 标签栏背景颜色)
-        If Parent IsNot Nothing Then Return Parent.BackColor
-        Return 标签栏背景颜色
-    End Function
-
-    Private Sub 绘制更多指示器渐变_D2D(rt As ID2D1RenderTarget, rect As RectangleF, isTop As Boolean)
-        If rect.Height < 2 Then Return
-        Dim baseColor As Color = 获取指示器渐变基色()
-        Dim c1 As Color = Color.FromArgb(200, baseColor)
-        Dim c2 As Color = Color.FromArgb(0, baseColor)
-        Dim startPt As New Vector2(rect.X, If(isTop, rect.Y, rect.Bottom - 1))
-        Dim endPt As New Vector2(rect.X, If(isTop, rect.Bottom - 1, rect.Y))
-        Dim stops As GradientStop() = {
-            New GradientStop With {.Position = 0.0F, .Color = D2DHelper.ToColor4(c1)},
-            New GradientStop With {.Position = 1.0F, .Color = D2DHelper.ToColor4(c2)}
-        }
-        Using stopCol = rt.CreateGradientStopCollection(stops)
-            Using br = rt.CreateLinearGradientBrush(
-                New LinearGradientBrushProperties With {.StartPoint = startPt, .EndPoint = endPt},
-                stopCol)
-                rt.FillRectangle(D2DHelper.ToD2DRect(rect), br)
-            End Using
-        End Using
     End Sub
 
     ''' <summary>在 DC RT 上绘制所有文字（标签项 / 说明项 / "更多" 三角符号）。</summary>
@@ -1281,23 +1234,13 @@ Public Class ModernTabListControl
     Private Sub 启动帧驱动()
         If _帧驱动激活 Then Return
         _帧驱动激活 = True
-        If _动画用Idle Then
-            AddHandler Application.Idle, AddressOf 帧Tick_Idle
-        Else
-            AddHandler _动画计时器.Tick, AddressOf 帧Tick
-            _动画计时器.Start()
-        End If
+        _动画助手.StartFrameLoop(AddressOf 帧Tick_Idle)
     End Sub
 
     Friend Sub 停止帧驱动()
         If Not _帧驱动激活 Then Return
         _帧驱动激活 = False
-        If _动画用Idle Then
-            RemoveHandler Application.Idle, AddressOf 帧Tick_Idle
-        Else
-            Try : _动画计时器?.Stop() : Catch : End Try
-            Try : RemoveHandler _动画计时器.Tick, AddressOf 帧Tick : Catch : End Try
-        End If
+        Try : _动画助手.StopFrameLoop() : Catch : End Try
     End Sub
 
     ''' <summary>
@@ -1586,21 +1529,7 @@ Public Class ModernTabListControl
             Dim wasRunning = _帧驱动激活
             If wasRunning Then 停止帧驱动()
             动画帧率值 = value
-            _动画用Idle = (动画帧率值 <= 0)
-            If _动画用Idle Then
-                Try : _动画计时器?.Dispose() : Catch : End Try
-                _动画计时器 = Nothing
-            Else
-                If _动画计时器 Is Nothing Then
-                    _动画计时器 = New PrecisionTimer() With {
-                        .DispatchMode = PrecisionTimer.DispatchModeEnum.NonBlocking,
-                        .OverrunPolicy = PrecisionTimer.OverrunPolicyEnum.Drop,
-                        .WorkerThreadCount = 1,
-                        .SynchronizingObject = Me
-                    }
-                End If
-                _动画计时器.Interval = Math.Max(1, CInt(1000.0 / 动画帧率值))
-            End If
+            _动画助手.FPS = 动画帧率值
             If wasRunning Then 启动帧驱动()
         End Set
     End Property

@@ -4,6 +4,7 @@ Imports System.Net.Http
 Imports System.Runtime.InteropServices
 Imports System.Text
 Imports System.Text.RegularExpressions
+Imports Vortice.Direct2D1
 
 ''' <summary>
 ''' 轻量级 Markdown 渲染控件，只读显示，支持流式追加（AI 场景）、文本选中和可扩展的格式解析。
@@ -568,6 +569,13 @@ Public Class MarkDownViewer
     Private ReadOnly _imageLoadingUrls As New HashSet(Of String)
     Private Shared ReadOnly _httpClient As New HttpClient() With {.Timeout = TimeSpan.FromSeconds(30)}
 
+    ' D2D 资源缓存
+    Private _dcRT As ID2D1DCRenderTarget
+    Private ReadOnly _ssaaCache As New D2DHelper.BitmapRTCache()
+    Private ReadOnly _brushCache As New D2DHelper.SolidColorBrushCache()
+    Private ReadOnly _textFormatCache As New D2DHelper.TextFormatCache()
+    Private ReadOnly _d2dImageCaches As New Dictionary(Of String, D2DHelper.D2DBitmapCache)
+
 #End Region
 
 #Region "外观属性 - 颜色"
@@ -1103,6 +1111,7 @@ Public Class MarkDownViewer
         _streamTimer.Stop()
         DisposeFontCache()
         DisposeImageCache()
+        DisposeD2DResources()
         MyBase.OnHandleDestroyed(e)
     End Sub
 
@@ -1592,54 +1601,78 @@ Public Class MarkDownViewer
 #Region "绘制"
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
-        Dim g = e.Graphics
         Dim w As Integer = ClientRectangle.Width
         Dim h As Integer = ClientRectangle.Height
+        If w <= 0 OrElse h <= 0 Then Return
         Dim s As Single = DpiScale()
 
-        ' 背景与边框
-        Dim boundsRect As New RectangleF(0, 0, w - 1, h - 1)
-        If 边框宽度 > 0 Then boundsRect.Inflate(-边框宽度 * s / 2.0F, -边框宽度 * s / 2.0F)
-        DrawBackground(g, boundsRect, s)
+        Dim ssaa As Integer = 1
+        If Class1.GlobalSSAA > 1 Then ssaa = CInt(Class1.GlobalSSAA)
 
-        ' 内容裁剪区
-        Dim ci = GetContentInsets()
-        Dim scrollW As Integer = If(_scrollBarVisible, CInt(Math.Round(滚动条宽度 * s)) + ScrollBarRenderer.Margin * 2, 0)
-        Dim clipW As Integer = w - ci.Left - Math.Max(ci.Right, scrollW)
-        Dim clipH As Integer = h - ci.Top - ci.Bottom
-        g.SetClip(New Rectangle(ci.Left, ci.Top, clipW, clipH))
-        g.TextRenderingHint = Drawing.Text.TextRenderingHint.ClearTypeGridFit
+        Using scope = D2DHelper.BeginPaint(e, Me, GetOrCreateDCRenderTarget(), ssaa, _ssaaCache)
+            Dim rt As ID2D1RenderTarget = scope.GraphicsRenderTarget
 
-        ' 选中排序
-        Dim selStart, selEnd As SelectionPos
-        If _hasSelection Then GetOrderedSelection(selStart, selEnd)
+            ' 背景与边框
+            Dim boundsRect As New RectangleF(0, 0, w - 1, h - 1)
+            If 边框宽度 > 0 Then boundsRect.Inflate(-边框宽度 * s / 2.0F, -边框宽度 * s / 2.0F)
+            DrawBackground_D2D(rt, boundsRect, s)
 
-        ' 绘制可见行
-        For vli As Integer = 0 To _visualLines.Count - 1
-            Dim vl = _visualLines(vli)
-            Dim drawY As Integer = vl.Y - _scrollY + ci.Top
-            If drawY + vl.Height < ci.Top Then Continue For
-            If drawY > ci.Top + clipH Then Exit For
+            ' 内容裁剪区
+            Dim ci = GetContentInsets()
+            Dim scrollW As Integer = If(_scrollBarVisible, CInt(Math.Round(滚动条宽度 * s)) + ScrollBarRenderer.Margin * 2, 0)
+            Dim clipW As Integer = w - ci.Left - Math.Max(ci.Right, scrollW)
+            Dim clipH As Integer = h - ci.Top - ci.Bottom
 
-            Dim block = _document.Blocks(vl.BlockIndex)
-            DrawBlockDecoration(g, block, vl, vli, ci.Left, drawY, clipW, s)
-            DrawFragments(g, vl, vli, ci.Left, drawY, block.Kind, s, selStart, selEnd)
-        Next
+            If clipW > 0 AndAlso clipH > 0 Then
+                rt.PushAxisAlignedClip(New Vortice.RawRectF(ci.Left, ci.Top, ci.Left + clipW, ci.Top + clipH), AntialiasMode.PerPrimitive)
+                Try
+                    ' 选中排序
+                    Dim selStart, selEnd As SelectionPos
+                    If _hasSelection Then GetOrderedSelection(selStart, selEnd)
 
-        g.ResetClip()
-        DrawScrollBar(g, w, h, s)
+                    ' 绘制可见行
+                    For vli As Integer = 0 To _visualLines.Count - 1
+                        Dim vl = _visualLines(vli)
+                        Dim drawY As Integer = vl.Y - _scrollY + ci.Top
+                        If drawY + vl.Height < ci.Top Then Continue For
+                        If drawY > ci.Top + clipH Then Exit For
+
+                        Dim block = _document.Blocks(vl.BlockIndex)
+                        DrawBlockDecoration_D2D(rt, block, vl, vli, ci.Left, drawY, clipW, s)
+                        DrawFragments_D2D(rt, vl, vli, ci.Left, drawY, block.Kind, s, selStart, selEnd)
+                    Next
+                Finally
+                    rt.PopAxisAlignedClip()
+                End Try
+            End If
+
+            DrawScrollBar_D2D(rt, w, h, s)
+            scope.FlushGraphics()
+        End Using
     End Sub
 
     Private Sub DrawBackground(g As Graphics, boundsRect As RectangleF, s As Single)
         g.SmoothingMode = SmoothingMode.AntiAlias
         If 边框圆角半径 > 0 Then
             Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(boundsRect, 边框圆角半径 * s)
-                RectangleRenderer.绘制圆角背景(g, path, boundsRect, 背景颜色, Color.Empty, Orientation.Horizontal)
+                RectangleRenderer.绘制圆角背景(g, path, boundsRect, 背景颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal)
                 RectangleRenderer.绘制圆角边框(g, path, 边框颜色, 边框宽度 * s)
             End Using
         Else
-            RectangleRenderer.绘制矩形背景(g, boundsRect, 背景颜色, Color.Empty, Orientation.Horizontal)
+            RectangleRenderer.绘制矩形背景(g, boundsRect, 背景颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal)
             RectangleRenderer.绘制矩形边框(g, boundsRect, 边框颜色, 边框宽度 * s)
+        End If
+    End Sub
+
+    Private Sub DrawBackground_D2D(rt As ID2D1RenderTarget, boundsRect As RectangleF, s As Single)
+        If 边框圆角半径 > 0 Then
+            Using geo = RectangleRenderer.创建圆角矩形几何(boundsRect, 边框圆角半径 * s)
+                RectangleRenderer.绘制圆角背景_D2D(rt, geo, boundsRect, 背景颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal)
+                RectangleRenderer.绘制圆角边框_D2D(rt, geo, 边框颜色, 边框宽度 * s)
+            End Using
+        Else
+            RectangleRenderer.绘制矩形背景_D2D(rt, boundsRect, 背景颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal)
+            RectangleRenderer.绘制矩形边框_D2D(rt, boundsRect, 边框颜色, 边框宽度 * s)
         End If
     End Sub
 
@@ -1753,6 +1786,99 @@ Public Class MarkDownViewer
         End Using
     End Sub
 
+    Private Sub DrawBlockDecoration_D2D(rt As ID2D1RenderTarget, block As MarkdownBlock, vl As VisualLine, vli As Integer,
+                                        textLeft As Integer, drawY As Integer, clipW As Integer, s As Single)
+        Select Case block.Kind
+            Case BlockKind.HorizontalRule
+                Dim ruleThick As Integer = Math.Max(1, CInt(分隔线粗细 * s))
+                Dim ruleY As Integer = drawY + (vl.Height - ruleThick) \ 2
+                rt.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(textLeft + CInt(4 * s), ruleY, clipW - CInt(8 * s), ruleThick)), _brushCache.Get(rt, 分隔线颜色))
+
+            Case BlockKind.BlockQuote
+                Dim barH As Integer = vl.Height
+                If vli + 1 < _visualLines.Count Then
+                    Dim nextVl = _visualLines(vli + 1)
+                    Dim nextBlock = _document.Blocks(nextVl.BlockIndex)
+                    If nextBlock.Kind = BlockKind.BlockQuote Then
+                        barH = nextVl.Y - vl.Y
+                    End If
+                End If
+                Dim barColor As Color = If(block.AlertKind <> AlertKind.None, GetAlertColor(block.AlertKind), 引用条颜色)
+                rt.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(textLeft + CInt(4 * s), drawY, CInt(3 * s), barH)), _brushCache.Get(rt, barColor))
+
+            Case BlockKind.CodeBlock
+                Dim padT As Integer = CInt(代码块内边距.Top * s)
+                Dim padB As Integer = CInt(代码块内边距.Bottom * s)
+                Dim isFirstCodeLine = (vli = 0 OrElse _visualLines(vli - 1).BlockIndex <> vl.BlockIndex)
+                Dim isLastCodeLine = (vli = _visualLines.Count - 1 OrElse _visualLines(vli + 1).BlockIndex <> vl.BlockIndex)
+                Dim bgY = drawY - If(isFirstCodeLine, padT, 0)
+                Dim bgH = vl.Height + If(isFirstCodeLine, padT, 0) + If(isLastCodeLine, padB, 0)
+                rt.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(textLeft, bgY, clipW, bgH)), _brushCache.Get(rt, 代码背景颜色))
+
+            Case BlockKind.UnorderedListItem
+                Dim bulletR As Integer = CInt(3 * s)
+                Using geo = D2DHelper.GetD2DFactory().CreateEllipseGeometry(New Ellipse(New System.Numerics.Vector2(textLeft + CInt(6 * s) + bulletR, drawY + vl.Height \ 2 - CInt(2 * s) + bulletR), bulletR, bulletR))
+                    rt.FillGeometry(geo, _brushCache.Get(rt, 文本颜色))
+                End Using
+
+            Case BlockKind.OrderedListItem
+                DrawText_D2D(rt, block.OrderIndex.ToString() & ".", GetBlockFont(block.Kind), 文本颜色,
+                    New RectangleF(textLeft, drawY, CInt(22 * s), vl.Height), D2DTextAlign.Right, True)
+
+            Case BlockKind.Table
+                DrawTableDecoration_D2D(rt, block, vl, vli, textLeft, drawY, s)
+
+            Case BlockKind.Heading1, BlockKind.Heading2
+                If 标题分隔线粗细 > 0 Then
+                    Dim isLastLineOfBlock As Boolean =
+                        (vli + 1 >= _visualLines.Count OrElse _visualLines(vli + 1).BlockIndex <> vl.BlockIndex)
+                    If isLastLineOfBlock Then
+                        Dim sepThick As Integer = Math.Max(1, CInt(标题分隔线粗细 * s))
+                        Dim sepGap As Integer = CInt(标题分隔线间距 * s)
+                        Dim sepY As Integer = drawY + vl.Height + sepGap
+                        rt.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(textLeft, sepY, clipW, sepThick)), _brushCache.Get(rt, 标题分隔线颜色))
+                    End If
+                End If
+        End Select
+    End Sub
+
+    Private Sub DrawTableDecoration_D2D(rt As ID2D1RenderTarget, block As MarkdownBlock, vl As VisualLine, vli As Integer,
+                                        textLeft As Integer, drawY As Integer, s As Single)
+        If vl.TableSubLine <> 0 Then Return
+        Dim colWidths As Integer() = Nothing
+        If Not _tableColumnWidths.TryGetValue(vl.BlockIndex, colWidths) Then Return
+        Dim colCount As Integer = colWidths.Length
+        Dim totalW As Integer = colWidths.Sum()
+
+        Dim cellPadding As Integer = CInt(6 * s)
+        Dim logicalRowH As Integer = vl.Height
+        Dim look As Integer = vli + 1
+        While look < _visualLines.Count
+            Dim nextVl = _visualLines(look)
+            If nextVl.BlockIndex <> vl.BlockIndex OrElse nextVl.TableRowIndex <> vl.TableRowIndex Then Exit While
+            logicalRowH += nextVl.Height
+            look += 1
+        End While
+        logicalRowH += cellPadding
+
+        Dim topPad As Integer = cellPadding \ 2
+        Dim rowTop As Integer = drawY - topPad
+
+        If vl.TableRowIndex = 0 AndAlso block.HasHeader Then
+            rt.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(textLeft, rowTop, totalW, logicalRowH)), _brushCache.Get(rt, 表头背景颜色))
+        End If
+
+        Dim lineBrush = _brushCache.Get(rt, 表格边框颜色)
+        Dim stroke As Single = Math.Max(1.0F, s)
+        rt.DrawLine(New System.Numerics.Vector2(textLeft, rowTop), New System.Numerics.Vector2(textLeft + totalW, rowTop), lineBrush, stroke)
+        rt.DrawLine(New System.Numerics.Vector2(textLeft, rowTop + logicalRowH), New System.Numerics.Vector2(textLeft + totalW, rowTop + logicalRowH), lineBrush, stroke)
+        Dim x As Integer = textLeft
+        For ci As Integer = 0 To colCount
+            rt.DrawLine(New System.Numerics.Vector2(x, rowTop), New System.Numerics.Vector2(x, rowTop + logicalRowH), lineBrush, stroke)
+            If ci < colCount Then x += colWidths(ci)
+        Next
+    End Sub
+
     Private Sub DrawFragments(g As Graphics, vl As VisualLine, vli As Integer,
                                textLeft As Integer, drawY As Integer, blockKind As BlockKind,
                                s As Single, selStart As SelectionPos, selEnd As SelectionPos)
@@ -1770,12 +1896,12 @@ Public Class MarkDownViewer
                 Dim imgRect As New Rectangle(fragX, drawY, frag.Width, imgH)
                 If frag.ImageObj IsNot Nothing Then
                     Dim oldInterp = g.InterpolationMode
-                    g.InterpolationMode = InterpolationMode.HighQualityBicubic
+                    g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic
                     g.DrawImage(frag.ImageObj, imgRect)
                     g.InterpolationMode = oldInterp
                 Else
                     Using pen As New Pen(Color.FromArgb(80, 80, 80), Math.Max(1, s))
-                        pen.DashStyle = DashStyle.Dash
+                        pen.DashStyle = System.Drawing.Drawing2D.DashStyle.Dash
                         g.DrawRectangle(pen, imgRect)
                     End Using
                     If Not String.IsNullOrEmpty(frag.Text) Then
@@ -1873,6 +1999,126 @@ Public Class MarkDownViewer
         End If
     End Sub
 
+    Private Enum D2DTextAlign
+        Left
+        Center
+        Right
+    End Enum
+
+    Private Sub DrawFragments_D2D(rt As ID2D1RenderTarget, vl As VisualLine, vli As Integer,
+                                  textLeft As Integer, drawY As Integer, blockKind As BlockKind,
+                                  s As Single, selStart As SelectionPos, selEnd As SelectionPos)
+        For fi As Integer = 0 To vl.Fragments.Count - 1
+            Dim frag = vl.Fragments(fi)
+            Dim fragX As Integer = textLeft + frag.X
+            Dim fragW As Integer = frag.Width
+
+            If frag.Kind = InlineKind.Image Then
+                If _hasSelection Then DrawFragmentSelection_D2D(rt, vli, fi, frag, fragX, drawY, vl.Height, selStart, selEnd)
+                Dim imgH As Integer = If(frag.FragmentHeight > 0, frag.FragmentHeight, vl.Height)
+                Dim imgRect As New RectangleF(fragX, drawY, frag.Width, imgH)
+                If frag.ImageObj IsNot Nothing Then
+                    Dim cache = GetD2DImageCache(frag.Url)
+                    Dim bmp = cache?.GetBitmap(rt, frag.ImageObj)
+                    If bmp IsNot Nothing Then
+                        rt.DrawBitmap(bmp, D2DHelper.ToD2DRect(imgRect), 1.0F, BitmapInterpolationMode.Linear,
+                            New Vortice.Mathematics.Rect(0, 0, bmp.Size.Width, bmp.Size.Height))
+                    End If
+                Else
+                    Dim placeholderColor = Color.FromArgb(80, 80, 80)
+                    rt.DrawRectangle(D2DHelper.ToD2DRect(imgRect), _brushCache.Get(rt, placeholderColor), Math.Max(1.0F, s))
+                    If Not String.IsNullOrEmpty(frag.Text) Then
+                        DrawText_D2D(rt, frag.Text, frag.UseFont, Color.FromArgb(120, 120, 120), imgRect, D2DTextAlign.Center, True)
+                    End If
+                End If
+                Continue For
+            End If
+
+            If frag.BackColor <> Color.Empty AndAlso blockKind <> BlockKind.CodeBlock Then
+                Dim padL As Integer = CInt(代码块内边距.Left * s)
+                Dim padR As Integer = CInt(代码块内边距.Right * s)
+                Using geo = RectangleRenderer.创建圆角矩形几何(New RectangleF(fragX - padL, drawY, fragW + padL + padR, vl.Height), CInt(3 * s))
+                    rt.FillGeometry(geo, _brushCache.Get(rt, frag.BackColor))
+                End Using
+            End If
+
+            If _hasSelection Then DrawFragmentSelection_D2D(rt, vli, fi, frag, fragX, drawY, vl.Height, selStart, selEnd)
+
+            If Not String.IsNullOrEmpty(frag.Text) Then
+                If blockKind = BlockKind.Table AndAlso frag.TableColIndex >= 0 Then
+                    Dim block = _document.Blocks(vl.BlockIndex)
+                    Dim colWidths As Integer() = Nothing
+                    Dim cellW As Integer = frag.Width
+                    If _tableColumnWidths.TryGetValue(vl.BlockIndex, colWidths) AndAlso frag.TableColIndex < colWidths.Length Then
+                        Dim cellPadding As Integer = CInt(6 * s)
+                        cellW = colWidths(frag.TableColIndex) - cellPadding * 2
+                    End If
+                    Dim align As D2DTextAlign = D2DTextAlign.Left
+                    If block.ColumnAlignments IsNot Nothing AndAlso frag.TableColIndex < block.ColumnAlignments.Count Then
+                        Select Case block.ColumnAlignments(frag.TableColIndex)
+                            Case TableAlignment.Center : align = D2DTextAlign.Center
+                            Case TableAlignment.Right : align = D2DTextAlign.Right
+                        End Select
+                    End If
+                    DrawText_D2D(rt, frag.Text, frag.UseFont, frag.ForeColor, New RectangleF(fragX, drawY, cellW, vl.Height), align, True)
+                Else
+                    DrawText_D2D(rt, frag.Text, frag.UseFont, frag.ForeColor, New RectangleF(fragX, drawY, Short.MaxValue, vl.Height), D2DTextAlign.Left, True)
+                End If
+            End If
+
+            If fragW > 0 Then
+                Dim lineBrush = _brushCache.Get(rt, frag.ForeColor)
+                If frag.Kind = InlineKind.Strikethrough Then
+                    rt.DrawLine(New System.Numerics.Vector2(fragX, drawY + vl.Height \ 2), New System.Numerics.Vector2(fragX + fragW, drawY + vl.Height \ 2), lineBrush, Math.Max(1.0F, s))
+                ElseIf frag.Kind = InlineKind.Link Then
+                    Dim y As Integer = drawY + vl.Height - CInt(3 * s)
+                    rt.DrawLine(New System.Numerics.Vector2(fragX, y), New System.Numerics.Vector2(fragX + fragW, y), lineBrush, Math.Max(1.0F, s))
+                End If
+            End If
+        Next
+    End Sub
+
+    Private Sub DrawFragmentSelection_D2D(rt As ID2D1RenderTarget, vli As Integer, fi As Integer, frag As VisualFragment,
+                                          fragX As Integer, drawY As Integer, lineH As Integer,
+                                          selStart As SelectionPos, selEnd As SelectionPos)
+        If vli < selStart.VisualLine OrElse vli > selEnd.VisualLine Then Return
+        Dim sChar As Integer = 0
+        Dim eChar As Integer = frag.CharLength
+        If vli = selStart.VisualLine Then
+            If fi < selStart.FragmentIndex Then Return
+            If fi = selStart.FragmentIndex Then sChar = selStart.CharOffset
+        End If
+        If vli = selEnd.VisualLine Then
+            If fi > selEnd.FragmentIndex Then Return
+            If fi = selEnd.FragmentIndex Then eChar = selEnd.CharOffset
+        End If
+        If eChar <= sChar OrElse frag.Text Is Nothing Then Return
+        Dim safeS = Math.Min(sChar, frag.Text.Length)
+        Dim safeE = Math.Min(eChar, frag.Text.Length)
+        Dim x1 As Integer = fragX + If(safeS > 0, TextRenderHelper.MeasureTextWidth(frag.Text.Substring(0, safeS), frag.UseFont, lineH), 0)
+        Dim x2 As Integer = fragX + TextRenderHelper.MeasureTextWidth(frag.Text.Substring(0, safeE), frag.UseFont, lineH)
+        If x2 > x1 Then
+            rt.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(x1, drawY, x2 - x1, lineH)), _brushCache.Get(rt, 选中背景颜色))
+        End If
+    End Sub
+
+    Private Sub DrawText_D2D(rt As ID2D1RenderTarget, text As String, font As Font, color As Color,
+                             rect As RectangleF, align As D2DTextAlign, verticalCenter As Boolean)
+        If String.IsNullOrEmpty(text) OrElse font Is Nothing OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        Dim weight As Vortice.DirectWrite.FontWeight = If((font.Style And System.Drawing.FontStyle.Bold) <> 0, Vortice.DirectWrite.FontWeight.Bold, Vortice.DirectWrite.FontWeight.Normal)
+        Dim style As Vortice.DirectWrite.FontStyle = If((font.Style And System.Drawing.FontStyle.Italic) <> 0, Vortice.DirectWrite.FontStyle.Italic, Vortice.DirectWrite.FontStyle.Normal)
+        Dim textAlign As Vortice.DirectWrite.TextAlignment
+        Select Case align
+            Case D2DTextAlign.Center : textAlign = Vortice.DirectWrite.TextAlignment.Center
+            Case D2DTextAlign.Right : textAlign = Vortice.DirectWrite.TextAlignment.Trailing
+            Case Else : textAlign = Vortice.DirectWrite.TextAlignment.Leading
+        End Select
+        Dim paraAlign As Vortice.DirectWrite.ParagraphAlignment = If(verticalCenter, Vortice.DirectWrite.ParagraphAlignment.Center, Vortice.DirectWrite.ParagraphAlignment.Near)
+        Dim sizePx As Single = font.SizeInPoints * DeviceDpi / 72.0F
+        Dim fmt = _textFormatCache.Get(font.FontFamily.Name, weight, style, sizePx, textAlign, paraAlign, True)
+        rt.DrawText(text, fmt, D2DHelper.ToD2DRect(rect), _brushCache.Get(rt, color))
+    End Sub
+
     Private Sub DrawScrollBar(g As Graphics, w As Integer, h As Integer, s As Single)
         If Not _scrollBarVisible Then Return
         Dim scaledBorder As Integer = CInt(Math.Round(边框宽度 * s))
@@ -1883,6 +2129,19 @@ Public Class MarkDownViewer
         _scrollBar.ComputeLayout(w, h, scaledBorder, scaledRadius, 0, 0, scaledScrollW,
             _totalContentHeight, viewH, _scrollY)
         _scrollBar.Draw(g, w, h, scaledBorder, scaledRadius, scaledScrollW,
+            滚动条轨道颜色, 滚动条颜色, 滚动条悬停颜色)
+    End Sub
+
+    Private Sub DrawScrollBar_D2D(rt As ID2D1RenderTarget, w As Integer, h As Integer, s As Single)
+        If Not _scrollBarVisible Then Return
+        Dim scaledBorder As Integer = CInt(Math.Round(边框宽度 * s))
+        Dim scaledRadius As Integer = CInt(Math.Round(边框圆角半径 * s))
+        Dim scaledScrollW As Integer = CInt(Math.Round(滚动条宽度 * s))
+        Dim viewH As Integer = ViewportHeight()
+        If _totalContentHeight <= 0 OrElse viewH <= 0 Then Return
+        _scrollBar.ComputeLayout(w, h, scaledBorder, scaledRadius, 0, 0, scaledScrollW,
+            _totalContentHeight, viewH, _scrollY)
+        _scrollBar.Draw_D2D(rt, w, h, scaledBorder, scaledRadius, scaledScrollW,
             滚动条轨道颜色, 滚动条颜色, 滚动条悬停颜色)
     End Sub
 
@@ -2388,6 +2647,7 @@ Public Class MarkDownViewer
     End Sub
 
     Private Sub DisposeImageCache()
+        DisposeD2DImageCache()
         For Each img In _imageCache.Values
             img?.Dispose()
         Next
@@ -2401,6 +2661,43 @@ Public Class MarkDownViewer
         RebuildLayout()
         Invalidate()
     End Sub
+
+#End Region
+
+#Region "D2D 资源管理"
+
+    Private Function GetOrCreateDCRenderTarget() As ID2D1DCRenderTarget
+        If _dcRT Is Nothing Then _dcRT = D2DHelper.CreateDCRenderTarget()
+        Return _dcRT
+    End Function
+
+    Private Sub DisposeD2DResources()
+        DisposeD2DImageCache()
+        _brushCache.Dispose()
+        _textFormatCache.Dispose()
+        _ssaaCache.Dispose()
+        If _dcRT IsNot Nothing Then
+            Try : _dcRT.Dispose() : Catch : End Try
+            _dcRT = Nothing
+        End If
+    End Sub
+
+    Private Sub DisposeD2DImageCache()
+        For Each cache In _d2dImageCaches.Values
+            cache.Dispose()
+        Next
+        _d2dImageCaches.Clear()
+    End Sub
+
+    Private Function GetD2DImageCache(url As String) As D2DHelper.D2DBitmapCache
+        If String.IsNullOrEmpty(url) Then Return Nothing
+        Dim cache As D2DHelper.D2DBitmapCache = Nothing
+        If Not _d2dImageCaches.TryGetValue(url, cache) Then
+            cache = New D2DHelper.D2DBitmapCache()
+            _d2dImageCaches(url) = cache
+        End If
+        Return cache
+    End Function
 
 #End Region
 

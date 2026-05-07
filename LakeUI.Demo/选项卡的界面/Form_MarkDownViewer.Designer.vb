@@ -42,6 +42,7 @@ Partial Class Form_MarkDownViewer
         ' 
         ' ModernPanel1
         ' 
+        ModernPanel1.BackColor = Color.Transparent
         ModernPanel1.BorderSize = 0
         ModernPanel1.Controls.Add(MarkDownViewer1)
         ModernPanel1.Controls.Add(JustEmptyControl2)
@@ -54,19 +55,21 @@ Partial Class Form_MarkDownViewer
         ModernPanel1.Margin = New Padding(2)
         ModernPanel1.Name = "ModernPanel1"
         ModernPanel1.Padding = New Padding(20)
-        ModernPanel1.ScrollBarMode = ModernPanel.ScrollMode.Vertical
+        ModernPanel1.ScrollBarMode = ModernPanel.ScrollMode.None
         ModernPanel1.Size = New Size(823, 691)
         ModernPanel1.TabIndex = 47
         ' 
         ' MarkDownViewer1
         ' 
-        MarkDownViewer1.BackColor1 = Color.FromArgb(CByte(48), CByte(48), CByte(48))
+        MarkDownViewer1.BackColor1 = Color.FromArgb(CByte(20), CByte(220), CByte(220), CByte(220))
         MarkDownViewer1.BasePath = Nothing
         MarkDownViewer1.BlockQuoteForeColor = Color.FromArgb(CByte(160), CByte(160), CByte(160))
+        MarkDownViewer1.BlockSpacing = 10
         MarkDownViewer1.BorderRadius = 10
         MarkDownViewer1.Dock = DockStyle.Fill
         MarkDownViewer1.Font = New Font("Microsoft YaHei UI", 10F)
         MarkDownViewer1.HeadingColor = Color.FromArgb(CByte(255), CByte(255), CByte(255))
+        MarkDownViewer1.InlineLineSpacing = 3
         MarkDownViewer1.Location = New Point(411, 140)
         MarkDownViewer1.Name = "MarkDownViewer1"
         MarkDownViewer1.Padding = New Padding(20)
@@ -84,6 +87,7 @@ Partial Class Form_MarkDownViewer
         ' 
         ' ModernTextBox1
         ' 
+        ModernTextBox1.BackColor1 = Color.FromArgb(CByte(40), CByte(0), CByte(0), CByte(0))
         ModernTextBox1.BorderRadius = 10
         ModernTextBox1.BorderSize = 2
         ModernTextBox1.CaretColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
@@ -123,7 +127,7 @@ Partial Class Form_MarkDownViewer
         ' 
         ' ModernButton4
         ' 
-        ModernButton4.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton4.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton4.BorderRadius = 10
         ModernButton4.BorderSize = 0
         ModernButton4.Dock = DockStyle.Left
@@ -149,7 +153,7 @@ Partial Class Form_MarkDownViewer
         ' 
         ' ModernButton3
         ' 
-        ModernButton3.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton3.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton3.BorderRadius = 10
         ModernButton3.BorderSize = 0
         ModernButton3.Dock = DockStyle.Left
@@ -174,7 +178,7 @@ Partial Class Form_MarkDownViewer
         ' 
         ' ModernButton2
         ' 
-        ModernButton2.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton2.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton2.BorderRadius = 10
         ModernButton2.BorderSize = 0
         ModernButton2.Dock = DockStyle.Left
@@ -199,7 +203,7 @@ Partial Class Form_MarkDownViewer
         ' 
         ' ModernButton1
         ' 
-        ModernButton1.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton1.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton1.BorderRadius = 10
         ModernButton1.BorderSize = 0
         ModernButton1.Dock = DockStyle.Left

@@ -26,7 +26,6 @@ Partial Class Form_QuantumSwitch
         Label9 = New Label()
         Label8 = New Label()
         Panel3 = New Panel()
-        Label7 = New Label()
         QuantumSwitch2 = New QuantumSwitch()
         Label5 = New Label()
         Panel2 = New Panel()
@@ -63,6 +62,7 @@ Partial Class Form_QuantumSwitch
         ModernPanel1.Margin = New Padding(2)
         ModernPanel1.Name = "ModernPanel1"
         ModernPanel1.Padding = New Padding(20)
+        ModernPanel1.ScrollBarMode = ModernPanel.ScrollMode.None
         ModernPanel1.Size = New Size(709, 532)
         ModernPanel1.TabIndex = 38
         ' 
@@ -92,25 +92,12 @@ Partial Class Form_QuantumSwitch
         ' 
         ' Panel3
         ' 
-        Panel3.Controls.Add(Label7)
         Panel3.Controls.Add(QuantumSwitch2)
         Panel3.Dock = DockStyle.Top
         Panel3.Location = New Point(20, 250)
         Panel3.Name = "Panel3"
         Panel3.Size = New Size(669, 30)
         Panel3.TabIndex = 42
-        ' 
-        ' Label7
-        ' 
-        Label7.Dock = DockStyle.Fill
-        Label7.ForeColor = Color.Gray
-        Label7.Location = New Point(60, 0)
-        Label7.Name = "Label7"
-        Label7.Padding = New Padding(10, 0, 0, 0)
-        Label7.Size = New Size(609, 30)
-        Label7.TabIndex = 1
-        Label7.Text = "CPU ：？"
-        Label7.TextAlign = ContentAlignment.MiddleLeft
         ' 
         ' QuantumSwitch2
         ' 
@@ -186,7 +173,7 @@ Partial Class Form_QuantumSwitch
         ' 
         ' ModernButton4
         ' 
-        ModernButton4.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton4.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton4.BorderRadius = 10
         ModernButton4.BorderSize = 0
         ModernButton4.Dock = DockStyle.Left
@@ -212,7 +199,7 @@ Partial Class Form_QuantumSwitch
         ' 
         ' ModernButton3
         ' 
-        ModernButton3.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton3.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton3.BorderRadius = 10
         ModernButton3.BorderSize = 0
         ModernButton3.Dock = DockStyle.Left
@@ -238,7 +225,7 @@ Partial Class Form_QuantumSwitch
         ' 
         ' ModernButton2
         ' 
-        ModernButton2.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton2.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton2.BorderRadius = 10
         ModernButton2.BorderSize = 0
         ModernButton2.Dock = DockStyle.Left
@@ -263,7 +250,7 @@ Partial Class Form_QuantumSwitch
         ' 
         ' ModernButton1
         ' 
-        ModernButton1.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton1.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton1.BorderRadius = 10
         ModernButton1.BorderSize = 0
         ModernButton1.Dock = DockStyle.Left
@@ -311,7 +298,6 @@ Partial Class Form_QuantumSwitch
 
     Friend WithEvents ModernPanel1 As ModernPanel
     Friend WithEvents Panel3 As Panel
-    Friend WithEvents Label7 As Label
     Friend WithEvents Label5 As Label
     Friend WithEvents Panel2 As Panel
     Friend WithEvents Label6 As Label

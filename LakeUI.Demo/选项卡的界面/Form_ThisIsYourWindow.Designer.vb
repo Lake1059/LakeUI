@@ -23,6 +23,7 @@ Partial Class Form_ThisIsYourWindow
     <System.Diagnostics.DebuggerStepThrough()> _
     Private Sub InitializeComponent()
         ModernPanel1 = New ModernPanel()
+        Label5 = New Label()
         Label6 = New Label()
         Panel1 = New Panel()
         ModernButton4 = New ModernButton()
@@ -33,7 +34,6 @@ Partial Class Form_ThisIsYourWindow
         Label2 = New Label()
         ModernButton1 = New ModernButton()
         Label1 = New Label()
-        Label5 = New Label()
         ModernPanel1.SuspendLayout()
         Panel1.SuspendLayout()
         SuspendLayout()
@@ -52,6 +52,18 @@ Partial Class Form_ThisIsYourWindow
         ModernPanel1.Padding = New Padding(20)
         ModernPanel1.Size = New Size(748, 590)
         ModernPanel1.TabIndex = 43
+        ' 
+        ' Label5
+        ' 
+        Label5.AutoSize = True
+        Label5.Dock = DockStyle.Top
+        Label5.Font = New Font("Microsoft YaHei UI", 10F)
+        Label5.Location = New Point(20, 210)
+        Label5.Name = "Label5"
+        Label5.Padding = New Padding(0, 20, 0, 10)
+        Label5.Size = New Size(476, 110)
+        Label5.TabIndex = 40
+        Label5.Text = "注意完全体需要 Windows 11 新版本" & vbCrLf & "Windows 10 强制最外层有1像素的固定颜色边框，无法去除" & vbCrLf & "不支持设置圆角，因为 WinForms 自身不擅长窗口级透明，所以就直接砍了" & vbCrLf & "但分层阴影是个例外，那东西刷新一次其实不耗什么性能"
         ' 
         ' Label6
         ' 
@@ -82,7 +94,7 @@ Partial Class Form_ThisIsYourWindow
         ' 
         ' ModernButton4
         ' 
-        ModernButton4.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton4.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton4.BorderRadius = 10
         ModernButton4.BorderSize = 0
         ModernButton4.Dock = DockStyle.Left
@@ -108,7 +120,7 @@ Partial Class Form_ThisIsYourWindow
         ' 
         ' ModernButton3
         ' 
-        ModernButton3.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton3.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton3.BorderRadius = 10
         ModernButton3.BorderSize = 0
         ModernButton3.Dock = DockStyle.Left
@@ -133,7 +145,7 @@ Partial Class Form_ThisIsYourWindow
         ' 
         ' ModernButton2
         ' 
-        ModernButton2.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton2.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton2.BorderRadius = 10
         ModernButton2.BorderSize = 0
         ModernButton2.Dock = DockStyle.Left
@@ -158,7 +170,7 @@ Partial Class Form_ThisIsYourWindow
         ' 
         ' ModernButton1
         ' 
-        ModernButton1.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton1.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton1.BorderRadius = 10
         ModernButton1.BorderSize = 0
         ModernButton1.Dock = DockStyle.Left
@@ -184,18 +196,6 @@ Partial Class Form_ThisIsYourWindow
         Label1.Size = New Size(382, 50)
         Label1.TabIndex = 34
         Label1.Text = "窗口样式定制器 ThisIsYourWindow"
-        ' 
-        ' Label5
-        ' 
-        Label5.AutoSize = True
-        Label5.Dock = DockStyle.Top
-        Label5.Font = New Font("Microsoft YaHei UI", 10F)
-        Label5.Location = New Point(20, 210)
-        Label5.Name = "Label5"
-        Label5.Padding = New Padding(0, 20, 0, 10)
-        Label5.Size = New Size(476, 110)
-        Label5.TabIndex = 40
-        Label5.Text = "注意完全体需要 Windows 11 新版本" & vbCrLf & "Windows 10 强制最外层有1像素的固定颜色边框，无法去除" & vbCrLf & "不支持设置圆角，因为 WinForms 自身不擅长窗口级透明，所以就直接砍了" & vbCrLf & "但分层阴影是个例外，那东西刷新一次其实不耗什么性能"
         ' 
         ' Form_ThisIsYourWindow
         ' 

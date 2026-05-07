@@ -1,6 +1,7 @@
-Imports System.Drawing.Drawing2D
 Imports System.Drawing.Imaging
+Imports System.Numerics
 Imports System.Threading
+Imports D2D = Vortice.Direct2D1
 
 Public Class ModernColorDialog
 
@@ -18,7 +19,7 @@ Public Class ModernColorDialog
     ''' </summary>
     <ComponentModel.Category("LakeUI")>
     <ComponentModel.Description("色域图渲染精度步长，1=最高质量，2-4=更快")>
-    <ComponentModel.DefaultValue(2)>
+    <ComponentModel.DefaultValue(1)>
     Public Property RenderQuality As Integer
         Get
             Return _renderStep
@@ -37,13 +38,17 @@ Public Class ModernColorDialog
 #Region "私有字段"
 
     Private _suppressSync As Boolean = False
-    Private _renderStep As Integer = 2
+    Private _renderStep As Integer = 1
 
     ' ── 色域图 ──
     Private _chromaticityBitmap As Bitmap = Nothing
+    Private ReadOnly _chromaticityBitmapCache As New D2DHelper.D2DBitmapCache()
+    Private _pictureBoxDCRT As D2D.ID2D1DCRenderTarget = Nothing
+    Private ReadOnly _d2dBrushCache As New D2DHelper.SolidColorBrushCache()
     Private _markerX As Double = 0.3127  ' 当前标记的 CIE xy（默认 D65 白点）
     Private _markerY As Double = 0.329
     Private _renderCts As CancellationTokenSource = Nothing
+    Private _isClosing As Boolean = False
 
     ' ── HTML 基本颜色表 ──
     Private ReadOnly _htmlColors As New List(Of KeyValuePair(Of String, Color))
@@ -280,12 +285,18 @@ Public Class ModernColorDialog
     ''' 取消正在进行的渲染并启动新的后台渲染。
     ''' </summary>
     Private Sub StartBackgroundRender()
+        If _isClosing OrElse IsDisposed OrElse Disposing Then Return
         Dim w As Integer = PictureBox1.ClientSize.Width
         Dim h As Integer = PictureBox1.ClientSize.Height
         If w < 10 OrElse h < 10 Then Return
 
-        _renderCts?.Cancel()
+        Dim oldCts = _renderCts
         _renderCts = New CancellationTokenSource()
+        Try
+            oldCts?.Cancel()
+        Catch ex As ObjectDisposedException
+        End Try
+        oldCts?.Dispose()
         Dim token = _renderCts.Token
         Dim renderStep = _renderStep
 
@@ -297,10 +308,19 @@ Public Class ModernColorDialog
                     Return
                 End If
                 If bmp Is Nothing Then Return
+                If _isClosing OrElse IsDisposed OrElse Disposing Then
+                    bmp.Dispose()
+                    Return
+                End If
                 Try
                     Me.BeginInvoke(
                         Sub()
+                            If _isClosing OrElse IsDisposed OrElse Disposing Then
+                                bmp.Dispose()
+                                Return
+                            End If
                             Dim old = _chromaticityBitmap
+                            _chromaticityBitmapCache.Invalidate()
                             _chromaticityBitmap = bmp
                             old?.Dispose()
                             PictureBox1.Invalidate()
@@ -323,9 +343,9 @@ Public Class ModernColorDialog
         Dim bmpData = bmp.LockBits(New Rectangle(0, 0, w, h), ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb)
         Dim stride = bmpData.Stride
         Dim scan0 = bmpData.Scan0
-        Dim bgArgb As Integer = Color.FromArgb(255, 36, 36, 36).ToArgb()
+        Dim bgArgb As Integer = Color.Transparent.ToArgb()
 
-        ' 批量填充背景
+        ' 批量填充透明背景，色域外区域交由 PictureBox1.BackColor / 父级背景决定
         Dim bgLine(w - 1) As Integer
         Array.Fill(bgLine, bgArgb)
         For py = 0 To h - 1
@@ -339,12 +359,13 @@ Public Class ModernColorDialog
                 Return Nothing
             End If
             For px = 0 To w - 1 Step renderStep
-                Dim cieXY = PixelToCIExy(px, py, w, h)
+                Dim cieXY = PixelCenterToCIExy(px, py, w, h)
                 Dim cx = cieXY.Item1
                 Dim cy = cieXY.Item2
                 If cy < 0.001 Then Continue For
 
-                If Not PointInPolygon(cx, cy, _polyX, _polyY, _polyN) Then Continue For
+                If Not PointInPolygon(cx, cy, _polyX, _polyY, _polyN) AndAlso
+                   Not PixelTouchesGamut(px, py, w, h) Then Continue For
 
                 ' CIE xy → XYZ，固定 Y = 1
                 Dim cX2 = cx / cy
@@ -392,31 +413,95 @@ Public Class ModernColorDialog
         bmp.UnlockBits(bmpData)
         If token.IsCancellationRequested Then Return Nothing
 
-        ' 在位图上描绘光谱轨迹边界线（抗锯齿）
-        Dim polyPoints(_polyN - 2) As PointF
-        For i = 0 To _polyN - 2
-            polyPoints(i) = CIExyToPixel(_polyX(i), _polyY(i), w, h)
-        Next
-        Using g = Graphics.FromImage(bmp)
-            g.SmoothingMode = Class1.GlobalSmoothingMode
-            Using pen As New Pen(Color.FromArgb(140, 200, 200, 200), 1.0F)
-                g.DrawPolygon(pen, polyPoints)
-            End Using
-        End Using
-
         Return bmp
     End Function
 
     Private Sub PictureBox1_Paint(sender As Object, e As PaintEventArgs)
-        If _chromaticityBitmap IsNot Nothing Then
-            e.Graphics.DrawImage(_chromaticityBitmap, 0, 0)
-        End If
-        DrawCrosshairMarker(e.Graphics)
+        If PictureBox1.Width < 1 OrElse PictureBox1.Height < 1 Then Return
+        If _pictureBoxDCRT Is Nothing Then _pictureBoxDCRT = D2DHelper.CreateDCRenderTarget()
+
+        Using scope = D2DHelper.BeginPaint(e, PictureBox1, _pictureBoxDCRT, 1)
+            Dim rt = scope.GraphicsRenderTarget
+            If PictureBox1.BackColor.A < 255 Then
+                TransparentBackgroundCache.PaintBackgroundFor_D2D(PictureBox1, rt, Nothing)
+                If PictureBox1.BackColor.A > 0 Then
+                    Using backBrush = rt.CreateSolidColorBrush(D2DHelper.ToColor4(PictureBox1.BackColor))
+                        rt.FillRectangle(D2DHelper.ToD2DRect(PictureBox1.ClientRectangle), backBrush)
+                    End Using
+                End If
+            Else
+                rt.Clear(D2DHelper.ToColor4(PictureBox1.BackColor))
+            End If
+
+            If _chromaticityBitmap IsNot Nothing Then
+                Dim d2dBitmap = _chromaticityBitmapCache.GetBitmap(rt, _chromaticityBitmap)
+                If d2dBitmap IsNot Nothing Then
+                    Dim srcRect As New RectangleF(0, 0, _chromaticityBitmap.Width, _chromaticityBitmap.Height)
+                    Dim destRect As New RectangleF(0, 0, PictureBox1.ClientSize.Width, PictureBox1.ClientSize.Height)
+                    rt.DrawBitmap(
+                        d2dBitmap,
+                        D2DHelper.ToD2DRect(destRect),
+                        1.0F,
+                        D2D.BitmapInterpolationMode.Linear,
+                        D2DHelper.ToD2DRect(srcRect))
+                End If
+            End If
+
+            DrawChromaticityBoundaryD2D(rt)
+            DrawCrosshairMarkerD2D(rt)
+        End Using
+    End Sub
+
+    Private Sub DrawChromaticityBoundaryD2D(rt As D2D.ID2D1RenderTarget)
+        Dim w = PictureBox1.ClientSize.Width
+        Dim h = PictureBox1.ClientSize.Height
+        If w < 10 OrElse h < 10 Then Return
+
+        Dim brush = _d2dBrushCache.Get(rt, Color.FromArgb(140, 200, 200, 200))
+        If brush Is Nothing Then Return
+        Dim prev = CIExyToPixel(_polyX(0), _polyY(0), w, h)
+        For i = 1 To _polyN - 1
+            Dim cur = CIExyToPixel(_polyX(i), _polyY(i), w, h)
+            rt.DrawLine(New Vector2(prev.X, prev.Y), New Vector2(cur.X, cur.Y), brush, 1.0F)
+            prev = cur
+        Next
     End Sub
 
     ''' <summary>
     ''' 在色域图上绘制自动反色十字线标记。
     ''' </summary>
+    Private Sub DrawCrosshairMarkerD2D(rt As D2D.ID2D1RenderTarget)
+        Dim w = PictureBox1.ClientSize.Width
+        Dim h = PictureBox1.ClientSize.Height
+        Dim pt = CIExyToPixel(_markerX, _markerY, w, h)
+        Dim px = CInt(Math.Round(pt.X))
+        Dim py = CInt(Math.Round(pt.Y))
+
+        ' 获取标记点处的颜色以计算反色
+        Dim markerColor As Color = Color.White
+        If _chromaticityBitmap IsNot Nothing AndAlso
+           px >= 0 AndAlso px < _chromaticityBitmap.Width AndAlso
+           py >= 0 AndAlso py < _chromaticityBitmap.Height Then
+            markerColor = _chromaticityBitmap.GetPixel(px, py)
+        End If
+
+        Dim lum = 0.299 * markerColor.R + 0.587 * markerColor.G + 0.114 * markerColor.B
+        Dim invColor As Color = If(lum > 128, Color.Black, Color.White)
+        Dim crossSize As Integer = 12
+
+        Dim brush = _d2dBrushCache.Get(rt, invColor)
+        If brush Is Nothing Then Return
+        rt.DrawLine(New Vector2(px - crossSize, py), New Vector2(px - 4, py), brush, 1.5F)
+        rt.DrawLine(New Vector2(px + 4, py), New Vector2(px + crossSize, py), brush, 1.5F)
+        rt.DrawLine(New Vector2(px, py - crossSize), New Vector2(px, py - 4), brush, 1.5F)
+        rt.DrawLine(New Vector2(px, py + 4), New Vector2(px, py + crossSize), brush, 1.5F)
+
+        brush = _d2dBrushCache.Get(rt, Color.FromArgb(120, invColor))
+        If brush Is Nothing Then Return
+        Dim ellipse As New D2D.Ellipse(New Vector2(px, py), crossSize, crossSize)
+        rt.DrawEllipse(ellipse, brush, 1.0F)
+    End Sub
+
     Private Sub DrawCrosshairMarker(g As Graphics)
         Dim w = PictureBox1.ClientSize.Width
         Dim h = PictureBox1.ClientSize.Height
@@ -492,6 +577,9 @@ Public Class ModernColorDialog
             Dim currentL As Double = 50.0
             Dim unused = Double.TryParse(ModernTextBox7.Text, currentL)
             currentL = Math.Clamp(currentL, 0, 100)
+            Dim currentS As Double = 0.0
+            Dim unusedS = Double.TryParse(ModernTextBox6.Text, currentS)
+            If currentS <= 0.001 OrElse currentL <= 0.001 OrElse currentL >= 99.999 Then currentL = 50.0
             Dim rgb = HSLtoRGB(hsl.Item1, hsl.Item2, currentL)
             c = Color.FromArgb(255, rgb.Item1, rgb.Item2, rgb.Item3)
         End If
@@ -862,10 +950,19 @@ Public Class ModernColorDialog
     End Sub
 
     Protected Overrides Sub OnFormClosed(e As FormClosedEventArgs)
+        _isClosing = True
         StopEyeDropper()
         _eyeDropperTimer?.Dispose()
-        _renderCts?.Cancel()
-        _renderCts?.Dispose()
+        Dim cts = _renderCts
+        _renderCts = Nothing
+        Try
+            cts?.Cancel()
+        Catch ex As ObjectDisposedException
+        End Try
+        cts?.Dispose()
+        _chromaticityBitmapCache.Dispose()
+        _d2dBrushCache.Dispose()
+        _pictureBoxDCRT?.Dispose()
         _chromaticityBitmap?.Dispose()
         For Each img In _colorSwatchImages : img.Dispose() : Next
         MyBase.OnFormClosed(e)
@@ -892,6 +989,13 @@ Public Class ModernColorDialog
         Const margin As Double = 0.08
         Dim cx = ((px - margin * w) / ((1 - 2 * margin) * w)) * 0.8
         Dim cy = (1.0 - (py - margin * h) / ((1 - 2 * margin) * h)) * 0.9
+        Return Tuple.Create(cx, cy)
+    End Function
+
+    Private Shared Function PixelCenterToCIExy(px As Integer, py As Integer, w As Integer, h As Integer) As Tuple(Of Double, Double)
+        Const margin As Double = 0.08
+        Dim cx = (((px + 0.5) - margin * w) / ((1 - 2 * margin) * w)) * 0.8
+        Dim cy = (1.0 - ((py + 0.5) - margin * h) / ((1 - 2 * margin) * h)) * 0.9
         Return Tuple.Create(cx, cy)
     End Function
 
@@ -1028,6 +1132,24 @@ Public Class ModernColorDialog
         Return inside
     End Function
 
+    Private Shared Function PixelTouchesGamut(px As Integer, py As Integer, w As Integer, h As Integer) As Boolean
+        Dim offsets As Double() = {0.15, 0.85}
+        For Each ox In offsets
+            For Each oy In offsets
+                Dim xy = PixelOffsetToCIExy(px, py, ox, oy, w, h)
+                If xy.Item2 >= 0.001 AndAlso PointInPolygon(xy.Item1, xy.Item2, _polyX, _polyY, _polyN) Then Return True
+            Next
+        Next
+        Return False
+    End Function
+
+    Private Shared Function PixelOffsetToCIExy(px As Integer, py As Integer, ox As Double, oy As Double, w As Integer, h As Integer) As Tuple(Of Double, Double)
+        Const margin As Double = 0.08
+        Dim cx = (((px + ox) - margin * w) / ((1 - 2 * margin) * w)) * 0.8
+        Dim cy = (1.0 - ((py + oy) - margin * h) / ((1 - 2 * margin) * h)) * 0.9
+        Return Tuple.Create(cx, cy)
+    End Function
+
     Private Shared Function ClosestPointOnSegment(px As Double, py As Double,
                                                    ax As Double, ay As Double,
                                                    bx As Double, by As Double) As Tuple(Of Double, Double)
@@ -1041,8 +1163,24 @@ Public Class ModernColorDialog
 
 #End Region
 
-    Private Sub ModernColorDialog_SizeChanged(sender As Object, e As EventArgs) Handles Me.SizeChanged
-        If Me.WindowState = FormWindowState.Minimized Then Exit Sub
+    Protected Overrides Sub OnShown(e As EventArgs)
+        MyBase.OnShown(e)
+        UpdateChromaticityPanelWidth()
+    End Sub
+
+    Protected Overrides Sub OnVisibleChanged(e As EventArgs)
+        MyBase.OnVisibleChanged(e)
+        If Visible Then UpdateChromaticityPanelWidth()
+    End Sub
+
+    Protected Overrides Sub OnResizeEnd(e As EventArgs)
+        MyBase.OnResizeEnd(e)
+        UpdateChromaticityPanelWidth()
+    End Sub
+
+    Private Sub UpdateChromaticityPanelWidth()
+        If Me.WindowState = FormWindowState.Minimized Then Return
+        If Panel4.Parent Is Nothing Then Return
 
         ' 计算 PictureBox1 可用高度，反推 Panel4 宽度使图片框保持正方形
         Dim panelPad = Panel4.Padding                     ' (20, 20, 0, 0)
@@ -1055,7 +1193,8 @@ Public Class ModernColorDialog
                           - mpPad.Top - mpPad.Bottom - mpBorder * 2
 
         ' 反推 Panel4 宽度 = 正方形边长 + ModernPanel1 内边距和边框 + Panel4 左右 Padding
-        Panel4.Width = innerHeight + mpPad.Left + mpPad.Right + mpBorder * 2 + panelPad.Left + panelPad.Right
+        Dim targetWidth = innerHeight + mpPad.Left + mpPad.Right + mpBorder * 2 + panelPad.Left + panelPad.Right
+        If Panel4.Width <> targetWidth Then Panel4.Width = targetWidth
     End Sub
 
     Private Sub ModernButton14_Click(sender As Object, e As EventArgs) Handles ModernButton14.Click

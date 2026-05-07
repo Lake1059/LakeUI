@@ -62,6 +62,7 @@ Partial Class Form1
         Dim ModernTabPage37 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
         Dim ModernTabPage38 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
         Dim ModernTabPage39 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
+        Dim resources As System.ComponentModel.ComponentResourceManager = New System.ComponentModel.ComponentResourceManager(GetType(Form1))
         ModernTabListControl1 = New ModernTabListControl()
         ModernTextBox1 = New ModernTextBox()
         ThisIsYourWindow1 = New ThisIsYourWindow(components)
@@ -154,21 +155,31 @@ Partial Class Form1
         ModernTabListControl1.Items.Add(ModernTabPage38)
         ModernTabListControl1.Items.Add(ModernTabPage39)
         ModernTabListControl1.Location = New Point(0, 0)
+        ModernTabListControl1.MoreIndicatorColor = Color.FromArgb(CByte(120), CByte(220), CByte(220), CByte(220))
         ModernTabListControl1.Name = "ModernTabListControl1"
+        ModernTabListControl1.ScrollBarThumbColor = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
+        ModernTabListControl1.ScrollBarThumbHoverColor = Color.FromArgb(CByte(80), CByte(220), CByte(220), CByte(220))
+        ModernTabListControl1.ScrollBarTrackColor = Color.FromArgb(CByte(20), CByte(220), CByte(220), CByte(220))
         ModernTabListControl1.ScrollBarWidth = 10
         ModernTabListControl1.SearchBoxControl = ModernTextBox1
         ModernTabListControl1.SearchBoxHeight = 34
+        ModernTabListControl1.SeparatorColor = Color.FromArgb(CByte(120), CByte(220), CByte(220), CByte(220))
         ModernTabListControl1.Size = New Size(984, 661)
         ModernTabListControl1.TabIndex = 11
         ModernTabListControl1.TabItemHeight = 30
+        ModernTabListControl1.TabItemHoverBackColor = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
+        ModernTabListControl1.TabItemSelectedBackColor = Color.FromArgb(CByte(80), CByte(220), CByte(220), CByte(220))
+        ModernTabListControl1.TabItemSelectedForeColor = Color.WhiteSmoke
         ModernTabListControl1.TabStripBackColor = Color.Transparent
         ModernTabListControl1.TabStripWidth = 250
         ' 
         ' ModernTextBox1
         ' 
         ModernTextBox1.BackColor = Color.Transparent
+        ModernTextBox1.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
+        ModernTextBox1.BorderColor = Color.FromArgb(CByte(80), CByte(220), CByte(220), CByte(220))
+        ModernTextBox1.BorderColorFocus = Color.FromArgb(CByte(80), CByte(220), CByte(220), CByte(220))
         ModernTextBox1.BorderRadius = 10
-        ModernTextBox1.BorderSize = 2
         ModernTextBox1.CaretColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
         ModernTextBox1.Location = New Point(10, 10)
         ModernTextBox1.Margin = New Padding(2, 2, 2, 2)
@@ -179,15 +190,17 @@ Partial Class Form1
         ModernTextBox1.TabIndex = 12
         ModernTextBox1.TabStop = False
         ModernTextBox1.WaterText = "搜索选项卡标题"
+        ModernTextBox1.WaterTextForeColor = Color.DarkGray
         ' 
         ' ThisIsYourWindow1
         ' 
         ThisIsYourWindow1.BackdropBlurRadius = 10
+        ThisIsYourWindow1.BackdropImage = CType(resources.GetObject("ThisIsYourWindow1.BackdropImage"), Image)
         ThisIsYourWindow1.BackdropMaxParallelism = 6
-        ThisIsYourWindow1.BackdropMode = ThisIsYourWindow.BackdropModeEnum.Auto
-        ThisIsYourWindow1.BackdropNoiseOpacity = CByte(0)
-        ThisIsYourWindow1.BackdropTintColor = Color.FromArgb(CByte(120), CByte(48), CByte(48), CByte(48))
-        ThisIsYourWindow1.BackdropTintInactiveColor = Color.FromArgb(CByte(80), CByte(48), CByte(48), CByte(48))
+        ThisIsYourWindow1.BackdropMode = ThisIsYourWindow.BackdropModeEnum.Image
+        ThisIsYourWindow1.BackdropNoiseScale = 0.5F
+        ThisIsYourWindow1.BackdropTintColor = Color.FromArgb(CByte(80), CByte(0), CByte(0), CByte(0))
+        ThisIsYourWindow1.BackdropTintInactiveColor = Color.FromArgb(CByte(80), CByte(0), CByte(0), CByte(0))
         ThisIsYourWindow1.BorderAutoColor = True
         ThisIsYourWindow1.BorderColor = Color.MediumPurple
         ThisIsYourWindow1.BorderInactiveColor = Color.MediumPurple
@@ -223,7 +236,7 @@ Partial Class Form1
         MinimumSize = New Size(1000, 700)
         Name = "Form1"
         StartPosition = FormStartPosition.CenterScreen
-        Text = "LakeUI 1.5.0 DEMO"
+        Text = "LakeUI 2.0.0 DEMO"
         ModernTabListControl1.ResumeLayout(False)
         ResumeLayout(False)
     End Sub

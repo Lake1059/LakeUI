@@ -1,6 +1,9 @@
 Imports System.ComponentModel
 Imports System.ComponentModel.Design
 Imports System.Drawing.Drawing2D
+Imports System.Numerics
+Imports Vortice.Direct2D1
+Imports Vortice.DirectWrite
 
 <ToolboxItem(True)>
 <Designer("System.Windows.Forms.Design.ComponentDesigner, System.Design", GetType(IDesigner))>
@@ -8,6 +11,12 @@ Imports System.Drawing.Drawing2D
 Public Class ModernContextMenu
     Inherits Component
     Implements IExtenderProvider
+
+    Public Enum BackdropModeEnum
+        None = 0
+        Auto = 1
+        Image = 2
+    End Enum
 
     Private ReadOnly 项目列表 As New List(Of ModernMenuItem)
 
@@ -351,6 +360,110 @@ Public Class ModernContextMenu
         End Set
     End Property
 
+    Private 毛玻璃模式 As BackdropModeEnum = BackdropModeEnum.None
+    <Category("LakeUI - Backdrop"), Description("毛玻璃 / 亚克力背景模式。Auto = Show 时截取菜单所在屏幕区域；Image = 使用 BackdropImage。"), DefaultValue(GetType(BackdropModeEnum), "None"), Browsable(True)>
+    Public Property BackdropMode As BackdropModeEnum
+        Get
+            Return 毛玻璃模式
+        End Get
+        Set(value As BackdropModeEnum)
+            SetValue(毛玻璃模式, value)
+        End Set
+    End Property
+
+    Private 毛玻璃图片 As Image = Nothing
+    <Category("LakeUI - Backdrop"), Description("Image 模式下作为模糊源的图片（cover 撑满菜单）。"), DefaultValue(GetType(Image), Nothing), Browsable(True)>
+    Public Property BackdropImage As Image
+        Get
+            Return 毛玻璃图片
+        End Get
+        Set(value As Image)
+            SetValue(毛玻璃图片, value)
+        End Set
+    End Property
+
+    Private 毛玻璃Tint颜色 As Color = Color.FromArgb(120, 32, 32, 32)
+    <Category("LakeUI - Backdrop"), Description("毛玻璃背景 tint 叠加颜色（含 Alpha）。"), DefaultValue(GetType(Color), "120, 32, 32, 32"), Browsable(True)>
+    Public Property BackdropTintColor As Color
+        Get
+            Return 毛玻璃Tint颜色
+        End Get
+        Set(value As Color)
+            SetValue(毛玻璃Tint颜色, value)
+        End Set
+    End Property
+
+    Private 毛玻璃模糊半径 As Integer = 24
+    <Category("LakeUI - Backdrop"), Description("毛玻璃模糊半径（逻辑像素）。1 - 96。"), DefaultValue(24), Browsable(True)>
+    Public Property BackdropBlurRadius As Integer
+        Get
+            Return 毛玻璃模糊半径
+        End Get
+        Set(value As Integer)
+            value = Math.Max(1, Math.Min(96, value))
+            SetValue(毛玻璃模糊半径, value)
+        End Set
+    End Property
+
+    Private 毛玻璃模糊次数 As Integer = 3
+    <Category("LakeUI - Backdrop"), Description("box blur 通过次数（1=方框, 3≈高斯）。"), DefaultValue(3), Browsable(True)>
+    Public Property BackdropBlurPasses As Integer
+        Get
+            Return 毛玻璃模糊次数
+        End Get
+        Set(value As Integer)
+            value = Math.Max(1, Math.Min(5, value))
+            SetValue(毛玻璃模糊次数, value)
+        End Set
+    End Property
+
+    Private 毛玻璃下采样 As Integer = 4
+    <Category("LakeUI - Backdrop"), Description("下采样倍率（建议 1/2/4/6/8，越大越快越糊）。"), DefaultValue(4), Browsable(True)>
+    Public Property BackdropDownsampleFactor As Integer
+        Get
+            Return 毛玻璃下采样
+        End Get
+        Set(value As Integer)
+            value = Math.Max(1, value)
+            SetValue(毛玻璃下采样, value)
+        End Set
+    End Property
+
+    Private 毛玻璃并行度 As Integer = Environment.ProcessorCount
+    <Category("LakeUI - Backdrop"), Description("模糊计算最大并行度。0 = Environment.ProcessorCount。"), DefaultValue(0), Browsable(True)>
+    Public Property BackdropMaxParallelism As Integer
+        Get
+            Return 毛玻璃并行度
+        End Get
+        Set(value As Integer)
+            value = If(value <= 0, Environment.ProcessorCount, value)
+            SetValue(毛玻璃并行度, value)
+        End Set
+    End Property
+
+    Private 毛玻璃噪点不透明度 As Byte = 18
+    <Category("LakeUI - Backdrop"), Description("噪点叠加层不透明度 (0-255)。0 = 关闭噪点。"), DefaultValue(GetType(Byte), "18"), Browsable(True)>
+    Public Property BackdropNoiseOpacity As Byte
+        Get
+            Return 毛玻璃噪点不透明度
+        End Get
+        Set(value As Byte)
+            SetValue(毛玻璃噪点不透明度, value)
+        End Set
+    End Property
+
+    Private 毛玻璃噪点缩放 As Single = 1.0F
+    <Category("LakeUI - Backdrop"), Description("噪点 tile 缩放（>1 颗粒变粗）。"), DefaultValue(1.0F), Browsable(True)>
+    Public Property BackdropNoiseScale As Single
+        Get
+            Return 毛玻璃噪点缩放
+        End Get
+        Set(value As Single)
+            value = Math.Max(0.1F, value)
+            SetValue(毛玻璃噪点缩放, value)
+        End Set
+    End Property
+
 #End Region
 
 #Region "绑定控件（IExtenderProvider）"
@@ -474,6 +587,37 @@ Public Class ModernContextMenu
         Private 正在关闭动画 As Boolean = False
         Private 最终高度 As Integer
 
+        Private _dcRT As ID2D1DCRenderTarget
+        Private ReadOnly _ssaaCache As New D2DHelper.BitmapRTCache()
+        Private ReadOnly _backdropImageCache As New D2DHelper.D2DBitmapCache()
+        Private ReadOnly _iconCache As New D2DHelper.D2DBitmapCache()
+        Private ReadOnly _graphicsBrushCache As New D2DHelper.SolidColorBrushCache()
+        Private ReadOnly _dcBrushCache As New D2DHelper.SolidColorBrushCache()
+        Private ReadOnly _textFormats As New D2DHelper.TextFormatCache()
+        Private _backdropRenderer As BackdropRenderer
+
+        Private Function GetOrCreateDCRenderTarget() As ID2D1DCRenderTarget
+            If _dcRT Is Nothing Then _dcRT = D2DHelper.CreateDCRenderTarget()
+            Return _dcRT
+        End Function
+
+        Private Sub 释放D2D资源()
+            Try : _ssaaCache.Dispose() : Catch : End Try
+            Try : _backdropImageCache.Dispose() : Catch : End Try
+            Try : _iconCache.Dispose() : Catch : End Try
+            Try : _graphicsBrushCache.Dispose() : Catch : End Try
+            Try : _dcBrushCache.Dispose() : Catch : End Try
+            Try : _textFormats.Dispose() : Catch : End Try
+            If _dcRT IsNot Nothing Then
+                Try : _dcRT.Dispose() : Catch : End Try
+                _dcRT = Nothing
+            End If
+            If _backdropRenderer IsNot Nothing Then
+                Try : _backdropRenderer.Dispose() : Catch : End Try
+                _backdropRenderer = Nothing
+            End If
+        End Sub
+
         Private Const WM_LBUTTONDOWN As Integer = &H201
         Private Const WM_RBUTTONDOWN As Integer = &H204
         Private Const WM_MBUTTONDOWN As Integer = &H207
@@ -528,6 +672,7 @@ Public Class ModernContextMenu
             If Me.Bottom > scr.Bottom Then Me.Top = y - Me.Height
             If Me.Left < scr.Left Then Me.Left = scr.Left
             If Me.Top < scr.Top Then Me.Top = scr.Top
+            准备毛玻璃背景()
             If 父弹窗 Is Nothing Then Application.AddMessageFilter(Me)
             If 菜单.展开关闭动画时长 > 0 Then
                 Me.Size = New Size(Me.Width, 1)
@@ -539,6 +684,22 @@ Public Class ModernContextMenu
             Else
                 Me.Show()
             End If
+        End Sub
+
+        Private Sub 准备毛玻璃背景()
+            If 菜单.毛玻璃模式 = BackdropModeEnum.None Then
+                If _backdropRenderer IsNot Nothing Then
+                    _backdropRenderer.Dispose()
+                    _backdropRenderer = Nothing
+                End If
+                Return
+            End If
+
+            If _backdropRenderer Is Nothing Then _backdropRenderer = New BackdropRenderer(Me)
+            _backdropRenderer.ApplyParameters(菜单.毛玻璃模糊半径, 菜单.毛玻璃模糊次数, 菜单.毛玻璃下采样, 菜单.毛玻璃并行度, 菜单.毛玻璃噪点缩放)
+            _backdropRenderer.SetSource(菜单.毛玻璃模式 = BackdropModeEnum.Image, 菜单.毛玻璃图片)
+            _backdropRenderer.SetTransientExcludeOnCapture(False)
+            _backdropRenderer.RequestFrame(Me.Bounds, True)
         End Sub
 
         Private Sub 计算布局()
@@ -592,21 +753,115 @@ Public Class ModernContextMenu
 #Region "绘制"
 
         Protected Overrides Sub OnPaint(e As PaintEventArgs)
-            Dim _ssaa As Integer = If(Class1.GlobalSSAA > 1, Class1.GlobalSSAA, 菜单.超采样倍率)
-            If _ssaa > 1 Then
-                Using bmp As New Bitmap(Me.Width * _ssaa, Me.Height * _ssaa)
-                    Using g As Graphics = Graphics.FromImage(bmp)
-                        g.ScaleTransform(_ssaa, _ssaa)
-                        绘制图形内容(g)
-                    End Using
-                    e.Graphics.CompositingQuality = Class1.GlobalCompositingQuality
-                    e.Graphics.InterpolationMode = Class1.GlobalInterpolationMode
-                    e.Graphics.DrawImage(bmp, 0, 0, Me.Width, Me.Height)
+            Dim ssaa As Integer = Math.Max(1, CInt(菜单.超采样倍率))
+            If Class1.GlobalSSAA <> Class1.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(Class1.GlobalSSAA))
+
+            绘制毛玻璃背景(e.Graphics)
+
+            Using scope = D2DHelper.BeginPaint(e, Me, GetOrCreateDCRenderTarget(), ssaa, _ssaaCache)
+                Dim gRT As ID2D1RenderTarget = scope.GraphicsRenderTarget
+                Dim dcRT As ID2D1DCRenderTarget = scope.DCRenderTarget
+
+                绘制图形内容_D2D(gRT)
+                scope.FlushGraphics()
+                绘制全部文本_D2D(dcRT)
+            End Using
+        End Sub
+
+        Private Sub 绘制毛玻璃背景(g As Graphics)
+            If 菜单.毛玻璃模式 = BackdropModeEnum.None OrElse _backdropRenderer Is Nothing OrElse Not _backdropRenderer.HasFrame Then Return
+            Dim target As New Rectangle(0, 0, ClientSize.Width, ClientSize.Height)
+            If target.Width <= 0 OrElse target.Height <= 0 Then Return
+            _backdropRenderer.DrawTo(g, target)
+            If 菜单.毛玻璃Tint颜色.A > 0 Then
+                Using brush As New SolidBrush(菜单.毛玻璃Tint颜色)
+                    g.FillRectangle(brush, target)
+                End Using
+            End If
+            If 菜单.毛玻璃噪点不透明度 > 0 Then
+                _backdropRenderer.DrawNoise(g, target, 菜单.毛玻璃噪点不透明度)
+            End If
+        End Sub
+
+        Private Sub 绘制图形内容_D2D(rt As ID2D1RenderTarget)
+            If 菜单.毛玻璃模式 = BackdropModeEnum.None OrElse _backdropRenderer Is Nothing OrElse Not _backdropRenderer.HasFrame Then
+                Dim bg = _graphicsBrushCache.Get(rt, 菜单.背景颜色)
+                rt.FillRectangle(D2DHelper.ToD2DRect(ClientRectangle), bg)
+            End If
+
+            If 菜单.边框宽度 > 0 Then
+                Dim bw As Single = Math.Max(1.0F, 菜单.边框宽度 * DpiScale())
+                Dim cw As Single = ClientSize.Width - 1
+                Dim ch As Single = ClientSize.Height - 1
+                Dim b = _graphicsBrushCache.Get(rt, 菜单.边框颜色)
+                rt.FillRectangle(New Vortice.Mathematics.Rect(0, 0, cw, bw), b)
+                rt.FillRectangle(New Vortice.Mathematics.Rect(0, ch - bw, cw, bw), b)
+                rt.FillRectangle(New Vortice.Mathematics.Rect(0, bw, bw, ch - bw * 2), b)
+                rt.FillRectangle(New Vortice.Mathematics.Rect(cw - bw, bw, bw, ch - bw * 2), b)
+            End If
+
+            绘制悬停高亮_D2D(rt)
+
+            For i = 0 To 菜单.项目列表.Count - 1
+                If i >= 项目区域列表.Count Then Exit For
+                Dim item = 菜单.项目列表(i)
+                Dim rect = 项目区域列表(i)
+                If item.IsSeparator Then
+                    绘制分割线_D2D(rt, rect)
+                ElseIf Not item.IsDescription Then
+                    绘制项目图形_D2D(rt, item, rect)
+                End If
+            Next
+        End Sub
+
+        Private Sub 绘制分割线_D2D(rt As ID2D1RenderTarget, rect As Rectangle)
+            Dim lineY As Single = rect.Y + (rect.Height - 1) / 2.0F
+            Dim b = _graphicsBrushCache.Get(rt, 菜单.分割线颜色)
+            rt.FillRectangle(New Vortice.Mathematics.Rect(rect.X, lineY, rect.Width, 1.0F), b)
+        End Sub
+
+        Private Sub 绘制悬停高亮_D2D(rt As ID2D1RenderTarget)
+            If Not 动画显示高亮 OrElse 项目区域列表.Count = 0 Then Return
+            Dim highlightRect As New RectangleF(
+                项目区域列表(0).X, 动画当前Y,
+                项目区域列表(0).Width, 动画当前高度)
+            Dim highlightColor As Color = If(鼠标按下, 菜单.按下背景颜色, 菜单.悬停背景颜色)
+            Dim b = _graphicsBrushCache.Get(rt, highlightColor)
+            If 菜单.悬停圆角半径 > 0 Then
+                Dim radius As Single = Math.Min(菜单.悬停圆角半径 * DpiScale(), highlightRect.Height / 2.0F)
+                Using geo = RectangleRenderer.创建圆角矩形几何(highlightRect, radius)
+                    rt.FillGeometry(geo, b)
                 End Using
             Else
-                绘制图形内容(e.Graphics)
+                rt.FillRectangle(D2DHelper.ToD2DRect(highlightRect), b)
             End If
-            绘制全部文本(e.Graphics)
+        End Sub
+
+        Private Sub 绘制项目图形_D2D(rt As ID2D1RenderTarget, item As ModernMenuItem, rect As Rectangle)
+            Dim s As Single = DpiScale()
+            Dim ipL As Integer = CInt(菜单.项目内边距.Left * s)
+            Dim iconCol As Integer = CInt(菜单.有效图标列宽度 * s)
+
+            If iconCol > 0 Then
+                Dim iconX As Integer = rect.X + ipL
+                Dim iconY As Integer = rect.Y + (rect.Height - iconCol) \ 2
+                Dim iconRect As New RectangleF(iconX, iconY, iconCol, iconCol)
+
+                If item.Checked Then 绘制勾选标记_D2D(rt, iconRect)
+
+                If item.Icon IsNot Nothing Then
+                    Dim bmp = _iconCache.GetBitmap(rt, item.Icon)
+                    If bmp IsNot Nothing Then
+                        Dim srcRect As New RectangleF(0, 0, item.Icon.Width, item.Icon.Height)
+                        rt.DrawBitmap(bmp, D2DHelper.ToD2DRect(iconRect), 1.0F, BitmapInterpolationMode.Linear, D2DHelper.ToD2DRect(srcRect))
+                    End If
+                End If
+            End If
+
+            If item.SubMenu IsNot Nothing Then
+                Dim arrowW As Integer = CInt(16 * s)
+                绘制箭头_D2D(rt, New Rectangle(rect.Right - arrowW, rect.Y, arrowW, rect.Height))
+            End If
         End Sub
 
         Private Sub 绘制图形内容(g As Graphics)
@@ -725,6 +980,79 @@ Public Class ModernContextMenu
             Next
         End Sub
 
+        Private Sub 绘制全部文本_D2D(rt As ID2D1DCRenderTarget)
+            Dim s As Single = DpiScale()
+            Dim iconCol As Integer = CInt(菜单.有效图标列宽度 * s)
+            Dim ipL As Integer = CInt(菜单.项目内边距.Left * s)
+            Dim ipR As Integer = CInt(菜单.项目内边距.Right * s)
+            Dim ipT As Integer = CInt(菜单.项目内边距.Top * s)
+            Dim ipB As Integer = CInt(菜单.项目内边距.Bottom * s)
+            Dim iconTextGap As Integer = If(iconCol > 0, CInt(菜单.图标文字间距 * s), 0)
+
+            For i = 0 To 菜单.项目列表.Count - 1
+                If i >= 项目区域列表.Count Then Exit For
+                Dim item = 菜单.项目列表(i)
+                If item.IsSeparator Then Continue For
+                Dim rect = 项目区域列表(i)
+                Dim x As Integer = rect.X + ipL + iconCol + iconTextGap
+                Dim font As Font
+                Dim foreColor As Color
+                If item.IsDescription Then
+                    font = If(item.Font, 菜单.说明字体)
+                    foreColor = If(item.ForeColor <> Color.Empty, item.ForeColor, 菜单.说明文本颜色)
+                Else
+                    font = If(item.Font, 菜单.菜单字体)
+                    foreColor = If(item.ForeColor <> Color.Empty, item.ForeColor, 菜单.文本颜色)
+                End If
+                If font Is Nothing OrElse foreColor.A = 0 Then Continue For
+
+                Dim arrowSpace As Integer = If(Not item.IsDescription AndAlso item.SubMenu IsNot Nothing, CInt(20 * s), 0)
+                Dim textRect As New RectangleF(x, rect.Y + ipT, rect.Width - ipL - iconCol - iconTextGap - ipR - arrowSpace, rect.Height - ipT - ipB)
+                If textRect.Width <= 0 OrElse textRect.Height <= 0 Then Continue For
+
+                Dim sizePx As Single = font.SizeInPoints * (96.0F / 72.0F) * s
+                Dim weight As Vortice.DirectWrite.FontWeight = If(font.Bold, Vortice.DirectWrite.FontWeight.Bold, Vortice.DirectWrite.FontWeight.Normal)
+                Dim style As Vortice.DirectWrite.FontStyle = If(font.Italic, Vortice.DirectWrite.FontStyle.Italic, Vortice.DirectWrite.FontStyle.Normal)
+                Dim fmt = _textFormats.Get(font.FontFamily.Name, weight, style, sizePx,
+                                           Vortice.DirectWrite.TextAlignment.Leading,
+                                           Vortice.DirectWrite.ParagraphAlignment.Center,
+                                           True)
+                Dim brush = _dcBrushCache.Get(rt, foreColor)
+                rt.DrawText(If(item.Text, ""), fmt, D2DHelper.ToD2DRect(textRect), brush,
+                            DrawTextOptions.Clip, Vortice.DCommon.MeasuringMode.Natural)
+            Next
+        End Sub
+
+        Private Sub 绘制勾选标记_D2D(rt As ID2D1RenderTarget, rect As RectangleF)
+            Dim cx As Single = rect.X + rect.Width / 2.0F
+            Dim cy As Single = rect.Y + rect.Height / 2.0F
+            Dim s As Single = rect.Height * 0.18F
+            Dim pw As Single = Math.Max(1.6F, rect.Height * 0.08F)
+            Dim b = _graphicsBrushCache.Get(rt, 菜单.勾选颜色)
+            rt.DrawLine(New Vector2(cx - s, cy), New Vector2(cx - s * 0.35F, cy + s * 0.85F), b, pw)
+            rt.DrawLine(New Vector2(cx - s * 0.35F, cy + s * 0.85F), New Vector2(cx + s, cy - s), b, pw)
+        End Sub
+
+        Private Sub 绘制箭头_D2D(rt As ID2D1RenderTarget, rect As Rectangle)
+            Dim cx As Single = rect.X + rect.Width / 2.0F
+            Dim cy As Single = rect.Y + rect.Height / 2.0F
+            Dim arrSize As Single = 菜单.箭头大小 * DpiScale()
+            Dim arrH As Single = arrSize
+            Dim arrW As Single = CSng(arrSize * Math.Sqrt(3.0) / 2.0)
+            Dim b = _graphicsBrushCache.Get(rt, 菜单.箭头颜色)
+
+            Using geo = D2DHelper.GetD2DFactory().CreatePathGeometry()
+                Using sink = geo.Open()
+                    sink.BeginFigure(New Vector2(cx - arrW / 2.0F, cy - arrH / 2.0F), FigureBegin.Filled)
+                    sink.AddLine(New Vector2(cx - arrW / 2.0F, cy + arrH / 2.0F))
+                    sink.AddLine(New Vector2(cx + arrW / 2.0F, cy))
+                    sink.EndFigure(FigureEnd.Closed)
+                    sink.Close()
+                End Using
+                rt.FillGeometry(geo, b)
+            End Using
+        End Sub
+
         Private Sub 绘制勾选标记(g As Graphics, rect As Rectangle)
             Dim cx As Single = rect.X + rect.Width / 2.0F
             Dim cy As Single = rect.Y + rect.Height / 2.0F
@@ -743,7 +1071,7 @@ Public Class ModernContextMenu
                 Using wp As New Pen(Color.Black, pw)
                     wp.StartCap = LineCap.Round
                     wp.EndCap = LineCap.Round
-                    wp.LineJoin = LineJoin.Round
+                    wp.LineJoin = System.Drawing.Drawing2D.LineJoin.Round
                     path.Widen(wp)
                 End Using
                 Using brush As New SolidBrush(菜单.勾选颜色)
@@ -1099,6 +1427,7 @@ Public Class ModernContextMenu
             停止展开关闭驱动()
             If 动画计时器 IsNot Nothing Then 动画计时器.Dispose()
             If 展开关闭计时器 IsNot Nothing Then 展开关闭计时器.Dispose()
+            释放D2D资源()
             If 父弹窗 Is Nothing Then
                 Application.RemoveMessageFilter(Me)
                 菜单.通知菜单关闭()
@@ -1139,6 +1468,12 @@ Public Class ModernContextMenu
             If 父弹窗 Is Nothing AndAlso Not 正在关闭 Then
                 Application.RemoveMessageFilter(Me)
             End If
+            释放D2D资源()
+        End Sub
+
+        Protected Overrides Sub OnHandleDestroyed(e As EventArgs)
+            释放D2D资源()
+            MyBase.OnHandleDestroyed(e)
         End Sub
 
 #End Region

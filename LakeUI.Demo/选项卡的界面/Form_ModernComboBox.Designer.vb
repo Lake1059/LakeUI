@@ -74,6 +74,7 @@ Partial Class Form_ModernComboBox
         ModernPanel1.Margin = New Padding(2)
         ModernPanel1.Name = "ModernPanel1"
         ModernPanel1.Padding = New Padding(20)
+        ModernPanel1.ScrollBarMode = ModernPanel.ScrollMode.None
         ModernPanel1.Size = New Size(742, 610)
         ModernPanel1.TabIndex = 36
         ' 
@@ -108,7 +109,7 @@ Partial Class Form_ModernComboBox
         ModernComboBox4.Items.Add("下拉选项5")
         ToolTipEntry1.ItemText = "下拉选项1"
         ToolTipEntry1.ToolTipText = "可以根据指定选项的文本来设置工具提示"
-        ModernComboBox4.ItemToolTips.Add(ToolTipEntry1)
+        ModernComboBox4.ItemToolTips.AddRange(New ModernComboBox.ToolTipEntry() {ToolTipEntry1})
         ModernComboBox4.Location = New Point(0, 0)
         ModernComboBox4.Margin = New Padding(2, 2, 2, 2)
         ModernComboBox4.Name = "ModernComboBox4"
@@ -164,7 +165,7 @@ Partial Class Form_ModernComboBox
         ModernComboBox3.Items.Add("下拉选项5")
         ToolTipEntry2.ItemText = "下拉选项1"
         ToolTipEntry2.ToolTipText = "可以根据指定选项的文本来设置工具提示"
-        ModernComboBox3.ItemToolTips.Add(ToolTipEntry2)
+        ModernComboBox3.ItemToolTips.AddRange(New ModernComboBox.ToolTipEntry() {ToolTipEntry2})
         ModernComboBox3.Location = New Point(0, 0)
         ModernComboBox3.Margin = New Padding(2, 2, 2, 2)
         ModernComboBox3.Name = "ModernComboBox3"
@@ -221,7 +222,7 @@ Partial Class Form_ModernComboBox
         ModernComboBox2.Items.Add("下拉选项5")
         ToolTipEntry3.ItemText = "下拉选项1"
         ToolTipEntry3.ToolTipText = "可以根据指定选项的文本来设置工具提示"
-        ModernComboBox2.ItemToolTips.Add(ToolTipEntry3)
+        ModernComboBox2.ItemToolTips.AddRange(New ModernComboBox.ToolTipEntry() {ToolTipEntry3})
         ModernComboBox2.Location = New Point(0, 0)
         ModernComboBox2.Margin = New Padding(2, 2, 2, 2)
         ModernComboBox2.Name = "ModernComboBox2"
@@ -277,7 +278,7 @@ Partial Class Form_ModernComboBox
         ModernComboBox1.Items.Add("下拉选项5")
         ToolTipEntry4.ItemText = "下拉选项1"
         ToolTipEntry4.ToolTipText = "可以根据指定选项的文本来设置工具提示"
-        ModernComboBox1.ItemToolTips.Add(ToolTipEntry4)
+        ModernComboBox1.ItemToolTips.AddRange(New ModernComboBox.ToolTipEntry() {ToolTipEntry4})
         ModernComboBox1.Location = New Point(0, 0)
         ModernComboBox1.Margin = New Padding(2, 2, 2, 2)
         ModernComboBox1.Name = "ModernComboBox1"
@@ -319,7 +320,7 @@ Partial Class Form_ModernComboBox
         ' 
         ' ModernButton4
         ' 
-        ModernButton4.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton4.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton4.BorderRadius = 10
         ModernButton4.BorderSize = 0
         ModernButton4.Dock = DockStyle.Left
@@ -345,7 +346,7 @@ Partial Class Form_ModernComboBox
         ' 
         ' ModernButton3
         ' 
-        ModernButton3.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton3.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton3.BorderRadius = 10
         ModernButton3.BorderSize = 0
         ModernButton3.Dock = DockStyle.Left
@@ -371,7 +372,7 @@ Partial Class Form_ModernComboBox
         ' 
         ' ModernButton2
         ' 
-        ModernButton2.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton2.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton2.BorderRadius = 10
         ModernButton2.BorderSize = 0
         ModernButton2.Dock = DockStyle.Left
@@ -396,7 +397,7 @@ Partial Class Form_ModernComboBox
         ' 
         ' ModernButton1
         ' 
-        ModernButton1.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton1.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton1.BorderRadius = 10
         ModernButton1.BorderSize = 0
         ModernButton1.Dock = DockStyle.Left

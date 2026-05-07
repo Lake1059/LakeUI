@@ -1,5 +1,6 @@
 ﻿Imports System.ComponentModel
-Imports System.Drawing.Drawing2D
+Imports Vortice.Direct2D1
+Imports Vortice.DirectWrite
 
 ''' <summary>
 ''' 现代化横向选项卡控件。采用自绘标签栏 + 面板的组合方式，
@@ -177,6 +178,13 @@ Public Class ModernTabControl
     Private _浮层显示 As Boolean = False
     Private _鼠标过滤器 As RibbonMouseFilter = Nothing
 
+    ' D2D 渲染资源
+    Private _dcRT As ID2D1DCRenderTarget = Nothing
+    Private ReadOnly _ssaaCache As New D2DHelper.BitmapRTCache()
+    Private ReadOnly _brushCache As New D2DHelper.SolidColorBrushCache()
+    Private ReadOnly _textFormatCache As New D2DHelper.TextFormatCache()
+    Private ReadOnly _图标缓存 As New Dictionary(Of Image, D2DHelper.D2DBitmapCache)()
+
     Private Class RibbonMouseFilter
         Implements IMessageFilter
         Private ReadOnly _owner As ModernTabControl
@@ -219,6 +227,47 @@ Public Class ModernTabControl
             _动画计时器 = New Timer() With {.Interval = Math.Max(1, CInt(1000.0 / 动画帧率值))}
         End If
         同步内容面板布局()
+    End Sub
+
+    Private Function GetOrCreateDCRenderTarget() As ID2D1DCRenderTarget
+        If _dcRT Is Nothing Then
+            _dcRT = D2DHelper.CreateDCRenderTarget()
+            _ssaaCache.Invalidate()
+            _brushCache.Invalidate()
+            清空图标缓存()
+        End If
+        Return _dcRT
+    End Function
+
+    Private Function 获取图标缓存(img As Image) As D2DHelper.D2DBitmapCache
+        If img Is Nothing Then Return Nothing
+        Dim cache As D2DHelper.D2DBitmapCache = Nothing
+        If Not _图标缓存.TryGetValue(img, cache) Then
+            cache = New D2DHelper.D2DBitmapCache()
+            _图标缓存(img) = cache
+        End If
+        Return cache
+    End Function
+
+    Private Sub 清空图标缓存()
+        For Each cache In _图标缓存.Values
+            Try : cache.Dispose() : Catch : End Try
+        Next
+        _图标缓存.Clear()
+    End Sub
+
+    Protected Overrides Sub OnHandleDestroyed(e As EventArgs)
+        停止动画驱动()
+        停用鼠标过滤器()
+        Try : _ssaaCache.Dispose() : Catch : End Try
+        Try : _brushCache.Dispose() : Catch : End Try
+        Try : _textFormatCache.Dispose() : Catch : End Try
+        清空图标缓存()
+        If _dcRT IsNot Nothing Then
+            Try : _dcRT.Dispose() : Catch : End Try
+            _dcRT = Nothing
+        End If
+        MyBase.OnHandleDestroyed(e)
     End Sub
 
     <Category("LakeUI"), Description("选项卡项集合"), Browsable(True)>
@@ -364,224 +413,201 @@ Public Class ModernTabControl
         MyBase.OnPaint(e)
         确保Owner()
         If Me.Width <= 0 OrElse Me.Height <= 0 Then Return
-        e.Graphics.SetClip(Me.ClientRectangle)
-        Dim _ssaa As Integer = If(Class1.GlobalSSAA > 1, Class1.GlobalSSAA, 超采样倍率)
-        If _ssaa > 1 Then
-            Using bmp As New Bitmap(Me.Width * _ssaa, Me.Height * _ssaa)
-                Using g As Graphics = Graphics.FromImage(bmp)
-                    g.ScaleTransform(_ssaa, _ssaa)
-                    绘制图形内容(g)
-                End Using
-                e.Graphics.CompositingQuality = CompositingQuality.HighQuality
-                e.Graphics.InterpolationMode = InterpolationMode.HighQualityBicubic
-                e.Graphics.DrawImage(bmp, 0, 0, Me.Width, Me.Height)
-            End Using
-        Else
-            绘制图形内容(e.Graphics)
-        End If
-        Dim tabClipState = e.Graphics.Save()
-        e.Graphics.SetClip(获取标签栏矩形(), CombineMode.Intersect)
-        For i As Integer = 0 To 项目列表.Count - 1
-            绘制标签页文本(e.Graphics, i)
-        Next
-        If Ribbon模式值 Then
-            绘制折叠按钮文本(e.Graphics)
-        End If
-        e.Graphics.Restore(tabClipState)
+        Dim ssaa As Integer = If(Class1.GlobalSSAA > 1, Class1.GlobalSSAA, 超采样倍率)
+        Using scope = D2DHelper.BeginPaint(e, Me, GetOrCreateDCRenderTarget(), ssaa, _ssaaCache)
+            Dim gRT As ID2D1RenderTarget = scope.GraphicsRenderTarget
+            绘制图形内容_D2D(gRT)
+            scope.FlushGraphics()
+
+            Dim dcRT As ID2D1RenderTarget = scope.DCRenderTarget
+            绘制文本内容_D2D(dcRT)
+        End Using
     End Sub
 
-    Private Sub 绘制图形内容(g As Graphics)
-        g.SmoothingMode = SmoothingMode.AntiAlias
-        g.PixelOffsetMode = PixelOffsetMode.HighQuality
-        g.InterpolationMode = InterpolationMode.HighQualityBicubic
-
+    Private Sub 绘制图形内容_D2D(rt As ID2D1RenderTarget)
         Dim contentRect = 获取内容区域矩形()
         Dim stripRect = 获取标签栏矩形()
 
-        Using brush As New SolidBrush(内容区域背景颜色)
-            g.FillRectangle(brush, contentRect)
-        End Using
-
-        Using brush As New SolidBrush(标签栏背景颜色)
-            g.FillRectangle(brush, stripRect)
-        End Using
-
-        Dim gState = g.Save()
-        g.SetClip(stripRect, CombineMode.Intersect)
-
-        For i As Integer = 0 To 项目列表.Count - 1
-            Dim item = 项目列表(i)
-            If item.IsSeparator Then
-                绘制分割线(g, i)
-            Else
-                绘制标签页项图形(g, i)
-            End If
-        Next
-
-        If Ribbon模式值 Then
-            绘制折叠按钮图形(g)
+        If Not contentRect.IsEmpty Then
+            rt.FillRectangle(D2DHelper.ToD2DRect(contentRect), _brushCache.Get(rt, 内容区域背景颜色))
         End If
+        rt.FillRectangle(D2DHelper.ToD2DRect(stripRect), _brushCache.Get(rt, 标签栏背景颜色))
 
-        g.Restore(gState)
+        rt.PushAxisAlignedClip(New Vortice.RawRectF(stripRect.Left, stripRect.Top, stripRect.Right, stripRect.Bottom), AntialiasMode.PerPrimitive)
+        Try
+            For i As Integer = 0 To 项目列表.Count - 1
+                Dim item = 项目列表(i)
+                If item.IsSeparator Then
+                    绘制分割线_D2D(rt, i)
+                Else
+                    绘制标签页项图形_D2D(rt, i)
+                End If
+            Next
+
+            If Ribbon模式值 Then
+                绘制折叠按钮图形_D2D(rt)
+            End If
+        Finally
+            rt.PopAxisAlignedClip()
+        End Try
 
         更新滚动条布局()
         If Not _滚动条TrackRect.IsEmpty Then
-            绘制横向滚动条(g)
+            绘制横向滚动条_D2D(rt)
         End If
 
-        If 内容区域边框宽度 > 0 Then
+        If 内容区域边框宽度 > 0 AndAlso Not contentRect.IsEmpty Then
             Dim s As Single = DpiScale()
-            Using pen As New Pen(内容区域边框颜色, 内容区域边框宽度 * s)
-                g.DrawRectangle(pen, contentRect.X, contentRect.Y, contentRect.Width - 1, contentRect.Height - 1)
-            End Using
+            Dim borderRect As RectangleF = contentRect
+            borderRect.Width -= 1
+            borderRect.Height -= 1
+            RectangleRenderer.绘制矩形边框_D2D(rt, borderRect, 内容区域边框颜色, 内容区域边框宽度 * s)
         End If
     End Sub
 
-    Private Sub 绘制分割线(g As Graphics, index As Integer)
+    Private Sub 绘制分割线_D2D(rt As ID2D1RenderTarget, index As Integer)
         Dim bounds = 获取标签页项矩形(index)
+        If bounds.Width <= 0 OrElse bounds.Height <= 0 Then Return
         Dim lineX As Single = bounds.X + (bounds.Width - 1) / 2.0F
-        Using brush As New SolidBrush(分割线颜色值)
-            g.FillRectangle(brush, lineX, bounds.Y, 1, bounds.Height)
-        End Using
+        rt.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(lineX, bounds.Y, 1, bounds.Height)), _brushCache.Get(rt, 分割线颜色值))
     End Sub
 
-    Private Sub 绘制标签页项图形(g As Graphics, index As Integer)
+    Private Sub 绘制标签页项图形_D2D(rt As ID2D1RenderTarget, index As Integer)
         Dim s As Single = DpiScale()
         Dim bounds As RectangleF = 获取标签页项矩形(index)
+        If bounds.Width <= 0 OrElse bounds.Height <= 0 Then Return
         Dim isSelected As Boolean = (_selectedIndex = index)
         Dim hoverProgress As Single = 获取动画进度(index)
 
-        Dim bgColor As Color
-        If isSelected Then
-            bgColor = 选中标签页背景颜色
-        Else
-            bgColor = 颜色插值(标签栏背景颜色, 悬停标签页背景颜色, hoverProgress)
-        End If
-
-        Dim _标签页圆角半径 As Single = 标签页圆角半径 * s
-        If _标签页圆角半径 > 0 Then
-            Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(bounds, _标签页圆角半径)
-                Using brush As New SolidBrush(bgColor)
-                    g.FillPath(brush, path)
-                End Using
-            End Using
-        Else
-            Using brush As New SolidBrush(bgColor)
-                g.FillRectangle(brush, bounds)
-            End Using
-        End If
+        Dim bgColor As Color = If(isSelected, 选中标签页背景颜色, 颜色插值(标签栏背景颜色, 悬停标签页背景颜色, hoverProgress))
+        Dim radius As Single = 标签页圆角半径 * s
+        填充圆角或矩形_D2D(rt, bounds, radius, bgColor)
 
         If isSelected AndAlso 选中指示条高度 > 0 Then
-            Dim _指示条高度 As Single = 选中指示条高度 * s
-            Dim _指示条边距 As Single = 选中指示条边距 * s
-            Dim _指示条圆角半径 As Single = 选中指示条圆角半径 * s
+            Dim indicatorH As Single = 选中指示条高度 * s
+            Dim indicatorPad As Single = 选中指示条边距 * s
+            Dim indicatorRadius As Single = 选中指示条圆角半径 * s
             Dim indicatorRect As RectangleF
             If 标签页位置 = TabPositionEnum.Top Then
-                indicatorRect = New RectangleF(bounds.X + _指示条边距, bounds.Bottom - _指示条高度, bounds.Width - _指示条边距 * 2, _指示条高度)
+                indicatorRect = New RectangleF(bounds.X + indicatorPad, bounds.Bottom - indicatorH, bounds.Width - indicatorPad * 2, indicatorH)
             Else
-                indicatorRect = New RectangleF(bounds.X + _指示条边距, bounds.Y, bounds.Width - _指示条边距 * 2, _指示条高度)
+                indicatorRect = New RectangleF(bounds.X + indicatorPad, bounds.Y, bounds.Width - indicatorPad * 2, indicatorH)
             End If
-            If _指示条圆角半径 > 0 Then
-                Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(indicatorRect, _指示条圆角半径)
-                    Using brush As New SolidBrush(选中指示条颜色)
-                        g.FillPath(brush, path)
-                    End Using
-                End Using
-            Else
-                Using brush As New SolidBrush(选中指示条颜色)
-                    g.FillRectangle(brush, indicatorRect)
-                End Using
+            If indicatorRect.Width > 0 AndAlso indicatorRect.Height > 0 Then
+                填充圆角或矩形_D2D(rt, indicatorRect, indicatorRadius, 选中指示条颜色)
             End If
         End If
 
         If isSelected AndAlso Me.Focused AndAlso 焦点边框颜色 <> Color.Empty Then
             Dim focusBounds = bounds
             focusBounds.Inflate(-1 * s, -1 * s)
-            If _标签页圆角半径 > 0 Then
-                Using focusPath As GraphicsPath = RectangleRenderer.创建圆角矩形路径(focusBounds, Math.Max(1, _标签页圆角半径 - 1 * s))
-                    RectangleRenderer.绘制圆角边框(g, focusPath, 焦点边框颜色, 1.0F * s)
-                End Using
-            Else
-                RectangleRenderer.绘制矩形边框(g, focusBounds, 焦点边框颜色, 1.0F * s)
+            If focusBounds.Width > 0 AndAlso focusBounds.Height > 0 Then
+                If radius > 0 Then
+                    Using focusGeo = RectangleRenderer.创建圆角矩形几何(focusBounds, Math.Max(1, radius - 1 * s))
+                        RectangleRenderer.绘制圆角边框_D2D(rt, focusGeo, 焦点边框颜色, 1.0F * s)
+                    End Using
+                Else
+                    RectangleRenderer.绘制矩形边框_D2D(rt, focusBounds, 焦点边框颜色, 1.0F * s)
+                End If
             End If
         End If
 
-        绘制标签页图标(g, index, bounds)
+        绘制标签页图标_D2D(rt, index, bounds)
     End Sub
 
-    Private Sub 绘制标签页图标(g As Graphics, index As Integer, bounds As RectangleF)
-        If index >= 项目列表.Count Then Return
-        Dim item = 项目列表(index)
-        If item.TabIcon Is Nothing Then Return
-
-        Dim s As Single = DpiScale()
-        Dim _图标尺寸 As Single = 图标尺寸 * s
-        Dim _标签页文本内边距 As Single = 标签页文本内边距 * s
-        Dim iconX As Single = bounds.X + _标签页文本内边距
-        Dim iconY As Single = bounds.Y + (bounds.Height - _图标尺寸) / 2.0F
-        g.DrawImage(item.TabIcon, New RectangleF(iconX, iconY, _图标尺寸, _图标尺寸))
-    End Sub
-
-    Private Sub 绘制标签页文本(g As Graphics, index As Integer)
-        If index >= 项目列表.Count Then Return
-        Dim bounds As Rectangle = Rectangle.Round(获取标签页项矩形(index))
-        Dim item = 项目列表(index)
-        If item.IsSeparator Then Return
-        Dim isSelected As Boolean = (_selectedIndex = index)
-        Dim textColor As Color
-        Dim textFont As Font
-        textColor = If(isSelected,
-            If(item.SelectedForeColor <> Color.Empty, item.SelectedForeColor, 选中标签页文本颜色),
-            If(item.NormalForeColor <> Color.Empty, item.NormalForeColor, 标签页默认文本颜色))
-        textFont = If(item.TabFont, Me.Font)
-
-        Dim s As Single = DpiScale()
-        Dim _标签页文本内边距 As Integer = CInt(标签页文本内边距 * s)
-        Dim iconOffset As Integer = 0
-        If item.TabIcon IsNot Nothing Then
-            iconOffset = CInt(图标尺寸 * s + 图标与文本间距 * s)
+    Private Sub 填充圆角或矩形_D2D(rt As ID2D1RenderTarget, rect As RectangleF, radius As Single, color As Color)
+        If color.A = 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        If radius > 0 Then
+            Using geo = RectangleRenderer.创建圆角矩形几何(rect, radius)
+                rt.FillGeometry(geo, _brushCache.Get(rt, color))
+            End Using
+        Else
+            rt.FillRectangle(D2DHelper.ToD2DRect(rect), _brushCache.Get(rt, color))
         End If
-
-        Dim textRect As New Rectangle(
-            bounds.X + _标签页文本内边距 + iconOffset,
-            bounds.Y,
-            bounds.Width - _标签页文本内边距 * 2 - iconOffset,
-            bounds.Height)
-        TextRenderer.DrawText(g, item.Text, textFont, textRect, textColor,
-            TextFormatFlags.HorizontalCenter Or TextFormatFlags.VerticalCenter Or TextFormatFlags.EndEllipsis Or TextFormatFlags.NoPadding)
     End Sub
 
-    Private Sub 绘制折叠按钮图形(g As Graphics)
+    Private Sub 绘制标签页图标_D2D(rt As ID2D1RenderTarget, index As Integer, bounds As RectangleF)
+        If index >= 项目列表.Count Then Return
+        Dim item = 项目列表(index)
+        绘制图标_D2D(rt, item.TabIcon, bounds)
+    End Sub
+
+    Private Sub 绘制图标_D2D(rt As ID2D1RenderTarget, img As Image, bounds As RectangleF)
+        If img Is Nothing Then Return
+        Dim cache = 获取图标缓存(img)
+        Dim bmp = cache?.GetBitmap(rt, img)
+        If bmp Is Nothing Then Return
+        Dim s As Single = DpiScale()
+        Dim iconSize As Single = 图标尺寸 * s
+        Dim pad As Single = 标签页文本内边距 * s
+        Dim iconRect As New RectangleF(bounds.X + pad, bounds.Y + (bounds.Height - iconSize) / 2.0F, iconSize, iconSize)
+        rt.DrawBitmap(bmp, D2DHelper.ToD2DRect(iconRect), 1.0F, BitmapInterpolationMode.Linear,
+            New Vortice.Mathematics.Rect(0, 0, img.Width, img.Height))
+    End Sub
+
+    Private Sub 绘制折叠按钮图形_D2D(rt As ID2D1RenderTarget)
         Dim bounds = 获取折叠按钮矩形()
         If bounds.IsEmpty Then Return
         _折叠按钮缓存矩形 = bounds
         Dim s As Single = DpiScale()
-        Dim hoverProgress As Single = _折叠按钮动画.当前值
-        Dim bgColor As Color = 颜色插值(标签栏背景颜色, 悬停标签页背景颜色, hoverProgress)
-        Dim _圆角半径 As Single = 标签页圆角半径 * s
-        If _圆角半径 > 0 Then
-            Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(bounds, _圆角半径)
-                Using brush As New SolidBrush(bgColor)
-                    g.FillPath(brush, path)
-                End Using
-            End Using
-        Else
-            Using brush As New SolidBrush(bgColor)
-                g.FillRectangle(brush, bounds)
-            End Using
-        End If
-
-        If 折叠按钮图标值 IsNot Nothing Then
-            Dim _图标尺寸 As Single = 图标尺寸 * s
-            Dim _标签页文本内边距 As Single = 标签页文本内边距 * s
-            Dim iconX As Single = bounds.X + _标签页文本内边距
-            Dim iconY As Single = bounds.Y + (bounds.Height - _图标尺寸) / 2.0F
-            g.DrawImage(折叠按钮图标值, New RectangleF(iconX, iconY, _图标尺寸, _图标尺寸))
-        End If
+        Dim bgColor As Color = 颜色插值(标签栏背景颜色, 悬停标签页背景颜色, _折叠按钮动画.当前值)
+        填充圆角或矩形_D2D(rt, bounds, 标签页圆角半径 * s, bgColor)
+        绘制图标_D2D(rt, 折叠按钮图标值, bounds)
     End Sub
 
-    Private Sub 绘制折叠按钮文本(g As Graphics)
-        Dim bounds As Rectangle = Rectangle.Round(获取折叠按钮矩形())
+    Private Sub 绘制横向滚动条_D2D(rt As ID2D1RenderTarget)
+        If _滚动条TrackRect.IsEmpty Then Return
+        Dim s As Single = DpiScale()
+        Dim barH As Integer = CInt(滚动条高度 * s)
+        If _滚动条TrackRect.Width < 1 OrElse barH < 1 Then Return
+
+        Dim trackY As Integer = _滚动条TrackRect.Y + (_滚动条TrackRect.Height - barH) \ 2
+        If 滚动条轨道颜色.A > 0 Then
+            Dim trackRadius As Integer = Math.Min(barH \ 2, _滚动条TrackRect.Width \ 2)
+            填充圆角或矩形_D2D(rt, New RectangleF(_滚动条TrackRect.X, trackY, _滚动条TrackRect.Width, barH), trackRadius, 滚动条轨道颜色)
+        End If
+
+        Dim activeColor As Color = If(_滚动条IsDragging OrElse _滚动条IsHover, 滚动条悬停颜色, 滚动条滑块颜色)
+        Dim thumbY As Integer = _滚动条ThumbRect.Y + (_滚动条ThumbRect.Height - barH) \ 2
+        Dim thumbRadius As Integer = Math.Min(barH \ 2, _滚动条ThumbRect.Width \ 2)
+        填充圆角或矩形_D2D(rt, New RectangleF(_滚动条ThumbRect.X, thumbY, _滚动条ThumbRect.Width, barH), thumbRadius, activeColor)
+    End Sub
+
+    Private Sub 绘制文本内容_D2D(rt As ID2D1RenderTarget)
+        Dim stripRect = 获取标签栏矩形()
+        rt.PushAxisAlignedClip(New Vortice.RawRectF(stripRect.Left, stripRect.Top, stripRect.Right, stripRect.Bottom), AntialiasMode.PerPrimitive)
+        Try
+            For i As Integer = 0 To 项目列表.Count - 1
+                绘制标签页文本_D2D(rt, i)
+            Next
+            If Ribbon模式值 Then
+                绘制折叠按钮文本_D2D(rt)
+            End If
+        Finally
+            rt.PopAxisAlignedClip()
+        End Try
+    End Sub
+
+    Private Sub 绘制标签页文本_D2D(rt As ID2D1RenderTarget, index As Integer)
+        If index >= 项目列表.Count Then Return
+        Dim bounds As RectangleF = 获取标签页项矩形(index)
+        Dim item = 项目列表(index)
+        If item.IsSeparator OrElse bounds.Width <= 0 OrElse bounds.Height <= 0 Then Return
+        Dim isSelected As Boolean = (_selectedIndex = index)
+        Dim textColor As Color = If(isSelected,
+            If(item.SelectedForeColor <> Color.Empty, item.SelectedForeColor, 选中标签页文本颜色),
+            If(item.NormalForeColor <> Color.Empty, item.NormalForeColor, 标签页默认文本颜色))
+        Dim textFont As Font = If(item.TabFont, Me.Font)
+
+        Dim s As Single = DpiScale()
+        Dim pad As Single = 标签页文本内边距 * s
+        Dim iconOffset As Single = If(item.TabIcon IsNot Nothing, 图标尺寸 * s + 图标与文本间距 * s, 0)
+        Dim textRect As New RectangleF(bounds.X + pad + iconOffset, bounds.Y, bounds.Width - pad * 2 - iconOffset, bounds.Height)
+        绘制单行居中文本_D2D(rt, item.Text, textFont, textRect, textColor)
+    End Sub
+
+    Private Sub 绘制折叠按钮文本_D2D(rt As ID2D1RenderTarget)
+        Dim bounds As RectangleF = 获取折叠按钮矩形()
         If bounds.Width <= 0 OrElse bounds.Height <= 0 Then Return
         Dim caption As String = If(已折叠值, 折叠按钮展开文本值, 折叠按钮折叠文本值)
         If String.IsNullOrEmpty(caption) AndAlso 折叠按钮图标值 Is Nothing Then Return
@@ -591,54 +617,21 @@ Public Class ModernTabControl
         Dim textFont As Font = If(折叠按钮字体值, Me.Font)
 
         Dim s As Single = DpiScale()
-        Dim _标签页文本内边距 As Integer = CInt(标签页文本内边距 * s)
-        Dim iconOffset As Integer = 0
-        If 折叠按钮图标值 IsNot Nothing Then
-            iconOffset = CInt(图标尺寸 * s + 图标与文本间距 * s)
-        End If
-
-        Dim textRect As New Rectangle(
-            bounds.X + _标签页文本内边距 + iconOffset,
-            bounds.Y,
-            bounds.Width - _标签页文本内边距 * 2 - iconOffset,
-            bounds.Height)
-        TextRenderer.DrawText(g, caption, textFont, textRect, textColor,
-            TextFormatFlags.HorizontalCenter Or TextFormatFlags.VerticalCenter Or TextFormatFlags.EndEllipsis Or TextFormatFlags.NoPadding)
+        Dim pad As Single = 标签页文本内边距 * s
+        Dim iconOffset As Single = If(折叠按钮图标值 IsNot Nothing, 图标尺寸 * s + 图标与文本间距 * s, 0)
+        Dim textRect As New RectangleF(bounds.X + pad + iconOffset, bounds.Y, bounds.Width - pad * 2 - iconOffset, bounds.Height)
+        绘制单行居中文本_D2D(rt, caption, textFont, textRect, textColor)
     End Sub
 
-    Private Sub 绘制横向滚动条(g As Graphics)
-        If _滚动条TrackRect.IsEmpty Then Return
-        Dim s As Single = DpiScale()
-        Dim barH As Integer = CInt(滚动条高度 * s)
-        If _滚动条TrackRect.Width < 1 OrElse barH < 1 Then Return
-
-        Dim oldSmooth = g.SmoothingMode
-        g.SmoothingMode = SmoothingMode.AntiAlias
-
-        Dim trackY As Integer = _滚动条TrackRect.Y + (_滚动条TrackRect.Height - barH) \ 2
-
-        If 滚动条轨道颜色.A > 0 Then
-            Dim trackRadius As Integer = Math.Min(barH \ 2, _滚动条TrackRect.Width \ 2)
-            Using trackPath As GraphicsPath = RectangleRenderer.创建圆角矩形路径(
-                New RectangleF(_滚动条TrackRect.X, trackY, _滚动条TrackRect.Width, barH), trackRadius)
-                Using br As New SolidBrush(滚动条轨道颜色)
-                    g.FillPath(br, trackPath)
-                End Using
-            End Using
-        End If
-
-        Dim activeColor As Color = If(_滚动条IsDragging OrElse _滚动条IsHover, 滚动条悬停颜色, 滚动条滑块颜色)
-        Dim thumbY As Integer = _滚动条ThumbRect.Y + (_滚动条ThumbRect.Height - barH) \ 2
-        Dim thumbRadius As Integer = Math.Min(barH \ 2, _滚动条ThumbRect.Width \ 2)
-        Using thumbPath As GraphicsPath = RectangleRenderer.创建圆角矩形路径(
-            New RectangleF(_滚动条ThumbRect.X, thumbY, _滚动条ThumbRect.Width, barH), thumbRadius)
-            Using br As New SolidBrush(activeColor)
-                g.FillPath(br, thumbPath)
-            End Using
-        End Using
-
-        g.SmoothingMode = oldSmooth
+    Private Sub 绘制单行居中文本_D2D(rt As ID2D1RenderTarget, text As String, font As Font, rect As RectangleF, color As Color)
+        If String.IsNullOrEmpty(text) OrElse rect.Width <= 0 OrElse rect.Height <= 0 OrElse color.A = 0 Then Return
+        Dim weight As Vortice.DirectWrite.FontWeight = If(font.Bold, Vortice.DirectWrite.FontWeight.Bold, Vortice.DirectWrite.FontWeight.Normal)
+        Dim style As Vortice.DirectWrite.FontStyle = If(font.Italic, Vortice.DirectWrite.FontStyle.Italic, Vortice.DirectWrite.FontStyle.Normal)
+        Dim sizePx As Single = font.SizeInPoints * (96.0F / 72.0F) * DpiScale()
+        Dim fmt = _textFormatCache.Get(font.FontFamily.Name, weight, style, sizePx, TextAlignment.Center, ParagraphAlignment.Center, True)
+        rt.DrawText(text, fmt, D2DHelper.ToD2DRect(rect), _brushCache.Get(rt, color), DrawTextOptions.Clip)
     End Sub
+
 #End Region
 
 #Region "布局"

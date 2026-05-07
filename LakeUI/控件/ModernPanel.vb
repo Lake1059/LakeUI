@@ -1,5 +1,5 @@
 ﻿Imports System.ComponentModel
-Imports System.Drawing.Drawing2D
+Imports Vortice.Direct2D1
 
 ''' <summary>
 ''' 继承 Panel 的现代化面板控件，支持自定义滚动条、边框圆角和 AutoSize。
@@ -494,29 +494,28 @@ Public Class ModernPanel
     Private _lastDeviceDpi As Integer = 96
     Private _inDpiChange As Boolean = False
 
-    ' 背景图片缓存：避免每帧重新缩放+裁切
-    Private _cachedImageBmp As Bitmap = Nothing
-    Private _cacheKey As Long = 0
+    ' D2D 资源：DC RenderTarget + SSAA BitmapRT 缓存 + 背景图缓存
+    Private _dcRT As ID2D1DCRenderTarget
+    Private ReadOnly _ssaaCache As New D2DHelper.BitmapRTCache()
+    Private ReadOnly _backImageCache As New D2DHelper.D2DBitmapCache()
 
-    Private Function 计算图片缓存键(w As Integer, h As Integer, hasClip As Boolean) As Long
-        ' 将影响最终图片的参数压缩为单个 Long 便于快速比较
-        Dim hash As Long = CLng(w) << 32 Or (CLng(h) And &HFFFFFFFFL)
-        hash = hash Xor (CLng(_imageFillMode) << 16)
-        hash = hash Xor (CLng(If(hasClip, 1, 0)) << 17)
-        hash = hash Xor (CLng(边框圆角半径) << 18)
-        hash = hash Xor (CLng(边框宽度) << 26)
-        hash = hash Xor (CLng(Me.DeviceDpi) << 34)
-        hash = hash Xor (CLng(圆角位置.GetHashCode()) << 42)
-        If _image IsNot Nothing Then hash = hash Xor CLng(Runtime.CompilerServices.RuntimeHelpers.GetHashCode(_image)) << 40
-        Return hash
+    Private Function GetOrCreateDCRenderTarget() As ID2D1DCRenderTarget
+        If _dcRT Is Nothing Then _dcRT = D2DHelper.CreateDCRenderTarget()
+        Return _dcRT
     End Function
 
     Private Sub 清除图片缓存()
-        If _cachedImageBmp IsNot Nothing Then
-            _cachedImageBmp.Dispose()
-            _cachedImageBmp = Nothing
+        _backImageCache.Invalidate()
+    End Sub
+
+    Protected Overrides Sub OnHandleDestroyed(e As EventArgs)
+        Try : _ssaaCache.Dispose() : Catch : End Try
+        Try : _backImageCache.Dispose() : Catch : End Try
+        If _dcRT IsNot Nothing Then
+            Try : _dcRT.Dispose() : Catch : End Try
+            _dcRT = Nothing
         End If
-        _cacheKey = 0
+        MyBase.OnHandleDestroyed(e)
     End Sub
 
 #End Region
@@ -703,244 +702,127 @@ Public Class ModernPanel
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
         If Me.Width < 1 OrElse Me.Height < 1 Then Return
-        If 需要自绘背景() Then
-            绘制父容器背景(e.Graphics)
-        End If
-        Dim g As Graphics = e.Graphics
+        Dim 需要贴底图 As Boolean = 需要自绘背景()
 
-        Dim _ssaa As Integer = If(Class1.GlobalSSAA > 1, Class1.GlobalSSAA, 超采样倍率)
-        If _ssaa > 1 Then
-            Using bmp As New Bitmap(Me.Width * _ssaa, Me.Height * _ssaa)
-                Using sg As Graphics = Graphics.FromImage(bmp)
-                    sg.ScaleTransform(_ssaa, _ssaa)
-                    sg.SmoothingMode = Class1.GlobalSmoothingMode
-                    sg.PixelOffsetMode = Class1.GlobalPixelOffsetMode
-                    绘制背景与边框(sg, 跳过图片:=True)
-                    绘制垂直滚动条(sg)
-                    绘制水平滚动条(sg)
-                End Using
-                g.CompositingQuality = Class1.GlobalCompositingQuality
-                g.InterpolationMode = Class1.GlobalInterpolationMode
-                g.DrawImage(bmp, 0, 0, Me.Width, Me.Height)
-            End Using
-            ' 图片直接绘制到 e.Graphics，不经过 SSAA（位图缩放无抗锯齿收益）
-            绘制独立背景图片(g)
-        Else
-            绘制背景与边框(g)
-            绘制垂直滚动条(g)
-            绘制水平滚动条(g)
-        End If
+        Dim ssaa As Integer = If(Class1.GlobalSSAA > 1, CInt(Class1.GlobalSSAA), 超采样倍率)
+        ssaa = Math.Max(1, ssaa)
+
+        Using scope = D2DHelper.BeginPaint(e, Me, GetOrCreateDCRenderTarget(), ssaa, _ssaaCache)
+            Dim gRT As ID2D1RenderTarget = scope.GraphicsRenderTarget
+
+            ' 透明背景贴底图：在图形 RT 上画，让整面像素有有效内容，
+            ' 避免 dcRT.EndDraw 的 BitBlt（AlphaMode.Ignore）把圆角外区域覆盖为黑。
+            If 需要贴底图 Then
+                TransparentBackgroundCache.PaintBackgroundFor_D2D(Me, gRT, _backgroundSource)
+            End If
+
+            ' 在图形 RT 上绘制背景、图片、遮罩、边框
+            绘制背景与边框_D2D(gRT)
+
+            ' 滚动条（不需 SSAA，但和图形层一起画也无妨）
+            绘制垂直滚动条_D2D(gRT)
+            绘制水平滚动条_D2D(gRT)
+
+            scope.FlushGraphics()
+        End Using
     End Sub
 
     ''' <summary>
-    ''' 透明背景贴底图：圆角 / 半透明背景 / 透明 BackColor 时，由共享缓存把
-    ''' BackgroundSource（或 Parent）的内容采样到本控件区域。
-    ''' 设计器中背景源为透明控件时可能出现"鬼影"叠加，运行时不会出现。
-    ''' 详见 TransparentBackgroundCache 的接入说明。
+    ''' （已废弃）透明背景贴底图的 GDI 路径。保留调用点以防外部引用，实际走 D2D 路径。
     ''' </summary>
     Private Sub 绘制父容器背景(g As Graphics)
         TransparentBackgroundCache.PaintBackgroundFor(Me, g, _backgroundSource)
     End Sub
 
-    Private Sub 绘制背景与边框(g As Graphics, Optional 跳过图片 As Boolean = False)
-        g.SmoothingMode = Class1.GlobalSmoothingMode
-        g.PixelOffsetMode = Class1.GlobalPixelOffsetMode
+    Private Sub 绘制背景与边框_D2D(rt As ID2D1RenderTarget)
         Dim s As Single = DpiScale()
-        Dim boundsRect As New RectangleF(0, 0, Me.Width - 1, Me.Height - 1)
+        Dim boundsRect As New RectangleF(0, 0, Me.Width, Me.Height)
         If 边框宽度 > 0 Then
             Dim half As Single = 边框宽度 * s / 2.0F
             boundsRect.Inflate(-half, -half)
         End If
-        If 边框圆角半径 > 0 Then
-            Dim scaledRadius As Single = 边框圆角半径 * s
-            Dim isCircle As Boolean = 圆角位置.IsAll AndAlso
-                                       (scaledRadius * 2 >= boundsRect.Width) AndAlso
-                                       (scaledRadius * 2 >= boundsRect.Height)
-            If isCircle Then
-                ' 当圆角半径足以构成正圆/椭圆时，改用专门的椭圆绘制逻辑避免四弧拼接瑕疵
-                Using path As GraphicsPath = RectangleRenderer.创建椭圆路径(boundsRect)
-                    If 背景颜色.A > 0 Then
-                        Using br As New SolidBrush(背景颜色)
-                            g.FillPath(br, path)
-                        End Using
-                    End If
-                    If Not 跳过图片 Then 绘制背景图片(g, path)
-                    If 遮罩颜色.A > 0 Then
-                        Using br As New SolidBrush(遮罩颜色)
-                            g.FillPath(br, path)
-                        End Using
-                    End If
-                    RectangleRenderer.绘制椭圆边框(g, boundsRect, 边框颜色, 边框宽度 * s)
-                End Using
-            Else
-                Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(boundsRect, scaledRadius, 圆角位置)
-                    If 背景颜色.A > 0 Then
-                        Using br As New SolidBrush(背景颜色)
-                            g.FillPath(br, path)
-                        End Using
-                    End If
-                    If Not 跳过图片 Then 绘制背景图片(g, path)
-                    If 遮罩颜色.A > 0 Then
-                        Using br As New SolidBrush(遮罩颜色)
-                            g.FillPath(br, path)
-                        End Using
-                    End If
-                    RectangleRenderer.绘制圆角边框(g, path, 边框颜色, 边框宽度 * s)
-                End Using
-            End If
-        Else
-            If 背景颜色.A > 0 Then
-                Using br As New SolidBrush(背景颜色)
-                    g.FillRectangle(br, boundsRect)
-                End Using
-            End If
-            If Not 跳过图片 Then 绘制背景图片(g, Nothing)
-            If 遮罩颜色.A > 0 Then
-                Using br As New SolidBrush(遮罩颜色)
-                    g.FillRectangle(br, boundsRect)
-                End Using
-            End If
-            RectangleRenderer.绘制矩形边框(g, boundsRect, 边框颜色, 边框宽度 * s)
-        End If
-    End Sub
 
-    ''' <summary>独立绘制背景图片到指定 Graphics，不经过 SSAA 管线。</summary>
-    Private Sub 绘制独立背景图片(g As Graphics)
-        If _image Is Nothing Then Return
-        Dim s As Single = DpiScale()
-        Dim boundsRect As New RectangleF(0, 0, Me.Width - 1, Me.Height - 1)
-        If 边框宽度 > 0 Then
-            Dim half As Single = 边框宽度 * s / 2.0F
-            boundsRect.Inflate(-half, -half)
-        End If
-        If 边框圆角半径 > 0 Then
-            Dim scaledRadius As Single = 边框圆角半径 * s
-            Dim isCircle As Boolean = 圆角位置.IsAll AndAlso
-                                       (scaledRadius * 2 >= boundsRect.Width) AndAlso
-                                       (scaledRadius * 2 >= boundsRect.Height)
-            If isCircle Then
-                Using path As GraphicsPath = RectangleRenderer.创建椭圆路径(boundsRect)
-                    绘制背景图片(g, path)
-                End Using
-            Else
-                Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(boundsRect, scaledRadius, 圆角位置)
-                    绘制背景图片(g, path)
-                End Using
-            End If
-        Else
-            绘制背景图片(g, Nothing)
-        End If
-    End Sub
+        Dim scaledRadius As Single = 边框圆角半径 * s
+        Dim 是否有圆角 As Boolean = 边框圆角半径 > 0
+        ' 控件本体的 BackColor 在新契约下作为"带颜色的半透明遮罩"层，叠加在采样底图之上、
+        ' BackColor1（=背景颜色）之下；A=0 时退化为不绘制。详见 TransparentBackgroundCache 顶部契约。
+        Dim backColorMask As Color = MyBase.BackColor
 
-    ''' <summary>
-    ''' 绘制背景图片，使用缓存避免每帧重新缩放和裁切。
-    ''' 缓存在控件尺寸、图片源、填充模式、边框参数或 DPI 变化时自动失效。
-    ''' </summary>
-    Private Sub 绘制背景图片(g As Graphics, clipPath As GraphicsPath)
-        If _image Is Nothing Then Return
-        Dim w As Integer = Me.Width
-        Dim h As Integer = Me.Height
-        If w < 1 OrElse h < 1 Then Return
-
-        Dim hasClip As Boolean = clipPath IsNot Nothing
-        Dim key As Long = 计算图片缓存键(w, h, hasClip)
-
-        If _cachedImageBmp IsNot Nothing AndAlso _cacheKey = key Then
-            g.DrawImage(_cachedImageBmp, 0, 0, w, h)
-            Return
-        End If
-
-        ' 缓存未命中，重建
-        清除图片缓存()
-
-        Dim img As Image = _image
-
-        ' 1) 把原图按指定模式缩放到与控件等大的位图上
-        Dim scaled As New Bitmap(w, h, Imaging.PixelFormat.Format32bppArgb)
-        Try
-            Using sg As Graphics = Graphics.FromImage(scaled)
-                sg.InterpolationMode = Class1.GlobalInterpolationMode
-                sg.CompositingQuality = Class1.GlobalCompositingQuality
-                sg.PixelOffsetMode = Drawing2D.PixelOffsetMode.HighQuality
-                ' 使用图片原始像素尺寸（包含透明像素），不做透明边界裁剪
-                Dim srcW As Integer = img.Width
-                Dim srcH As Integer = img.Height
-                Dim ratioW As Single = CSng(w) / srcW
-                Dim ratioH As Single = CSng(h) / srcH
-                ' Zoom：按比例完整显示（取较小比例，允许放大或缩小以 fit 控件）
-                ' Fill：按比例撑满控件（取较大比例，超出部分裁切）
-                Dim ratio As Single = If(_imageFillMode = ImageFillMode.Fill,
-                                         Math.Max(ratioW, ratioH),
-                                         Math.Min(ratioW, ratioH))
-                Dim drawW As Single = srcW * ratio
-                Dim drawH As Single = srcH * ratio
-                ' 计算整数化的目标矩形：用 left/top + (right-left)/(bottom-top) 保证宽高一致性，
-                ' 避免对 X 和 Width 分别 Round 造成右/下边界少 1 像素的累积误差。
-                Dim left As Integer = CInt(Math.Round((w - drawW) / 2.0F))
-                Dim top As Integer = CInt(Math.Round((h - drawH) / 2.0F))
-                Dim right As Integer = CInt(Math.Round((w - drawW) / 2.0F + drawW))
-                Dim bottom As Integer = CInt(Math.Round((h - drawH) / 2.0F + drawH))
-                ' Zoom 模式下确保不越界（理论上 ratio<=ratioW/H 已保证，这里做最终保险）
-                If _imageFillMode = ImageFillMode.Zoom Then
-                    If left < 0 Then left = 0
-                    If top < 0 Then top = 0
-                    If right > w Then right = w
-                    If bottom > h Then bottom = h
+        If 是否有圆角 Then
+            Using geo As ID2D1Geometry = RectangleRenderer.创建圆角矩形几何(boundsRect, scaledRadius, 圆角位置)
+                If backColorMask.A > 0 AndAlso backColorMask.A < 255 Then
+                    RectangleRenderer.绘制圆角背景_D2D(rt, geo, boundsRect, backColorMask, Color.Empty, System.Windows.Forms.Orientation.Horizontal)
                 End If
-                Dim destRect As New Rectangle(left, top, Math.Max(0, right - left), Math.Max(0, bottom - top))
-                Using attrs As New Imaging.ImageAttributes()
-                    ' 使用 Clamp 避免边缘半像素采样镜像扩展到 destRect 之外（Zoom 模式下右/下边可能与控件边贴齐）
-                    attrs.SetWrapMode(WrapMode.TileFlipXY)
-                    sg.DrawImage(img,
-                        destRect,
-                        0, 0, srcW, srcH,
-                        GraphicsUnit.Pixel, attrs)
-                End Using
+                If 背景颜色.A > 0 Then
+                    RectangleRenderer.绘制圆角背景_D2D(rt, geo, boundsRect, 背景颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal)
+                End If
+                绘制背景图片_D2D(rt, boundsRect, geo)
+                If 遮罩颜色.A > 0 Then
+                    RectangleRenderer.绘制圆角背景_D2D(rt, geo, boundsRect, 遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal)
+                End If
+                If 边框颜色.A > 0 AndAlso 边框宽度 > 0 Then
+                    RectangleRenderer.绘制圆角边框_D2D(rt, geo, 边框颜色, 边框宽度 * s)
+                End If
             End Using
-
-            If hasClip Then
-                ' 2) 用 TextureBrush + FillPath 裁剪到圆角/椭圆路径
-                Dim result As New Bitmap(w, h, Imaging.PixelFormat.Format32bppArgb)
-                Try
-                    Using rg As Graphics = Graphics.FromImage(result)
-                        rg.SmoothingMode = Class1.GlobalSmoothingMode
-                        Using tb As New TextureBrush(scaled)
-                            rg.FillPath(tb, clipPath)
-                        End Using
-                    End Using
-                    ' 缓存裁剪后的结果，释放中间 scaled
-                    scaled.Dispose()
-                    scaled = Nothing
-                    _cachedImageBmp = result
-                Catch
-                    result.Dispose()
-                    Throw
-                End Try
-            Else
-                ' 无裁剪，直接缓存 scaled
-                _cachedImageBmp = scaled
-                scaled = Nothing
+        Else
+            If backColorMask.A > 0 AndAlso backColorMask.A < 255 Then
+                RectangleRenderer.绘制矩形背景_D2D(rt, boundsRect, backColorMask, Color.Empty, System.Windows.Forms.Orientation.Horizontal)
             End If
+            If 背景颜色.A > 0 Then
+                RectangleRenderer.绘制矩形背景_D2D(rt, boundsRect, 背景颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal)
+            End If
+            绘制背景图片_D2D(rt, boundsRect, Nothing)
+            If 遮罩颜色.A > 0 Then
+                RectangleRenderer.绘制矩形背景_D2D(rt, boundsRect, 遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal)
+            End If
+            If 边框颜色.A > 0 AndAlso 边框宽度 > 0 Then
+                RectangleRenderer.绘制矩形边框_D2D(rt, boundsRect, 边框颜色, 边框宽度 * s)
+            End If
+        End If
+    End Sub
 
-            _cacheKey = key
-            g.DrawImage(_cachedImageBmp, 0, 0, w, h)
+    ''' <summary>D2D 绘制背景图片：按 ImageMode 计算目标矩形，圆角下用几何裁切。</summary>
+    Private Sub 绘制背景图片_D2D(rt As ID2D1RenderTarget, area As RectangleF, geo As ID2D1Geometry)
+        If _image Is Nothing Then Return
+        Dim bmp = _backImageCache.GetBitmap(rt, _image)
+        If bmp Is Nothing Then Return
+
+        Dim srcW As Single = _image.Width
+        Dim srcH As Single = _image.Height
+        If srcW <= 0 OrElse srcH <= 0 Then Return
+        Dim ratioW As Single = area.Width / srcW
+        Dim ratioH As Single = area.Height / srcH
+        Dim ratio As Single = If(_imageFillMode = ImageFillMode.Fill,
+                                 Math.Max(ratioW, ratioH),
+                                 Math.Min(ratioW, ratioH))
+        Dim drawW As Single = srcW * ratio
+        Dim drawH As Single = srcH * ratio
+        Dim destRect As New RectangleF(
+            area.X + (area.Width - drawW) / 2.0F,
+            area.Y + (area.Height - drawH) / 2.0F,
+            drawW, drawH)
+
+        Dim hasMask As Boolean = geo IsNot Nothing
+        If hasMask Then D2DHelper.PushGeometryClip(rt, geo, area)
+        Try
+            Dim srcRect As New RectangleF(0, 0, srcW, srcH)
+            rt.DrawBitmap(bmp, D2DHelper.ToD2DRect(destRect), 1.0F, BitmapInterpolationMode.Linear, D2DHelper.ToD2DRect(srcRect))
         Finally
-            ' 如果异常导致 scaled 未被转移到缓存，确保释放
-            scaled?.Dispose()
+            If hasMask Then rt.PopLayer()
         End Try
     End Sub
 
-    Private Sub 绘制垂直滚动条(g As Graphics)
+    Private Sub 绘制垂直滚动条_D2D(rt As ID2D1RenderTarget)
         If _vScrollBar.TrackRect.IsEmpty Then Return
         Dim s As Single = DpiScale()
-        _vScrollBar.Draw(g, Me.Width, Me.Height, CInt(Math.Round(边框宽度 * s)), CInt(Math.Round(边框圆角半径 * s)),
+        _vScrollBar.Draw_D2D(rt, Me.Width, Me.Height, CInt(Math.Round(边框宽度 * s)), CInt(Math.Round(边框圆角半径 * s)),
             CInt(Math.Round(滚动条宽度 * s)), 滚动条轨道颜色, 滚动条滑块颜色, 滚动条悬停颜色)
     End Sub
 
-    Private Sub 绘制水平滚动条(g As Graphics)
+    Private Sub 绘制水平滚动条_D2D(rt As ID2D1RenderTarget)
         If _hScrollBar.TrackRect.IsEmpty Then Return
         Dim s As Single = DpiScale()
-        _hScrollBar.DrawHorizontal(g, Me.Width, Me.Height, CInt(Math.Round(边框宽度 * s)), CInt(Math.Round(边框圆角半径 * s)),
+        _hScrollBar.DrawHorizontal_D2D(rt, Me.Width, Me.Height, CInt(Math.Round(边框宽度 * s)), CInt(Math.Round(边框圆角半径 * s)),
             CInt(Math.Round(滚动条宽度 * s)), 滚动条轨道颜色, 滚动条滑块颜色, 滚动条悬停颜色)
     End Sub
 

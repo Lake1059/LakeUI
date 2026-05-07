@@ -95,12 +95,15 @@ Partial Class Form_UltraDetailListView
         ModernPanel1.Margin = New Padding(2)
         ModernPanel1.Name = "ModernPanel1"
         ModernPanel1.Padding = New Padding(20)
+        ModernPanel1.ScrollBarMode = ModernPanel.ScrollMode.None
         ModernPanel1.Size = New Size(903, 770)
         ModernPanel1.TabIndex = 42
         ' 
         ' UltraDetailListView1
         ' 
         UltraDetailListView1.AllowDragReorder = True
+        UltraDetailListView1.BackColor = Color.Transparent
+        UltraDetailListView1.BackgroundColor = Color.FromArgb(CByte(40), CByte(0), CByte(0), CByte(0))
         UltraDetailListView1.BottomLinesSpacing = 10
         ListColumn1.AllowLabelEdit = True
         ListColumn1.Text = "列宽会限制子项区域"
@@ -115,11 +118,12 @@ Partial Class Form_UltraDetailListView
         UltraDetailListView1.Columns.Add(ListColumn2)
         UltraDetailListView1.Columns.Add(ListColumn3)
         UltraDetailListView1.Dock = DockStyle.Fill
+        UltraDetailListView1.GroupBackColor = Color.FromArgb(CByte(20), CByte(220), CByte(220), CByte(220))
         UltraDetailListView1.GroupHeight = 35
         ListGroup1.Name = "G1"
         ListGroup1.Text = "分组点击切换折叠 —— 招牌特色展示"
         UltraDetailListView1.Groups.Add(ListGroup1)
-        UltraDetailListView1.HeaderBackColor = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        UltraDetailListView1.HeaderBackColor = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         UltraDetailListView1.HeaderBorderColor = SystemColors.ButtonShadow
         UltraDetailListView1.HeaderHeight = 40
         UltraDetailListView1.IconSize = New Size(48, 48)
@@ -203,6 +207,7 @@ Partial Class Form_UltraDetailListView
         UltraDetailListView1.Items.Add(ListItem7)
         UltraDetailListView1.Items.Add(ListItem8)
         UltraDetailListView1.Items.Add(ListItem9)
+        UltraDetailListView1.ItemSelectedBackColor = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         UltraDetailListView1.Location = New Point(20, 180)
         UltraDetailListView1.Margin = New Padding(2, 2, 2, 2)
         UltraDetailListView1.Name = "UltraDetailListView1"
@@ -240,7 +245,7 @@ Partial Class Form_UltraDetailListView
         ' 
         ' ModernButton4
         ' 
-        ModernButton4.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton4.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton4.BorderRadius = 10
         ModernButton4.BorderSize = 0
         ModernButton4.Dock = DockStyle.Left
@@ -266,7 +271,7 @@ Partial Class Form_UltraDetailListView
         ' 
         ' ModernButton3
         ' 
-        ModernButton3.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton3.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton3.BorderRadius = 10
         ModernButton3.BorderSize = 0
         ModernButton3.Dock = DockStyle.Left
@@ -292,7 +297,7 @@ Partial Class Form_UltraDetailListView
         ' 
         ' ModernButton2
         ' 
-        ModernButton2.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton2.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton2.BorderRadius = 10
         ModernButton2.BorderSize = 0
         ModernButton2.Dock = DockStyle.Left
@@ -317,7 +322,7 @@ Partial Class Form_UltraDetailListView
         ' 
         ' ModernButton1
         ' 
-        ModernButton1.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton1.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton1.BorderRadius = 10
         ModernButton1.BorderSize = 0
         ModernButton1.Dock = DockStyle.Left

@@ -56,6 +56,7 @@ Partial Class Form_ModernContextMenu
         ModernPanel1.Margin = New Padding(2)
         ModernPanel1.Name = "ModernPanel1"
         ModernPanel1.Padding = New Padding(20)
+        ModernPanel1.ScrollBarMode = ModernPanel.ScrollMode.None
         ModernPanel1.Size = New Size(638, 509)
         ModernPanel1.TabIndex = 40
         ' 
@@ -89,7 +90,7 @@ Partial Class Form_ModernContextMenu
         ' 
         ' ModernButton4
         ' 
-        ModernButton4.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton4.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton4.BorderRadius = 10
         ModernButton4.BorderSize = 0
         ModernButton4.Dock = DockStyle.Left
@@ -115,7 +116,7 @@ Partial Class Form_ModernContextMenu
         ' 
         ' ModernButton3
         ' 
-        ModernButton3.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton3.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton3.BorderRadius = 10
         ModernButton3.BorderSize = 0
         ModernButton3.Dock = DockStyle.Left
@@ -141,7 +142,7 @@ Partial Class Form_ModernContextMenu
         ' 
         ' ModernButton2
         ' 
-        ModernButton2.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton2.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton2.BorderRadius = 10
         ModernButton2.BorderSize = 0
         ModernButton2.Dock = DockStyle.Left
@@ -166,7 +167,7 @@ Partial Class Form_ModernContextMenu
         ' 
         ' ModernButton1
         ' 
-        ModernButton1.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton1.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton1.BorderRadius = 10
         ModernButton1.BorderSize = 0
         ModernButton1.Dock = DockStyle.Left
@@ -195,8 +196,15 @@ Partial Class Form_ModernContextMenu
         ' 
         ' ModernContextMenu1
         ' 
-        ModernContextMenu1.DescriptionFont = New Font("MiSans Medium", 9F, FontStyle.Regular, GraphicsUnit.Point, CByte(134))
+        ModernContextMenu1.BackdropBlurPasses = 1
+        ModernContextMenu1.BackdropBlurRadius = 10
+        ModernContextMenu1.BackdropMaxParallelism = 2
+        ModernContextMenu1.BackdropMode = ModernContextMenu.BackdropModeEnum.Auto
+        ModernContextMenu1.BackdropTintColor = Color.FromArgb(CByte(80), CByte(0), CByte(0), CByte(0))
+        ModernContextMenu1.BorderColor = Color.FromArgb(CByte(80), CByte(220), CByte(220), CByte(220))
+        ModernContextMenu1.BorderSize = 2
         ModernContextMenu1.HoverAnimationFPS = 0
+        ModernContextMenu1.HoverBackColor = Color.FromArgb(CByte(60), CByte(220), CByte(220), CByte(220))
         ModernContextMenu1.HoverRadius = 5
         ModernContextMenu1.ItemHeight = 35
         ModernMenuItem1.Font = Nothing
@@ -218,10 +226,11 @@ Partial Class Form_ModernContextMenu
         ModernContextMenu1.Items.Add(ModernMenuItem3)
         ModernContextMenu1.Items.Add(ModernMenuItem4)
         ModernContextMenu1.Items.Add(ModernMenuItem5)
-        ModernContextMenu1.MenuFont = New Font("MiSans Medium", 10.5F)
+        ModernContextMenu1.MenuFont = New Font("Microsoft YaHei UI", 10F)
         ModernContextMenu1.MenuPadding = New Padding(10)
         ModernContextMenu1.PopupAnimationFPS = 0
-        ModernContextMenu1.PressedBackColor = SystemColors.WindowFrame
+        ModernContextMenu1.PressedBackColor = Color.FromArgb(CByte(80), CByte(220), CByte(220), CByte(220))
+        ModernContextMenu1.SeparatorColor = Color.FromArgb(CByte(80), CByte(220), CByte(220), CByte(220))
         ModernContextMenu1.SeparatorHeight = 20
         ModernContextMenu1.SuperSamplingScale = Class1.SuperSamplingScaleEnum.x2
         ' 

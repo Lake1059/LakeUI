@@ -12,13 +12,16 @@ Friend Class AnimationHelper
     End Enum
 
     Private ReadOnly _秒表 As New Stopwatch()
-    Private ReadOnly _计时器 As New System.Windows.Forms.Timer()
+    Private ReadOnly _计时器 As New PrecisionTimer()
     Private ReadOnly _所有者 As Control
     Private _进度 As Single = 0.0F
     Private _起始进度 As Single = 0.0F
     Private _目标 As Single = 0.0F
     Private _动画中 As Boolean = False
     Private _使用空闲驱动 As Boolean = False
+    Private _帧循环中 As Boolean = False
+    Private _帧循环使用空闲驱动 As Boolean = False
+    Private _帧循环处理器 As EventHandler
     Private _当前段时长 As Double = 0
     Private _缓动模式 As EasingModeEnum = EasingModeEnum.EaseOut
 
@@ -47,6 +50,41 @@ Friend Class AnimationHelper
 
     Public Sub New(owner As Control)
         _所有者 = owner
+        _计时器.SynchronizingObject = owner
+        _计时器.DispatchMode = PrecisionTimer.DispatchModeEnum.Blocking
+    End Sub
+
+    ''' <summary>启动通用帧循环，适用于自定义多状态动画。重复调用幂等。</summary>
+    Public Sub StartFrameLoop(handler As EventHandler)
+        If handler Is Nothing Then Throw New ArgumentNullException(NameOf(handler))
+        If _帧循环中 Then Return
+        _帧循环中 = True
+        _帧循环处理器 = handler
+        _帧循环使用空闲驱动 = (FPS <= 0)
+        If _帧循环使用空闲驱动 Then
+            AddHandler Application.Idle, AddressOf 触发帧循环
+        Else
+            _计时器.Interval = Math.Max(1, CInt(1000.0 / FPS))
+            AddHandler _计时器.Tick, AddressOf 触发帧循环
+            _计时器.Start()
+        End If
+    End Sub
+
+    ''' <summary>停止通用帧循环。</summary>
+    Public Sub StopFrameLoop()
+        If Not _帧循环中 Then Return
+        _帧循环中 = False
+        If _帧循环使用空闲驱动 Then
+            RemoveHandler Application.Idle, AddressOf 触发帧循环
+        Else
+            _计时器.Stop()
+            RemoveHandler _计时器.Tick, AddressOf 触发帧循环
+        End If
+        _帧循环处理器 = Nothing
+    End Sub
+
+    Private Sub 触发帧循环(sender As Object, e As EventArgs)
+        _帧循环处理器?.Invoke(sender, e)
     End Sub
 
     ''' <summary>立即设置进度，不播放动画</summary>
@@ -123,6 +161,7 @@ Friend Class AnimationHelper
     End Sub
 
     Public Sub Dispose() Implements IDisposable.Dispose
+        StopFrameLoop()
         StopAnimation()
         _计时器.Dispose()
     End Sub

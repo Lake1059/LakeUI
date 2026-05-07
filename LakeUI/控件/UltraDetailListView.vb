@@ -690,6 +690,292 @@ Public Class UltraDetailListView
         Return p
     End Function
 
+    ''' <summary>取/创建 D2D Solid 画刷（仅在当前 RT 上使用，复用按颜色键）。</summary>
+    Private Function 获取D2D画刷(rt As Vortice.Direct2D1.ID2D1RenderTarget, color As Color) As Vortice.Direct2D1.ID2D1SolidColorBrush
+        Return _d2dBrushCache.Get(rt, color)
+    End Function
+
+    Private Sub 填充矩形_D2D(rt As Vortice.Direct2D1.ID2D1RenderTarget, rect As RectangleF, color As Color)
+        If color.A = 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        rt.FillRectangle(D2DHelper.ToD2DRect(rect), 获取D2D画刷(rt, color))
+    End Sub
+
+    Private Sub 描边矩形_D2D(rt As Vortice.Direct2D1.ID2D1RenderTarget, rect As RectangleF, color As Color, strokeWidth As Single)
+        If color.A = 0 OrElse strokeWidth <= 0 Then Return
+        rt.DrawRectangle(D2DHelper.ToD2DRect(rect), 获取D2D画刷(rt, color), strokeWidth)
+    End Sub
+
+    Private Sub 绘制水平线_D2D(rt As Vortice.Direct2D1.ID2D1RenderTarget, x1 As Single, x2 As Single, y As Single, color As Color, strokeWidth As Single)
+        If color.A = 0 OrElse strokeWidth <= 0 Then Return
+        Dim br = 获取D2D画刷(rt, color)
+        rt.DrawLine(New System.Numerics.Vector2(x1, y), New System.Numerics.Vector2(x2, y), br, strokeWidth)
+    End Sub
+
+    Private Sub 绘制垂直线_D2D(rt As Vortice.Direct2D1.ID2D1RenderTarget, x As Single, y1 As Single, y2 As Single, color As Color, strokeWidth As Single)
+        If color.A = 0 OrElse strokeWidth <= 0 Then Return
+        Dim br = 获取D2D画刷(rt, color)
+        rt.DrawLine(New System.Numerics.Vector2(x, y1), New System.Numerics.Vector2(x, y2), br, strokeWidth)
+    End Sub
+
+    Private Sub 绘制背景与边框_D2D(rt As Vortice.Direct2D1.ID2D1RenderTarget)
+        Dim s As Single = DpiScale()
+        Dim boundsRect As New RectangleF(0, 0, Me.Width - 1, Me.Height - 1)
+        If 边框宽度 > 0 Then
+            Dim half As Single = 边框宽度 * s / 2.0F
+            boundsRect.Inflate(-half, -half)
+        End If
+        If 边框圆角半径 > 0 Then
+            Using geo = RectangleRenderer.创建圆角矩形几何(boundsRect, 边框圆角半径 * s)
+                RectangleRenderer.绘制圆角背景_D2D(rt, geo, boundsRect, 背景颜色, Color.Empty, 0)
+                If 边框颜色.A > 0 AndAlso 边框宽度 > 0 Then
+                    RectangleRenderer.绘制圆角边框_D2D(rt, geo, 边框颜色, 边框宽度 * s)
+                End If
+            End Using
+        Else
+            RectangleRenderer.绘制矩形背景_D2D(rt, boundsRect, 背景颜色, Color.Empty, 0)
+            If 边框颜色.A > 0 AndAlso 边框宽度 > 0 Then
+                RectangleRenderer.绘制矩形边框_D2D(rt, boundsRect, 边框颜色, 边框宽度 * s)
+            End If
+        End If
+    End Sub
+
+    Private Sub 绘制滚动条_D2D(rt As Vortice.Direct2D1.ID2D1RenderTarget)
+        If _scrollBar.TrackRect.IsEmpty Then Return
+        Dim s As Single = DpiScale()
+        _scrollBar.Draw_D2D(rt, Me.Width, Me.Height, CInt(边框宽度 * s), CInt(边框圆角半径 * s),
+            Dpi(滚动条宽度), 滚动条轨道颜色, 滚动条滑块颜色, 滚动条悬停颜色)
+    End Sub
+
+    Private Sub 绘制横向滚动条_D2D(rt As Vortice.Direct2D1.ID2D1RenderTarget)
+        If _hScrollBar.TrackRect.IsEmpty Then Return
+        Dim s As Single = DpiScale()
+        _hScrollBar.DrawHorizontal_D2D(rt, Me.Width, Me.Height, CInt(边框宽度 * s), CInt(边框圆角半径 * s),
+            Dpi(滚动条宽度), 滚动条轨道颜色, 滚动条滑块颜色, 滚动条悬停颜色)
+    End Sub
+
+    ''' <summary>D2D 绘制列标题背景与分隔线（不绘文字）。</summary>
+    Private Sub 绘制列标题形状_D2D(rt As Vortice.Direct2D1.ID2D1RenderTarget)
+        Dim headerRect As Rectangle = 获取列标题区域()
+        填充矩形_D2D(rt, headerRect, 列标题背景颜色)
+        确保列X缓存()
+        Dim dpiS As Single = DpiScale()
+        Dim sw As Single = Math.Max(1.0F, 列标题分隔线宽度 * dpiS)
+        For i As Integer = 0 To _columns.Count - 1
+            Dim col = _columns(i)
+            Dim x As Integer = _columnXCache(i)
+            绘制垂直线_D2D(rt, x + col.Width - 1, headerRect.Y + 4, headerRect.Bottom - 4, 列标题分隔线颜色, sw)
+        Next
+        绘制水平线_D2D(rt, headerRect.X, headerRect.Right, headerRect.Bottom - 1, 列标题分隔线颜色, sw)
+    End Sub
+
+    ''' <summary>D2D 绘制分组行背景、贝塞尔三角箭头、底部分隔线（不绘组名文字）。</summary>
+    Private Sub 绘制分组标题行形状_D2D(rt As Vortice.Direct2D1.ID2D1RenderTarget, grp As ListGroup, rect As Rectangle)
+        填充矩形_D2D(rt, rect, 分组背景颜色)
+
+        Dim arrowSize As Integer = Dpi(12)
+        Dim arrowMargin As Integer = Dpi(10)
+        Dim arrowX As Integer = rect.X + arrowMargin
+        Dim arrowY As Integer = rect.Y + (rect.Height - arrowSize) \ 2
+        Dim effectiveColor As Color = If(grp.ForeColor <> Color.Empty, grp.ForeColor, 分组文字颜色)
+        Using path As GraphicsPath = 创建圆角箭头路径(arrowX, arrowY, arrowSize, grp.IsCollapsed)
+            Using geo = 路径转D2D几何(path)
+                If geo IsNot Nothing Then
+                    rt.FillGeometry(geo, 获取D2D画刷(rt, effectiveColor), Nothing)
+                End If
+            End Using
+        End Using
+
+        绘制水平线_D2D(rt, rect.X, rect.Right, rect.Bottom - 1, 分组分隔线颜色, 1.0F)
+    End Sub
+
+    ''' <summary>把 GDI+ GraphicsPath 转换为 D2D PathGeometry。仅支持线段与三次贝塞尔，足够本控件使用。</summary>
+    Private Shared Function 路径转D2D几何(path As GraphicsPath) As Vortice.Direct2D1.ID2D1PathGeometry
+        If path Is Nothing OrElse path.PointCount = 0 Then Return Nothing
+        Dim pts() As PointF = path.PathPoints
+        Dim types() As Byte = path.PathTypes
+        Dim geo = D2DHelper.GetD2DFactory().CreatePathGeometry()
+        Dim sink = geo.Open()
+        Try
+            Dim figureOpen As Boolean = False
+            Dim i As Integer = 0
+            While i < pts.Length
+                Dim t As Byte = types(i)
+                Dim ptType As Byte = t And &H7
+                If ptType = 0 Then ' Start
+                    If figureOpen Then
+                        sink.EndFigure(Vortice.Direct2D1.FigureEnd.Open)
+                        figureOpen = False
+                    End If
+                    sink.BeginFigure(New System.Numerics.Vector2(pts(i).X, pts(i).Y), Vortice.Direct2D1.FigureBegin.Filled)
+                    figureOpen = True
+                    i += 1
+                ElseIf ptType = 1 Then ' Line
+                    sink.AddLine(New System.Numerics.Vector2(pts(i).X, pts(i).Y))
+                    Dim closed As Boolean = (t And &H80) <> 0
+                    i += 1
+                    If closed AndAlso figureOpen Then
+                        sink.EndFigure(Vortice.Direct2D1.FigureEnd.Closed)
+                        figureOpen = False
+                    End If
+                ElseIf ptType = 3 Then ' Bezier (3 points)
+                    If i + 2 < pts.Length Then
+                        Dim seg As New Vortice.Direct2D1.BezierSegment With {
+                            .Point1 = New System.Numerics.Vector2(pts(i).X, pts(i).Y),
+                            .Point2 = New System.Numerics.Vector2(pts(i + 1).X, pts(i + 1).Y),
+                            .Point3 = New System.Numerics.Vector2(pts(i + 2).X, pts(i + 2).Y)}
+                        sink.AddBezier(seg)
+                        Dim closeFlag As Byte = types(i + 2)
+                        i += 3
+                        If (closeFlag And &H80) <> 0 AndAlso figureOpen Then
+                            sink.EndFigure(Vortice.Direct2D1.FigureEnd.Closed)
+                            figureOpen = False
+                        End If
+                    Else
+                        Exit While
+                    End If
+                Else
+                    i += 1
+                End If
+            End While
+            If figureOpen Then sink.EndFigure(Vortice.Direct2D1.FigureEnd.Closed)
+            sink.Close()
+        Finally
+            sink.Dispose()
+        End Try
+        Return geo
+    End Function
+
+    ''' <summary>D2D 绘制更多指示器渐变背景（不绘 ▲▼ 符号）。</summary>
+    Private Sub 绘制更多指示器形状_D2D(rt As Vortice.Direct2D1.ID2D1RenderTarget, rect As Rectangle, isTop As Boolean)
+        If rect.Height < 2 Then Return
+        Dim c1 As Color = Color.FromArgb(200, 背景颜色)
+        Dim c2 As Color = Color.FromArgb(0, 背景颜色)
+        Dim startPt As New System.Numerics.Vector2(rect.X, If(isTop, rect.Y, rect.Bottom - 1))
+        Dim endPt As New System.Numerics.Vector2(rect.X, If(isTop, rect.Bottom - 1, rect.Y))
+        Dim stops() As Vortice.Direct2D1.GradientStop = {
+            New Vortice.Direct2D1.GradientStop With {.Position = 0F, .Color = D2DHelper.ToColor4(c1)},
+            New Vortice.Direct2D1.GradientStop With {.Position = 1.0F, .Color = D2DHelper.ToColor4(c2)}}
+        Dim gsc = rt.CreateGradientStopCollection(stops, Vortice.Direct2D1.Gamma.StandardRgb, Vortice.Direct2D1.ExtendMode.Clamp)
+        Try
+            Dim props As New Vortice.Direct2D1.LinearGradientBrushProperties With {.StartPoint = startPt, .EndPoint = endPt}
+            Using br = rt.CreateLinearGradientBrush(props, gsc)
+                rt.FillRectangle(D2DHelper.ToD2DRect(rect), br)
+            End Using
+        Finally
+            gsc.Dispose()
+        End Try
+    End Sub
+
+    ''' <summary>D2D 绘制拖选框（半透明填充 + 边框）。</summary>
+    Private Sub 绘制拖选框_D2D(rt As Vortice.Direct2D1.ID2D1RenderTarget)
+        If Not _isDragSelecting Then Return
+        Dim rect As Rectangle = 获取拖选矩形()
+        If rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        填充矩形_D2D(rt, rect, 选框填充颜色)
+        描边矩形_D2D(rt, rect, 选框边框颜色, 1.0F)
+    End Sub
+
+    ''' <summary>D2D 绘制拖动排序指示线。</summary>
+    Private Sub 绘制拖动排序指示线_D2D(rt As Vortice.Direct2D1.ID2D1RenderTarget)
+        If Not _isDragReordering OrElse _dragReorderInsertIndex < 0 Then Return
+        Dim contentRect = 获取内容区域()
+        Dim inset = 获取边框内边距()
+        Dim scrollW = If(Not _scrollBar.TrackRect.IsEmpty, Me.Width - inset - _scrollBar.VisualLeft, 0)
+        Dim availW = contentRect.Width - scrollW
+        If _columns.Count > 0 Then availW = Math.Max(availW, 获取总列宽())
+        Dim lineY As Integer
+        If _dragReorderInsertIndex < _displayRows.Count Then
+            lineY = 获取行Y坐标(_dragReorderInsertIndex)
+            If lineY < 0 Then Return
+        Else
+            Dim lastIdx = _dragReorderInsertIndex - 1
+            If lastIdx < 0 OrElse lastIdx >= _displayRows.Count Then Return
+            lineY = 获取行Y坐标(lastIdx)
+            If lineY < 0 Then Return
+            lineY += _displayRows(lastIdx).Height
+        End If
+        绘制水平线_D2D(rt, contentRect.X, contentRect.X + availW, lineY, 拖动排序指示线颜色, 拖动排序指示线宽 * DpiScale())
+    End Sub
+
+    ''' <summary>D2D 绘制全部行的形状层（背景/选中/悬停/Checked 边框/分组背景与箭头/更多指示器渐变）。</summary>
+    Private Sub 绘制全部行形状_D2D(rt As Vortice.Direct2D1.ID2D1RenderTarget)
+        If _displayRows.Count = 0 Then Return
+        Dim contentRect = 获取内容区域()
+        If contentRect.Height <= 0 OrElse contentRect.Width <= 0 Then Return
+
+        Dim hasMoreAbove As Boolean = _scrollOffset > 0
+        Dim topIndicatorH As Integer = If(hasMoreAbove, Dpi(更多指示器高度), 0)
+        Dim currentY As Integer = contentRect.Y + topIndicatorH + 获取有效内容上边距()
+        Dim bottomLimit As Integer = contentRect.Bottom - 获取有效内容下边距()
+        Dim lastDrawnIndex As Integer = _scrollOffset - 1
+
+        Dim inset As Integer = 获取边框内边距()
+        Dim scrollW As Integer = If(Not _scrollBar.TrackRect.IsEmpty, Me.Width - inset - _scrollBar.VisualLeft, 0)
+        Dim availW As Integer = contentRect.Width - scrollW
+        If _columns.Count > 0 Then availW = Math.Max(availW, 获取总列宽())
+        Dim dpiS As Single = DpiScale()
+
+        If _hoverAnimActive AndAlso _hoverRowIndex >= 0 AndAlso Not _selectedIndices.Contains(_hoverRowIndex) Then
+            Dim t As Single = _hoverAnim.Progress
+            Dim animY As Single = _hoverAnimFromY + (_hoverAnimToY - _hoverAnimFromY) * t
+            Dim animH As Single = _hoverAnimFromH + (_hoverAnimToH - _hoverAnimFromH) * t
+            填充矩形_D2D(rt, New RectangleF(contentRect.X, animY, availW, animH), 项悬停背景颜色)
+        End If
+
+        For i As Integer = _scrollOffset To _displayRows.Count - 1
+            Dim row = _displayRows(i)
+            Dim rowH As Integer = row.Height
+            Dim spacing As Integer = If(i = _scrollOffset, 0, row.Spacing)
+            If currentY + spacing + rowH > bottomLimit Then Exit For
+            currentY += spacing
+            Dim rowRect As New Rectangle(contentRect.X, currentY, availW, rowH)
+
+            If _selectedIndices.Contains(i) Then
+                填充矩形_D2D(rt, rowRect, 项选中背景颜色)
+            ElseIf i = _hoverRowIndex AndAlso Not _hoverAnimActive Then
+                填充矩形_D2D(rt, rowRect, 项悬停背景颜色)
+            End If
+
+            If row.Type = DisplayRowType.GroupHeader Then
+                绘制分组标题行形状_D2D(rt, row.Group, rowRect)
+            ElseIf row.Item.Checked AndAlso 项高亮边框宽度 > 0 Then
+                Dim sb As Single = 项高亮边框宽度 * dpiS
+                Dim half As Single = sb / 2.0F
+                描边矩形_D2D(rt, New RectangleF(rowRect.X + half, rowRect.Y + half, rowRect.Width - sb, rowRect.Height - sb), 项高亮边框颜色, sb)
+            End If
+
+            currentY += rowH
+            lastDrawnIndex = i
+        Next
+
+        Dim hasMoreBelow As Boolean = lastDrawnIndex < _displayRows.Count - 1
+        If hasMoreBelow AndAlso currentY < bottomLimit Then
+            绘制更多指示器形状_D2D(rt, New Rectangle(contentRect.X, currentY, availW, bottomLimit - currentY), False)
+        End If
+        If hasMoreAbove Then
+            绘制更多指示器形状_D2D(rt, New Rectangle(contentRect.X, contentRect.Y, availW, topIndicatorH), True)
+        End If
+    End Sub
+
+    Protected Overrides Sub OnHandleDestroyed(e As EventArgs)
+        释放D2D资源()
+        MyBase.OnHandleDestroyed(e)
+    End Sub
+
+    Private Sub 释放D2D资源()
+        Try : _d2dBrushCache.Dispose() : Catch : End Try
+        Try : _textFmtCache.Dispose() : Catch : End Try
+        Try : _ssaaCache.Dispose() : Catch : End Try
+        For Each c In _iconBitmaps.Values
+            Try : c.Dispose() : Catch : End Try
+        Next
+        _iconBitmaps.Clear()
+        If _dcRT IsNot Nothing Then
+            Try : _dcRT.Dispose() : Catch : End Try
+            _dcRT = Nothing
+        End If
+    End Sub
+
     Private Sub 释放GDI缓存()
         For Each br In _brushCache.Values
             br.Dispose()
@@ -702,12 +988,25 @@ Public Class UltraDetailListView
         _moreSymbolFont?.Dispose()
         _moreSymbolFont = Nothing
         _moreSymbolFontKey = 0F
-        _ssaaBufferGraphics?.Dispose()
-        _ssaaBufferGraphics = Nothing
-        _ssaaBuffer?.Dispose()
-        _ssaaBuffer = Nothing
-        _ssaaBufferScale = 0
+        释放D2D资源()
     End Sub
+
+    Private Function 获取或创建DCRenderTarget() As Vortice.Direct2D1.ID2D1DCRenderTarget
+        If _dcRT Is Nothing Then
+            _dcRT = D2DHelper.CreateDCRenderTarget()
+        End If
+        Return _dcRT
+    End Function
+
+    Private Function 获取D2D位图(rt As Vortice.Direct2D1.ID2D1RenderTarget, src As Image) As Vortice.Direct2D1.ID2D1Bitmap
+        If src Is Nothing OrElse rt Is Nothing Then Return Nothing
+        Dim cache As D2DHelper.D2DBitmapCache = Nothing
+        If Not _iconBitmaps.TryGetValue(src, cache) Then
+            cache = New D2DHelper.D2DBitmapCache()
+            _iconBitmaps(src) = cache
+        End If
+        Return cache.GetBitmap(rt, src)
+    End Function
 
     ''' <summary>确保 _columnXCache 是最新的。所有需要列 X 的路径调用此方法后用 _columnXCache 数组与 _columnXCount。
     ''' 通过比较"期望首列 X"与缓存首列 X 自检失效，避免外部分散地维护脏标记。</summary>
@@ -1337,16 +1636,18 @@ Public Class UltraDetailListView
     Private _columnXCount As Integer = 0
     Private _columnXDirty As Boolean = True
 
-    ' --- 帧级缓存：GDI 资源（按颜色/规格键复用） ---
+    ' --- 帧级缓存：GDI 资源（按颜色/规格键复用，仅 ToolTip OwnerDraw 仍需要） ---
     Private ReadOnly _brushCache As New Dictionary(Of Integer, SolidBrush)
     Private ReadOnly _penCache As New Dictionary(Of Long, Pen)
     Private _moreSymbolFont As Font = Nothing
     Private _moreSymbolFontKey As Single = 0F
 
-    ' --- SSAA 离屏缓冲 ---
-    Private _ssaaBuffer As Bitmap = Nothing
-    Private _ssaaBufferGraphics As Graphics = Nothing
-    Private _ssaaBufferScale As Integer = 0
+    ' --- D2D 资源 ---
+    Private _dcRT As Vortice.Direct2D1.ID2D1DCRenderTarget
+    Private ReadOnly _ssaaCache As New D2DHelper.BitmapRTCache()
+    Private ReadOnly _d2dBrushCache As New D2DHelper.SolidColorBrushCache()
+    Private ReadOnly _textFmtCache As New D2DHelper.TextFormatCache()
+    Private ReadOnly _iconBitmaps As New Dictionary(Of Image, D2DHelper.D2DBitmapCache)
 
     Private _columnResizeIndex As Integer = -1
     Private _columnResizeStartX As Integer = 0
@@ -1660,6 +1961,9 @@ Public Class UltraDetailListView
 
 #Region "绘制"
 
+    ''' <summary>当前帧是否处于"仅绘文字层"通道。形状已在 D2D 通道画过，GDI 通道应跳过填充/边框/箭头/分隔线。</summary>
+    Private _onlyText As Boolean = False
+
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
         If Me.Width < 1 OrElse Me.Height < 1 Then Return
         Dim g As Graphics = e.Graphics
@@ -1668,81 +1972,73 @@ Public Class UltraDetailListView
         预计算滚动条布局()
         预计算横向滚动条布局()
 
-        Dim _ssaa As Integer = If(Class1.GlobalSSAA > 1, Class1.GlobalSSAA, 超采样倍率)
-        If _ssaa > 1 Then
-            Dim w = Me.Width * _ssaa
-            Dim h = Me.Height * _ssaa
-            ' 复用持久化离屏 Bitmap，仅在尺寸/SSAA 变更时重建
-            If _ssaaBuffer Is Nothing OrElse _ssaaBufferScale <> _ssaa OrElse
-               _ssaaBuffer.Width <> w OrElse _ssaaBuffer.Height <> h Then
-                _ssaaBufferGraphics?.Dispose()
-                _ssaaBuffer?.Dispose()
-                _ssaaBuffer = New Bitmap(w, h)
-                _ssaaBufferGraphics = Graphics.FromImage(_ssaaBuffer)
-                _ssaaBufferScale = _ssaa
-            End If
-            Dim sg As Graphics = _ssaaBufferGraphics
-            sg.ResetTransform()
-            sg.Clear(Color.Transparent)
-            sg.ScaleTransform(_ssaa, _ssaa)
-            sg.SmoothingMode = SmoothingMode.AntiAlias
-            sg.PixelOffsetMode = PixelOffsetMode.HighQuality
-            绘制背景与边框(sg)
-            绘制滚动条(sg)
-            绘制横向滚动条(sg)
-            g.CompositingQuality = CompositingQuality.HighQuality
-            g.InterpolationMode = InterpolationMode.HighQualityBicubic
-            g.DrawImage(_ssaaBuffer, 0, 0, Me.Width, Me.Height)
-        Else
-            绘制背景与边框(g)
-        End If
+        Dim ssaa As Integer = Math.Max(1, CInt(超采样倍率))
+        If Class1.GlobalSSAA <> Class1.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(Class1.GlobalSSAA))
 
-        Dim inset As Integer = 获取边框内边距()
-        Dim clipRect As New RectangleF(inset, inset, Me.Width - inset * 2 - 1, Me.Height - inset * 2 - 1)
-        If clipRect.Width <= 0 OrElse clipRect.Height <= 0 Then Return
-        Dim s As Single = DpiScale()
+        ' --- 第一遍：D2D 画形状（背景/边框/选中/悬停/箭头/拖选/指示线/滚动条/更多指示器）---
+        Using scope = D2DHelper.BeginPaint(e, Me, 获取或创建DCRenderTarget(), ssaa, _ssaaCache)
+            Dim gRT = scope.GraphicsRenderTarget
+            绘制背景与边框_D2D(gRT)
+
+            ' 内容区域裁剪
+            Dim inset As Integer = 获取边框内边距()
+            Dim clipRect As New RectangleF(inset, inset, Me.Width - inset * 2 - 1, Me.Height - inset * 2 - 1)
+            If clipRect.Width > 0 AndAlso clipRect.Height > 0 Then
+                Dim s As Single = DpiScale()
+                Dim clipGeo As Vortice.Direct2D1.ID2D1Geometry = Nothing
+                If 边框圆角半径 > 0 Then
+                    clipGeo = RectangleRenderer.创建圆角矩形几何(clipRect, Math.Max(0, (边框圆角半径 - 边框宽度) * s))
+                End If
+                Dim clipPushed As Boolean = False
+                Try
+                    If clipGeo IsNot Nothing Then
+                        D2DHelper.PushGeometryClip(gRT, clipGeo, clipRect)
+                        clipPushed = True
+                    Else
+                        gRT.PushAxisAlignedClip(New Vortice.RawRectF(clipRect.Left, clipRect.Top, clipRect.Right, clipRect.Bottom), Vortice.Direct2D1.AntialiasMode.PerPrimitive)
+                    End If
+                    If 列标题可见 AndAlso _columns.Count > 0 Then 绘制列标题形状_D2D(gRT)
+                    绘制全部行形状_D2D(gRT)
+                    绘制拖选框_D2D(gRT)
+                    绘制拖动排序指示线_D2D(gRT)
+                Finally
+                    If clipPushed Then
+                        gRT.PopLayer()
+                    Else
+                        gRT.PopAxisAlignedClip()
+                    End If
+                    If clipGeo IsNot Nothing Then clipGeo.Dispose()
+                End Try
+            End If
+
+            ' 滚动条无须裁剪到内容区
+            scope.FlushGraphics()
+            绘制滚动条_D2D(scope.DCRenderTarget)
+            绘制横向滚动条_D2D(scope.DCRenderTarget)
+        End Using
+
+        ' --- 第二遍：GDI+ 在同一 DC 上叠加文字层 / 图标 ---
+        Dim insetG As Integer = 获取边框内边距()
+        Dim clipRectG As New RectangleF(insetG, insetG, Me.Width - insetG * 2 - 1, Me.Height - insetG * 2 - 1)
+        If clipRectG.Width <= 0 OrElse clipRectG.Height <= 0 Then Return
+        Dim sg As Single = DpiScale()
         If 边框圆角半径 > 0 Then
-            Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(clipRect, Math.Max(0, (边框圆角半径 - 边框宽度) * s))
+            Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(clipRectG, Math.Max(0, (边框圆角半径 - 边框宽度) * sg))
                 g.SetClip(path)
             End Using
         Else
-            g.SetClip(Rectangle.Round(clipRect))
+            g.SetClip(Rectangle.Round(clipRectG))
         End If
 
-        If 列标题可见 AndAlso _columns.Count > 0 Then
-            绘制列标题(g)
-        End If
-
-        绘制全部行(g)
-        绘制拖选框(g)
-        绘制拖动排序指示线(g)
-
-        If _ssaa <= 1 Then
-            绘制滚动条(g)
-            绘制横向滚动条(g)
-        End If
+        _onlyText = True
+        Try
+            If 列标题可见 AndAlso _columns.Count > 0 Then 绘制列标题(g)
+            绘制全部行(g)
+        Finally
+            _onlyText = False
+        End Try
 
         g.ResetClip()
-    End Sub
-
-    Private Sub 绘制背景与边框(g As Graphics)
-        g.SmoothingMode = SmoothingMode.AntiAlias
-        g.PixelOffsetMode = PixelOffsetMode.HighQuality
-        Dim s As Single = DpiScale()
-        Dim boundsRect As New RectangleF(0, 0, Me.Width - 1, Me.Height - 1)
-        If 边框宽度 > 0 Then
-            Dim half As Single = 边框宽度 * s / 2.0F
-            boundsRect.Inflate(-half, -half)
-        End If
-        If 边框圆角半径 > 0 Then
-            Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(boundsRect, 边框圆角半径 * s)
-                g.FillPath(获取画刷(背景颜色), path)
-                RectangleRenderer.绘制圆角边框(g, path, 边框颜色, 边框宽度 * s)
-            End Using
-        Else
-            g.FillRectangle(获取画刷(背景颜色), boundsRect)
-            RectangleRenderer.绘制矩形边框(g, boundsRect, 边框颜色, 边框宽度 * s)
-        End If
     End Sub
 
     Private Sub 预计算滚动条布局()
@@ -1790,33 +2086,32 @@ Public Class UltraDetailListView
             totalW, visibleW, _hScrollOffset)
     End Sub
 
-    Private Sub 绘制横向滚动条(g As Graphics)
-        If _hScrollBar.TrackRect.IsEmpty Then Return
-        Dim s As Single = DpiScale()
-        _hScrollBar.DrawHorizontal(g, Me.Width, Me.Height, CInt(边框宽度 * s), CInt(边框圆角半径 * s),
-            Dpi(滚动条宽度), 滚动条轨道颜色, 滚动条滑块颜色, 滚动条悬停颜色)
-    End Sub
-
     Private Sub 绘制列标题(g As Graphics)
         Dim headerRect As Rectangle = 获取列标题区域()
-        g.FillRectangle(获取画刷(列标题背景颜色), headerRect)
+        If Not _onlyText Then
+            g.FillRectangle(获取画刷(列标题背景颜色), headerRect)
+        End If
 
         确保列X缓存()
         Dim dpiS As Single = DpiScale()
-        Dim pen As Pen = 获取画笔(列标题分隔线颜色, 列标题分隔线宽度 * dpiS)
         Dim foreColor As Color = 列标题文字颜色
         Dim font As Font = Me.Font
         Dim flags As TextFormatFlags = TextFormatFlags.Left Or TextFormatFlags.VerticalCenter Or TextFormatFlags.EndEllipsis Or TextFormatFlags.NoPadding
         Dim n = _columns.Count
+        Dim pen As Pen = If(_onlyText, Nothing, 获取画笔(列标题分隔线颜色, 列标题分隔线宽度 * dpiS))
         For i As Integer = 0 To n - 1
             Dim col = _columns(i)
             Dim x As Integer = _columnXCache(i)
             Dim pad As Padding = Dpi(col.HeaderPadding)
             Dim textRect As New Rectangle(x + pad.Left, headerRect.Y + pad.Top, col.Width - pad.Horizontal, headerRect.Height - pad.Vertical)
             TextRenderer.DrawText(g, col.Text, font, textRect, foreColor, flags)
-            g.DrawLine(pen, x + col.Width - 1, headerRect.Y + 4, x + col.Width - 1, headerRect.Bottom - 4)
+            If pen IsNot Nothing Then
+                g.DrawLine(pen, x + col.Width - 1, headerRect.Y + 4, x + col.Width - 1, headerRect.Bottom - 4)
+            End If
         Next
-        g.DrawLine(pen, headerRect.X, headerRect.Bottom - 1, headerRect.Right, headerRect.Bottom - 1)
+        If pen IsNot Nothing Then
+            g.DrawLine(pen, headerRect.X, headerRect.Bottom - 1, headerRect.Right, headerRect.Bottom - 1)
+        End If
     End Sub
 
     Private Sub 绘制全部行(g As Graphics)
@@ -1847,7 +2142,9 @@ Public Class UltraDetailListView
             Dim t As Single = _hoverAnim.Progress
             Dim animY As Single = _hoverAnimFromY + (_hoverAnimToY - _hoverAnimFromY) * t
             Dim animH As Single = _hoverAnimFromH + (_hoverAnimToH - _hoverAnimFromH) * t
-            g.FillRectangle(hoverBr, New RectangleF(contentRect.X, animY, availW, animH))
+            If Not _onlyText Then
+                g.FillRectangle(hoverBr, New RectangleF(contentRect.X, animY, availW, animH))
+            End If
         End If
 
         For i As Integer = _scrollOffset To _displayRows.Count - 1
@@ -1859,17 +2156,19 @@ Public Class UltraDetailListView
             currentY += spacing
             Dim rowRect As New Rectangle(contentRect.X, currentY, availW, rowH)
 
-            If _selectedIndices.Contains(i) Then
-                g.FillRectangle(selectedBr, rowRect)
-            ElseIf i = _hoverRowIndex AndAlso Not _hoverAnimActive Then
-                g.FillRectangle(hoverBr, rowRect)
+            If Not _onlyText Then
+                If _selectedIndices.Contains(i) Then
+                    g.FillRectangle(selectedBr, rowRect)
+                ElseIf i = _hoverRowIndex AndAlso Not _hoverAnimActive Then
+                    g.FillRectangle(hoverBr, rowRect)
+                End If
             End If
 
             If row.Type = DisplayRowType.GroupHeader Then
                 绘制分组标题行(g, row.Group, rowRect)
             Else
                 绘制项行(g, row.Item, rowRect, colXListLocal)
-                If row.Item.Checked AndAlso 项高亮边框宽度 > 0 Then
+                If Not _onlyText AndAlso row.Item.Checked AndAlso 项高亮边框宽度 > 0 Then
                     Dim scaledCheckedBorder As Single = 项高亮边框宽度 * dpiS
                     Dim half As Single = scaledCheckedBorder / 2.0F
                     g.DrawRectangle(checkedPen,
@@ -1892,31 +2191,84 @@ Public Class UltraDetailListView
     End Sub
 
     Private Sub 绘制分组标题行(g As Graphics, grp As ListGroup, rect As Rectangle)
-        g.FillRectangle(获取画刷(分组背景颜色), rect)
+        Dim effectiveColor As Color = If(grp.ForeColor <> Color.Empty, grp.ForeColor, 分组文字颜色)
+
+        If Not _onlyText Then
+            g.FillRectangle(获取画刷(分组背景颜色), rect)
+
+            Dim arrowSize0 As Integer = Dpi(12)
+            Dim arrowMargin0 As Integer = Dpi(10)
+            Dim arrowX0 As Integer = rect.X + arrowMargin0
+            Dim arrowY0 As Integer = rect.Y + (rect.Height - arrowSize0) \ 2
+            Dim prevSmooth = g.SmoothingMode
+            g.SmoothingMode = SmoothingMode.AntiAlias
+            Using arrowPath As GraphicsPath = 创建圆角箭头路径(arrowX0, arrowY0, arrowSize0, grp.IsCollapsed)
+                g.FillPath(获取画刷(effectiveColor), arrowPath)
+            End Using
+            g.SmoothingMode = prevSmooth
+        End If
 
         Dim arrowSize As Integer = Dpi(12)
         Dim arrowMargin As Integer = Dpi(10)
         Dim arrowX As Integer = rect.X + arrowMargin
-        Dim arrowY As Integer = rect.Y + (rect.Height - arrowSize) \ 2
-        Dim prevSmooth = g.SmoothingMode
-        g.SmoothingMode = SmoothingMode.AntiAlias
-        Dim pts() As PointF
-        If grp.IsCollapsed Then
-            pts = {New PointF(arrowX, arrowY), New PointF(arrowX + arrowSize, arrowY + arrowSize \ 2), New PointF(arrowX, arrowY + arrowSize)}
-        Else
-            pts = {New PointF(arrowX, arrowY), New PointF(arrowX + arrowSize, arrowY), New PointF(arrowX + arrowSize \ 2, arrowY + arrowSize)}
-        End If
-        Dim effectiveColor As Color = If(grp.ForeColor <> Color.Empty, grp.ForeColor, 分组文字颜色)
-        g.FillPolygon(获取画刷(effectiveColor), pts)
-        g.SmoothingMode = prevSmooth
-
         Dim textX As Integer = arrowX + arrowSize + Dpi(6)
         Dim textRect As New Rectangle(textX, rect.Y, rect.Right - textX - Dpi(4), rect.Height)
         TextRenderer.DrawText(g, grp.Text, Me.Font, textRect, effectiveColor,
             TextFormatFlags.Left Or TextFormatFlags.VerticalCenter Or TextFormatFlags.EndEllipsis Or TextFormatFlags.NoPadding)
 
-        g.DrawLine(获取画笔(分组分隔线颜色, 1.0F), rect.X, rect.Bottom - 1, rect.Right, rect.Bottom - 1)
+        If Not _onlyText Then
+            g.DrawLine(获取画笔(分组分隔线颜色, 1.0F), rect.X, rect.Bottom - 1, rect.Right, rect.Bottom - 1)
+        End If
     End Sub
+
+    ''' <summary>
+    ''' 创建一个使用三次贝塞尔曲线代替每个角的圆角三角形箭头路径。
+    ''' isCollapsed=True 时为指向右的箭头(▶)，否则为指向下的箭头(▼)。
+    ''' </summary>
+    Private Function 创建圆角箭头路径(x As Integer, y As Integer, size As Integer, isCollapsed As Boolean) As GraphicsPath
+        Dim path As New GraphicsPath()
+        Dim p1 As PointF, p2 As PointF, p3 As PointF
+        If isCollapsed Then
+            p1 = New PointF(x, y)
+            p2 = New PointF(x + size, y + size / 2.0F)
+            p3 = New PointF(x, y + size)
+        Else
+            p1 = New PointF(x, y)
+            p2 = New PointF(x + size, y)
+            p3 = New PointF(x + size / 2.0F, y + size)
+        End If
+        ' 角点向边内"收"的距离与控制柄长度。t 越大越圆。
+        Dim t As Single = size * 0.18F
+        AddRoundedCorner(path, p3, p1, p2, t, isFirst:=True)
+        AddRoundedCorner(path, p1, p2, p3, t)
+        AddRoundedCorner(path, p2, p3, p1, t)
+        path.CloseFigure()
+        Return path
+    End Function
+
+    ''' <summary>把顶点 v 替换为：从前邻边收 t 距离的进入点 → 贝塞尔曲线（控制点= v）→ 出边收 t 距离的离开点。</summary>
+    Private Shared Sub AddRoundedCorner(path As GraphicsPath, prev As PointF, v As PointF, [next] As PointF, t As Single, Optional isFirst As Boolean = False)
+        Dim inPt As PointF = LerpToward(v, prev, t)
+        Dim outPt As PointF = LerpToward(v, [next], t)
+        If isFirst Then
+            path.StartFigure()
+            path.AddLine(inPt, inPt) ' 占位起点（GraphicsPath 没有显式 MoveTo，需通过 AddLine 触发）
+        Else
+            path.AddLine(path.GetLastPoint(), inPt)
+        End If
+        ' 用三次贝塞尔逼近圆角：两控制点都落在 v 上，曲线自然在 inPt-outPt 之间通过 v 弯过去
+        path.AddBezier(inPt, v, v, outPt)
+    End Sub
+
+    ''' <summary>从 a 朝 b 方向移动距离 d；若距离不足则返回 b。</summary>
+    Private Shared Function LerpToward(a As PointF, b As PointF, d As Single) As PointF
+        Dim dx As Single = b.X - a.X
+        Dim dy As Single = b.Y - a.Y
+        Dim len As Single = CSng(Math.Sqrt(dx * dx + dy * dy))
+        If len <= d OrElse len < 0.0001F Then Return b
+        Dim k As Single = d / len
+        Return New PointF(a.X + dx * k, a.Y + dy * k)
+    End Function
 
     Private Sub 绘制项行(g As Graphics, item As ListItem, rowRect As Rectangle, colXList As List(Of Integer))
         Dim iconAreaW As Integer = 获取图标区域宽度(item)
@@ -2021,13 +2373,15 @@ Public Class UltraDetailListView
 
     Private Sub 绘制更多指示器(g As Graphics, rect As Rectangle, isTop As Boolean)
         If rect.Height < 2 Then Return
-        Dim c1 As Color = Color.FromArgb(200, 背景颜色)
-        Dim c2 As Color = Color.FromArgb(0, 背景颜色)
-        Dim pt1 As New Point(rect.X, If(isTop, rect.Y, rect.Bottom - 1))
-        Dim pt2 As New Point(rect.X, If(isTop, rect.Bottom - 1, rect.Y))
-        Using br As New LinearGradientBrush(pt1, pt2, c1, c2)
-            g.FillRectangle(br, rect)
-        End Using
+        If Not _onlyText Then
+            Dim c1 As Color = Color.FromArgb(200, 背景颜色)
+            Dim c2 As Color = Color.FromArgb(0, 背景颜色)
+            Dim pt1 As New Point(rect.X, If(isTop, rect.Y, rect.Bottom - 1))
+            Dim pt2 As New Point(rect.X, If(isTop, rect.Bottom - 1, rect.Y))
+            Using br As New LinearGradientBrush(pt1, pt2, c1, c2)
+                g.FillRectangle(br, rect)
+            End Using
+        End If
         Dim symbol As String = If(isTop, "▲", "▼")
         Dim symbolSize As Single = Math.Max(7, Me.Font.Size - 1)
         If _moreSymbolFont Is Nothing OrElse _moreSymbolFontKey <> symbolSize Then
@@ -2037,43 +2391,6 @@ Public Class UltraDetailListView
         End If
         TextRenderer.DrawText(g, symbol, _moreSymbolFont, rect, 更多指示器颜色,
             TextFormatFlags.HorizontalCenter Or TextFormatFlags.VerticalCenter Or TextFormatFlags.NoPadding)
-    End Sub
-
-    Private Sub 绘制滚动条(g As Graphics)
-        If _scrollBar.TrackRect.IsEmpty Then Return
-        Dim s As Single = DpiScale()
-        _scrollBar.Draw(g, Me.Width, Me.Height, CInt(边框宽度 * s), CInt(边框圆角半径 * s),
-            Dpi(滚动条宽度), 滚动条轨道颜色, 滚动条滑块颜色, 滚动条悬停颜色)
-    End Sub
-
-    Private Sub 绘制拖选框(g As Graphics)
-        If Not _isDragSelecting Then Return
-        Dim rect As Rectangle = 获取拖选矩形()
-        If rect.Width <= 0 OrElse rect.Height <= 0 Then Return
-        g.FillRectangle(获取画刷(选框填充颜色), rect)
-        g.DrawRectangle(获取画笔(选框边框颜色, 1.0F), rect)
-    End Sub
-
-    Private Sub 绘制拖动排序指示线(g As Graphics)
-        If Not _isDragReordering OrElse _dragReorderInsertIndex < 0 Then Return
-        Dim contentRect = 获取内容区域()
-        Dim inset = 获取边框内边距()
-        Dim scrollW = If(Not _scrollBar.TrackRect.IsEmpty, Me.Width - inset - _scrollBar.VisualLeft, 0)
-        Dim availW = contentRect.Width - scrollW
-        If _columns.Count > 0 Then availW = Math.Max(availW, 获取总列宽())
-        Dim lineY As Integer
-        If _dragReorderInsertIndex < _displayRows.Count Then
-            lineY = 获取行Y坐标(_dragReorderInsertIndex)
-            If lineY < 0 Then Return
-        Else
-            Dim lastIdx = _dragReorderInsertIndex - 1
-            If lastIdx < 0 OrElse lastIdx >= _displayRows.Count Then Return
-            lineY = 获取行Y坐标(lastIdx)
-            If lineY < 0 Then Return
-            lineY += _displayRows(lastIdx).Height
-        End If
-        g.DrawLine(获取画笔(拖动排序指示线颜色, 拖动排序指示线宽 * DpiScale()),
-                   contentRect.X, lineY, contentRect.X + availW, lineY)
     End Sub
 
 #End Region

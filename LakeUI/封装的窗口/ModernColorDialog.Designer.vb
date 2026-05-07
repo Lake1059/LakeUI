@@ -138,6 +138,7 @@ Partial Class ModernColorDialog
         ' 
         ' Panel1
         ' 
+        Panel1.BackColor = Color.Transparent
         Panel1.Controls.Add(Panel6)
         Panel1.Controls.Add(Panel4)
         Panel1.Controls.Add(Panel7)
@@ -149,6 +150,7 @@ Partial Class ModernColorDialog
         ' 
         ' Panel6
         ' 
+        Panel6.BackColor = Color.Transparent
         Panel6.Controls.Add(ModernListBox1)
         Panel6.Controls.Add(Label5)
         Panel6.Controls.Add(ModernTextBox1)
@@ -162,6 +164,9 @@ Partial Class ModernColorDialog
         ' 
         ' ModernListBox1
         ' 
+        ModernListBox1.BackColor1 = Color.FromArgb(CByte(80), CByte(0), CByte(0), CByte(0))
+        ModernListBox1.BorderColor = Color.FromArgb(CByte(120), CByte(220), CByte(220), CByte(220))
+        ModernListBox1.BorderColorFocus = Color.FromArgb(CByte(120), CByte(220), CByte(220), CByte(220))
         ModernListBox1.BorderRadius = 10
         ModernListBox1.BorderSize = 2
         ModernListBox1.Dock = DockStyle.Fill
@@ -186,6 +191,9 @@ Partial Class ModernColorDialog
         ' 
         ' ModernTextBox1
         ' 
+        ModernTextBox1.BackColor1 = Color.FromArgb(CByte(80), CByte(0), CByte(0), CByte(0))
+        ModernTextBox1.BorderColor = Color.FromArgb(CByte(120), CByte(220), CByte(220), CByte(220))
+        ModernTextBox1.BorderColorFocus = Color.FromArgb(CByte(120), CByte(220), CByte(220), CByte(220))
         ModernTextBox1.BorderRadius = 10
         ModernTextBox1.BorderSize = 2
         ModernTextBox1.CaretColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
@@ -213,6 +221,7 @@ Partial Class ModernColorDialog
         ' 
         ' Panel4
         ' 
+        Panel4.BackColor = Color.Transparent
         Panel4.Controls.Add(ModernPanel1)
         Panel4.Controls.Add(Label1)
         Panel4.Dock = DockStyle.Left
@@ -224,6 +233,8 @@ Partial Class ModernColorDialog
         ' 
         ' ModernPanel1
         ' 
+        ModernPanel1.BackColor1 = Color.FromArgb(CByte(80), CByte(0), CByte(0), CByte(0))
+        ModernPanel1.BorderColor = Color.FromArgb(CByte(120), CByte(220), CByte(220), CByte(220))
         ModernPanel1.BorderRadius = 10
         ModernPanel1.BorderSize = 2
         ModernPanel1.Controls.Add(PictureBox1)
@@ -238,7 +249,7 @@ Partial Class ModernColorDialog
         ' 
         ' PictureBox1
         ' 
-        PictureBox1.BackColor = Color.FromArgb(CByte(36), CByte(36), CByte(36))
+        PictureBox1.BackColor = Color.Transparent
         PictureBox1.Dock = DockStyle.Fill
         PictureBox1.Location = New Point(10, 10)
         PictureBox1.Name = "PictureBox1"
@@ -259,6 +270,7 @@ Partial Class ModernColorDialog
         ' 
         ' Panel7
         ' 
+        Panel7.BackColor = Color.Transparent
         Panel7.Controls.Add(Panel13)
         Panel7.Controls.Add(Label16)
         Panel7.Controls.Add(Panel14)
@@ -293,6 +305,9 @@ Partial Class ModernColorDialog
         ' 
         ' ModernTextBox7
         ' 
+        ModernTextBox7.BackColor1 = Color.FromArgb(CByte(80), CByte(0), CByte(0), CByte(0))
+        ModernTextBox7.BorderColor = Color.FromArgb(CByte(120), CByte(220), CByte(220), CByte(220))
+        ModernTextBox7.BorderColorFocus = Color.FromArgb(CByte(120), CByte(220), CByte(220), CByte(220))
         ModernTextBox7.BorderRadius = 10
         ModernTextBox7.BorderSize = 2
         ModernTextBox7.CaretColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
@@ -336,6 +351,9 @@ Partial Class ModernColorDialog
         ' 
         ' ModernTextBox8
         ' 
+        ModernTextBox8.BackColor1 = Color.FromArgb(CByte(80), CByte(0), CByte(0), CByte(0))
+        ModernTextBox8.BorderColor = Color.FromArgb(CByte(120), CByte(220), CByte(220), CByte(220))
+        ModernTextBox8.BorderColorFocus = Color.FromArgb(CByte(120), CByte(220), CByte(220), CByte(220))
         ModernTextBox8.BorderRadius = 10
         ModernTextBox8.BorderSize = 2
         ModernTextBox8.CaretColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
@@ -379,6 +397,9 @@ Partial Class ModernColorDialog
         ' 
         ' ModernTextBox9
         ' 
+        ModernTextBox9.BackColor1 = Color.FromArgb(CByte(80), CByte(0), CByte(0), CByte(0))
+        ModernTextBox9.BorderColor = Color.FromArgb(CByte(120), CByte(220), CByte(220), CByte(220))
+        ModernTextBox9.BorderColorFocus = Color.FromArgb(CByte(120), CByte(220), CByte(220), CByte(220))
         ModernTextBox9.BorderRadius = 10
         ModernTextBox9.BorderSize = 2
         ModernTextBox9.CaretColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
@@ -413,6 +434,9 @@ Partial Class ModernColorDialog
         ' 
         ' ModernTextBox6
         ' 
+        ModernTextBox6.BackColor1 = Color.FromArgb(CByte(80), CByte(0), CByte(0), CByte(0))
+        ModernTextBox6.BorderColor = Color.FromArgb(CByte(120), CByte(220), CByte(220), CByte(220))
+        ModernTextBox6.BorderColorFocus = Color.FromArgb(CByte(120), CByte(220), CByte(220), CByte(220))
         ModernTextBox6.BorderRadius = 10
         ModernTextBox6.BorderSize = 2
         ModernTextBox6.CaretColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
@@ -455,6 +479,9 @@ Partial Class ModernColorDialog
         ' 
         ' ModernTextBox5
         ' 
+        ModernTextBox5.BackColor1 = Color.FromArgb(CByte(80), CByte(0), CByte(0), CByte(0))
+        ModernTextBox5.BorderColor = Color.FromArgb(CByte(120), CByte(220), CByte(220), CByte(220))
+        ModernTextBox5.BorderColorFocus = Color.FromArgb(CByte(120), CByte(220), CByte(220), CByte(220))
         ModernTextBox5.BorderRadius = 10
         ModernTextBox5.BorderSize = 2
         ModernTextBox5.CaretColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
@@ -497,6 +524,9 @@ Partial Class ModernColorDialog
         ' 
         ' ModernTextBox4
         ' 
+        ModernTextBox4.BackColor1 = Color.FromArgb(CByte(80), CByte(0), CByte(0), CByte(0))
+        ModernTextBox4.BorderColor = Color.FromArgb(CByte(120), CByte(220), CByte(220), CByte(220))
+        ModernTextBox4.BorderColorFocus = Color.FromArgb(CByte(120), CByte(220), CByte(220), CByte(220))
         ModernTextBox4.BorderRadius = 10
         ModernTextBox4.BorderSize = 2
         ModernTextBox4.CaretColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
@@ -539,6 +569,9 @@ Partial Class ModernColorDialog
         ' 
         ' ModernTextBox3
         ' 
+        ModernTextBox3.BackColor1 = Color.FromArgb(CByte(80), CByte(0), CByte(0), CByte(0))
+        ModernTextBox3.BorderColor = Color.FromArgb(CByte(120), CByte(220), CByte(220), CByte(220))
+        ModernTextBox3.BorderColorFocus = Color.FromArgb(CByte(120), CByte(220), CByte(220), CByte(220))
         ModernTextBox3.BorderRadius = 10
         ModernTextBox3.BorderSize = 2
         ModernTextBox3.CaretColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
@@ -581,6 +614,9 @@ Partial Class ModernColorDialog
         ' 
         ' ModernTextBox2
         ' 
+        ModernTextBox2.BackColor1 = Color.FromArgb(CByte(80), CByte(0), CByte(0), CByte(0))
+        ModernTextBox2.BorderColor = Color.FromArgb(CByte(120), CByte(220), CByte(220), CByte(220))
+        ModernTextBox2.BorderColorFocus = Color.FromArgb(CByte(120), CByte(220), CByte(220), CByte(220))
         ModernTextBox2.BorderRadius = 10
         ModernTextBox2.BorderSize = 2
         ModernTextBox2.CaretColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
@@ -616,6 +652,7 @@ Partial Class ModernColorDialog
         ' 
         ' Panel2
         ' 
+        Panel2.BackColor = Color.Transparent
         Panel2.Controls.Add(ModernButton14)
         Panel2.Controls.Add(Label4)
         Panel2.Controls.Add(ModernButton13)
@@ -626,21 +663,21 @@ Partial Class ModernColorDialog
         Panel2.Location = New Point(0, 491)
         Panel2.Name = "Panel2"
         Panel2.Padding = New Padding(20)
-        Panel2.Size = New Size(884, 80)
+        Panel2.Size = New Size(884, 75)
         Panel2.TabIndex = 4
         ' 
         ' ModernButton14
         ' 
-        ModernButton14.BackColor2 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton14.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton14.BorderRadius = 10
-        ModernButton14.BorderSize = 2
+        ModernButton14.BorderSize = 0
         ModernButton14.Dock = DockStyle.Left
-        ModernButton14.HoverBorderColor = Color.CornflowerBlue
+        ModernButton14.HoverBackColor1 = Color.FromArgb(CByte(60), CByte(220), CByte(220), CByte(220))
         ModernButton14.Location = New Point(150, 20)
         ModernButton14.Margin = New Padding(2)
         ModernButton14.Name = "ModernButton14"
-        ModernButton14.PressedBorderColor = Color.MediumSlateBlue
-        ModernButton14.Size = New Size(120, 40)
+        ModernButton14.PressedBackColor1 = Color.FromArgb(CByte(80), CByte(220), CByte(220), CByte(220))
+        ModernButton14.Size = New Size(120, 35)
         ModernButton14.TabIndex = 8
         ModernButton14.Text = "使用技巧"
         ' 
@@ -649,36 +686,36 @@ Partial Class ModernColorDialog
         Label4.Dock = DockStyle.Left
         Label4.Location = New Point(140, 20)
         Label4.Name = "Label4"
-        Label4.Size = New Size(10, 40)
+        Label4.Size = New Size(10, 35)
         Label4.TabIndex = 7
         ' 
         ' ModernButton13
         ' 
-        ModernButton13.BackColor2 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton13.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton13.BorderRadius = 10
-        ModernButton13.BorderSize = 2
+        ModernButton13.BorderSize = 0
         ModernButton13.Dock = DockStyle.Left
-        ModernButton13.HoverBorderColor = Color.CornflowerBlue
+        ModernButton13.HoverBackColor1 = Color.FromArgb(CByte(60), CByte(220), CByte(220), CByte(220))
         ModernButton13.Location = New Point(20, 20)
         ModernButton13.Margin = New Padding(2)
         ModernButton13.Name = "ModernButton13"
-        ModernButton13.PressedBorderColor = Color.MediumSlateBlue
-        ModernButton13.Size = New Size(120, 40)
+        ModernButton13.PressedBackColor1 = Color.FromArgb(CByte(80), CByte(220), CByte(220), CByte(220))
+        ModernButton13.Size = New Size(120, 35)
         ModernButton13.TabIndex = 6
         ModernButton13.Text = "取色器"
         ' 
         ' ModernButton2
         ' 
-        ModernButton2.BackColor2 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton2.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton2.BorderRadius = 10
-        ModernButton2.BorderSize = 2
+        ModernButton2.BorderSize = 0
         ModernButton2.Dock = DockStyle.Right
-        ModernButton2.HoverBorderColor = Color.CornflowerBlue
+        ModernButton2.HoverBackColor1 = Color.FromArgb(CByte(60), CByte(220), CByte(220), CByte(220))
         ModernButton2.Location = New Point(614, 20)
         ModernButton2.Margin = New Padding(2)
         ModernButton2.Name = "ModernButton2"
-        ModernButton2.PressedBorderColor = Color.MediumSlateBlue
-        ModernButton2.Size = New Size(120, 40)
+        ModernButton2.PressedBackColor1 = Color.FromArgb(CByte(80), CByte(220), CByte(220), CByte(220))
+        ModernButton2.Size = New Size(120, 35)
         ModernButton2.TabIndex = 5
         ModernButton2.Text = "确定"
         ' 
@@ -687,26 +724,27 @@ Partial Class ModernColorDialog
         Label11.Dock = DockStyle.Right
         Label11.Location = New Point(734, 20)
         Label11.Name = "Label11"
-        Label11.Size = New Size(10, 40)
+        Label11.Size = New Size(10, 35)
         Label11.TabIndex = 4
         ' 
         ' ModernButton1
         ' 
-        ModernButton1.BackColor2 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton1.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton1.BorderRadius = 10
-        ModernButton1.BorderSize = 2
+        ModernButton1.BorderSize = 0
         ModernButton1.Dock = DockStyle.Right
-        ModernButton1.HoverBorderColor = Color.CornflowerBlue
+        ModernButton1.HoverBackColor1 = Color.FromArgb(CByte(60), CByte(220), CByte(220), CByte(220))
         ModernButton1.Location = New Point(744, 20)
         ModernButton1.Margin = New Padding(2)
         ModernButton1.Name = "ModernButton1"
-        ModernButton1.PressedBorderColor = Color.MediumSlateBlue
-        ModernButton1.Size = New Size(120, 40)
+        ModernButton1.PressedBackColor1 = Color.FromArgb(CByte(80), CByte(220), CByte(220), CByte(220))
+        ModernButton1.Size = New Size(120, 35)
         ModernButton1.TabIndex = 0
         ModernButton1.Text = "取消"
         ' 
         ' Panel3
         ' 
+        Panel3.BackColor = Color.Transparent
         Panel3.Controls.Add(Panel15)
         Panel3.Controls.Add(ModernPanel2)
         Panel3.Dock = DockStyle.Bottom
@@ -972,7 +1010,7 @@ Partial Class ModernColorDialog
         HtmlColorLabel1.AutoSizeMode = AutoSizeMode.GrowAndShrink
         HtmlColorLabel1.Dock = DockStyle.Top
         HtmlColorLabel1.Location = New Point(20, 0)
-        HtmlColorLabel1.Margin = New Padding(2, 2, 2, 2)
+        HtmlColorLabel1.Margin = New Padding(2)
         HtmlColorLabel1.Name = "HtmlColorLabel1"
         HtmlColorLabel1.Padding = New Padding(0, 0, 0, 10)
         HtmlColorLabel1.Size = New Size(704, 31)
@@ -995,6 +1033,7 @@ Partial Class ModernColorDialog
         ' 
         ' ModernContextMenu1
         ' 
+        ModernContextMenu1.BackdropMaxParallelism = 12
         ModernContextMenu1.BorderSize = 2
         ModernContextMenu1.HoverAnimationFPS = 0
         ModernContextMenu1.HoverRadius = 5
@@ -1076,7 +1115,7 @@ Partial Class ModernColorDialog
         AutoScaleDimensions = New SizeF(96F, 96F)
         AutoScaleMode = AutoScaleMode.Dpi
         BackColor = Color.FromArgb(CByte(48), CByte(48), CByte(48))
-        ClientSize = New Size(884, 571)
+        ClientSize = New Size(884, 566)
         Controls.Add(Panel1)
         Controls.Add(Panel3)
         Controls.Add(Panel2)
@@ -1085,7 +1124,7 @@ Partial Class ModernColorDialog
         ForeColor = Color.Silver
         MaximizeBox = False
         MinimizeBox = False
-        MinimumSize = New Size(900, 610)
+        MinimumSize = New Size(900, 605)
         Name = "ModernColorDialog"
         ShowIcon = False
         ShowInTaskbar = False

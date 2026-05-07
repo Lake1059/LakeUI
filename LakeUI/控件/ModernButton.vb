@@ -34,17 +34,16 @@ Public Class ModernButton
 
 #Region "绘制"
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
-        ' 有圆角或半透明背景时由 OnPaint 负责绘制父容器背景，此处不做默认填充
-        If 边框圆角半径 > 0 OrElse 背景基础颜色.A < 255 Then Return
+        ' 新契约：BackColor 透明 / 含 ARGB 或启用圆角时一律走 TransparentBackgroundCache 采样底图，
+        ' 不让基类做默认透明合成或纯色填底。详见 TransparentBackgroundCache 顶部的统一图层契约。
+        If 边框圆角半径 > 0 OrElse MyBase.BackColor.A < 255 Then Return
         MyBase.OnPaintBackground(e)
     End Sub
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
         Dim 是否有圆角 As Boolean = 边框圆角半径 > 0
-        ' 透明背景采样：保留对共享缓存的调用（GDI 路径），随后再切换到 D2D 绘制
-        If 是否有圆角 OrElse 背景基础颜色.A < 255 Then
-            TransparentBackgroundCache.PaintBackgroundFor(Me, e.Graphics, _backgroundSource)
-        End If
+        ' 透明背景采样统一走 D2D 路径（在 BitmapRT 上贴底图）；GDI 路径贴的底图会被
+        ' dcRT.EndDraw 的覆盖式 BitBlt（AlphaMode.Ignore）将圆角外未绘区域以黑像素覆盖。
 
         Dim 极限矩形区域 As New RectangleF(0, 0, Me.Width, Me.Height)
         If 边框宽度 > 0 Then
@@ -64,14 +63,20 @@ Public Class ModernButton
             Dim gRT As ID2D1RenderTarget = scope.GraphicsRenderTarget
             Dim dcRT As ID2D1DCRenderTarget = scope.DCRenderTarget
 
-            ' 1) 图形层（享受 SSAA）
+            ' 1) 透明背景贴底图：直接在图形 RT（SSAA BitmapRT 或 dcRT）上画，
+            '    让整面像素都有有效内容，避免圆角外被黑像素覆盖。
+            If 是否有圆角 OrElse MyBase.BackColor.A < 255 Then
+                TransparentBackgroundCache.PaintBackgroundFor_D2D(Me, gRT, _backgroundSource)
+            End If
+
+            ' 2) 图形层（享受 SSAA）
             绘制图形内容_D2D(gRT, 是否有圆角, 极限矩形区域, 内容矩形区域)
 
-            ' 2) 把图形层（如果是 BitmapRT）回采到 DC，然后在 DC 上画文字（保留 ClearType 子像素）
+            ' 3) 把图形层（如果是 BitmapRT）回采到 DC，然后在 DC 上画文字（保留 ClearType 子像素）
             scope.FlushGraphics()
             绘制文本_D2D(dcRT, 内容矩形区域, 计算图标占用的水平宽度(内容矩形区域))
 
-            ' 3) 禁用遮罩（直接覆盖整个 DC，不需要 SSAA）
+            ' 4) 禁用遮罩（直接覆盖整个 DC，不需要 SSAA）
             If Not Enabled Then
                 Using mb = dcRT.CreateSolidColorBrush(D2DHelper.ToColor4(Color.FromArgb(120, 0, 0, 0)))
                     dcRT.FillRectangle(New Vortice.Mathematics.Rect(0, 0, Me.Width, Me.Height), mb)
@@ -101,9 +106,15 @@ Public Class ModernButton
         End If
         Dim s As Single = DpiScale()
         Dim r As Single = 边框圆角半径 * s
+        ' BackColor 半透明遮罩层：在采样底图与状态填充色之间叠加；A=0 退化为不绘制，
+        ' A=255 走的是普通基类填底路径（不会进入本流程）。详见 TransparentBackgroundCache 契约。
+        Dim backColorMask As Color = MyBase.BackColor
 
         If 是否有圆角 Then
             Using geo = RectangleRenderer.创建圆角矩形几何(极限矩形区域, r)
+                If backColorMask.A > 0 AndAlso backColorMask.A < 255 Then
+                    RectangleRenderer.绘制圆角背景_D2D(rt, geo, 极限矩形区域, backColorMask, Color.Empty, 渐变方向)
+                End If
                 If 背景颜色缓存值.A > 0 OrElse 渐变颜色缓存值.A > 0 Then
                     RectangleRenderer.绘制圆角背景_D2D(rt, geo, 极限矩形区域, 背景颜色缓存值, 渐变颜色缓存值, 渐变方向)
                 End If
@@ -114,6 +125,9 @@ Public Class ModernButton
                 End If
             End Using
         Else
+            If backColorMask.A > 0 AndAlso backColorMask.A < 255 Then
+                RectangleRenderer.绘制矩形背景_D2D(rt, 极限矩形区域, backColorMask, Color.Empty, 渐变方向)
+            End If
             If 背景颜色缓存值.A > 0 OrElse 渐变颜色缓存值.A > 0 Then
                 RectangleRenderer.绘制矩形背景_D2D(rt, 极限矩形区域, 背景颜色缓存值, 渐变颜色缓存值, 渐变方向)
             End If
@@ -194,6 +208,11 @@ Public Class ModernButton
         End Select
 
         Dim mainText As String = If(MyBase.Text, "")
+        ' ── ⚠ DirectWrite 字号必须叠加 DPI 缩放（* s）──
+        ' DC RT 由 D2DHelper 创建后默认按 96 DPI 像素映射；只用 (Pt * 96/72) 得到的是逻辑像素，
+        ' 在 HighDPI 下与 GDI+ TextRenderer 实际渲染尺寸不一致，会出现"换字体/字号像不生效"的现象。
+        ' 必须再乘以 DpiScale()=DeviceDpi/96，让物理像素字号与系统 GDI 文本一致。
+        ' 该规则适用于本仓库所有走 D2D + DirectWrite 的文字绘制路径，参考此实现。
         Dim mainSizePx As Single = Me.Font.SizeInPoints * (96.0F / 72.0F) * s
         Dim mainWeight As Vortice.DirectWrite.FontWeight = If(Me.Font.Bold, Vortice.DirectWrite.FontWeight.Bold, Vortice.DirectWrite.FontWeight.Normal)
         Dim mainStyle As Vortice.DirectWrite.FontStyle = If(Me.Font.Italic, Vortice.DirectWrite.FontStyle.Italic, Vortice.DirectWrite.FontStyle.Normal)

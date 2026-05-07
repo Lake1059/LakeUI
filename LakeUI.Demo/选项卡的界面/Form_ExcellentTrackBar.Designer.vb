@@ -30,7 +30,6 @@ Partial Class Form_ExcellentTrackBar
         Dim TrackLabel6 As LakeUI.ExcellentTrackBar.TrackLabel = New ExcellentTrackBar.TrackLabel()
         Dim TrackLabel7 As LakeUI.ExcellentTrackBar.TrackLabel = New ExcellentTrackBar.TrackLabel()
         ModernPanel1 = New ModernPanel()
-        Label9 = New Label()
         Panel4 = New Panel()
         ExcellentTrackBar3 = New ExcellentTrackBar()
         Label7 = New Label()
@@ -59,7 +58,6 @@ Partial Class Form_ExcellentTrackBar
         ' ModernPanel1
         ' 
         ModernPanel1.BorderSize = 0
-        ModernPanel1.Controls.Add(Label9)
         ModernPanel1.Controls.Add(Panel4)
         ModernPanel1.Controls.Add(Label7)
         ModernPanel1.Controls.Add(Panel3)
@@ -73,20 +71,9 @@ Partial Class Form_ExcellentTrackBar
         ModernPanel1.Margin = New Padding(2)
         ModernPanel1.Name = "ModernPanel1"
         ModernPanel1.Padding = New Padding(20)
+        ModernPanel1.ScrollBarMode = ModernPanel.ScrollMode.None
         ModernPanel1.Size = New Size(661, 553)
         ModernPanel1.TabIndex = 39
-        ' 
-        ' Label9
-        ' 
-        Label9.AutoSize = True
-        Label9.Dock = DockStyle.Top
-        Label9.Font = New Font("Microsoft YaHei UI", 10F)
-        Label9.ForeColor = Color.Gray
-        Label9.Location = New Point(20, 430)
-        Label9.Name = "Label9"
-        Label9.Size = New Size(471, 20)
-        Label9.TabIndex = 45
-        Label9.Text = "此控件的动画对帧率要求较高，如果目标场景性能允许可以考虑开无限帧率"
         ' 
         ' Panel4
         ' 
@@ -101,19 +88,18 @@ Partial Class Form_ExcellentTrackBar
         ' 
         ExcellentTrackBar3.AnimationDuration = 500
         ExcellentTrackBar3.AnimationFPS = 0
-        ExcellentTrackBar3.BackColor = Color.FromArgb(CByte(36), CByte(36), CByte(36))
         ExcellentTrackBar3.Dock = DockStyle.Left
         ExcellentTrackBar3.LabelFont = New Font("MiSans Medium", 9F, FontStyle.Regular, GraphicsUnit.Point, CByte(134))
         ExcellentTrackBar3.LabelLineLength = 15
-        TrackLabel2.Position = 1
+        TrackLabel2.Position = 1R
         TrackLabel2.Side = ExcellentTrackBar.LabelSideEnum.TopOrLeft
-        TrackLabel3.Position = 2
-        TrackLabel4.Position = 3
+        TrackLabel3.Position = 2R
+        TrackLabel4.Position = 3R
         TrackLabel4.Side = ExcellentTrackBar.LabelSideEnum.TopOrLeft
-        TrackLabel5.Position = 4
-        TrackLabel6.Position = 5
+        TrackLabel5.Position = 4R
+        TrackLabel6.Position = 5R
         TrackLabel6.Side = ExcellentTrackBar.LabelSideEnum.TopOrLeft
-        TrackLabel7.Position = 6
+        TrackLabel7.Position = 6R
         ExcellentTrackBar3.Labels.Add(TrackLabel1)
         ExcellentTrackBar3.Labels.Add(TrackLabel2)
         ExcellentTrackBar3.Labels.Add(TrackLabel3)
@@ -123,7 +109,7 @@ Partial Class Form_ExcellentTrackBar
         ExcellentTrackBar3.Labels.Add(TrackLabel7)
         ExcellentTrackBar3.Location = New Point(0, 0)
         ExcellentTrackBar3.Margin = New Padding(2, 2, 2, 2)
-        ExcellentTrackBar3.Maximum = 6
+        ExcellentTrackBar3.Maximum = 6R
         ExcellentTrackBar3.Name = "ExcellentTrackBar3"
         ExcellentTrackBar3.Size = New Size(416, 100)
         ExcellentTrackBar3.StringItems.Add("veryslow")
@@ -142,7 +128,7 @@ Partial Class Form_ExcellentTrackBar
         ExcellentTrackBar3.ThumbTextMode = ExcellentTrackBar.ThumbTextModeEnum.StringItem
         ExcellentTrackBar3.ThumbWidth = 80
         ExcellentTrackBar3.UseStringItems = True
-        ExcellentTrackBar3.Value = 3
+        ExcellentTrackBar3.Value = 3R
         ' 
         ' Label7
         ' 
@@ -178,7 +164,7 @@ Partial Class Form_ExcellentTrackBar
         ExcellentTrackBar2.ThumbBorderWidth = 0
         ExcellentTrackBar2.ThumbColor = Color.FromArgb(CByte(255), CByte(128), CByte(0))
         ExcellentTrackBar2.ThumbRadius = 10
-        ExcellentTrackBar2.Value = 50
+        ExcellentTrackBar2.Value = 50R
         ' 
         ' Label5
         ' 
@@ -209,7 +195,8 @@ Partial Class Form_ExcellentTrackBar
         ExcellentTrackBar1.Name = "ExcellentTrackBar1"
         ExcellentTrackBar1.Size = New Size(288, 30)
         ExcellentTrackBar1.TabIndex = 0
-        ExcellentTrackBar1.Value = 50
+        ExcellentTrackBar1.ThumbBorderWidth = 0
+        ExcellentTrackBar1.Value = 50R
         ' 
         ' Label6
         ' 
@@ -240,7 +227,7 @@ Partial Class Form_ExcellentTrackBar
         ' 
         ' ModernButton4
         ' 
-        ModernButton4.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton4.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton4.BorderRadius = 10
         ModernButton4.BorderSize = 0
         ModernButton4.Dock = DockStyle.Left
@@ -266,7 +253,7 @@ Partial Class Form_ExcellentTrackBar
         ' 
         ' ModernButton3
         ' 
-        ModernButton3.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton3.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton3.BorderRadius = 10
         ModernButton3.BorderSize = 0
         ModernButton3.Dock = DockStyle.Left
@@ -292,7 +279,7 @@ Partial Class Form_ExcellentTrackBar
         ' 
         ' ModernButton2
         ' 
-        ModernButton2.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton2.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton2.BorderRadius = 10
         ModernButton2.BorderSize = 0
         ModernButton2.Dock = DockStyle.Left
@@ -317,7 +304,7 @@ Partial Class Form_ExcellentTrackBar
         ' 
         ' ModernButton1
         ' 
-        ModernButton1.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton1.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton1.BorderRadius = 10
         ModernButton1.BorderSize = 0
         ModernButton1.Dock = DockStyle.Left
@@ -383,5 +370,4 @@ Partial Class Form_ExcellentTrackBar
     Friend WithEvents Panel4 As Panel
     Friend WithEvents Label7 As Label
     Friend WithEvents ExcellentTrackBar3 As ExcellentTrackBar
-    Friend WithEvents Label9 As Label
 End Class

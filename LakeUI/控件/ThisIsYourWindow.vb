@@ -190,6 +190,13 @@ Public Class ThisIsYourWindow
         Public ReadOnly SsaaCache As New D2DHelper.BitmapRTCache()
         Public ReadOnly CaptionImageCache As New D2DHelper.D2DBitmapCache()
         Public ReadOnly IconBitmapCache As New D2DHelper.D2DBitmapCache()
+        ' ── D2D 资源池：每帧大量 CreateSolidColorBrush / CreateTextFormat 太昂贵 ──
+        '   GraphicsBrushCache：跟踪 PaintScope.GraphicsRenderTarget（SSAA 开启时为 BitmapRT，关闭时为 DC RT）。
+        '   DcBrushCache：仅给 DC RT 上的标题文字用（与 GraphicsBrushCache 不能复用，RT 不一致会强制 invalidate）。
+        '   TitleTextFormats：DirectWrite TextFormat 与 RT 无关，可长期复用。
+        Public ReadOnly GraphicsBrushCache As New D2DHelper.SolidColorBrushCache()
+        Public ReadOnly DcBrushCache As New D2DHelper.SolidColorBrushCache()
+        Public ReadOnly TitleTextFormats As New D2DHelper.TextFormatCache()
         Public Sub New(form As Form)
             HostForm = form
         End Sub
@@ -351,6 +358,20 @@ Public Class ThisIsYourWindow
     Private Sub 宿主窗口_FormClosed(sender As Object, e As FormClosedEventArgs)
         Dim frm = TryCast(sender, Form)
         If frm IsNot Nothing Then Detach(frm)
+    End Sub
+
+    ''' <summary>
+    ''' 宿主窗体 Font 改变时：当 <see cref="TitleFont"/> 未单独设置时，标题文字使用窗体 Font，
+    ''' 此处需要立即让缓存的 IDWriteTextFormat 失效（不同字号 / 字族对应不同实例）并重绘标题栏。
+    ''' </summary>
+    Private Sub 宿主窗口_FontChanged(sender As Object, e As EventArgs)
+        Dim frm = TryCast(sender, Form)
+        If frm Is Nothing Then Return
+        Dim s = 查找状态(frm)
+        If s Is Nothing Then Return
+        ' 注意：TextFormatCache 以 (family, weight, style, sizePx, ...) 为键，新字体只是新键，
+        ' 旧键仍占内存；但标题字体一般不会频繁变化，无需主动 Invalidate。这里只触发重绘。
+        InvalidateCaption(frm)
     End Sub
 
     Private Sub 更新窗口内边距(s As PerFormState)
@@ -1614,7 +1635,8 @@ Public Class ThisIsYourWindow
         If s.DcRT Is Nothing Then s.DcRT = D2DHelper.CreateDCRenderTarget()
         Dim ssaaScale As Integer = Math.Max(1, ssaa)
         Dim hdc As IntPtr = g.GetHdc()
-        Dim scope As D2DHelper.PaintScope = Nothing
+        Dim scope As PaintScope
+
         Try
             scope = New D2DHelper.PaintScope(g, hdc, s.DcRT, w, h, ssaaScale, s.SsaaCache)
         Catch
@@ -1631,9 +1653,8 @@ Public Class ThisIsYourWindow
             If Not useBackdrop AndAlso _标题栏高度 > 0 Then
                 Dim capColor As Color = If(active, _标题栏背景颜色, _标题栏失焦背景颜色)
                 If capColor.A > 0 Then
-                    Using b = gRT.CreateSolidColorBrush(D2DHelper.ToColor4(capColor))
-                        gRT.FillRectangle(D2DHelper.ToD2DRect(captionRect), b)
-                    End Using
+                    Dim b = s.GraphicsBrushCache.Get(gRT, capColor)
+                    gRT.FillRectangle(D2DHelper.ToD2DRect(captionRect), b)
                 End If
             End If
 
@@ -1644,9 +1665,8 @@ Public Class ThisIsYourWindow
 
             ' 2.3 标题栏遮罩
             If _标题栏遮罩颜色.A > 0 AndAlso _标题栏高度 > 0 Then
-                Using b = gRT.CreateSolidColorBrush(D2DHelper.ToColor4(_标题栏遮罩颜色))
-                    gRT.FillRectangle(D2DHelper.ToD2DRect(captionRect), b)
-                End Using
+                Dim b = s.GraphicsBrushCache.Get(gRT, _标题栏遮罩颜色)
+                gRT.FillRectangle(D2DHelper.ToD2DRect(captionRect), b)
             End If
 
             ' 2.4 图标
@@ -1667,19 +1687,18 @@ Public Class ThisIsYourWindow
                 End If
                 If bdrColor.A > 0 Then
                     Dim bdr As Integer = _边框厚度
-                    Using b = gRT.CreateSolidColorBrush(D2DHelper.ToColor4(bdrColor))
-                        gRT.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(0, 0, w, bdr)), b)
-                        gRT.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(0, h - bdr, w, bdr)), b)
-                        gRT.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(0, bdr, bdr, h - bdr * 2)), b)
-                        gRT.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(w - bdr, bdr, bdr, h - bdr * 2)), b)
-                    End Using
+                    Dim b = s.GraphicsBrushCache.Get(gRT, bdrColor)
+                    gRT.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(0, 0, w, bdr)), b)
+                    gRT.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(0, h - bdr, w, bdr)), b)
+                    gRT.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(0, bdr, bdr, h - bdr * 2)), b)
+                    gRT.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(w - bdr, bdr, bdr, h - bdr * 2)), b)
                 End If
             End If
 
             ' 2.7 把图形层 SSAA 结果回采到 DC
             scope.FlushGraphics()
 
-            ' 2.8 标题文字（DirectWrite，保留 ClearType 子像素）
+            ' 2.8 标题文字（D2D / DirectWrite 路径，绘制在 DC RT 上以保留 ClearType 子像素抗锯齿）
             绘制标题文字_D2D(dcRT, s)
         End Using
 
@@ -1739,11 +1758,12 @@ Public Class ThisIsYourWindow
         Dim bmp = s.IconBitmapCache.GetBitmap(rt, img)
         If bmp Is Nothing Then Return
         Dim r = s.IconRect
+        Dim srcRect As New RectangleF(0, 0, img.Width, img.Height)
         rt.DrawBitmap(bmp,
                       New Vortice.Mathematics.Rect(r.X, r.Y, r.Width, r.Height),
                       1.0F,
                       BitmapInterpolationMode.Linear,
-                      Nothing)
+                       D2DHelper.ToD2DRect(srcRect))
     End Sub
 
     Private Sub 绘制控制按钮_D2D(rt As ID2D1RenderTarget, s As PerFormState, rect As Rectangle, htValue As Integer)
@@ -1778,16 +1798,13 @@ Public Class ThisIsYourWindow
         ' 背景
         If bgColor.A > 0 Then
             Dim r As Integer = Math.Min(_按钮圆角半径, CInt(Math.Min(vis.Width, vis.Height)) \ 2)
+            Dim bgBrush = s.GraphicsBrushCache.Get(rt, bgColor)
             If r > 0 Then
                 Using geo = RectangleRenderer.创建圆角矩形几何(vis, r)
-                    Using b = rt.CreateSolidColorBrush(D2DHelper.ToColor4(bgColor))
-                        rt.FillGeometry(geo, b)
-                    End Using
+                    rt.FillGeometry(geo, bgBrush)
                 End Using
             Else
-                Using b = rt.CreateSolidColorBrush(D2DHelper.ToColor4(bgColor))
-                    rt.FillRectangle(D2DHelper.ToD2DRect(vis), b)
-                End Using
+                rt.FillRectangle(D2DHelper.ToD2DRect(vis), bgBrush)
             End If
         End If
 
@@ -1797,7 +1814,8 @@ Public Class ThisIsYourWindow
         Dim cx As Single = vis.X + (vis.Width - sz) / 2.0F
         Dim cy As Single = vis.Y + (vis.Height - sz) / 2.0F
         Dim lw As Single = Math.Max(0.5F, _按钮符号线宽)
-        Using pen = rt.CreateSolidColorBrush(D2DHelper.ToColor4(symColor))
+        Dim pen = s.GraphicsBrushCache.Get(rt, symColor)
+        If True Then
             Select Case htValue
                 Case HTCLOSE
                     rt.DrawLine(New Vector2(cx, cy), New Vector2(cx + sz, cy + sz), pen, lw)
@@ -1814,7 +1832,7 @@ Public Class ThisIsYourWindow
                     Dim mid As Single = cy + sz / 2.0F
                     rt.DrawLine(New Vector2(cx, mid), New Vector2(cx + sz, mid), pen, lw)
             End Select
-        End Using
+        End If
     End Sub
 
     Private Sub 绘制标题文字_D2D(rt As ID2D1DCRenderTarget, s As PerFormState)
@@ -1854,24 +1872,16 @@ Public Class ThisIsYourWindow
             Case Else : align = Vortice.DirectWrite.TextAlignment.Leading
         End Select
 
-        Dim sizePx As Single = font.SizeInPoints * (96.0F / 72.0F)
+        ' DirectWrite 字号必须叠加 DPI 缩放（参考 ModernButton.vb 中的注释说明）。
+        Dim dpiScale As Single = s.HostForm.DeviceDpi / 96.0F
+        Dim sizePx As Single = font.SizeInPoints * (96.0F / 72.0F) * dpiScale
         Dim weight As Vortice.DirectWrite.FontWeight = If(font.Bold, Vortice.DirectWrite.FontWeight.Bold, Vortice.DirectWrite.FontWeight.Normal)
         Dim style As Vortice.DirectWrite.FontStyle = If(font.Italic, Vortice.DirectWrite.FontStyle.Italic, Vortice.DirectWrite.FontStyle.Normal)
 
-        Dim dw = D2DHelper.GetDWriteFactory()
-        Using fmt = dw.CreateTextFormat(font.FontFamily.Name, Nothing, weight, style, Vortice.DirectWrite.FontStretch.Normal, sizePx)
-            fmt.TextAlignment = align
-            fmt.ParagraphAlignment = ParagraphAlignment.Center
-            fmt.WordWrapping = WordWrapping.NoWrap
-            Try
-                fmt.SetTrimming(New Trimming With {.Granularity = TrimmingGranularity.Character}, Nothing)
-            Catch
-            End Try
-            Using brush = rt.CreateSolidColorBrush(D2DHelper.ToColor4(fgColor))
-                rt.DrawText(text, fmt, D2DHelper.ToD2DRect(textRect), brush,
-                            DrawTextOptions.Clip, Vortice.DCommon.MeasuringMode.Natural)
-            End Using
-        End Using
+        Dim fmt = s.TitleTextFormats.Get(font.FontFamily.Name, weight, style, sizePx, align, ParagraphAlignment.Center, True)
+        Dim brush = s.DcBrushCache.Get(rt, fgColor)
+        rt.DrawText(text, fmt, D2DHelper.ToD2DRect(textRect), brush,
+                    DrawTextOptions.Clip, Vortice.DCommon.MeasuringMode.Natural)
     End Sub
 
     ''' <summary>请求指定窗体重绘标题栏区域。</summary>
@@ -1958,6 +1968,7 @@ Public Class ThisIsYourWindow
 
         AddHandler targetForm.Paint, AddressOf 宿主窗口_Paint
         AddHandler targetForm.FormClosed, AddressOf 宿主窗口_FormClosed
+        AddHandler targetForm.FontChanged, AddressOf 宿主窗口_FontChanged
         RecalculateButtonBounds(s)
         更新窗口内边距(s)
         targetForm.Invalidate()
@@ -1976,6 +1987,9 @@ Public Class ThisIsYourWindow
         Try : s.SsaaCache.Dispose() : Catch : End Try
         Try : s.CaptionImageCache.Dispose() : Catch : End Try
         Try : s.IconBitmapCache.Dispose() : Catch : End Try
+        Try : s.GraphicsBrushCache.Dispose() : Catch : End Try
+        Try : s.DcBrushCache.Dispose() : Catch : End Try
+        Try : s.TitleTextFormats.Dispose() : Catch : End Try
         If s.DcRT IsNot Nothing Then
             Try : s.DcRT.Dispose() : Catch : End Try
             s.DcRT = Nothing
@@ -1997,6 +2011,7 @@ Public Class ThisIsYourWindow
         End If
         RemoveHandler targetForm.Paint, AddressOf 宿主窗口_Paint
         RemoveHandler targetForm.FormClosed, AddressOf 宿主窗口_FormClosed
+        RemoveHandler targetForm.FontChanged, AddressOf 宿主窗口_FontChanged
         targetForm.Padding = s.OriginalPadding
     End Sub
 

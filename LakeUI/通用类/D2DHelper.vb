@@ -131,7 +131,7 @@ Friend Module D2DHelper
         Return New Vortice.Mathematics.Color4(c.R / 255.0F, c.G / 255.0F, c.B / 255.0F, Math.Max(0F, Math.Min(1.0F, overrideAlpha)))
     End Function
 
-    ''' <summary><see cref="RectangleF"/> → D2D <see cref="Vortice.Mathematics.Rect"/>（保留浮点精度，建议用于绘制坐标）。</summary>
+    ''' <summary><see cref="RectangleF"/> → D2D <see cref="Vortice.Mathematics.Rect"/>（location + size，保留浮点精度）。</summary>
     Public Function ToD2DRect(r As RectangleF) As Vortice.Mathematics.Rect
         Return New Vortice.Mathematics.Rect(r.X, r.Y, r.Width, r.Height)
     End Function
@@ -172,16 +172,15 @@ Friend Module D2DHelper
     ''' </summary>
     Public Function CreateBitmapFromImage(rt As ID2D1RenderTarget, img As Image) As ID2D1Bitmap
         If img Is Nothing Then Return Nothing
-        Dim bmp As Bitmap = TryCast(img, Bitmap)
-        Dim ownsBmp As Boolean = False
-        If bmp Is Nothing Then
-            bmp = New Bitmap(img)
-            ownsBmp = True
-        End If
+        Dim bmp As New Bitmap(img.Width, img.Height, System.Drawing.Imaging.PixelFormat.Format32bppPArgb)
+        bmp.SetResolution(img.HorizontalResolution, img.VerticalResolution)
+        Using g = Graphics.FromImage(bmp)
+            g.DrawImage(img, 0, 0, img.Width, img.Height)
+        End Using
         Try
             Return CreateBitmapFromGdi(rt, bmp)
         Finally
-            If ownsBmp Then bmp.Dispose()
+            bmp.Dispose()
         End Try
     End Function
 
@@ -299,17 +298,15 @@ Friend Module D2DHelper
             Try
                 _bitmapRT.Transform = Matrix3x2.Identity
                 _bitmapRT.EndDraw()
+                ' 注意：_bitmapRT.Bitmap 是 BitmapRT 内部拥有的资源，调用方不得 Dispose，
+                ' 否则下一帧从缓存复用 BitmapRT 时会触发 ExecutionEngineException。
                 Dim bmp = _bitmapRT.Bitmap
-                Try
-                    DCRenderTarget.DrawBitmap(
-                        bmp,
-                        New Vortice.Mathematics.Rect(0, 0, _w, _h),
-                        1.0F,
-                        BitmapInterpolationMode.Linear,
-                        New Vortice.Mathematics.Rect(0, 0, _w * _ssaa, _h * _ssaa))
-                Finally
-                    bmp.Dispose()
-                End Try
+                DCRenderTarget.DrawBitmap(
+                    bmp,
+                    New Vortice.Mathematics.Rect(0, 0, _w, _h),
+                    1.0F,
+                    BitmapInterpolationMode.Linear,
+                    New Vortice.Mathematics.Rect(0, 0, _w * _ssaa, _h * _ssaa))
             Finally
                 If _bitmapRTOwned Then
                     Try : _bitmapRT.Dispose() : Catch : End Try
@@ -421,6 +418,121 @@ Friend Module D2DHelper
 
         Public Sub Dispose() Implements IDisposable.Dispose
             Invalidate()
+        End Sub
+    End Class
+
+    ''' <summary>
+    ''' 跨帧复用 <see cref="ID2D1SolidColorBrush"/>。按 (RT 引用, ARGB) 缓存，
+    ''' 避免热路径每帧 <c>Using ... CreateSolidColorBrush ... End Using</c> 造成的 D2D 资源分配开销。
+    '''
+    ''' 用法（控件层）：
+    '''   Dim brush = _brushCache.Get(rt, color)
+    '''   rt.FillRectangle(rect, brush)
+    ''' 控件 <see cref="IDisposable.Dispose"/> 时调用本类的 <see cref="Dispose"/>。
+    '''
+    ''' 注意：
+    '''   - SolidColorBrush 必须在创建它的 RT 仍然有效时才可使用；当 RT 引用切换（例如 SSAA
+    '''     BitmapRT 重建）时缓存自动失效。
+    '''   - 不处理 RT 的 RecreateTarget 错误（与本仓库其它 D2D 缓存保持一致）。
+    ''' </summary>
+    Public Class SolidColorBrushCache
+        Implements IDisposable
+
+        Private _rt As ID2D1RenderTarget
+        Private ReadOnly _map As New Dictionary(Of Integer, ID2D1SolidColorBrush)(8)
+
+        ''' <summary>取得（或惰性创建）指定颜色的 brush。</summary>
+        Public Function [Get](rt As ID2D1RenderTarget, c As Color) As ID2D1SolidColorBrush
+            If rt Is Nothing Then Return Nothing
+            If Not ReferenceEquals(rt, _rt) Then
+                ' RT 切换：旧 brush 关联到旧 RT，必须丢弃。
+                InvalidateInternal()
+                _rt = rt
+            End If
+            Dim key As Integer = c.ToArgb()
+            Dim b As ID2D1SolidColorBrush = Nothing
+            If _map.TryGetValue(key, b) Then Return b
+            b = rt.CreateSolidColorBrush(ToColor4(c))
+            _map(key) = b
+            Return b
+        End Function
+
+        ''' <summary>主动清空（例如父 RT 即将 Dispose）。</summary>
+        Public Sub Invalidate()
+            InvalidateInternal()
+            _rt = Nothing
+        End Sub
+
+        Private Sub InvalidateInternal()
+            For Each b In _map.Values
+                Try : b.Dispose() : Catch : End Try
+            Next
+            _map.Clear()
+        End Sub
+
+        Public Sub Dispose() Implements IDisposable.Dispose
+            Invalidate()
+        End Sub
+    End Class
+
+    ''' <summary>
+    ''' 跨帧复用 <see cref="IDWriteTextFormat"/>。按 (family, weight, style, sizePx, textAlignment, paragraphAlignment) 缓存。
+    ''' DirectWrite TextFormat 不绑定 RT，可全局共享；本类仍按控件实例持有以便 Dispose 时一次性释放。
+    ''' </summary>
+    Public Class TextFormatCache
+        Implements IDisposable
+
+        Private Structure Key
+            Public Family As String
+            Public Weight As Vortice.DirectWrite.FontWeight
+            Public Style As Vortice.DirectWrite.FontStyle
+            Public SizePx As Single
+            Public TextAlign As Vortice.DirectWrite.TextAlignment
+            Public ParaAlign As Vortice.DirectWrite.ParagraphAlignment
+            Public Trim As Boolean
+        End Structure
+
+        Private ReadOnly _map As New Dictionary(Of Key, IDWriteTextFormat)(4)
+
+        ''' <summary>
+        ''' 取得（或创建）匹配的 TextFormat。<paramref name="trimChar"/> = True 表示 SetTrimming(Character)。
+        ''' </summary>
+        Public Function [Get](family As String, weight As Vortice.DirectWrite.FontWeight,
+                              style As Vortice.DirectWrite.FontStyle, sizePx As Single,
+                              textAlign As Vortice.DirectWrite.TextAlignment,
+                              paraAlign As Vortice.DirectWrite.ParagraphAlignment,
+                              trimChar As Boolean) As IDWriteTextFormat
+            Dim k As New Key With {
+                .Family = If(family, ""),
+                .Weight = weight,
+                .Style = style,
+                .SizePx = sizePx,
+                .TextAlign = textAlign,
+                .ParaAlign = paraAlign,
+                .Trim = trimChar
+            }
+            Dim fmt As IDWriteTextFormat = Nothing
+            If _map.TryGetValue(k, fmt) Then Return fmt
+            fmt = GetDWriteFactory().CreateTextFormat(k.Family, Nothing, weight, style,
+                                                      Vortice.DirectWrite.FontStretch.Normal, sizePx)
+            fmt.TextAlignment = textAlign
+            fmt.ParagraphAlignment = paraAlign
+            fmt.WordWrapping = WordWrapping.NoWrap
+            If trimChar Then
+                Try
+                    fmt.SetTrimming(New Trimming With {.Granularity = TrimmingGranularity.Character}, Nothing)
+                Catch
+                End Try
+            End If
+            _map(k) = fmt
+            Return fmt
+        End Function
+
+        Public Sub Dispose() Implements IDisposable.Dispose
+            For Each f In _map.Values
+                Try : f.Dispose() : Catch : End Try
+            Next
+            _map.Clear()
         End Sub
     End Class
 

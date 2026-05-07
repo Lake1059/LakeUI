@@ -8,7 +8,7 @@ Partial Class ModernTabListControl
         Try
             If disposing Then
                 停止动画驱动()
-                _动画计时器?.Dispose()
+                _动画助手.Dispose()
                 说明字体值?.Dispose()
                 If components IsNot Nothing Then
                     components.Dispose()

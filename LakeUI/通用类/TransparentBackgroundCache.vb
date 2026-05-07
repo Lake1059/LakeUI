@@ -1,7 +1,7 @@
 Imports System.Drawing.Imaging
 
 ''' <summary>
-''' 透明控件背景共享缓存与统一接入入口。
+''' 透明控件背景共享缓存与统一接入入口（LakeUI 全库唯一的透明渲染机制）。
 '''
 ''' === 设计动机 ===
 ''' 当多个透明控件（ModernPanel / ModernButton / HtmlColorLabel /
@@ -9,18 +9,48 @@ Imports System.Drawing.Imaging
 ''' 背景源画到一张 Bitmap 是巨大的性能浪费。本类按背景源控件分组，
 ''' 一帧内（短 TTL）的所有取样请求共享同一张 Bitmap。
 '''
-''' === 接入新控件的清单 ===
+''' === 统一图层契约（重要） ===
+''' LakeUI 的所有"透明感知控件"都不依赖 .NET WinForms 的默认透明合成，而是
+''' 一律走本机制采样父级 / 指定背景源，再在采样底图之上以 D2D 叠加自身图层。
+''' 这条契约的关键点：
+'''
+''' 1) BackColor 的语义重定义：
+'''    • BackColor.A = 255 → 完全不透明纯色，控件按普通实色背景绘制，
+'''      无需采样背景源（除非启用了圆角，圆角外的空白仍由本机制透出）。
+'''    • BackColor.A &lt; 255（含 0/Transparent）→ 把 BackColor 当作"带颜色的
+'''      半透明遮罩"。绘制顺序固定为：① 先用本机制采样背景源 → ② 再把 BackColor
+'''      作为一层半透明遮罩盖到底图上。A=0 时遮罩层退化为不绘制，与"完全透明"等价。
+'''
+''' 2) 标准图层叠加顺序（自下而上）：
+'''        采样底图（仅 A&lt;255 或圆角时）
+'''     → BackColor 半透明遮罩（仅 0 &lt; A &lt; 255 时绘制）
+'''     → 控件自身的实色填充（背景图 / BackColor1 / 渐变 / 多状态色 等）
+'''     → ModernPanel 专属的 OverlayColor（仅 ModernPanel）
+'''     → 边框
+'''    其中 BackColor1 是控件实际填充色（位于 BackColor 遮罩之上），
+'''    BackColor2 是 ModernPanel 特有的渐变副色，OverlayColor 是 ModernPanel 特有
+'''    的容器叠加层（用于在透明模式下区分容器边界），其他控件不应增加这两个属性。
+'''
+''' 3) 圆角空白也由本机制透出：当 BorderRadius &gt; 0 时，圆角之外、控件矩形之内
+'''    的"空缺区"必须显示父级背景，因此触发条件是
+'''        BorderRadius &gt; 0 OrElse BackColor.A &lt; 255
+'''    满足任一即走本机制采样底图，再按上面的标准顺序叠加。
+'''
+''' === 屏蔽 .NET 默认透明渲染的三件套 ===
 ''' 1) 构造里调用 SetStyle(ControlStyles.SupportsTransparentBackColor, True)，
-'''    并允许 BackColor 为 Color.Transparent 或 A &lt; 255 的颜色。
-''' 2) 重写 OnPaintBackground：当存在圆角 / 半透明背景 / 透明 BackColor 时直接 Return，
-'''    防止基类用纯色填底覆盖透出内容。
-''' 3) 重写 OnPaint：在绘制自身内容之前调用
+'''    并允许 BackColor 为 Color.Transparent 或 A &lt; 255 的 ARGB 颜色。
+''' 2) 重写 OnPaintBackground：当 BorderRadius &gt; 0 OrElse BackColor.A &lt; 255 时
+'''    直接 Return，防止基类用纯色填底或默认透明合成覆盖本机制的输出。
+''' 3) 重写 OnPaint：在绘制自身内容之前先调用
 '''        TransparentBackgroundCache.PaintBackgroundFor(Me, e.Graphics, _backgroundSource)
-'''    即可贴底图。
-''' 4) 暴露 BackgroundSource As Control 属性，存到字段里传入步骤 3。Setter 中调用
-'''    Me.Invalidate() 即可，不需要手动 Invalidate 缓存（控件 Dispose 时缓存自动清理）。
-''' 5) 控件自身的尺寸/视觉变化由 Invalidate() 触发重绘即可，缓存键是“背景源控件”，
-'''    与子控件无关；只有“背景源”自身视觉变化时才需要调用
+'''    贴底图，再按"BackColor 遮罩 → 自身填充 → (OverlayColor) → 边框"顺序绘制。
+'''
+''' === 接入新控件的清单 ===
+''' 1) 完成上述"三件套"。
+''' 2) 暴露 BackgroundSource As Control 属性，Setter 中调用 Me.Invalidate() 即可，
+'''    不需要手动 Invalidate 缓存（控件 Dispose 时缓存自动清理）。
+''' 3) 控件自身的尺寸/视觉变化由 Invalidate() 触发重绘即可，缓存键是"背景源控件"，
+'''    与子控件无关；只有"背景源"自身视觉变化时才需要调用
 '''    TransparentBackgroundCache.Invalidate(source) 来强制重建。
 '''
 ''' === 已知限制（接入前需了解） ===
@@ -200,6 +230,13 @@ Friend Module TransparentBackgroundCache
                         InvokePaintProxy(source, pea)
                     End Using
                 End Using
+                ' ── 关键修复：强制把缓存位图的 alpha 通道恢复为 255 ──
+                ' 背景采样位图按定义代表"源控件的不透明视图"。但当 source 控件（例如 ModernPanel）
+                ' 内部使用 ID2D1DCRenderTarget 在该位图的 HDC 上绘制时，D2D EndDraw 通过 GDI BitBlt
+                ' 把内部表面写回 32bpp DIB Section，会把覆盖到的像素 alpha 清成 0（GDI 经典行为）。
+                ' 任何整面覆盖的 D2D 操作（OverlayColor.A>0、纯色背景等）都会引发该问题，导致后续
+                ' 子控件 DrawImage 时把整层视为完全透明，视觉表现为"跳过本层、采样到更外层"。
+                ForceOpaqueAlpha(entry.Bmp)
                 entry.Stamp = now
                 entry.Dirty = False
                 entry.ForceDirty = False
@@ -329,6 +366,43 @@ Friend Module TransparentBackgroundCache
 
     Private Sub InvokePaintProxy(source As Control, pea As PaintEventArgs)
         _invokePaint(source, source, pea)
+    End Sub
+
+    ''' <summary>
+    ''' 把 32bpp 位图的 alpha 通道全部置为 255。
+    ''' 见 AcquireSourceBitmap 中的注释——用于消除 D2D + GDI BitBlt 在内存 DIB 上对 alpha 的破坏。
+    ''' </summary>
+    Private Sub ForceOpaqueAlpha(bmp As Bitmap)
+        If bmp Is Nothing Then Return
+        Dim rect As New Rectangle(0, 0, bmp.Width, bmp.Height)
+        Dim data As BitmapData = Nothing
+        Try
+            data = bmp.LockBits(rect, ImageLockMode.ReadWrite, PixelFormat.Format32bppPArgb)
+            Dim stride As Integer = data.Stride
+            Dim h As Integer = data.Height
+            Dim w As Integer = data.Width
+            Dim scan0 As IntPtr = data.Scan0
+            ' BGRA 顺序，alpha 在每 4 字节里的最后一个字节。
+            ' 当 alpha 被 BitBlt 写成 0 时，BGR 通常仍是有效的颜色字节（GDI 不预乘），
+            ' 直接把 A 设为 255 即可恢复成不透明的正确颜色。
+            Dim row(stride - 1) As Byte
+            For y As Integer = 0 To h - 1
+                Dim rowPtr As IntPtr = IntPtr.Add(scan0, y * stride)
+                Runtime.InteropServices.Marshal.Copy(rowPtr, row, 0, stride)
+                Dim x As Integer = 3
+                For i As Integer = 0 To w - 1
+                    row(x) = 255
+                    x += 4
+                Next
+                Runtime.InteropServices.Marshal.Copy(row, 0, rowPtr, stride)
+            Next
+        Catch
+            ' LockBits 失败时静默忽略，下一帧会重试
+        Finally
+            If data IsNot Nothing Then
+                Try : bmp.UnlockBits(data) : Catch : End Try
+            End If
+        End Try
     End Sub
 
 End Module
