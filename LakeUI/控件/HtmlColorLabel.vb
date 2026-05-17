@@ -407,9 +407,14 @@ Public Class HtmlColorLabel
             绘制文本内容_D2D(dcRT, 内容矩形区域)
 
             ' 3) 禁用遮罩
-            If Not Enabled Then
-                Dim mb = _brushCache.Get(dcRT, Color.FromArgb(120, 0, 0, 0))
-                dcRT.FillRectangle(New Vortice.Mathematics.Rect(0, 0, Me.Width, Me.Height), mb)
+            If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
+                If 是否有圆角 Then
+                    Using geo = RectangleRenderer.创建圆角矩形几何(极限矩形区域, 边框圆角半径 * DpiScale())
+                        RectangleRenderer.绘制圆角背景_D2D(dcRT, geo, 极限矩形区域, 禁用时遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Vertical)
+                    End Using
+                Else
+                    RectangleRenderer.绘制矩形背景_D2D(dcRT, 极限矩形区域, 禁用时遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Vertical)
+                End If
             End If
         End Using
     End Sub
@@ -954,6 +959,17 @@ Public Class HtmlColorLabel
         End Get
         Set(value As Integer)
             SetValue(边框圆角半径, value)
+        End Set
+    End Property
+
+    Private 禁用时遮罩颜色 As Color = Color.FromArgb(120, 0, 0, 0)
+    <Category("LakeUI"), Description("禁用（Enabled = False）时覆盖在主体区域上的遮罩颜色（受圆角裁剪，不影响圆角外的透明区域）。"), DefaultValue(GetType(Color), "120, 0, 0, 0"), Browsable(True)>
+    Public Property DisabledOverlayColor As Color
+        Get
+            Return 禁用时遮罩颜色
+        End Get
+        Set(value As Color)
+            SetValue(禁用时遮罩颜色, value)
         End Set
     End Property
 

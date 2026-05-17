@@ -43,9 +43,9 @@ Public Class BooleanSwitch
             绘制图形内容_D2D(scope.GraphicsRenderTarget, 极限矩形区域)
             scope.FlushGraphics()
 
-            If Not Enabled Then
-                Using brush = scope.DCRenderTarget.CreateSolidColorBrush(D2DHelper.ToColor4(Color.FromArgb(120, 0, 0, 0)))
-                    scope.DCRenderTarget.FillRectangle(New Vortice.Mathematics.Rect(0, 0, Me.Width, Me.Height), brush)
+            If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
+                Using geo = RectangleRenderer.创建圆角矩形几何(极限矩形区域, CSng(Math.Floor(极限矩形区域.Height / 2.0F)))
+                    RectangleRenderer.绘制圆角背景_D2D(scope.DCRenderTarget, geo, 极限矩形区域, 禁用时遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Vertical)
                 End Using
             End If
         End Using
@@ -295,6 +295,17 @@ Public Class BooleanSwitch
         End Get
         Set(value As Integer)
             SetValue(边框宽度, value)
+        End Set
+    End Property
+
+    Private 禁用时遮罩颜色 As Color = Color.FromArgb(120, 0, 0, 0)
+    <Category("LakeUI"), Description("禁用（Enabled = False）时覆盖在主体区域上的遮罩颜色（受圆角裁剪，不影响圆角外的透明区域）。"), DefaultValue(GetType(Color), "120, 0, 0, 0"), Browsable(True)>
+    Public Property DisabledOverlayColor As Color
+        Get
+            Return 禁用时遮罩颜色
+        End Get
+        Set(value As Color)
+            SetValue(禁用时遮罩颜色, value)
         End Set
     End Property
 

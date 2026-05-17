@@ -1,6 +1,9 @@
 ﻿Imports System.ComponentModel
 Imports System.Drawing.Drawing2D
+Imports System.Numerics
 Imports System.Runtime.InteropServices
+Imports Vortice.Direct2D1
+Imports Vortice.DirectWrite
 
 ''' <summary>
 ''' 任务管理器风格的内存监视器：显示 已用 / 已修改 / 备用 的堆叠历史曲线，
@@ -12,6 +15,18 @@ Imports System.Runtime.InteropServices
 <DefaultEvent("SampleUpdated")>
 Public Class RamMonitor
 
+#Region "D2D 资源"
+    Private _dcRT As ID2D1DCRenderTarget
+    Private ReadOnly _ssaaCache As New D2DHelper.BitmapRTCache()
+    Private ReadOnly _brushCache As New D2DHelper.SolidColorBrushCache()
+    Private ReadOnly _textFormatCache As New D2DHelper.TextFormatCache()
+
+    Private Function GetOrCreateDCRenderTarget() As ID2D1DCRenderTarget
+        If _dcRT Is Nothing Then _dcRT = D2DHelper.CreateDCRenderTarget()
+        Return _dcRT
+    End Function
+#End Region
+
     Public Event SampleUpdated As EventHandler
 
     Public Sub New()
@@ -20,6 +35,7 @@ Public Class RamMonitor
         Me.SetStyle(ControlStyles.UserPaint Or
                     ControlStyles.AllPaintingInWmPaint Or
                     ControlStyles.OptimizedDoubleBuffer Or
+                    ControlStyles.SupportsTransparentBackColor Or
                     ControlStyles.ResizeRedraw, True)
         AddHandler 采样定时器.Tick, AddressOf 采样定时器_Tick
     End Sub
@@ -519,27 +535,353 @@ Public Class RamMonitor
 #End Region
 
 #Region "绘制"
+    Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
+        If 圆角半径值 > 0 OrElse MyBase.BackColor.A < 255 Then Return
+        MyBase.OnPaintBackground(e)
+    End Sub
+
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
-        Dim ssaa As Integer = If(Class1.GlobalSSAA > 1, Class1.GlobalSSAA, 超采样倍率)
-        If ssaa > 1 Then
-            Using bmp As New Bitmap(Math.Max(1, Me.Width * ssaa), Math.Max(1, Me.Height * ssaa))
-                Using g As Graphics = Graphics.FromImage(bmp)
-                    g.ScaleTransform(ssaa, ssaa)
-                    绘制图形内容(g, True, False)
+        If Me.Width <= 0 OrElse Me.Height <= 0 Then Return
+
+        Dim ssaa As Integer = Math.Max(1, CInt(超采样倍率))
+        If Class1.GlobalSSAA <> Class1.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(Class1.GlobalSSAA))
+
+        Using scope = D2DHelper.BeginPaint(e, Me, GetOrCreateDCRenderTarget(), ssaa, _ssaaCache)
+            Dim gRT As ID2D1RenderTarget = scope.GraphicsRenderTarget
+            Dim dcRT As ID2D1DCRenderTarget = scope.DCRenderTarget
+
+            If 圆角半径值 > 0 OrElse MyBase.BackColor.A < 255 Then
+                TransparentBackgroundCache.PaintBackgroundFor_D2D(Me, gRT, _backgroundSource)
+                If MyBase.BackColor.A > 0 AndAlso MyBase.BackColor.A < 255 Then
+                    Using b = gRT.CreateSolidColorBrush(D2DHelper.ToColor4(MyBase.BackColor))
+                        gRT.FillRectangle(New Vortice.Mathematics.Rect(0, 0, Me.Width, Me.Height), b)
+                    End Using
+                End If
+            End If
+
+            绘制图形内容_D2D(gRT)
+            scope.FlushGraphics()
+            绘制文字内容_D2D(dcRT)
+
+            If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
+                绘制禁用遮罩_D2D(dcRT)
+            End If
+        End Using
+    End Sub
+
+    Private Sub 绘制图形内容_D2D(rt As ID2D1RenderTarget)
+        Dim s As Single = DpiScale()
+        Dim pad As Padding = Me.Padding
+        Dim rect As New RectangleF(pad.Left * s, pad.Top * s,
+                                   Math.Max(0, Me.Width - (pad.Left + pad.Right) * s),
+                                   Math.Max(0, Me.Height - (pad.Top + pad.Bottom) * s))
+        If rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+
+        绘制背景与边框_D2D(rt, rect, s)
+
+        Dim innerPad As Single = 核心内边距值 * s
+        Dim inner As New RectangleF(rect.X + innerPad, rect.Y + innerPad,
+                                    Math.Max(0, rect.Width - innerPad * 2),
+                                    Math.Max(0, rect.Height - innerPad * 2))
+        If inner.Width <= 0 OrElse inner.Height <= 0 Then Return
+
+        Dim fontHeight As Single = 文本像素高度(s)
+        Dim tp As Padding = 文字内边距值
+        Dim stripH As Single = fontHeight + (tp.Top + tp.Bottom) * s
+        Dim topText As String = 构造槽位文字(TextSlotPosition.Top)
+        Dim bottomText As String = 构造槽位文字(TextSlotPosition.Bottom)
+        Dim topStripH As Single = If(Not String.IsNullOrEmpty(topText), Math.Min(stripH, inner.Height), 0)
+        Dim bottomStripH As Single = If(Not String.IsNullOrEmpty(bottomText), Math.Min(stripH, Math.Max(0, inner.Height - topStripH)), 0)
+        Dim graphRect As New RectangleF(inner.X, inner.Y + topStripH,
+                                        inner.Width,
+                                        Math.Max(0, inner.Height - topStripH - bottomStripH))
+
+        If graphRect.Height >= 2 AndAlso graphRect.Width >= 2 Then
+            Dim hasClip As Boolean = 圆角半径值 > 0
+            If hasClip Then
+                Using geo = RectangleRenderer.创建圆角矩形几何(rect, 圆角半径值 * s)
+                    D2DHelper.PushGeometryClip(rt, geo, rect)
+                    Try
+                        绘制历史图表_D2D(rt, graphRect, s)
+                    Finally
+                        rt.PopLayer()
+                    End Try
                 End Using
-                e.Graphics.CompositingQuality = Class1.GlobalCompositingQuality
-                e.Graphics.InterpolationMode = Class1.GlobalInterpolationMode
-                e.Graphics.DrawImage(bmp, 0, 0, Me.Width, Me.Height)
+            Else
+                绘制历史图表_D2D(rt, graphRect, s)
+            End If
+        End If
+    End Sub
+
+    Private Sub 绘制历史图表_D2D(rt As ID2D1RenderTarget, rect As RectangleF, s As Single)
+        If 图表背景颜色值.A > 0 Then
+            Using b = rt.CreateSolidColorBrush(D2DHelper.ToColor4(图表背景颜色值))
+                rt.FillRectangle(D2DHelper.ToD2DRect(rect), b)
             End Using
-            绘制图形内容(e.Graphics, False, True)
+        End If
+
+        Dim hist = 获取历史快照()
+        Dim n As Integer = hist.Length
+        Dim cap As Integer = Math.Max(2, 记录长度值)
+        _图表矩形 = rect
+        _图表样本数 = n
+        If n < 2 Then Return
+
+        Dim step_ As Single = rect.Width / CSng(cap - 1)
+
+        Dim inUseTop(n - 1) As Vector2
+        Dim modTop(n - 1) As Vector2
+        Dim standbyTop(n - 1) As Vector2
+        For i As Integer = 0 To n - 1
+            Dim x As Single = rect.Right - CSng(n - 1 - i) * step_
+            Dim total As Double = If(hist(i).TotalBytes > 0UL, CDbl(hist(i).TotalBytes), 0.0)
+            Dim a As Single = 0, bm As Single = 0, c As Single = 0
+            If total > 0.0 Then
+                a = CSng(hist(i).InUseBytes / total)
+                bm = CSng(hist(i).ModifiedBytes / total)
+                c = CSng(hist(i).StandbyBytes / total)
+            End If
+            a = Math.Max(0, Math.Min(1, a))
+            bm = Math.Max(0, Math.Min(1 - a, bm))
+            c = Math.Max(0, Math.Min(1 - a - bm, c))
+            If bm * rect.Height < 1.0F Then bm = 0
+            inUseTop(i) = New Vector2(x, rect.Bottom - a * rect.Height)
+            modTop(i) = New Vector2(x, rect.Bottom - (a + bm) * rect.Height)
+            standbyTop(i) = New Vector2(x, rect.Bottom - (a + bm + c) * rect.Height)
+        Next
+
+        填充堆叠区_D2D(rt, 备用填充颜色值, standbyTop, rect)
+        填充堆叠区_D2D(rt, 已修改填充颜色值, modTop, rect)
+        填充堆叠区_D2D(rt, 已用填充颜色值, inUseTop, rect)
+
+        If 图表线条颜色值.A > 0 AndAlso 图表线条粗细值 > 0 Then
+            Using b = rt.CreateSolidColorBrush(D2DHelper.ToColor4(图表线条颜色值))
+                Dim lineW As Single = 图表线条粗细值 * s
+                For i As Integer = 0 To standbyTop.Length - 2
+                    rt.DrawLine(standbyTop(i), standbyTop(i + 1), b, lineW)
+                Next
+            End Using
+        End If
+    End Sub
+
+    Private Shared Sub 填充堆叠区_D2D(rt As ID2D1RenderTarget, color As Color, topPts As Vector2(), rect As RectangleF)
+        If color.A = 0 Then Return
+        If topPts Is Nothing OrElse topPts.Length < 2 Then Return
+        Using geo = 创建堆叠填充几何(rect, topPts)
+            Using b = rt.CreateSolidColorBrush(D2DHelper.ToColor4(color))
+                rt.FillGeometry(geo, b)
+            End Using
+        End Using
+    End Sub
+
+    Private Shared Function 创建堆叠填充几何(rect As RectangleF, topPts As Vector2()) As ID2D1PathGeometry
+        Dim geo As ID2D1PathGeometry = D2DHelper.GetD2DFactory().CreatePathGeometry()
+        Dim sink As ID2D1GeometrySink = geo.Open()
+        Try
+            sink.BeginFigure(topPts(0), FigureBegin.Filled)
+            For i As Integer = 1 To topPts.Length - 1
+                sink.AddLine(topPts(i))
+            Next
+            sink.AddLine(New Vector2(topPts(topPts.Length - 1).X, rect.Bottom))
+            sink.AddLine(New Vector2(topPts(0).X, rect.Bottom))
+            sink.EndFigure(FigureEnd.Closed)
+            sink.Close()
+        Finally
+            sink.Dispose()
+        End Try
+        Return geo
+    End Function
+
+    Private Sub 绘制背景与边框_D2D(rt As ID2D1RenderTarget, rect As RectangleF, s As Single)
+        Dim r As Single = 圆角半径值 * s
+        If 核心背景颜色值.A <= 0 Then Return
+        If r > 0 Then
+            Using geo = RectangleRenderer.创建圆角矩形几何(rect, r)
+                RectangleRenderer.绘制圆角背景_D2D(rt, geo, rect, 核心背景颜色值, Color.Empty, System.Windows.Forms.Orientation.Vertical)
+            End Using
         Else
-            绘制图形内容(e.Graphics, True, True)
+            RectangleRenderer.绘制矩形背景_D2D(rt, rect, 核心背景颜色值, Color.Empty, System.Windows.Forms.Orientation.Vertical)
         End If
-        If Not Enabled Then
-            Using brush As New SolidBrush(Color.FromArgb(120, 0, 0, 0))
-                e.Graphics.FillRectangle(brush, 0, 0, Me.Width, Me.Height)
+    End Sub
+
+    Private Sub 绘制禁用遮罩_D2D(rt As ID2D1RenderTarget)
+        Dim s As Single = DpiScale()
+        Dim pad As Padding = Me.Padding
+        Dim rect As New RectangleF(pad.Left * s, pad.Top * s,
+                                   Math.Max(0, Me.Width - (pad.Left + pad.Right) * s),
+                                   Math.Max(0, Me.Height - (pad.Top + pad.Bottom) * s))
+        If rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        Dim r As Single = 圆角半径值 * s
+        If r > 0 Then
+            Using geo = RectangleRenderer.创建圆角矩形几何(rect, r)
+                RectangleRenderer.绘制圆角背景_D2D(rt, geo, rect, 禁用时遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Vertical)
+            End Using
+        Else
+            RectangleRenderer.绘制矩形背景_D2D(rt, rect, 禁用时遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Vertical)
+        End If
+    End Sub
+
+    Private Sub 绘制文字内容_D2D(rt As ID2D1RenderTarget)
+        Dim s As Single = DpiScale()
+        Dim pad As Padding = Me.Padding
+        Dim rect As New RectangleF(pad.Left * s, pad.Top * s,
+                                   Math.Max(0, Me.Width - (pad.Left + pad.Right) * s),
+                                   Math.Max(0, Me.Height - (pad.Top + pad.Bottom) * s))
+        If rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+
+        Dim innerPad As Single = 核心内边距值 * s
+        Dim inner As New RectangleF(rect.X + innerPad, rect.Y + innerPad,
+                                    Math.Max(0, rect.Width - innerPad * 2),
+                                    Math.Max(0, rect.Height - innerPad * 2))
+        If inner.Width <= 0 OrElse inner.Height <= 0 Then Return
+
+        Dim fontHeight As Single = 文本像素高度(s)
+        Dim tp As Padding = 文字内边距值
+        Dim stripH As Single = fontHeight + (tp.Top + tp.Bottom) * s
+        Dim topText As String = 构造槽位文字(TextSlotPosition.Top)
+        Dim bottomText As String = 构造槽位文字(TextSlotPosition.Bottom)
+        Dim topStripH As Single = If(Not String.IsNullOrEmpty(topText), Math.Min(stripH, inner.Height), 0)
+        Dim bottomStripH As Single = If(Not String.IsNullOrEmpty(bottomText), Math.Min(stripH, Math.Max(0, inner.Height - topStripH)), 0)
+        Dim graphRect As New RectangleF(inner.X, inner.Y + topStripH,
+                                        inner.Width,
+                                        Math.Max(0, inner.Height - topStripH - bottomStripH))
+
+        If topStripH > 0 Then
+            绘制文字_D2D(rt, New RectangleF(inner.X, inner.Y, inner.Width, topStripH), topText, s, 顶部文字对齐值)
+        End If
+        If bottomStripH > 0 Then
+            绘制文字_D2D(rt, New RectangleF(inner.X, inner.Bottom - bottomStripH, inner.Width, bottomStripH), bottomText, s, 底部文字对齐值)
+        End If
+        If 启用悬停读数值 AndAlso _悬停有效 AndAlso graphRect.Height >= 2 AndAlso graphRect.Width >= 2 Then
+            绘制悬停读数_D2D(rt, graphRect, s)
+        End If
+    End Sub
+
+    Private Function 文本像素高度(s As Single) As Single
+        Return Me.Font.SizeInPoints * (96.0F / 72.0F) * s
+    End Function
+
+    Private Shared Function 转文本水平对齐(a As ContentAlignment) As TextAlignment
+        If a = ContentAlignment.TopLeft OrElse a = ContentAlignment.MiddleLeft OrElse a = ContentAlignment.BottomLeft Then Return TextAlignment.Leading
+        If a = ContentAlignment.TopRight OrElse a = ContentAlignment.MiddleRight OrElse a = ContentAlignment.BottomRight Then Return TextAlignment.Trailing
+        Return TextAlignment.Center
+    End Function
+
+    Private Shared Function 转文本垂直对齐(a As ContentAlignment) As ParagraphAlignment
+        If a = ContentAlignment.TopLeft OrElse a = ContentAlignment.TopCenter OrElse a = ContentAlignment.TopRight Then Return ParagraphAlignment.Near
+        If a = ContentAlignment.BottomLeft OrElse a = ContentAlignment.BottomCenter OrElse a = ContentAlignment.BottomRight Then Return ParagraphAlignment.Far
+        Return ParagraphAlignment.Center
+    End Function
+
+    Private Sub 绘制文字_D2D(rt As ID2D1RenderTarget, inner As RectangleF, text As String, s As Single, align As ContentAlignment)
+        If String.IsNullOrEmpty(text) Then Return
+        Dim tp As Padding = 文字内边距值
+        Dim textRect As New RectangleF(
+            inner.X + tp.Left * s,
+            inner.Y + tp.Top * s,
+            Math.Max(0, inner.Width - (tp.Left + tp.Right) * s),
+            Math.Max(0, inner.Height - (tp.Top + tp.Bottom) * s))
+        If textRect.Width <= 0 OrElse textRect.Height <= 0 Then Return
+
+        Dim weight As FontWeight = If(Me.Font.Bold, FontWeight.Bold, FontWeight.Normal)
+        Dim style As FontStyle = If(Me.Font.Italic, FontStyle.Italic, FontStyle.Normal)
+        Dim fmt = _textFormatCache.Get(Me.Font.FontFamily.Name, weight, style, 文本像素高度(s),
+                                       转文本水平对齐(align), 转文本垂直对齐(align), True)
+        Using layout = D2DHelper.GetDWriteFactory().CreateTextLayout(If(text, ""), fmt, textRect.Width, textRect.Height)
+            Using b = rt.CreateSolidColorBrush(D2DHelper.ToColor4(Me.ForeColor))
+                rt.DrawTextLayout(New Vector2(textRect.X, textRect.Y), layout, b)
+            End Using
+        End Using
+    End Sub
+
+    Private Sub 绘制悬停读数_D2D(rt As ID2D1RenderTarget, graphRect As RectangleF, s As Single)
+        Dim hist = 获取历史快照()
+        Dim n As Integer = hist.Length
+        If n < 1 Then Return
+        Dim idx As Integer = 样本索引从X坐标(_悬停X, graphRect)
+        If idx < 0 OrElse idx >= n Then Return
+        Dim hp = hist(idx)
+        Dim total As ULong = hp.TotalBytes
+        If total = 0UL Then Return
+
+        Dim cap As Integer = Math.Max(2, 记录长度值)
+        Dim step_ As Single = graphRect.Width / CSng(cap - 1)
+        Dim xAtSample As Single = graphRect.Right - CSng(n - 1 - idx) * step_
+
+        If 悬停线颜色值.A > 0 Then
+            Using b = rt.CreateSolidColorBrush(D2DHelper.ToColor4(悬停线颜色值))
+                rt.DrawLine(New Vector2(xAtSample, graphRect.Top), New Vector2(xAtSample, graphRect.Bottom), b, Math.Max(1.0F, 悬停线粗细值 * s))
             End Using
         End If
+
+        Dim lines As New List(Of (label As String, value As String)) From {
+            (RamMonitorStrings.InUse, 格式化字节(hp.InUseBytes)),
+            (RamMonitorStrings.Standby, 格式化字节(hp.StandbyBytes)),
+            (RamMonitorStrings.Available, 格式化字节(hp.FreeBytes + hp.StandbyBytes))
+        }
+
+        Dim weight As FontWeight = If(Me.Font.Bold, FontWeight.Bold, FontWeight.Normal)
+        Dim style As FontStyle = If(Me.Font.Italic, FontStyle.Italic, FontStyle.Normal)
+        Dim fmt = _textFormatCache.Get(Me.Font.FontFamily.Name, weight, style, 文本像素高度(s), TextAlignment.Leading, ParagraphAlignment.Near, False)
+        Dim lineH As Single = 文本像素高度(s)
+        Dim maxLabel As Single = 0, maxValue As Single = 0
+        For i As Integer = 0 To lines.Count - 1
+            maxLabel = Math.Max(maxLabel, 测量单行文字宽度(fmt, lines(i).label))
+            maxValue = Math.Max(maxValue, 测量单行文字宽度(fmt, lines(i).value))
+        Next
+
+        Dim panelPad As Single = 6 * s
+        Dim gap As Single = 4 * s
+        Dim innerGap As Single = 6 * s
+        Dim panelW As Single = panelPad * 2 + maxLabel + innerGap + maxValue
+        Dim panelH As Single = panelPad * 2 + lineH * lines.Count
+        Dim showOnLeft As Boolean = (xAtSample - gap - panelW) >= graphRect.Left
+        Dim panelX As Single = If(showOnLeft, xAtSample - gap - panelW, xAtSample + gap)
+        If Not showOnLeft AndAlso panelX + panelW > graphRect.Right Then panelX = graphRect.Right - panelW
+        If panelX < graphRect.Left Then panelX = graphRect.Left
+        Dim panelY As Single = graphRect.Top + (graphRect.Height - panelH) / 2.0F
+        If panelY < graphRect.Top Then panelY = graphRect.Top
+        If panelY + panelH > graphRect.Bottom Then panelY = graphRect.Bottom - panelH
+        Dim panelRect As New RectangleF(panelX, panelY, panelW, panelH)
+
+        If 悬停面板背景值.A > 0 Then
+            Using b = rt.CreateSolidColorBrush(D2DHelper.ToColor4(悬停面板背景值))
+                rt.FillRectangle(D2DHelper.ToD2DRect(panelRect), b)
+            End Using
+        End If
+        If 悬停面板边框值.A > 0 Then
+            Using b = rt.CreateSolidColorBrush(D2DHelper.ToColor4(悬停面板边框值))
+                rt.DrawRectangle(D2DHelper.ToD2DRect(panelRect), b, 1.0F)
+            End Using
+        End If
+
+        Dim fore As Color = If(悬停面板前景值.A > 0, 悬停面板前景值, Me.ForeColor)
+        Using b = rt.CreateSolidColorBrush(D2DHelper.ToColor4(fore))
+            For i As Integer = 0 To lines.Count - 1
+                Dim rowY As Single = panelRect.Y + panelPad + i * lineH
+                If showOnLeft Then
+                    绘制悬停单行_D2D(rt, fmt, b, lines(i).value, panelRect.Right - panelPad - maxLabel - innerGap - maxValue, rowY, maxValue, lineH)
+                    绘制悬停单行_D2D(rt, fmt, b, lines(i).label, panelRect.Right - panelPad - maxLabel, rowY, maxLabel, lineH)
+                Else
+                    绘制悬停单行_D2D(rt, fmt, b, lines(i).label, panelRect.X + panelPad, rowY, maxLabel, lineH)
+                    绘制悬停单行_D2D(rt, fmt, b, lines(i).value, panelRect.X + panelPad + maxLabel + innerGap, rowY, maxValue, lineH)
+                End If
+            Next
+        End Using
+    End Sub
+
+    Private Shared Function 测量单行文字宽度(fmt As IDWriteTextFormat, text As String) As Single
+        Using layout = D2DHelper.GetDWriteFactory().CreateTextLayout(If(text, ""), fmt, 10000.0F, 1000.0F)
+            Return CSng(Math.Ceiling(layout.Metrics.WidthIncludingTrailingWhitespace))
+        End Using
+    End Function
+
+    Private Shared Sub 绘制悬停单行_D2D(rt As ID2D1RenderTarget, fmt As IDWriteTextFormat, brush As ID2D1Brush,
+                                      text As String, x As Single, y As Single, w As Single, h As Single)
+        If w <= 0 OrElse h <= 0 Then Return
+        Using layout = D2DHelper.GetDWriteFactory().CreateTextLayout(If(text, ""), fmt, w, h)
+            rt.DrawTextLayout(New Vector2(x, y), layout, brush)
+        End Using
     End Sub
 
     Private Sub 绘制图形内容(g As Graphics, drawGfx As Boolean, drawText As Boolean)
@@ -649,7 +991,7 @@ Public Class RamMonitor
         ' 线条：只画 "总占用 = 已用 + 已修改 + 备用" 的顶线
         If 图表线条颜色值.A > 0 AndAlso 图表线条粗细值 > 0 Then
             Using p As New Pen(图表线条颜色值, 图表线条粗细值 * s)
-                p.LineJoin = LineJoin.Round
+                p.LineJoin = System.Drawing.Drawing2D.LineJoin.Round
                 g.DrawLines(p, standbyTop)
             End Using
         End If
@@ -795,7 +1137,7 @@ Public Class RamMonitor
         If 圆角半径值 <= 0 Then Return Nothing
         Dim old As Region = g.Clip
         Using path = 构造圆角路径(rect, 圆角半径值 * s)
-            g.SetClip(path, CombineMode.Intersect)
+            g.SetClip(path, System.Drawing.Drawing2D.CombineMode.Intersect)
         End Using
         Return old
     End Function
@@ -973,6 +1315,13 @@ Public Class RamMonitor
     Protected Overrides Sub OnHandleDestroyed(e As EventArgs)
         采样定时器.Stop()
         采样定时器.Dispose()
+        Try : _ssaaCache.Dispose() : Catch : End Try
+        Try : _brushCache.Dispose() : Catch : End Try
+        Try : _textFormatCache.Dispose() : Catch : End Try
+        If _dcRT IsNot Nothing Then
+            Try : _dcRT.Dispose() : Catch : End Try
+            _dcRT = Nothing
+        End If
         MyBase.OnHandleDestroyed(e)
     End Sub
 
@@ -1085,6 +1434,17 @@ Public Class RamMonitor
         End Get
         Set(value As Color)
             SetValue(核心背景颜色值, value)
+        End Set
+    End Property
+
+    Private 禁用时遮罩颜色 As Color = Color.FromArgb(120, 0, 0, 0)
+    <Category("LakeUI"), Description("禁用（Enabled = False）时覆盖在主体区域上的遮罩颜色（受圆角裁剪，不影响圆角外的透明区域）。"), DefaultValue(GetType(Color), "120, 0, 0, 0"), Browsable(True)>
+    Public Property DisabledOverlayColor As Color
+        Get
+            Return 禁用时遮罩颜色
+        End Get
+        Set(value As Color)
+            SetValue(禁用时遮罩颜色, value)
         End Set
     End Property
 
@@ -1518,6 +1878,25 @@ Public Class RamMonitor
         End Get
         Set(value As Class1.SuperSamplingScaleEnum)
             SetValue(超采样倍率, value)
+        End Set
+    End Property
+
+    Private _backgroundSource As Control = Nothing
+    ''' <summary>
+    ''' 背景采样源（超容器背景映射）。透明背景模式下用于采样父级或指定控件作为底图。
+    ''' </summary>
+    <Category("LakeUI"),
+     Description("背景采样源（超容器背景映射）。设置后将跨越任意层级直接采样此控件的绘制内容作为透明背景；为空时自动选择首个不透明祖先。"),
+     DefaultValue(GetType(Control), Nothing), Browsable(True)>
+    Public Property BackgroundSource As Control
+        Get
+            Return _backgroundSource
+        End Get
+        Set(value As Control)
+            If _backgroundSource IsNot value Then
+                _backgroundSource = value
+                Me.Invalidate()
+            End If
         End Set
     End Property
 #End Region

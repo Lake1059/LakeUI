@@ -1,5 +1,6 @@
 ﻿Imports System.ComponentModel
 Imports System.Drawing.Drawing2D
+Imports D2D = Vortice.Direct2D1
 
 ''' <summary>
 ''' 像素级缩放图片框控件，使用最近邻插值保持像素清晰。
@@ -386,7 +387,7 @@ Public Class PixelPictureBox
         Dim srcY0 As Integer = cornerY - viewRadius
 
         Using g As Graphics = Graphics.FromImage(bmp)
-            g.InterpolationMode = InterpolationMode.NearestNeighbor
+            g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.NearestNeighbor
             g.PixelOffsetMode = PixelOffsetMode.Half
             g.SmoothingMode = SmoothingMode.None
             g.Clear(背景颜色)
@@ -428,6 +429,24 @@ Public Class PixelPictureBox
 #End Region
 
 #Region "内部状态"
+
+    Private _dcRT As D2D.ID2D1DCRenderTarget
+    Private ReadOnly _ssaaCache As New D2DHelper.BitmapRTCache()
+    Private ReadOnly _imageCache As New D2DHelper.D2DBitmapCache()
+
+    Private Function GetOrCreateDCRenderTarget() As D2D.ID2D1DCRenderTarget
+        If _dcRT Is Nothing Then _dcRT = D2DHelper.CreateDCRenderTarget()
+        Return _dcRT
+    End Function
+
+    Private Sub DisposeD2DResources()
+        Try : _ssaaCache.Dispose() : Catch : End Try
+        Try : _imageCache.Dispose() : Catch : End Try
+        If _dcRT IsNot Nothing Then
+            Try : _dcRT.Dispose() : Catch : End Try
+            _dcRT = Nothing
+        End If
+    End Sub
 
     Private _zoomFactor As Single = 0
     Private _minZoom As Single = 1
@@ -738,28 +757,31 @@ Public Class PixelPictureBox
 
         更新滚动区域()
 
-        Dim g As Graphics = e.Graphics
-        绘制背景与边框(g)
-        绘制图片(g)
-        绘制框选(g)
-        绘制垂直滚动条(g)
-        绘制水平滚动条(g)
+        Using scope = D2DHelper.BeginPaint(e, Me, GetOrCreateDCRenderTarget(), 1, _ssaaCache)
+            Dim rt As D2D.ID2D1RenderTarget = scope.GraphicsRenderTarget
+            绘制背景与边框_D2D(rt)
+            绘制图片_D2D(rt)
+            绘制框选_D2D(rt)
+            绘制垂直滚动条_D2D(rt)
+            绘制水平滚动条_D2D(rt)
+            scope.FlushGraphics()
+        End Using
     End Sub
 
-    Private Sub 绘制背景与边框(g As Graphics)
+    Private Sub 绘制背景与边框_D2D(rt As D2D.ID2D1RenderTarget)
         Dim s As Single = DpiScale()
         Dim boundsRect As New RectangleF(0, 0, Me.Width, Me.Height)
         If 边框宽度 > 0 Then
             Dim half As Single = 边框宽度 * s / 2.0F
             boundsRect.Inflate(-half, -half)
         End If
-        Using br As New SolidBrush(背景颜色)
-            g.FillRectangle(br, boundsRect)
-        End Using
-        RectangleRenderer.绘制矩形边框(g, boundsRect, 边框颜色, 边框宽度 * s)
+        If 背景颜色.A > 0 Then
+            RectangleRenderer.绘制矩形背景_D2D(rt, boundsRect, 背景颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal)
+        End If
+        RectangleRenderer.绘制矩形边框_D2D(rt, boundsRect, 边框颜色, 边框宽度 * s)
     End Sub
 
-    Private Sub 绘制图片(g As Graphics)
+    Private Sub 绘制图片_D2D(rt As D2D.ID2D1RenderTarget)
         If _image Is Nothing Then Return
 
         Dim bw As Integer = CInt(Math.Round(边框宽度 * DpiScale()))
@@ -783,19 +805,18 @@ Public Class PixelPictureBox
         Dim destRect As New RectangleF(destX, destY, exactW, exactH)
 
         Dim clipRect As New Rectangle(bw, bw, viewport.Width, viewport.Height)
-        Using oldClip As Region = g.Clip.Clone()
-            g.SetClip(clipRect, CombineMode.Intersect)
-
-            g.InterpolationMode = InterpolationMode.NearestNeighbor
-            g.PixelOffsetMode = PixelOffsetMode.Half
-            g.SmoothingMode = SmoothingMode.None
-            g.DrawImage(_image, destRect, New RectangleF(0, 0, _image.Width, _image.Height), GraphicsUnit.Pixel)
-
-            g.Clip = oldClip
-        End Using
+        Dim bmp = _imageCache.GetBitmap(rt, _image)
+        If bmp Is Nothing Then Return
+        rt.PushAxisAlignedClip(New Vortice.RawRectF(clipRect.Left, clipRect.Top, clipRect.Right, clipRect.Bottom), D2D.AntialiasMode.Aliased)
+        Try
+            Dim srcRect As New RectangleF(0, 0, _image.Width, _image.Height)
+            rt.DrawBitmap(bmp, D2DHelper.ToD2DRect(destRect), 1.0F, D2D.BitmapInterpolationMode.NearestNeighbor, D2DHelper.ToD2DRect(srcRect))
+        Finally
+            rt.PopAxisAlignedClip()
+        End Try
     End Sub
 
-    Private Sub 绘制框选(g As Graphics)
+    Private Sub 绘制框选_D2D(rt As D2D.ID2D1RenderTarget)
         If Not _showSelection Then Return
         If Not HasSelection Then Return
 
@@ -809,45 +830,42 @@ Public Class PixelPictureBox
         Dim snapB As Single = CSng(Math.Round(selScreen.Bottom))
         Dim snapped As New RectangleF(snapX, snapY, snapR - snapX, snapB - snapY)
 
-        Using br As New SolidBrush(框选填充颜色)
-            g.FillRectangle(br, snapped)
+        Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(框选填充颜色))
+            rt.FillRectangle(D2DHelper.ToD2DRect(snapped), br)
         End Using
 
         ' 边框居中到像素边缘：向内偏移半个线宽
         Dim halfPen As Single = 框选边框宽度 / 2.0F
         Dim borderRect As New RectangleF(snapped.X + halfPen, snapped.Y + halfPen,
                                           snapped.Width - 框选边框宽度, snapped.Height - 框选边框宽度)
-        Dim oldSmooth = g.SmoothingMode
-        g.SmoothingMode = SmoothingMode.None
-        Using pen As New Pen(框选边框颜色, 框选边框宽度)
-            pen.Alignment = PenAlignment.Center
-            g.DrawRectangle(pen, borderRect.X, borderRect.Y, borderRect.Width, borderRect.Height)
-        End Using
-        g.SmoothingMode = oldSmooth
+        If borderRect.Width > 0 AndAlso borderRect.Height > 0 Then
+            RectangleRenderer.绘制矩形边框_D2D(rt, borderRect, 框选边框颜色, 框选边框宽度)
+        End If
 
-        Using handleBrush As New SolidBrush(手柄颜色), handlePen As New Pen(手柄边框颜色, 1)
+        Using handleBrush = rt.CreateSolidColorBrush(D2DHelper.ToColor4(手柄颜色)),
+              handlePen = rt.CreateSolidColorBrush(D2DHelper.ToColor4(手柄边框颜色))
             For Each hp As HandlePosition In AllHandlePositions
                 Dim hr As RectangleF = 获取手柄矩形(hp)
                 If hr.IsEmpty Then Continue For
                 Dim hSnap As New RectangleF(CSng(Math.Round(hr.X)), CSng(Math.Round(hr.Y)),
                                              CSng(Math.Round(hr.Width)), CSng(Math.Round(hr.Height)))
-                g.FillRectangle(handleBrush, hSnap)
-                g.DrawRectangle(handlePen, hSnap.X, hSnap.Y, hSnap.Width, hSnap.Height)
+                rt.FillRectangle(D2DHelper.ToD2DRect(hSnap), handleBrush)
+                rt.DrawRectangle(D2DHelper.ToD2DRect(hSnap), handlePen, 1.0F)
             Next
         End Using
     End Sub
 
-    Private Sub 绘制垂直滚动条(g As Graphics)
+    Private Sub 绘制垂直滚动条_D2D(rt As D2D.ID2D1RenderTarget)
         If _vScrollBar.TrackRect.IsEmpty Then Return
         Dim s As Single = DpiScale()
-        _vScrollBar.Draw(g, Me.Width, Me.Height, CInt(Math.Round(边框宽度 * s)), 0,
+        _vScrollBar.Draw_D2D(rt, Me.Width, Me.Height, CInt(Math.Round(边框宽度 * s)), 0,
             CInt(Math.Round(滚动条宽度 * s)), 滚动条轨道颜色, 滚动条滑块颜色, 滚动条悬停颜色)
     End Sub
 
-    Private Sub 绘制水平滚动条(g As Graphics)
+    Private Sub 绘制水平滚动条_D2D(rt As D2D.ID2D1RenderTarget)
         If _hScrollBar.TrackRect.IsEmpty Then Return
         Dim s As Single = DpiScale()
-        _hScrollBar.DrawHorizontal(g, Me.Width, Me.Height, CInt(Math.Round(边框宽度 * s)), 0,
+        _hScrollBar.DrawHorizontal_D2D(rt, Me.Width, Me.Height, CInt(Math.Round(边框宽度 * s)), 0,
             CInt(Math.Round(滚动条宽度 * s)), 滚动条轨道颜色, 滚动条滑块颜色, 滚动条悬停颜色)
     End Sub
 

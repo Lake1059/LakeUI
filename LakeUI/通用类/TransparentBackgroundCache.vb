@@ -78,17 +78,32 @@ Friend Module TransparentBackgroundCache
     ''' </summary>
     Private Const DirtyMinIntervalMs As Integer = 120
 
+    ''' <summary>
+    ''' 缓存总字节预算（GDI + D2D 合并计算）。重建一张新位图后，按 LRU 顺序淘汰最久未访问的 entry，
+    ''' 直到总占用回落到该预算下。淘汰只释放位图（GDI/D2D），保留 entry 和事件订阅，下次访问会重建。
+    ''' 64MB 在普通桌面应用上能容纳一两个 4K 全屏 source；密集多控件场景靠 LRU 自然轮换。
+    ''' </summary>
+    Private Const MaxCacheBytes As Long = 64L * 1024L * 1024L
+
     Private Class Entry
         Public Bmp As Bitmap
         Public Width As Integer
         Public Height As Integer
         Public Stamp As Long
+        ''' <summary>最近一次被 Acquire / 命中的时间戳，用于 LRU 淘汰。</summary>
+        Public LastAccessMs As Long
         ''' <summary>事件驱动的"脏"标记：source.Invalidated / Resize 触发后置 True，下次取样重建。</summary>
         Public Dirty As Boolean = True
         ''' <summary>高优先级脏标记：Resize 或显式 Invalidate(source) 时置位，绕过 DirtyMinIntervalMs 节流。</summary>
         Public ForceDirty As Boolean = True
         ''' <summary>正在重建该 source 的位图：用于阻断递归（child 的 BackgroundSource 指向自身祖先时）。</summary>
         Public Painting As Boolean
+        ''' <summary>
+        ''' 该 source 是否曾被 GDI 路径（DrawSourceRegion / PaintBackgroundFor）消费过。
+        ''' 一旦置 True 即单调保留 GDI 位图，避免在两条路径间来回分配/释放。
+        ''' 仅 D2D 路径消费的 source，重建上传后会立即释放 GDI 位图，使其稳态只占显存。
+        ''' </summary>
+        Public HasGdiConsumer As Boolean
         ''' <summary>跨帧缓存的 D2D 位图（与 Bmp 同步重建），避免每帧 LockBits + CreateBitmap 上传。</summary>
         Public D2DBmp As Vortice.Direct2D1.ID2D1Bitmap
         Public D2DStamp As Long
@@ -124,7 +139,7 @@ Friend Module TransparentBackgroundCache
     ''' 一般控件应使用 <see cref="PaintBackgroundFor"/>；此方法保留给需要自定义偏移/裁切的特殊场景。
     ''' </summary>
     Public Sub DrawSourceRegion(g As Graphics, source As Control, srcRect As Rectangle, destRect As Rectangle)
-        Dim bmp As Bitmap = AcquireSourceBitmap(source)
+        Dim bmp As Bitmap = AcquireSourceBitmap(source, markGdiConsumer:=True)
         If bmp Is Nothing Then Return
         g.DrawImage(bmp, destRect, srcRect, GraphicsUnit.Pixel)
     End Sub
@@ -149,31 +164,62 @@ Friend Module TransparentBackgroundCache
     Public Sub DrawSourceRegion_D2D(rt As Vortice.Direct2D1.ID2D1RenderTarget, source As Control,
                                      srcRect As Rectangle, destRect As Rectangle)
         If rt Is Nothing OrElse source Is Nothing Then Return
-        Dim bmp As Bitmap = AcquireSourceBitmap(source)
-        If bmp Is Nothing Then Return
+        Dim sw As Integer = source.Width, sh As Integer = source.Height
+        If sw <= 0 OrElse sh <= 0 Then Return
 
+        ' 快速路径：稳态下只占显存。entry 已存在，D2DBmp 仍属同一 RT，且未脏、TTL 未过、尺寸一致，
+        ' 直接 DrawBitmap，跳过 GDI 位图分配 / LockBits / CreateBitmapFromGdi 全套。
+        Dim now As Long = _sw.ElapsedMilliseconds
+        Dim d2dBmp As Vortice.Direct2D1.ID2D1Bitmap = Nothing
         Dim entry As Entry = Nothing
         SyncLock _cache
-            _cache.TryGetValue(source, entry)
-        End SyncLock
-        If entry Is Nothing Then Return
-
-        Dim d2dBmp As Vortice.Direct2D1.ID2D1Bitmap = Nothing
-        Dim ownerRtAlive As Boolean =
-            entry.D2DOwnerRT IsNot Nothing AndAlso ReferenceEquals(entry.D2DOwnerRT.Target, rt)
-        If entry.D2DBmp IsNot Nothing AndAlso ownerRtAlive AndAlso entry.D2DStamp = entry.Stamp Then
-            d2dBmp = entry.D2DBmp
-        Else
-            ' GDI 位图已刷新或 RT 改变 → 重新上传一次。
-            If entry.D2DBmp IsNot Nothing Then
-                Try : entry.D2DBmp.Dispose() : Catch : End Try
-                entry.D2DBmp = Nothing
+            If _cache.TryGetValue(source, entry) Then
+                Dim sizeOk As Boolean = (entry.Width = sw AndAlso entry.Height = sh)
+                Dim ownerRtAlive As Boolean =
+                    entry.D2DOwnerRT IsNot Nothing AndAlso ReferenceEquals(entry.D2DOwnerRT.Target, rt)
+                Dim canSkipDirty As Boolean = entry.Dirty AndAlso sizeOk AndAlso Not entry.ForceDirty AndAlso
+                    (now - entry.Stamp) < DirtyMinIntervalMs
+                If sizeOk AndAlso ownerRtAlive AndAlso entry.D2DBmp IsNot Nothing AndAlso
+                   entry.D2DStamp = entry.Stamp AndAlso
+                   (Not entry.Dirty OrElse canSkipDirty) AndAlso
+                   (now - entry.Stamp) <= CacheTtlMs Then
+                    d2dBmp = entry.D2DBmp
+                    entry.LastAccessMs = now
+                End If
             End If
-            d2dBmp = D2DHelper.CreateBitmapFromGdi(rt, bmp)
-            If d2dBmp Is Nothing Then Return
-            entry.D2DBmp = d2dBmp
-            entry.D2DStamp = entry.Stamp
-            entry.D2DOwnerRT = New WeakReference(rt)
+        End SyncLock
+
+        If d2dBmp Is Nothing Then
+            ' 慢速路径：必须重建 GDI 位图并重新上传到 D2D。
+            Dim bmp As Bitmap = AcquireSourceBitmap(source, markGdiConsumer:=False)
+            If bmp Is Nothing Then Return
+            SyncLock _cache
+                _cache.TryGetValue(source, entry)
+            End SyncLock
+            If entry Is Nothing Then Return
+
+            Dim ownerRtAlive As Boolean =
+                entry.D2DOwnerRT IsNot Nothing AndAlso ReferenceEquals(entry.D2DOwnerRT.Target, rt)
+            If entry.D2DBmp IsNot Nothing AndAlso ownerRtAlive AndAlso entry.D2DStamp = entry.Stamp Then
+                d2dBmp = entry.D2DBmp
+            Else
+                If entry.D2DBmp IsNot Nothing Then
+                    Try : entry.D2DBmp.Dispose() : Catch : End Try
+                    entry.D2DBmp = Nothing
+                End If
+                d2dBmp = D2DHelper.CreateBitmapFromGdi(rt, bmp)
+                If d2dBmp Is Nothing Then Return
+                entry.D2DBmp = d2dBmp
+                entry.D2DStamp = entry.Stamp
+                entry.D2DOwnerRT = New WeakReference(rt)
+            End If
+
+            ' C1：仅 D2D 消费者的 source，上传完成后立即释放 GDI 位图，稳态只占显存。
+            ' 一旦后续有 GDI 路径调用，HasGdiConsumer 会被置 True，不再走这条释放分支。
+            If Not entry.HasGdiConsumer AndAlso entry.Bmp IsNot Nothing Then
+                entry.Bmp.Dispose()
+                entry.Bmp = Nothing
+            End If
         End If
 
         rt.DrawBitmap(d2dBmp,
@@ -184,7 +230,11 @@ Friend Module TransparentBackgroundCache
     End Sub
 
     ''' <summary>取得 source 的最新缓存位图（按 TTL 重建）。返回 Nothing 表示当前不可采样。</summary>
-    Private Function AcquireSourceBitmap(source As Control) As Bitmap
+    ''' <param name="markGdiConsumer">
+    ''' True 表示调用方是 GDI 路径（DrawImage 需要原始 Bitmap），会单调置位 entry.HasGdiConsumer，
+    ''' 之后该 entry 的 GDI 位图不再被自动释放。False 表示 D2D 路径，重建上传后位图可能被丢弃。
+    ''' </param>
+    Private Function AcquireSourceBitmap(source As Control, markGdiConsumer As Boolean) As Bitmap
         If source Is Nothing Then Return Nothing
         Dim sw As Integer = source.Width, sh As Integer = source.Height
         If sw <= 0 OrElse sh <= 0 Then Return Nothing
@@ -195,6 +245,7 @@ Friend Module TransparentBackgroundCache
         SyncLock _cache
             If _cache.TryGetValue(source, entry) Then
                 If entry.Painting Then Return Nothing
+                If markGdiConsumer Then entry.HasGdiConsumer = True
                 Dim sizeOk As Boolean = (entry.Width = sw AndAlso entry.Height = sh AndAlso entry.Bmp IsNot Nothing)
                 If Not sizeOk Then entry.Dirty = True
                 ' 节流：Dirty 但距上次重建不到 DirtyMinIntervalMs 时仍视为命中（继续用旧底图）。
@@ -207,12 +258,17 @@ Friend Module TransparentBackgroundCache
                 End If
             Else
                 entry = New Entry()
+                If markGdiConsumer Then entry.HasGdiConsumer = True
                 _cache(source) = entry
                 AddHandler source.Disposed, AddressOf OnSourceDisposed
                 AddHandler source.Invalidated, AddressOf OnSourceInvalidated
                 AddHandler source.Resize, AddressOf OnSourceResized
             End If
-            If Not hit Then entry.Painting = True
+            If hit Then
+                entry.LastAccessMs = now
+            Else
+                entry.Painting = True
+            End If
         End SyncLock
 
         If Not hit Then
@@ -238,6 +294,7 @@ Friend Module TransparentBackgroundCache
                 ' 子控件 DrawImage 时把整层视为完全透明，视觉表现为"跳过本层、采样到更外层"。
                 ForceOpaqueAlpha(entry.Bmp)
                 entry.Stamp = now
+                entry.LastAccessMs = now
                 entry.Dirty = False
                 entry.ForceDirty = False
             Finally
@@ -245,10 +302,56 @@ Friend Module TransparentBackgroundCache
                     entry.Painting = False
                 End SyncLock
             End Try
+            EnforceBudget(source, now)
         End If
 
         Return entry.Bmp
     End Function
+
+    ''' <summary>
+    ''' 按 LRU 淘汰最久未访问的 entry，直到 GDI + D2D 总字节回落到 <see cref="MaxCacheBytes"/> 之下。
+    ''' 仅释放位图（保留 entry / 事件订阅），下次访问时会按需重建。跳过 Painting=True 与 protectedSource。
+    ''' </summary>
+    Private Sub EnforceBudget(protectedSource As Control, now As Long)
+        SyncLock _cache
+            Dim total As Long = 0
+            For Each kv In _cache
+                Dim e As Entry = kv.Value
+                If e.Bmp IsNot Nothing Then total += CLng(e.Width) * e.Height * 4L
+                If e.D2DBmp IsNot Nothing Then total += CLng(e.Width) * e.Height * 4L
+            Next
+            If total <= MaxCacheBytes Then Return
+
+            ' 收集可淘汰候选并按 LastAccess 升序排序
+            Dim victims As New List(Of KeyValuePair(Of Control, Entry))(_cache.Count)
+            For Each kv In _cache
+                If ReferenceEquals(kv.Key, protectedSource) Then Continue For
+                If kv.Value.Painting Then Continue For
+                If kv.Value.Bmp Is Nothing AndAlso kv.Value.D2DBmp Is Nothing Then Continue For
+                victims.Add(kv)
+            Next
+            victims.Sort(Function(a, b) a.Value.LastAccessMs.CompareTo(b.Value.LastAccessMs))
+
+            For Each kv In victims
+                If total <= MaxCacheBytes Then Exit For
+                Dim e As Entry = kv.Value
+                If e.Bmp IsNot Nothing Then
+                    total -= CLng(e.Width) * e.Height * 4L
+                    Try : e.Bmp.Dispose() : Catch : End Try
+                    e.Bmp = Nothing
+                End If
+                If e.D2DBmp IsNot Nothing Then
+                    total -= CLng(e.Width) * e.Height * 4L
+                    Try : e.D2DBmp.Dispose() : Catch : End Try
+                    e.D2DBmp = Nothing
+                    e.D2DOwnerRT = Nothing
+                End If
+                ' 标脏，下次访问会重建
+                e.Dirty = True
+                e.ForceDirty = True
+            Next
+        End SyncLock
+    End Sub
 
     ''' <summary>
     ''' 显式使指定控件的缓存失效。背景源自身的视觉重大变化（如换图/换主题）时调用，

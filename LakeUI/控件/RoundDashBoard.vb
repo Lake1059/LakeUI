@@ -1,5 +1,7 @@
 ﻿Imports System.ComponentModel
-Imports System.Drawing.Drawing2D
+Imports System.Numerics
+Imports Vortice.Direct2D1
+Imports Vortice.DirectWrite
 
 <DefaultEvent("ValueChanged")>
 Public Class RoundDashBoard
@@ -10,119 +12,146 @@ Public Class RoundDashBoard
         InitializeComponent()
     End Sub
 
+#Region "D2D 资源"
+    Private _dcRT As ID2D1DCRenderTarget
+    Private ReadOnly _ssaaCache As New D2DHelper.BitmapRTCache()
+    Private ReadOnly _textFormatCache As New D2DHelper.TextFormatCache()
+
+    Private Function GetOrCreateDCRenderTarget() As ID2D1DCRenderTarget
+        If _dcRT Is Nothing Then _dcRT = D2DHelper.CreateDCRenderTarget()
+        Return _dcRT
+    End Function
+
+    Protected Overrides Sub OnHandleDestroyed(e As EventArgs)
+        Try : _ssaaCache.Dispose() : Catch : End Try
+        Try : _textFormatCache.Dispose() : Catch : End Try
+        If _dcRT IsNot Nothing Then
+            Try : _dcRT.Dispose() : Catch : End Try
+            _dcRT = Nothing
+        End If
+        MyBase.OnHandleDestroyed(e)
+    End Sub
+#End Region
+
 #Region "绘制"
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
-        Dim _ssaa As Integer = If(Class1.GlobalSSAA > 1, Class1.GlobalSSAA, 超采样倍率)
-        If _ssaa > 1 Then
-            Using bmp As New Bitmap(Me.Width * _ssaa, Me.Height * _ssaa)
-                Using g As Graphics = Graphics.FromImage(bmp)
-                    g.ScaleTransform(_ssaa, _ssaa)
-                    绘制图形内容(g)
+        Dim ssaa As Integer = Math.Max(1, CInt(超采样倍率))
+        If Class1.GlobalSSAA <> Class1.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(Class1.GlobalSSAA))
+
+        Using scope = D2DHelper.BeginPaint(e, Me, GetOrCreateDCRenderTarget(), ssaa, _ssaaCache)
+            Dim gRT As ID2D1RenderTarget = scope.GraphicsRenderTarget
+            Dim dcRT As ID2D1DCRenderTarget = scope.DCRenderTarget
+
+            Dim 中心X As Single = 0
+            Dim 中心Y As Single = 0
+            Dim progress As Single = 动画助手.Progress
+            Dim hasContent As Boolean = 绘制图形内容_D2D(gRT, 中心X, 中心Y, progress)
+
+            scope.FlushGraphics()
+            If hasContent Then 绘制中心文字_D2D(dcRT, 中心X, 中心Y, progress)
+
+            If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
+                Using brush = dcRT.CreateSolidColorBrush(D2DHelper.ToColor4(禁用时遮罩颜色))
+                    dcRT.FillEllipse(New Ellipse(New Vector2(Me.Width / 2.0F, Me.Height / 2.0F), Math.Max(0, (Me.Width - 1) / 2.0F), Math.Max(0, (Me.Height - 1) / 2.0F)), brush)
                 End Using
-                e.Graphics.CompositingQuality = CompositingQuality.HighQuality
-                e.Graphics.InterpolationMode = InterpolationMode.HighQualityBicubic
-                e.Graphics.DrawImage(bmp, 0, 0, Me.Width, Me.Height)
-            End Using
-        Else
-            绘制图形内容(e.Graphics)
-        End If
-        If Not Enabled Then
-            Using brush As New SolidBrush(Color.FromArgb(120, 0, 0, 0))
-                e.Graphics.FillRectangle(brush, 0, 0, Me.Width, Me.Height)
-            End Using
-        End If
+            End If
+        End Using
     End Sub
 
-    Private Sub 绘制图形内容(g As Graphics)
-        g.SmoothingMode = SmoothingMode.AntiAlias
-        g.PixelOffsetMode = PixelOffsetMode.HighQuality
-        g.InterpolationMode = InterpolationMode.HighQualityBicubic
-
+    Private Function 绘制图形内容_D2D(rt As ID2D1RenderTarget, ByRef 中心X As Single, ByRef 中心Y As Single, ByRef progress As Single) As Boolean
         Dim s As Single = DpiScale()
 
         ' 计算 Padding 后的内容区域，并保持正方形
         Dim 内容宽 As Single = Me.Width - Padding.Left - Padding.Right
         Dim 内容高 As Single = Me.Height - Padding.Top - Padding.Bottom
         Dim 正方形边长 As Single = Math.Min(内容宽, 内容高)
-        Dim 中心X As Single = Padding.Left + 内容宽 / 2.0F
-        Dim 中心Y As Single = Padding.Top + 内容高 / 2.0F
+        中心X = Padding.Left + 内容宽 / 2.0F
+        中心Y = Padding.Top + 内容高 / 2.0F
         Dim 外径 As Single = 外圈半径
         Dim 厚度值 As Single = 圆弧厚度 * s
 
         ' 确保半径不超出正方形内容区域
         Dim 最大半径 As Single = 正方形边长 / 2.0F - 1
         If 外径 > 最大半径 Then 外径 = 最大半径
-        If 外径 < 1 Then Return
+        If 外径 < 1 Then Return False
 
         Dim 画笔宽度 As Single = Math.Min(厚度值, 外径)
         Dim 绘制半径 As Single = 外径 - 画笔宽度 / 2.0F
 
-        If 绘制半径 < 1 Then Return
+        If 绘制半径 < 1 Then Return False
 
         Dim 绘制矩形 As New RectangleF(中心X - 绘制半径, 中心Y - 绘制半径, 绘制半径 * 2, 绘制半径 * 2)
         Dim 实际起始角 As Single = 起始角度 - 90 ' GDI+ 0度在3点钟方向，减90使0度在12点钟方向
         Dim 实际扫过角 As Single = 表盘角度
 
         ' 绘制轨道背景
-        绘制圆弧(g, 绘制矩形, 轨道背景颜色, 画笔宽度, 实际起始角, 实际扫过角)
+        绘制圆弧_D2D(rt, 绘制矩形, 轨道背景颜色, 画笔宽度, 实际起始角, 实际扫过角)
 
         ' 绘制填充弧
-        Dim progress As Single = 动画助手.Progress
+        progress = 动画助手.Progress
         If progress > 0.001F Then
             Dim 填充扫过角 As Single = 实际扫过角 * progress
             If 填充渐变颜色 <> Color.Empty Then
-                绘制渐变弧(g, 绘制矩形, 画笔宽度, 实际起始角, 填充扫过角, 实际扫过角)
+                绘制渐变弧_D2D(rt, 绘制矩形, 画笔宽度, 实际起始角, 填充扫过角, 实际扫过角)
             Else
-                绘制圆弧(g, 绘制矩形, 填充基础颜色, 画笔宽度, 实际起始角, 填充扫过角)
+                绘制圆弧_D2D(rt, 绘制矩形, 填充基础颜色, 画笔宽度, 实际起始角, 填充扫过角)
             End If
 
-            If 显示指针 Then 绘制指针(g, 中心X, 中心Y, 外径, 画笔宽度, 实际起始角 + 填充扫过角, s)
+            If 显示指针 Then 绘制指针_D2D(rt, 中心X, 中心Y, 外径, 画笔宽度, 实际起始角 + 填充扫过角, s)
         End If
 
-        绘制中心文字(g, 中心X, 中心Y, progress)
-    End Sub
+        Return True
+    End Function
 
-    Private Shared Sub 绘制圆弧(g As Graphics, rect As RectangleF, color As Color, penWidth As Single, startAngle As Single, sweepAngle As Single)
-        Using pen As New Pen(color, penWidth)
-            pen.StartCap = LineCap.Round
-            pen.EndCap = LineCap.Round
-            If sweepAngle >= 360 Then
-                g.DrawEllipse(pen, rect)
-            Else
-                g.DrawArc(pen, rect, startAngle, sweepAngle)
-            End If
+    Private Shared Sub 绘制圆弧_D2D(rt As ID2D1RenderTarget, rect As RectangleF, color As Color, penWidth As Single, startAngle As Single, sweepAngle As Single)
+        If rt Is Nothing OrElse color.A <= 0 OrElse penWidth <= 0 OrElse sweepAngle <= 0 Then Return
+        Using brush = rt.CreateSolidColorBrush(D2DHelper.ToColor4(color))
+            Using strokeStyle = 创建线帽样式(CapStyle.Round, CapStyle.Round)
+                If sweepAngle >= 360 Then
+                    rt.DrawEllipse(创建椭圆(rect), brush, penWidth, strokeStyle)
+                Else
+                    Using geo = 创建圆弧几何(rect, startAngle, sweepAngle)
+                        rt.DrawGeometry(geo, brush, penWidth, strokeStyle)
+                    End Using
+                End If
+            End Using
         End Using
     End Sub
 
-    Private Sub 绘制指针(g As Graphics, 中心X As Single, 中心Y As Single, 外径 As Single, 画笔宽度 As Single, 角度 As Single, s As Single)
+    Private Sub 绘制指针_D2D(rt As ID2D1RenderTarget, 中心X As Single, 中心Y As Single, 外径 As Single, 画笔宽度 As Single, 角度 As Single, s As Single)
         Dim 指针角度弧度 As Double = 角度 * Math.PI / 180.0
         Dim cosVal As Single = CSng(Math.Cos(指针角度弧度))
         Dim sinVal As Single = CSng(Math.Sin(指针角度弧度))
         Dim 指针内半径 As Single = Math.Max(0, 外径 - 画笔宽度 - 指针长度值 * s)
         Dim 指针外半径 As Single = 外径 + 2
 
-        Using pen As New Pen(指针颜色值, 指针宽度值 * s)
-            pen.StartCap = LineCap.Round
-            pen.EndCap = LineCap.Round
-            g.DrawLine(pen,
-                       中心X + cosVal * 指针内半径, 中心Y + sinVal * 指针内半径,
-                       中心X + cosVal * 指针外半径, 中心Y + sinVal * 指针外半径)
+        Using brush = rt.CreateSolidColorBrush(D2DHelper.ToColor4(指针颜色值))
+            Using strokeStyle = 创建线帽样式(CapStyle.Round, CapStyle.Round)
+                rt.DrawLine(
+                    New Vector2(中心X + cosVal * 指针内半径, 中心Y + sinVal * 指针内半径),
+                    New Vector2(中心X + cosVal * 指针外半径, 中心Y + sinVal * 指针外半径),
+                    brush,
+                    指针宽度值 * s,
+                    strokeStyle)
+            End Using
         End Using
     End Sub
 
-    Private Sub 绘制中心文字(g As Graphics, 中心X As Single, 中心Y As Single, progress As Single)
+    Private Sub 绘制中心文字_D2D(rt As ID2D1DCRenderTarget, 中心X As Single, 中心Y As Single, progress As Single)
         If 中心文字模式 = CenterTextModeEnum.None Then Return
 
         Dim 文字内容 As String = 获取中心文字内容(progress)
         If String.IsNullOrEmpty(文字内容) Then Return
 
-        Dim textSize As SizeF = g.MeasureString(文字内容, Me.Font)
-        Dim textRect As New Rectangle(
-            CInt(中心X - textSize.Width / 2.0F),
-            CInt(中心Y - textSize.Height / 2.0F),
-            CInt(Math.Ceiling(textSize.Width)),
-            CInt(Math.Ceiling(textSize.Height)))
-        TextRenderer.DrawText(g, 文字内容, Me.Font, textRect, Me.ForeColor, TextFormatFlags.HorizontalCenter Or TextFormatFlags.VerticalCenter Or TextFormatFlags.NoPadding)
+        Dim s As Single = DpiScale()
+        Dim sizePx As Single = Me.Font.SizeInPoints * (96.0F / 72.0F) * s
+        Dim weight As Vortice.DirectWrite.FontWeight = If(Me.Font.Bold, Vortice.DirectWrite.FontWeight.Bold, Vortice.DirectWrite.FontWeight.Normal)
+        Dim style As Vortice.DirectWrite.FontStyle = If(Me.Font.Italic, Vortice.DirectWrite.FontStyle.Italic, Vortice.DirectWrite.FontStyle.Normal)
+        Dim fmt = _textFormatCache.Get(Me.Font.FontFamily.Name, weight, style, sizePx, TextAlignment.Center, ParagraphAlignment.Center, False)
+        Dim textRect As New Vortice.Mathematics.Rect(中心X - Me.Width / 2.0F, 中心Y - Me.Height / 2.0F, Me.Width, Me.Height)
+        Using brush = rt.CreateSolidColorBrush(D2DHelper.ToColor4(Me.ForeColor))
+            rt.DrawText(文字内容, fmt, textRect, brush, DrawTextOptions.None)
+        End Using
     End Sub
 
     Private Function 获取中心文字内容(progress As Single) As String
@@ -139,7 +168,8 @@ Public Class RoundDashBoard
     End Function
 #End Region
 
-    Private Sub 绘制渐变弧(g As Graphics, rect As RectangleF, penWidth As Single, startAngle As Single, fillSweep As Single, totalSweep As Single)
+    Private Sub 绘制渐变弧_D2D(rt As ID2D1RenderTarget, rect As RectangleF, penWidth As Single, startAngle As Single, fillSweep As Single, totalSweep As Single)
+        If rt Is Nothing OrElse penWidth <= 0 OrElse fillSweep <= 0 Then Return
         Const 步进角度 As Single = 2.0F
         Dim 段数 As Integer = Math.Max(1, CInt(Math.Ceiling(fillSweep / 步进角度)))
         Dim 每段角度 As Single = fillSweep / 段数
@@ -162,13 +192,58 @@ Public Class RoundDashBoard
             渐变比例 = Math.Max(0, Math.Min(1, 渐变比例))
 
             Dim c As Color = 颜色插值(填充基础颜色, 填充渐变颜色, 渐变比例)
-            Using pen As New Pen(c, penWidth)
-                pen.StartCap = If(i = 0, LineCap.Round, LineCap.Flat)
-                pen.EndCap = If(i = 段数 - 1, LineCap.Round, LineCap.Flat)
-                g.DrawArc(pen, rect, 段起始角, 段跨度)
+            Using brush = rt.CreateSolidColorBrush(D2DHelper.ToColor4(c))
+                Using strokeStyle = 创建线帽样式(If(i = 0, CapStyle.Round, CapStyle.Flat), If(i = 段数 - 1, CapStyle.Round, CapStyle.Flat))
+                    Using geo = 创建圆弧几何(rect, 段起始角, 段跨度)
+                        rt.DrawGeometry(geo, brush, penWidth, strokeStyle)
+                    End Using
+                End Using
             End Using
         Next
     End Sub
+
+    Private Shared Function 创建椭圆(rect As RectangleF) As Ellipse
+        Return New Ellipse(New Vector2(rect.X + rect.Width / 2.0F, rect.Y + rect.Height / 2.0F), rect.Width / 2.0F, rect.Height / 2.0F)
+    End Function
+
+    Private Shared Function 创建圆弧几何(rect As RectangleF, startAngle As Single, sweepAngle As Single) As ID2D1PathGeometry
+        Dim rx As Single = rect.Width / 2.0F
+        Dim ry As Single = rect.Height / 2.0F
+        Dim cx As Single = rect.X + rx
+        Dim cy As Single = rect.Y + ry
+        Dim startRad As Double = startAngle * Math.PI / 180.0
+        Dim endRad As Double = (startAngle + sweepAngle) * Math.PI / 180.0
+        Dim startPoint As New Vector2(cx + CSng(Math.Cos(startRad)) * rx, cy + CSng(Math.Sin(startRad)) * ry)
+        Dim endPoint As New Vector2(cx + CSng(Math.Cos(endRad)) * rx, cy + CSng(Math.Sin(endRad)) * ry)
+
+        Dim path As ID2D1PathGeometry = D2DHelper.GetD2DFactory().CreatePathGeometry()
+        Dim sink As ID2D1GeometrySink = path.Open()
+        Try
+            sink.BeginFigure(startPoint, FigureBegin.Hollow)
+            sink.AddArc(New ArcSegment With {
+                .Point = endPoint,
+                .Size = New Vortice.Mathematics.Size(rx, ry),
+                .RotationAngle = 0,
+                .SweepDirection = SweepDirection.Clockwise,
+                .ArcSize = If(sweepAngle > 180.0F, ArcSize.Large, ArcSize.Small)})
+            sink.EndFigure(FigureEnd.Open)
+            sink.Close()
+        Finally
+            sink.Dispose()
+        End Try
+        Return path
+    End Function
+
+    Private Shared Function 创建线帽样式(startCap As CapStyle, endCap As CapStyle) As ID2D1StrokeStyle
+        Return D2DHelper.GetD2DFactory().CreateStrokeStyle(
+            New StrokeStyleProperties With {
+                .StartCap = startCap,
+                .EndCap = endCap,
+                .DashCap = CapStyle.Flat,
+                .LineJoin = Vortice.Direct2D1.LineJoin.Round,
+                .DashStyle = Vortice.Direct2D1.DashStyle.Solid,
+                .MiterLimit = 10.0F})
+    End Function
 
     Private Shared Function 颜色插值(c1 As Color, c2 As Color, t As Single) As Color
         Return Color.FromArgb(
@@ -326,6 +401,17 @@ Public Class RoundDashBoard
         End Get
         Set(value As Color)
             SetValue(轨道背景颜色, value)
+        End Set
+    End Property
+
+    Private 禁用时遮罩颜色 As Color = Color.FromArgb(120, 0, 0, 0)
+    <Category("LakeUI"), Description("禁用（Enabled = False）时覆盖在主体区域上的遮罩颜色（受圆角裁剪，不影响圆角外的透明区域）。"), DefaultValue(GetType(Color), "120, 0, 0, 0"), Browsable(True)>
+    Public Property DisabledOverlayColor As Color
+        Get
+            Return 禁用时遮罩颜色
+        End Get
+        Set(value As Color)
+            SetValue(禁用时遮罩颜色, value)
         End Set
     End Property
 

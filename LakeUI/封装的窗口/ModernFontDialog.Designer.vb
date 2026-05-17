@@ -81,6 +81,7 @@ Partial Class ModernFontDialog
         ' 
         ' Panel1
         ' 
+        Panel1.BackColor = Color.Transparent
         Panel1.Controls.Add(ModernListBox1)
         Panel1.Controls.Add(Label2)
         Panel1.Controls.Add(ModernTextBox1)
@@ -132,6 +133,7 @@ Partial Class ModernFontDialog
         ' 
         ' Panel2
         ' 
+        Panel2.BackColor = Color.Transparent
         Panel2.Controls.Add(Panel5)
         Panel2.Controls.Add(Panel4)
         Panel2.Controls.Add(Panel3)
@@ -361,6 +363,7 @@ Partial Class ModernFontDialog
         ' 
         ' Panel8
         ' 
+        Panel8.BackColor = Color.Transparent
         Panel8.Controls.Add(ModernButton2)
         Panel8.Controls.Add(Label11)
         Panel8.Controls.Add(ModernButton1)
@@ -411,6 +414,7 @@ Partial Class ModernFontDialog
         ' 
         ' Panel9
         ' 
+        Panel9.BackColor = Color.Transparent
         Panel9.Controls.Add(Label16)
         Panel9.Controls.Add(Label15)
         Panel9.Controls.Add(Label14)

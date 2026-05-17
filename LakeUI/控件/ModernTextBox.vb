@@ -965,7 +965,6 @@ Public Class ModernTextBox
         Dim ssaa As Integer = Math.Max(1, CInt(超采样倍率))
         If Class1.GlobalSSAA <> Class1.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(Class1.GlobalSSAA))
 
-        ' 1) D2D 图形层：背景（先在图形 RT 上贴透明底图，避免 dcRT.EndDraw 把圆角外区域擦黑）
         Using scope = D2DHelper.BeginPaint(e, Me, GetOrCreateDCRenderTarget(), ssaa, _ssaaCache)
             Dim gRT As ID2D1RenderTarget = scope.GraphicsRenderTarget
             If hasRadius OrElse MyBase.BackColor.A < 255 Then
@@ -973,17 +972,11 @@ Public Class ModernTextBox
             End If
             绘制背景_D2D(gRT, hasRadius, fillRect)
             scope.FlushGraphics()
-        End Using
 
-        ' 2) GDI 文本层（保留 TextRenderer 测量与现有渲染逻辑，兼容 MacType）
-        DrawTextContent(e.Graphics, w, h)
-
-        ' 3) D2D 图形层：边框 + 滚动条
-        Using scope = D2DHelper.BeginPaint(e, Me, GetOrCreateDCRenderTarget(), ssaa, _ssaaCache)
-            Dim gRT As ID2D1RenderTarget = scope.GraphicsRenderTarget
-            绘制边框_D2D(gRT, hasRadius, boundsRect, bc)
-            DrawScrollBar_D2D(gRT, w, h)
-            scope.FlushGraphics()
+            Dim dcRT As ID2D1DCRenderTarget = scope.DCRenderTarget
+            DrawTextContent_D2D(dcRT, w, h)
+            绘制边框_D2D(dcRT, hasRadius, boundsRect, bc)
+            DrawScrollBar_D2D(dcRT, w, h)
         End Using
     End Sub
 
@@ -1064,8 +1057,7 @@ Public Class ModernTextBox
         g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic
     End Sub
 
-    Private Sub DrawTextContent(g As Graphics, w As Integer, h As Integer)
-        g.TextRenderingHint = Drawing.Text.TextRenderingHint.ClearTypeGridFit
+    Private Sub DrawTextContent_D2D(rt As ID2D1DCRenderTarget, w As Integer, h As Integer)
         Dim bi As Integer = ScaledBorderWidth()
         Dim textTop As Integer = Math.Max(Padding.Top, bi)
         Dim textRight As Integer = Math.Max(Padding.Right, bi)
@@ -1092,33 +1084,27 @@ Public Class ModernTextBox
             ' 绘制行号背景，兼容圆角边框
             If _lineNumBackColor <> Color.Empty Then
                 Dim s As Single = DpiScale()
-                Dim gutterRect As New Rectangle(0, 0, bi + gutterW, h)
+                Dim gutterRect As New RectangleF(0, 0, bi + gutterW, h)
                 If 边框圆角半径 > 0 Then
                     Dim boundsRect As New RectangleF(0, 0, w, h)
                     If 边框宽度 > 0 Then
                         Dim half As Single = 边框宽度 * s / 2.0F
                         boundsRect.Inflate(-half, -half)
                     End If
-                    Using clipPath As GraphicsPath = RectangleRenderer.创建圆角矩形路径(boundsRect, 边框圆角半径 * s)
-                        Dim oldSmooth = g.SmoothingMode
-                        g.SmoothingMode = SmoothingMode.AntiAlias
-                        Using rgn As New Region(clipPath)
-                            rgn.Intersect(gutterRect)
-                            g.SetClip(rgn, Drawing2D.CombineMode.Replace)
+                    Using geo = RectangleRenderer.创建圆角矩形几何(boundsRect, 边框圆角半径 * s)
+                        D2DHelper.PushGeometryClip(rt, geo, boundsRect)
+                        Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(_lineNumBackColor))
+                            rt.FillRectangle(D2DHelper.ToD2DRect(gutterRect), br)
                         End Using
-                        Using br As New SolidBrush(_lineNumBackColor)
-                            g.FillRectangle(br, gutterRect)
-                        End Using
-                        g.SmoothingMode = oldSmooth
-                        g.ResetClip()
+                        rt.PopLayer()
                     End Using
                 Else
-                    Using br As New SolidBrush(_lineNumBackColor)
-                        g.FillRectangle(br, gutterRect)
+                    Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(_lineNumBackColor))
+                        rt.FillRectangle(D2DHelper.ToD2DRect(gutterRect), br)
                     End Using
                 End If
             End If
-            g.SetClip(New Rectangle(gutterLeft, textTop, gutterW, textHeight))
+            PushClip(rt, New RectangleF(gutterLeft, textTop, gutterW, textHeight))
             Dim useNumFont As Font = If(_lineNumFont, Font)
             Dim contentW As Integer = gutterW - _scaledLineNumPadL - _scaledLineNumPadR
             Dim lastDrawnLogical As Integer = -1
@@ -1128,7 +1114,7 @@ Public Class ModernTextBox
                 If vl.LogicalLine <> lastDrawnLogical Then
                     lastDrawnLogical = vl.LogicalLine
                     Dim numStr As String = (vl.LogicalLine + 1).ToString()
-                    Dim numW As Integer = TextRenderHelper.MeasureTextWidth(numStr, useNumFont, _scaledLineHeight)
+                    Dim numW As Integer = CInt(Math.Ceiling(TextRenderHelper.MeasureTextWidth_D2D(numStr, useNumFont, DpiScale())))
                     Dim numX As Integer
                     Select Case _lineNumAlign
                         Case TextAlignMode.Left
@@ -1138,24 +1124,20 @@ Public Class ModernTextBox
                         Case Else ' Right
                             numX = gutterLeft + _scaledLineNumPadL + contentW - numW
                     End Select
-                    TextRenderer.DrawText(g, numStr, useNumFont,
-                        New Rectangle(numX, lineY, numW, _scaledLineHeight),
-                        _lineNumForeColor, TF)
+                    DrawTextSegment_D2D(rt, numStr, useNumFont, _lineNumForeColor, numX, lineY, numW, _scaledLineHeight, False)
                 End If
             Next
-            g.ResetClip()
+            rt.PopAxisAlignedClip()
         End If
 
         ' 绘制文本内容
-        g.SetClip(New Rectangle(textLeft, textTop, textWidth, textHeight))
+        PushClip(rt, New RectangleF(textLeft, textTop, textWidth, textHeight))
         Dim isEmpty As Boolean = (_lines.Count = 1 AndAlso _lines(0).Length = 0)
         If isEmpty AndAlso Not String.IsNullOrEmpty(水印文本) Then
             Dim waterLineY As Integer = If(isSingleLine, singleLineY, textTop)
             Dim waterAlignOff As Integer = If(启用多行 OrElse 文本对齐 = TextAlignMode.Left, 0,
                 ComputeAlignOffset(MeasureWidth(水印文本), textWidth))
-            TextRenderer.DrawText(g, 水印文本, Font,
-                New Rectangle(textLeft + waterAlignOff, waterLineY, textWidth, _scaledLineHeight),
-                水印颜色, TF)
+            DrawTextSegment_D2D(rt, 水印文本, Font, 水印颜色, textLeft + waterAlignOff, waterLineY, textWidth, _scaledLineHeight, False)
         End If
         Dim wrapActive As Boolean = IsWordWrapActive()
         Dim minL As Integer = 0, minC As Integer = 0, maxL As Integer = 0, maxC As Integer = 0
@@ -1169,20 +1151,24 @@ Public Class ModernTextBox
             Dim alignOff As Integer = If(wrapActive, 0, GetAlignOffsetXForLine(vl.LogicalLine, textWidth))
             Dim scrollX As Integer = If(wrapActive, 0, _scrollXOffset)
             If _hasSelection Then
-                DrawVisualLineSelection(g, vl, lineY, textLeft, alignOff, scrollX, minL, minC, maxL, maxC)
+                DrawVisualLineSelection_D2D(rt, vl, lineY, textLeft, alignOff, scrollX, minL, minC, maxL, maxC)
             End If
             If vl.Length > 0 Then
-                DrawLineRuns(g, vl.LogicalLine, vl.StartCol, vl.Length,
+                DrawLineRuns_D2D(rt, vl.LogicalLine, vl.StartCol, vl.Length,
                     textLeft + alignOff - scrollX, lineY)
             End If
         Next
         If Focused AndAlso _caretVisible Then
-            DrawCaret(g, textLeft, textTop)
+            DrawCaret_D2D(rt, textLeft, textTop)
         End If
-        g.ResetClip()
+        rt.PopAxisAlignedClip()
     End Sub
 
-    Private Sub DrawVisualLineSelection(g As Graphics, vl As VisualLineInfo, lineY As Integer, textLeft As Integer,
+    Private Sub PushClip(rt As ID2D1RenderTarget, rect As RectangleF)
+        rt.PushAxisAlignedClip(New Vortice.RawRectF(rect.Left, rect.Top, rect.Right, rect.Bottom), AntialiasMode.Aliased)
+    End Sub
+
+    Private Sub DrawVisualLineSelection_D2D(rt As ID2D1RenderTarget, vl As VisualLineInfo, lineY As Integer, textLeft As Integer,
                                          alignOff As Integer, scrollX As Integer,
                                          minL As Integer, minC As Integer, maxL As Integer, maxC As Integer)
         Dim li As Integer = vl.LogicalLine
@@ -1202,12 +1188,12 @@ Public Class ModernTextBox
             x2 = textLeft + alignOff + MeasureLineWidth(li, vl.StartCol, drawEnd - vl.StartCol) - scrollX
         End If
         If x2 <= x1 Then Return
-        Using br As New SolidBrush(选区背景色)
-            g.FillRectangle(br, x1, lineY, x2 - x1, _scaledLineHeight)
+        Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(选区背景色))
+            rt.FillRectangle(New Vortice.Mathematics.Rect(x1, lineY, x2 - x1, _scaledLineHeight), br)
         End Using
     End Sub
 
-    Private Sub DrawCaret(g As Graphics, textLeft As Integer, textTop As Integer)
+    Private Sub DrawCaret_D2D(rt As ID2D1RenderTarget, textLeft As Integer, textTop As Integer)
         Dim vi As Integer = GetVisualLineIndex(_caretLine, _caretCol)
         If vi < _scrollLineOffset OrElse vi >= _scrollLineOffset + VisibleLineCount() + 2 Then
             Return
@@ -1227,8 +1213,8 @@ Public Class ModernTextBox
         End If
         Dim caretH As Integer = _scaledLineHeight - 2
         Dim caretY As Integer = lineY + (_scaledLineHeight - caretH) \ 2
-        Using br As New SolidBrush(光标颜色)
-            g.FillRectangle(br, cx, caretY, _scaledCaretWidth, caretH)
+        Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(光标颜色))
+            rt.FillRectangle(New Vortice.Mathematics.Rect(cx, caretY, _scaledCaretWidth, caretH), br)
         End Using
     End Sub
 
@@ -1244,8 +1230,8 @@ Public Class ModernTextBox
             滚动条轨道颜色, 滚动条颜色, 滚动条悬停颜色)
     End Sub
 
-    Private Sub DrawLineRuns(g As Graphics, lineIndex As Integer, vlStartCol As Integer,
-                              vlLength As Integer, x As Integer, lineY As Integer)
+    Private Sub DrawLineRuns_D2D(rt As ID2D1RenderTarget, lineIndex As Integer, vlStartCol As Integer,
+                                  vlLength As Integer, x As Integer, lineY As Integer)
         Dim runs = _lineRuns(lineIndex)
         Dim lineStr = _lines(lineIndex)
         Dim vlEnd = vlStartCol + vlLength
@@ -1254,10 +1240,9 @@ Public Class ModernTextBox
         If runs Is Nothing OrElse runs.Count = 0 Then
             If Not hasLinks Then
                 Dim text = GetDisplayText(lineStr.Substring(vlStartCol, vlLength))
-                TextRenderer.DrawText(g, text, Font, New Rectangle(x, lineY, Short.MaxValue, _scaledLineHeight),
-                    ForeColor, TF)
+                DrawTextSegment_D2D(rt, text, Font, ForeColor, x, lineY, Short.MaxValue, _scaledLineHeight, False)
             Else
-                DrawSegmentsWithLinks(g, lineStr, vlStartCol, vlEnd, x, lineY, ForeColor, Font, links)
+                DrawSegmentsWithLinks_D2D(rt, lineStr, vlStartCol, vlEnd, x, lineY, ForeColor, Font, links)
             End If
             Return
         End If
@@ -1271,18 +1256,17 @@ Public Class ModernTextBox
             Dim useFont = If(r.RunFont, Font)
             If Not hasLinks Then
                 Dim segText = GetDisplayText(lineStr.Substring(segStart, segEnd - segStart))
-                TextRenderer.DrawText(g, segText, useFont, New Rectangle(drawX, lineY, Short.MaxValue, _scaledLineHeight),
-                    useFore, TF)
-                drawX += TextRenderHelper.MeasureTextWidth(segText, useFont, _scaledLineHeight)
+                DrawTextSegment_D2D(rt, segText, useFont, useFore, drawX, lineY, Short.MaxValue, _scaledLineHeight, False)
+                drawX += CInt(Math.Ceiling(TextRenderHelper.MeasureTextWidth_D2D(segText, useFont, DpiScale())))
             Else
-                drawX = DrawSegmentsWithLinks(g, lineStr, segStart, segEnd, drawX, lineY, useFore, useFont, links)
+                drawX = DrawSegmentsWithLinks_D2D(rt, lineStr, segStart, segEnd, drawX, lineY, useFore, useFont, links)
             End If
         Next
     End Sub
 
-    Private Function DrawSegmentsWithLinks(g As Graphics, lineStr As String, startCol As Integer, endCol As Integer,
-                                            x As Integer, lineY As Integer, baseFore As Color, baseFont As Font,
-                                            links As List(Of LinkRange)) As Integer
+    Private Function DrawSegmentsWithLinks_D2D(rt As ID2D1RenderTarget, lineStr As String, startCol As Integer, endCol As Integer,
+                                                x As Integer, lineY As Integer, baseFore As Color, baseFont As Font,
+                                                links As List(Of LinkRange)) As Integer
         Dim pos = startCol
         Dim drawX = x
         For Each link In links
@@ -1291,30 +1275,44 @@ Public Class ModernTextBox
             If pos < link.StartCol AndAlso pos < endCol Then
                 Dim nonLinkEnd = Math.Min(link.StartCol, endCol)
                 Dim segText = GetDisplayText(lineStr.Substring(pos, nonLinkEnd - pos))
-                TextRenderer.DrawText(g, segText, baseFont, New Rectangle(drawX, lineY, Short.MaxValue, _scaledLineHeight),
-                    baseFore, TF)
-                drawX += TextRenderHelper.MeasureTextWidth(segText, baseFont, _scaledLineHeight)
+                DrawTextSegment_D2D(rt, segText, baseFont, baseFore, drawX, lineY, Short.MaxValue, _scaledLineHeight, False)
+                drawX += CInt(Math.Ceiling(TextRenderHelper.MeasureTextWidth_D2D(segText, baseFont, DpiScale())))
                 pos = nonLinkEnd
             End If
             Dim overlapStart = Math.Max(pos, link.StartCol)
             Dim overlapEnd = Math.Min(endCol, linkEnd)
             If overlapStart < overlapEnd Then
                 Dim linkText = GetDisplayText(lineStr.Substring(overlapStart, overlapEnd - overlapStart))
-                Dim linkFont = If(链接下划线, GetUnderlineFont(baseFont), baseFont)
-                TextRenderer.DrawText(g, linkText, linkFont, New Rectangle(drawX, lineY, Short.MaxValue, _scaledLineHeight),
-                    链接颜色, TF)
-                drawX += TextRenderHelper.MeasureTextWidth(linkText, baseFont, _scaledLineHeight)
+                DrawTextSegment_D2D(rt, linkText, baseFont, 链接颜色, drawX, lineY, Short.MaxValue, _scaledLineHeight, 链接下划线)
+                drawX += CInt(Math.Ceiling(TextRenderHelper.MeasureTextWidth_D2D(linkText, baseFont, DpiScale())))
                 pos = overlapEnd
             End If
         Next
         If pos < endCol Then
             Dim segText = GetDisplayText(lineStr.Substring(pos, endCol - pos))
-            TextRenderer.DrawText(g, segText, baseFont, New Rectangle(drawX, lineY, Short.MaxValue, _scaledLineHeight),
-                baseFore, TF)
-            drawX += TextRenderHelper.MeasureTextWidth(segText, baseFont, _scaledLineHeight)
+            DrawTextSegment_D2D(rt, segText, baseFont, baseFore, drawX, lineY, Short.MaxValue, _scaledLineHeight, False)
+            drawX += CInt(Math.Ceiling(TextRenderHelper.MeasureTextWidth_D2D(segText, baseFont, DpiScale())))
         End If
         Return drawX
     End Function
+
+    Private Sub DrawTextSegment_D2D(rt As ID2D1RenderTarget, text As String, font As Font, foreColor As Color,
+                                    x As Single, y As Single, width As Single, height As Single, underline As Boolean)
+        If String.IsNullOrEmpty(text) OrElse foreColor.A = 0 Then Return
+        Dim s As Single = DpiScale()
+        Using fmt = TextRenderHelper.CreateDWriteTextFormat(font, s)
+            fmt.WordWrapping = Vortice.DirectWrite.WordWrapping.NoWrap
+            fmt.ParagraphAlignment = Vortice.DirectWrite.ParagraphAlignment.Center
+            Using layout = D2DHelper.GetDWriteFactory().CreateTextLayout(text, fmt, width, height)
+                If underline Then
+                    layout.SetUnderline(True, New Vortice.DirectWrite.TextRange(0, CUInt(text.Length)))
+                End If
+                Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(foreColor))
+                    rt.DrawTextLayout(New System.Numerics.Vector2(x, y), layout, br)
+                End Using
+            End Using
+        End Using
+    End Sub
 
 #End Region
 
@@ -1554,7 +1552,7 @@ Public Class ModernTextBox
         Return New Point(col, vl.LogicalLine)
     End Function
     Private Function FindColFromX(lineStr As String, x As Integer) As Integer
-        Return TextRenderHelper.FindColFromX(GetDisplayText(lineStr), x, Font, _scaledLineHeight)
+        Return TextRenderHelper.FindColFromX_D2D(GetDisplayText(lineStr), x, Font, DpiScale())
     End Function
     Private Sub UpdateCursorForLink(x As Integer, y As Integer)
         Dim hitPos As Point = HitTest(x, y)
@@ -2027,7 +2025,7 @@ Public Class ModernTextBox
 
 #Region "度量与布局"
     Private Function MeasureWidth(text As String) As Integer
-        Return TextRenderHelper.MeasureTextWidth(GetDisplayText(text), Font, _scaledLineHeight)
+        Return CInt(Math.Ceiling(TextRenderHelper.MeasureTextWidth_D2D(GetDisplayText(text), Font, DpiScale())))
     End Function
     Private Function MeasureLineWidth(lineIndex As Integer, startCol As Integer, length As Integer) As Integer
         If length <= 0 Then Return 0
@@ -2045,7 +2043,7 @@ Public Class ModernTextBox
             If segStart >= segEnd Then Continue For
             Dim useFont = If(r.RunFont, Font)
             Dim segText = GetDisplayText(lineStr.Substring(segStart, segEnd - segStart))
-            totalWidth += TextRenderHelper.MeasureTextWidth(segText, useFont, _scaledLineHeight)
+            totalWidth += CInt(Math.Ceiling(TextRenderHelper.MeasureTextWidth_D2D(segText, useFont, DpiScale())))
         Next
         Return totalWidth
     End Function
@@ -2065,9 +2063,9 @@ Public Class ModernTextBox
             If segStart >= segEnd Then Continue For
             Dim useFont = If(r.RunFont, Font)
             Dim segText = GetDisplayText(lineStr.Substring(segStart, segEnd - segStart))
-            Dim segWidth = TextRenderHelper.MeasureTextWidth(segText, useFont, _scaledLineHeight)
+            Dim segWidth = CInt(Math.Ceiling(TextRenderHelper.MeasureTextWidth_D2D(segText, useFont, DpiScale())))
             If accWidth + segWidth > x Then
-                Dim localCol = TextRenderHelper.FindColFromX(segText, x - accWidth, useFont, _scaledLineHeight)
+                Dim localCol = TextRenderHelper.FindColFromX_D2D(segText, x - accWidth, useFont, DpiScale())
                 Return segStart + localCol
             End If
             accWidth += segWidth
@@ -2102,7 +2100,7 @@ Public Class ModernTextBox
         If Not _showLineNumbers OrElse Not 启用多行 Then Return 0
         Dim useFont As Font = If(_lineNumFont, Font)
         Dim maxNum As String = _lines.Count.ToString()
-        Dim numW As Integer = TextRenderHelper.MeasureTextWidth(maxNum, useFont, _scaledLineHeight)
+        Dim numW As Integer = CInt(Math.Ceiling(TextRenderHelper.MeasureTextWidth_D2D(maxNum, useFont, DpiScale())))
         Return _scaledLineNumPadL + numW + _scaledLineNumPadR
     End Function
 #End Region
@@ -2374,7 +2372,7 @@ Public Class ModernTextBox
         End If
         _underlineFontCache?.Dispose()
         _underlineFontBase = baseFont
-        _underlineFontCache = New Font(baseFont, baseFont.Style Or FontStyle.Underline)
+        _underlineFontCache = New Font(baseFont, baseFont.Style Or System.Drawing.FontStyle.Underline)
         Return _underlineFontCache
     End Function
 #End Region

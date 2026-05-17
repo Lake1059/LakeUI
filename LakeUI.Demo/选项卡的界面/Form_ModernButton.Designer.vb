@@ -100,20 +100,21 @@ Partial Class Form_ModernButton
         ' 
         ' ModernButton8
         ' 
+        ModernButton8.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton8.BorderRadius = 10
-        ModernButton8.BorderSize = 2
+        ModernButton8.BorderSize = 0
         ModernButton8.Dock = DockStyle.Left
         ModernButton8.HoldClickDuration = 1500
         ModernButton8.HoldClickEnabled = True
         ModernButton8.HoldClickFPS = 0
-        ModernButton8.HoverBackColor1 = Color.FromArgb(CByte(48), CByte(48), CByte(48))
+        ModernButton8.HoverBackColor1 = Color.FromArgb(CByte(60), CByte(220), CByte(220), CByte(220))
         ModernButton8.Location = New Point(0, 0)
         ModernButton8.Margin = New Padding(2)
         ModernButton8.Name = "ModernButton8"
-        ModernButton8.PressedBorderColor = Color.CornflowerBlue
+        ModernButton8.PressedBackColor1 = Color.FromArgb(CByte(80), CByte(220), CByte(220), CByte(220))
         ModernButton8.Size = New Size(150, 40)
         ModernButton8.TabIndex = 0
-        ModernButton8.Text = "ModernButton8"
+        ModernButton8.Text = "按住并保持进度完成"
         ' 
         ' Label10
         ' 
@@ -138,17 +139,15 @@ Partial Class Form_ModernButton
         ' 
         ' ModernButton7
         ' 
-        ModernButton7.BackColor2 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
-        ModernButton7.BorderRadius = 18
-        ModernButton7.BorderSize = 2
+        ModernButton7.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
+        ModernButton7.BorderRadius = 20
+        ModernButton7.BorderSize = 0
         ModernButton7.Dock = DockStyle.Left
-        ModernButton7.HoverBackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
-        ModernButton7.HoverBackColor2 = SystemColors.WindowFrame
-        ModernButton7.HoverBorderColor = Color.CornflowerBlue
+        ModernButton7.HoverBackColor1 = Color.FromArgb(CByte(60), CByte(220), CByte(220), CByte(220))
         ModernButton7.Location = New Point(0, 0)
         ModernButton7.Margin = New Padding(2)
         ModernButton7.Name = "ModernButton7"
-        ModernButton7.PressedBorderColor = Color.MediumSlateBlue
+        ModernButton7.PressedBackColor1 = Color.FromArgb(CByte(80), CByte(220), CByte(220), CByte(220))
         ModernButton7.Size = New Size(150, 40)
         ModernButton7.TabIndex = 0
         ModernButton7.Text = "ModernButton7"
@@ -176,17 +175,20 @@ Partial Class Form_ModernButton
         ' 
         ' ModernButton6
         ' 
+        ModernButton6.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
+        ModernButton6.BorderColor = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton6.BorderRadius = 10
-        ModernButton6.BorderSize = 2
+        ModernButton6.BorderSize = 0
         ModernButton6.Dock = DockStyle.Left
-        ModernButton6.HoverBackColor1 = Color.FromArgb(CByte(48), CByte(48), CByte(48))
+        ModernButton6.HoverBackColor1 = Color.FromArgb(CByte(60), CByte(220), CByte(220), CByte(220))
         ModernButton6.Location = New Point(0, 0)
         ModernButton6.Margin = New Padding(2)
         ModernButton6.Name = "ModernButton6"
+        ModernButton6.PressedBackColor1 = Color.FromArgb(CByte(80), CByte(220), CByte(220), CByte(220))
         ModernButton6.PressedBorderColor = Color.CornflowerBlue
         ModernButton6.Size = New Size(150, 40)
         ModernButton6.TabIndex = 0
-        ModernButton6.Text = "ModernButton6"
+        ModernButton6.Text = "ModernButton6 (&A)"
         ' 
         ' Label7
         ' 

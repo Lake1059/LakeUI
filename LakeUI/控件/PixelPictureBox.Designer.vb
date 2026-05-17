@@ -9,6 +9,9 @@ Partial Class PixelPictureBox
             If disposing AndAlso components IsNot Nothing Then
                 components.Dispose()
             End If
+            If disposing Then
+                DisposeD2DResources()
+            End If
         Finally
             MyBase.Dispose(disposing)
         End Try

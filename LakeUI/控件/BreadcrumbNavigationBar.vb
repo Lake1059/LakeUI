@@ -359,6 +359,17 @@ Public Class BreadcrumbNavigationBar
         End Set
     End Property
 
+    Private 禁用时遮罩颜色 As Color = Color.FromArgb(120, 0, 0, 0)
+    <Category("LakeUI"), Description("禁用（Enabled = False）时覆盖在主体区域上的遮罩颜色（受圆角裁剪，不影响圆角外的透明区域）。"), DefaultValue(GetType(Color), "120, 0, 0, 0"), Browsable(True)>
+    Public Property DisabledOverlayColor As Color
+        Get
+            Return 禁用时遮罩颜色
+        End Get
+        Set(value As Color)
+            SetValue(禁用时遮罩颜色, value)
+        End Set
+    End Property
+
     Private 超采样倍率 As Integer = 1
     <Category("LakeUI"), Description(Class1.超采样抗锯齿描述词), DefaultValue(GetType(Class1.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
     Public Property SuperSamplingScale As Class1.SuperSamplingScaleEnum
@@ -632,8 +643,8 @@ Public Class BreadcrumbNavigationBar
             DrawNodes(e.Graphics)
         End If
 
-        If Not Enabled Then
-            Using br As New SolidBrush(Color.FromArgb(120, 0, 0, 0))
+        If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
+            Using br As New SolidBrush(禁用时遮罩颜色)
                 e.Graphics.FillRectangle(br, ClientRectangle)
             End Using
         End If

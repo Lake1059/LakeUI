@@ -77,10 +77,14 @@ Public Class ModernButton
             绘制文本_D2D(dcRT, 内容矩形区域, 计算图标占用的水平宽度(内容矩形区域))
 
             ' 4) 禁用遮罩（直接覆盖整个 DC，不需要 SSAA）
-            If Not Enabled Then
-                Using mb = dcRT.CreateSolidColorBrush(D2DHelper.ToColor4(Color.FromArgb(120, 0, 0, 0)))
-                    dcRT.FillRectangle(New Vortice.Mathematics.Rect(0, 0, Me.Width, Me.Height), mb)
-                End Using
+            If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
+                If 是否有圆角 Then
+                    Using geo = RectangleRenderer.创建圆角矩形几何(极限矩形区域, 边框圆角半径 * DpiScale())
+                        RectangleRenderer.绘制圆角背景_D2D(dcRT, geo, 极限矩形区域, 禁用时遮罩颜色, Color.Empty, 渐变方向)
+                    End Using
+                Else
+                    RectangleRenderer.绘制矩形背景_D2D(dcRT, 极限矩形区域, 禁用时遮罩颜色, Color.Empty, 渐变方向)
+                End If
             End If
         End Using
 
@@ -207,7 +211,8 @@ Public Class ModernButton
             Case Else : align = Vortice.DirectWrite.TextAlignment.Center
         End Select
 
-        Dim mainText As String = If(MyBase.Text, "")
+        Dim mainTextInfo = 解析助记键文本(If(MyBase.Text, ""))
+        Dim mainText As String = mainTextInfo.DisplayText
         ' ── ⚠ DirectWrite 字号必须叠加 DPI 缩放（* s）──
         ' DC RT 由 D2DHelper 创建后默认按 96 DPI 像素映射；只用 (Pt * 96/72) 得到的是逻辑像素，
         ' 在 HighDPI 下与 GDI+ TextRenderer 实际渲染尺寸不一致，会出现"换字体/字号像不生效"的现象。
@@ -233,6 +238,7 @@ Public Class ModernButton
 
                     Using mainLayout = dw.CreateTextLayout(mainText, mainFmt, 文本绘制区域.Width, 文本绘制区域.Height)
                         Using subLayout = dw.CreateTextLayout(次要文本, subFmt, 文本绘制区域.Width, 文本绘制区域.Height)
+                            应用助记键下划线(mainLayout, mainTextInfo.MnemonicIndex)
                             Dim mm = mainLayout.Metrics
                             Dim sm = subLayout.Metrics
                             Dim _主次文本间距 As Single = 主次文本间距 * s
@@ -254,11 +260,54 @@ Public Class ModernButton
                 mainFmt.TextAlignment = align
                 mainFmt.ParagraphAlignment = ParagraphAlignment.Center
                 mainFmt.WordWrapping = WordWrapping.NoWrap
-                Using fb = rt.CreateSolidColorBrush(D2DHelper.ToColor4(文本颜色))
-                    rt.DrawText(mainText, mainFmt, D2DHelper.ToD2DRect(文本绘制区域), fb)
+                Using mainLayout = dw.CreateTextLayout(mainText, mainFmt, 文本绘制区域.Width, 文本绘制区域.Height)
+                    应用助记键下划线(mainLayout, mainTextInfo.MnemonicIndex)
+                    Using fb = rt.CreateSolidColorBrush(D2DHelper.ToColor4(文本颜色))
+                        rt.DrawTextLayout(New Vector2(文本绘制区域.X, 文本绘制区域.Y), mainLayout, fb)
+                    End Using
                 End Using
             End Using
         End If
+    End Sub
+
+    Private Structure 助记键文本信息
+        Public DisplayText As String
+        Public MnemonicIndex As Integer
+        Public MnemonicChar As Char
+    End Structure
+
+    Private Function 解析助记键文本(text As String) As 助记键文本信息
+        Dim result As New 助记键文本信息 With {.DisplayText = "", .MnemonicIndex = -1, .MnemonicChar = vbNullChar}
+        If String.IsNullOrEmpty(text) Then Return result
+
+        Dim sb As New System.Text.StringBuilder(text.Length)
+        Dim i As Integer = 0
+        While i < text.Length
+            Dim ch As Char = text(i)
+            If ch = "&"c Then
+                If i + 1 < text.Length AndAlso text(i + 1) = "&"c Then
+                    sb.Append("&"c)
+                    i += 2
+                    Continue While
+                End If
+                If i + 1 < text.Length AndAlso result.MnemonicIndex < 0 Then
+                    result.MnemonicIndex = sb.Length
+                    result.MnemonicChar = Char.ToUpperInvariant(text(i + 1))
+                End If
+                i += 1
+                Continue While
+            End If
+            sb.Append(ch)
+            i += 1
+        End While
+
+        result.DisplayText = sb.ToString()
+        Return result
+    End Function
+
+    Private Sub 应用助记键下划线(layout As IDWriteTextLayout, mnemonicIndex As Integer)
+        If mnemonicIndex < 0 OrElse Not ShowKeyboardCues Then Return
+        layout.SetUnderline(True, New TextRange(mnemonicIndex, 1))
     End Sub
 
     Private Function 计算图标占用的水平宽度(内容矩形区域 As RectangleF) As Single
@@ -329,6 +378,7 @@ Public Class ModernButton
     Private 动画前背景颜色 As Color
     Private 动画前渐变颜色 As Color
     Private 动画前边框颜色 As Color
+    Private 助记键触发计时器 As Timer
     Protected Overrides Sub OnClick(e As EventArgs)
         If Not 长按确认已启用 Then
             MyBase.OnClick(e)
@@ -375,11 +425,51 @@ Public Class ModernButton
             鼠标状态 = MouseStateEnum.Normal
             颜色动画已启用 = False
             动画助手.StopAnimation()
+            助记键触发计时器?.Stop()
+            助记键触发计时器?.Dispose()
+            助记键触发计时器 = Nothing
             长按正在进行 = False
             长按动画助手.StopAnimation()
             长按动画助手.SetImmediate(0)
         End If
         Me.Invalidate()
+    End Sub
+    Protected Overrides Sub OnChangeUICues(e As UICuesEventArgs)
+        MyBase.OnChangeUICues(e)
+        If (e.Changed And UICues.ChangeKeyboard) <> 0 Then Me.Invalidate()
+    End Sub
+    Protected Overrides Function ProcessMnemonic(charCode As Char) As Boolean
+        If CanSelect AndAlso IsMnemonic(charCode, MyBase.Text) Then
+            If 长按确认已启用 Then
+                Return True
+            End If
+            通过助记键触发点击()
+            Return True
+        End If
+        Return MyBase.ProcessMnemonic(charCode)
+    End Function
+
+    Private Sub 通过助记键触发点击()
+        If Not Enabled Then Return
+        助记键触发计时器?.Stop()
+        助记键触发计时器?.Dispose()
+
+        切换鼠标颜色状态(MouseStateEnum.Pressed)
+
+        助记键触发计时器 = New Timer() With {.Interval = Math.Max(1, 动画助手.Duration)}
+        AddHandler 助记键触发计时器.Tick,
+            Sub()
+                助记键触发计时器.Stop()
+                助记键触发计时器.Dispose()
+                助记键触发计时器 = Nothing
+
+                MyBase.OnClick(EventArgs.Empty)
+
+                If Enabled Then
+                    切换鼠标颜色状态(If(ClientRectangle.Contains(PointToClient(Cursor.Position)), MouseStateEnum.Hover, MouseStateEnum.Normal))
+                End If
+            End Sub
+        助记键触发计时器.Start()
     End Sub
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
@@ -695,6 +785,17 @@ Public Class ModernButton
         End Get
         Set(value As Color)
             SetValue(鼠标按下时边框颜色, value)
+        End Set
+    End Property
+
+    Private 禁用时遮罩颜色 As Color = Color.FromArgb(120, 0, 0, 0)
+    <Category("LakeUI"), Description("禁用（Enabled = False）时覆盖在主体区域上的遮罩颜色（受圆角裁剪，不影响圆角外的透明区域）。"), DefaultValue(GetType(Color), "120, 0, 0, 0"), Browsable(True)>
+    Public Property DisabledOverlayColor As Color
+        Get
+            Return 禁用时遮罩颜色
+        End Get
+        Set(value As Color)
+            SetValue(禁用时遮罩颜色, value)
         End Set
     End Property
 #End Region

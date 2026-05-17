@@ -40,7 +40,7 @@ Public Class ExOverlayMsgBoxTheme
     ''' <summary>遮罩背景色。</summary>
     Public Property OverlayBackColor As Color = Color.Black
     ''' <summary>遮罩不透明度 (0-255)。</summary>
-    Public Property OverlayOpacity As Integer = 160
+    Public Property OverlayOpacity As Integer = 180
 
     ' ── 卡片 ──
     ''' <summary>卡片背景色。</summary>

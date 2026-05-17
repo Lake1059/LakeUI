@@ -223,26 +223,21 @@ Public Class ModernComboBox
         End Get
         Set(value As String)
             Dim v As String = If(value, "")
-            If _text = v Then Return
-            _text = v
-            _caretCol = 0
-            _scrollXOffset = 0
-            ClearSelection()
-            Invalidate()
-            RaiseEvent TextChanged(Me, EventArgs.Empty)
-            If _items IsNot Nothing Then
-                Dim matchIndex As Integer = -1
-                For i As Integer = 0 To _items.Count - 1
-                    If String.Equals(_items(i), v, StringComparison.Ordinal) Then
-                        matchIndex = i
-                        Exit For
-                    End If
-                Next
-                If matchIndex >= 0 AndAlso _selectedIndex <> matchIndex Then
-                    _selectedIndex = matchIndex
-                    RaiseEvent SelectedIndexChanged(Me, EventArgs.Empty)
-                End If
+            Dim textChanged As Boolean = _text <> v
+            Dim matchIndex As Integer = FindItemIndexExact(v)
+            Dim selectedIndexChanged As Boolean = _selectedIndex <> matchIndex
+            If Not textChanged AndAlso Not selectedIndexChanged Then Return
+
+            If textChanged Then
+                _text = v
+                _caretCol = 0
+                _scrollXOffset = 0
+                ClearSelection()
             End If
+            _selectedIndex = matchIndex
+            Invalidate()
+            If textChanged Then RaiseEvent TextChanged(Me, EventArgs.Empty)
+            If selectedIndexChanged Then RaiseEvent SelectedIndexChanged(Me, EventArgs.Empty)
         End Set
     End Property
     Private Function ShouldSerializeText() As Boolean
@@ -268,17 +263,19 @@ Public Class ModernComboBox
         End Get
         Set(value As Integer)
             If value < -1 OrElse value >= _items.Count Then value = -1
-            If _selectedIndex = value Then Return
+            Dim newText As String = If(value >= 0, _items(value), String.Empty)
+            Dim selectedIndexChanged As Boolean = _selectedIndex <> value
+            Dim textChanged As Boolean = _text <> newText
+            If Not selectedIndexChanged AndAlso Not textChanged Then Return
+
             _selectedIndex = value
-            If _selectedIndex >= 0 Then
-                _text = _items(_selectedIndex)
-            End If
+            _text = newText
             _caretCol = _text.Length
             _scrollXOffset = 0
             ClearSelection()
             Invalidate()
-            RaiseEvent TextChanged(Me, EventArgs.Empty)
-            RaiseEvent SelectedIndexChanged(Me, EventArgs.Empty)
+            If textChanged Then RaiseEvent TextChanged(Me, EventArgs.Empty)
+            If selectedIndexChanged Then RaiseEvent SelectedIndexChanged(Me, EventArgs.Empty)
         End Set
     End Property
 
@@ -521,6 +518,17 @@ Public Class ModernComboBox
         Set(value As Integer)
             箭头大小 = Math.Max(4, value)
             Invalidate()
+        End Set
+    End Property
+
+    Private 禁用时遮罩颜色 As Color = Color.FromArgb(120, 0, 0, 0)
+    <Category("LakeUI"), Description("禁用（Enabled = False）时覆盖在主体区域上的遮罩颜色（受圆角裁剪，不影响圆角外的透明区域）。"), DefaultValue(GetType(Color), "120, 0, 0, 0"), Browsable(True)>
+    Public Property DisabledOverlayColor As Color
+        Get
+            Return 禁用时遮罩颜色
+        End Get
+        Set(value As Color)
+            SetValue(禁用时遮罩颜色, value)
         End Set
     End Property
 
@@ -1052,7 +1060,6 @@ Public Class ModernComboBox
         Dim ssaa As Integer = Math.Max(1, CInt(超采样倍率))
         If Class1.GlobalSSAA <> Class1.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(Class1.GlobalSSAA))
 
-        ' 1) D2D 图形层：背景填充（先在图形 RT 上贴透明底图）
         Using scope = D2DHelper.BeginPaint(e, Me, GetOrCreateDCRenderTarget(), ssaa, _ssaaCache)
             Dim gRT As ID2D1RenderTarget = scope.GraphicsRenderTarget
             If hasRadius OrElse MyBase.BackColor.A < 255 Then
@@ -1060,21 +1067,22 @@ Public Class ModernComboBox
             End If
             绘制背景_D2D(gRT, hasRadius, boundsRect, effBg, effBg2)
             scope.FlushGraphics()
-        End Using
 
-        ' 2) GDI 文本层（保留 TextRenderer 行为，兼容 IME / 选区 / 光标）
-        DrawTextContent(e.Graphics, w, h)
-
-        ' 3) D2D 图形层：箭头区域背景、分隔线、边框、箭头、禁用遮罩
-        Using scope = D2DHelper.BeginPaint(e, Me, GetOrCreateDCRenderTarget(), ssaa, _ssaaCache)
-            Dim gRT As ID2D1RenderTarget = scope.GraphicsRenderTarget
-            绘制分隔线与箭头_D2D(gRT, w, h, bc)
-            绘制边框_D2D(gRT, hasRadius, boundsRect, bc)
-            If Not Enabled Then
-                RectangleRenderer.绘制矩形背景_D2D(gRT, New RectangleF(0, 0, w, h),
-                    Color.FromArgb(120, 0, 0, 0), Color.Empty, System.Windows.Forms.Orientation.Horizontal)
+            Dim dcRT As ID2D1DCRenderTarget = scope.DCRenderTarget
+            DrawTextContent_D2D(dcRT, w, h)
+            绘制分隔线与箭头_D2D(dcRT, w, h, bc)
+            绘制边框_D2D(dcRT, hasRadius, boundsRect, bc)
+            If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
+                ' 与 绘制背景_D2D 中 fillRect / 半径 保持一致，保证遮罩圆角曲线与背景圆角完全重合。
+                Dim overlayRect As New RectangleF(boundsRect.X, boundsRect.Y, boundsRect.Width + 1, boundsRect.Height + 1)
+                If hasRadius Then
+                    Using geo = RectangleRenderer.创建圆角矩形几何(overlayRect, 边框圆角半径 * DpiScale())
+                        RectangleRenderer.绘制圆角背景_D2D(dcRT, geo, overlayRect, 禁用时遮罩颜色, Color.Empty, 渐变方向)
+                    End Using
+                Else
+                    RectangleRenderer.绘制矩形背景_D2D(dcRT, overlayRect, 禁用时遮罩颜色, Color.Empty, 渐变方向)
+                End If
             End If
-            scope.FlushGraphics()
         End Using
     End Sub
 
@@ -1125,8 +1133,7 @@ Public Class ModernComboBox
         TransparentBackgroundCache.PaintBackgroundFor(Me, g, _backgroundSource)
     End Sub
 
-    Private Sub DrawTextContent(g As Graphics, w As Integer, h As Integer)
-        g.TextRenderingHint = Drawing.Text.TextRenderingHint.ClearTypeGridFit
+    Private Sub DrawTextContent_D2D(rt As ID2D1DCRenderTarget, w As Integer, h As Integer)
         Dim bi As Integer = CInt(边框宽度 * DpiScale())
         Dim textLeft As Integer = Math.Max(Padding.Left, bi)
         Dim textTop As Integer = Math.Max(Padding.Top, bi)
@@ -1134,49 +1141,50 @@ Public Class ModernComboBox
         Dim textBottom As Integer = Math.Max(Padding.Bottom, bi)
         Dim textWidth As Integer = w - textLeft - textRight - ArrowAreaWidth
         Dim textHeight As Integer = h - textTop - textBottom
-        g.SetClip(New Rectangle(textLeft, textTop, textWidth, textHeight))
+        PushClip_D2D(rt, New RectangleF(textLeft, textTop, textWidth, textHeight))
 
         Dim singleLineY As Integer = textTop + (textHeight - 行高) \ 2
         Dim isEmpty As Boolean = String.IsNullOrEmpty(_text)
 
         If isEmpty AndAlso Not String.IsNullOrEmpty(水印文本) Then
             Dim waterAlignOff As Integer = GetAlignOffsetX(水印文本, textWidth)
-            TextRenderer.DrawText(g, 水印文本, Font,
-                New Rectangle(textLeft + waterAlignOff, textTop, textWidth, textHeight),
-                水印颜色, TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine Or TextFormatFlags.VerticalCenter)
+            DrawSingleLineText_D2D(rt, 水印文本, Font, 水印颜色,
+                New RectangleF(textLeft + waterAlignOff, textTop, textWidth, textHeight), DpiScale(), False)
         End If
 
         If Not isEmpty Then
             If _hasSelection Then
-                DrawSelection(g, singleLineY, textLeft, textWidth)
+                DrawSelection_D2D(rt, singleLineY, textLeft, textWidth)
             End If
             Dim alignOff As Integer = GetAlignOffsetX(_text, textWidth)
-            Dim textY As Integer = singleLineY + (行高 - FontHeight) \ 2
-            TextRenderer.DrawText(g, _text, Font,
-                New Point(textLeft + alignOff - _scrollXOffset, textY),
-                ForeColor, TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine)
+            DrawSingleLineText_D2D(rt, _text, Font, ForeColor,
+                New RectangleF(textLeft + alignOff - _scrollXOffset, textTop, Short.MaxValue, textHeight), DpiScale(), False)
         End If
 
         If Focused AndAlso _caretVisible AndAlso 启用编辑 Then
-            DrawCaret(g, textLeft, textTop)
+            DrawCaret_D2D(rt, textLeft, textTop)
         End If
 
-        g.ResetClip()
+        rt.PopAxisAlignedClip()
     End Sub
 
-    Private Sub DrawSelection(g As Graphics, lineY As Integer, textLeft As Integer, textWidth As Integer)
+    Private Shared Sub PushClip_D2D(rt As ID2D1RenderTarget, rect As RectangleF)
+        rt.PushAxisAlignedClip(New Vortice.RawRectF(rect.Left, rect.Top, rect.Right, rect.Bottom), AntialiasMode.Aliased)
+    End Sub
+
+    Private Sub DrawSelection_D2D(rt As ID2D1RenderTarget, lineY As Integer, textLeft As Integer, textWidth As Integer)
         Dim minC As Integer = Math.Min(_selAnchorCol, _caretCol)
         Dim maxC As Integer = Math.Max(_selAnchorCol, _caretCol)
         Dim alignOff As Integer = GetAlignOffsetX(_text, textWidth)
         Dim x1 As Integer = textLeft + alignOff + MeasureWidth(_text.Substring(0, minC)) - _scrollXOffset
         Dim x2 As Integer = textLeft + alignOff + MeasureWidth(_text.Substring(0, maxC)) - _scrollXOffset
         If x2 <= x1 Then Return
-        Using br As New SolidBrush(选区背景色)
-            g.FillRectangle(br, x1, lineY, x2 - x1, 行高)
+        Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(选区背景色))
+            rt.FillRectangle(New Vortice.Mathematics.Rect(x1, lineY, x2 - x1, 行高), br)
         End Using
     End Sub
 
-    Private Sub DrawCaret(g As Graphics, textLeft As Integer, textTop As Integer)
+    Private Sub DrawCaret_D2D(rt As ID2D1RenderTarget, textLeft As Integer, textTop As Integer)
         Dim bi As Integer = CInt(边框宽度 * DpiScale())
         Dim textHeight As Integer = ClientRectangle.Height - Math.Max(Padding.Top, bi) - Math.Max(Padding.Bottom, bi)
         Dim textWidth As Integer = ClientRectangle.Width - textLeft - Math.Max(Padding.Right, bi) - ArrowAreaWidth
@@ -1185,8 +1193,8 @@ Public Class ModernComboBox
         Dim lineY As Integer = textTop + (textHeight - 行高) \ 2
         Dim caretH As Integer = 行高 - 2
         Dim caretY As Integer = lineY + (行高 - caretH) \ 2
-        Using br As New SolidBrush(光标颜色)
-            g.FillRectangle(br, cx, caretY, CInt(光标线宽 * DpiScale()), caretH)
+        Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(光标颜色))
+            rt.FillRectangle(New Vortice.Mathematics.Rect(cx, caretY, CInt(光标线宽 * DpiScale()), caretH), br)
         End Using
     End Sub
 
@@ -1605,7 +1613,7 @@ Public Class ModernComboBox
     End Function
 
     Private Function FindColFromX(lineStr As String, x As Integer) As Integer
-        Return TextRenderHelper.FindColFromX(lineStr, x, Font, 行高)
+        Return TextRenderHelper.FindColFromX_D2D(lineStr, x, Font, DpiScale())
     End Function
 #End Region
 
@@ -1819,6 +1827,16 @@ Public Class ModernComboBox
         If s Is Nothing Then Return -1
         For i As Integer = startIndex + 1 To _items.Count - 1
             If String.Equals(_items(i), s, StringComparison.CurrentCultureIgnoreCase) Then
+                Return i
+            End If
+        Next
+        Return -1
+    End Function
+
+    Private Function FindItemIndexExact(s As String) As Integer
+        If _items Is Nothing Then Return -1
+        For i As Integer = 0 To _items.Count - 1
+            If String.Equals(_items(i), s, StringComparison.Ordinal) Then
                 Return i
             End If
         Next
@@ -2151,31 +2169,24 @@ Public Class ModernComboBox
             Dim ssaa As Integer = Math.Max(1, CInt(_owner.超采样倍率))
             If Class1.GlobalSSAA <> Class1.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(Class1.GlobalSSAA))
 
-            ' 1) D2D 图形层：背景 + 项高亮
             Using scope = D2DHelper.BeginPaint(e, Me, GetOrCreateDCRenderTarget(), ssaa, _ssaaCache)
                 Dim gRT As ID2D1RenderTarget = scope.GraphicsRenderTarget
                 DrawDropDownBackground_D2D(gRT, boundsRect, bw, w, h)
                 DrawDropDownItemsBackground_D2D(gRT, w, h)
                 scope.FlushGraphics()
-            End Using
 
-            ' 2) GDI 文本层（保留 ClearTypeGridFit + EndEllipsis 行为）
-            DrawDropDownItemsText(e.Graphics, w, h)
-
-            ' 3) D2D 图形层：滚动条
-            If _scrollBarVisible Then
-                Using scope = D2DHelper.BeginPaint(e, Me, GetOrCreateDCRenderTarget(), ssaa, _ssaaCache)
-                    Dim gRT As ID2D1RenderTarget = scope.GraphicsRenderTarget
+                Dim dcRT As ID2D1DCRenderTarget = scope.DCRenderTarget
+                DrawDropDownItemsText_D2D(dcRT, w, h)
+                If _scrollBarVisible Then
                     _scrollBar.ComputeLayout(w, h, bw, 0,
                         _owner.下拉内边距.Top, _owner.下拉内边距.Bottom,
                         _owner.下拉滚动条宽度,
                         _owner._items.Count, Math.Min(_owner._items.Count, _owner.最大下拉项数), _scrollOffset)
-                    _scrollBar.Draw_D2D(gRT, w, h, bw, 0,
+                    _scrollBar.Draw_D2D(dcRT, w, h, bw, 0,
                         _owner.下拉滚动条宽度,
                         _owner.下拉滚动条轨道颜色, _owner.下拉滚动条颜色, _owner.下拉滚动条悬停颜色)
-                    scope.FlushGraphics()
-                End Using
-            End If
+                End If
+            End Using
         End Sub
 
         Private Sub DrawDropDownBackground_D2D(rt As ID2D1RenderTarget, boundsRect As RectangleF, bw As Integer, w As Integer, h As Integer)
@@ -2236,8 +2247,7 @@ Public Class ModernComboBox
             End Try
         End Sub
 
-        Private Sub DrawDropDownItemsText(g As Graphics, w As Integer, h As Integer)
-            g.TextRenderingHint = Drawing.Text.TextRenderingHint.ClearTypeGridFit
+        Private Sub DrawDropDownItemsText_D2D(rt As ID2D1RenderTarget, w As Integer, h As Integer)
             Dim s As Single = _owner.DpiScale()
             Dim bw As Integer = CInt(_owner.下拉边框宽度 * s)
             Dim pad As Padding = _owner.下拉内边距
@@ -2254,17 +2264,16 @@ Public Class ModernComboBox
                 hlR += pad.Right
             End If
 
-            g.SetClip(New Rectangle(inset, inset, w - inset * 2 - rightCorr - scrollW, h - inset * 2))
+            PushClip_D2D(rt, New RectangleF(inset, inset, w - inset * 2 - rightCorr - scrollW, h - inset * 2))
             For i As Integer = 0 To visCount - 1
                 Dim idx As Integer = i + _scrollOffset
                 If idx >= _owner._items.Count Then Exit For
                 Dim itemY As Integer = bw + pad.Top + i * itemH
-                Dim itemRect As New Rectangle(hlL, itemY, w - hlL - hlR - scrollW, itemH)
-                Dim textRect As New Rectangle(itemRect.X + pad.Left + 4, itemRect.Y, itemRect.Width - pad.Left - pad.Right - 8, itemRect.Height)
-                TextRenderer.DrawText(g, _owner._items(idx), _owner.Font, textRect, _owner.ForeColor,
-                    TextFormatFlags.Left Or TextFormatFlags.VerticalCenter Or TextFormatFlags.EndEllipsis Or TextFormatFlags.NoPadding)
+                Dim itemRect As New RectangleF(hlL, itemY, w - hlL - hlR - scrollW, itemH)
+                Dim textRect As New RectangleF(itemRect.X + pad.Left + 4, itemRect.Y, itemRect.Width - pad.Left - pad.Right - 8, itemRect.Height)
+                DrawSingleLineText_D2D(rt, _owner._items(idx), _owner.Font, _owner.ForeColor, textRect, s, True)
             Next
-            g.ResetClip()
+            rt.PopAxisAlignedClip()
         End Sub
 
         Private Function GetItemIndexAtY(y As Integer) As Integer
@@ -2497,9 +2506,7 @@ Public Class ModernComboBox
             Dim contentW As Integer = maxW - pad.Left - pad.Right - bw * 2
             If contentW < 10 Then contentW = 10
 
-            Dim measured As Size = TextRenderer.MeasureText(_tipText, _owner.Font,
-                New Size(contentW, Integer.MaxValue),
-                TextFormatFlags.WordBreak Or TextFormatFlags.NoPadding)
+            Dim measured As Size = MeasureWrappedText_D2D(_tipText, _owner.Font, contentW, _owner.DpiScale())
 
             Dim w As Integer = Math.Min(maxW, measured.Width + pad.Left + pad.Right + bw * 2)
             Dim h As Integer = measured.Height + pad.Top + pad.Bottom + bw * 2
@@ -2538,7 +2545,6 @@ Public Class ModernComboBox
             Dim ssaa As Integer = 1
             If Class1.GlobalSSAA <> Class1.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(Class1.GlobalSSAA))
 
-            ' 1) D2D 图形层：背景 + 边框
             Using scope = D2DHelper.BeginPaint(e, Me, GetOrCreateDCRenderTarget(), ssaa, _ssaaCache)
                 Dim gRT As ID2D1RenderTarget = scope.GraphicsRenderTarget
                 ' 用背景色填满整个客户区，防止边缘漏像素
@@ -2562,15 +2568,12 @@ Public Class ModernComboBox
                     End If
                 End If
                 scope.FlushGraphics()
-            End Using
 
-            ' 2) GDI 文本层
-            e.Graphics.TextRenderingHint = Drawing.Text.TextRenderingHint.ClearTypeGridFit
-            Dim textRect As New Rectangle(bw + pad.Left, bw + pad.Top,
+                Dim textRect As New RectangleF(bw + pad.Left, bw + pad.Top,
                 w - bw * 2 - pad.Left - pad.Right,
                 h - bw * 2 - pad.Top - pad.Bottom)
-            TextRenderer.DrawText(e.Graphics, _tipText, _owner.Font, textRect, _owner.提示文本颜色,
-                TextFormatFlags.WordBreak Or TextFormatFlags.NoPadding Or TextFormatFlags.Left Or TextFormatFlags.Top)
+                DrawWrappedText_D2D(scope.DCRenderTarget, _tipText, _owner.Font, _owner.提示文本颜色, textRect, _owner.DpiScale())
+            End Using
         End Sub
     End Class
 #End Region
@@ -2602,8 +2605,54 @@ Public Class ModernComboBox
     End Function
 
     Private Function MeasureWidth(text As String) As Integer
-        Return TextRenderHelper.MeasureTextWidth(text, Font, 行高)
+        Return CInt(Math.Ceiling(TextRenderHelper.MeasureTextWidth_D2D(text, Font, DpiScale())))
     End Function
+
+    Private Shared Sub DrawSingleLineText_D2D(rt As ID2D1RenderTarget, text As String, font As Font, foreColor As Color,
+                                             rect As RectangleF, dpiScale As Single, endEllipsis As Boolean)
+        If String.IsNullOrEmpty(text) OrElse foreColor.A = 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        Using fmt = TextRenderHelper.CreateDWriteTextFormat(font, dpiScale)
+            fmt.WordWrapping = Vortice.DirectWrite.WordWrapping.NoWrap
+            fmt.ParagraphAlignment = Vortice.DirectWrite.ParagraphAlignment.Center
+            If endEllipsis Then
+                Try
+                    fmt.SetTrimming(New Vortice.DirectWrite.Trimming With {.Granularity = Vortice.DirectWrite.TrimmingGranularity.Character}, Nothing)
+                Catch
+                End Try
+            End If
+            Using layout = D2DHelper.GetDWriteFactory().CreateTextLayout(text, fmt, rect.Width, rect.Height)
+                Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(foreColor))
+                    rt.DrawTextLayout(New Vector2(rect.X, rect.Y), layout, br)
+                End Using
+            End Using
+        End Using
+    End Sub
+
+    Private Shared Function MeasureWrappedText_D2D(text As String, font As Font, maxWidth As Integer, dpiScale As Single) As Size
+        If String.IsNullOrEmpty(text) Then Return Size.Empty
+        Using fmt = TextRenderHelper.CreateDWriteTextFormat(font, dpiScale)
+            fmt.WordWrapping = Vortice.DirectWrite.WordWrapping.Wrap
+            fmt.ParagraphAlignment = Vortice.DirectWrite.ParagraphAlignment.Near
+            Using layout = D2DHelper.GetDWriteFactory().CreateTextLayout(text, fmt, maxWidth, Single.MaxValue)
+                Dim m = layout.Metrics
+                Return New Size(CInt(Math.Ceiling(m.Width)), CInt(Math.Ceiling(m.Height)))
+            End Using
+        End Using
+    End Function
+
+    Private Shared Sub DrawWrappedText_D2D(rt As ID2D1RenderTarget, text As String, font As Font, foreColor As Color,
+                                          rect As RectangleF, dpiScale As Single)
+        If String.IsNullOrEmpty(text) OrElse foreColor.A = 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        Using fmt = TextRenderHelper.CreateDWriteTextFormat(font, dpiScale)
+            fmt.WordWrapping = Vortice.DirectWrite.WordWrapping.Wrap
+            fmt.ParagraphAlignment = Vortice.DirectWrite.ParagraphAlignment.Near
+            Using layout = D2DHelper.GetDWriteFactory().CreateTextLayout(text, fmt, rect.Width, rect.Height)
+                Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(foreColor))
+                    rt.DrawTextLayout(New Vector2(rect.X, rect.Y), layout, br)
+                End Using
+            End Using
+        End Using
+    End Sub
 
     Private Function GetAlignOffsetX(lineStr As String, areaWidth As Integer) As Integer
         If 文本对齐 = TextAlignMode.Left Then Return 0
@@ -2620,9 +2669,13 @@ Public Class ModernComboBox
     End Function
 
     Private Sub NotifyTextChanged()
+        Dim matchIndex As Integer = FindItemIndexExact(_text)
+        Dim selectedIndexChanged As Boolean = _selectedIndex <> matchIndex
+        If selectedIndexChanged Then _selectedIndex = matchIndex
         EnsureCaretVisible()
         Invalidate()
         RaiseEvent TextChanged(Me, EventArgs.Empty)
+        If selectedIndexChanged Then RaiseEvent SelectedIndexChanged(Me, EventArgs.Empty)
     End Sub
 
     Friend Sub OnItemsTextChanged()

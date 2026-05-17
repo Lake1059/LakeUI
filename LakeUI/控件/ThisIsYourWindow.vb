@@ -256,7 +256,7 @@ Public Class ThisIsYourWindow
     ''' <summary>
     ''' 毛玻璃 / 亚克力背景模式。
     ''' None — 关闭。
-    ''' Auto — 抓取窗口背后的桌面区域并模糊后绘制为窗体背景。默认仅在事件驱动时刷新（移动 / 调整大小结束 / 显示 / 激活），
+    ''' Auto — 抓取窗口背后的桌面区域并模糊后绘制为窗体背景。默认仅在事件驱动时刷新（移动或调整大小结束 / 显示 / 激活），
     '''        系统截图工具能截到本窗口；如需常态周期刷新，请同时开启 <see cref="BackdropExcludeFromCapture"/>，
     '''        此时启用 WDA_EXCLUDEFROMCAPTURE 防止抓自身（要求 Win10 build 19041+），副作用：系统截图 / 录屏均无法捕获本窗口。
     ''' Image — 使用 <see cref="BackdropImage"/> 作为虚拟背景源（按 cover 撑满窗口）后再做模糊；
@@ -1251,7 +1251,7 @@ Public Class ThisIsYourWindow
     End Property
 
     Private _毛玻璃帧率 As Integer = 15
-    <Category("LakeUI - Backdrop"), Description("Auto 模式常态刷新帧率 (0-60)。0 = 仅事件驱动（窗口移动 / 调整大小结束 / 显示 / 激活）。仅在 BackdropExcludeFromCapture=True 时生效；关闭该开关时强制纯事件驱动。"), DefaultValue(15)>
+    <Category("LakeUI - Backdrop"), Description("Auto 模式常态刷新帧率 (0-60)。0 = 仅事件驱动（移动或调整大小结束 / 显示 / 激活）。仅在 BackdropExcludeFromCapture=True 时生效；关闭该开关时强制纯事件驱动。"), DefaultValue(15)>
     Public Property BackdropFrameRate As Integer
         Get
             Return _毛玻璃帧率
@@ -1267,7 +1267,7 @@ Public Class ThisIsYourWindow
     ''' Auto 模式下是否启用 <c>WDA_EXCLUDEFROMCAPTURE</c> 把本窗口排除在抓屏之外。
     ''' True — 安全防自照，可启用常态周期刷新；副作用：系统截图、屏幕共享、录屏均无法捕获本窗口。
     ''' False（默认） — 不启用 WDA，截图工具可以正常截到窗口；为防止"自己抓自己"产生递归反馈纹路，
-    ''' 强制使用纯事件驱动刷新（窗口移动 / 调整大小结束 / 显示 / 激活），<see cref="BackdropFrameRate"/> 被忽略。
+    ''' 强制使用纯事件驱动刷新（移动或调整大小结束 / 显示 / 激活），<see cref="BackdropFrameRate"/> 被忽略。
     ''' Image 模式与本属性无关：永远不抓屏、永远不启用 WDA。
     ''' </summary>
     <Category("LakeUI - Backdrop"), Description("Auto 模式下启用 WDA_EXCLUDEFROMCAPTURE 防自照（True 才允许周期刷新；副作用：系统截图截不到本窗口）。"), DefaultValue(False)>
@@ -2251,11 +2251,6 @@ Public Class ThisIsYourWindow
                     _state.IsInSizeMove = True
                     ' 暂停常态 Tick
                     _state.BackdropTimer?.Stop()
-                    ' Auto / CaptionOnly 模式下触发"动作开始"首帧（抓一次当前桌面，拖动期间复用）。
-                    ' Image 模式源是静态图，进入 sizemove 不需要重模糊。
-                    If (_owner._毛玻璃模式 = BackdropModeEnum.Auto OrElse _owner._毛玻璃模式 = BackdropModeEnum.CaptionOnly) AndAlso _state.Renderer IsNot Nothing Then
-                        _state.Renderer.RequestFrame(_owner.获取毛玻璃捕获区域(_state.HostForm), False)
-                    End If
                     MyBase.WndProc(m)
                     Return
 

@@ -42,10 +42,18 @@ Public Class ExcellentProgressBar
         If Not String.IsNullOrEmpty(Me.Text) Then
             绘制文字(e.Graphics)
         End If
-        If Not Enabled Then
-            Using brush As New SolidBrush(Color.FromArgb(120, 0, 0, 0))
-                e.Graphics.FillRectangle(brush, 0, 0, Me.Width, Me.Height)
-            End Using
+        If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
+            If 边框圆角半径 > 0 Then
+                Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(极限矩形区域, 边框圆角半径 * s)
+                    Using brush As New SolidBrush(禁用时遮罩颜色)
+                        e.Graphics.FillPath(brush, path)
+                    End Using
+                End Using
+            Else
+                Using brush As New SolidBrush(禁用时遮罩颜色)
+                    e.Graphics.FillRectangle(brush, 极限矩形区域)
+                End Using
+            End If
         End If
     End Sub
 
@@ -428,6 +436,17 @@ Public Class ExcellentProgressBar
         End Get
         Set(value As Integer)
             SetValue(边框圆角半径, value)
+        End Set
+    End Property
+
+    Private 禁用时遮罩颜色 As Color = Color.FromArgb(120, 0, 0, 0)
+    <Category("LakeUI"), Description("禁用（Enabled = False）时覆盖在主体区域上的遮罩颜色（受圆角裁剪，不影响圆角外的透明区域）。"), DefaultValue(GetType(Color), "120, 0, 0, 0"), Browsable(True)>
+    Public Property DisabledOverlayColor As Color
+        Get
+            Return 禁用时遮罩颜色
+        End Get
+        Set(value As Color)
+            SetValue(禁用时遮罩颜色, value)
         End Set
     End Property
 

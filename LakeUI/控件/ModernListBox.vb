@@ -1,5 +1,8 @@
 ﻿Imports System.ComponentModel
 Imports System.Drawing.Drawing2D
+Imports System.Numerics
+Imports Vortice.Direct2D1
+Imports Vortice.DirectWrite
 
 <DefaultEvent("SelectedIndexChanged")>
 Public Class ModernListBox
@@ -260,6 +263,11 @@ Public Class ModernListBox
 #End Region
 
 #Region "字段"
+    Private _dcRT As ID2D1DCRenderTarget
+    Private ReadOnly _ssaaCache As New D2DHelper.BitmapRTCache()
+    Private ReadOnly _iconCache As New D2DHelper.D2DBitmapCache()
+    Private ReadOnly _textFormatCache As New D2DHelper.TextFormatCache()
+
     Private _items As ItemCollection
     Friend _checkStates As New Dictionary(Of Integer, CheckStateEnum)
     Private _selectedIndex As Integer = -1
@@ -489,6 +497,17 @@ Public Class ModernListBox
         End Get
         Set(value As Color)
             SetValue(背景颜色, value)
+        End Set
+    End Property
+
+    Private 禁用时遮罩颜色 As Color = Color.FromArgb(120, 0, 0, 0)
+    <Category("LakeUI"), Description("禁用（Enabled = False）时覆盖在主体区域上的遮罩颜色（受圆角裁剪，不影响圆角外的透明区域）。"), DefaultValue(GetType(Color), "120, 0, 0, 0"), Browsable(True)>
+    Public Property DisabledOverlayColor As Color
+        Get
+            Return 禁用时遮罩颜色
+        End Get
+        Set(value As Color)
+            SetValue(禁用时遮罩颜色, value)
         End Set
     End Property
 
@@ -1051,6 +1070,22 @@ Public Class ModernListBox
         UpdateStyles()
     End Sub
 
+    Private Function GetOrCreateDCRenderTarget() As ID2D1DCRenderTarget
+        If _dcRT Is Nothing Then _dcRT = D2DHelper.CreateDCRenderTarget()
+        Return _dcRT
+    End Function
+
+    Protected Overrides Sub OnHandleDestroyed(e As EventArgs)
+        Try : _ssaaCache.Dispose() : Catch : End Try
+        Try : _iconCache.Dispose() : Catch : End Try
+        Try : _textFormatCache.Dispose() : Catch : End Try
+        If _dcRT IsNot Nothing Then
+            Try : _dcRT.Dispose() : Catch : End Try
+            _dcRT = Nothing
+        End If
+        MyBase.OnHandleDestroyed(e)
+    End Sub
+
 #End Region
 
 #Region "布局计算"
@@ -1121,6 +1156,8 @@ Public Class ModernListBox
 #Region "绘制"
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
+        If Width < 1 OrElse Height < 1 Then Return
+
         Dim w As Integer = ClientRectangle.Width
         Dim h As Integer = ClientRectangle.Height
         Dim hasRadius As Boolean = 边框圆角半径 > 0
@@ -1136,69 +1173,92 @@ Public Class ModernListBox
 
         预计算滚动条布局()
 
-        Dim _ssaa As Integer = If(Class1.GlobalSSAA > 1, Class1.GlobalSSAA, 超采样倍率)
-        If _ssaa > 1 Then
-            Using bmp As New Bitmap(w * _ssaa, h * _ssaa)
-                Using g As Graphics = Graphics.FromImage(bmp)
-                    g.ScaleTransform(_ssaa, _ssaa)
-                    DrawBackground(g, hasRadius, boundsRect, bc, effBg)
-                    绘制滚动条(g)
-                End Using
-                e.Graphics.CompositingQuality = CompositingQuality.HighQuality
-                e.Graphics.InterpolationMode = InterpolationMode.HighQualityBicubic
-                e.Graphics.DrawImage(bmp, 0, 0, w, h)
+        Dim ssaa As Integer = Math.Max(1, CInt(超采样倍率))
+        If Class1.GlobalSSAA <> Class1.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(Class1.GlobalSSAA))
+
+        Using scope = D2DHelper.BeginPaint(e, Me, GetOrCreateDCRenderTarget(), ssaa, _ssaaCache)
+            Dim gRT As ID2D1RenderTarget = scope.GraphicsRenderTarget
+            Dim dcRT As ID2D1DCRenderTarget = scope.DCRenderTarget
+
+            DrawBackground_D2D(gRT, hasRadius, boundsRect, bc, effBg)
+
+            Using clip = CreateContentClip_D2D(gRT, hasRadius, s)
+                绘制全部项背景与图标_D2D(gRT)
+                绘制拖选框_D2D(gRT)
+                绘制拖动排序指示线_D2D(gRT)
+                绘制滚动条_D2D(gRT)
             End Using
-        Else
-            DrawBackground(e.Graphics, hasRadius, boundsRect, bc, effBg)
-        End If
 
-        ' 设置裁剪区域
-        Dim inset As Integer = 获取边框内边距()
-        Dim clipRect As New RectangleF(inset, inset, w - inset * 2 - 1, h - inset * 2 - 1)
-        If clipRect.Width > 0 AndAlso clipRect.Height > 0 Then
-            If hasRadius Then
-                Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(clipRect, Math.Max(0, 边框圆角半径 * s - 边框宽度 * s))
-                    e.Graphics.SetClip(path)
-                End Using
-            Else
-                e.Graphics.SetClip(Rectangle.Round(clipRect))
-            End If
+            scope.FlushGraphics()
 
-            绘制全部项(e.Graphics)
-            绘制拖选框(e.Graphics)
-            绘制拖动排序指示线(e.Graphics)
-
-            If _ssaa <= 1 Then
-                绘制滚动条(e.Graphics)
-            End If
-
-            e.Graphics.ResetClip()
-        End If
-
-        If Not Enabled Then
-            Using brush As New SolidBrush(Color.FromArgb(120, 0, 0, 0))
-                e.Graphics.FillRectangle(brush, 0, 0, w, h)
+            Using clip = CreateContentClip_D2D(dcRT, hasRadius, s)
+                绘制全部项文本_D2D(dcRT)
             End Using
-        End If
+
+            If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
+                If hasRadius Then
+                    Using geo = RectangleRenderer.创建圆角矩形几何(boundsRect, 边框圆角半径 * s)
+                        RectangleRenderer.绘制圆角背景_D2D(dcRT, geo, boundsRect, 禁用时遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Vertical)
+                    End Using
+                Else
+                    RectangleRenderer.绘制矩形背景_D2D(dcRT, boundsRect, 禁用时遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Vertical)
+                End If
+            End If
+        End Using
     End Sub
 
-    Private Sub DrawBackground(g As Graphics, hasRadius As Boolean, boundsRect As RectangleF, borderClr As Color, bgClr As Color)
+    Private Sub DrawBackground_D2D(rt As ID2D1RenderTarget, hasRadius As Boolean, boundsRect As RectangleF, borderClr As Color, bgClr As Color)
         Dim s As Single = DpiScale()
-        g.SmoothingMode = SmoothingMode.AntiAlias
-        g.PixelOffsetMode = PixelOffsetMode.HighQuality
-        g.InterpolationMode = InterpolationMode.HighQualityBicubic
         If hasRadius Then
-            Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(boundsRect, 边框圆角半径 * s)
-                RectangleRenderer.绘制圆角背景(g, path, boundsRect, bgClr, Color.Empty, Orientation.Vertical)
-                RectangleRenderer.绘制圆角边框(g, path, borderClr, 边框宽度 * s)
+            Using geo = RectangleRenderer.创建圆角矩形几何(boundsRect, 边框圆角半径 * s)
+                RectangleRenderer.绘制圆角背景_D2D(rt, geo, boundsRect, bgClr, Color.Empty, System.Windows.Forms.Orientation.Vertical)
+                RectangleRenderer.绘制圆角边框_D2D(rt, geo, borderClr, 边框宽度 * s)
             End Using
         Else
-            Using br As New SolidBrush(bgClr)
-                g.FillRectangle(br, boundsRect)
-            End Using
-            RectangleRenderer.绘制矩形边框(g, boundsRect, borderClr, 边框宽度 * s)
+            RectangleRenderer.绘制矩形背景_D2D(rt, boundsRect, bgClr, Color.Empty, System.Windows.Forms.Orientation.Vertical)
+            RectangleRenderer.绘制矩形边框_D2D(rt, boundsRect, borderClr, 边框宽度 * s)
         End If
     End Sub
+
+    Private Function CreateContentClip_D2D(rt As ID2D1RenderTarget, hasRadius As Boolean, s As Single) As D2DContentClipScope
+        Dim inset As Integer = 获取边框内边距()
+        Dim clipRect As New RectangleF(inset, inset, Width - inset * 2 - 1, Height - inset * 2 - 1)
+        Dim radius As Single = If(hasRadius, Math.Max(0, 边框圆角半径 * s - 边框宽度 * s), 0)
+        Return New D2DContentClipScope(rt, clipRect, radius)
+    End Function
+
+    Private NotInheritable Class D2DContentClipScope
+        Implements IDisposable
+
+        Private ReadOnly _rt As ID2D1RenderTarget
+        Private ReadOnly _usesLayer As Boolean
+        Private ReadOnly _geo As ID2D1Geometry
+        Private ReadOnly _active As Boolean
+
+        Public Sub New(rt As ID2D1RenderTarget, clipRect As RectangleF, radius As Single)
+            If rt Is Nothing OrElse clipRect.Width <= 0 OrElse clipRect.Height <= 0 Then Return
+            _rt = rt
+            If radius > 0 Then
+                _geo = RectangleRenderer.创建圆角矩形几何(clipRect, radius)
+                D2DHelper.PushGeometryClip(rt, _geo, clipRect)
+                _usesLayer = True
+            Else
+                rt.PushAxisAlignedClip(New Vortice.RawRectF(clipRect.X, clipRect.Y, clipRect.Right, clipRect.Bottom), AntialiasMode.PerPrimitive)
+            End If
+            _active = True
+        End Sub
+
+        Public Sub Dispose() Implements IDisposable.Dispose
+            If _active Then
+                If _usesLayer Then
+                    _rt.PopLayer()
+                Else
+                    _rt.PopAxisAlignedClip()
+                End If
+            End If
+            If _geo IsNot Nothing Then _geo.Dispose()
+        End Sub
+    End Class
 
     Private Sub 预计算滚动条布局()
         If _items.Count = 0 Then
@@ -1222,25 +1282,22 @@ Public Class ModernListBox
         End If
     End Sub
 
-    Private Sub 绘制滚动条(g As Graphics)
+    Private Sub 绘制滚动条_D2D(rt As ID2D1RenderTarget)
         If _scrollBar.TrackRect.IsEmpty Then Return
         Dim s As Single = DpiScale()
-        _scrollBar.Draw(g, Width, Height, CInt(Math.Round(边框宽度 * s)), CInt(Math.Round(边框圆角半径 * s)),
+        _scrollBar.Draw_D2D(rt, Width, Height, CInt(Math.Round(边框宽度 * s)), CInt(Math.Round(边框圆角半径 * s)),
             CInt(Math.Round(滚动条宽度 * s)), 滚动条轨道颜色, 滚动条颜色, 滚动条悬停颜色)
     End Sub
 
-    Private Sub 绘制全部项(g As Graphics)
+    Private Sub 绘制全部项背景与图标_D2D(rt As ID2D1RenderTarget)
         If _items.Count = 0 Then Return
         Dim contentRect = 获取内容区域()
         If contentRect.Height <= 0 OrElse contentRect.Width <= 0 Then Return
-
-        g.TextRenderingHint = Drawing.Text.TextRenderingHint.ClearTypeGridFit
 
         Dim s As Single = DpiScale()
         Dim scaledH As Integer = CInt(Math.Round(行高 * s))
         Dim scaledPadL As Integer = CInt(Math.Round(项左内边距 * s))
         Dim scaledCbLeft As Integer = CInt(Math.Round(复选框左边距 * s))
-        Dim scaledCbSize As Integer = CInt(Math.Round(复选框大小 * s))
         Dim scaledIconW As Integer = CInt(Math.Round(图标尺寸.Width * s))
         Dim scaledIconH As Integer = CInt(Math.Round(图标尺寸.Height * s))
         Dim scaledIconMR As Integer = CInt(Math.Round(图标右边距 * s))
@@ -1249,13 +1306,12 @@ Public Class ModernListBox
         Dim scrollW As Integer = If(Not _scrollBar.TrackRect.IsEmpty, Width - inset - _scrollBar.VisualLeft, 0)
         Dim availW As Integer = contentRect.Width - scrollW
 
-        ' 绘制悬停动画高亮
         If _hoverAnimActive AndAlso _hoverIndex >= 0 AndAlso Not _selectedIndices.Contains(_hoverIndex) Then
             Dim t As Single = _hoverAnim.Progress
             Dim animY As Single = _hoverAnimFromY + (_hoverAnimToY - _hoverAnimFromY) * t
             Dim animH As Single = _hoverAnimFromH + (_hoverAnimToH - _hoverAnimFromH) * t
-            Using br As New SolidBrush(项悬停颜色)
-                g.FillRectangle(br, New RectangleF(contentRect.X, animY, availW, animH))
+            Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(项悬停颜色))
+                rt.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(contentRect.X, animY, availW, animH)), br)
             End Using
         End If
 
@@ -1266,125 +1322,148 @@ Public Class ModernListBox
             Dim itemY As Integer = contentRect.Y + i * scaledH
             If itemY + scaledH > contentRect.Bottom Then Exit For
 
-            Dim itemRect As New Rectangle(contentRect.X, itemY, availW, scaledH)
-
-            ' 选中背景
+            Dim itemRect As New RectangleF(contentRect.X, itemY, availW, scaledH)
             If _selectedIndices.Contains(idx) Then
-                Using br As New SolidBrush(项选中颜色)
-                    g.FillRectangle(br, itemRect)
+                Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(项选中颜色))
+                    rt.FillRectangle(D2DHelper.ToD2DRect(itemRect), br)
                 End Using
             ElseIf idx = _hoverIndex AndAlso Not _hoverAnimActive Then
-                Using br As New SolidBrush(项悬停颜色)
-                    g.FillRectangle(br, itemRect)
+                Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(项悬停颜色))
+                    rt.FillRectangle(D2DHelper.ToD2DRect(itemRect), br)
                 End Using
             End If
 
             Dim itemText As String = _items(idx)
             Dim textX As Integer = contentRect.X + scaledPadL
 
-            ' 复选框
             If 显示复选框 Then
                 Dim cbX As Integer = contentRect.X + scaledCbLeft
-                Dim cbY As Integer = itemY + (scaledH - scaledCbSize) \ 2
-                绘制复选框(g, cbX, cbY, 获取复选状态(idx))
+                Dim cbY As Integer = itemY + (scaledH - CInt(Math.Round(复选框大小 * s))) \ 2
+                绘制复选框_D2D(rt, cbX, cbY, 获取复选状态(idx))
                 textX = contentRect.X + 获取复选框区域宽度()
             End If
 
-            ' 图标
             Dim icon As Image = Nothing
-            If _itemIcons.TryGetIcon(itemText, icon) AndAlso icon IsNot Nothing Then
+            If _itemIcons.TryGetIcon(itemText, icon) AndAlso icon IsNot Nothing AndAlso scaledIconW > 0 AndAlso scaledIconH > 0 Then
                 Dim iconX As Integer = textX
                 Dim iconY As Integer = itemY + (scaledH - scaledIconH) \ 2
-                Dim prevMode = g.InterpolationMode
-                g.InterpolationMode = InterpolationMode.HighQualityBicubic
-                g.DrawImage(icon, New Rectangle(iconX, iconY, scaledIconW, scaledIconH))
-                g.InterpolationMode = prevMode
-                textX += scaledIconW + scaledIconMR
-            End If
-
-            ' 文本
-            Dim textRight As Integer = itemRect.Right - scaledPadL
-            Dim textWidth As Integer = textRight - textX
-            If textWidth > 0 Then
-                Dim textRect As New Rectangle(textX, itemY, textWidth, scaledH)
-                TextRenderer.DrawText(g, itemText, Font, textRect, ForeColor,
-                    TextFormatFlags.Left Or TextFormatFlags.VerticalCenter Or TextFormatFlags.EndEllipsis Or TextFormatFlags.NoPadding)
+                Dim bmp = _iconCache.GetBitmap(rt, icon)
+                If bmp IsNot Nothing Then
+                    rt.DrawBitmap(bmp,
+                        New Vortice.Mathematics.Rect(iconX, iconY, scaledIconW, scaledIconH),
+                        1.0F,
+                        BitmapInterpolationMode.Linear,
+                        New Vortice.Mathematics.Rect(0, 0, icon.Width, icon.Height))
+                End If
             End If
         Next
     End Sub
 
-    Private Sub 绘制复选框(g As Graphics, x As Integer, y As Integer, state As CheckStateEnum)
+    Private Sub 绘制全部项文本_D2D(rt As ID2D1DCRenderTarget)
+        If _items.Count = 0 Then Return
+        Dim contentRect = 获取内容区域()
+        If contentRect.Height <= 0 OrElse contentRect.Width <= 0 Then Return
+
+        Dim s As Single = DpiScale()
+        Dim scaledH As Integer = CInt(Math.Round(行高 * s))
+        Dim scaledPadL As Integer = CInt(Math.Round(项左内边距 * s))
+        Dim scaledIconW As Integer = CInt(Math.Round(图标尺寸.Width * s))
+        Dim scaledIconMR As Integer = CInt(Math.Round(图标右边距 * s))
+        Dim inset As Integer = 获取边框内边距()
+        Dim scrollW As Integer = If(Not _scrollBar.TrackRect.IsEmpty, Width - inset - _scrollBar.VisualLeft, 0)
+        Dim availW As Integer = contentRect.Width - scrollW
+
+        Dim fontSizePx As Single = Font.SizeInPoints * (96.0F / 72.0F) * s
+        Dim fontWeight As Vortice.DirectWrite.FontWeight = If(Font.Bold, Vortice.DirectWrite.FontWeight.Bold, Vortice.DirectWrite.FontWeight.Normal)
+        Dim fontStyle As Vortice.DirectWrite.FontStyle = If(Font.Italic, Vortice.DirectWrite.FontStyle.Italic, Vortice.DirectWrite.FontStyle.Normal)
+        Dim fmt = _textFormatCache.Get(Font.FontFamily.Name, fontWeight, fontStyle, fontSizePx,
+            Vortice.DirectWrite.TextAlignment.Leading, ParagraphAlignment.Center, True)
+
+        Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(ForeColor))
+            Dim visCount As Integer = 估算可见行数()
+            For i As Integer = 0 To visCount - 1
+                Dim idx As Integer = i + _scrollOffset
+                If idx >= _items.Count Then Exit For
+                Dim itemY As Integer = contentRect.Y + i * scaledH
+                If itemY + scaledH > contentRect.Bottom Then Exit For
+
+                Dim itemText As String = _items(idx)
+                Dim textX As Integer = contentRect.X + scaledPadL
+                If 显示复选框 Then textX = contentRect.X + 获取复选框区域宽度()
+
+                Dim icon As Image = Nothing
+                If _itemIcons.TryGetIcon(itemText, icon) AndAlso icon IsNot Nothing Then
+                    textX += scaledIconW + scaledIconMR
+                End If
+
+                Dim textRight As Integer = contentRect.X + availW - scaledPadL
+                Dim textWidth As Integer = textRight - textX
+                If textWidth > 0 Then
+                    rt.DrawText(itemText, fmt, New Vortice.Mathematics.Rect(textX, itemY, textWidth, scaledH), br)
+                End If
+            Next
+        End Using
+    End Sub
+
+    Private Sub 绘制复选框_D2D(rt As ID2D1RenderTarget, x As Integer, y As Integer, state As CheckStateEnum)
         Dim s As Single = DpiScale()
         Dim scaledSize As Single = 复选框大小 * s
         Dim scaledRadius As Single = 复选框圆角半径 * s
         Dim scaledBW As Single = 复选框边框宽度 * s
         Dim scaledMarkW As Single = 复选框标记线宽 * s
         Dim rect As New RectangleF(x, y, scaledSize, scaledSize)
-        Dim prevSmooth = g.SmoothingMode
-        g.SmoothingMode = SmoothingMode.AntiAlias
 
-        ' 背景
         If scaledRadius > 0 Then
-            Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(rect, scaledRadius)
-                Using br As New SolidBrush(复选框背景颜色)
-                    g.FillPath(br, path)
+            Using geo = RectangleRenderer.创建圆角矩形几何(rect, scaledRadius)
+                Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(复选框背景颜色))
+                    rt.FillGeometry(geo, br)
                 End Using
-                If scaledBW > 0 Then
-                    Using pen As New Pen(复选框边框颜色, scaledBW)
-                        pen.LineJoin = LineJoin.Round
-                        g.DrawPath(pen, path)
-                    End Using
-                End If
+                RectangleRenderer.绘制圆角边框_D2D(rt, geo, 复选框边框颜色, scaledBW)
             End Using
         Else
-            Using br As New SolidBrush(复选框背景颜色)
-                g.FillRectangle(br, rect)
+            Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(复选框背景颜色))
+                rt.FillRectangle(D2DHelper.ToD2DRect(rect), br)
             End Using
-            If scaledBW > 0 Then
-                Using pen As New Pen(复选框边框颜色, scaledBW)
-                    g.DrawRectangle(pen, rect.X, rect.Y, rect.Width, rect.Height)
-                End Using
-            End If
+            RectangleRenderer.绘制矩形边框_D2D(rt, rect, 复选框边框颜色, scaledBW)
         End If
 
-        ' 标记
         Dim inset As Single = scaledSize * 0.2F
         Select Case state
             Case CheckStateEnum.Checked
-                Using pen As New Pen(复选框勾选颜色, scaledMarkW)
-                    pen.StartCap = LineCap.Round
-                    pen.EndCap = LineCap.Round
-                    pen.LineJoin = LineJoin.Round
-                    Dim p1 As New PointF(x + inset, y + scaledSize * 0.5F)
-                    Dim p2 As New PointF(x + scaledSize * 0.4F, y + scaledSize - inset)
-                    Dim p3 As New PointF(x + scaledSize - inset, y + inset)
-                    g.DrawLines(pen, {p1, p2, p3})
+                Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(复选框勾选颜色))
+                    Using geo = D2DHelper.GetD2DFactory().CreatePathGeometry()
+                        Using sink = geo.Open()
+                            sink.BeginFigure(New Vector2(x + inset, y + scaledSize * 0.5F), FigureBegin.Hollow)
+                            sink.AddLine(New Vector2(x + scaledSize * 0.4F, y + scaledSize - inset))
+                            sink.AddLine(New Vector2(x + scaledSize - inset, y + inset))
+                            sink.EndFigure(FigureEnd.Open)
+                            sink.Close()
+                        End Using
+                        rt.DrawGeometry(geo, br, scaledMarkW)
+                    End Using
                 End Using
             Case CheckStateEnum.Crossed
-                Using pen As New Pen(复选框叉选颜色, scaledMarkW)
-                    pen.StartCap = LineCap.Round
-                    pen.EndCap = LineCap.Round
-                    g.DrawLine(pen, x + inset, y + inset, x + scaledSize - inset, y + scaledSize - inset)
-                    g.DrawLine(pen, x + scaledSize - inset, y + inset, x + inset, y + scaledSize - inset)
+                Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(复选框叉选颜色))
+                    rt.DrawLine(New Vector2(x + inset, y + inset), New Vector2(x + scaledSize - inset, y + scaledSize - inset), br, scaledMarkW)
+                    rt.DrawLine(New Vector2(x + scaledSize - inset, y + inset), New Vector2(x + inset, y + scaledSize - inset), br, scaledMarkW)
                 End Using
         End Select
-
-        g.SmoothingMode = prevSmooth
     End Sub
 
-    Private Sub 绘制拖选框(g As Graphics)
+    Private Sub 绘制拖选框_D2D(rt As ID2D1RenderTarget)
         If Not _isDragSelecting Then Return
         Dim rect As Rectangle = 获取拖选矩形()
         If rect.Width <= 0 OrElse rect.Height <= 0 Then Return
-        Using br As New SolidBrush(选框填充颜色)
-            g.FillRectangle(br, rect)
+        Dim rectF As New RectangleF(rect.X, rect.Y, rect.Width, rect.Height)
+        Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(选框填充颜色))
+            rt.FillRectangle(D2DHelper.ToD2DRect(rectF), br)
         End Using
-        Using pen As New Pen(选框边框颜色)
-            g.DrawRectangle(pen, rect)
+        Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(选框边框颜色))
+            rt.DrawRectangle(D2DHelper.ToD2DRect(rectF), br, 1.0F)
         End Using
     End Sub
 
-    Private Sub 绘制拖动排序指示线(g As Graphics)
+    Private Sub 绘制拖动排序指示线_D2D(rt As ID2D1RenderTarget)
         If Not _isDragReordering OrElse _dragReorderInsertIndex < 0 Then Return
         Dim contentRect = 获取内容区域()
         Dim scaledH As Integer = CInt(Math.Round(行高 * DpiScale()))
@@ -1395,8 +1474,8 @@ Public Class ModernListBox
             lineY = 获取项Y坐标(_dragReorderInsertIndex)
             If lineY < 0 Then Return
         End If
-        Using pen As New Pen(拖动排序指示线颜色, 拖动排序指示线宽 * DpiScale())
-            g.DrawLine(pen, contentRect.X, lineY, contentRect.Right, lineY)
+        Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(拖动排序指示线颜色))
+            rt.DrawLine(New Vector2(contentRect.X, lineY), New Vector2(contentRect.Right, lineY), br, 拖动排序指示线宽 * DpiScale())
         End Using
     End Sub
 
@@ -2008,7 +2087,7 @@ Public Class ModernListBox
                     End Using
                     If bw > 0 Then
                         Using pen As New Pen(_owner.提示边框颜色, bw)
-                            pen.LineJoin = LineJoin.Round
+                            pen.LineJoin = Drawing2D.LineJoin.Round
                             e.Graphics.DrawPath(pen, path)
                         End Using
                     End If

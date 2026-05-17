@@ -6,7 +6,7 @@ Imports System.Threading.Tasks
 
 ''' <summary>
 ''' 毛玻璃 / 亚克力效果的核心渲染器。
-''' 在常驻后台线程上抓取桌面 DC（窗口背后区域）→ 下采样 → 多次水平 / 垂直 box blur →
+''' 按需抓取桌面 DC（窗口背后区域）→ 下采样 → 多次水平 / 垂直 box blur →
 ''' 缓存为 <see cref="Bitmap"/>，供 <see cref="ThisIsYourWindow"/> 在 Paint 时铺满整个客户区。
 ''' 通过 <see cref="SetWindowDisplayAffinity"/>（Win10 19041+）确保自身不被拍到。
 ''' </summary>
@@ -47,9 +47,10 @@ Friend NotInheritable Class BackdropRenderer
     ' 在 UI 线程构造时缓存的窗口句柄。后台线程绝不能访问 _host.Handle / IsHandleCreated /
     ' IsDisposed —— 那会触发 WinForms 跨线程检查（InvalidOperationException）。
     Private _hostHandle As IntPtr
-    Private ReadOnly _signal As New AutoResetEvent(False)
-    Private ReadOnly _thread As Thread
+    Private ReadOnly _workerIdle As New ManualResetEventSlim(True)
+    Private ReadOnly _workerLock As New Object()
     Private _disposed As Integer = 0
+    Private _workerScheduled As Integer = 0
 
     ' 0 = Desktop 抓屏；1 = Image 静态源图
     Private _sourceMode As Integer = 0
@@ -115,11 +116,6 @@ Friend NotInheritable Class BackdropRenderer
                 _hostHandle = IntPtr.Zero
             End Try
         End If
-        _thread = New Thread(AddressOf WorkerLoop) With {
-            .IsBackground = True,
-            .Name = "LakeUI.BackdropRenderer"
-        }
-        _thread.Start()
     End Sub
 
     Public Sub ApplyParameters(radius As Integer, passes As Integer, downsample As Integer,
@@ -167,22 +163,39 @@ Friend NotInheritable Class BackdropRenderer
         _pendingH = formBounds.Height
         Volatile.Write(_pendingCommitAverage, If(commitAverage, 1, 0))
         Volatile.Write(_hasPending, 1)
-        _signal.Set()
+        ScheduleWorker()
     End Sub
 
-    Private Sub WorkerLoop()
-        Do
-            _signal.WaitOne()
+    Private Sub ScheduleWorker()
+        If Volatile.Read(_disposed) <> 0 Then Return
+        SyncLock _workerLock
             If Volatile.Read(_disposed) <> 0 Then Return
-            If Interlocked.Exchange(_hasPending, 0) = 0 Then Continue Do
-            Try
-                Dim bounds As New Rectangle(_pendingX, _pendingY, _pendingW, _pendingH)
-                Dim commitAvg As Boolean = (Interlocked.Exchange(_pendingCommitAverage, 0) <> 0)
-                ProcessFrame(bounds, commitAvg)
-            Catch
-                ' 后台线程绝不能抛出
-            End Try
-        Loop
+            If Interlocked.CompareExchange(_workerScheduled, 1, 0) <> 0 Then Return
+            _workerIdle.Reset()
+            ThreadPool.QueueUserWorkItem(AddressOf DrainPendingFrames)
+        End SyncLock
+    End Sub
+
+    Private Sub DrainPendingFrames(state As Object)
+        Try
+            Do While Volatile.Read(_disposed) = 0
+                If Interlocked.Exchange(_hasPending, 0) = 0 Then Exit Do
+                Try
+                    Dim bounds As New Rectangle(_pendingX, _pendingY, _pendingW, _pendingH)
+                    Dim commitAvg As Boolean = (Interlocked.Exchange(_pendingCommitAverage, 0) <> 0)
+                    ProcessFrame(bounds, commitAvg)
+                Catch
+                    ' 后台工作项绝不能抛出
+                End Try
+            Loop
+        Finally
+            Volatile.Write(_workerScheduled, 0)
+            If Volatile.Read(_disposed) = 0 AndAlso Volatile.Read(_hasPending) <> 0 Then
+                ScheduleWorker()
+            Else
+                _workerIdle.Set()
+            End If
+        End Try
     End Sub
 
     Private Sub ProcessFrame(bounds As Rectangle, commitAvg As Boolean)
@@ -692,9 +705,10 @@ Friend NotInheritable Class BackdropRenderer
 
     Public Sub Dispose() Implements IDisposable.Dispose
         If Interlocked.Exchange(_disposed, 1) <> 0 Then Return
-        _signal.Set()
+        SyncLock _workerLock
+        End SyncLock
         Try
-            _thread.Join(500)
+            _workerIdle.Wait(500)
         Catch
         End Try
         SyncLock _frameLock
@@ -711,7 +725,7 @@ Friend NotInheritable Class BackdropRenderer
         _noiseBrush = Nothing
         _blurBufferA = Nothing
         _blurBufferB = Nothing
-        _signal.Dispose()
+        _workerIdle.Dispose()
     End Sub
 
 End Class

@@ -40,7 +40,7 @@ Imports Vortice.DXGI
 '''   GraphicsRenderTarget（图形层）与 DCRenderTarget（文字层）。
 ''' • 任何"每帧创建/销毁"的 D2D 资源都应通过本模块的缓存/池化辅助接入。
 ''' </summary>
-Friend Module D2DHelper
+Public Module D2DHelper
 
 #Region "全局质量策略"
 
@@ -52,6 +52,15 @@ Friend Module D2DHelper
         Grayscale
         ''' <summary>不抗锯齿：仅用于像素艺术 / 极小字号场景。</summary>
         Aliased
+        ''' <summary>
+        ''' Outline（仿 MacType "几何渲染"档）：使用 DirectWrite 的 RenderingMode.Outline，
+        ''' 把字形当作纯矢量几何路径直接交给 D2D 抗锯齿管线绘制，
+        ''' <b>完全跳过字体的 TrueType hinting 字节码与 GASP 表</b>。
+        ''' 优点：彻底绕过"小字号禁用抗锯齿/强制贴格"策略，所有字号统一最高质量；
+        ''' 副作用：Outline 模式不支持子像素 ClearType，会自动落回灰度 AA；极小字号（&lt; 10pt）会显得稍"虚"。
+        ''' 启用本模式后 MacType 等基于 GDI 的钩子对 D2D 路径无效（D2D 本来就不经过 GDI）。
+        ''' </summary>
+        Outline
     End Enum
 
     ''' <summary>全局图形抗锯齿模式（不影响文字）。</summary>
@@ -59,6 +68,40 @@ Friend Module D2DHelper
 
     ''' <summary>全局文本质量。默认 ClearType 以兼容第三方文字渲染钩子。</summary>
     Public Property GlobalTextQuality As TextQualityMode = TextQualityMode.ClearType
+
+    ''' <summary>
+    ''' Outline 模式的可调参数。所有字段都可在运行时改写；改写后调用
+    ''' <see cref="InvalidateOutlineRenderingParams"/> 让下一帧生效。
+    '''
+    ''' 默认值是仿 MacType "几何渲染"档：
+    '''   gamma 1.4 ─ 比系统默认 (~2.0) 低，黑字更"重"、灰阶更平滑；
+    '''   enhancedContrast 0.5 ─ 适度的笔画强化（Outline 模式下过高会让字过粗失真）；
+    '''   grayscaleEnhancedContrast 1.0 ─ 灰度路径上的 stem darkening；
+    '''   clearTypeLevel 0 ─ Outline 模式不使用子像素；
+    '''   RenderingMode = Outline；GridFitMode = Disabled。
+    ''' </summary>
+    Public Class OutlineTextOptions
+        Public Property Gamma As Single = 1.4F
+        Public Property EnhancedContrast As Single = 0.5F
+        Public Property GrayscaleEnhancedContrast As Single = 1.0F
+        Public Property ClearTypeLevel As Single = 0.0F
+        Public Property PixelGeometry As Vortice.DirectWrite.PixelGeometry = Vortice.DirectWrite.PixelGeometry.Rgb
+        Public Property RenderingMode As Vortice.DirectWrite.RenderingMode = Vortice.DirectWrite.RenderingMode.Outline
+        Public Property GridFitMode As Vortice.DirectWrite.GridFitMode = Vortice.DirectWrite.GridFitMode.Disabled
+    End Class
+
+    ''' <summary>Outline 模式的可调参数。</summary>
+    Public ReadOnly Property OutlineText As New OutlineTextOptions()
+
+    ''' <summary>修改 <see cref="OutlineText"/> 后调用，丢弃缓存的 RenderingParams 让下一帧重建。</summary>
+    Public Sub InvalidateOutlineRenderingParams()
+        SyncLock _factoryLock
+            If _outlineRenderingParams IsNot Nothing Then
+                Try : _outlineRenderingParams.Dispose() : Catch : End Try
+                _outlineRenderingParams = Nothing
+            End If
+        End SyncLock
+    End Sub
 
     ''' <summary>
     ''' 将全局抗锯齿与文本质量策略一次性应用到指定 RT。
@@ -71,12 +114,65 @@ Friend Module D2DHelper
         Select Case GlobalTextQuality
             Case TextQualityMode.Grayscale
                 rt.TextAntialiasMode = Vortice.Direct2D1.TextAntialiasMode.Grayscale
+                rt.TextRenderingParams = Nothing
             Case TextQualityMode.Aliased
                 rt.TextAntialiasMode = Vortice.Direct2D1.TextAntialiasMode.Aliased
+                rt.TextRenderingParams = Nothing
+            Case TextQualityMode.Outline
+                ' Outline 渲染模式产生的是几何 alpha 覆盖，不携带子像素信息，
+                ' 必须搭配 Grayscale TextAntialiasMode；用 Cleartype 反而会触发 D2D 内部回退路径。
+                rt.TextAntialiasMode = Vortice.Direct2D1.TextAntialiasMode.Grayscale
+                rt.TextRenderingParams = GetOutlineRenderingParams()
             Case Else
                 rt.TextAntialiasMode = Vortice.Direct2D1.TextAntialiasMode.Cleartype
+                rt.TextRenderingParams = Nothing
         End Select
     End Sub
+
+    Private _outlineRenderingParams As IDWriteRenderingParams
+
+    ''' <summary>
+    ''' 获取（或惰性创建）Outline 模式用的进程级 <see cref="IDWriteRenderingParams"/>。
+    ''' 关键：RenderingMode = Outline，DirectWrite 走纯几何路径绘制字形，完全跳过 hinting / GASP。
+    ''' </summary>
+    Private Function GetOutlineRenderingParams() As IDWriteRenderingParams
+        If _outlineRenderingParams Is Nothing Then
+            SyncLock _factoryLock
+                If _outlineRenderingParams Is Nothing Then
+                    Dim dw = GetDWriteFactory()
+                    Dim opt = OutlineText
+
+                    ' 优先尝试 IDWriteFactory2 路径，可同时设置 GridFitMode 与 grayscaleEnhancedContrast
+                    Dim dw2 As IDWriteFactory2 = TryCast(dw, IDWriteFactory2)
+                    If dw2 IsNot Nothing Then
+                        Try
+                            _outlineRenderingParams = dw2.CreateCustomRenderingParams(
+                                opt.Gamma,
+                                opt.EnhancedContrast,
+                                opt.GrayscaleEnhancedContrast,
+                                opt.ClearTypeLevel,
+                                opt.PixelGeometry,
+                                opt.RenderingMode,
+                                opt.GridFitMode)
+                        Catch
+                            _outlineRenderingParams = Nothing
+                        End Try
+                    End If
+
+                    ' Fallback：基础 API 仅能设置 RenderingMode（不能关 GridFit / 无灰度对比度）
+                    If _outlineRenderingParams Is Nothing Then
+                        _outlineRenderingParams = dw.CreateCustomRenderingParams(
+                            opt.Gamma,
+                            opt.EnhancedContrast,
+                            opt.ClearTypeLevel,
+                            opt.PixelGeometry,
+                            opt.RenderingMode)
+                    End If
+                End If
+            End SyncLock
+        End If
+        Return _outlineRenderingParams
+    End Function
 
 #End Region
 

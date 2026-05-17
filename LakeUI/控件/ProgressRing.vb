@@ -23,9 +23,9 @@ Public Class ProgressRing
         Else
             绘制图形内容(e.Graphics)
         End If
-        If Not Enabled Then
-            Using brush As New SolidBrush(Color.FromArgb(120, 0, 0, 0))
-                e.Graphics.FillRectangle(brush, 0, 0, Me.Width, Me.Height)
+        If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
+            Using brush As New SolidBrush(禁用时遮罩颜色)
+                e.Graphics.FillEllipse(brush, 0, 0, Me.Width - 1, Me.Height - 1)
             End Using
         End If
     End Sub
@@ -248,6 +248,17 @@ Public Class ProgressRing
         End Get
         Set(value As Color)
             SetValue(圆弧颜色, value)
+        End Set
+    End Property
+
+    Private 禁用时遮罩颜色 As Color = Color.FromArgb(120, 0, 0, 0)
+    <Category("LakeUI"), Description("禁用（Enabled = False）时覆盖在主体区域上的遮罩颜色（受圆角裁剪，不影响圆角外的透明区域）。"), DefaultValue(GetType(Color), "120, 0, 0, 0"), Browsable(True)>
+    Public Property DisabledOverlayColor As Color
+        Get
+            Return 禁用时遮罩颜色
+        End Get
+        Set(value As Color)
+            SetValue(禁用时遮罩颜色, value)
         End Set
     End Property
 
