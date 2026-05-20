@@ -1,5 +1,6 @@
 ﻿Imports System.ComponentModel
-Imports System.Drawing.Drawing2D
+Imports System.Numerics
+Imports Vortice.Direct2D1
 
 Public Class ProgressRing
 
@@ -7,43 +8,76 @@ Public Class ProgressRing
         InitializeComponent()
     End Sub
 
+#Region "V2 背景穿透"
+    Private _backgroundSource As Control = Nothing
+    ''' <summary>
+    ''' 背景采样源（超容器背景映射）。设置后会跨越任意层级直接采样此控件的绘制内容作为透明背景；
+    ''' 为 Nothing 时不进行背景采样，按 BackColor 协议处理。
+    ''' </summary>
+    <Category("LakeUI"),
+     Description("背景采样源（超容器背景映射）。设置后将跨越任意层级直接采样此控件的绘制内容作为透明背景；为空时不进行背景采样。"),
+     DefaultValue(GetType(Control), Nothing), Browsable(True)>
+    Public Property BackgroundSource As Control
+        Get
+            Return _backgroundSource
+        End Get
+        Set(value As Control)
+            If _backgroundSource IsNot value Then
+                _backgroundSource = value
+                Me.Invalidate()
+            End If
+        End Set
+    End Property
+
+    Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
+        If _backgroundSource IsNot Nothing Then Return
+        MyBase.OnPaintBackground(e)
+    End Sub
+#End Region
+
 #Region "绘制"
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
-        Dim _ssaa As Integer = If(Class1.GlobalSSAA > 1, Class1.GlobalSSAA, 超采样倍率)
-        If _ssaa > 1 Then
-            Using bmp As New Bitmap(Me.Width * _ssaa, Me.Height * _ssaa)
-                Using g As Graphics = Graphics.FromImage(bmp)
-                    g.ScaleTransform(_ssaa, _ssaa)
-                    绘制图形内容(g)
-                End Using
-                e.Graphics.CompositingQuality = Class1.GlobalCompositingQuality
-                e.Graphics.InterpolationMode = Class1.GlobalInterpolationMode
-                e.Graphics.DrawImage(bmp, 0, 0, Me.Width, Me.Height)
-            End Using
-        Else
-            绘制图形内容(e.Graphics)
-        End If
-        If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
-            Using brush As New SolidBrush(禁用时遮罩颜色)
-                e.Graphics.FillEllipse(brush, 0, 0, Me.Width - 1, Me.Height - 1)
-            End Using
-        End If
+        If Me.Width < 1 OrElse Me.Height < 1 Then Return
+        Dim ssaa As Integer = Math.Max(1, CInt(超采样倍率))
+        If Class1.GlobalSSAA <> Class1.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(Class1.GlobalSSAA))
+
+        Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
+            If scope Is Nothing Then
+                MyBase.OnPaint(e)
+                Return
+            End If
+
+            If _backgroundSource IsNot Nothing Then
+                BackgroundPenetrationV2.PaintBackground(Me, scope, _backgroundSource)
+            ElseIf MyBase.BackColor.A > 0 AndAlso MyBase.BackColor.A < 255 Then
+                Dim bgLayer = scope.BackgroundLayer
+                Dim brush = scope.Compositor.BrushCache.[Get](bgLayer, MyBase.BackColor)
+                If brush IsNot Nothing Then
+                    bgLayer.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(0, 0, Me.Width, Me.Height)), brush)
+                End If
+            End If
+
+            Dim gRT As ID2D1RenderTarget = scope.GraphicsLayer
+            Select Case 动画样式
+                Case StyleEnum.Win11
+                    绘制Win11样式_D2D(gRT, scope.Compositor.BrushCache)
+                Case StyleEnum.Win10
+                    绘制Win10样式_D2D(gRT, scope.Compositor.BrushCache)
+            End Select
+
+            scope.FlushGraphics()
+
+            If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
+                Dim dcRT = scope.DCRenderTarget
+                Dim maskBrush = scope.Compositor.BrushCache.[Get](dcRT, 禁用时遮罩颜色)
+                If maskBrush IsNot Nothing Then
+                    dcRT.FillEllipse(New Ellipse(New Vector2(Me.Width / 2.0F, Me.Height / 2.0F), Math.Max(0, (Me.Width - 1) / 2.0F), Math.Max(0, (Me.Height - 1) / 2.0F)), maskBrush)
+                End If
+            End If
+        End Using
     End Sub
 
-    Private Sub 绘制图形内容(g As Graphics)
-        g.SmoothingMode = Class1.GlobalSmoothingMode
-        g.PixelOffsetMode = Class1.GlobalPixelOffsetMode
-        g.InterpolationMode = Class1.GlobalInterpolationMode
-
-        Select Case 动画样式
-            Case StyleEnum.Win11
-                绘制Win11样式(g)
-            Case StyleEnum.Win10
-                绘制Win10样式(g)
-        End Select
-    End Sub
-
-    Private Sub 绘制Win11样式(g As Graphics)
+    Private Sub 绘制Win11样式_D2D(rt As ID2D1RenderTarget, brushCache As D2DHelper.SolidColorBrushCache)
         Dim s As Single = DpiScale()
         Dim 中心X As Single = Me.Width / 2.0F
         Dim 中心Y As Single = Me.Height / 2.0F
@@ -95,15 +129,26 @@ Public Class ProgressRing
 
         ' 从12点位置（-90°）开始，连续旋转
         Dim startAngle As Single = n * totalPerCycle + baseRotation * t + sweepOffset - 90.0F
+        If sweepAngle <= 0.05F Then Return
 
-        Using pen As New Pen(圆弧颜色, 画笔宽度)
-            pen.StartCap = LineCap.Round
-            pen.EndCap = LineCap.Round
-            g.DrawArc(pen, 绘制矩形, startAngle, sweepAngle)
+        Using strokeStyle = D2DHelper.GetD2DFactory().CreateStrokeStyle(
+            New StrokeStyleProperties With {
+                .StartCap = CapStyle.Round,
+                .EndCap = CapStyle.Round,
+                .DashCap = CapStyle.Flat,
+                .LineJoin = Vortice.Direct2D1.LineJoin.Round,
+                .DashStyle = Vortice.Direct2D1.DashStyle.Solid,
+                .MiterLimit = 10.0F})
+            Using geo = 创建圆弧几何(绘制矩形, startAngle, sweepAngle)
+                Dim brush = brushCache.[Get](rt, 圆弧颜色)
+                If brush IsNot Nothing Then
+                    rt.DrawGeometry(geo, brush, 画笔宽度, strokeStyle)
+                End If
+            End Using
         End Using
     End Sub
 
-    Private Sub 绘制Win10样式(g As Graphics)
+    Private Sub 绘制Win10样式_D2D(rt As ID2D1RenderTarget, brushCache As D2DHelper.SolidColorBrushCache)
         Dim s As Single = DpiScale()
         Dim 中心X As Single = Me.Width / 2.0F
         Dim 中心Y As Single = Me.Height / 2.0F
@@ -122,16 +167,45 @@ Public Class ProgressRing
         ' 12点位置慢（圆点聚拢），6点位置快（圆点散开）
         ' 5个点始终可见，总角度跨度 94°~266°，永远不会互相超越
 
-        Using brush As New SolidBrush(圆弧颜色)
-            For i As Integer = 0 To 点数量 - 1
-                Dim p As Double = (t + CDbl(i) / (点数量 - 1) * 相位跨度) Mod 1.0
-                Dim 角度 As Double = (720.0 * p - (180.0 * A / Math.PI) * Math.Sin(4.0 * Math.PI * p) - 90.0) * Math.PI / 180.0
-                Dim 点X As Single = 中心X + CSng(Math.Cos(角度)) * 轨道半径
-                Dim 点Y As Single = 中心Y + CSng(Math.Sin(角度)) * 轨道半径
-                g.FillEllipse(brush, 点X - 点直径 / 2, 点Y - 点直径 / 2, 点直径, 点直径)
-            Next
-        End Using
+        Dim brush = brushCache.[Get](rt, 圆弧颜色)
+        If brush Is Nothing Then Return
+        Dim 点半径 As Single = 点直径 / 2.0F
+        For i As Integer = 0 To 点数量 - 1
+            Dim p As Double = (t + CDbl(i) / (点数量 - 1) * 相位跨度) Mod 1.0
+            Dim 角度 As Double = (720.0 * p - (180.0 * A / Math.PI) * Math.Sin(4.0 * Math.PI * p) - 90.0) * Math.PI / 180.0
+            Dim 点X As Single = 中心X + CSng(Math.Cos(角度)) * 轨道半径
+            Dim 点Y As Single = 中心Y + CSng(Math.Sin(角度)) * 轨道半径
+            rt.FillEllipse(New Ellipse(New Vector2(点X, 点Y), 点半径, 点半径), brush)
+        Next
     End Sub
+
+    Private Shared Function 创建圆弧几何(rect As RectangleF, startAngle As Single, sweepAngle As Single) As ID2D1PathGeometry
+        Dim rx As Single = rect.Width / 2.0F
+        Dim ry As Single = rect.Height / 2.0F
+        Dim cx As Single = rect.X + rx
+        Dim cy As Single = rect.Y + ry
+        Dim startRad As Double = startAngle * Math.PI / 180.0
+        Dim endRad As Double = (startAngle + sweepAngle) * Math.PI / 180.0
+        Dim startPoint As New Vector2(cx + CSng(Math.Cos(startRad)) * rx, cy + CSng(Math.Sin(startRad)) * ry)
+        Dim endPoint As New Vector2(cx + CSng(Math.Cos(endRad)) * rx, cy + CSng(Math.Sin(endRad)) * ry)
+
+        Dim path As ID2D1PathGeometry = D2DHelper.GetD2DFactory().CreatePathGeometry()
+        Dim sink As ID2D1GeometrySink = path.Open()
+        Try
+            sink.BeginFigure(startPoint, FigureBegin.Hollow)
+            sink.AddArc(New ArcSegment With {
+                .Point = endPoint,
+                .Size = New Vortice.Mathematics.Size(rx, ry),
+                .RotationAngle = 0,
+                .SweepDirection = SweepDirection.Clockwise,
+                .ArcSize = If(sweepAngle > 180.0F, ArcSize.Large, ArcSize.Small)})
+            sink.EndFigure(FigureEnd.Open)
+            sink.Close()
+        Finally
+            sink.Dispose()
+        End Try
+        Return path
+    End Function
 
     Private Shared Function 缓动(t As Single) As Single
         ' EaseInOut 三次方缓动

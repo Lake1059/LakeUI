@@ -7,16 +7,8 @@ Imports Vortice.Direct2D1
 
 <DefaultEvent("TextChanged")>
 Public Class ModernTextBox
-#Region "D2D 资源"
-    ''' <summary>控件级 DC RenderTarget。与窗口 DC 强相关，无法跨控件共享，由控件持有。</summary>
-    Private _dcRT As ID2D1DCRenderTarget
-    ''' <summary>跨帧复用的 SSAA 离屏 BitmapRT，按 (Width, Height, ssaa) 命中。</summary>
-    Private ReadOnly _ssaaCache As New D2DHelper.BitmapRTCache()
-
-    Private Function GetOrCreateDCRenderTarget() As ID2D1DCRenderTarget
-        If _dcRT Is Nothing Then _dcRT = D2DHelper.CreateDCRenderTarget()
-        Return _dcRT
-    End Function
+#Region "D2D 资源（V2 占位）"
+    ' V2：D2D 资源由 WindowCompositor 按顶层 Form 共享管理，本控件不再持有 _dcRT / _ssaaCache。
 #End Region
     Public Shadows Event TextChanged As EventHandler
     Public Event LinkClicked As EventHandler(Of LinkClickedEventArgs)
@@ -112,9 +104,6 @@ Public Class ModernTextBox
     Private _visualLines As New List(Of VisualLineInfo)
     Private _autoScrollTimer As New Timer() With {.Interval = 50}
     Private _lastMousePos As Point = Point.Empty
-    Private _ssaaBitmap As Bitmap = Nothing
-    Private _ssaaBitmapW As Integer = 0
-    Private _ssaaBitmapH As Integer = 0
     Private _preserveScrollPosition As Boolean = False
     Private _lineLinks As New List(Of List(Of LinkRange)) From {Nothing}
     Private _underlineFontCache As Font = Nothing
@@ -711,10 +700,10 @@ Public Class ModernTextBox
     ''' <summary>
     ''' 背景采样源（超容器背景映射）。透明背景模式下，控件会调用此控件的绘制流程取像素作为底图，
     ''' 从而实现跨越任意层级的"穿透显示"效果。
-    ''' 为 Nothing 时自动沿祖先链查找首个不透明祖先（默认行为）。
+    ''' 为 Nothing 时不进行背景采样。
     ''' </summary>
     <Category("LakeUI"),
-     Description("背景采样源（超容器背景映射）。设置后将跨越任意层级直接采样此控件的绘制内容作为透明背景；为空时自动选择首个不透明祖先。"),
+     Description("背景采样源（超容器背景映射）。设置后将跨越任意层级直接采样此控件的绘制内容作为透明背景；为空时不进行背景采样。"),
      DefaultValue(GetType(Control), Nothing), Browsable(True)>
     Public Property BackgroundSource As Control
         Get
@@ -913,6 +902,15 @@ Public Class ModernTextBox
                  ControlStyles.SupportsTransparentBackColor, True)
         UpdateStyles()
         AddHandler _caretBlinkTimer.Tick, Sub()
+                                              ' 守卫：失焦 / 不可见 / 未创建句柄 时立即停止，避免空闲状态下持续 Invalidate。
+                                              If Not Me.Focused OrElse Not Me.Visible OrElse Not Me.IsHandleCreated Then
+                                                  _caretBlinkTimer.Stop()
+                                                  If _caretVisible Then
+                                                      _caretVisible = False
+                                                      Invalidate()
+                                                  End If
+                                                  Return
+                                              End If
                                               _caretVisible = Not _caretVisible
                                               Invalidate()
                                           End Sub
@@ -924,28 +922,29 @@ Public Class ModernTextBox
         UpdateDpiCache()
         ImeHelper.AssociateDefault(Handle)
         RebuildVisualLines()
-        _caretBlinkTimer.Start()
+        ' 仅在已聚焦时才启动光标闪烁；未聚焦时启动会让控件即使无操作也每 530ms 触发一次重绘。
+        If Me.Focused Then
+            _caretVisible = True
+            _caretBlinkTimer.Start()
+        End If
     End Sub
     Protected Overrides Sub OnHandleDestroyed(e As EventArgs)
         _caretBlinkTimer.Stop()
         _autoScrollTimer.Stop()
-        _ssaaBitmap?.Dispose()
-        _ssaaBitmap = Nothing
         _underlineFontCache?.Dispose()
         _underlineFontCache = Nothing
-        Try : _ssaaCache.Dispose() : Catch : End Try
-        If _dcRT IsNot Nothing Then
-            Try : _dcRT.Dispose() : Catch : End Try
-            _dcRT = Nothing
-        End If
         MyBase.OnHandleDestroyed(e)
     End Sub
 #End Region
 
 #Region "绘制"
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
-        ' 圆角或半透明背景下不让基类填底，改由 OnPaint 头部走 TransparentBackgroundCache 贴底图。
-        If 边框圆角半径 > 0 OrElse 背景颜色.A < 255 Then Return
+        ' V2 契约（与 ModernButton 一致）：
+        '   • BackgroundSource 已设置 → 跳过基类填底，背景由 OnPaint 内 BackgroundPenetrationV2 绘制；
+        '   • 否则一律走 .NET 自身透明逻辑（半透明 BackColor 由基类合成父级背景到 HDC，
+        '     不透明色由基类填底）。BindDC 之后 DC RT 初始像素即为正确底图，
+        '     不再依赖手工 Clear，因此不会出现"HDC 残留导致乱照父窗体其它区域"的问题。
+        If _backgroundSource IsNot Nothing Then Return
         MyBase.OnPaintBackground(e)
     End Sub
 
@@ -965,53 +964,62 @@ Public Class ModernTextBox
         Dim ssaa As Integer = Math.Max(1, CInt(超采样倍率))
         If Class1.GlobalSSAA <> Class1.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(Class1.GlobalSSAA))
 
-        Using scope = D2DHelper.BeginPaint(e, Me, GetOrCreateDCRenderTarget(), ssaa, _ssaaCache)
-            Dim gRT As ID2D1RenderTarget = scope.GraphicsRenderTarget
-            If hasRadius OrElse MyBase.BackColor.A < 255 Then
-                TransparentBackgroundCache.PaintBackgroundFor_D2D(Me, gRT, _backgroundSource)
+        Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
+            If scope Is Nothing Then Return
+            ' 背景层：
+            '   • BackgroundSource 已设置 → 显式穿透到指定源；
+            '   • 否则 OnPaintBackground 中 MyBase 已把基类 BackColor / 父级透明背景合成进 HDC，
+            '     DC RT 初始像素即正确底图，这里不再手工 Clear。
+            '     旧版的"ClearType 累积"是把 Parent.BackColor 当不透明底强 Clear 的副作用，
+            '     现在每帧都由基类重画底图，不会累积。
+            If _backgroundSource IsNot Nothing Then
+                BackgroundPenetrationV2.PaintBackground(Me, scope, _backgroundSource)
             End If
-            绘制背景_D2D(gRT, hasRadius, fillRect)
+
+            Dim gRT As ID2D1RenderTarget = scope.GraphicsLayer
+            Dim brushCache = scope.Compositor.BrushCache
+            绘制背景_D2D(gRT, hasRadius, fillRect, brushCache)
             scope.FlushGraphics()
 
             Dim dcRT As ID2D1DCRenderTarget = scope.DCRenderTarget
             DrawTextContent_D2D(dcRT, w, h)
-            绘制边框_D2D(dcRT, hasRadius, boundsRect, bc)
+            绘制边框_D2D(dcRT, hasRadius, boundsRect, bc, brushCache)
             DrawScrollBar_D2D(dcRT, w, h)
         End Using
     End Sub
 
-    Private Sub 绘制背景_D2D(rt As ID2D1RenderTarget, hasRadius As Boolean, fillRect As RectangleF)
+    Private Sub 绘制背景_D2D(rt As ID2D1RenderTarget, hasRadius As Boolean, fillRect As RectangleF, brushCache As D2DHelper.SolidColorBrushCache)
         ' BackColor 半透明遮罩层：位于采样底图之上、BackColor1（=背景颜色）之下。A=255 不走本路径。
         Dim backColorMask As Color = MyBase.BackColor
         Dim s As Single = DpiScale()
         If hasRadius Then
             Using geo = RectangleRenderer.创建圆角矩形几何(fillRect, 边框圆角半径 * s)
                 If backColorMask.A > 0 AndAlso backColorMask.A < 255 Then
-                    RectangleRenderer.绘制圆角背景_D2D(rt, geo, fillRect, backColorMask, Color.Empty, System.Windows.Forms.Orientation.Horizontal)
+                    RectangleRenderer.绘制圆角背景_D2D(rt, geo, fillRect, backColorMask, Color.Empty, System.Windows.Forms.Orientation.Horizontal, brushCache)
                 End If
                 If 背景颜色.A > 0 Then
-                    RectangleRenderer.绘制圆角背景_D2D(rt, geo, fillRect, 背景颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal)
+                    RectangleRenderer.绘制圆角背景_D2D(rt, geo, fillRect, 背景颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal, brushCache)
                 End If
             End Using
         Else
             If backColorMask.A > 0 AndAlso backColorMask.A < 255 Then
-                RectangleRenderer.绘制矩形背景_D2D(rt, fillRect, backColorMask, Color.Empty, System.Windows.Forms.Orientation.Horizontal)
+                RectangleRenderer.绘制矩形背景_D2D(rt, fillRect, backColorMask, Color.Empty, System.Windows.Forms.Orientation.Horizontal, brushCache)
             End If
             If 背景颜色.A > 0 Then
-                RectangleRenderer.绘制矩形背景_D2D(rt, fillRect, 背景颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal)
+                RectangleRenderer.绘制矩形背景_D2D(rt, fillRect, 背景颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal, brushCache)
             End If
         End If
     End Sub
 
-    Private Sub 绘制边框_D2D(rt As ID2D1RenderTarget, hasRadius As Boolean, boundsRect As RectangleF, borderClr As Color)
+    Private Sub 绘制边框_D2D(rt As ID2D1RenderTarget, hasRadius As Boolean, boundsRect As RectangleF, borderClr As Color, brushCache As D2DHelper.SolidColorBrushCache)
         If 边框宽度 <= 0 OrElse borderClr.A = 0 Then Return
         Dim s As Single = DpiScale()
         If hasRadius Then
             Using geo = RectangleRenderer.创建圆角矩形几何(boundsRect, 边框圆角半径 * s)
-                RectangleRenderer.绘制圆角边框_D2D(rt, geo, borderClr, 边框宽度 * s)
+                RectangleRenderer.绘制圆角边框_D2D(rt, geo, borderClr, 边框宽度 * s, brushCache)
             End Using
         Else
-            RectangleRenderer.绘制矩形边框_D2D(rt, boundsRect, borderClr, 边框宽度 * s)
+            RectangleRenderer.绘制矩形边框_D2D(rt, boundsRect, borderClr, 边框宽度 * s, brushCache)
         End If
     End Sub
 
@@ -1025,36 +1033,6 @@ Public Class ModernTextBox
             _visualLines.Count, VisibleLineCount(), _scrollLineOffset)
         _scrollBar.Draw_D2D(rt, w, h, scaledBorder, scaledRadius, scaledScrollW,
             滚动条轨道颜色, 滚动条颜色, 滚动条悬停颜色)
-    End Sub
-
-    Private Sub DrawBackgroundFill(g As Graphics, hasRadius As Boolean, boundsRect As RectangleF)
-        SetHighQualityGraphics(g)
-        Dim s As Single = DpiScale()
-        If hasRadius Then
-            Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(boundsRect, 边框圆角半径 * s)
-                RectangleRenderer.绘制圆角背景(g, path, boundsRect, 背景颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal)
-            End Using
-        Else
-            RectangleRenderer.绘制矩形背景(g, boundsRect, 背景颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal)
-        End If
-    End Sub
-
-    Private Sub DrawBorderOnly(g As Graphics, hasRadius As Boolean, boundsRect As RectangleF, borderClr As Color)
-        SetHighQualityGraphics(g)
-        Dim s As Single = DpiScale()
-        If hasRadius Then
-            Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(boundsRect, 边框圆角半径 * s)
-                RectangleRenderer.绘制圆角边框(g, path, borderClr, 边框宽度 * s)
-            End Using
-        Else
-            RectangleRenderer.绘制矩形边框(g, boundsRect, borderClr, 边框宽度 * s)
-        End If
-    End Sub
-
-    Private Shared Sub SetHighQualityGraphics(g As Graphics)
-        g.SmoothingMode = SmoothingMode.AntiAlias
-        g.PixelOffsetMode = PixelOffsetMode.HighQuality
-        g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic
     End Sub
 
     Private Sub DrawTextContent_D2D(rt As ID2D1DCRenderTarget, w As Integer, h As Integer)
@@ -1216,18 +1194,6 @@ Public Class ModernTextBox
         Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(光标颜色))
             rt.FillRectangle(New Vortice.Mathematics.Rect(cx, caretY, _scaledCaretWidth, caretH), br)
         End Using
-    End Sub
-
-    Private Sub DrawScrollBar(g As Graphics, w As Integer, h As Integer)
-        If Not _scrollBarVisible Then Return
-        Dim s As Single = DpiScale()
-        Dim scaledBorder As Integer = CInt(Math.Round(边框宽度 * s))
-        Dim scaledRadius As Integer = CInt(Math.Round(边框圆角半径 * s))
-        Dim scaledScrollW As Integer = CInt(Math.Round(滚动条宽度 * s))
-        _scrollBar.ComputeLayout(w, h, scaledBorder, scaledRadius, 0, 0, scaledScrollW,
-            _visualLines.Count, VisibleLineCount(), _scrollLineOffset)
-        _scrollBar.Draw(g, w, h, scaledBorder, scaledRadius, scaledScrollW,
-            滚动条轨道颜色, 滚动条颜色, 滚动条悬停颜色)
     End Sub
 
     Private Sub DrawLineRuns_D2D(rt As ID2D1RenderTarget, lineIndex As Integer, vlStartCol As Integer,
@@ -2468,7 +2434,10 @@ Public Class ModernTextBox
     Private Sub ResetCaretBlink()
         _caretVisible = True
         _caretBlinkTimer.Stop()
-        _caretBlinkTimer.Start()
+        ' 只在聚焦时重启闪烁，否则保持停止状态。
+        If Me.Focused Then
+            _caretBlinkTimer.Start()
+        End If
         Invalidate()
     End Sub
     Private Sub SetValue(Of T)(ByRef field As T, value As T)

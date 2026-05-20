@@ -6,23 +6,22 @@ Public Class QuantumSwitch
 
     Public Event StateChanged As EventHandler
 
-#Region "D2D 资源"
-    Private _dcRT As ID2D1DCRenderTarget
-    Private ReadOnly _ssaaCache As New D2DHelper.BitmapRTCache()
-
-    Private Function GetOrCreateDCRenderTarget() As ID2D1DCRenderTarget
-        If _dcRT Is Nothing Then _dcRT = D2DHelper.CreateDCRenderTarget()
-        Return _dcRT
-    End Function
-
-    Protected Overrides Sub OnHandleDestroyed(e As EventArgs)
-        Try : _ssaaCache.Dispose() : Catch : End Try
-        If _dcRT IsNot Nothing Then
-            Try : _dcRT.Dispose() : Catch : End Try
-            _dcRT = Nothing
-        End If
-        MyBase.OnHandleDestroyed(e)
-    End Sub
+#Region "V2 透明背景穿透"
+    Private _backgroundSource As Control = Nothing
+    <Category("LakeUI"),
+     Description("背景采样源（V2 透明背景穿透）。设置后将跨越任意层级直接采样此控件的绘制内容作为透明背景。"),
+     DefaultValue(GetType(Control), Nothing), Browsable(True)>
+    Public Property BackgroundSource As Control
+        Get
+            Return _backgroundSource
+        End Get
+        Set(value As Control)
+            If _backgroundSource IsNot value Then
+                _backgroundSource = value
+                Me.Invalidate()
+            End If
+        End Set
+    End Property
 #End Region
 
 #Region "状态枚举"
@@ -39,6 +38,11 @@ Public Class QuantumSwitch
 #End Region
 
 #Region "绘制"
+    Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
+        If _backgroundSource IsNot Nothing Then Return
+        MyBase.OnPaintBackground(e)
+    End Sub
+
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
         If Me.Width <= 0 OrElse Me.Height <= 0 Then Return
 
@@ -52,8 +56,14 @@ Public Class QuantumSwitch
         Dim ssaa As Integer = Math.Max(1, CInt(超采样倍率))
         If Class1.GlobalSSAA <> Class1.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(Class1.GlobalSSAA))
 
-        Using scope = D2DHelper.BeginPaint(e, Me, GetOrCreateDCRenderTarget(), ssaa, _ssaaCache)
-            绘制图形内容_D2D(scope.GraphicsRenderTarget, 极限矩形区域)
+        Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
+            If scope Is Nothing Then Return
+
+            If _backgroundSource IsNot Nothing Then
+                BackgroundPenetrationV2.PaintBackground(Me, scope, _backgroundSource)
+            End If
+
+            绘制图形内容_D2D(scope.GraphicsLayer, 极限矩形区域)
             scope.FlushGraphics()
 
             If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then

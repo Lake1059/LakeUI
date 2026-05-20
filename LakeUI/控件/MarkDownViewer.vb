@@ -569,12 +569,25 @@ Public Class MarkDownViewer
     Private ReadOnly _imageLoadingUrls As New HashSet(Of String)
     Private Shared ReadOnly _httpClient As New HttpClient() With {.Timeout = TimeSpan.FromSeconds(30)}
 
-    ' D2D 资源缓存
-    Private _dcRT As ID2D1DCRenderTarget
-    Private ReadOnly _ssaaCache As New D2DHelper.BitmapRTCache()
-    Private ReadOnly _brushCache As New D2DHelper.SolidColorBrushCache()
-    Private ReadOnly _textFormatCache As New D2DHelper.TextFormatCache()
+    ' V2 渲染资源（共享 DC RT / brush / textformat / SSAA 来自 WindowCompositor，仅图片缓存按 URL 本地持有）
+    Private _当前合成器 As WindowCompositor
     Private ReadOnly _d2dImageCaches As New Dictionary(Of String, D2DHelper.D2DBitmapCache)
+    Private _backgroundSource As Control = Nothing
+
+    <Category("LakeUI"),
+     Description("背景采样源（V2 透明背景穿透）。设置后将跨越任意层级直接采样此控件的绘制内容作为透明背景。"),
+     DefaultValue(GetType(Control), Nothing), Browsable(True)>
+    Public Property BackgroundSource As Control
+        Get
+            Return _backgroundSource
+        End Get
+        Set(value As Control)
+            If _backgroundSource IsNot value Then
+                _backgroundSource = value
+                Me.Invalidate()
+            End If
+        End Set
+    End Property
 
 #End Region
 
@@ -1609,60 +1622,57 @@ Public Class MarkDownViewer
         Dim ssaa As Integer = 1
         If Class1.GlobalSSAA > 1 Then ssaa = CInt(Class1.GlobalSSAA)
 
-        Using scope = D2DHelper.BeginPaint(e, Me, GetOrCreateDCRenderTarget(), ssaa, _ssaaCache)
-            Dim rt As ID2D1RenderTarget = scope.GraphicsRenderTarget
+        Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
+            If scope Is Nothing Then Return  ' 设计期 / 无 Form
+            _当前合成器 = scope.Compositor
+            Try
+                If _backgroundSource IsNot Nothing Then
+                    BackgroundPenetrationV2.PaintBackground(Me, scope, _backgroundSource)
+                End If
+                Dim rt As ID2D1RenderTarget = scope.GraphicsLayer
 
-            ' 背景与边框
-            Dim boundsRect As New RectangleF(0, 0, w - 1, h - 1)
-            If 边框宽度 > 0 Then boundsRect.Inflate(-边框宽度 * s / 2.0F, -边框宽度 * s / 2.0F)
-            DrawBackground_D2D(rt, boundsRect, s)
+                ' 背景与边框
+                Dim boundsRect As New RectangleF(0, 0, w - 1, h - 1)
+                If 边框宽度 > 0 Then boundsRect.Inflate(-边框宽度 * s / 2.0F, -边框宽度 * s / 2.0F)
+                DrawBackground_D2D(rt, boundsRect, s)
 
-            ' 内容裁剪区
-            Dim ci = GetContentInsets()
-            Dim scrollW As Integer = If(_scrollBarVisible, CInt(Math.Round(滚动条宽度 * s)) + ScrollBarRenderer.Margin * 2, 0)
-            Dim clipW As Integer = w - ci.Left - Math.Max(ci.Right, scrollW)
-            Dim clipH As Integer = h - ci.Top - ci.Bottom
+                ' 内容裁剪区
+                Dim ci = GetContentInsets()
+                Dim scrollW As Integer = If(_scrollBarVisible, CInt(Math.Round(滚动条宽度 * s)) + ScrollBarRenderer.Margin * 2, 0)
+                Dim clipW As Integer = w - ci.Left - Math.Max(ci.Right, scrollW)
+                Dim clipH As Integer = h - ci.Top - ci.Bottom
 
-            If clipW > 0 AndAlso clipH > 0 Then
-                rt.PushAxisAlignedClip(New Vortice.RawRectF(ci.Left, ci.Top, ci.Left + clipW, ci.Top + clipH), AntialiasMode.PerPrimitive)
-                Try
-                    ' 选中排序
-                    Dim selStart, selEnd As SelectionPos
-                    If _hasSelection Then GetOrderedSelection(selStart, selEnd)
+                If clipW > 0 AndAlso clipH > 0 Then
+                    rt.PushAxisAlignedClip(New Vortice.RawRectF(ci.Left, ci.Top, ci.Left + clipW, ci.Top + clipH), AntialiasMode.PerPrimitive)
+                    Try
+                        ' 选中排序
+                        Dim selStart, selEnd As SelectionPos
+                        If _hasSelection Then GetOrderedSelection(selStart, selEnd)
 
-                    ' 绘制可见行
-                    For vli As Integer = 0 To _visualLines.Count - 1
-                        Dim vl = _visualLines(vli)
-                        Dim drawY As Integer = vl.Y - _scrollY + ci.Top
-                        If drawY + vl.Height < ci.Top Then Continue For
-                        If drawY > ci.Top + clipH Then Exit For
+                        ' 绘制可见行
+                        For vli As Integer = 0 To _visualLines.Count - 1
+                            Dim vl = _visualLines(vli)
+                            Dim drawY As Integer = vl.Y - _scrollY + ci.Top
+                            If drawY + vl.Height < ci.Top Then Continue For
+                            If drawY > ci.Top + clipH Then Exit For
 
-                        Dim block = _document.Blocks(vl.BlockIndex)
-                        DrawBlockDecoration_D2D(rt, block, vl, vli, ci.Left, drawY, clipW, s)
-                        DrawFragments_D2D(rt, vl, vli, ci.Left, drawY, block.Kind, s, selStart, selEnd)
-                    Next
-                Finally
-                    rt.PopAxisAlignedClip()
-                End Try
-            End If
+                            Dim block = _document.Blocks(vl.BlockIndex)
+                            DrawBlockDecoration_D2D(rt, block, vl, vli, ci.Left, drawY, clipW, s)
+                            DrawFragments_D2D(rt, vl, vli, ci.Left, drawY, block.Kind, s, selStart, selEnd)
+                        Next
+                    Finally
+                        rt.PopAxisAlignedClip()
+                    End Try
+                End If
 
-            DrawScrollBar_D2D(rt, w, h, s)
-            scope.FlushGraphics()
+                DrawScrollBar_D2D(rt, w, h, s)
+                scope.FlushGraphics()
+            Finally
+                _当前合成器 = Nothing
+            End Try
         End Using
     End Sub
 
-    Private Sub DrawBackground(g As Graphics, boundsRect As RectangleF, s As Single)
-        g.SmoothingMode = SmoothingMode.AntiAlias
-        If 边框圆角半径 > 0 Then
-            Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(boundsRect, 边框圆角半径 * s)
-                RectangleRenderer.绘制圆角背景(g, path, boundsRect, 背景颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal)
-                RectangleRenderer.绘制圆角边框(g, path, 边框颜色, 边框宽度 * s)
-            End Using
-        Else
-            RectangleRenderer.绘制矩形背景(g, boundsRect, 背景颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal)
-            RectangleRenderer.绘制矩形边框(g, boundsRect, 边框颜色, 边框宽度 * s)
-        End If
-    End Sub
 
     Private Sub DrawBackground_D2D(rt As ID2D1RenderTarget, boundsRect As RectangleF, s As Single)
         If 边框圆角半径 > 0 Then
@@ -1676,115 +1686,7 @@ Public Class MarkDownViewer
         End If
     End Sub
 
-    Private Sub DrawBlockDecoration(g As Graphics, block As MarkdownBlock, vl As VisualLine, vli As Integer,
-                                     textLeft As Integer, drawY As Integer, clipW As Integer, s As Single)
-        Select Case block.Kind
-            Case BlockKind.HorizontalRule
-                Dim ruleThick As Integer = Math.Max(1, CInt(分隔线粗细 * s))
-                Dim ruleY As Integer = drawY + (vl.Height - ruleThick) \ 2
-                Using br As New SolidBrush(分隔线颜色)
-                    g.FillRectangle(br, textLeft + CInt(4 * s), ruleY, clipW - CInt(8 * s), ruleThick)
-                End Using
 
-            Case BlockKind.BlockQuote
-                ' 计算连续引用块的竖条高度：延伸到下一个相邻引用行
-                Dim barH As Integer = vl.Height
-                If vli + 1 < _visualLines.Count Then
-                    Dim nextVl = _visualLines(vli + 1)
-                    Dim nextBlock = _document.Blocks(nextVl.BlockIndex)
-                    If nextBlock.Kind = BlockKind.BlockQuote Then
-                        barH = nextVl.Y - vl.Y
-                    End If
-                End If
-                Dim barColor As Color = If(block.AlertKind <> AlertKind.None, GetAlertColor(block.AlertKind), 引用条颜色)
-                Using br As New SolidBrush(barColor)
-                    g.FillRectangle(br, textLeft + CInt(4 * s), drawY, CInt(3 * s), barH)
-                End Using
-
-            Case BlockKind.CodeBlock
-                Dim padT As Integer = CInt(代码块内边距.Top * s)
-                Dim padB As Integer = CInt(代码块内边距.Bottom * s)
-                Dim isFirstCodeLine = (vli = 0 OrElse _visualLines(vli - 1).BlockIndex <> vl.BlockIndex)
-                Dim isLastCodeLine = (vli = _visualLines.Count - 1 OrElse _visualLines(vli + 1).BlockIndex <> vl.BlockIndex)
-                Dim bgY = drawY - If(isFirstCodeLine, padT, 0)
-                Dim bgH = vl.Height + If(isFirstCodeLine, padT, 0) + If(isLastCodeLine, padB, 0)
-                Using br As New SolidBrush(代码背景颜色)
-                    g.FillRectangle(br, textLeft, bgY, clipW, bgH)
-                End Using
-
-            Case BlockKind.UnorderedListItem
-                Dim bulletR As Integer = CInt(3 * s)
-                Using br As New SolidBrush(文本颜色)
-                    g.FillEllipse(br, textLeft + CInt(6 * s), drawY + vl.Height \ 2 - CInt(2 * s), bulletR * 2, bulletR * 2)
-                End Using
-
-            Case BlockKind.OrderedListItem
-                TextRenderer.DrawText(g, block.OrderIndex.ToString() & ".", GetBlockFont(block.Kind),
-                    New Rectangle(textLeft, drawY, CInt(22 * s), vl.Height),
-                    文本颜色, TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine Or TextFormatFlags.VerticalCenter Or TextFormatFlags.Right)
-
-            Case BlockKind.Table
-                DrawTableDecoration(g, block, vl, vli, textLeft, drawY, s)
-
-            Case BlockKind.Heading1, BlockKind.Heading2
-                ' H1/H2 自带分割线：仅在该标题块的最后一个视觉行绘制
-                If 标题分隔线粗细 > 0 Then
-                    Dim isLastLineOfBlock As Boolean =
-                        (vli + 1 >= _visualLines.Count OrElse _visualLines(vli + 1).BlockIndex <> vl.BlockIndex)
-                    If isLastLineOfBlock Then
-                        Dim sepThick As Integer = Math.Max(1, CInt(标题分隔线粗细 * s))
-                        Dim sepGap As Integer = CInt(标题分隔线间距 * s)
-                        Dim sepY As Integer = drawY + vl.Height + sepGap
-                        Using br As New SolidBrush(标题分隔线颜色)
-                            g.FillRectangle(br, textLeft, sepY, clipW, sepThick)
-                        End Using
-                    End If
-                End If
-        End Select
-    End Sub
-
-    Private Sub DrawTableDecoration(g As Graphics, block As MarkdownBlock, vl As VisualLine, vli As Integer,
-                                     textLeft As Integer, drawY As Integer, s As Single)
-        If vl.TableSubLine <> 0 Then Return
-        Dim colWidths As Integer() = Nothing
-        If Not _tableColumnWidths.TryGetValue(vl.BlockIndex, colWidths) Then Return
-        Dim colCount As Integer = colWidths.Length
-        Dim totalW As Integer = colWidths.Sum()
-
-        ' 计算当前逻辑行的完整高度（所有子行之和 + cellPadding）
-        Dim cellPadding As Integer = CInt(6 * s)
-        Dim logicalRowH As Integer = vl.Height
-        Dim look As Integer = vli + 1
-        While look < _visualLines.Count
-            Dim nextVl = _visualLines(look)
-            If nextVl.BlockIndex <> vl.BlockIndex OrElse nextVl.TableRowIndex <> vl.TableRowIndex Then Exit While
-            logicalRowH += nextVl.Height
-            look += 1
-        End While
-        logicalRowH += cellPadding
-
-        Dim topPad As Integer = cellPadding \ 2
-        Dim rowTop As Integer = drawY - topPad
-
-        ' 表头背景
-        If vl.TableRowIndex = 0 AndAlso block.HasHeader Then
-            Using br As New SolidBrush(表头背景颜色)
-                g.FillRectangle(br, textLeft, rowTop, totalW, logicalRowH)
-            End Using
-        End If
-
-        ' 网格线：顶部横线 + 底部横线
-        Using pen As New Pen(表格边框颜色, Math.Max(1, s))
-            g.DrawLine(pen, textLeft, rowTop, textLeft + totalW, rowTop)
-            g.DrawLine(pen, textLeft, rowTop + logicalRowH, textLeft + totalW, rowTop + logicalRowH)
-            ' 竖线贯穿整个逻辑行
-            Dim x As Integer = textLeft
-            For ci As Integer = 0 To colCount
-                g.DrawLine(pen, x, rowTop, x, rowTop + logicalRowH)
-                If ci < colCount Then x += colWidths(ci)
-            Next
-        End Using
-    End Sub
 
     Private Sub DrawBlockDecoration_D2D(rt As ID2D1RenderTarget, block As MarkdownBlock, vl As VisualLine, vli As Integer,
                                         textLeft As Integer, drawY As Integer, clipW As Integer, s As Single)
@@ -1792,7 +1694,7 @@ Public Class MarkDownViewer
             Case BlockKind.HorizontalRule
                 Dim ruleThick As Integer = Math.Max(1, CInt(分隔线粗细 * s))
                 Dim ruleY As Integer = drawY + (vl.Height - ruleThick) \ 2
-                rt.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(textLeft + CInt(4 * s), ruleY, clipW - CInt(8 * s), ruleThick)), _brushCache.Get(rt, 分隔线颜色))
+                rt.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(textLeft + CInt(4 * s), ruleY, clipW - CInt(8 * s), ruleThick)), _当前合成器.BrushCache.Get(rt, 分隔线颜色))
 
             Case BlockKind.BlockQuote
                 Dim barH As Integer = vl.Height
@@ -1804,7 +1706,7 @@ Public Class MarkDownViewer
                     End If
                 End If
                 Dim barColor As Color = If(block.AlertKind <> AlertKind.None, GetAlertColor(block.AlertKind), 引用条颜色)
-                rt.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(textLeft + CInt(4 * s), drawY, CInt(3 * s), barH)), _brushCache.Get(rt, barColor))
+                rt.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(textLeft + CInt(4 * s), drawY, CInt(3 * s), barH)), _当前合成器.BrushCache.Get(rt, barColor))
 
             Case BlockKind.CodeBlock
                 Dim padT As Integer = CInt(代码块内边距.Top * s)
@@ -1813,12 +1715,12 @@ Public Class MarkDownViewer
                 Dim isLastCodeLine = (vli = _visualLines.Count - 1 OrElse _visualLines(vli + 1).BlockIndex <> vl.BlockIndex)
                 Dim bgY = drawY - If(isFirstCodeLine, padT, 0)
                 Dim bgH = vl.Height + If(isFirstCodeLine, padT, 0) + If(isLastCodeLine, padB, 0)
-                rt.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(textLeft, bgY, clipW, bgH)), _brushCache.Get(rt, 代码背景颜色))
+                rt.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(textLeft, bgY, clipW, bgH)), _当前合成器.BrushCache.Get(rt, 代码背景颜色))
 
             Case BlockKind.UnorderedListItem
                 Dim bulletR As Integer = CInt(3 * s)
                 Using geo = D2DHelper.GetD2DFactory().CreateEllipseGeometry(New Ellipse(New System.Numerics.Vector2(textLeft + CInt(6 * s) + bulletR, drawY + vl.Height \ 2 - CInt(2 * s) + bulletR), bulletR, bulletR))
-                    rt.FillGeometry(geo, _brushCache.Get(rt, 文本颜色))
+                    rt.FillGeometry(geo, _当前合成器.BrushCache.Get(rt, 文本颜色))
                 End Using
 
             Case BlockKind.OrderedListItem
@@ -1836,7 +1738,7 @@ Public Class MarkDownViewer
                         Dim sepThick As Integer = Math.Max(1, CInt(标题分隔线粗细 * s))
                         Dim sepGap As Integer = CInt(标题分隔线间距 * s)
                         Dim sepY As Integer = drawY + vl.Height + sepGap
-                        rt.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(textLeft, sepY, clipW, sepThick)), _brushCache.Get(rt, 标题分隔线颜色))
+                        rt.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(textLeft, sepY, clipW, sepThick)), _当前合成器.BrushCache.Get(rt, 标题分隔线颜色))
                     End If
                 End If
         End Select
@@ -1865,10 +1767,10 @@ Public Class MarkDownViewer
         Dim rowTop As Integer = drawY - topPad
 
         If vl.TableRowIndex = 0 AndAlso block.HasHeader Then
-            rt.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(textLeft, rowTop, totalW, logicalRowH)), _brushCache.Get(rt, 表头背景颜色))
+            rt.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(textLeft, rowTop, totalW, logicalRowH)), _当前合成器.BrushCache.Get(rt, 表头背景颜色))
         End If
 
-        Dim lineBrush = _brushCache.Get(rt, 表格边框颜色)
+        Dim lineBrush = _当前合成器.BrushCache.Get(rt, 表格边框颜色)
         Dim stroke As Single = Math.Max(1.0F, s)
         rt.DrawLine(New System.Numerics.Vector2(textLeft, rowTop), New System.Numerics.Vector2(textLeft + totalW, rowTop), lineBrush, stroke)
         rt.DrawLine(New System.Numerics.Vector2(textLeft, rowTop + logicalRowH), New System.Numerics.Vector2(textLeft + totalW, rowTop + logicalRowH), lineBrush, stroke)
@@ -1879,125 +1781,7 @@ Public Class MarkDownViewer
         Next
     End Sub
 
-    Private Sub DrawFragments(g As Graphics, vl As VisualLine, vli As Integer,
-                               textLeft As Integer, drawY As Integer, blockKind As BlockKind,
-                               s As Single, selStart As SelectionPos, selEnd As SelectionPos)
-        For fi As Integer = 0 To vl.Fragments.Count - 1
-            Dim frag = vl.Fragments(fi)
-            Dim fragX As Integer = textLeft + frag.X
-            Dim fragW As Integer = frag.Width
 
-            ' 图片渲染
-            If frag.Kind = InlineKind.Image Then
-                If _hasSelection Then
-                    DrawFragmentSelection(g, vli, fi, frag, fragX, drawY, vl.Height, selStart, selEnd)
-                End If
-                Dim imgH As Integer = If(frag.FragmentHeight > 0, frag.FragmentHeight, vl.Height)
-                Dim imgRect As New Rectangle(fragX, drawY, frag.Width, imgH)
-                If frag.ImageObj IsNot Nothing Then
-                    Dim oldInterp = g.InterpolationMode
-                    g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic
-                    g.DrawImage(frag.ImageObj, imgRect)
-                    g.InterpolationMode = oldInterp
-                Else
-                    Using pen As New Pen(Color.FromArgb(80, 80, 80), Math.Max(1, s))
-                        pen.DashStyle = System.Drawing.Drawing2D.DashStyle.Dash
-                        g.DrawRectangle(pen, imgRect)
-                    End Using
-                    If Not String.IsNullOrEmpty(frag.Text) Then
-                        TextRenderer.DrawText(g, frag.Text, frag.UseFont, imgRect,
-                            Color.FromArgb(120, 120, 120),
-                            TextFormatFlags.HorizontalCenter Or TextFormatFlags.VerticalCenter Or TextFormatFlags.WordBreak)
-                    End If
-                End If
-                Continue For
-            End If
-
-            ' 行内代码背景（先于选中高亮绘制）
-            If frag.BackColor <> Color.Empty AndAlso blockKind <> BlockKind.CodeBlock Then
-                Dim padL As Integer = CInt(代码块内边距.Left * s)
-                Dim padR As Integer = CInt(代码块内边距.Right * s)
-                Dim oldSmooth = g.SmoothingMode
-                g.SmoothingMode = SmoothingMode.AntiAlias
-                Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(
-                    New RectangleF(fragX - padL, drawY, fragW + padL + padR, vl.Height), CInt(3 * s))
-                    Using br As New SolidBrush(frag.BackColor)
-                        g.FillPath(br, path)
-                    End Using
-                End Using
-                g.SmoothingMode = oldSmooth
-            End If
-
-            ' 选中高亮（在代码背景之后绘制，确保可见）
-            If _hasSelection Then
-                DrawFragmentSelection(g, vli, fi, frag, fragX, drawY, vl.Height, selStart, selEnd)
-            End If
-
-            If Not String.IsNullOrEmpty(frag.Text) Then
-                If blockKind = BlockKind.Table AndAlso frag.TableColIndex >= 0 Then
-                    Dim block = _document.Blocks(vl.BlockIndex)
-                    Dim colWidths As Integer() = Nothing
-                    Dim cellW As Integer = frag.Width
-                    If _tableColumnWidths.TryGetValue(vl.BlockIndex, colWidths) AndAlso frag.TableColIndex < colWidths.Length Then
-                        Dim cellPadding As Integer = CInt(6 * s)
-                        cellW = colWidths(frag.TableColIndex) - cellPadding * 2
-                    End If
-                    Dim flags As TextFormatFlags = TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine Or TextFormatFlags.VerticalCenter
-                    If block.ColumnAlignments IsNot Nothing AndAlso frag.TableColIndex < block.ColumnAlignments.Count Then
-                        Select Case block.ColumnAlignments(frag.TableColIndex)
-                            Case TableAlignment.Center : flags = flags Or TextFormatFlags.HorizontalCenter
-                            Case TableAlignment.Right : flags = flags Or TextFormatFlags.Right
-                        End Select
-                    End If
-                    TextRenderer.DrawText(g, frag.Text, frag.UseFont,
-                        New Rectangle(fragX, drawY, cellW, vl.Height),
-                        frag.ForeColor, flags)
-                Else
-                    TextRenderer.DrawText(g, frag.Text, frag.UseFont,
-                        New Rectangle(fragX, drawY, Short.MaxValue, vl.Height),
-                        frag.ForeColor, TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine Or TextFormatFlags.VerticalCenter)
-                End If
-            End If
-
-            If fragW > 0 Then
-                If frag.Kind = InlineKind.Strikethrough Then
-                    Using pen As New Pen(frag.ForeColor, Math.Max(1, s))
-                        g.DrawLine(pen, fragX, drawY + vl.Height \ 2, fragX + fragW, drawY + vl.Height \ 2)
-                    End Using
-                ElseIf frag.Kind = InlineKind.Link Then
-                    Using pen As New Pen(frag.ForeColor, Math.Max(1, s))
-                        g.DrawLine(pen, fragX, drawY + vl.Height - CInt(3 * s), fragX + fragW, drawY + vl.Height - CInt(3 * s))
-                    End Using
-                End If
-            End If
-        Next
-    End Sub
-
-    Private Sub DrawFragmentSelection(g As Graphics, vli As Integer, fi As Integer, frag As VisualFragment,
-                                       fragX As Integer, drawY As Integer, lineH As Integer,
-                                       selStart As SelectionPos, selEnd As SelectionPos)
-        If vli < selStart.VisualLine OrElse vli > selEnd.VisualLine Then Return
-        Dim sChar As Integer = 0
-        Dim eChar As Integer = frag.CharLength
-        If vli = selStart.VisualLine Then
-            If fi < selStart.FragmentIndex Then Return
-            If fi = selStart.FragmentIndex Then sChar = selStart.CharOffset
-        End If
-        If vli = selEnd.VisualLine Then
-            If fi > selEnd.FragmentIndex Then Return
-            If fi = selEnd.FragmentIndex Then eChar = selEnd.CharOffset
-        End If
-        If eChar <= sChar OrElse frag.Text Is Nothing Then Return
-        Dim safeS = Math.Min(sChar, frag.Text.Length)
-        Dim safeE = Math.Min(eChar, frag.Text.Length)
-        Dim x1 As Integer = fragX + If(safeS > 0, TextRenderHelper.MeasureTextWidth(frag.Text.Substring(0, safeS), frag.UseFont, lineH), 0)
-        Dim x2 As Integer = fragX + TextRenderHelper.MeasureTextWidth(frag.Text.Substring(0, safeE), frag.UseFont, lineH)
-        If x2 > x1 Then
-            Using br As New SolidBrush(选中背景颜色)
-                g.FillRectangle(br, x1, drawY, x2 - x1, lineH)
-            End Using
-        End If
-    End Sub
 
     Private Enum D2DTextAlign
         Left
@@ -2026,7 +1810,7 @@ Public Class MarkDownViewer
                     End If
                 Else
                     Dim placeholderColor = Color.FromArgb(80, 80, 80)
-                    rt.DrawRectangle(D2DHelper.ToD2DRect(imgRect), _brushCache.Get(rt, placeholderColor), Math.Max(1.0F, s))
+                    rt.DrawRectangle(D2DHelper.ToD2DRect(imgRect), _当前合成器.BrushCache.Get(rt, placeholderColor), Math.Max(1.0F, s))
                     If Not String.IsNullOrEmpty(frag.Text) Then
                         DrawText_D2D(rt, frag.Text, frag.UseFont, Color.FromArgb(120, 120, 120), imgRect, D2DTextAlign.Center, True)
                     End If
@@ -2038,7 +1822,7 @@ Public Class MarkDownViewer
                 Dim padL As Integer = CInt(代码块内边距.Left * s)
                 Dim padR As Integer = CInt(代码块内边距.Right * s)
                 Using geo = RectangleRenderer.创建圆角矩形几何(New RectangleF(fragX - padL, drawY, fragW + padL + padR, vl.Height), CInt(3 * s))
-                    rt.FillGeometry(geo, _brushCache.Get(rt, frag.BackColor))
+                    rt.FillGeometry(geo, _当前合成器.BrushCache.Get(rt, frag.BackColor))
                 End Using
             End If
 
@@ -2067,7 +1851,7 @@ Public Class MarkDownViewer
             End If
 
             If fragW > 0 Then
-                Dim lineBrush = _brushCache.Get(rt, frag.ForeColor)
+                Dim lineBrush = _当前合成器.BrushCache.Get(rt, frag.ForeColor)
                 If frag.Kind = InlineKind.Strikethrough Then
                     rt.DrawLine(New System.Numerics.Vector2(fragX, drawY + vl.Height \ 2), New System.Numerics.Vector2(fragX + fragW, drawY + vl.Height \ 2), lineBrush, Math.Max(1.0F, s))
                 ElseIf frag.Kind = InlineKind.Link Then
@@ -2098,7 +1882,7 @@ Public Class MarkDownViewer
         Dim x1 As Integer = fragX + If(safeS > 0, TextRenderHelper.MeasureTextWidth(frag.Text.Substring(0, safeS), frag.UseFont, lineH), 0)
         Dim x2 As Integer = fragX + TextRenderHelper.MeasureTextWidth(frag.Text.Substring(0, safeE), frag.UseFont, lineH)
         If x2 > x1 Then
-            rt.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(x1, drawY, x2 - x1, lineH)), _brushCache.Get(rt, 选中背景颜色))
+            rt.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(x1, drawY, x2 - x1, lineH)), _当前合成器.BrushCache.Get(rt, 选中背景颜色))
         End If
     End Sub
 
@@ -2115,22 +1899,10 @@ Public Class MarkDownViewer
         End Select
         Dim paraAlign As Vortice.DirectWrite.ParagraphAlignment = If(verticalCenter, Vortice.DirectWrite.ParagraphAlignment.Center, Vortice.DirectWrite.ParagraphAlignment.Near)
         Dim sizePx As Single = font.SizeInPoints * DeviceDpi / 72.0F
-        Dim fmt = _textFormatCache.Get(font.FontFamily.Name, weight, style, sizePx, textAlign, paraAlign, True)
-        rt.DrawText(text, fmt, D2DHelper.ToD2DRect(rect), _brushCache.Get(rt, color))
+        Dim fmt = _当前合成器.TextFormatCache.Get(font.FontFamily.Name, weight, style, sizePx, textAlign, paraAlign, True)
+        rt.DrawText(text, fmt, D2DHelper.ToD2DRect(rect), _当前合成器.BrushCache.Get(rt, color))
     End Sub
 
-    Private Sub DrawScrollBar(g As Graphics, w As Integer, h As Integer, s As Single)
-        If Not _scrollBarVisible Then Return
-        Dim scaledBorder As Integer = CInt(Math.Round(边框宽度 * s))
-        Dim scaledRadius As Integer = CInt(Math.Round(边框圆角半径 * s))
-        Dim scaledScrollW As Integer = CInt(Math.Round(滚动条宽度 * s))
-        Dim viewH As Integer = ViewportHeight()
-        If _totalContentHeight <= 0 OrElse viewH <= 0 Then Return
-        _scrollBar.ComputeLayout(w, h, scaledBorder, scaledRadius, 0, 0, scaledScrollW,
-            _totalContentHeight, viewH, _scrollY)
-        _scrollBar.Draw(g, w, h, scaledBorder, scaledRadius, scaledScrollW,
-            滚动条轨道颜色, 滚动条颜色, 滚动条悬停颜色)
-    End Sub
 
     Private Sub DrawScrollBar_D2D(rt As ID2D1RenderTarget, w As Integer, h As Integer, s As Single)
         If Not _scrollBarVisible Then Return
@@ -2666,20 +2438,8 @@ Public Class MarkDownViewer
 
 #Region "D2D 资源管理"
 
-    Private Function GetOrCreateDCRenderTarget() As ID2D1DCRenderTarget
-        If _dcRT Is Nothing Then _dcRT = D2DHelper.CreateDCRenderTarget()
-        Return _dcRT
-    End Function
-
     Private Sub DisposeD2DResources()
         DisposeD2DImageCache()
-        _brushCache.Dispose()
-        _textFormatCache.Dispose()
-        _ssaaCache.Dispose()
-        If _dcRT IsNot Nothing Then
-            Try : _dcRT.Dispose() : Catch : End Try
-            _dcRT = Nothing
-        End If
     End Sub
 
     Private Sub DisposeD2DImageCache()

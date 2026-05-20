@@ -494,28 +494,12 @@ Public Class ModernPanel
     Private _lastDeviceDpi As Integer = 96
     Private _inDpiChange As Boolean = False
 
-    ' D2D 资源：DC RenderTarget + SSAA BitmapRT 缓存 + 背景图缓存
-    Private _dcRT As ID2D1DCRenderTarget
-    Private ReadOnly _ssaaCache As New D2DHelper.BitmapRTCache()
-    Private ReadOnly _backImageCache As New D2DHelper.D2DBitmapCache()
+    ' V2：D2D 资源全部移到 WindowCompositor（Form 级共享），控件本身不再持有任何 D2D 字段。
 
-    Private Function GetOrCreateDCRenderTarget() As ID2D1DCRenderTarget
-        If _dcRT Is Nothing Then _dcRT = D2DHelper.CreateDCRenderTarget()
-        Return _dcRT
-    End Function
-
+    ''' <summary>V2 占位：保留原有调用点签名，背景图缓存由 WindowCompositor.GetBitmapCache 共享，
+    ''' 这里只在 Image 切换时调用 Me.Invalidate 触发一次重绘，让上传缓存按 Image 引用自然失效。</summary>
     Private Sub 清除图片缓存()
-        _backImageCache.Invalidate()
-    End Sub
-
-    Protected Overrides Sub OnHandleDestroyed(e As EventArgs)
-        Try : _ssaaCache.Dispose() : Catch : End Try
-        Try : _backImageCache.Dispose() : Catch : End Try
-        If _dcRT IsNot Nothing Then
-            Try : _dcRT.Dispose() : Catch : End Try
-            _dcRT = Nothing
-        End If
-        MyBase.OnHandleDestroyed(e)
+        ' no-op：V2 缓存按 Image 引用在 WindowCompositor 内共享，无需控件级失效。
     End Sub
 
 #End Region
@@ -690,36 +674,50 @@ Public Class ModernPanel
 #Region "绘制"
 
     Private Function 需要自绘背景() As Boolean
-        ' 圆角 / 半透明背景色 / 半透明 BackColor（基类）任一成立都不能交给基类绘制背景，
-        ' 否则圆角外角落或基类透明处理会出现错误填充。
-        Return 边框圆角半径 > 0 OrElse 背景颜色.A < 255 OrElse MyBase.BackColor.A < 255
+        ' V2 契约：以下任一为真都不能交给基类绘制背景：
+        '   1) 圆角 > 0（圆角外空白要透出底色 / 背景源）
+        '   2) BackColor1 (背景颜色) 半透明 → 自身实色填充层有 alpha
+        '   3) MyBase.BackColor 半透明 → 走 .NET 自身透明逻辑（OnPaintBackground 仍交回基类）
+        '      —— 但 BackgroundSource 已设置时跳过 BackColor 逻辑直接画背景穿透。
+        Return 边框圆角半径 > 0 OrElse 背景颜色.A < 255 OrElse
+               _backgroundSource IsNot Nothing OrElse MyBase.BackColor.A < 255
     End Function
 
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
-        If 需要自绘背景() Then Return
+        ' V2 契约：
+        '   • BackgroundSource 已设置 → 跳过 BackColor 整个逻辑，背景由 OnPaint 内 BackgroundPenetrationV2 绘制；
+        '   • 否则一律走 .NET 自身透明逻辑（基类负责合成父级背景或填充不透明 BackColor）。
+        '     半透明 BackColor 的"颜色覆盖"会在 OnPaint 的背景层上再叠加一次。
+        If _backgroundSource IsNot Nothing Then Return
         MyBase.OnPaintBackground(e)
     End Sub
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
         If Me.Width < 1 OrElse Me.Height < 1 Then Return
-        Dim 需要贴底图 As Boolean = 需要自绘背景()
 
         Dim ssaa As Integer = If(Class1.GlobalSSAA > 1, CInt(Class1.GlobalSSAA), 超采样倍率)
         ssaa = Math.Max(1, ssaa)
 
-        Using scope = D2DHelper.BeginPaint(e, Me, GetOrCreateDCRenderTarget(), ssaa, _ssaaCache)
-            Dim gRT As ID2D1RenderTarget = scope.GraphicsRenderTarget
+        Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
+            If scope Is Nothing Then Return  ' 设计期或无 Form 上下文，直接跳过自绘
 
-            ' 透明背景贴底图：在图形 RT 上画，让整面像素有有效内容，
-            ' 避免 dcRT.EndDraw 的 BitBlt（AlphaMode.Ignore）把圆角外区域覆盖为黑。
-            If 需要贴底图 Then
-                TransparentBackgroundCache.PaintBackgroundFor_D2D(Me, gRT, _backgroundSource)
+            ' 1) 背景层（1× 直绘）：
+            '    • 若设置 BackgroundSource → 直接画穿透底图（BackColor 被跳过，OnPaintBackground 也已 Return）；
+            '    • 否则若 MyBase.BackColor 半透明 → 基类 OnPaintBackground 已把父级背景画到 DC RT 上，
+            '      这里再叠一层 BackColor 作为半透明遮罩（"颜色覆盖在上面"）。
+            If _backgroundSource IsNot Nothing Then
+                BackgroundPenetrationV2.PaintBackground(Me, scope, _backgroundSource)
+            ElseIf MyBase.BackColor.A > 0 AndAlso MyBase.BackColor.A < 255 Then
+                Dim bgLayer = scope.BackgroundLayer
+                Dim brush = scope.Compositor.BrushCache.[Get](bgLayer, MyBase.BackColor)
+                If brush IsNot Nothing Then
+                    bgLayer.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(0, 0, Me.Width, Me.Height)), brush)
+                End If
             End If
 
-            ' 在图形 RT 上绘制背景、图片、遮罩、边框
-            绘制背景与边框_D2D(gRT)
-
-            ' 滚动条（不需 SSAA，但和图形层一起画也无妨）
+            ' 2) 图形层（SSAA）：背景颜色 / 图片 / 遮罩 / 边框 / 滚动条
+            Dim gRT As ID2D1RenderTarget = scope.GraphicsLayer
+            绘制背景与边框_D2D(gRT, scope.Compositor)
             绘制垂直滚动条_D2D(gRT)
             绘制水平滚动条_D2D(gRT)
 
@@ -728,13 +726,13 @@ Public Class ModernPanel
     End Sub
 
     ''' <summary>
-    ''' （已废弃）透明背景贴底图的 GDI 路径。保留调用点以防外部引用，实际走 D2D 路径。
+    ''' （已废弃）透明背景贴底图的 GDI 路径。V2 不再使用，保留方法占位避免外部引用编译失败。
     ''' </summary>
     Private Sub 绘制父容器背景(g As Graphics)
-        TransparentBackgroundCache.PaintBackgroundFor(Me, g, _backgroundSource)
+        ' no-op
     End Sub
 
-    Private Sub 绘制背景与边框_D2D(rt As ID2D1RenderTarget)
+    Private Sub 绘制背景与边框_D2D(rt As ID2D1RenderTarget, compositor As WindowCompositor)
         Dim s As Single = DpiScale()
         Dim boundsRect As New RectangleF(0, 0, Me.Width, Me.Height)
         If 边框宽度 > 0 Then
@@ -756,7 +754,7 @@ Public Class ModernPanel
                 If 背景颜色.A > 0 Then
                     RectangleRenderer.绘制圆角背景_D2D(rt, geo, boundsRect, 背景颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal)
                 End If
-                绘制背景图片_D2D(rt, boundsRect, geo)
+                绘制背景图片_D2D(rt, compositor, boundsRect, geo)
                 If 遮罩颜色.A > 0 Then
                     RectangleRenderer.绘制圆角背景_D2D(rt, geo, boundsRect, 遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal)
                 End If
@@ -771,7 +769,7 @@ Public Class ModernPanel
             If 背景颜色.A > 0 Then
                 RectangleRenderer.绘制矩形背景_D2D(rt, boundsRect, 背景颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal)
             End If
-            绘制背景图片_D2D(rt, boundsRect, Nothing)
+            绘制背景图片_D2D(rt, compositor, boundsRect, Nothing)
             If 遮罩颜色.A > 0 Then
                 RectangleRenderer.绘制矩形背景_D2D(rt, boundsRect, 遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal)
             End If
@@ -782,9 +780,10 @@ Public Class ModernPanel
     End Sub
 
     ''' <summary>D2D 绘制背景图片：按 ImageMode 计算目标矩形，圆角下用几何裁切。</summary>
-    Private Sub 绘制背景图片_D2D(rt As ID2D1RenderTarget, area As RectangleF, geo As ID2D1Geometry)
-        If _image Is Nothing Then Return
-        Dim bmp = _backImageCache.GetBitmap(rt, _image)
+    Private Sub 绘制背景图片_D2D(rt As ID2D1RenderTarget, compositor As WindowCompositor, area As RectangleF, geo As ID2D1Geometry)
+        If _image Is Nothing OrElse compositor Is Nothing Then Return
+        Dim cache = compositor.GetBitmapCache(_image)
+        Dim bmp = If(cache Is Nothing, Nothing, cache.GetBitmap(rt, _image))
         If bmp Is Nothing Then Return
 
         Dim srcW As Single = _image.Width
@@ -1009,8 +1008,11 @@ Public Class ModernPanel
     Private _suppressLocationSync As Boolean = False
 
     Private Sub 子控件布局变更(sender As Object, e As EventArgs)
-        If _inScrollUpdate OrElse _inDpiChange Then Return
+        If _inDpiChange Then Return
+        ' 即使处于 _inScrollUpdate 重入窗口（例如 MyBase.OnLayout 过程中子控件 SizeChanged），
+        ' 也必须置脏，否则随后的 更新滚动区域() 会用陈旧 _contentSize 误判 needV/needH。
         _contentSizeDirty = True
+        If _inScrollUpdate Then Return
         更新滚动区域()
         Me.Invalidate()
     End Sub
@@ -1041,6 +1043,11 @@ Public Class ModernPanel
 
         ' DPI 变化期间跳过设计坐标捕获和滚动区域更新，由 OnDpiChangedAfterParent 统一处理
         If _inDpiChange Then Return
+
+        ' 兜底：基类布局过程中子控件的 SizeChanged 在 _inScrollUpdate 守卫下未递归更新，
+        ' 但脏标记已在 子控件布局变更() 内被置 True。这里再显式置一次脏，确保即使
+        ' 将来调整重入逻辑，更新滚动区域() 也会重新计算内容大小，避免使用陈旧 _contentSize。
+        _contentSizeDirty = True
 
         If _layoutMode = LayoutModeEnum.Flow Then
             执行流式排布()

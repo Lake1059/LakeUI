@@ -54,7 +54,8 @@ Partial Class Form_CpuMonitor
         ' 
         ' CpuMonitor1
         ' 
-        CpuMonitor1.CellBackColor = Color.FromArgb(CByte(24), CByte(24), CByte(24))
+        CpuMonitor1.BackgroundSource = ModernPanel1
+        CpuMonitor1.CellBackColor = Color.FromArgb(CByte(80), CByte(0), CByte(0), CByte(0))
         CpuMonitor1.CellBorderColor = Color.FromArgb(CByte(80), CByte(80), CByte(80))
         CpuMonitor1.CellBorderThickness = 0F
         CpuMonitor1.CellPadding = 0F
@@ -85,7 +86,7 @@ Partial Class Form_CpuMonitor
         ' 
         ' ModernButton4
         ' 
-        ModernButton4.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton4.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton4.BorderRadius = 10
         ModernButton4.BorderSize = 0
         ModernButton4.Dock = DockStyle.Left
@@ -111,7 +112,7 @@ Partial Class Form_CpuMonitor
         ' 
         ' ModernButton3
         ' 
-        ModernButton3.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton3.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton3.BorderRadius = 10
         ModernButton3.BorderSize = 0
         ModernButton3.Dock = DockStyle.Left
@@ -136,7 +137,7 @@ Partial Class Form_CpuMonitor
         ' 
         ' ModernButton2
         ' 
-        ModernButton2.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton2.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton2.BorderRadius = 10
         ModernButton2.BorderSize = 0
         ModernButton2.Dock = DockStyle.Left
@@ -161,7 +162,7 @@ Partial Class Form_CpuMonitor
         ' 
         ' ModernButton1
         ' 
-        ModernButton1.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton1.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton1.BorderRadius = 10
         ModernButton1.BorderSize = 0
         ModernButton1.Dock = DockStyle.Left

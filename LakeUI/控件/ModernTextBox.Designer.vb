@@ -32,11 +32,11 @@ Partial Class ModernTextBox
         ' 
         ' ModernTextBox
         ' 
-        AutoScaleDimensions = New SizeF(120F, 120F)
+        AutoScaleDimensions = New SizeF(96F, 96F)
         AutoScaleMode = AutoScaleMode.Dpi
-        DoubleBuffered = True
+        Margin = New Padding(2, 2, 2, 2)
         Name = "ModernTextBox"
-        Size = New Size(150, 40)
+        Size = New Size(120, 32)
         ResumeLayout(False)
     End Sub
 

@@ -1,5 +1,6 @@
 ﻿Imports System.ComponentModel
 Imports System.Drawing.Drawing2D
+Imports Vortice.Direct2D1
 
 ''' <summary>
 ''' Win11 文件资源管理器风格的面包屑导航控件。
@@ -381,6 +382,22 @@ Public Class BreadcrumbNavigationBar
         End Set
     End Property
 
+    Private _backgroundSource As Control = Nothing
+    <Category("LakeUI"),
+     Description("背景采样源（V2 透明背景穿透）。设置后将跨越任意层级直接采样此控件的绘制内容作为透明背景；为空时按 BackColor 协议处理。"),
+     DefaultValue(GetType(Control), Nothing), Browsable(True)>
+    Public Property BackgroundSource As Control
+        Get
+            Return _backgroundSource
+        End Get
+        Set(value As Control)
+            If _backgroundSource IsNot value Then
+                _backgroundSource = value
+                Me.Invalidate()
+            End If
+        End Set
+    End Property
+
     Private 下拉背景颜色 As Color = Color.FromArgb(36, 36, 36)
     <Category("LakeUI"), Description("下拉列表背景颜色"), DefaultValue(GetType(Color), "36,36,36"), Browsable(True)>
     Public Property DropDownBackColor As Color
@@ -611,6 +628,7 @@ Public Class BreadcrumbNavigationBar
 
 #Region "绘制"
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
+        If _backgroundSource IsNot Nothing Then Return
         If 背景颜色.A < 255 Then Return
         MyBase.OnPaintBackground(e)
     End Sub
@@ -619,53 +637,50 @@ Public Class BreadcrumbNavigationBar
         RebuildLayout()
         Dim w As Integer = ClientRectangle.Width
         Dim h As Integer = ClientRectangle.Height
-        If 背景颜色.A < 255 Then
-            绘制父容器背景(e.Graphics)
-        End If
-        If 背景颜色.A > 0 Then
-            Using br As New SolidBrush(背景颜色)
-                e.Graphics.FillRectangle(br, ClientRectangle)
-            End Using
-        End If
+        If w < 1 OrElse h < 1 Then Return
 
-        Dim ssaa As Integer = If(Class1.GlobalSSAA > 1, Class1.GlobalSSAA, 超采样倍率)
-        If ssaa > 1 Then
-            Using bmp As New Bitmap(w * ssaa, h * ssaa)
-                Using g As Graphics = Graphics.FromImage(bmp)
-                    g.ScaleTransform(ssaa, ssaa)
-                    DrawNodes(g)
-                End Using
-                e.Graphics.CompositingQuality = CompositingQuality.HighQuality
-                e.Graphics.InterpolationMode = InterpolationMode.HighQualityBicubic
-                e.Graphics.DrawImage(bmp, 0, 0, w, h)
-            End Using
-        Else
-            DrawNodes(e.Graphics)
-        End If
+        Dim ssaa As Integer = Math.Max(1, CInt(超采样倍率))
+        If Class1.GlobalSSAA <> Class1.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(Class1.GlobalSSAA))
 
-        If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
-            Using br As New SolidBrush(禁用时遮罩颜色)
-                e.Graphics.FillRectangle(br, ClientRectangle)
-            End Using
-        End If
-    End Sub
+        Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
+            If scope Is Nothing Then
+                MyBase.OnPaint(e)
+                Return
+            End If
 
-    Private Sub 绘制父容器背景(g As Graphics)
-        If Parent Is Nothing Then Return
-        Dim state = g.Save()
-        g.TranslateTransform(-Me.Left, -Me.Top)
-        Using pea As New PaintEventArgs(g, New Rectangle(Me.Left, Me.Top, Me.Width, Me.Height))
-            InvokePaintBackground(Parent, pea)
-            InvokePaint(Parent, pea)
+            ' 背景层
+            If _backgroundSource IsNot Nothing Then
+                BackgroundPenetrationV2.PaintBackground(Me, scope, _backgroundSource)
+            ElseIf 背景颜色.A = 255 Then
+                scope.BackgroundLayer.Clear(D2DHelper.ToColor4(背景颜色))
+            ElseIf 背景颜色.A > 0 Then
+                Dim bgLayer = scope.BackgroundLayer
+                Dim bb = scope.Compositor.BrushCache.[Get](bgLayer, 背景颜色)
+                If bb IsNot Nothing Then
+                    bgLayer.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(0, 0, w, h)), bb)
+                End If
+            End If
+
+            ' 图形层：节点高亮 + 箭头
+            Dim gRT As ID2D1RenderTarget = scope.GraphicsLayer
+            Dim brushCache = scope.Compositor.BrushCache
+            DrawNodesShapes_D2D(gRT, brushCache)
+
+            scope.FlushGraphics()
+
+            ' 禁用遮罩
+            If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
+                Dim dcRT = scope.DCRenderTarget
+                Dim mb = brushCache.[Get](dcRT, 禁用时遮罩颜色)
+                If mb IsNot Nothing Then dcRT.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(0, 0, w, h)), mb)
+            End If
+
+            ' 文字层（DirectWrite）
+            DrawNodesText_D2D(scope.TextLayer, scope.Compositor.TextFormatCache, brushCache)
         End Using
-        g.Restore(state)
     End Sub
 
-    Private Sub DrawNodes(g As Graphics)
-        g.SmoothingMode = SmoothingMode.AntiAlias
-        g.PixelOffsetMode = PixelOffsetMode.HighQuality
-        g.TextRenderingHint = Drawing.Text.TextRenderingHint.ClearTypeGridFit
-
+    Private Sub DrawNodesShapes_D2D(rt As ID2D1RenderTarget, brushCache As D2DHelper.SolidColorBrushCache)
         Dim s As Single = DpiScale()
         Dim radius As Single = 节点圆角半径 * s
 
@@ -682,7 +697,7 @@ Public Class BreadcrumbNavigationBar
                 textHl = 节点悬停背景
             End If
             If textHl <> Color.Empty AndAlso textHl.A > 0 Then
-                FillRoundedRect(g, l.TextRect, radius, textHl)
+                FillRoundedRect_D2D(rt, brushCache, l.TextRect, radius, textHl)
             End If
 
             If l.HasArrow Then
@@ -695,66 +710,90 @@ Public Class BreadcrumbNavigationBar
                     arrHl = 节点悬停背景
                 End If
                 If arrHl <> Color.Empty AndAlso arrHl.A > 0 Then
-                    FillRoundedRect(g, l.ArrowRect, radius, arrHl)
+                    FillRoundedRect_D2D(rt, brushCache, l.ArrowRect, radius, arrHl)
                 End If
-            End If
 
-            TextRenderer.DrawText(g, item.Text, Font, l.TextRect, ForeColor,
-                TextFormatFlags.NoPadding Or TextFormatFlags.HorizontalCenter Or
-                TextFormatFlags.VerticalCenter Or TextFormatFlags.SingleLine Or TextFormatFlags.EndEllipsis)
-
-            If l.HasArrow Then
                 Dim arrowClr As Color = 箭头颜色
                 If (_hoverNodeIndex = l.Index AndAlso _hoverIsArrow) OrElse (_dropDownArrowIndex = l.Index) Then
                     arrowClr = 箭头悬停颜色
                 End If
                 Dim chevronDown As Boolean = (_dropDownArrowIndex = l.Index)
-                DrawChevron(g, l.ArrowRect, arrowClr, chevronDown)
+                DrawChevron_D2D(rt, brushCache, l.ArrowRect, arrowClr, chevronDown)
             End If
         Next
     End Sub
 
-    Private Sub FillRoundedRect(g As Graphics, r As Rectangle, radius As Single, c As Color)
-        If r.Width <= 0 OrElse r.Height <= 0 Then Return
+    Private Sub DrawNodesText_D2D(rt As ID2D1RenderTarget,
+                                   textFormatCache As D2DHelper.TextFormatCache,
+                                   brushCache As D2DHelper.SolidColorBrushCache)
+        Dim dpi As Single = DpiScale()
+        For Each l In _layoutCache
+            Dim item As BreadcrumbItem = _items(l.Index)
+            If item Is Nothing Then Continue For
+            D2DTextRenderer.DrawText(rt, item.Text, Font, l.TextRect, ForeColor,
+                TextFormatFlags.NoPadding Or TextFormatFlags.HorizontalCenter Or
+                TextFormatFlags.VerticalCenter Or TextFormatFlags.SingleLine Or TextFormatFlags.EndEllipsis,
+                dpi, textFormatCache, brushCache)
+        Next
+    End Sub
+
+    Private Sub FillRoundedRect_D2D(rt As ID2D1RenderTarget, brushCache As D2DHelper.SolidColorBrushCache,
+                                    r As Rectangle, radius As Single, c As Color)
+        If r.Width <= 0 OrElse r.Height <= 0 OrElse c.A = 0 Then Return
+        Dim brush = brushCache.[Get](rt, c)
+        If brush Is Nothing Then Return
         If radius <= 0.5F Then
-            Using br As New SolidBrush(c)
-                g.FillRectangle(br, r)
-            End Using
+            rt.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(r.X, r.Y, r.Width, r.Height)), brush)
             Return
         End If
-        Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(New RectangleF(r.X, r.Y, r.Width, r.Height), radius)
-            Using br As New SolidBrush(c)
-                g.FillPath(br, path)
-            End Using
+        Using geo = RectangleRenderer.创建圆角矩形几何(New RectangleF(r.X, r.Y, r.Width, r.Height), radius)
+            rt.FillGeometry(geo, brush)
         End Using
     End Sub
 
-    ''' <summary>
-    ''' 绘制 Win11 风格的 chevron 箭头（两段折线，非实心三角）。
-    ''' </summary>
-    Private Sub DrawChevron(g As Graphics, area As Rectangle, c As Color, pointDown As Boolean)
+    Private Sub DrawChevron_D2D(rt As ID2D1RenderTarget, brushCache As D2DHelper.SolidColorBrushCache,
+                                area As Rectangle, c As Color, pointDown As Boolean)
         Dim s As Single = DpiScale()
         Dim sz As Single = 箭头大小 * s
         Dim cx As Single = area.X + area.Width / 2.0F
         Dim cy As Single = area.Y + area.Height / 2.0F
         Dim half As Single = sz / 2.0F
         Dim hh As Single = half * 0.55F
-        Dim p1, p2, p3 As PointF
+        Dim p1, p2, p3 As System.Numerics.Vector2
         If pointDown Then
-            p1 = New PointF(cx - half, cy - hh)
-            p2 = New PointF(cx, cy + hh)
-            p3 = New PointF(cx + half, cy - hh)
+            p1 = New System.Numerics.Vector2(cx - half, cy - hh)
+            p2 = New System.Numerics.Vector2(cx, cy + hh)
+            p3 = New System.Numerics.Vector2(cx + half, cy - hh)
         Else
-            p1 = New PointF(cx - hh, cy - half)
-            p2 = New PointF(cx + hh, cy)
-            p3 = New PointF(cx - hh, cy + half)
+            p1 = New System.Numerics.Vector2(cx - hh, cy - half)
+            p2 = New System.Numerics.Vector2(cx + hh, cy)
+            p3 = New System.Numerics.Vector2(cx - hh, cy + half)
         End If
-        Using pen As New Pen(c, 箭头线宽 * s)
-            pen.StartCap = LineCap.Round
-            pen.EndCap = LineCap.Round
-            pen.LineJoin = LineJoin.Round
-            g.DrawLines(pen, New PointF() {p1, p2, p3})
-        End Using
+        Dim brush = brushCache.[Get](rt, c)
+        If brush Is Nothing Then Return
+        Dim factory = D2DHelper.GetD2DFactory()
+        Dim path As ID2D1PathGeometry = factory.CreatePathGeometry()
+        Try
+            Using sink = path.Open()
+                sink.BeginFigure(p1, FigureBegin.Hollow)
+                sink.AddLine(p2)
+                sink.AddLine(p3)
+                sink.EndFigure(FigureEnd.Open)
+                sink.Close()
+            End Using
+            Dim style As StrokeStyleProperties = New StrokeStyleProperties() With {
+                .StartCap = CapStyle.Round,
+                .EndCap = CapStyle.Round,
+                .LineJoin = Vortice.Direct2D1.LineJoin.Round,
+                .DashCap = CapStyle.Round,
+                .MiterLimit = 10.0F
+            }
+            Using ss = factory.CreateStrokeStyle(style)
+                rt.DrawGeometry(path, brush, 箭头线宽 * s, ss)
+            End Using
+        Finally
+            path.Dispose()
+        End Try
     End Sub
 #End Region
 
@@ -1129,10 +1168,14 @@ Public Class BreadcrumbNavigationBar
             Return False
         End Function
 
+        Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
+            ' DropDownForm 是顶层 Form，由 OnPaint 用 D2D 全权接管底色，避免 GDI 闪烁。
+        End Sub
+
         Protected Overrides Sub OnPaint(e As PaintEventArgs)
-            Dim g As Graphics = e.Graphics
             Dim w As Integer = ClientRectangle.Width
             Dim h As Integer = ClientRectangle.Height
+            If w < 1 OrElse h < 1 Then Return
             Dim s As Single = _owner.DpiScale()
             Dim bw As Integer = CInt(_owner.下拉边框宽度 * s)
             Dim radius As Single = _owner.下拉圆角半径 * s
@@ -1140,68 +1183,61 @@ Public Class BreadcrumbNavigationBar
             Dim itemH As Integer = CInt(_owner.下拉项高度 * s)
             Dim itemPad As Integer = CInt(_owner.下拉项内边距 * s)
 
-            g.SmoothingMode = SmoothingMode.AntiAlias
-            g.PixelOffsetMode = PixelOffsetMode.HighQuality
-            Using bgBr As New SolidBrush(_owner.下拉背景颜色)
-                g.FillRectangle(bgBr, 0, 0, w, h)
-            End Using
+            Using scope = D2DHelperV2.BeginPaint(e, Me, 1)
+                If scope Is Nothing Then Return
+                Dim rt = scope.GraphicsLayer
+                Dim brushCache = scope.Compositor.BrushCache
 
-            Dim boundsRect As New RectangleF(0, 0, w - 1, h - 1)
-            If bw > 0 Then
-                Dim half As Single = bw / 2.0F
-                boundsRect.Inflate(-half, -half)
-            End If
+                ' 1) 整体底色
+                rt.Clear(D2DHelper.ToColor4(_owner.下拉背景颜色))
 
-            If radius > 0 Then
-                Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(boundsRect, radius)
-                    Using br As New SolidBrush(_owner.下拉背景颜色)
-                        g.FillPath(br, path)
-                    End Using
-                    If bw > 0 Then
-                        Using pen As New Pen(_owner.下拉边框颜色, bw)
-                            pen.LineJoin = LineJoin.Round
-                            g.DrawPath(pen, path)
-                        End Using
-                    End If
-                End Using
-            Else
+                Dim boundsRect As New RectangleF(0, 0, w - 1, h - 1)
                 If bw > 0 Then
-                    Using pen As New Pen(_owner.下拉边框颜色, bw)
-                        g.DrawRectangle(pen, boundsRect.X, boundsRect.Y, boundsRect.Width, boundsRect.Height)
+                    Dim half As Single = bw / 2.0F
+                    boundsRect.Inflate(-half, -half)
+                End If
+
+                ' 2) 圆角背景 + 边框
+                If radius > 0 Then
+                    Using geo = RectangleRenderer.创建圆角矩形几何(boundsRect, radius)
+                        rt.FillGeometry(geo, brushCache.[Get](rt, _owner.下拉背景颜色))
+                        If bw > 0 Then
+                            rt.DrawGeometry(geo, brushCache.[Get](rt, _owner.下拉边框颜色), bw)
+                        End If
                     End Using
+                ElseIf bw > 0 Then
+                    rt.DrawRectangle(D2DHelper.ToD2DRect(boundsRect), brushCache.[Get](rt, _owner.下拉边框颜色), bw)
                 End If
-            End If
 
-            g.SetClip(New Rectangle(bw, bw, w - bw * 2, h - bw * 2))
-            g.TextRenderingHint = Drawing.Text.TextRenderingHint.ClearTypeGridFit
-            For i As Integer = 0 To _items.Count - 1
-                Dim it As BreadcrumbItem = _items(i)
-                If it Is Nothing Then Continue For
-                Dim y As Integer = bw + pad.Top + i * itemH
-                Dim itemRect As New Rectangle(bw + pad.Left, y, w - bw * 2 - pad.Left - pad.Right, itemH)
-                If i = _hoverIndex Then
-                    Dim hr As Single = Math.Max(0, radius - 2)
-                    FillRoundedRectF(g, itemRect, hr, _owner.下拉悬停颜色)
-                End If
-                Dim textRect As New Rectangle(itemRect.X + itemPad, itemRect.Y, itemRect.Width - itemPad * 2, itemRect.Height)
-                TextRenderer.DrawText(g, it.Text, _owner.Font, textRect, _owner.下拉文本颜色,
-                    TextFormatFlags.Left Or TextFormatFlags.VerticalCenter Or TextFormatFlags.EndEllipsis Or TextFormatFlags.NoPadding)
-            Next
-            g.ResetClip()
-        End Sub
+                scope.FlushGraphics()
 
-        Private Sub FillRoundedRectF(g As Graphics, r As Rectangle, radius As Single, c As Color)
-            If r.Width <= 0 OrElse r.Height <= 0 Then Return
-            If radius <= 0.5F Then
-                Using br As New SolidBrush(c)
-                    g.FillRectangle(br, r)
-                End Using
-                Return
-            End If
-            Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(New RectangleF(r.X, r.Y, r.Width, r.Height), radius)
-                Using br As New SolidBrush(c)
-                    g.FillPath(br, path)
-                End Using
+                ' 3) Item 高亮 + 文字
+                Dim dcRT = scope.DCRenderTarget
+                Dim textRT = scope.TextLayer
+                Dim textFormatCache = scope.Compositor.TextFormatCache
+                Dim dpi As Single = _owner.DpiScale()
+
+                ' 裁剪区域：边框内侧
+                Dim clipRect As New RectangleF(bw, bw, w - bw * 2, h - bw * 2)
+                dcRT.PushAxisAlignedClip(New Vortice.RawRectF(clipRect.Left, clipRect.Top, clipRect.Right, clipRect.Bottom), Vortice.Direct2D1.AntialiasMode.Aliased)
+                Try
+                    For i As Integer = 0 To _items.Count - 1
+                        Dim it As BreadcrumbItem = _items(i)
+                        If it Is Nothing Then Continue For
+                        Dim y As Integer = bw + pad.Top + i * itemH
+                        Dim itemRect As New Rectangle(bw + pad.Left, y, w - bw * 2 - pad.Left - pad.Right, itemH)
+                        If i = _hoverIndex Then
+                            Dim hr As Single = Math.Max(0, radius - 2)
+                            RectangleRenderer.绘制圆角矩形_D2D(dcRT, itemRect, hr, RoundCorners.All, _owner.下拉悬停颜色, brushCache)
+                        End If
+                        Dim textRect As New Rectangle(itemRect.X + itemPad, itemRect.Y, itemRect.Width - itemPad * 2, itemRect.Height)
+                        D2DTextRenderer.DrawText(textRT, it.Text, _owner.Font, textRect, _owner.下拉文本颜色,
+                            TextFormatFlags.Left Or TextFormatFlags.VerticalCenter Or TextFormatFlags.EndEllipsis Or TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine,
+                            dpi, textFormatCache, brushCache)
+                    Next
+                Finally
+                    dcRT.PopAxisAlignedClip()
+                End Try
             End Using
         End Sub
 

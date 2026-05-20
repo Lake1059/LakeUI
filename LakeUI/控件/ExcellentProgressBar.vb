@@ -1,5 +1,6 @@
 ﻿Imports System.ComponentModel
 Imports System.Drawing.Drawing2D
+Imports Vortice.Direct2D1
 
 <DefaultEvent("ValueChanged")>
 Public Class ExcellentProgressBar
@@ -10,8 +11,33 @@ Public Class ExcellentProgressBar
         InitializeComponent()
     End Sub
 
+#Region "V2 背景穿透"
+    Private _backgroundSource As Control = Nothing
+    <Category("LakeUI"),
+     Description("背景采样源（V2 透明背景穿透）。设置后将跨越任意层级直接采样此控件的绘制内容作为透明背景；为空时按 BackColor 协议处理。"),
+     DefaultValue(GetType(Control), Nothing), Browsable(True)>
+    Public Property BackgroundSource As Control
+        Get
+            Return _backgroundSource
+        End Get
+        Set(value As Control)
+            If _backgroundSource IsNot value Then
+                _backgroundSource = value
+                Me.Invalidate()
+            End If
+        End Set
+    End Property
+
+    Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
+        If _backgroundSource IsNot Nothing Then Return
+        MyBase.OnPaintBackground(e)
+    End Sub
+#End Region
+
 #Region "绘制"
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
+        If Me.Width < 1 OrElse Me.Height < 1 Then Return
+
         Dim s As Single = DpiScale()
         Dim p As Padding = Me.Padding
         Dim 极限矩形区域 As New RectangleF(0, 0, Me.Width - 1, Me.Height - 1)
@@ -24,88 +50,102 @@ Public Class ExcellentProgressBar
             极限矩形区域.Y + p.Top,
             极限矩形区域.Width - p.Horizontal,
             极限矩形区域.Height - p.Vertical)
-        Dim _ssaa As Integer = If(Class1.GlobalSSAA > 1, Class1.GlobalSSAA, 超采样倍率)
-        If _ssaa > 1 Then
-            Using bmp As New Bitmap(Me.Width * _ssaa, Me.Height * _ssaa)
-                Using g As Graphics = Graphics.FromImage(bmp)
-                    g.ScaleTransform(_ssaa, _ssaa)
-                    绘制图形内容(g, 极限矩形区域, 内容区域)
-                End Using
-                e.Graphics.CompositingQuality = Class1.GlobalCompositingQuality
-                e.Graphics.InterpolationMode = Class1.GlobalInterpolationMode
-                e.Graphics.DrawImage(bmp, 0, 0, Me.Width, Me.Height)
-            End Using
-        Else
-            绘制图形内容(e.Graphics, 极限矩形区域, 内容区域)
-        End If
-        ' 文字直接绘制在 e.Graphics 上，避免 SSAA 缩放导致模糊，同时兼容 MacType
-        If Not String.IsNullOrEmpty(Me.Text) Then
-            绘制文字(e.Graphics)
-        End If
-        If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
-            If 边框圆角半径 > 0 Then
-                Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(极限矩形区域, 边框圆角半径 * s)
-                    Using brush As New SolidBrush(禁用时遮罩颜色)
-                        e.Graphics.FillPath(brush, path)
-                    End Using
-                End Using
-            Else
-                Using brush As New SolidBrush(禁用时遮罩颜色)
-                    e.Graphics.FillRectangle(brush, 极限矩形区域)
-                End Using
+
+        Dim ssaa As Integer = Math.Max(1, CInt(超采样倍率))
+        If Class1.GlobalSSAA <> Class1.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(Class1.GlobalSSAA))
+
+        ' --- 第一遍：D2D 画形状（背景/填充/边框/禁用遮罩）---
+        Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
+            If scope Is Nothing Then
+                MyBase.OnPaint(e)
+                Return
             End If
-        End If
+
+            If _backgroundSource IsNot Nothing Then
+                BackgroundPenetrationV2.PaintBackground(Me, scope, _backgroundSource)
+            ElseIf MyBase.BackColor.A > 0 AndAlso MyBase.BackColor.A < 255 Then
+                Dim bgLayer = scope.BackgroundLayer
+                Dim bb = scope.Compositor.BrushCache.[Get](bgLayer, MyBase.BackColor)
+                If bb IsNot Nothing Then
+                    bgLayer.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(0, 0, Me.Width, Me.Height)), bb)
+                End If
+            End If
+
+            Dim gRT As ID2D1RenderTarget = scope.GraphicsLayer
+            Dim brushCache = scope.Compositor.BrushCache
+            绘制图形内容_D2D(gRT, brushCache, 极限矩形区域, 内容区域)
+
+            scope.FlushGraphics()
+
+            If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
+                Dim dcRT = scope.DCRenderTarget
+                If 边框圆角半径 > 0 Then
+                    Using maskGeo = RectangleRenderer.创建圆角矩形几何(极限矩形区域, 边框圆角半径 * s)
+                        Dim mb = brushCache.[Get](dcRT, 禁用时遮罩颜色)
+                        If mb IsNot Nothing Then dcRT.FillGeometry(maskGeo, mb)
+                    End Using
+                Else
+                    Dim mb = brushCache.[Get](dcRT, 禁用时遮罩颜色)
+                    If mb IsNot Nothing Then dcRT.FillRectangle(D2DHelper.ToD2DRect(极限矩形区域), mb)
+                End If
+            End If
+
+            ' 文字层（DirectWrite）
+            If Not String.IsNullOrEmpty(Me.Text) Then
+                绘制文字_D2D(scope.TextLayer, scope.Compositor.TextFormatCache, brushCache)
+            End If
+        End Using
     End Sub
 
-    Private Sub 绘制文字(g As Graphics)
+    Private Sub 绘制文字_D2D(rt As ID2D1RenderTarget,
+                              textFormatCache As D2DHelper.TextFormatCache,
+                              brushCache As D2DHelper.SolidColorBrushCache)
         Dim p As Padding = 文字边距
         Dim textRect As New Rectangle(p.Left, p.Top, Me.Width - p.Horizontal - 1, Me.Height - p.Vertical - 1)
         If textRect.Width < 1 OrElse textRect.Height < 1 Then Return
-        ' 使用 TextRenderer（GDI）以兼容 MacType，避免 GDI+ 绘字绕过 MacType 钩子
         Dim flags As TextFormatFlags = TextFormatFlags.Left Or TextFormatFlags.Bottom Or TextFormatFlags.SingleLine Or TextFormatFlags.EndEllipsis
-        TextRenderer.DrawText(g, Me.Text, Me.Font, textRect, Me.ForeColor, flags)
+        D2DTextRenderer.DrawText(rt, Me.Text, Me.Font, textRect, Me.ForeColor, flags, DpiScale(), textFormatCache, brushCache)
     End Sub
 
-    Private Sub 绘制图形内容(g As Graphics, 极限矩形区域 As RectangleF, 内容区域 As RectangleF)
-        g.SmoothingMode = Class1.GlobalSmoothingMode
-        g.PixelOffsetMode = Class1.GlobalPixelOffsetMode
-        g.InterpolationMode = Class1.GlobalInterpolationMode
-
+    Private Sub 绘制图形内容_D2D(rt As ID2D1RenderTarget, brushCache As D2DHelper.SolidColorBrushCache,
+                              极限矩形区域 As RectangleF, 内容区域 As RectangleF)
         Dim s As Single = DpiScale()
         Dim _边框圆角半径 As Single = 边框圆角半径 * s
         Dim _边框宽度 As Single = 边框宽度 * s
         Dim 是否有圆角 As Boolean = 边框圆角半径 > 0
 
         If 是否有圆角 Then
-            Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(极限矩形区域, _边框圆角半径)
-                RectangleRenderer.绘制圆角背景(g, path, 极限矩形区域, 轨道背景颜色, 轨道渐变颜色, 轨道渐变方向)
-                绘制双填充区域(g, 内容区域, path)
-                RectangleRenderer.绘制圆角边框(g, path, 边框颜色, _边框宽度)
+            Using geo = RectangleRenderer.创建圆角矩形几何(极限矩形区域, _边框圆角半径)
+                RectangleRenderer.绘制圆角背景_D2D(rt, geo, 极限矩形区域, 轨道背景颜色, 轨道渐变颜色, 轨道渐变方向, brushCache)
+                绘制双填充区域_D2D(rt, brushCache, 内容区域, geo)
+                RectangleRenderer.绘制圆角边框_D2D(rt, geo, 边框颜色, _边框宽度, brushCache)
             End Using
         Else
-            RectangleRenderer.绘制矩形背景(g, 极限矩形区域, 轨道背景颜色, 轨道渐变颜色, 轨道渐变方向)
-            绘制双填充区域(g, 内容区域, Nothing)
-            RectangleRenderer.绘制矩形边框(g, 极限矩形区域, 边框颜色, _边框宽度)
+            RectangleRenderer.绘制矩形背景_D2D(rt, 极限矩形区域, 轨道背景颜色, 轨道渐变颜色, 轨道渐变方向, brushCache)
+            绘制双填充区域_D2D(rt, brushCache, 内容区域, Nothing)
+            RectangleRenderer.绘制矩形边框_D2D(rt, 极限矩形区域, 边框颜色, _边框宽度, brushCache)
         End If
     End Sub
 
-    Private Sub 绘制双填充区域(g As Graphics, 极限矩形区域 As RectangleF, clipPath As GraphicsPath)
+    Private Sub 绘制双填充区域_D2D(rt As ID2D1RenderTarget, brushCache As D2DHelper.SolidColorBrushCache,
+                                极限矩形区域 As RectangleF, clipGeo As ID2D1Geometry)
         Dim progress1 As Single = 动画助手.Progress
         Dim progress2 As Single = 动画助手2.Progress
 
         ' 先绘制较大的进度（在底层），再绘制较小的进度（在上层）
         If progress1 >= progress2 Then
-            绘制单个填充区域(g, 极限矩形区域, clipPath, progress1, 填充基础颜色, 填充渐变颜色, 填充渐变方向, 渐变模式)
-            绘制单个填充区域(g, 极限矩形区域, clipPath, progress2, 填充基础颜色2, 填充渐变颜色2, 填充渐变方向2, 渐变模式2)
+            绘制单个填充区域_D2D(rt, brushCache, 极限矩形区域, clipGeo, progress1, 填充基础颜色, 填充渐变颜色, 填充渐变方向, 渐变模式)
+            绘制单个填充区域_D2D(rt, brushCache, 极限矩形区域, clipGeo, progress2, 填充基础颜色2, 填充渐变颜色2, 填充渐变方向2, 渐变模式2)
         Else
-            绘制单个填充区域(g, 极限矩形区域, clipPath, progress2, 填充基础颜色2, 填充渐变颜色2, 填充渐变方向2, 渐变模式2)
-            绘制单个填充区域(g, 极限矩形区域, clipPath, progress1, 填充基础颜色, 填充渐变颜色, 填充渐变方向, 渐变模式)
+            绘制单个填充区域_D2D(rt, brushCache, 极限矩形区域, clipGeo, progress2, 填充基础颜色2, 填充渐变颜色2, 填充渐变方向2, 渐变模式2)
+            绘制单个填充区域_D2D(rt, brushCache, 极限矩形区域, clipGeo, progress1, 填充基础颜色, 填充渐变颜色, 填充渐变方向, 渐变模式)
         End If
     End Sub
 
-    Private Sub 绘制单个填充区域(g As Graphics, 极限矩形区域 As RectangleF, clipPath As GraphicsPath,
-                               progress As Single, baseColor As Color, gradColor As Color, gradDir As Orientation,
-                               gradMode As FillGradientModeEnum)
+    Private Sub 绘制单个填充区域_D2D(rt As ID2D1RenderTarget, brushCache As D2DHelper.SolidColorBrushCache,
+                                  极限矩形区域 As RectangleF, clipGeo As ID2D1Geometry,
+                                  progress As Single, baseColor As Color, gradColor As Color, gradDir As Orientation,
+                                  gradMode As FillGradientModeEnum)
         If progress < 0.001F Then Return
 
         Dim 填充区域 As RectangleF
@@ -121,40 +161,48 @@ Public Class ExcellentProgressBar
 
         Dim 渐变参考区域 As RectangleF = If(gradMode = FillGradientModeEnum.WithinProgress, 填充区域, 极限矩形区域)
 
-        If clipPath IsNot Nothing Then
-            ' 使用矩形裁剪 + FillPath 代替圆角路径裁剪 + FillRectangle，避免圆角锯齿
-            Dim state = g.Save()
-            g.SetClip(填充区域)
-            绘制填充内容(g, 填充区域, 渐变参考区域, baseColor, gradColor, gradDir, clipPath)
-            g.Restore(state)
-        Else
-            绘制填充内容(g, 填充区域, 渐变参考区域, baseColor, gradColor, gradDir)
+        Dim clipPushed As Boolean = False
+        If clipGeo IsNot Nothing Then
+            ' 用 D2D 几何裁剪到圆角轨道范围内，再在填充矩形里绘制（避免渐变与圆角不一致导致的锯齿）
+            D2DHelper.PushGeometryClip(rt, clipGeo, 极限矩形区域)
+            clipPushed = True
         End If
+        Try
+            If gradColor <> Color.Empty AndAlso 渐变参考区域.Width > 0 AndAlso 渐变参考区域.Height > 0 Then
+                Using brush = 创建填充渐变画刷_D2D(rt, 渐变参考区域, baseColor, gradColor, gradDir)
+                    rt.FillRectangle(D2DHelper.ToD2DRect(填充区域), brush)
+                End Using
+            Else
+                Dim solid = brushCache.[Get](rt, baseColor)
+                If solid IsNot Nothing Then rt.FillRectangle(D2DHelper.ToD2DRect(填充区域), solid)
+            End If
+        Finally
+            If clipPushed Then rt.PopLayer()
+        End Try
     End Sub
 
-    Private Sub 绘制填充内容(g As Graphics, 填充区域 As RectangleF, 渐变参考区域 As RectangleF,
-                           baseColor As Color, gradColor As Color, gradDir As BarOrientationEnum,
-                           Optional fillPath As GraphicsPath = Nothing)
-        If gradColor <> Color.Empty AndAlso 渐变参考区域.Width > 0 AndAlso 渐变参考区域.Height > 0 Then
-            ' 竖向时底部为主色、顶部为渐变色，使用 270° 让渐变从下到上
-            Dim angle As Single = If(gradDir = BarOrientationEnum.Vertical, 270.0F, 0.0F)
-            Using brush As New LinearGradientBrush(渐变参考区域, baseColor, gradColor, angle)
-                If fillPath IsNot Nothing Then
-                    g.FillPath(brush, fillPath)
-                Else
-                    g.FillRectangle(brush, 填充区域)
-                End If
-            End Using
+    Private Shared Function 创建填充渐变画刷_D2D(rt As ID2D1RenderTarget, 区域 As RectangleF,
+                                          baseColor As Color, gradColor As Color, gradDir As Orientation) As ID2D1LinearGradientBrush
+        Dim startPt As System.Numerics.Vector2
+        Dim endPt As System.Numerics.Vector2
+        If gradDir = System.Windows.Forms.Orientation.Vertical Then
+            ' 竖向：底部为主色、顶部为渐变色（GDI 中 270° 的效果）
+            startPt = New System.Numerics.Vector2(区域.X, 区域.Bottom)
+            endPt = New System.Numerics.Vector2(区域.X, 区域.Y)
         Else
-            Using brush As New SolidBrush(baseColor)
-                If fillPath IsNot Nothing Then
-                    g.FillPath(brush, fillPath)
-                Else
-                    g.FillRectangle(brush, 填充区域)
-                End If
-            End Using
+            startPt = New System.Numerics.Vector2(区域.X, 区域.Y)
+            endPt = New System.Numerics.Vector2(区域.Right, 区域.Y)
         End If
-    End Sub
+        Dim stops() As Vortice.Direct2D1.GradientStop = {
+            New Vortice.Direct2D1.GradientStop With {.Position = 0.0F, .Color = D2DHelper.ToColor4(baseColor)},
+            New Vortice.Direct2D1.GradientStop With {.Position = 1.0F, .Color = D2DHelper.ToColor4(gradColor)}}
+        Dim gsc = rt.CreateGradientStopCollection(stops)
+        Try
+            Return rt.CreateLinearGradientBrush(New LinearGradientBrushProperties(startPt, endPt), gsc)
+        Finally
+            gsc.Dispose()
+        End Try
+    End Function
 #End Region
 
 #Region "通用"

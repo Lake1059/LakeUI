@@ -43,7 +43,6 @@ Public Class ModernColorDialog
     ' ── 色域图 ──
     Private _chromaticityBitmap As Bitmap = Nothing
     Private ReadOnly _chromaticityBitmapCache As New D2DHelper.D2DBitmapCache()
-    Private _pictureBoxDCRT As D2D.ID2D1DCRenderTarget = Nothing
     Private ReadOnly _d2dBrushCache As New D2DHelper.SolidColorBrushCache()
     Private _markerX As Double = 0.3127  ' 当前标记的 CIE xy（默认 D65 白点）
     Private _markerY As Double = 0.329
@@ -52,6 +51,7 @@ Public Class ModernColorDialog
 
     ' ── HTML 基本颜色表 ──
     Private ReadOnly _htmlColors As New List(Of KeyValuePair(Of String, Color))
+    Private ReadOnly _htmlColorByName As New Dictionary(Of String, Color)(StringComparer.OrdinalIgnoreCase)
     Private ReadOnly _colorSwatchImages As New List(Of Bitmap)
 
     ' ── 标签拖动调节 ──
@@ -233,6 +233,12 @@ Public Class ModernColorDialog
                              If cmp <> 0 Then Return cmp
                              Return ca.GetBrightness().CompareTo(cb.GetBrightness())
                          End Function)
+
+        ' 构建名称 → 颜色字典，避免 HighlightHtmlColor / 列表选择时的反射查找
+        _htmlColorByName.Clear()
+        For Each kv In _htmlColors
+            _htmlColorByName(kv.Key) = kv.Value
+        Next
     End Sub
 
     ''' <summary>
@@ -336,36 +342,35 @@ Public Class ModernColorDialog
     ''' 使用「亮度归一化」算法：先按 max(R,G,B) 归一化以保持色度比例，再钳位负值。
     ''' 这与标准参考实现一致，确保蓝/紫区域的色彩过渡正确。
     ''' </summary>
+    ' 不透明 Alpha 通道（&HFF000000 作为 Int32）
+    Private Const OpaqueAlphaMask As Integer = -16777216
+
     Private Shared Function RenderChromaticityBitmap(w As Integer, h As Integer,
                                                       renderStep As Integer,
                                                       token As CancellationToken) As Bitmap
-        Dim bmp As New Bitmap(w, h, PixelFormat.Format32bppArgb)
-        Dim bmpData = bmp.LockBits(New Rectangle(0, 0, w, h), ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb)
-        Dim stride = bmpData.Stride
-        Dim scan0 = bmpData.Scan0
+        ' 使用整型缓冲在托管侧完成全部写入，避免每像素 P/Invoke 调用
+        Dim pixels(w * h - 1) As Integer
         Dim bgArgb As Integer = Color.Transparent.ToArgb()
+        Array.Fill(pixels, bgArgb)
 
-        ' 批量填充透明背景，色域外区域交由 PictureBox1.BackColor / 父级背景决定
-        Dim bgLine(w - 1) As Integer
-        Array.Fill(bgLine, bgArgb)
-        For py = 0 To h - 1
-            Runtime.InteropServices.Marshal.Copy(bgLine, 0, IntPtr.Add(scan0, py * stride), w)
-        Next
+        ' 预计算每行的色域 x 像素跨度（扫描线多边形栅格化）
+        ' CIE 1931 光谱轨迹是凸的，每行最多产生一对交点，无需逐像素 PointInPolygon。
+        Dim rowMin(h - 1) As Integer
+        Dim rowMax(h - 1) As Integer
+        ComputeGamutSpans(w, h, rowMin, rowMax)
 
         ' 按 step 填充色域内像素
         For py = 0 To h - 1 Step renderStep
-            If token.IsCancellationRequested Then
-                bmp.UnlockBits(bmpData)
-                Return Nothing
-            End If
+            If token.IsCancellationRequested Then Return Nothing
+            Dim xLo = rowMin(py)
+            Dim xHi = rowMax(py)
+            If xLo > xHi Then Continue For
             For px = 0 To w - 1 Step renderStep
+                If px < xLo OrElse px > xHi Then Continue For
                 Dim cieXY = PixelCenterToCIExy(px, py, w, h)
                 Dim cx = cieXY.Item1
                 Dim cy = cieXY.Item2
                 If cy < 0.001 Then Continue For
-
-                If Not PointInPolygon(cx, cy, _polyX, _polyY, _polyN) AndAlso
-                   Not PixelTouchesGamut(px, py, w, h) Then Continue For
 
                 ' CIE xy → XYZ，固定 Y = 1
                 Dim cX2 = cx / cy
@@ -397,40 +402,56 @@ Public Class ModernColorDialog
                 Dim ri = CInt(Math.Clamp(rl * 255, 0, 255))
                 Dim gi = CInt(Math.Clamp(gl * 255, 0, 255))
                 Dim bi = CInt(Math.Clamp(bl * 255, 0, 255))
-                Dim argb = Color.FromArgb(255, ri, gi, bi).ToArgb()
+                Dim argb As Integer = OpaqueAlphaMask Or (ri << 16) Or (gi << 8) Or bi
 
                 ' 填充 step×step 块
                 Dim endY = Math.Min(py + renderStep - 1, h - 1)
                 Dim endX = Math.Min(px + renderStep - 1, w - 1)
                 For fy = py To endY
+                    Dim rowBase = fy * w
                     For fx = px To endX
-                        Runtime.InteropServices.Marshal.WriteInt32(scan0, fy * stride + fx * 4, argb)
+                        pixels(rowBase + fx) = argb
                     Next
                 Next
             Next
         Next
 
-        bmp.UnlockBits(bmpData)
         If token.IsCancellationRequested Then Return Nothing
 
+        ' 一次性复制整张图（每行单次 Marshal.Copy 兼容任意 stride）
+        Dim bmp As New Bitmap(w, h, PixelFormat.Format32bppArgb)
+        Dim bmpData = bmp.LockBits(New Rectangle(0, 0, w, h), ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb)
+        Try
+            Dim stride = bmpData.Stride
+            Dim scan0 = bmpData.Scan0
+            If stride = w * 4 Then
+                Runtime.InteropServices.Marshal.Copy(pixels, 0, scan0, w * h)
+            Else
+                For py = 0 To h - 1
+                    Runtime.InteropServices.Marshal.Copy(pixels, py * w, IntPtr.Add(scan0, py * stride), w)
+                Next
+            End If
+        Finally
+            bmp.UnlockBits(bmpData)
+        End Try
         Return bmp
     End Function
 
     Private Sub PictureBox1_Paint(sender As Object, e As PaintEventArgs)
         If PictureBox1.Width < 1 OrElse PictureBox1.Height < 1 Then Return
-        If _pictureBoxDCRT Is Nothing Then _pictureBoxDCRT = D2DHelper.CreateDCRenderTarget()
 
-        Using scope = D2DHelper.BeginPaint(e, PictureBox1, _pictureBoxDCRT, 1)
-            Dim rt = scope.GraphicsRenderTarget
-            If PictureBox1.BackColor.A < 255 Then
-                TransparentBackgroundCache.PaintBackgroundFor_D2D(PictureBox1, rt, Nothing)
-                If PictureBox1.BackColor.A > 0 Then
-                    Using backBrush = rt.CreateSolidColorBrush(D2DHelper.ToColor4(PictureBox1.BackColor))
-                        rt.FillRectangle(D2DHelper.ToD2DRect(PictureBox1.ClientRectangle), backBrush)
-                    End Using
-                End If
-            Else
+        Using scope = D2DHelperV2.BeginPaint(e, PictureBox1, 1)
+            If scope Is Nothing Then Return
+            Dim rt As D2D.ID2D1RenderTarget = scope.GraphicsLayer
+            ' PictureBox 没有 V2 BackgroundSource 概念，A=255 时直接 Clear，A<255 时不画底
+            ' （PictureBox 在 ModernColorDialog 内部使用，背景由父窗口提供）。
+            If PictureBox1.BackColor.A = 255 Then
                 rt.Clear(D2DHelper.ToColor4(PictureBox1.BackColor))
+            ElseIf PictureBox1.BackColor.A > 0 Then
+                Dim b = scope.Compositor.BrushCache.[Get](rt, PictureBox1.BackColor)
+                If b IsNot Nothing Then
+                    rt.FillRectangle(D2DHelper.ToD2DRect(PictureBox1.ClientRectangle), b)
+                End If
             End If
 
             If _chromaticityBitmap IsNot Nothing Then
@@ -477,15 +498,8 @@ Public Class ModernColorDialog
         Dim px = CInt(Math.Round(pt.X))
         Dim py = CInt(Math.Round(pt.Y))
 
-        ' 获取标记点处的颜色以计算反色
-        Dim markerColor As Color = Color.White
-        If _chromaticityBitmap IsNot Nothing AndAlso
-           px >= 0 AndAlso px < _chromaticityBitmap.Width AndAlso
-           py >= 0 AndAlso py < _chromaticityBitmap.Height Then
-            markerColor = _chromaticityBitmap.GetPixel(px, py)
-        End If
-
-        Dim lum = 0.299 * markerColor.R + 0.587 * markerColor.G + 0.114 * markerColor.B
+        ' 以当前 SelectedColor 亮度决定反色（避免 Paint 热路径上调用 Bitmap.GetPixel）
+        Dim lum = 0.299 * SelectedColor.R + 0.587 * SelectedColor.G + 0.114 * SelectedColor.B
         Dim invColor As Color = If(lum > 128, Color.Black, Color.White)
         Dim crossSize As Integer = 12
 
@@ -509,15 +523,8 @@ Public Class ModernColorDialog
         Dim px = CInt(Math.Round(pt.X))
         Dim py = CInt(Math.Round(pt.Y))
 
-        ' 获取标记点处的颜色以计算反色
-        Dim markerColor As Color = Color.White
-        If _chromaticityBitmap IsNot Nothing AndAlso
-           px >= 0 AndAlso px < _chromaticityBitmap.Width AndAlso
-           py >= 0 AndAlso py < _chromaticityBitmap.Height Then
-            markerColor = _chromaticityBitmap.GetPixel(px, py)
-        End If
-
-        Dim lum = 0.299 * markerColor.R + 0.587 * markerColor.G + 0.114 * markerColor.B
+        ' 以当前 SelectedColor 亮度决定反色（避免 Paint 热路径上调用 Bitmap.GetPixel）
+        Dim lum = 0.299 * SelectedColor.R + 0.587 * SelectedColor.G + 0.114 * SelectedColor.B
         Dim invColor As Color = If(lum > 128, Color.Black, Color.White)
 
         Dim crossSize As Integer = 12
@@ -534,8 +541,21 @@ Public Class ModernColorDialog
         End Using
     End Sub
 
+    ' Resize 防抖：拖动期间 Resize 会高频触发，延迟 60ms 再启动后台渲染
+    Private _resizeDebounceTimer As System.Windows.Forms.Timer = Nothing
+
     Private Sub PictureBox1_Resize(sender As Object, e As EventArgs)
-        StartBackgroundRender()
+        If _isClosing OrElse IsDisposed OrElse Disposing Then Return
+        If _resizeDebounceTimer Is Nothing Then
+            _resizeDebounceTimer = New System.Windows.Forms.Timer With {.Interval = 60}
+            AddHandler _resizeDebounceTimer.Tick, Sub(s2, e2)
+                                                      _resizeDebounceTimer.Stop()
+                                                      If _isClosing OrElse IsDisposed OrElse Disposing Then Return
+                                                      StartBackgroundRender()
+                                                  End Sub
+        End If
+        _resizeDebounceTimer.Stop()
+        _resizeDebounceTimer.Start()
     End Sub
 
 #End Region
@@ -618,6 +638,9 @@ Public Class ModernColorDialog
 
 #Region "颜色同步"
 
+    ' 上一次写入 UI 的 ARGB，用于短路重复刷新
+    Private _lastAppliedArgb As Integer = 0
+
     ''' <summary>
     ''' 将颜色应用到所有 UI 控件。
     ''' </summary>
@@ -625,6 +648,12 @@ Public Class ModernColorDialog
     ''' 当由色域图点击触发时应为 False，避免 sRGB 往返精度损失导致准心偏移。</param>
     Private Sub ApplyColorToUI(c As Color, updateMarker As Boolean)
         If _suppressSync Then Return
+
+        ' 颜色未变化时直接跳过，避免在快速输入/拖动时把全链路（HTML 高亮、D2D 重绘等）跑一遍
+        Dim newArgb = c.ToArgb()
+        If newArgb = _lastAppliedArgb Then Return
+        _lastAppliedArgb = newArgb
+
         _suppressSync = True
 
         ' RGB
@@ -685,15 +714,21 @@ Public Class ModernColorDialog
         ' （避免在 RGB 相同的颜色之间跳转，如 Aqua/Cyan、Fuchsia/Magenta）
         Dim currentIdx = ModernListBox1.SelectedIndex
         If currentIdx >= 0 AndAlso currentIdx < ModernListBox1.Items.Count Then
-            Dim currentColor = Color.FromName(ModernListBox1.Items(currentIdx))
-            If currentColor.R = c.R AndAlso currentColor.G = c.G AndAlso currentColor.B = c.B Then
-                Return
+            Dim curName = TryCast(ModernListBox1.Items(currentIdx), String)
+            Dim currentColor As Color = Nothing
+            If curName IsNot Nothing AndAlso _htmlColorByName.TryGetValue(curName, currentColor) Then
+                If currentColor.R = c.R AndAlso currentColor.G = c.G AndAlso currentColor.B = c.B Then
+                    Return
+                End If
             End If
         End If
 
         ' 必须搜索当前可见的 ListBox 项（可能已被搜索框过滤），而非 _htmlColors 全量索引
         For i = 0 To ModernListBox1.Items.Count - 1
-            Dim hc = Color.FromName(ModernListBox1.Items(i))
+            Dim name = TryCast(ModernListBox1.Items(i), String)
+            If name Is Nothing Then Continue For
+            Dim hc As Color = Nothing
+            If Not _htmlColorByName.TryGetValue(name, hc) Then Continue For
             If hc.R = c.R AndAlso hc.G = c.G AndAlso hc.B = c.B Then
                 ModernListBox1.SelectedIndex = i
                 ModernListBox1.EnsureVisible(i)
@@ -773,29 +808,34 @@ Public Class ModernColorDialog
         If _suppressSync Then Return
         Dim filter = ModernTextBox1.Text.Trim()
         _suppressSync = True
-        ModernListBox1.Items.Clear()
-        If String.IsNullOrEmpty(filter) Then
-            For Each kv In _htmlColors
-                ModernListBox1.Items.Add(kv.Key)
-            Next
-        Else
-            For Each kv In _htmlColors
-                If kv.Key.Contains(filter, StringComparison.OrdinalIgnoreCase) Then
+        ModernListBox1.SuspendLayout()
+        Try
+            ModernListBox1.Items.Clear()
+            If String.IsNullOrEmpty(filter) Then
+                For Each kv In _htmlColors
                     ModernListBox1.Items.Add(kv.Key)
-                End If
-            Next
-        End If
-        _suppressSync = False
+                Next
+            Else
+                For Each kv In _htmlColors
+                    If kv.Key.Contains(filter, StringComparison.OrdinalIgnoreCase) Then
+                        ModernListBox1.Items.Add(kv.Key)
+                    End If
+                Next
+            End If
+        Finally
+            ModernListBox1.ResumeLayout()
+            _suppressSync = False
+        End Try
     End Sub
 
     ' ── HTML 颜色列表选择 ──
     Private Sub HtmlList_SelectedIndexChanged(sender As Object, e As EventArgs)
         If _suppressSync Then Return
-        Dim selText As String = ModernListBox1.SelectedItem
+        Dim selText As String = TryCast(ModernListBox1.SelectedItem, String)
         If selText Is Nothing Then Return
-        Dim kv = _htmlColors.FirstOrDefault(Function(x) x.Key = selText)
-        If kv.Key Is Nothing Then Return
-        SelectedColor = Color.FromArgb(ParseCurrentAlpha(), kv.Value.R, kv.Value.G, kv.Value.B)
+        Dim col As Color = Nothing
+        If Not _htmlColorByName.TryGetValue(selText, col) Then Return
+        SelectedColor = Color.FromArgb(ParseCurrentAlpha(), col.R, col.G, col.B)
         ApplyColorToUI(SelectedColor, True)
     End Sub
 
@@ -953,6 +993,8 @@ Public Class ModernColorDialog
         _isClosing = True
         StopEyeDropper()
         _eyeDropperTimer?.Dispose()
+        _resizeDebounceTimer?.Stop()
+        _resizeDebounceTimer?.Dispose()
         Dim cts = _renderCts
         _renderCts = Nothing
         Try
@@ -962,7 +1004,6 @@ Public Class ModernColorDialog
         cts?.Dispose()
         _chromaticityBitmapCache.Dispose()
         _d2dBrushCache.Dispose()
-        _pictureBoxDCRT?.Dispose()
         _chromaticityBitmap?.Dispose()
         For Each img In _colorSwatchImages : img.Dispose() : Next
         MyBase.OnFormClosed(e)
@@ -985,18 +1026,18 @@ Public Class ModernColorDialog
     ''' <summary>
     ''' 画布像素 → CIE xy。
     ''' </summary>
-    Private Shared Function PixelToCIExy(px As Integer, py As Integer, w As Integer, h As Integer) As Tuple(Of Double, Double)
+    Private Shared Function PixelToCIExy(px As Integer, py As Integer, w As Integer, h As Integer) As (Double, Double)
         Const margin As Double = 0.08
         Dim cx = ((px - margin * w) / ((1 - 2 * margin) * w)) * 0.8
         Dim cy = (1.0 - (py - margin * h) / ((1 - 2 * margin) * h)) * 0.9
-        Return Tuple.Create(cx, cy)
+        Return (cx, cy)
     End Function
 
-    Private Shared Function PixelCenterToCIExy(px As Integer, py As Integer, w As Integer, h As Integer) As Tuple(Of Double, Double)
+    Private Shared Function PixelCenterToCIExy(px As Integer, py As Integer, w As Integer, h As Integer) As (Double, Double)
         Const margin As Double = 0.08
         Dim cx = (((px + 0.5) - margin * w) / ((1 - 2 * margin) * w)) * 0.8
         Dim cy = (1.0 - ((py + 0.5) - margin * h) / ((1 - 2 * margin) * h)) * 0.9
-        Return Tuple.Create(cx, cy)
+        Return (cx, cy)
     End Function
 
 #End Region
@@ -1037,7 +1078,7 @@ Public Class ModernColorDialog
         Return Color.FromArgb(255, r, g, b)
     End Function
 
-    Private Shared Function SRGBtoXYZ(r As Integer, g As Integer, b As Integer) As Tuple(Of Double, Double, Double)
+    Private Shared Function SRGBtoXYZ(r As Integer, g As Integer, b As Integer) As (Double, Double, Double)
         Dim rl = SRGBInverseGamma(r / 255.0)
         Dim gl = SRGBInverseGamma(g / 255.0)
         Dim bl = SRGBInverseGamma(b / 255.0)
@@ -1045,7 +1086,7 @@ Public Class ModernColorDialog
         Dim X = 0.4124564 * rl + 0.3575761 * gl + 0.1804375 * bl
         Dim Y = 0.2126729 * rl + 0.7151522 * gl + 0.072175 * bl
         Dim Z = 0.0193339 * rl + 0.119192 * gl + 0.9503041 * bl
-        Return Tuple.Create(X, Y, Z)
+        Return (X, Y, Z)
     End Function
 
     Private Shared Function SRGBGamma(c As Double) As Double
@@ -1058,7 +1099,7 @@ Public Class ModernColorDialog
         Return Math.Pow((c + 0.055) / 1.055, 2.4)
     End Function
 
-    Private Shared Function RGBtoHSL(r As Integer, g As Integer, b As Integer) As Tuple(Of Double, Double, Double)
+    Private Shared Function RGBtoHSL(r As Integer, g As Integer, b As Integer) As (Double, Double, Double)
         Dim rd = r / 255.0, gd = g / 255.0, bd = b / 255.0
         Dim max = Math.Max(rd, Math.Max(gd, bd))
         Dim min = Math.Min(rd, Math.Min(gd, bd))
@@ -1077,15 +1118,15 @@ Public Class ModernColorDialog
             End If
             h2 *= 60
         End If
-        Return Tuple.Create(h2, s2 * 100, l2 * 100)
+        Return (h2, s2 * 100, l2 * 100)
     End Function
 
-    Private Shared Function HSLtoRGB(h As Double, s As Double, l As Double) As Tuple(Of Integer, Integer, Integer)
+    Private Shared Function HSLtoRGB(h As Double, s As Double, l As Double) As (Integer, Integer, Integer)
         s /= 100.0
         l /= 100.0
         If s = 0 Then
             Dim v = CInt(Math.Clamp(l * 255, 0, 255))
-            Return Tuple.Create(v, v, v)
+            Return (v, v, v)
         End If
 
         Dim q = If(l < 0.5, l * (1 + s), l + s - l * s)
@@ -1095,7 +1136,7 @@ Public Class ModernColorDialog
         Dim r = HueToRGB(p, q, hNorm + 1.0 / 3.0)
         Dim g = HueToRGB(p, q, hNorm)
         Dim b = HueToRGB(p, q, hNorm - 1.0 / 3.0)
-        Return Tuple.Create(
+        Return (
             CInt(Math.Clamp(r * 255, 0, 255)),
             CInt(Math.Clamp(g * 255, 0, 255)),
             CInt(Math.Clamp(b * 255, 0, 255)))
@@ -1132,33 +1173,62 @@ Public Class ModernColorDialog
         Return inside
     End Function
 
-    Private Shared Function PixelTouchesGamut(px As Integer, py As Integer, w As Integer, h As Integer) As Boolean
-        Dim offsets As Double() = {0.15, 0.85}
-        For Each ox In offsets
-            For Each oy In offsets
-                Dim xy = PixelOffsetToCIExy(px, py, ox, oy, w, h)
-                If xy.Item2 >= 0.001 AndAlso PointInPolygon(xy.Item1, xy.Item2, _polyX, _polyY, _polyN) Then Return True
-            Next
+    ''' <summary>
+    ''' 扫描线多边形栅格化：为每一行 py 计算色域多边形覆盖的 [xMin, xMax] 像素范围。
+    ''' CIE 1931 光谱轨迹是凸的，每条扫描线最多 2 个交点；外扩 1 像素以兼容原
+    ''' PixelTouchesGamut 的子像素采样语义。无交点的行 xMin > xMax。
+    ''' </summary>
+    Private Shared Sub ComputeGamutSpans(w As Integer, h As Integer,
+                                          rowMin() As Integer, rowMax() As Integer)
+        ' 把多边形顶点一次性转换到像素坐标
+        Dim vx(_polyN - 1) As Double
+        Dim vy(_polyN - 1) As Double
+        For i = 0 To _polyN - 1
+            Dim p = CIExyToPixel(_polyX(i), _polyY(i), w, h)
+            vx(i) = p.X
+            vy(i) = p.Y
         Next
-        Return False
-    End Function
 
-    Private Shared Function PixelOffsetToCIExy(px As Integer, py As Integer, ox As Double, oy As Double, w As Integer, h As Integer) As Tuple(Of Double, Double)
-        Const margin As Double = 0.08
-        Dim cx = (((px + ox) - margin * w) / ((1 - 2 * margin) * w)) * 0.8
-        Dim cy = (1.0 - ((py + oy) - margin * h) / ((1 - 2 * margin) * h)) * 0.9
-        Return Tuple.Create(cx, cy)
-    End Function
+        For i = 0 To h - 1
+            rowMin(i) = Integer.MaxValue
+            rowMax(i) = Integer.MinValue
+        Next
+
+        For py = 0 To h - 1
+            Dim yScan As Double = py + 0.5
+            Dim xLo As Double = Double.PositiveInfinity
+            Dim xHi As Double = Double.NegativeInfinity
+            Dim j = _polyN - 1
+            For i = 0 To _polyN - 1
+                Dim yi = vy(i), yj = vy(j)
+                If (yi <= yScan AndAlso yj > yScan) OrElse (yj <= yScan AndAlso yi > yScan) Then
+                    Dim t = (yScan - yi) / (yj - yi)
+                    Dim xInt = vx(i) + t * (vx(j) - vx(i))
+                    If xInt < xLo Then xLo = xInt
+                    If xInt > xHi Then xHi = xInt
+                End If
+                j = i
+            Next
+            If Double.IsInfinity(xLo) Then Continue For
+            ' 外扩 1 像素以保留边缘采样
+            Dim xLoI = CInt(Math.Floor(xLo)) - 1
+            Dim xHiI = CInt(Math.Ceiling(xHi)) + 1
+            If xLoI < 0 Then xLoI = 0
+            If xHiI > w - 1 Then xHiI = w - 1
+            rowMin(py) = xLoI
+            rowMax(py) = xHiI
+        Next
+    End Sub
 
     Private Shared Function ClosestPointOnSegment(px As Double, py As Double,
                                                    ax As Double, ay As Double,
-                                                   bx As Double, by As Double) As Tuple(Of Double, Double)
+                                                   bx As Double, by As Double) As (Double, Double)
         Dim dx = bx - ax, dy = by - ay
         Dim lenSq = dx * dx + dy * dy
-        If lenSq < 0.000001 Then Return Tuple.Create(ax, ay)
+        If lenSq < 0.000001 Then Return (ax, ay)
         Dim t = ((px - ax) * dx + (py - ay) * dy) / lenSq
         t = Math.Clamp(t, 0.0, 1.0)
-        Return Tuple.Create(ax + t * dx, ay + t * dy)
+        Return (ax + t * dx, ay + t * dy)
     End Function
 
 #End Region

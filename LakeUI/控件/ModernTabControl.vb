@@ -178,12 +178,8 @@ Public Class ModernTabControl
     Private _浮层显示 As Boolean = False
     Private _鼠标过滤器 As RibbonMouseFilter = Nothing
 
-    ' D2D 渲染资源
-    Private _dcRT As ID2D1DCRenderTarget = Nothing
-    Private ReadOnly _ssaaCache As New D2DHelper.BitmapRTCache()
-    Private ReadOnly _brushCache As New D2DHelper.SolidColorBrushCache()
-    Private ReadOnly _textFormatCache As New D2DHelper.TextFormatCache()
-    Private ReadOnly _图标缓存 As New Dictionary(Of Image, D2DHelper.D2DBitmapCache)()
+    ' V2 渲染：每次 OnPaint 内由 D2DHelperV2 提供共享 WindowCompositor。
+    Private _当前合成器 As WindowCompositor
 
     Private Class RibbonMouseFilter
         Implements IMessageFilter
@@ -229,44 +225,14 @@ Public Class ModernTabControl
         同步内容面板布局()
     End Sub
 
-    Private Function GetOrCreateDCRenderTarget() As ID2D1DCRenderTarget
-        If _dcRT Is Nothing Then
-            _dcRT = D2DHelper.CreateDCRenderTarget()
-            _ssaaCache.Invalidate()
-            _brushCache.Invalidate()
-            清空图标缓存()
-        End If
-        Return _dcRT
-    End Function
-
     Private Function 获取图标缓存(img As Image) As D2DHelper.D2DBitmapCache
-        If img Is Nothing Then Return Nothing
-        Dim cache As D2DHelper.D2DBitmapCache = Nothing
-        If Not _图标缓存.TryGetValue(img, cache) Then
-            cache = New D2DHelper.D2DBitmapCache()
-            _图标缓存(img) = cache
-        End If
-        Return cache
+        If img Is Nothing OrElse _当前合成器 Is Nothing Then Return Nothing
+        Return _当前合成器.GetBitmapCache(img)
     End Function
-
-    Private Sub 清空图标缓存()
-        For Each cache In _图标缓存.Values
-            Try : cache.Dispose() : Catch : End Try
-        Next
-        _图标缓存.Clear()
-    End Sub
 
     Protected Overrides Sub OnHandleDestroyed(e As EventArgs)
         停止动画驱动()
         停用鼠标过滤器()
-        Try : _ssaaCache.Dispose() : Catch : End Try
-        Try : _brushCache.Dispose() : Catch : End Try
-        Try : _textFormatCache.Dispose() : Catch : End Try
-        清空图标缓存()
-        If _dcRT IsNot Nothing Then
-            Try : _dcRT.Dispose() : Catch : End Try
-            _dcRT = Nothing
-        End If
         MyBase.OnHandleDestroyed(e)
     End Sub
 
@@ -414,13 +380,19 @@ Public Class ModernTabControl
         确保Owner()
         If Me.Width <= 0 OrElse Me.Height <= 0 Then Return
         Dim ssaa As Integer = If(Class1.GlobalSSAA > 1, Class1.GlobalSSAA, 超采样倍率)
-        Using scope = D2DHelper.BeginPaint(e, Me, GetOrCreateDCRenderTarget(), ssaa, _ssaaCache)
-            Dim gRT As ID2D1RenderTarget = scope.GraphicsRenderTarget
-            绘制图形内容_D2D(gRT)
-            scope.FlushGraphics()
+        Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
+            If scope Is Nothing Then Return  ' 设计期 / 无 Form
+            _当前合成器 = scope.Compositor
+            Try
+                Dim gRT As ID2D1RenderTarget = scope.GraphicsLayer
+                绘制图形内容_D2D(gRT)
+                scope.FlushGraphics()
 
-            Dim dcRT As ID2D1RenderTarget = scope.DCRenderTarget
-            绘制文本内容_D2D(dcRT)
+                Dim dcRT As ID2D1RenderTarget = scope.DCRenderTarget
+                绘制文本内容_D2D(dcRT)
+            Finally
+                _当前合成器 = Nothing
+            End Try
         End Using
     End Sub
 
@@ -429,9 +401,9 @@ Public Class ModernTabControl
         Dim stripRect = 获取标签栏矩形()
 
         If Not contentRect.IsEmpty Then
-            rt.FillRectangle(D2DHelper.ToD2DRect(contentRect), _brushCache.Get(rt, 内容区域背景颜色))
+            rt.FillRectangle(D2DHelper.ToD2DRect(contentRect), _当前合成器.BrushCache.Get(rt, 内容区域背景颜色))
         End If
-        rt.FillRectangle(D2DHelper.ToD2DRect(stripRect), _brushCache.Get(rt, 标签栏背景颜色))
+        rt.FillRectangle(D2DHelper.ToD2DRect(stripRect), _当前合成器.BrushCache.Get(rt, 标签栏背景颜色))
 
         rt.PushAxisAlignedClip(New Vortice.RawRectF(stripRect.Left, stripRect.Top, stripRect.Right, stripRect.Bottom), AntialiasMode.PerPrimitive)
         Try
@@ -469,7 +441,7 @@ Public Class ModernTabControl
         Dim bounds = 获取标签页项矩形(index)
         If bounds.Width <= 0 OrElse bounds.Height <= 0 Then Return
         Dim lineX As Single = bounds.X + (bounds.Width - 1) / 2.0F
-        rt.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(lineX, bounds.Y, 1, bounds.Height)), _brushCache.Get(rt, 分割线颜色值))
+        rt.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(lineX, bounds.Y, 1, bounds.Height)), _当前合成器.BrushCache.Get(rt, 分割线颜色值))
     End Sub
 
     Private Sub 绘制标签页项图形_D2D(rt As ID2D1RenderTarget, index As Integer)
@@ -519,10 +491,10 @@ Public Class ModernTabControl
         If color.A = 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
         If radius > 0 Then
             Using geo = RectangleRenderer.创建圆角矩形几何(rect, radius)
-                rt.FillGeometry(geo, _brushCache.Get(rt, color))
+                rt.FillGeometry(geo, _当前合成器.BrushCache.Get(rt, color))
             End Using
         Else
-            rt.FillRectangle(D2DHelper.ToD2DRect(rect), _brushCache.Get(rt, color))
+            rt.FillRectangle(D2DHelper.ToD2DRect(rect), _当前合成器.BrushCache.Get(rt, color))
         End If
     End Sub
 
@@ -628,8 +600,8 @@ Public Class ModernTabControl
         Dim weight As Vortice.DirectWrite.FontWeight = If(font.Bold, Vortice.DirectWrite.FontWeight.Bold, Vortice.DirectWrite.FontWeight.Normal)
         Dim style As Vortice.DirectWrite.FontStyle = If(font.Italic, Vortice.DirectWrite.FontStyle.Italic, Vortice.DirectWrite.FontStyle.Normal)
         Dim sizePx As Single = font.SizeInPoints * (96.0F / 72.0F) * DpiScale()
-        Dim fmt = _textFormatCache.Get(font.FontFamily.Name, weight, style, sizePx, TextAlignment.Center, ParagraphAlignment.Center, True)
-        rt.DrawText(text, fmt, D2DHelper.ToD2DRect(rect), _brushCache.Get(rt, color), DrawTextOptions.Clip)
+        Dim fmt = _当前合成器.TextFormatCache.Get(font.FontFamily.Name, weight, style, sizePx, TextAlignment.Center, ParagraphAlignment.Center, True)
+        rt.DrawText(text, fmt, D2DHelper.ToD2DRect(rect), _当前合成器.BrushCache.Get(rt, color), DrawTextOptions.Clip)
     End Sub
 
 #End Region

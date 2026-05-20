@@ -22,26 +22,26 @@ Partial Class ModernColorDialog
     '不要使用代码编辑器修改它。
     <System.Diagnostics.DebuggerStepThrough()> _
     Private Sub InitializeComponent()
-        Dim ModernMenuItem1 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
-        Dim ModernMenuItem2 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
-        Dim ModernMenuItem3 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
-        Dim ModernMenuItem4 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
-        Dim ModernMenuItem5 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
-        Dim ModernMenuItem6 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
-        Dim ModernMenuItem7 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
-        Dim ModernMenuItem8 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
-        Dim ModernMenuItem9 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
-        Dim ModernMenuItem10 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
-        Dim ModernMenuItem11 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
-        Dim ModernMenuItem12 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
-        Dim ModernMenuItem13 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
-        Dim ModernMenuItem14 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
-        Dim ModernMenuItem15 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
-        Dim ModernMenuItem16 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
-        Dim ModernMenuItem17 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
-        Dim ModernMenuItem18 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
-        Dim ModernMenuItem19 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
-        Dim ModernMenuItem20 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
+        Dim ModernMenuItem21 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
+        Dim ModernMenuItem22 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
+        Dim ModernMenuItem23 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
+        Dim ModernMenuItem24 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
+        Dim ModernMenuItem25 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
+        Dim ModernMenuItem26 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
+        Dim ModernMenuItem27 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
+        Dim ModernMenuItem28 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
+        Dim ModernMenuItem29 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
+        Dim ModernMenuItem30 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
+        Dim ModernMenuItem31 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
+        Dim ModernMenuItem32 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
+        Dim ModernMenuItem33 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
+        Dim ModernMenuItem34 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
+        Dim ModernMenuItem35 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
+        Dim ModernMenuItem36 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
+        Dim ModernMenuItem37 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
+        Dim ModernMenuItem38 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
+        Dim ModernMenuItem39 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
+        Dim ModernMenuItem40 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
         Panel1 = New Panel()
         Panel6 = New Panel()
         ModernListBox1 = New ModernListBox()
@@ -150,7 +150,6 @@ Partial Class ModernColorDialog
         ' 
         ' Panel6
         ' 
-        Panel6.BackColor = Color.Transparent
         Panel6.Controls.Add(ModernListBox1)
         Panel6.Controls.Add(Label5)
         Panel6.Controls.Add(ModernTextBox1)
@@ -164,14 +163,15 @@ Partial Class ModernColorDialog
         ' 
         ' ModernListBox1
         ' 
-        ModernListBox1.BackColor1 = Color.FromArgb(CByte(80), CByte(0), CByte(0), CByte(0))
+        ModernListBox1.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernListBox1.BorderColor = Color.FromArgb(CByte(120), CByte(220), CByte(220), CByte(220))
         ModernListBox1.BorderColorFocus = Color.FromArgb(CByte(120), CByte(220), CByte(220), CByte(220))
         ModernListBox1.BorderRadius = 10
-        ModernListBox1.BorderSize = 2
+        ModernListBox1.BorderSize = 0
         ModernListBox1.Dock = DockStyle.Fill
         ModernListBox1.ItemHeight = 26
         ModernListBox1.ItemHoverColor = Color.Empty
+        ModernListBox1.ItemSelectedColor = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernListBox1.Location = New Point(20, 92)
         ModernListBox1.Margin = New Padding(2, 2, 2, 2)
         ModernListBox1.MultiSelect = False
@@ -191,19 +191,21 @@ Partial Class ModernColorDialog
         ' 
         ' ModernTextBox1
         ' 
-        ModernTextBox1.BackColor1 = Color.FromArgb(CByte(80), CByte(0), CByte(0), CByte(0))
+        ModernTextBox1.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
+        ModernTextBox1.BackgroundSource = Panel6
         ModernTextBox1.BorderColor = Color.FromArgb(CByte(120), CByte(220), CByte(220), CByte(220))
         ModernTextBox1.BorderColorFocus = Color.FromArgb(CByte(120), CByte(220), CByte(220), CByte(220))
         ModernTextBox1.BorderRadius = 10
-        ModernTextBox1.BorderSize = 2
+        ModernTextBox1.BorderSize = 0
         ModernTextBox1.CaretColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
         ModernTextBox1.Dock = DockStyle.Top
         ModernTextBox1.Location = New Point(20, 50)
-        ModernTextBox1.Margin = New Padding(2, 2, 2, 2)
+        ModernTextBox1.Margin = New Padding(2)
         ModernTextBox1.MaxUndoCount = 0
         ModernTextBox1.Name = "ModernTextBox1"
         ModernTextBox1.Padding = New Padding(13, 0, 13, 0)
         ModernTextBox1.ScrollBarHoverColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
+        ModernTextBox1.SelectionColor = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernTextBox1.Size = New Size(263, 32)
         ModernTextBox1.TabIndex = 4
         ModernTextBox1.WaterText = "搜索"
@@ -233,10 +235,10 @@ Partial Class ModernColorDialog
         ' 
         ' ModernPanel1
         ' 
-        ModernPanel1.BackColor1 = Color.FromArgb(CByte(80), CByte(0), CByte(0), CByte(0))
+        ModernPanel1.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernPanel1.BorderColor = Color.FromArgb(CByte(120), CByte(220), CByte(220), CByte(220))
-        ModernPanel1.BorderRadius = 10
-        ModernPanel1.BorderSize = 2
+        ModernPanel1.BorderRadius = 15
+        ModernPanel1.BorderSize = 0
         ModernPanel1.Controls.Add(PictureBox1)
         ModernPanel1.Dock = DockStyle.Fill
         ModernPanel1.Location = New Point(20, 50)
@@ -251,9 +253,9 @@ Partial Class ModernColorDialog
         ' 
         PictureBox1.BackColor = Color.Transparent
         PictureBox1.Dock = DockStyle.Fill
-        PictureBox1.Location = New Point(10, 10)
+        PictureBox1.Location = New Point(12, 12)
         PictureBox1.Name = "PictureBox1"
-        PictureBox1.Size = New Size(320, 330)
+        PictureBox1.Size = New Size(317, 327)
         PictureBox1.TabIndex = 0
         PictureBox1.TabStop = False
         ' 
@@ -270,7 +272,6 @@ Partial Class ModernColorDialog
         ' 
         ' Panel7
         ' 
-        Panel7.BackColor = Color.Transparent
         Panel7.Controls.Add(Panel13)
         Panel7.Controls.Add(Label16)
         Panel7.Controls.Add(Panel14)
@@ -305,18 +306,20 @@ Partial Class ModernColorDialog
         ' 
         ' ModernTextBox7
         ' 
-        ModernTextBox7.BackColor1 = Color.FromArgb(CByte(80), CByte(0), CByte(0), CByte(0))
+        ModernTextBox7.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
+        ModernTextBox7.BackgroundSource = Panel7
         ModernTextBox7.BorderColor = Color.FromArgb(CByte(120), CByte(220), CByte(220), CByte(220))
         ModernTextBox7.BorderColorFocus = Color.FromArgb(CByte(120), CByte(220), CByte(220), CByte(220))
         ModernTextBox7.BorderRadius = 10
-        ModernTextBox7.BorderSize = 2
+        ModernTextBox7.BorderSize = 0
         ModernTextBox7.CaretColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
         ModernTextBox7.Dock = DockStyle.Fill
         ModernTextBox7.Location = New Point(80, 0)
-        ModernTextBox7.Margin = New Padding(2, 2, 2, 2)
+        ModernTextBox7.Margin = New Padding(2)
         ModernTextBox7.Name = "ModernTextBox7"
         ModernTextBox7.Padding = New Padding(10, 0, 10, 0)
         ModernTextBox7.ScrollBarHoverColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
+        ModernTextBox7.SelectionColor = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernTextBox7.Size = New Size(120, 32)
         ModernTextBox7.TabIndex = 5
         ' 
@@ -351,18 +354,20 @@ Partial Class ModernColorDialog
         ' 
         ' ModernTextBox8
         ' 
-        ModernTextBox8.BackColor1 = Color.FromArgb(CByte(80), CByte(0), CByte(0), CByte(0))
+        ModernTextBox8.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
+        ModernTextBox8.BackgroundSource = Panel7
         ModernTextBox8.BorderColor = Color.FromArgb(CByte(120), CByte(220), CByte(220), CByte(220))
         ModernTextBox8.BorderColorFocus = Color.FromArgb(CByte(120), CByte(220), CByte(220), CByte(220))
         ModernTextBox8.BorderRadius = 10
-        ModernTextBox8.BorderSize = 2
+        ModernTextBox8.BorderSize = 0
         ModernTextBox8.CaretColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
         ModernTextBox8.Dock = DockStyle.Fill
         ModernTextBox8.Location = New Point(80, 0)
-        ModernTextBox8.Margin = New Padding(2, 2, 2, 2)
+        ModernTextBox8.Margin = New Padding(2)
         ModernTextBox8.Name = "ModernTextBox8"
         ModernTextBox8.Padding = New Padding(10, 0, 10, 0)
         ModernTextBox8.ScrollBarHoverColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
+        ModernTextBox8.SelectionColor = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernTextBox8.Size = New Size(120, 32)
         ModernTextBox8.TabIndex = 5
         ' 
@@ -397,18 +402,20 @@ Partial Class ModernColorDialog
         ' 
         ' ModernTextBox9
         ' 
-        ModernTextBox9.BackColor1 = Color.FromArgb(CByte(80), CByte(0), CByte(0), CByte(0))
+        ModernTextBox9.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
+        ModernTextBox9.BackgroundSource = Panel7
         ModernTextBox9.BorderColor = Color.FromArgb(CByte(120), CByte(220), CByte(220), CByte(220))
         ModernTextBox9.BorderColorFocus = Color.FromArgb(CByte(120), CByte(220), CByte(220), CByte(220))
         ModernTextBox9.BorderRadius = 10
-        ModernTextBox9.BorderSize = 2
+        ModernTextBox9.BorderSize = 0
         ModernTextBox9.CaretColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
         ModernTextBox9.Dock = DockStyle.Fill
         ModernTextBox9.Location = New Point(80, 0)
-        ModernTextBox9.Margin = New Padding(2, 2, 2, 2)
+        ModernTextBox9.Margin = New Padding(2)
         ModernTextBox9.Name = "ModernTextBox9"
         ModernTextBox9.Padding = New Padding(10, 0, 10, 0)
         ModernTextBox9.ScrollBarHoverColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
+        ModernTextBox9.SelectionColor = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernTextBox9.Size = New Size(120, 32)
         ModernTextBox9.TabIndex = 5
         ' 
@@ -434,18 +441,20 @@ Partial Class ModernColorDialog
         ' 
         ' ModernTextBox6
         ' 
-        ModernTextBox6.BackColor1 = Color.FromArgb(CByte(80), CByte(0), CByte(0), CByte(0))
+        ModernTextBox6.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
+        ModernTextBox6.BackgroundSource = Panel7
         ModernTextBox6.BorderColor = Color.FromArgb(CByte(120), CByte(220), CByte(220), CByte(220))
         ModernTextBox6.BorderColorFocus = Color.FromArgb(CByte(120), CByte(220), CByte(220), CByte(220))
         ModernTextBox6.BorderRadius = 10
-        ModernTextBox6.BorderSize = 2
+        ModernTextBox6.BorderSize = 0
         ModernTextBox6.CaretColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
         ModernTextBox6.Dock = DockStyle.Fill
         ModernTextBox6.Location = New Point(80, 0)
-        ModernTextBox6.Margin = New Padding(2, 2, 2, 2)
+        ModernTextBox6.Margin = New Padding(2)
         ModernTextBox6.Name = "ModernTextBox6"
         ModernTextBox6.Padding = New Padding(10, 0, 10, 0)
         ModernTextBox6.ScrollBarHoverColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
+        ModernTextBox6.SelectionColor = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernTextBox6.Size = New Size(120, 32)
         ModernTextBox6.TabIndex = 5
         ' 
@@ -479,18 +488,20 @@ Partial Class ModernColorDialog
         ' 
         ' ModernTextBox5
         ' 
-        ModernTextBox5.BackColor1 = Color.FromArgb(CByte(80), CByte(0), CByte(0), CByte(0))
+        ModernTextBox5.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
+        ModernTextBox5.BackgroundSource = Panel7
         ModernTextBox5.BorderColor = Color.FromArgb(CByte(120), CByte(220), CByte(220), CByte(220))
         ModernTextBox5.BorderColorFocus = Color.FromArgb(CByte(120), CByte(220), CByte(220), CByte(220))
         ModernTextBox5.BorderRadius = 10
-        ModernTextBox5.BorderSize = 2
+        ModernTextBox5.BorderSize = 0
         ModernTextBox5.CaretColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
         ModernTextBox5.Dock = DockStyle.Fill
         ModernTextBox5.Location = New Point(80, 0)
-        ModernTextBox5.Margin = New Padding(2, 2, 2, 2)
+        ModernTextBox5.Margin = New Padding(2)
         ModernTextBox5.Name = "ModernTextBox5"
         ModernTextBox5.Padding = New Padding(10, 0, 10, 0)
         ModernTextBox5.ScrollBarHoverColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
+        ModernTextBox5.SelectionColor = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernTextBox5.Size = New Size(120, 32)
         ModernTextBox5.TabIndex = 5
         ' 
@@ -524,18 +535,20 @@ Partial Class ModernColorDialog
         ' 
         ' ModernTextBox4
         ' 
-        ModernTextBox4.BackColor1 = Color.FromArgb(CByte(80), CByte(0), CByte(0), CByte(0))
+        ModernTextBox4.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
+        ModernTextBox4.BackgroundSource = Panel7
         ModernTextBox4.BorderColor = Color.FromArgb(CByte(120), CByte(220), CByte(220), CByte(220))
         ModernTextBox4.BorderColorFocus = Color.FromArgb(CByte(120), CByte(220), CByte(220), CByte(220))
         ModernTextBox4.BorderRadius = 10
-        ModernTextBox4.BorderSize = 2
+        ModernTextBox4.BorderSize = 0
         ModernTextBox4.CaretColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
         ModernTextBox4.Dock = DockStyle.Fill
         ModernTextBox4.Location = New Point(80, 0)
-        ModernTextBox4.Margin = New Padding(2, 2, 2, 2)
+        ModernTextBox4.Margin = New Padding(2)
         ModernTextBox4.Name = "ModernTextBox4"
         ModernTextBox4.Padding = New Padding(10, 0, 10, 0)
         ModernTextBox4.ScrollBarHoverColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
+        ModernTextBox4.SelectionColor = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernTextBox4.Size = New Size(120, 32)
         ModernTextBox4.TabIndex = 5
         ' 
@@ -569,18 +582,20 @@ Partial Class ModernColorDialog
         ' 
         ' ModernTextBox3
         ' 
-        ModernTextBox3.BackColor1 = Color.FromArgb(CByte(80), CByte(0), CByte(0), CByte(0))
+        ModernTextBox3.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
+        ModernTextBox3.BackgroundSource = Panel7
         ModernTextBox3.BorderColor = Color.FromArgb(CByte(120), CByte(220), CByte(220), CByte(220))
         ModernTextBox3.BorderColorFocus = Color.FromArgb(CByte(120), CByte(220), CByte(220), CByte(220))
         ModernTextBox3.BorderRadius = 10
-        ModernTextBox3.BorderSize = 2
+        ModernTextBox3.BorderSize = 0
         ModernTextBox3.CaretColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
         ModernTextBox3.Dock = DockStyle.Fill
         ModernTextBox3.Location = New Point(80, 0)
-        ModernTextBox3.Margin = New Padding(2, 2, 2, 2)
+        ModernTextBox3.Margin = New Padding(2)
         ModernTextBox3.Name = "ModernTextBox3"
         ModernTextBox3.Padding = New Padding(10, 0, 10, 0)
         ModernTextBox3.ScrollBarHoverColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
+        ModernTextBox3.SelectionColor = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernTextBox3.Size = New Size(120, 32)
         ModernTextBox3.TabIndex = 5
         ' 
@@ -614,18 +629,20 @@ Partial Class ModernColorDialog
         ' 
         ' ModernTextBox2
         ' 
-        ModernTextBox2.BackColor1 = Color.FromArgb(CByte(80), CByte(0), CByte(0), CByte(0))
+        ModernTextBox2.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
+        ModernTextBox2.BackgroundSource = Panel7
         ModernTextBox2.BorderColor = Color.FromArgb(CByte(120), CByte(220), CByte(220), CByte(220))
         ModernTextBox2.BorderColorFocus = Color.FromArgb(CByte(120), CByte(220), CByte(220), CByte(220))
         ModernTextBox2.BorderRadius = 10
-        ModernTextBox2.BorderSize = 2
+        ModernTextBox2.BorderSize = 0
         ModernTextBox2.CaretColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
         ModernTextBox2.Dock = DockStyle.Fill
         ModernTextBox2.Location = New Point(80, 0)
-        ModernTextBox2.Margin = New Padding(2, 2, 2, 2)
+        ModernTextBox2.Margin = New Padding(2)
         ModernTextBox2.Name = "ModernTextBox2"
         ModernTextBox2.Padding = New Padding(10, 0, 10, 0)
         ModernTextBox2.ScrollBarHoverColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
+        ModernTextBox2.SelectionColor = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernTextBox2.Size = New Size(120, 32)
         ModernTextBox2.TabIndex = 5
         ' 
@@ -1008,6 +1025,7 @@ Partial Class ModernColorDialog
         ' 
         HtmlColorLabel1.AutoSize = True
         HtmlColorLabel1.AutoSizeMode = AutoSizeMode.GrowAndShrink
+        HtmlColorLabel1.BackgroundSource = Panel3
         HtmlColorLabel1.Dock = DockStyle.Top
         HtmlColorLabel1.Location = New Point(20, 0)
         HtmlColorLabel1.Margin = New Padding(2)
@@ -1039,72 +1057,72 @@ Partial Class ModernColorDialog
         ModernContextMenu1.HoverRadius = 5
         ModernContextMenu1.IconSize = 0
         ModernContextMenu1.ItemPadding = New Padding(7, 0, 0, 0)
-        ModernMenuItem1.Font = Nothing
-        ModernMenuItem1.IsDescription = True
-        ModernMenuItem1.Text = "最推荐的做法"
-        ModernMenuItem2.Font = Nothing
-        ModernMenuItem2.Text = "先选择 HTML 颜色来定位到大致颜色，然后使用数值面板进行微调"
-        ModernMenuItem3.Font = Nothing
-        ModernMenuItem3.IsSeparator = True
-        ModernMenuItem4.Font = Nothing
-        ModernMenuItem4.IsDescription = True
-        ModernMenuItem4.Text = "数值面板操作提示"
-        ModernMenuItem5.Font = Nothing
-        ModernMenuItem5.Text = "除了 HEX，所有文本框可以使用鼠标滚轮进行微调"
-        ModernMenuItem6.Font = Nothing
-        ModernMenuItem6.Text = "除了 HEX，所有标签区域可以像实体推子一样快速增加或减少"
-        ModernMenuItem7.Font = Nothing
-        ModernMenuItem7.IsSeparator = True
-        ModernMenuItem8.Font = Nothing
-        ModernMenuItem8.IsDescription = True
-        ModernMenuItem8.Text = "色域图操作提示"
-        ModernMenuItem9.Font = Nothing
-        ModernMenuItem9.Text = "左键选择时，会尝试保留当前亮度来计算新的颜色"
-        ModernMenuItem10.Font = Nothing
-        ModernMenuItem10.Text = "右键选择时，不会保留亮度，而是直接映射颜色"
-        ModernMenuItem11.Font = Nothing
-        ModernMenuItem11.IsSeparator = True
-        ModernMenuItem12.Font = Nothing
-        ModernMenuItem12.IsDescription = True
-        ModernMenuItem12.Text = "性能提示"
-        ModernMenuItem13.Font = Nothing
-        ModernMenuItem13.Text = "色域图由 CPU 即时绘制，为确保准确度不会进行缓存"
-        ModernMenuItem14.Font = Nothing
-        ModernMenuItem14.Text = "当尺寸变化时会重绘，虽然是在后台线程绘制但也非常吃性能"
-        ModernMenuItem15.Font = Nothing
-        ModernMenuItem15.Text = "因此请不要频繁变更此窗口的尺寸"
-        ModernMenuItem16.Font = Nothing
-        ModernMenuItem16.IsSeparator = True
-        ModernMenuItem17.Font = Nothing
-        ModernMenuItem17.IsDescription = True
-        ModernMenuItem17.Text = "并非节约性能"
-        ModernMenuItem18.Font = Nothing
-        ModernMenuItem18.Text = "这个菜单默认是开无限帧率动画的，就看开发者有没有调了"
-        ModernMenuItem19.Font = Nothing
-        ModernMenuItem19.IsSeparator = True
-        ModernMenuItem20.Font = Nothing
-        ModernMenuItem20.IsDescription = True
-        ModernMenuItem20.Text = "Designed by Lake1059, Coding by Claude Opus 4.6"
-        ModernContextMenu1.Items.Add(ModernMenuItem1)
-        ModernContextMenu1.Items.Add(ModernMenuItem2)
-        ModernContextMenu1.Items.Add(ModernMenuItem3)
-        ModernContextMenu1.Items.Add(ModernMenuItem4)
-        ModernContextMenu1.Items.Add(ModernMenuItem5)
-        ModernContextMenu1.Items.Add(ModernMenuItem6)
-        ModernContextMenu1.Items.Add(ModernMenuItem7)
-        ModernContextMenu1.Items.Add(ModernMenuItem8)
-        ModernContextMenu1.Items.Add(ModernMenuItem9)
-        ModernContextMenu1.Items.Add(ModernMenuItem10)
-        ModernContextMenu1.Items.Add(ModernMenuItem11)
-        ModernContextMenu1.Items.Add(ModernMenuItem12)
-        ModernContextMenu1.Items.Add(ModernMenuItem13)
-        ModernContextMenu1.Items.Add(ModernMenuItem14)
-        ModernContextMenu1.Items.Add(ModernMenuItem15)
-        ModernContextMenu1.Items.Add(ModernMenuItem16)
-        ModernContextMenu1.Items.Add(ModernMenuItem17)
-        ModernContextMenu1.Items.Add(ModernMenuItem18)
-        ModernContextMenu1.Items.Add(ModernMenuItem19)
-        ModernContextMenu1.Items.Add(ModernMenuItem20)
+        ModernMenuItem21.Font = Nothing
+        ModernMenuItem21.IsDescription = True
+        ModernMenuItem21.Text = "最推荐的做法"
+        ModernMenuItem22.Font = Nothing
+        ModernMenuItem22.Text = "先选择 HTML 颜色来定位到大致颜色，然后使用数值面板进行微调"
+        ModernMenuItem23.Font = Nothing
+        ModernMenuItem23.IsSeparator = True
+        ModernMenuItem24.Font = Nothing
+        ModernMenuItem24.IsDescription = True
+        ModernMenuItem24.Text = "数值面板操作提示"
+        ModernMenuItem25.Font = Nothing
+        ModernMenuItem25.Text = "除了 HEX，所有文本框可以使用鼠标滚轮进行微调"
+        ModernMenuItem26.Font = Nothing
+        ModernMenuItem26.Text = "除了 HEX，所有标签区域可以像实体推子一样快速增加或减少"
+        ModernMenuItem27.Font = Nothing
+        ModernMenuItem27.IsSeparator = True
+        ModernMenuItem28.Font = Nothing
+        ModernMenuItem28.IsDescription = True
+        ModernMenuItem28.Text = "色域图操作提示"
+        ModernMenuItem29.Font = Nothing
+        ModernMenuItem29.Text = "左键选择时，会尝试保留当前亮度来计算新的颜色"
+        ModernMenuItem30.Font = Nothing
+        ModernMenuItem30.Text = "右键选择时，不会保留亮度，而是直接映射颜色"
+        ModernMenuItem31.Font = Nothing
+        ModernMenuItem31.IsSeparator = True
+        ModernMenuItem32.Font = Nothing
+        ModernMenuItem32.IsDescription = True
+        ModernMenuItem32.Text = "性能提示"
+        ModernMenuItem33.Font = Nothing
+        ModernMenuItem33.Text = "色域图由 CPU 即时绘制，为确保准确度不会进行缓存"
+        ModernMenuItem34.Font = Nothing
+        ModernMenuItem34.Text = "当尺寸变化时会重绘，虽然是在后台线程绘制但也非常吃性能"
+        ModernMenuItem35.Font = Nothing
+        ModernMenuItem35.Text = "因此请不要频繁变更此窗口的尺寸"
+        ModernMenuItem36.Font = Nothing
+        ModernMenuItem36.IsSeparator = True
+        ModernMenuItem37.Font = Nothing
+        ModernMenuItem37.IsDescription = True
+        ModernMenuItem37.Text = "并非节约性能"
+        ModernMenuItem38.Font = Nothing
+        ModernMenuItem38.Text = "这个菜单默认是开无限帧率动画的，就看开发者有没有调了"
+        ModernMenuItem39.Font = Nothing
+        ModernMenuItem39.IsSeparator = True
+        ModernMenuItem40.Font = Nothing
+        ModernMenuItem40.IsDescription = True
+        ModernMenuItem40.Text = "Designed by Lake1059, Coding by Claude Opus 4.6"
+        ModernContextMenu1.Items.Add(ModernMenuItem21)
+        ModernContextMenu1.Items.Add(ModernMenuItem22)
+        ModernContextMenu1.Items.Add(ModernMenuItem23)
+        ModernContextMenu1.Items.Add(ModernMenuItem24)
+        ModernContextMenu1.Items.Add(ModernMenuItem25)
+        ModernContextMenu1.Items.Add(ModernMenuItem26)
+        ModernContextMenu1.Items.Add(ModernMenuItem27)
+        ModernContextMenu1.Items.Add(ModernMenuItem28)
+        ModernContextMenu1.Items.Add(ModernMenuItem29)
+        ModernContextMenu1.Items.Add(ModernMenuItem30)
+        ModernContextMenu1.Items.Add(ModernMenuItem31)
+        ModernContextMenu1.Items.Add(ModernMenuItem32)
+        ModernContextMenu1.Items.Add(ModernMenuItem33)
+        ModernContextMenu1.Items.Add(ModernMenuItem34)
+        ModernContextMenu1.Items.Add(ModernMenuItem35)
+        ModernContextMenu1.Items.Add(ModernMenuItem36)
+        ModernContextMenu1.Items.Add(ModernMenuItem37)
+        ModernContextMenu1.Items.Add(ModernMenuItem38)
+        ModernContextMenu1.Items.Add(ModernMenuItem39)
+        ModernContextMenu1.Items.Add(ModernMenuItem40)
         ModernContextMenu1.MenuPadding = New Padding(10)
         ModernContextMenu1.PopupAnimationDuration = 300
         ModernContextMenu1.PopupAnimationFPS = 0
@@ -1114,12 +1132,11 @@ Partial Class ModernColorDialog
         ' 
         AutoScaleDimensions = New SizeF(96F, 96F)
         AutoScaleMode = AutoScaleMode.Dpi
-        BackColor = Color.FromArgb(CByte(48), CByte(48), CByte(48))
+        BackColor = Color.FromArgb(CByte(24), CByte(24), CByte(24))
         ClientSize = New Size(884, 566)
         Controls.Add(Panel1)
         Controls.Add(Panel3)
         Controls.Add(Panel2)
-        DoubleBuffered = True
         Font = New Font("Microsoft YaHei UI", 10.2F, FontStyle.Regular, GraphicsUnit.Point, CByte(134))
         ForeColor = Color.Silver
         MaximizeBox = False

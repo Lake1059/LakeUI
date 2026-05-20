@@ -203,15 +203,7 @@ Public Class ModernComboBox
     Private _mouseOverArrow As Boolean = False
     Private _itemToolTips As ToolTipEntryCollection
 
-    ''' <summary>控件级 DC RenderTarget。与窗口 DC 强相关，由控件持有。</summary>
-    Private _dcRT As ID2D1DCRenderTarget
-    ''' <summary>跨帧复用的 SSAA 离屏 BitmapRT。</summary>
-    Private ReadOnly _ssaaCache As New D2DHelper.BitmapRTCache()
-
-    Private Function GetOrCreateDCRenderTarget() As ID2D1DCRenderTarget
-        If _dcRT Is Nothing Then _dcRT = D2DHelper.CreateDCRenderTarget()
-        Return _dcRT
-    End Function
+    ' V2：D2D 资源由 WindowCompositor 按顶层 Form 共享管理，本控件不再持有 _dcRT / _ssaaCache。
 #End Region
 
 #Region "属性"
@@ -236,8 +228,8 @@ Public Class ModernComboBox
             End If
             _selectedIndex = matchIndex
             Invalidate()
-            If textChanged Then RaiseEvent TextChanged(Me, EventArgs.Empty)
-            If selectedIndexChanged Then RaiseEvent SelectedIndexChanged(Me, EventArgs.Empty)
+            If textChanged Then RaiseEvent textChanged(Me, EventArgs.Empty)
+            If selectedIndexChanged Then RaiseEvent selectedIndexChanged(Me, EventArgs.Empty)
         End Set
     End Property
     Private Function ShouldSerializeText() As Boolean
@@ -274,8 +266,8 @@ Public Class ModernComboBox
             _scrollXOffset = 0
             ClearSelection()
             Invalidate()
-            If textChanged Then RaiseEvent TextChanged(Me, EventArgs.Empty)
-            If selectedIndexChanged Then RaiseEvent SelectedIndexChanged(Me, EventArgs.Empty)
+            If textChanged Then RaiseEvent textChanged(Me, EventArgs.Empty)
+            If selectedIndexChanged Then RaiseEvent selectedIndexChanged(Me, EventArgs.Empty)
         End Set
     End Property
 
@@ -964,10 +956,10 @@ Public Class ModernComboBox
     ''' <summary>
     ''' 背景采样源（超容器背景映射）。透明背景模式下，控件会调用此控件的绘制流程取像素作为底图，
     ''' 从而实现跨越任意层级的"穿透显示"效果。
-    ''' 为 Nothing 时自动沿祖先链查找首个不透明祖先（默认行为）。
+    ''' 为 Nothing 时不进行背景采样。
     ''' </summary>
     <Category("LakeUI"),
-                 Description("背景采样源（超容器背景映射）。设置后将跨越任意层级直接采样此控件的绘制内容作为透明背景；为空时自动选择首个不透明祖先。"),
+                  Description("背景采样源（超容器背景映射）。设置后将跨越任意层级直接采样此控件的绘制内容作为透明背景；为空时不进行背景采样。"),
                  DefaultValue(GetType(Control), Nothing), Browsable(True)>
     Public Property BackgroundSource As Control
         Get
@@ -1011,18 +1003,20 @@ Public Class ModernComboBox
     Protected Overrides Sub OnHandleDestroyed(e As EventArgs)
         _caretBlinkTimer.Stop()
         CloseDropDown()
-        Try : _ssaaCache.Dispose() : Catch : End Try
-        If _dcRT IsNot Nothing Then
-            Try : _dcRT.Dispose() : Catch : End Try
-            _dcRT = Nothing
-        End If
         MyBase.OnHandleDestroyed(e)
     End Sub
 #End Region
 
 #Region "绘制"
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
-        If 边框圆角半径 > 0 OrElse MyBase.BackColor.A < 255 Then Return
+        ' V2 契约（与 ModernButton 一致）：
+        '   • BackgroundSource 已设置 → 跳过基类填底，背景由 OnPaint 内显式穿透绘制；
+        '   • 否则一律走 .NET 自身透明逻辑——半透明 BackColor 由基类把父级背景合成到 HDC，
+        '     不透明色由基类填底。BindDC 之后 DC RT 初始像素即正确底图，
+        '     避免"HDC 残留 → 乱照父窗体其它区域"的故障。
+        '   • 圆角 + 不透明 BackColor 时角落会露出方形底色，
+        '     使用方应把 BackColor 设为透明（与 ModernButton 同约定）。
+        If _backgroundSource IsNot Nothing Then Return
         MyBase.OnPaintBackground(e)
     End Sub
 
@@ -1060,11 +1054,13 @@ Public Class ModernComboBox
         Dim ssaa As Integer = Math.Max(1, CInt(超采样倍率))
         If Class1.GlobalSSAA <> Class1.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(Class1.GlobalSSAA))
 
-        Using scope = D2DHelper.BeginPaint(e, Me, GetOrCreateDCRenderTarget(), ssaa, _ssaaCache)
-            Dim gRT As ID2D1RenderTarget = scope.GraphicsRenderTarget
-            If hasRadius OrElse MyBase.BackColor.A < 255 Then
-                TransparentBackgroundCache.PaintBackgroundFor_D2D(Me, gRT, _backgroundSource)
+        Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
+            If scope Is Nothing Then Return
+            If _backgroundSource IsNot Nothing Then
+                BackgroundPenetrationV2.PaintBackground(Me, scope, _backgroundSource)
             End If
+
+            Dim gRT As ID2D1RenderTarget = scope.GraphicsLayer
             绘制背景_D2D(gRT, hasRadius, boundsRect, effBg, effBg2)
             scope.FlushGraphics()
 
@@ -1087,7 +1083,7 @@ Public Class ModernComboBox
     End Sub
 
     Private Sub 绘制背景_D2D(rt As ID2D1RenderTarget, hasRadius As Boolean, boundsRect As RectangleF, bgClr As Color, bgClr2 As Color)
-        ' BackColor 半透明遮罩层：位于采样底图之上、状态填充色之下。详见 TransparentBackgroundCache 契约。
+        ' BackColor 半透明遮罩层：位于背景层之上、状态填充色之下。
         Dim backColorMask As Color = MyBase.BackColor
         Dim hasMask As Boolean = backColorMask.A > 0 AndAlso backColorMask.A < 255
         Dim hasFill As Boolean = bgClr.A > 0 OrElse (bgClr2 <> Color.Empty AndAlso bgClr2.A > 0)
@@ -1123,14 +1119,6 @@ Public Class ModernComboBox
         Else
             RectangleRenderer.绘制矩形边框_D2D(rt, boundsRect, borderClr, 边框宽度 * s)
         End If
-    End Sub
-
-    ''' <summary>
-    ''' 透明背景贴底图：圆角或半透明背景下，由共享缓存把 BackgroundSource（或 Parent）
-    ''' 的内容采样到本控件区域。详见 TransparentBackgroundCache 的接入说明。
-    ''' </summary>
-    Private Sub 绘制父容器背景(g As Graphics)
-        TransparentBackgroundCache.PaintBackgroundFor(Me, g, _backgroundSource)
     End Sub
 
     Private Sub DrawTextContent_D2D(rt As ID2D1DCRenderTarget, w As Integer, h As Integer)
@@ -1297,82 +1285,6 @@ Public Class ModernComboBox
         End Try
     End Sub
 
-    Private Sub DrawSeparatorAndArrow(g As Graphics, w As Integer, h As Integer, borderClr As Color)
-        Dim s As Single = DpiScale()
-        Dim aaw As Integer = ArrowAreaWidth
-        Dim bi As Integer = CInt(边框宽度 * s)
-        Dim sepX As Single = w - aaw - If(bi > 0, bi / 2.0F, 0)
-        Dim topInset As Integer = Math.Max(Padding.Top, bi)
-        Dim bottomInset As Integer = Math.Max(Padding.Bottom, bi)
-
-        If 启用编辑 AndAlso _mouseOverArrow Then
-            Dim arrowBgClr As Color = Color.Empty
-            Select Case 鼠标状态
-                Case MouseStateEnum.Hover
-                    arrowBgClr = 鼠标移上时背景颜色
-                Case MouseStateEnum.Pressed
-                    arrowBgClr = 鼠标按下时背景颜色
-            End Select
-            If arrowBgClr <> Color.Empty Then
-                Dim fillX As Single = sepX + If(bi > 0, bi / 2.0F, 0)
-                Using br As New SolidBrush(arrowBgClr)
-                    g.FillRectangle(br, fillX, topInset, w - fillX - bi, h - topInset - bottomInset)
-                End Using
-            End If
-        End If
-
-        If 显示分隔线 AndAlso 边框宽度 > 0 Then
-            Using pen As New Pen(borderClr, 边框宽度 * s)
-                g.DrawLine(pen, sepX, topInset, sepX, h - bottomInset)
-            End Using
-        End If
-
-        Dim effArrowClr As Color = 箭头颜色
-        Dim isArrowActive As Boolean = Not 启用编辑 OrElse _mouseOverArrow
-        If isArrowActive Then
-            Select Case 鼠标状态
-                Case MouseStateEnum.Hover
-                    If 鼠标移上时箭头颜色 <> Color.Empty Then effArrowClr = 鼠标移上时箭头颜色
-                Case MouseStateEnum.Pressed
-                    If 鼠标按下时箭头颜色 <> Color.Empty Then effArrowClr = 鼠标按下时箭头颜色
-            End Select
-        End If
-
-        Dim squareLeft As Single = w - aaw
-        Dim centerX As Single = squareLeft + aaw / 2.0F
-        Dim centerY As Single = h / 2.0F
-        Dim scaledArrow As Single = 箭头大小 * s
-        Dim arrW As Single = scaledArrow
-        Dim arrH As Single = scaledArrow * Math.Sqrt(3.0) / 2.0
-        Dim verts() As PointF = {
-            New PointF(centerX - arrW / 2.0F, centerY - arrH / 2.0F),
-            New PointF(centerX + arrW / 2.0F, centerY - arrH / 2.0F),
-            New PointF(centerX, centerY + arrH / 2.0F)
-        }
-        Dim cr As Single = Math.Max(scaledArrow * 0.2F, 1.0F)
-        g.SmoothingMode = SmoothingMode.AntiAlias
-        Using path As New GraphicsPath()
-            For i As Integer = 0 To 2
-                Dim curr As PointF = verts(i)
-                Dim prv As PointF = verts((i + 2) Mod 3)
-                Dim nxt As PointF = verts((i + 1) Mod 3)
-                Dim d1x As Single = prv.X - curr.X, d1y As Single = prv.Y - curr.Y
-                Dim d2x As Single = nxt.X - curr.X, d2y As Single = nxt.Y - curr.Y
-                Dim l1 As Single = Math.Sqrt(d1x * d1x + d1y * d1y)
-                Dim l2 As Single = Math.Sqrt(d2x * d2x + d2y * d2y)
-                Dim a As New PointF(curr.X + cr * d1x / l1, curr.Y + cr * d1y / l1)
-                Dim b As New PointF(curr.X + cr * d2x / l2, curr.Y + cr * d2y / l2)
-                Dim cp1 As New PointF(a.X + 2.0F / 3.0F * (curr.X - a.X), a.Y + 2.0F / 3.0F * (curr.Y - a.Y))
-                Dim cp2 As New PointF(b.X + 2.0F / 3.0F * (curr.X - b.X), b.Y + 2.0F / 3.0F * (curr.Y - b.Y))
-                If i > 0 Then path.AddLine(path.GetLastPoint(), a)
-                path.AddBezier(a, cp1, cp2, b)
-            Next
-            path.CloseFigure()
-            Using br As New SolidBrush(effArrowClr)
-                g.FillPath(br, path)
-            End Using
-        End Using
-    End Sub
 #End Region
 
 #Region "消息处理 (WndProc)"
@@ -1897,23 +1809,7 @@ Public Class ModernComboBox
         Private _scrollBarVisible As Boolean = False
         Private _scrollBar As New ScrollBarRenderer()
 
-        ' D2D 资源
-        Private _dcRT As ID2D1DCRenderTarget
-        Private ReadOnly _ssaaCache As New D2DHelper.BitmapRTCache()
-
-        Private Function GetOrCreateDCRenderTarget() As ID2D1DCRenderTarget
-            If _dcRT Is Nothing Then _dcRT = D2DHelper.CreateDCRenderTarget()
-            Return _dcRT
-        End Function
-
-        Protected Overrides Sub OnHandleDestroyed(e As EventArgs)
-            Try : _ssaaCache.Dispose() : Catch : End Try
-            If _dcRT IsNot Nothing Then
-                Try : _dcRT.Dispose() : Catch : End Try
-                _dcRT = Nothing
-            End If
-            MyBase.OnHandleDestroyed(e)
-        End Sub
+        ' V2：D2D 资源由 WindowCompositor 按顶层 Form 共享管理。
 #Disable Warning IDE0044
         Private _finalHeight As Integer
         Private _originPt As Point
@@ -2169,8 +2065,9 @@ Public Class ModernComboBox
             Dim ssaa As Integer = Math.Max(1, CInt(_owner.超采样倍率))
             If Class1.GlobalSSAA <> Class1.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(Class1.GlobalSSAA))
 
-            Using scope = D2DHelper.BeginPaint(e, Me, GetOrCreateDCRenderTarget(), ssaa, _ssaaCache)
-                Dim gRT As ID2D1RenderTarget = scope.GraphicsRenderTarget
+            Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
+                If scope Is Nothing Then Return
+                Dim gRT As ID2D1RenderTarget = scope.GraphicsLayer
                 DrawDropDownBackground_D2D(gRT, boundsRect, bw, w, h)
                 DrawDropDownItemsBackground_D2D(gRT, w, h)
                 scope.FlushGraphics()
@@ -2473,23 +2370,7 @@ Public Class ModernComboBox
         Private ReadOnly _owner As ModernComboBox
         Private _tipText As String = ""
 
-        ' D2D 资源
-        Private _dcRT As ID2D1DCRenderTarget
-        Private ReadOnly _ssaaCache As New D2DHelper.BitmapRTCache()
-
-        Private Function GetOrCreateDCRenderTarget() As ID2D1DCRenderTarget
-            If _dcRT Is Nothing Then _dcRT = D2DHelper.CreateDCRenderTarget()
-            Return _dcRT
-        End Function
-
-        Protected Overrides Sub OnHandleDestroyed(e As EventArgs)
-            Try : _ssaaCache.Dispose() : Catch : End Try
-            If _dcRT IsNot Nothing Then
-                Try : _dcRT.Dispose() : Catch : End Try
-                _dcRT = Nothing
-            End If
-            MyBase.OnHandleDestroyed(e)
-        End Sub
+        ' V2：D2D 资源由 WindowCompositor 按顶层 Form 共享管理。
 
         Public Sub New(owner As ModernComboBox)
             _owner = owner
@@ -2545,8 +2426,9 @@ Public Class ModernComboBox
             Dim ssaa As Integer = 1
             If Class1.GlobalSSAA <> Class1.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(Class1.GlobalSSAA))
 
-            Using scope = D2DHelper.BeginPaint(e, Me, GetOrCreateDCRenderTarget(), ssaa, _ssaaCache)
-                Dim gRT As ID2D1RenderTarget = scope.GraphicsRenderTarget
+            Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
+                If scope Is Nothing Then Return
+                Dim gRT As ID2D1RenderTarget = scope.GraphicsLayer
                 ' 用背景色填满整个客户区，防止边缘漏像素
                 Using br = gRT.CreateSolidColorBrush(D2DHelper.ToColor4(_owner.提示背景颜色))
                     gRT.FillRectangle(New Vortice.Mathematics.Rect(0, 0, w, h), br)

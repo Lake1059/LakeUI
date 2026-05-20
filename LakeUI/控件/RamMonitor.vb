@@ -16,15 +16,7 @@ Imports Vortice.DirectWrite
 Public Class RamMonitor
 
 #Region "D2D 资源"
-    Private _dcRT As ID2D1DCRenderTarget
-    Private ReadOnly _ssaaCache As New D2DHelper.BitmapRTCache()
-    Private ReadOnly _brushCache As New D2DHelper.SolidColorBrushCache()
-    Private ReadOnly _textFormatCache As New D2DHelper.TextFormatCache()
-
-    Private Function GetOrCreateDCRenderTarget() As ID2D1DCRenderTarget
-        If _dcRT Is Nothing Then _dcRT = D2DHelper.CreateDCRenderTarget()
-        Return _dcRT
-    End Function
+    Private _当前合成器 As WindowCompositor
 #End Region
 
     Public Event SampleUpdated As EventHandler
@@ -546,26 +538,33 @@ Public Class RamMonitor
         Dim ssaa As Integer = Math.Max(1, CInt(超采样倍率))
         If Class1.GlobalSSAA <> Class1.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(Class1.GlobalSSAA))
 
-        Using scope = D2DHelper.BeginPaint(e, Me, GetOrCreateDCRenderTarget(), ssaa, _ssaaCache)
-            Dim gRT As ID2D1RenderTarget = scope.GraphicsRenderTarget
-            Dim dcRT As ID2D1DCRenderTarget = scope.DCRenderTarget
+        Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
+            If scope Is Nothing Then Return
+            _当前合成器 = scope.Compositor
+            Try
+                Dim gRT As ID2D1RenderTarget = scope.GraphicsLayer
+                Dim dcRT As ID2D1DCRenderTarget = scope.DCRenderTarget
 
-            If 圆角半径值 > 0 OrElse MyBase.BackColor.A < 255 Then
-                TransparentBackgroundCache.PaintBackgroundFor_D2D(Me, gRT, _backgroundSource)
-                If MyBase.BackColor.A > 0 AndAlso MyBase.BackColor.A < 255 Then
-                    Using b = gRT.CreateSolidColorBrush(D2DHelper.ToColor4(MyBase.BackColor))
+                If 圆角半径值 > 0 OrElse MyBase.BackColor.A < 255 Then
+                    If _backgroundSource IsNot Nothing Then
+                        BackgroundPenetrationV2.PaintBackground(Me, scope, _backgroundSource)
+                    End If
+                    If MyBase.BackColor.A > 0 AndAlso MyBase.BackColor.A < 255 Then
+                        Dim b = _当前合成器.BrushCache.Get(gRT, MyBase.BackColor)
                         gRT.FillRectangle(New Vortice.Mathematics.Rect(0, 0, Me.Width, Me.Height), b)
-                    End Using
+                    End If
                 End If
-            End If
 
-            绘制图形内容_D2D(gRT)
-            scope.FlushGraphics()
-            绘制文字内容_D2D(dcRT)
+                绘制图形内容_D2D(gRT)
+                scope.FlushGraphics()
+                绘制文字内容_D2D(dcRT)
 
-            If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
-                绘制禁用遮罩_D2D(dcRT)
-            End If
+                If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
+                    绘制禁用遮罩_D2D(dcRT)
+                End If
+            Finally
+                _当前合成器 = Nothing
+            End Try
         End Using
     End Sub
 
@@ -785,7 +784,7 @@ Public Class RamMonitor
 
         Dim weight As FontWeight = If(Me.Font.Bold, FontWeight.Bold, FontWeight.Normal)
         Dim style As FontStyle = If(Me.Font.Italic, FontStyle.Italic, FontStyle.Normal)
-        Dim fmt = _textFormatCache.Get(Me.Font.FontFamily.Name, weight, style, 文本像素高度(s),
+        Dim fmt = _当前合成器.TextFormatCache.Get(Me.Font.FontFamily.Name, weight, style, 文本像素高度(s),
                                        转文本水平对齐(align), 转文本垂直对齐(align), True)
         Using layout = D2DHelper.GetDWriteFactory().CreateTextLayout(If(text, ""), fmt, textRect.Width, textRect.Height)
             Using b = rt.CreateSolidColorBrush(D2DHelper.ToColor4(Me.ForeColor))
@@ -822,7 +821,7 @@ Public Class RamMonitor
 
         Dim weight As FontWeight = If(Me.Font.Bold, FontWeight.Bold, FontWeight.Normal)
         Dim style As FontStyle = If(Me.Font.Italic, FontStyle.Italic, FontStyle.Normal)
-        Dim fmt = _textFormatCache.Get(Me.Font.FontFamily.Name, weight, style, 文本像素高度(s), TextAlignment.Leading, ParagraphAlignment.Near, False)
+        Dim fmt = _当前合成器.TextFormatCache.Get(Me.Font.FontFamily.Name, weight, style, 文本像素高度(s), TextAlignment.Leading, ParagraphAlignment.Near, False)
         Dim lineH As Single = 文本像素高度(s)
         Dim maxLabel As Single = 0, maxValue As Single = 0
         For i As Integer = 0 To lines.Count - 1
@@ -884,308 +883,16 @@ Public Class RamMonitor
         End Using
     End Sub
 
-    Private Sub 绘制图形内容(g As Graphics, drawGfx As Boolean, drawText As Boolean)
-        If drawGfx Then
-            g.SmoothingMode = Class1.GlobalSmoothingMode
-            g.PixelOffsetMode = Class1.GlobalPixelOffsetMode
-            g.InterpolationMode = Class1.GlobalInterpolationMode
-        End If
-        If drawText Then
-            g.TextRenderingHint = Drawing.Text.TextRenderingHint.AntiAliasGridFit
-        End If
-
-        Dim s As Single = DpiScale()
-        Dim pad As Padding = Me.Padding
-        Dim rect As New RectangleF(pad.Left * s, pad.Top * s,
-                                   Math.Max(0, Me.Width - (pad.Left + pad.Right) * s),
-                                   Math.Max(0, Me.Height - (pad.Top + pad.Bottom) * s))
-        If rect.Width <= 0 OrElse rect.Height <= 0 Then Return
-
-        If drawGfx Then 绘制背景与边框(g, rect, s)
-
-        Dim innerPad As Single = 核心内边距值 * s
-        Dim inner As New RectangleF(rect.X + innerPad, rect.Y + innerPad,
-                                    Math.Max(0, rect.Width - innerPad * 2),
-                                    Math.Max(0, rect.Height - innerPad * 2))
-        If inner.Width <= 0 OrElse inner.Height <= 0 Then Return
-
-        Dim fontHeight As Single = Me.Font.GetHeight(g)
-        Dim tp As Padding = 文字内边距值
-        Dim stripH As Single = fontHeight + (tp.Top + tp.Bottom) * s
-        Dim topText As String = 构造槽位文字(TextSlotPosition.Top)
-        Dim bottomText As String = 构造槽位文字(TextSlotPosition.Bottom)
-        Dim topStripH As Single = If(Not String.IsNullOrEmpty(topText), Math.Min(stripH, inner.Height), 0)
-        Dim bottomStripH As Single = If(Not String.IsNullOrEmpty(bottomText), Math.Min(stripH, Math.Max(0, inner.Height - topStripH)), 0)
-        Dim graphRect As New RectangleF(inner.X, inner.Y + topStripH,
-                                        inner.Width,
-                                        Math.Max(0, inner.Height - topStripH - bottomStripH))
-
-        If drawGfx AndAlso graphRect.Height >= 2 AndAlso graphRect.Width >= 2 Then
-            Dim oldClip As Region = 应用圆角裁剪(g, rect, s)
-            Try
-                绘制历史图表(g, graphRect, s)
-            Finally
-                恢复裁剪(g, oldClip)
-            End Try
-        End If
-
-        If drawText Then
-            If topStripH > 0 Then
-                绘制文字(g, New RectangleF(inner.X, inner.Y, inner.Width, topStripH), topText, s, 顶部文字对齐值)
-            End If
-            If bottomStripH > 0 Then
-                绘制文字(g, New RectangleF(inner.X, inner.Bottom - bottomStripH, inner.Width, bottomStripH), bottomText, s, 底部文字对齐值)
-            End If
-            ' 悬停读数覆盖层（文字层之后绘制以便显示在所有内容之上）
-            If 启用悬停读数值 AndAlso _悬停有效 AndAlso graphRect.Height >= 2 AndAlso graphRect.Width >= 2 Then
-                绘制悬停读数(g, graphRect, s)
-            End If
-        End If
-    End Sub
-
-    Private Sub 绘制历史图表(g As Graphics, rect As RectangleF, s As Single)
-        If 图表背景颜色值.A > 0 Then
-            Using b As New SolidBrush(图表背景颜色值)
-                g.FillRectangle(b, rect)
-            End Using
-        End If
-
-        Dim hist = 获取历史快照()
-        Dim n As Integer = hist.Length
-        Dim cap As Integer = Math.Max(2, 记录长度值)
-        ' 记录几何信息供悬停使用
-        _图表矩形 = rect
-        _图表样本数 = n
-        If n < 2 Then Exit Sub
-
-        Dim step_ As Single = rect.Width / CSng(cap - 1)
-
-        ' 转成比例后堆叠：从底向上 = 已用 / 已修改 / 备用
-        Dim inUseTop(n - 1) As PointF
-        Dim modTop(n - 1) As PointF
-        Dim standbyTop(n - 1) As PointF
-        ' 已修改厚度按像素判断：每个样本若其换算厚度 < 1px 则视为 0（避免紧贴已用顶部出现不可察觉的色带）
-        For i As Integer = 0 To n - 1
-            Dim x As Single = rect.Right - CSng(n - 1 - i) * step_
-            Dim total As Double = If(hist(i).TotalBytes > 0UL, CDbl(hist(i).TotalBytes), 0.0)
-            Dim a As Single = 0, bm As Single = 0, c As Single = 0
-            If total > 0.0 Then
-                a = CSng(hist(i).InUseBytes / total)
-                bm = CSng(hist(i).ModifiedBytes / total)
-                c = CSng(hist(i).StandbyBytes / total)
-            End If
-            a = Math.Max(0, Math.Min(1, a))
-            bm = Math.Max(0, Math.Min(1 - a, bm))
-            c = Math.Max(0, Math.Min(1 - a - bm, c))
-            If bm * rect.Height < 1.0F Then bm = 0
-            inUseTop(i) = New PointF(x, rect.Bottom - a * rect.Height)
-            modTop(i) = New PointF(x, rect.Bottom - (a + bm) * rect.Height)
-            standbyTop(i) = New PointF(x, rect.Bottom - (a + bm + c) * rect.Height)
-        Next
-
-        ' 堆叠填充（从上层往下画）
-        填充堆叠区(g, 备用填充颜色值, standbyTop, rect)
-        填充堆叠区(g, 已修改填充颜色值, modTop, rect)
-        填充堆叠区(g, 已用填充颜色值, inUseTop, rect)
-
-        ' 线条：只画 "总占用 = 已用 + 已修改 + 备用" 的顶线
-        If 图表线条颜色值.A > 0 AndAlso 图表线条粗细值 > 0 Then
-            Using p As New Pen(图表线条颜色值, 图表线条粗细值 * s)
-                p.LineJoin = System.Drawing.Drawing2D.LineJoin.Round
-                g.DrawLines(p, standbyTop)
-            End Using
-        End If
-    End Sub
-
-    Private Shared Sub 填充堆叠区(g As Graphics, color As Color, topPts As PointF(), rect As RectangleF)
-        If color.A = 0 Then Return
-        If topPts Is Nothing OrElse topPts.Length < 2 Then Return
-        Dim n As Integer = topPts.Length
-        Dim fill(n + 1) As PointF
-        Array.Copy(topPts, fill, n)
-        fill(n) = New PointF(topPts(n - 1).X, rect.Bottom)
-        fill(n + 1) = New PointF(topPts(0).X, rect.Bottom)
-        Using b As New SolidBrush(color)
-            g.FillPolygon(b, fill)
-        End Using
-    End Sub
-
-    Private Sub 绘制悬停读数(g As Graphics, graphRect As RectangleF, s As Single)
-        Dim hist = 获取历史快照()
-        Dim n As Integer = hist.Length
-        If n < 1 Then Return
-        Dim idx As Integer = 样本索引从X坐标(_悬停X, graphRect)
-        If idx < 0 OrElse idx >= n Then Return
-        Dim hp = hist(idx)
-        Dim total As ULong = hp.TotalBytes
-        If total = 0UL Then Return
-
-        ' 对齐到确切的采样 X
-        Dim cap As Integer = Math.Max(2, 记录长度值)
-        Dim step_ As Single = graphRect.Width / CSng(cap - 1)
-        Dim xAtSample As Single = graphRect.Right - CSng(n - 1 - idx) * step_
-
-        ' 绘制垂直刻度线
-        If 悬停线颜色值.A > 0 Then
-            Using p As New Pen(悬停线颜色值, Math.Max(1.0F, 悬停线粗细值 * s))
-                g.DrawLine(p, xAtSample, graphRect.Top, xAtSample, graphRect.Bottom)
-            End Using
-        End If
-
-        ' 构造三行：已用、备用、可用
-        Dim lines As New List(Of (label As String, value As String)) From {
-            (RamMonitorStrings.InUse, 格式化字节(hp.InUseBytes)),
-            (RamMonitorStrings.Standby, 格式化字节(hp.StandbyBytes)),
-            (RamMonitorStrings.Available, 格式化字节(hp.FreeBytes + hp.StandbyBytes))
-        }
-
-        Dim pad As Integer = CInt(Math.Round(6 * s))
-        Dim gap As Single = 4 * s
-        Dim lineH As Integer = CInt(Math.Ceiling(Me.Font.GetHeight(g)))
-        ' 测量每行宽度（标签和值之间留一空格），取最大
-        Dim maxLabel As Integer = 0, maxValue As Integer = 0
-        Dim labelSizes(lines.Count - 1) As Size
-        Dim valueSizes(lines.Count - 1) As Size
-        For i As Integer = 0 To lines.Count - 1
-            labelSizes(i) = TextRenderer.MeasureText(g, lines(i).label, Me.Font, New Size(Integer.MaxValue, lineH), TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine)
-            valueSizes(i) = TextRenderer.MeasureText(g, lines(i).value, Me.Font, New Size(Integer.MaxValue, lineH), TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine)
-            If labelSizes(i).Width > maxLabel Then maxLabel = labelSizes(i).Width
-            If valueSizes(i).Width > maxValue Then maxValue = valueSizes(i).Width
-        Next
-        Dim innerGap As Integer = CInt(Math.Round(6 * s))
-        Dim panelW As Integer = pad * 2 + maxLabel + innerGap + maxValue
-        Dim panelH As Integer = pad * 2 + lineH * lines.Count
-
-        ' 决定左右侧显示
-        Dim showOnLeft As Boolean = (xAtSample - gap - panelW) >= graphRect.Left
-        Dim panelX As Single
-        If showOnLeft Then
-            panelX = xAtSample - gap - panelW
-        Else
-            panelX = xAtSample + gap
-            If panelX + panelW > graphRect.Right Then panelX = graphRect.Right - panelW
-        End If
-        If panelX < graphRect.Left Then panelX = graphRect.Left
-
-        Dim panelY As Single = graphRect.Top + (graphRect.Height - panelH) / 2.0F
-        If panelY < graphRect.Top Then panelY = graphRect.Top
-        If panelY + panelH > graphRect.Bottom Then panelY = graphRect.Bottom - panelH
-
-        Dim panelRect As New RectangleF(panelX, panelY, panelW, panelH)
-
-        ' 背景
-        If 悬停面板背景值.A > 0 Then
-            Using b As New SolidBrush(悬停面板背景值)
-                g.FillRectangle(b, panelRect)
-            End Using
-        End If
-        If 悬停面板边框值.A > 0 Then
-            Using p As New Pen(悬停面板边框值, 1)
-                g.DrawRectangle(p, panelRect.X, panelRect.Y, panelRect.Width - 1, panelRect.Height - 1)
-            End Using
-        End If
-
-        ' 文字：左侧显示→右对齐，标签在右、值在左；右侧显示→左对齐，标签在左、值在右
-        Dim fore As Color = If(悬停面板前景值.A > 0, 悬停面板前景值, Me.ForeColor)
-        For i As Integer = 0 To lines.Count - 1
-            Dim rowY As Integer = CInt(panelRect.Y) + pad + i * lineH
-            If showOnLeft Then
-                ' value 在左，label 在右（右对齐到面板右边）
-                Dim labelRect As New Rectangle(CInt(panelRect.Right) - pad - labelSizes(i).Width, rowY, labelSizes(i).Width, lineH)
-                Dim valueRect As New Rectangle(labelRect.Left - innerGap - valueSizes(i).Width, rowY, valueSizes(i).Width, lineH)
-                TextRenderer.DrawText(g, lines(i).value, Me.Font, valueRect, fore, Color.Transparent, TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine Or TextFormatFlags.Left)
-                TextRenderer.DrawText(g, lines(i).label, Me.Font, labelRect, fore, Color.Transparent, TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine Or TextFormatFlags.Left)
-            Else
-                ' label 在左，value 在右（左对齐，值贴近面板右侧）
-                Dim labelRect As New Rectangle(CInt(panelRect.X) + pad, rowY, labelSizes(i).Width, lineH)
-                Dim valueRect As New Rectangle(labelRect.Right + innerGap, rowY, maxValue, lineH)
-                TextRenderer.DrawText(g, lines(i).label, Me.Font, labelRect, fore, Color.Transparent, TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine Or TextFormatFlags.Left)
-                TextRenderer.DrawText(g, lines(i).value, Me.Font, valueRect, fore, Color.Transparent, TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine Or TextFormatFlags.Left)
-            End If
-        Next
-    End Sub
-
     Private Function 样本索引从X坐标(x As Single, rect As RectangleF) As Integer
         Dim cap As Integer = Math.Max(2, 记录长度值)
         Dim step_ As Single = rect.Width / CSng(cap - 1)
         If step_ <= 0 Then Return -1
         Dim n As Integer = _图表样本数
         If n < 1 Then Return -1
-        ' 样本 i 的 X：right - (n-1-i)*step
         Dim idx As Integer = CInt(Math.Round((x - (rect.Right - CSng(n - 1) * step_)) / step_))
         If idx < 0 Then idx = 0
         If idx > n - 1 Then idx = n - 1
         Return idx
-    End Function
-
-    Private Sub 绘制背景与边框(g As Graphics, rect As RectangleF, s As Single)
-        Dim r As Single = 圆角半径值 * s
-        If 核心背景颜色值.A > 0 Then
-            Using b As New SolidBrush(核心背景颜色值)
-                If r > 0 Then
-                    Using path = 构造圆角路径(rect, r)
-                        g.FillPath(b, path)
-                    End Using
-                Else
-                    g.FillRectangle(b, rect)
-                End If
-            End Using
-        End If
-    End Sub
-
-    Private Function 应用圆角裁剪(g As Graphics, rect As RectangleF, s As Single) As Region
-        If 圆角半径值 <= 0 Then Return Nothing
-        Dim old As Region = g.Clip
-        Using path = 构造圆角路径(rect, 圆角半径值 * s)
-            g.SetClip(path, System.Drawing.Drawing2D.CombineMode.Intersect)
-        End Using
-        Return old
-    End Function
-
-    Private Shared Sub 恢复裁剪(g As Graphics, old As Region)
-        If old Is Nothing Then Return
-        g.Clip = old
-        old.Dispose()
-    End Sub
-
-    Private Shared Function 构造圆角路径(rect As RectangleF, radius As Single) As GraphicsPath
-        Dim path As New GraphicsPath()
-        Dim d As Single = radius * 2
-        If d > rect.Width Then d = rect.Width
-        If d > rect.Height Then d = rect.Height
-        If d <= 0 Then
-            path.AddRectangle(rect)
-            Return path
-        End If
-        path.AddArc(rect.X, rect.Y, d, d, 180, 90)
-        path.AddArc(rect.Right - d, rect.Y, d, d, 270, 90)
-        path.AddArc(rect.Right - d, rect.Bottom - d, d, d, 0, 90)
-        path.AddArc(rect.X, rect.Bottom - d, d, d, 90, 90)
-        path.CloseFigure()
-        Return path
-    End Function
-
-    Private Sub 绘制文字(g As Graphics, inner As RectangleF, text As String, s As Single, align As ContentAlignment)
-        If String.IsNullOrEmpty(text) Then Return
-        Dim tp As Padding = 文字内边距值
-        Dim textRect As New Rectangle(
-            CInt(Math.Round(inner.X + tp.Left * s)),
-            CInt(Math.Round(inner.Y + tp.Top * s)),
-            Math.Max(0, CInt(Math.Round(inner.Width - (tp.Left + tp.Right) * s))),
-            Math.Max(0, CInt(Math.Round(inner.Height - (tp.Top + tp.Bottom) * s))))
-        If textRect.Width <= 0 OrElse textRect.Height <= 0 Then Return
-        TextRenderer.DrawText(g, text, Me.Font, textRect, Me.ForeColor, Color.Transparent,
-                              对齐转标志(align) Or TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine Or TextFormatFlags.EndEllipsis)
-    End Sub
-
-    Private Shared Function 对齐转标志(a As ContentAlignment) As TextFormatFlags
-        Dim h As TextFormatFlags = If(a = ContentAlignment.TopLeft OrElse a = ContentAlignment.MiddleLeft OrElse a = ContentAlignment.BottomLeft, TextFormatFlags.Left,
-                                   If(a = ContentAlignment.TopRight OrElse a = ContentAlignment.MiddleRight OrElse a = ContentAlignment.BottomRight, TextFormatFlags.Right,
-                                      TextFormatFlags.HorizontalCenter))
-        Dim v As TextFormatFlags = If(a = ContentAlignment.TopLeft OrElse a = ContentAlignment.TopCenter OrElse a = ContentAlignment.TopRight, TextFormatFlags.Top,
-                                   If(a = ContentAlignment.BottomLeft OrElse a = ContentAlignment.BottomCenter OrElse a = ContentAlignment.BottomRight, TextFormatFlags.Bottom,
-                                      TextFormatFlags.VerticalCenter))
-        Return h Or v
     End Function
 
     Private Function 构造槽位文字(slot As TextSlotPosition) As String
@@ -1315,13 +1022,6 @@ Public Class RamMonitor
     Protected Overrides Sub OnHandleDestroyed(e As EventArgs)
         采样定时器.Stop()
         采样定时器.Dispose()
-        Try : _ssaaCache.Dispose() : Catch : End Try
-        Try : _brushCache.Dispose() : Catch : End Try
-        Try : _textFormatCache.Dispose() : Catch : End Try
-        If _dcRT IsNot Nothing Then
-            Try : _dcRT.Dispose() : Catch : End Try
-            _dcRT = Nothing
-        End If
         MyBase.OnHandleDestroyed(e)
     End Sub
 

@@ -12,34 +12,60 @@ Public Class RoundDashBoard
         InitializeComponent()
     End Sub
 
-#Region "D2D 资源"
-    Private _dcRT As ID2D1DCRenderTarget
-    Private ReadOnly _ssaaCache As New D2DHelper.BitmapRTCache()
-    Private ReadOnly _textFormatCache As New D2DHelper.TextFormatCache()
+#Region "V2 背景穿透"
+    ' V2：D2D 资源由 WindowCompositor 按顶层 Form 共享管理，本控件不再持有 _dcRT / _ssaaCache / _textFormatCache。
 
-    Private Function GetOrCreateDCRenderTarget() As ID2D1DCRenderTarget
-        If _dcRT Is Nothing Then _dcRT = D2DHelper.CreateDCRenderTarget()
-        Return _dcRT
-    End Function
+    Private _backgroundSource As Control = Nothing
+    ''' <summary>
+    ''' 背景采样源（超容器背景映射）。指定后会跨越任意层级直接采样此控件的绘制内容作为透明背景；
+    ''' 为 Nothing 时不进行背景采样，按 BackColor 协议处理。
+    ''' </summary>
+    <Category("LakeUI"),
+     Description("背景采样源（超容器背景映射）。设置后将跨越任意层级直接采样此控件的绘制内容作为透明背景；为空时不进行背景采样。"),
+     DefaultValue(GetType(Control), Nothing), Browsable(True)>
+    Public Property BackgroundSource As Control
+        Get
+            Return _backgroundSource
+        End Get
+        Set(value As Control)
+            If _backgroundSource IsNot value Then
+                _backgroundSource = value
+                Me.Invalidate()
+            End If
+        End Set
+    End Property
 
-    Protected Overrides Sub OnHandleDestroyed(e As EventArgs)
-        Try : _ssaaCache.Dispose() : Catch : End Try
-        Try : _textFormatCache.Dispose() : Catch : End Try
-        If _dcRT IsNot Nothing Then
-            Try : _dcRT.Dispose() : Catch : End Try
-            _dcRT = Nothing
-        End If
-        MyBase.OnHandleDestroyed(e)
+    Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
+        ' V2 路径下 OnPaint 入口统一处理背景，基类填底冗余。
+        If _backgroundSource IsNot Nothing Then Return
+        MyBase.OnPaintBackground(e)
     End Sub
 #End Region
 
 #Region "绘制"
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
+        If Me.Width < 1 OrElse Me.Height < 1 Then Return
         Dim ssaa As Integer = Math.Max(1, CInt(超采样倍率))
         If Class1.GlobalSSAA <> Class1.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(Class1.GlobalSSAA))
 
-        Using scope = D2DHelper.BeginPaint(e, Me, GetOrCreateDCRenderTarget(), ssaa, _ssaaCache)
-            Dim gRT As ID2D1RenderTarget = scope.GraphicsRenderTarget
+        Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
+            If scope Is Nothing Then
+                MyBase.OnPaint(e)
+                Return
+            End If
+
+            ' 背景层：显式 BackgroundSource 优先；否则按 BackColor 协议处理。
+            If _backgroundSource IsNot Nothing Then
+                BackgroundPenetrationV2.PaintBackground(Me, scope, _backgroundSource)
+            ElseIf MyBase.BackColor.A > 0 AndAlso MyBase.BackColor.A < 255 Then
+                Dim bgLayer = scope.BackgroundLayer
+                Dim brush = scope.Compositor.BrushCache.[Get](bgLayer, MyBase.BackColor)
+                If brush IsNot Nothing Then
+                    bgLayer.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(0, 0, Me.Width, Me.Height)), brush)
+                End If
+            End If
+
+            Dim gRT As ID2D1RenderTarget = scope.GraphicsLayer
             Dim dcRT As ID2D1DCRenderTarget = scope.DCRenderTarget
 
             Dim 中心X As Single = 0
@@ -48,12 +74,13 @@ Public Class RoundDashBoard
             Dim hasContent As Boolean = 绘制图形内容_D2D(gRT, 中心X, 中心Y, progress)
 
             scope.FlushGraphics()
-            If hasContent Then 绘制中心文字_D2D(dcRT, 中心X, 中心Y, progress)
+            If hasContent Then 绘制中心文字_D2D(dcRT, 中心X, 中心Y, progress, scope.Compositor.TextFormatCache)
 
             If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
-                Using brush = dcRT.CreateSolidColorBrush(D2DHelper.ToColor4(禁用时遮罩颜色))
-                    dcRT.FillEllipse(New Ellipse(New Vector2(Me.Width / 2.0F, Me.Height / 2.0F), Math.Max(0, (Me.Width - 1) / 2.0F), Math.Max(0, (Me.Height - 1) / 2.0F)), brush)
-                End Using
+                Dim maskBrush = scope.Compositor.BrushCache.[Get](dcRT, 禁用时遮罩颜色)
+                If maskBrush IsNot Nothing Then
+                    dcRT.FillEllipse(New Ellipse(New Vector2(Me.Width / 2.0F, Me.Height / 2.0F), Math.Max(0, (Me.Width - 1) / 2.0F), Math.Max(0, (Me.Height - 1) / 2.0F)), maskBrush)
+                End If
             End If
         End Using
     End Sub
@@ -137,7 +164,7 @@ Public Class RoundDashBoard
         End Using
     End Sub
 
-    Private Sub 绘制中心文字_D2D(rt As ID2D1DCRenderTarget, 中心X As Single, 中心Y As Single, progress As Single)
+    Private Sub 绘制中心文字_D2D(rt As ID2D1DCRenderTarget, 中心X As Single, 中心Y As Single, progress As Single, textFormatCache As D2DHelper.TextFormatCache)
         If 中心文字模式 = CenterTextModeEnum.None Then Return
 
         Dim 文字内容 As String = 获取中心文字内容(progress)
@@ -147,7 +174,7 @@ Public Class RoundDashBoard
         Dim sizePx As Single = Me.Font.SizeInPoints * (96.0F / 72.0F) * s
         Dim weight As Vortice.DirectWrite.FontWeight = If(Me.Font.Bold, Vortice.DirectWrite.FontWeight.Bold, Vortice.DirectWrite.FontWeight.Normal)
         Dim style As Vortice.DirectWrite.FontStyle = If(Me.Font.Italic, Vortice.DirectWrite.FontStyle.Italic, Vortice.DirectWrite.FontStyle.Normal)
-        Dim fmt = _textFormatCache.Get(Me.Font.FontFamily.Name, weight, style, sizePx, TextAlignment.Center, ParagraphAlignment.Center, False)
+        Dim fmt = textFormatCache.Get(Me.Font.FontFamily.Name, weight, style, sizePx, TextAlignment.Center, ParagraphAlignment.Center, False)
         Dim textRect As New Vortice.Mathematics.Rect(中心X - Me.Width / 2.0F, 中心Y - Me.Height / 2.0F, Me.Width, Me.Height)
         Using brush = rt.CreateSolidColorBrush(D2DHelper.ToColor4(Me.ForeColor))
             rt.DrawText(文字内容, fmt, textRect, brush, DrawTextOptions.None)

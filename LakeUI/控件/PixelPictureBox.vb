@@ -430,23 +430,27 @@ Public Class PixelPictureBox
 
 #Region "内部状态"
 
-    Private _dcRT As D2D.ID2D1DCRenderTarget
-    Private ReadOnly _ssaaCache As New D2DHelper.BitmapRTCache()
-    Private ReadOnly _imageCache As New D2DHelper.D2DBitmapCache()
-
-    Private Function GetOrCreateDCRenderTarget() As D2D.ID2D1DCRenderTarget
-        If _dcRT Is Nothing Then _dcRT = D2DHelper.CreateDCRenderTarget()
-        Return _dcRT
-    End Function
+    Private _当前合成器 As WindowCompositor
+    Private _backgroundSource As Control = Nothing
 
     Private Sub DisposeD2DResources()
-        Try : _ssaaCache.Dispose() : Catch : End Try
-        Try : _imageCache.Dispose() : Catch : End Try
-        If _dcRT IsNot Nothing Then
-            Try : _dcRT.Dispose() : Catch : End Try
-            _dcRT = Nothing
-        End If
+        ' V2: D2D 资源由 WindowCompositor 统一接管，控件级 Dispose 不再需要释放
     End Sub
+
+    <Category("LakeUI"),
+     Description("背景采样源（V2 透明背景穿透）。设置后将跨越任意层级直接采样此控件的绘制内容作为透明背景。"),
+     DefaultValue(GetType(Control), Nothing), Browsable(True)>
+    Public Property BackgroundSource As Control
+        Get
+            Return _backgroundSource
+        End Get
+        Set(value As Control)
+            If _backgroundSource IsNot value Then
+                _backgroundSource = value
+                Me.Invalidate()
+            End If
+        End Set
+    End Property
 
     Private _zoomFactor As Single = 0
     Private _minZoom As Single = 1
@@ -752,19 +756,33 @@ Public Class PixelPictureBox
 
 #Region "绘制"
 
+    Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
+        If _backgroundSource IsNot Nothing Then Return
+        MyBase.OnPaintBackground(e)
+    End Sub
+
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
         If Me.Width < 1 OrElse Me.Height < 1 Then Return
 
         更新滚动区域()
 
-        Using scope = D2DHelper.BeginPaint(e, Me, GetOrCreateDCRenderTarget(), 1, _ssaaCache)
-            Dim rt As D2D.ID2D1RenderTarget = scope.GraphicsRenderTarget
-            绘制背景与边框_D2D(rt)
-            绘制图片_D2D(rt)
-            绘制框选_D2D(rt)
-            绘制垂直滚动条_D2D(rt)
-            绘制水平滚动条_D2D(rt)
-            scope.FlushGraphics()
+        Using scope = D2DHelperV2.BeginPaint(e, Me, 1)
+            If scope Is Nothing Then Return
+            _当前合成器 = scope.Compositor
+            Try
+                If _backgroundSource IsNot Nothing Then
+                    BackgroundPenetrationV2.PaintBackground(Me, scope, _backgroundSource)
+                End If
+                Dim rt As D2D.ID2D1RenderTarget = scope.GraphicsLayer
+                绘制背景与边框_D2D(rt)
+                绘制图片_D2D(rt)
+                绘制框选_D2D(rt)
+                绘制垂直滚动条_D2D(rt)
+                绘制水平滚动条_D2D(rt)
+                scope.FlushGraphics()
+            Finally
+                _当前合成器 = Nothing
+            End Try
         End Using
     End Sub
 
@@ -805,7 +823,7 @@ Public Class PixelPictureBox
         Dim destRect As New RectangleF(destX, destY, exactW, exactH)
 
         Dim clipRect As New Rectangle(bw, bw, viewport.Width, viewport.Height)
-        Dim bmp = _imageCache.GetBitmap(rt, _image)
+        Dim bmp = _当前合成器.GetBitmapCache(_image).GetBitmap(rt, _image)
         If bmp Is Nothing Then Return
         rt.PushAxisAlignedClip(New Vortice.RawRectF(clipRect.Left, clipRect.Top, clipRect.Right, clipRect.Bottom), D2D.AntialiasMode.Aliased)
         Try

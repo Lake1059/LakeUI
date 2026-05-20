@@ -83,6 +83,7 @@ Partial Class Form_ExcellentProgressBar
         ModernPanel1.Margin = New Padding(2)
         ModernPanel1.Name = "ModernPanel1"
         ModernPanel1.Padding = New Padding(20)
+        ModernPanel1.ScrollBarMode = ModernPanel.ScrollMode.None
         ModernPanel1.Size = New Size(771, 604)
         ModernPanel1.TabIndex = 45
         ' 
@@ -168,6 +169,7 @@ Partial Class Form_ExcellentProgressBar
         ExcellentProgressBar5.Padding = New Padding(3)
         ExcellentProgressBar5.Size = New Size(288, 25)
         ExcellentProgressBar5.TabIndex = 2
+        ExcellentProgressBar5.TextPadding = New Padding(0)
         ExcellentProgressBar5.TrackColor = Color.Empty
         ExcellentProgressBar5.Value = 100
         ' 
@@ -205,6 +207,7 @@ Partial Class Form_ExcellentProgressBar
         ExcellentProgressBar4.Padding = New Padding(3)
         ExcellentProgressBar4.Size = New Size(288, 25)
         ExcellentProgressBar4.TabIndex = 2
+        ExcellentProgressBar4.TextPadding = New Padding(0)
         ExcellentProgressBar4.TrackColor = Color.Empty
         ExcellentProgressBar4.Value = 100
         ExcellentProgressBar4.Value2 = 50
@@ -240,6 +243,7 @@ Partial Class Form_ExcellentProgressBar
         ExcellentProgressBar3.Name = "ExcellentProgressBar3"
         ExcellentProgressBar3.Size = New Size(120, 30)
         ExcellentProgressBar3.TabIndex = 2
+        ExcellentProgressBar3.TextPadding = New Padding(0)
         ExcellentProgressBar3.TrackColor = Color.Empty
         ExcellentProgressBar3.Value = 100
         ' 
@@ -275,6 +279,7 @@ Partial Class Form_ExcellentProgressBar
         ExcellentProgressBar2.Padding = New Padding(3)
         ExcellentProgressBar2.Size = New Size(120, 25)
         ExcellentProgressBar2.TabIndex = 1
+        ExcellentProgressBar2.TextPadding = New Padding(0)
         ExcellentProgressBar2.TrackColor = Color.Empty
         ExcellentProgressBar2.Value = 100
         ' 
@@ -309,6 +314,7 @@ Partial Class Form_ExcellentProgressBar
         ExcellentProgressBar1.Padding = New Padding(3)
         ExcellentProgressBar1.Size = New Size(120, 25)
         ExcellentProgressBar1.TabIndex = 0
+        ExcellentProgressBar1.TextPadding = New Padding(0)
         ExcellentProgressBar1.TrackColor = Color.Empty
         ExcellentProgressBar1.Value = 50
         ' 
@@ -341,7 +347,7 @@ Partial Class Form_ExcellentProgressBar
         ' 
         ' ModernButton4
         ' 
-        ModernButton4.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton4.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton4.BorderRadius = 10
         ModernButton4.BorderSize = 0
         ModernButton4.Dock = DockStyle.Left
@@ -367,7 +373,7 @@ Partial Class Form_ExcellentProgressBar
         ' 
         ' ModernButton3
         ' 
-        ModernButton3.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton3.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton3.BorderRadius = 10
         ModernButton3.BorderSize = 0
         ModernButton3.Dock = DockStyle.Left
@@ -393,7 +399,7 @@ Partial Class Form_ExcellentProgressBar
         ' 
         ' ModernButton2
         ' 
-        ModernButton2.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton2.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton2.BorderRadius = 10
         ModernButton2.BorderSize = 0
         ModernButton2.Dock = DockStyle.Left
@@ -418,7 +424,7 @@ Partial Class Form_ExcellentProgressBar
         ' 
         ' ModernButton1
         ' 
-        ModernButton1.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton1.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton1.BorderRadius = 10
         ModernButton1.BorderSize = 0
         ModernButton1.Dock = DockStyle.Left

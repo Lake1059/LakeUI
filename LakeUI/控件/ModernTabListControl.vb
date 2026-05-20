@@ -141,14 +141,20 @@ Public Class ModernTabListControl
         End Sub
         Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
             If BackColor.A < 255 Then
-                ' 透明背景源显式指向 ModernTabListControl 的父容器（祖父级），
-                ' 而不是直接父级（ModernTabListControl 自身），否则会把标签栏等
-                ' 控件自身的绘制内容画进内容区域。
-                ' 通过 PaintBackgroundFor 走共享缓存：祖父级在祖先链上，由其内部
-                ' 自动按 Left/Top 累加得到正确偏移，无需手算。
-                Dim tabListCtrl As Control = Me.Parent
-                Dim grandParent As Control = If(tabListCtrl IsNot Nothing, tabListCtrl.Parent, Nothing)
-                TransparentBackgroundCache.PaintBackgroundFor(Me, e.Graphics, grandParent)
+                ' V2 透明背景穿透：source 选择 ModernTabListControl 的 BackgroundSource，
+                ' 若未指定再回退到祖父级控件（兼容旧行为）。
+                Dim tabListCtrl As ModernTabListControl = TryCast(Me.Parent, ModernTabListControl)
+                Dim source As Control = Nothing
+                If tabListCtrl IsNot Nothing Then
+                    source = If(tabListCtrl.BackgroundSource, tabListCtrl.Parent)
+                End If
+                If source IsNot Nothing Then
+                    Using scope = D2DHelperV2.BeginPaint(e, Me, 1)
+                        If scope IsNot Nothing Then
+                            BackgroundPenetrationV2.PaintBackground(Me, scope, source)
+                        End If
+                    End Using
+                End If
                 If BackColor.A > 0 Then
                     Using brush As New SolidBrush(BackColor)
                         e.Graphics.FillRectangle(brush, Me.ClientRectangle)
@@ -177,10 +183,9 @@ Public Class ModernTabListControl
     Private ReadOnly _标签栏滚动条 As New ScrollBarRenderer()
 
     ' D2D 资源
-    Private _dcRT As ID2D1DCRenderTarget
-    Private ReadOnly _ssaaCache As New D2DHelper.BitmapRTCache()
-    Private ReadOnly _stripBackImageCache As New D2DHelper.D2DBitmapCache()
-    Private ReadOnly _iconCaches As New Dictionary(Of ModernTabPage, D2DHelper.D2DBitmapCache)
+    ' V2：DC RT / SSAA / 位图缓存 / brush 缓存均由 WindowCompositor（Form 级共享）托管；
+    ' 本控件不再持有任何长生命周期 D2D 字段。OnPaint 期间通过 _当前合成器 共享 compositor。
+    Private _当前合成器 As WindowCompositor
 
     ' --- 渲染层缓存（统一 1 秒 TTL）---
     Private Const 缓存有效期Ms As Integer = 1000
@@ -201,7 +206,8 @@ Public Class ModernTabListControl
     Private _布局已生成 As Boolean = False
     Private _布局时刻Ms As Long = 0
 
-    ' DirectWrite TextFormat 缓存
+    ' DirectWrite TextFormat 缓存（V2：使用 compositor 共享 TextFormatCache；
+    ' 仍保留本地条目记录省略号 trimming sign 以便释放）
     Private Class TextFormatEntry
         Public Format As IDWriteTextFormat
         Public Ellipsis As IDWriteInlineObject
@@ -210,32 +216,15 @@ Public Class ModernTabListControl
     Private ReadOnly _textFormatCache As New Dictionary(Of String, TextFormatEntry)
     Private _textFormatLastSweepMs As Long = 0
 
-    Private Function GetOrCreateDCRenderTarget() As ID2D1DCRenderTarget
-        If _dcRT Is Nothing Then _dcRT = D2DHelper.CreateDCRenderTarget()
-        Return _dcRT
-    End Function
-
     Private Function 获取项图标缓存(item As ModernTabPage) As D2DHelper.D2DBitmapCache
-        Dim cache As D2DHelper.D2DBitmapCache = Nothing
-        If Not _iconCaches.TryGetValue(item, cache) Then
-            cache = New D2DHelper.D2DBitmapCache()
-            _iconCaches(item) = cache
-        End If
-        Return cache
+        If item Is Nothing OrElse item.TabIcon Is Nothing Then Return Nothing
+        If _当前合成器 Is Nothing Then Return Nothing
+        Return _当前合成器.GetBitmapCache(item.TabIcon)
     End Function
 
     Protected Overrides Sub OnHandleDestroyed(e As EventArgs)
         Try : 停止帧驱动() : Catch : End Try
         Try : _动画助手.Dispose() : Catch : End Try
-        Try : _ssaaCache.Dispose() : Catch : End Try
-        Try : _stripBackImageCache.Dispose() : Catch : End Try
-        Try
-            For Each kv In _iconCaches
-                Try : kv.Value.Dispose() : Catch : End Try
-            Next
-            _iconCaches.Clear()
-        Catch
-        End Try
         If _moreIndicatorFont IsNot Nothing Then
             Try : _moreIndicatorFont.Dispose() : Catch : End Try
             _moreIndicatorFont = Nothing
@@ -248,10 +237,6 @@ Public Class ModernTabListControl
             _textFormatCache.Clear()
         Catch
         End Try
-        If _dcRT IsNot Nothing Then
-            Try : _dcRT.Dispose() : Catch : End Try
-            _dcRT = Nothing
-        End If
         MyBase.OnHandleDestroyed(e)
     End Sub
     Private _搜索框控件 As Control = Nothing
@@ -446,11 +431,11 @@ Public Class ModernTabListControl
         Return 标签栏背景颜色.A < 255 OrElse 内容区域背景颜色.A < 255
     End Function
 
-    Private Sub 绘制父容器背景(g As Graphics)
-        If Parent Is Nothing Then Return
-        ' 走共享缓存：以 Parent 为采样源，TTL 内多控件共享同一张底图，
-        ' 不会像 InvokePaint(Parent) 那样把整棵父级子控件树每帧重画。
-        TransparentBackgroundCache.PaintBackgroundFor(Me, g, Parent)
+    Private Sub 绘制父容器背景_V2(scope As PaintScopeV2)
+        ' V2 背景穿透：优先使用显式 BackgroundSource，否则保留原 Parent 行为以兼容旧用法。
+        Dim source As Control = If(_backgroundSource, Parent)
+        If source Is Nothing Then Return
+        BackgroundPenetrationV2.PaintBackground(Me, scope, source)
     End Sub
 
     Private Function 获取内容面板有效背景色() As Color
@@ -464,32 +449,35 @@ Public Class ModernTabListControl
         确保Owner()
         If Me.Width <= 0 OrElse Me.Height <= 0 Then Return
 
-        ' 透明背景：先在 GDI Graphics 上画父级背景，再交给 D2D 绘制其余内容
-        If 是否需要透明背景() Then
-            e.Graphics.SetClip(Me.ClientRectangle)
-            绘制父容器背景(e.Graphics)
-            e.Graphics.ResetClip()
-        End If
-
         Dim ssaa As Integer = Math.Max(1, CInt(超采样倍率))
         If Class1.GlobalSSAA <> Class1.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(Class1.GlobalSSAA))
 
-        Using scope = D2DHelper.BeginPaint(e, Me, GetOrCreateDCRenderTarget(), ssaa, _ssaaCache)
-            Dim gRT As ID2D1RenderTarget = scope.GraphicsRenderTarget
-            Dim dcRT As ID2D1DCRenderTarget = scope.DCRenderTarget
+        Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
+            If scope Is Nothing Then Return  ' 设计期或无 Form 上下文
+            _当前合成器 = scope.Compositor
+            Try
+                ' V2 背景穿透：在 BackgroundLayer（DC RT，1×）画底图
+                If 是否需要透明背景() Then
+                    绘制父容器背景_V2(scope)
+                End If
+                Dim gRT As ID2D1RenderTarget = scope.GraphicsLayer
+                Dim dcRT As ID2D1DCRenderTarget = scope.DCRenderTarget
 
-            ' 1) 图形层（享受 SSAA）
-            绘制图形内容_D2D(gRT)
+                ' 1) 图形层（享受 SSAA）
+                绘制图形内容_D2D(gRT)
 
-            ' 2) 把图形层回采到 DC，然后在 DC RT 上绘制文字（DirectWrite 子像素质量）
-            scope.FlushGraphics()
-            绘制文本与指示器符号_D2D(dcRT)
+                ' 2) 把图形层回采到 DC，然后在 DC RT 上绘制文字（DirectWrite 子像素质量）
+                scope.FlushGraphics()
+                绘制文本与指示器符号_D2D(dcRT)
 
-            ' 3) 滚动条直接画在 DC RT 上（无需 SSAA）
-            If Not _标签栏滚动条.TrackRect.IsEmpty Then
-                Dim sbContainerW As Integer = If(标签页位置 = TabSideEnum.Left, CInt(标签栏宽度 * DpiScale()), Me.Width)
-                _标签栏滚动条.Draw_D2D(dcRT, sbContainerW, Me.Height, 0, 0, CInt(滚动条宽度 * DpiScale()), 滚动条轨道颜色, 滚动条滑块颜色, 滚动条悬停颜色)
-            End If
+                ' 3) 滚动条直接画在 DC RT 上（无需 SSAA）
+                If Not _标签栏滚动条.TrackRect.IsEmpty Then
+                    Dim sbContainerW As Integer = If(标签页位置 = TabSideEnum.Left, CInt(标签栏宽度 * DpiScale()), Me.Width)
+                    _标签栏滚动条.Draw_D2D(dcRT, sbContainerW, Me.Height, 0, 0, CInt(滚动条宽度 * DpiScale()), 滚动条轨道颜色, 滚动条滑块颜色, 滚动条悬停颜色)
+                End If
+            Finally
+                _当前合成器 = Nothing
+            End Try
         End Using
     End Sub
 
@@ -582,7 +570,8 @@ Public Class ModernTabListControl
         Dim ch As Integer = tabStripRect.Height
         If cw < 1 OrElse ch < 1 Then Return
 
-        Dim bmp = _stripBackImageCache.GetBitmap(rt, img)
+        Dim bmpCache = _当前合成器?.GetBitmapCache(img)
+        Dim bmp = bmpCache?.GetBitmap(rt, img)
         If bmp Is Nothing Then Return
 
         Dim ratioW As Single = CSng(cw) / img.Width
@@ -682,7 +671,7 @@ Public Class ModernTabListControl
         Dim iconX As Single = bounds.X + 标签页文本左边距 * s
         Dim iconY As Single = bounds.Y + (bounds.Height - scaledIconSize) / 2.0F
         Dim cache = 获取项图标缓存(item)
-        Dim bmp = cache.GetBitmap(rt, item.TabIcon)
+        Dim bmp = cache?.GetBitmap(rt, item.TabIcon)
         If bmp IsNot Nothing Then
             rt.DrawBitmap(bmp, New Vortice.Mathematics.Rect(iconX, iconY, scaledIconSize, scaledIconSize), 1.0F, BitmapInterpolationMode.Linear, Nothing)
         End If
@@ -1503,6 +1492,24 @@ Public Class ModernTabListControl
         End Get
         Set(value As Class1.SuperSamplingScaleEnum)
             SetValue(超采样倍率, value)
+        End Set
+    End Property
+
+    Private _backgroundSource As Control = Nothing
+    <Category("LakeUI"),
+     Description("背景采样源（V2 透明背景穿透）。设置后将跨越任意层级直接采样此控件的绘制内容作为透明背景；为空时按 BackColor 协议处理。"),
+     DefaultValue(GetType(Control), Nothing), Browsable(True)>
+    Public Property BackgroundSource As Control
+        Get
+            Return _backgroundSource
+        End Get
+        Set(value As Control)
+            If _backgroundSource IsNot value Then
+                _backgroundSource = value
+                ' 内容面板上的透明背景来自同一 source。
+                If _内容面板 IsNot Nothing Then _内容面板.Invalidate(True)
+                Me.Invalidate()
+            End If
         End Set
     End Property
 

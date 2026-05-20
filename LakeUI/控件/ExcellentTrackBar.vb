@@ -6,25 +6,24 @@ Imports DW = Vortice.DirectWrite
 <DefaultEvent("ValueChanged")>
 Public Class ExcellentTrackBar
 
-#Region "D2D 资源"
-    Private _dcRT As D2D.ID2D1DCRenderTarget
-    Private ReadOnly _ssaaCache As New D2DHelper.BitmapRTCache()
-    Private ReadOnly _textFormatCache As New D2DHelper.TextFormatCache()
+#Region "V2 透明背景穿透"
+    Private _当前合成器 As WindowCompositor
+    Private _backgroundSource As Control = Nothing
 
-    Private Function GetOrCreateDCRenderTarget() As D2D.ID2D1DCRenderTarget
-        If _dcRT Is Nothing Then _dcRT = D2DHelper.CreateDCRenderTarget()
-        Return _dcRT
-    End Function
-
-    Protected Overrides Sub OnHandleDestroyed(e As EventArgs)
-        Try : _ssaaCache.Dispose() : Catch : End Try
-        Try : _textFormatCache.Dispose() : Catch : End Try
-        If _dcRT IsNot Nothing Then
-            Try : _dcRT.Dispose() : Catch : End Try
-            _dcRT = Nothing
-        End If
-        MyBase.OnHandleDestroyed(e)
-    End Sub
+    <Category("LakeUI"),
+     Description("背景采样源（V2 透明背景穿透）。设置后将跨越任意层级直接采样此控件的绘制内容作为透明背景。"),
+     DefaultValue(GetType(Control), Nothing), Browsable(True)>
+    Public Property BackgroundSource As Control
+        Get
+            Return _backgroundSource
+        End Get
+        Set(value As Control)
+            If _backgroundSource IsNot value Then
+                _backgroundSource = value
+                Me.Invalidate()
+            End If
+        End Set
+    End Property
 #End Region
 
     Public Event ValueChanged As EventHandler
@@ -744,25 +743,40 @@ Public Class ExcellentTrackBar
 #End Region
 
 #Region "绘制"
+    Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
+        If _backgroundSource IsNot Nothing Then Return
+        MyBase.OnPaintBackground(e)
+    End Sub
+
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
         Dim thumbRect As RectangleF = 计算滑块矩形()
         Dim ssaa As Integer = Math.Max(1, CInt(超采样倍率))
         If Class1.GlobalSSAA <> Class1.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(Class1.GlobalSSAA))
 
-        Using scope = D2DHelper.BeginPaint(e, Me, GetOrCreateDCRenderTarget(), ssaa, _ssaaCache)
-            Dim gRT As D2D.ID2D1RenderTarget = scope.GraphicsRenderTarget
-            Dim dcRT As D2D.ID2D1DCRenderTarget = scope.DCRenderTarget
+        Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
+            If scope Is Nothing Then Return
+            _当前合成器 = scope.Compositor
+            Try
+                If _backgroundSource IsNot Nothing Then
+                    BackgroundPenetrationV2.PaintBackground(Me, scope, _backgroundSource)
+                End If
 
-            绘制图形内容_D2D(gRT, thumbRect)
-            scope.FlushGraphics()
-            绘制标签文字_D2D(dcRT)
-            绘制滑块文字_D2D(dcRT, thumbRect)
+                Dim gRT As D2D.ID2D1RenderTarget = scope.GraphicsLayer
+                Dim dcRT As D2D.ID2D1DCRenderTarget = scope.DCRenderTarget
 
-            If Not Enabled Then
-                Using brush = dcRT.CreateSolidColorBrush(D2DHelper.ToColor4(Color.FromArgb(128, BackColor)))
-                    dcRT.FillRectangle(New Vortice.Mathematics.Rect(0, 0, Me.Width, Me.Height), brush)
-                End Using
-            End If
+                绘制图形内容_D2D(gRT, thumbRect)
+                scope.FlushGraphics()
+                绘制标签文字_D2D(dcRT)
+                绘制滑块文字_D2D(dcRT, thumbRect)
+
+                If Not Enabled Then
+                    Using brush = dcRT.CreateSolidColorBrush(D2DHelper.ToColor4(Color.FromArgb(128, BackColor)))
+                        dcRT.FillRectangle(New Vortice.Mathematics.Rect(0, 0, Me.Width, Me.Height), brush)
+                    End Using
+                End If
+            Finally
+                _当前合成器 = Nothing
+            End Try
         End Using
     End Sub
 
@@ -891,7 +905,7 @@ Public Class ExcellentTrackBar
         Dim sizePx As Single = font.SizeInPoints * (96.0F / 72.0F) * s
         Dim weight As DW.FontWeight = If(font.Bold, DW.FontWeight.Bold, DW.FontWeight.Normal)
         Dim style As DW.FontStyle = If(font.Italic, DW.FontStyle.Italic, DW.FontStyle.Normal)
-        Return _textFormatCache.Get(font.FontFamily.Name, weight, style, sizePx, align, paraAlign, trimChar)
+        Return _当前合成器.TextFormatCache.Get(font.FontFamily.Name, weight, style, sizePx, align, paraAlign, trimChar)
     End Function
 
     Private Sub 绘制标签文字_D2D(rt As D2D.ID2D1DCRenderTarget)

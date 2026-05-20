@@ -5,45 +5,22 @@ Imports Vortice.DirectWrite
 
 <DefaultEvent("Click")>
 Public Class ModernButton
-#Region "D2D 资源"
-    ''' <summary>控件级 DC RenderTarget。与窗口 DC 强相关，无法跨控件共享，由控件持有。</summary>
-    Private _dcRT As ID2D1DCRenderTarget
-    ''' <summary>跨帧复用的 SSAA 离屏 BitmapRT，按 (Width, Height, ssaa) 命中。</summary>
-    Private ReadOnly _ssaaCache As New D2DHelper.BitmapRTCache()
-    ''' <summary>背景图缓存。</summary>
-    Private ReadOnly _backImageCache As New D2DHelper.D2DBitmapCache()
-    ''' <summary>图标缓存。</summary>
-    Private ReadOnly _iconCache As New D2DHelper.D2DBitmapCache()
-
-    Private Function GetOrCreateDCRenderTarget() As ID2D1DCRenderTarget
-        If _dcRT Is Nothing Then _dcRT = D2DHelper.CreateDCRenderTarget()
-        Return _dcRT
-    End Function
-
-    Protected Overrides Sub OnHandleDestroyed(e As EventArgs)
-        Try : _ssaaCache.Dispose() : Catch : End Try
-        Try : _backImageCache.Dispose() : Catch : End Try
-        Try : _iconCache.Dispose() : Catch : End Try
-        If _dcRT IsNot Nothing Then
-            Try : _dcRT.Dispose() : Catch : End Try
-            _dcRT = Nothing
-        End If
-        MyBase.OnHandleDestroyed(e)
-    End Sub
+#Region "D2D 资源（V2 占位）"
+    ' V2：所有 D2D 资源迁移到 WindowCompositor（Form 级共享）；ModernButton 不再持有任何 D2D 字段。
+    ' 旧的 _dcRT / _ssaaCache / _backImageCache / _iconCache 已移除。
 #End Region
 
 #Region "绘制"
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
-        ' 新契约：BackColor 透明 / 含 ARGB 或启用圆角时一律走 TransparentBackgroundCache 采样底图，
-        ' 不让基类做默认透明合成或纯色填底。详见 TransparentBackgroundCache 顶部的统一图层契约。
-        If 边框圆角半径 > 0 OrElse MyBase.BackColor.A < 255 Then Return
+        ' V2 契约：
+        '   • BackgroundSource 已设置 → 跳过 BackColor 整个逻辑，背景由 OnPaint 内 BackgroundPenetrationV2 绘制；
+        '   • 否则一律走 .NET 自身透明逻辑（半透明 BackColor 由基类合成父级背景，不透明色由基类填底）。
+        If _backgroundSource IsNot Nothing Then Return
         MyBase.OnPaintBackground(e)
     End Sub
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
         Dim 是否有圆角 As Boolean = 边框圆角半径 > 0
-        ' 透明背景采样统一走 D2D 路径（在 BitmapRT 上贴底图）；GDI 路径贴的底图会被
-        ' dcRT.EndDraw 的覆盖式 BitBlt（AlphaMode.Ignore）将圆角外未绘区域以黑像素覆盖。
 
         Dim 极限矩形区域 As New RectangleF(0, 0, Me.Width, Me.Height)
         If 边框宽度 > 0 Then
@@ -59,18 +36,28 @@ Public Class ModernButton
         Dim ssaa As Integer = Math.Max(1, CInt(超采样倍率))
         If Class1.GlobalSSAA <> Class1.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(Class1.GlobalSSAA))
 
-        Using scope = D2DHelper.BeginPaint(e, Me, GetOrCreateDCRenderTarget(), ssaa, _ssaaCache)
-            Dim gRT As ID2D1RenderTarget = scope.GraphicsRenderTarget
+        Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
+            If scope Is Nothing Then Return  ' 设计期或无 Form 上下文
+            Dim compositor = scope.Compositor
             Dim dcRT As ID2D1DCRenderTarget = scope.DCRenderTarget
 
-            ' 1) 透明背景贴底图：直接在图形 RT（SSAA BitmapRT 或 dcRT）上画，
-            '    让整面像素都有有效内容，避免圆角外被黑像素覆盖。
-            If 是否有圆角 OrElse MyBase.BackColor.A < 255 Then
-                TransparentBackgroundCache.PaintBackgroundFor_D2D(Me, gRT, _backgroundSource)
+            ' 1) 背景层（1× 直绘）：
+            '    • 显式 BackgroundSource → 绘制穿透底图（跳过 BackColor）；
+            '    • 否则若 MyBase.BackColor 半透明 → 基类 OnPaintBackground 已把父级背景合成到 DC，
+            '      这里再叠加 BackColor 作为半透明遮罩（"颜色覆盖在上面"）。
+            If _backgroundSource IsNot Nothing Then
+                BackgroundPenetrationV2.PaintBackground(Me, scope, _backgroundSource)
+            ElseIf MyBase.BackColor.A > 0 AndAlso MyBase.BackColor.A < 255 Then
+                Dim bgLayer = scope.BackgroundLayer
+                Dim brush = compositor.BrushCache.[Get](bgLayer, MyBase.BackColor)
+                If brush IsNot Nothing Then
+                    bgLayer.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(0, 0, Me.Width, Me.Height)), brush)
+                End If
             End If
 
             ' 2) 图形层（享受 SSAA）
-            绘制图形内容_D2D(gRT, 是否有圆角, 极限矩形区域, 内容矩形区域)
+            Dim gRT As ID2D1RenderTarget = scope.GraphicsLayer
+            绘制图形内容_D2D(gRT, compositor, 是否有圆角, 极限矩形区域, 内容矩形区域)
 
             ' 3) 把图形层（如果是 BitmapRT）回采到 DC，然后在 DC 上画文字（保留 ClearType 子像素）
             scope.FlushGraphics()
@@ -94,7 +81,7 @@ Public Class ModernButton
         End If
     End Sub
 
-    Private Sub 绘制图形内容_D2D(rt As ID2D1RenderTarget, 是否有圆角 As Boolean, 极限矩形区域 As RectangleF, 内容矩形区域 As RectangleF)
+    Private Sub 绘制图形内容_D2D(rt As ID2D1RenderTarget, compositor As WindowCompositor, 是否有圆角 As Boolean, 极限矩形区域 As RectangleF, 内容矩形区域 As RectangleF)
         Dim 背景颜色缓存值 As Color
         Dim 渐变颜色缓存值 As Color
         Dim 边框颜色缓存值 As Color
@@ -122,8 +109,8 @@ Public Class ModernButton
                 If 背景颜色缓存值.A > 0 OrElse 渐变颜色缓存值.A > 0 Then
                     RectangleRenderer.绘制圆角背景_D2D(rt, geo, 极限矩形区域, 背景颜色缓存值, 渐变颜色缓存值, 渐变方向)
                 End If
-                绘制背景图片_D2D(rt, 极限矩形区域, geo)
-                绘制长按遮罩_D2D(rt, 极限矩形区域, geo)
+                绘制背景图片_D2D(rt, compositor, 极限矩形区域, geo)
+                绘制长按遮罩_D2D(rt, compositor, 极限矩形区域, geo)
                 If 边框颜色缓存值.A > 0 AndAlso 边框宽度 > 0 Then
                     RectangleRenderer.绘制圆角边框_D2D(rt, geo, 边框颜色缓存值, 边框宽度 * s)
                 End If
@@ -135,22 +122,23 @@ Public Class ModernButton
             If 背景颜色缓存值.A > 0 OrElse 渐变颜色缓存值.A > 0 Then
                 RectangleRenderer.绘制矩形背景_D2D(rt, 极限矩形区域, 背景颜色缓存值, 渐变颜色缓存值, 渐变方向)
             End If
-            绘制背景图片_D2D(rt, 极限矩形区域, Nothing)
-            绘制长按遮罩_D2D(rt, 极限矩形区域, Nothing)
+            绘制背景图片_D2D(rt, compositor, 极限矩形区域, Nothing)
+            绘制长按遮罩_D2D(rt, compositor, 极限矩形区域, Nothing)
             If 边框颜色缓存值.A > 0 AndAlso 边框宽度 > 0 Then
                 RectangleRenderer.绘制矩形边框_D2D(rt, 极限矩形区域, 边框颜色缓存值, 边框宽度 * s)
             End If
         End If
 
-        绘制图标_D2D(rt, 内容矩形区域)
+        绘制图标_D2D(rt, compositor, 内容矩形区域)
     End Sub
 
-    Private Sub 绘制背景图片_D2D(rt As ID2D1RenderTarget, area As RectangleF, geo As ID2D1Geometry)
+    Private Sub 绘制背景图片_D2D(rt As ID2D1RenderTarget, compositor As WindowCompositor, area As RectangleF, geo As ID2D1Geometry)
         If 背景图片 Is Nothing Then Return
         Dim hasMask As Boolean = geo IsNot Nothing
         If hasMask Then D2DHelper.PushGeometryClip(rt, geo, area)
         Try
-            Dim bmp = _backImageCache.GetBitmap(rt, 背景图片)
+            Dim cache = compositor.GetBitmapCache(背景图片)
+            Dim bmp = cache?.GetBitmap(rt, 背景图片)
             If bmp IsNot Nothing Then
                 rt.DrawBitmap(bmp, D2DHelper.ToD2DRect(area), 1.0F, BitmapInterpolationMode.Linear, Nothing)
             End If
@@ -159,7 +147,7 @@ Public Class ModernButton
         End Try
     End Sub
 
-    Private Sub 绘制长按遮罩_D2D(rt As ID2D1RenderTarget, area As RectangleF, geo As ID2D1Geometry)
+    Private Sub 绘制长按遮罩_D2D(rt As ID2D1RenderTarget, compositor As WindowCompositor, area As RectangleF, geo As ID2D1Geometry)
         If Not 长按确认已启用 Then Return
         Dim progress As Single = 长按动画助手.Progress
         If progress < 0.001F Then Return
@@ -173,20 +161,22 @@ Public Class ModernButton
         Dim hasMask As Boolean = geo IsNot Nothing
         If hasMask Then D2DHelper.PushGeometryClip(rt, geo, area)
         Try
-            Using brush = rt.CreateSolidColorBrush(D2DHelper.ToColor4(长按遮罩颜色))
+            Dim brush = compositor.BrushCache.[Get](rt, 长按遮罩颜色)
+            If brush IsNot Nothing Then
                 rt.FillRectangle(D2DHelper.ToD2DRect(maskRect), brush)
-            End Using
+            End If
         Finally
             If hasMask Then rt.PopLayer()
         End Try
     End Sub
 
-    Private Sub 绘制图标_D2D(rt As ID2D1RenderTarget, 内容矩形区域 As RectangleF)
+    Private Sub 绘制图标_D2D(rt As ID2D1RenderTarget, compositor As WindowCompositor, 内容矩形区域 As RectangleF)
         If 图标 Is Nothing Then Return
         Dim iconSize As Single = 计算图标占用的水平宽度(内容矩形区域)
         Dim iconX As Single = 内容矩形区域.X + 图标边距 * DpiScale()
         Dim iconY As Single = 内容矩形区域.Y + (内容矩形区域.Height - iconSize) / 2.0F
-        Dim bmp = _iconCache.GetBitmap(rt, 图标)
+        Dim cache = compositor.GetBitmapCache(图标)
+        Dim bmp = cache?.GetBitmap(rt, 图标)
         If bmp IsNot Nothing Then
             rt.DrawBitmap(bmp, New Vortice.Mathematics.Rect(iconX, iconY, iconSize, iconSize), 1.0F, BitmapInterpolationMode.Linear, Nothing)
         End If

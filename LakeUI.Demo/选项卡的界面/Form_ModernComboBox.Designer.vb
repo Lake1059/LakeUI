@@ -91,6 +91,7 @@ Partial Class Form_ModernComboBox
         ' 
         ModernComboBox4.ArrowSize = 13
         ModernComboBox4.BackColor2 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernComboBox4.BackgroundSource = ModernPanel1
         ModernComboBox4.BorderSize = 2
         ModernComboBox4.CaretColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
         ModernComboBox4.Dock = DockStyle.Left
@@ -147,6 +148,7 @@ Partial Class Form_ModernComboBox
         ' 
         ModernComboBox3.ArrowSize = 13
         ModernComboBox3.BackColor2 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernComboBox3.BackgroundSource = ModernPanel1
         ModernComboBox3.BorderSize = 2
         ModernComboBox3.CaretColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
         ModernComboBox3.Dock = DockStyle.Left
@@ -203,6 +205,7 @@ Partial Class Form_ModernComboBox
         ' 
         ModernComboBox2.ArrowSize = 13
         ModernComboBox2.BackColor2 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernComboBox2.BackgroundSource = ModernPanel1
         ModernComboBox2.BorderRadius = 10
         ModernComboBox2.BorderSize = 2
         ModernComboBox2.CaretColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
@@ -260,6 +263,7 @@ Partial Class Form_ModernComboBox
         ' 
         ModernComboBox1.ArrowSize = 13
         ModernComboBox1.BackColor2 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernComboBox1.BackgroundSource = ModernPanel1
         ModernComboBox1.BorderRadius = 10
         ModernComboBox1.BorderSize = 2
         ModernComboBox1.CaretColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))

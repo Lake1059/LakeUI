@@ -1,14 +1,46 @@
 Imports System.Drawing.Drawing2D
 Imports System.Drawing.Imaging
+Imports System.Numerics
 Imports System.Runtime.InteropServices
 Imports System.Threading
 Imports System.Threading.Tasks
+Imports Vortice.Direct2D1
 
 ''' <summary>
 ''' 毛玻璃 / 亚克力效果的核心渲染器。
 ''' 按需抓取桌面 DC（窗口背后区域）→ 下采样 → 多次水平 / 垂直 box blur →
 ''' 缓存为 <see cref="Bitmap"/>，供 <see cref="ThisIsYourWindow"/> 在 Paint 时铺满整个客户区。
 ''' 通过 <see cref="SetWindowDisplayAffinity"/>（Win10 19041+）确保自身不被拍到。
+'''
+''' === 线程模型 ===
+''' • UI 线程：构造、<see cref="ApplyParameters"/>、<see cref="SetSource"/>、<see cref="RequestFrame"/>、
+'''   <see cref="DrawTo(Graphics, Rectangle)"/>、<see cref="DrawTo(ID2D1RenderTarget, Rectangle)"/>、
+'''   <see cref="DrawNoise(Graphics, Rectangle, Byte)"/>、<see cref="DrawNoise(ID2D1RenderTarget, Rectangle, Byte)"/>、
+'''   <see cref="Dispose"/>。
+''' • ThreadPool 工作项：<see cref="DrainPendingFrames"/> + <see cref="ProcessFrame"/>，永不直接访问
+'''   <c>_host</c> 的 Handle / IsHandleCreated / IsDisposed（WinForms 会触发跨线程检查），仅使用构造时
+'''   缓存的 <c>_hostHandle</c>；最终回 UI 线程靠 <c>_host.BeginInvoke</c>。
+''' • 双缓冲交换：UI 读 <c>_currentFrame</c>，worker 写 <c>_spareFrame</c>，<c>_frameLock</c> 内交换。
+''' • Pending 请求：UI 线程在 <c>_pendingLock</c> 内一次性写齐 4 个坐标 + commit 标志；worker
+'''   在同一锁内做原子快照，避免坐标分量撕裂；commit 走 sticky 语义（已挂的 true 不会被 false 覆盖）。
+''' • 帧版本：每次 worker 交换 _currentFrame 时 <c>Interlocked.Increment(_frameVersion)</c>，
+'''   UI 端 D2D 上传缓存据此判断是否要重传。
+'''
+''' === 关于 D2D 替代 ===
+''' • 抓桌面 DC：无 D2D 等价物，仍然必须 <c>BitBlt</c>（DXGI Desktop Duplication 不在本项目权衡范围内）。
+''' • box blur：理论上可改为 <c>ID2D1Effect</c> + <c>CLSID_D2D1GaussianBlur</c>，大半径下 GPU 显著快于
+'''   CPU。但项目 V2 现用的是 <see cref="ID2D1DCRenderTarget"/>（D2D 1.0），effect 管线要求
+'''   <c>ID2D1DeviceContext</c>（D2D 1.1+），并需把回读 CPU 的 average 颜色路径整体迁移；改动面大、
+'''   横跨 <see cref="D2DHelperV2"/>，作为独立议题，暂不在本类内迁移。
+''' • <see cref="DrawTo(ID2D1RenderTarget, Rectangle)"/> / <see cref="DrawNoise(ID2D1RenderTarget, Rectangle, Byte)"/>：
+'''   已迁移到 D2D。<see cref="ThisIsYourWindow"/> 的标题栏 V2 scope 内优先调用 D2D 重载，
+'''   非 V2 路径（或 V2 fallback）仍保留 GDI 重载。
+''' • <see cref="ComputeAverage"/>：D2D 读回 CPU 反而比当前 LockBits 慢，不迁移。
+'''
+''' === D2D 资源缓存 ===
+''' • <c>_frameD2DBitmap</c>：按 (RT, frameVersion) 失效；帧变 / RT 变才重传。
+''' • <c>_noiseD2DBitmap</c> + <c>_noiseD2DBrush</c>：源噪点 128×128 终身不变，brush 按 RT 缓存；
+'''   opacity 与 tile scale 每帧便宜地通过 brush.Opacity / brush.Transform 设置，不会引起重建。
 ''' </summary>
 Friend NotInheritable Class BackdropRenderer
     Implements IDisposable
@@ -70,17 +102,31 @@ Friend NotInheritable Class BackdropRenderer
     Private _noiseScale As Single = 1.0F
 
     ' ── 待处理请求（最新覆盖最旧，永不堆积）──
+    ' 全部字段写读均需在 _pendingLock 内：
+    '   • UI 线程一次 RequestFrame 写 4 个坐标 + commit + has 标记。
+    '   • Worker 线程在 DrainPendingFrames 内一次性快照 + 清零。
+    ' 否则可能出现 UI 写到一半 worker 就读 → 边界撕裂（X 是新值，Y 还是旧值）。
+    Private ReadOnly _pendingLock As New Object()
     Private _pendingX As Integer
     Private _pendingY As Integer
     Private _pendingW As Integer
     Private _pendingH As Integer
-    Private _pendingCommitAverage As Integer
+    Private _pendingCommitAverage As Integer   ' sticky：一旦置 1，未消费前不会被覆盖回 0
     Private _hasPending As Integer
 
     ' ── 当前帧（双缓冲：UI 读 _currentFrame，Worker 写 _spareFrame，结束后在 _frameLock 内交换）──
     Private ReadOnly _frameLock As New Object()
     Private _currentFrame As Bitmap
     Private _spareFrame As Bitmap
+    ' 每次 worker 在 _frameLock 内交换 _currentFrame 时自增。UI 端 D2D 上传缓存据此判断是否要重传。
+    Private _frameVersion As Integer
+
+    ' ── 当前帧的 D2D 上传缓存（UI 线程独占；按 (RT, frameVersion) 失效）──
+    ' 路径：CPU 生成的 _currentFrame (Format32bppPArgb) → ID2D1Bitmap，
+    ' 在 DrawTo(rt, target) 命中时仅当 frameVersion 变化或 RT 变化才重传。
+    Private _frameD2DBitmap As ID2D1Bitmap
+    Private _frameD2DOwnerRT As WeakReference
+    Private _frameD2DUploadedVersion As Integer = -1
 
     ' ── 抓屏临时位图复用（仅 Auto 模式使用，尺寸 = 窗口逻辑尺寸）──
     Private _capturedBitmap As Bitmap
@@ -95,10 +141,19 @@ Friend NotInheritable Class BackdropRenderer
 
     ' ── 噪点 ──
     Private _noiseBitmap As Bitmap
-    ' ── 噪点平铺笔刷缓存（按 (opacity, tile) 失效）──
+    ' ── 噪点平铺笔刷缓存（GDI 路径，按 (opacity, tile) 失效）──
     Private _noiseBrush As TextureBrush
     Private _noiseBrushOpacity As Byte = 0
     Private _noiseBrushTile As Integer = 0
+
+    ' ── 噪点的 D2D 上传缓存（UI 线程独占；按 RT 失效）──
+    ' 源 _noiseBitmap 终身不变，因此只要 RT 不变就长期复用。
+    ' brush 的 Wrap 模式 + ScaleTransform(tile) + Opacity 都在 DrawNoise 时按需更新，
+    ' 不需要为不同 (opacity, tile) 维持多份 brush。
+    Private _noiseD2DBitmap As ID2D1Bitmap
+    Private _noiseD2DBrush As ID2D1BitmapBrush
+    Private _noiseD2DOwnerRT As WeakReference
+    Private _noiseD2DBrushTile As Integer = 0
 
 #End Region
 
@@ -153,16 +208,22 @@ Friend NotInheritable Class BackdropRenderer
         End Get
     End Property
 
-    ''' <summary>请求一帧抓屏 + 模糊。多次调用只保留最新一次。</summary>
-    ''' <param name="commitAverage">是否将本帧平均色发布为"已稳定"——仅在首帧 / 拖动结束帧使用。</param>
+    ''' <summary>请求一帧抓屏 + 模糊。多次调用只保留最新一组 bounds；commit 标志按"或"合并不会丢。</summary>
+    ''' <param name="formBounds">屏幕坐标系下的窗体外接矩形（用于 BitBlt 抓桌面 DC 的源 rect）。</param>
+    ''' <param name="commitAverage">
+    ''' 是否将本帧平均色发布为"已稳定"——仅在首帧 / 拖动结束帧使用。
+    ''' Sticky 语义：若已有未消费的 commit=true 请求，再来的 commit=false 不会清掉它。
+    ''' </param>
     Public Sub RequestFrame(formBounds As Rectangle, commitAverage As Boolean)
         If Volatile.Read(_disposed) <> 0 Then Return
-        _pendingX = formBounds.X
-        _pendingY = formBounds.Y
-        _pendingW = formBounds.Width
-        _pendingH = formBounds.Height
-        Volatile.Write(_pendingCommitAverage, If(commitAverage, 1, 0))
-        Volatile.Write(_hasPending, 1)
+        SyncLock _pendingLock
+            _pendingX = formBounds.X
+            _pendingY = formBounds.Y
+            _pendingW = formBounds.Width
+            _pendingH = formBounds.Height
+            If commitAverage Then _pendingCommitAverage = 1
+            _hasPending = 1
+        End SyncLock
         ScheduleWorker()
     End Sub
 
@@ -176,13 +237,24 @@ Friend NotInheritable Class BackdropRenderer
         End SyncLock
     End Sub
 
+    ''' <summary>
+    ''' Worker 主循环：原子快照 pending 状态后处理一帧；处理完循环检查是否又有新 pending。
+    ''' 关键不变量：bounds 的 4 个分量 + commitAverage + hasPending 必须在 _pendingLock 内
+    ''' 同时读出并清零，避免与 UI 线程的多字段写入交错产生坐标撕裂。
+    ''' </summary>
     Private Sub DrainPendingFrames(state As Object)
         Try
             Do While Volatile.Read(_disposed) = 0
-                If Interlocked.Exchange(_hasPending, 0) = 0 Then Exit Do
+                Dim bounds As Rectangle
+                Dim commitAvg As Boolean
+                SyncLock _pendingLock
+                    If _hasPending = 0 Then Exit Do
+                    bounds = New Rectangle(_pendingX, _pendingY, _pendingW, _pendingH)
+                    commitAvg = (_pendingCommitAverage <> 0)
+                    _pendingCommitAverage = 0
+                    _hasPending = 0
+                End SyncLock
                 Try
-                    Dim bounds As New Rectangle(_pendingX, _pendingY, _pendingW, _pendingH)
-                    Dim commitAvg As Boolean = (Interlocked.Exchange(_pendingCommitAverage, 0) <> 0)
                     ProcessFrame(bounds, commitAvg)
                 Catch
                     ' 后台工作项绝不能抛出
@@ -190,6 +262,8 @@ Friend NotInheritable Class BackdropRenderer
             Loop
         Finally
             Volatile.Write(_workerScheduled, 0)
+            ' 退出循环到上面 _workerScheduled=0 之间，UI 线程可能又投递了新 pending；
+            ' 不需要锁，_hasPending 这里的脏读最差只会触发一次额外的 ScheduleWorker（幂等）。
             If Volatile.Read(_disposed) = 0 AndAlso Volatile.Read(_hasPending) <> 0 Then
                 ScheduleWorker()
             Else
@@ -220,7 +294,7 @@ Friend NotInheritable Class BackdropRenderer
             Try
                 Using gs As Graphics = Graphics.FromImage(small)
                     gs.CompositingMode = CompositingMode.SourceCopy
-                    gs.InterpolationMode = InterpolationMode.HighQualityBilinear
+                    gs.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBilinear
                     gs.PixelOffsetMode = PixelOffsetMode.HighQuality
                     Dim sw As Integer, sh As Integer
                     SyncLock src
@@ -271,7 +345,7 @@ Friend NotInheritable Class BackdropRenderer
                 End Using
                 Using gs As Graphics = Graphics.FromImage(small)
                     gs.CompositingMode = CompositingMode.SourceCopy
-                    gs.InterpolationMode = InterpolationMode.HighQualityBilinear
+                    gs.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBilinear
                     gs.PixelOffsetMode = PixelOffsetMode.HighQuality
                     gs.DrawImage(captured, New Rectangle(0, 0, dw, dh))
                 End Using
@@ -300,11 +374,13 @@ Friend NotInheritable Class BackdropRenderer
             publishedNow = True
         End If
 
-        ' 5. 交换前后帧：旧的 _currentFrame 退役为下次的 _spareFrame，避免分配
+        ' 5. 交换前后帧：旧的 _currentFrame 退役为下次的 _spareFrame，避免分配。
+        '    同时递增 _frameVersion，让 UI 侧 D2D 上传缓存知道需要重传。
         SyncLock _frameLock
             Dim previousCurrent As Bitmap = _currentFrame
             _currentFrame = small
             _spareFrame = previousCurrent
+            Interlocked.Increment(_frameVersion)
         End SyncLock
 
         ' 6. 触发 UI 重绘
@@ -591,12 +667,45 @@ Friend NotInheritable Class BackdropRenderer
             Dim oldInterp = g.InterpolationMode
             Dim oldOffset = g.PixelOffsetMode
             ' 源已模糊，普通 Bilinear 即可，HQ 在大窗口下显著更慢
-            g.InterpolationMode = InterpolationMode.Bilinear
+            g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.Bilinear
             g.PixelOffsetMode = PixelOffsetMode.Half
             g.DrawImage(_currentFrame, target)
             g.InterpolationMode = oldInterp
             g.PixelOffsetMode = oldOffset
         End SyncLock
+    End Sub
+
+    ''' <summary>
+    ''' D2D 重载：把当前缓存帧上传成 <see cref="ID2D1Bitmap"/> 并绘制到目标矩形。
+    ''' 比 GDI 路径少一次完整的 BLT/采样：D2D 直接走 GPU 双线性 + Premultiplied Alpha 合成。
+    ''' </summary>
+    ''' <remarks>
+    ''' 缓存策略：按 (RT, frameVersion) 失效。
+    ''' • 帧未变 + RT 未变 → 复用已上传的 <see cref="ID2D1Bitmap"/>。
+    ''' • 帧变化 → 重新上传（同 RT）。
+    ''' • RT 变化（DC RT 被外部替换 / compositor 重建）→ 整个上传重做。
+    ''' 上传期间持 <c>_frameLock</c>，确保 worker 不会同时交换 _currentFrame。
+    ''' </remarks>
+    Public Sub DrawTo(rt As ID2D1RenderTarget, target As Rectangle)
+        If rt Is Nothing OrElse target.Width <= 0 OrElse target.Height <= 0 Then Return
+        Dim d2dBmp As ID2D1Bitmap
+        SyncLock _frameLock
+            If _currentFrame Is Nothing Then Return
+            Dim curVer As Integer = Volatile.Read(_frameVersion)
+            Dim ownerAlive As Boolean = _frameD2DOwnerRT IsNot Nothing AndAlso ReferenceEquals(_frameD2DOwnerRT.Target, rt)
+            If _frameD2DBitmap Is Nothing OrElse Not ownerAlive OrElse _frameD2DUploadedVersion <> curVer Then
+                If _frameD2DBitmap IsNot Nothing Then
+                    Try : _frameD2DBitmap.Dispose() : Catch : End Try
+                    _frameD2DBitmap = Nothing
+                End If
+                _frameD2DBitmap = D2DHelper.CreateBitmapFromGdi(rt, _currentFrame)
+                _frameD2DOwnerRT = New WeakReference(rt)
+                _frameD2DUploadedVersion = curVer
+            End If
+            d2dBmp = _frameD2DBitmap
+        End SyncLock
+        If d2dBmp Is Nothing Then Return
+        rt.DrawBitmap(d2dBmp, D2DHelper.ToD2DRect(target), 1.0F, BitmapInterpolationMode.Linear, Nothing)
     End Sub
 
     ''' <summary>
@@ -621,6 +730,34 @@ Friend NotInheritable Class BackdropRenderer
         Finally
             brush.ResetTransform()
         End Try
+    End Sub
+
+    ''' <summary>
+    ''' D2D 重载：用 <see cref="ID2D1BitmapBrush"/> 平铺噪点。
+    ''' 相比 GDI <see cref="TextureBrush"/>，省去 CPU 端的 ColorMatrix 合成与 Tile 采样，
+    ''' opacity 通过 brush.Opacity 直接给 GPU，scale 通过 brush.Transform 给 GPU。
+    ''' </summary>
+    ''' <remarks>
+    ''' 缓存策略：
+    ''' • <see cref="_noiseD2DBitmap"/> 按 RT 缓存，源 <see cref="_noiseBitmap"/> 终身不变 → 长期复用。
+    ''' • <see cref="_noiseD2DBrush"/> 同 RT 内复用，每帧仅按需更新 Opacity 与 Transform(scale)。
+    ''' </remarks>
+    Public Sub DrawNoise(rt As ID2D1RenderTarget, target As Rectangle, opacity As Byte)
+        If rt Is Nothing OrElse opacity = 0 OrElse target.Width <= 0 OrElse target.Height <= 0 Then Return
+        EnsureNoise()
+        If _noiseBitmap Is Nothing Then Return
+
+        Dim tile As Integer = Math.Max(1, CInt(_noiseBitmap.Width * _noiseScale))
+        Dim brush As ID2D1BitmapBrush = AcquireNoiseD2DBrush(rt, tile)
+        If brush Is Nothing Then Return
+
+        ' Opacity 走 brush.Opacity，每帧便宜地改一下；不需要为不同 opacity 维持多份 brush。
+        brush.Opacity = opacity / 255.0F
+        ' brush 默认在世界坐标 (0,0) 起铺；用 Translate 把 tile 锚定到 target.X/Y。
+        Dim t = Matrix3x2.CreateScale(tile / CSng(_noiseBitmap.Width)) *
+                Matrix3x2.CreateTranslation(target.X, target.Y)
+        brush.Transform = t
+        rt.FillRectangle(D2DHelper.ToD2DRect(target), brush)
     End Sub
 
     ''' <summary>取得（或重建）匹配 (opacity, tile) 的噪点平铺 TextureBrush。</summary>
@@ -651,6 +788,47 @@ Friend NotInheritable Class BackdropRenderer
         _noiseBrushOpacity = opacity
         _noiseBrushTile = tile
         Return _noiseBrush
+    End Function
+
+    ''' <summary>
+    ''' 取得（或重建）当前 RT 下用于平铺噪点的 <see cref="ID2D1BitmapBrush"/>。
+    ''' RT 变了或位图缓存还没建好，会重新上传 + 重新创建 brush。
+    ''' </summary>
+    Private Function AcquireNoiseD2DBrush(rt As ID2D1RenderTarget, tile As Integer) As ID2D1BitmapBrush
+        Dim ownerAlive As Boolean = _noiseD2DOwnerRT IsNot Nothing AndAlso ReferenceEquals(_noiseD2DOwnerRT.Target, rt)
+        If Not ownerAlive Then
+            ' RT 变了：旧 brush / bitmap 都来自旧 RT，必须释放。
+            If _noiseD2DBrush IsNot Nothing Then
+                Try : _noiseD2DBrush.Dispose() : Catch : End Try
+                _noiseD2DBrush = Nothing
+            End If
+            If _noiseD2DBitmap IsNot Nothing Then
+                Try : _noiseD2DBitmap.Dispose() : Catch : End Try
+                _noiseD2DBitmap = Nothing
+            End If
+            _noiseD2DOwnerRT = Nothing
+        End If
+
+        If _noiseD2DBitmap Is Nothing Then
+            _noiseD2DBitmap = D2DHelper.CreateBitmapFromGdi(rt, _noiseBitmap)
+            If _noiseD2DBitmap Is Nothing Then Return Nothing
+            _noiseD2DOwnerRT = New WeakReference(rt)
+        End If
+
+        If _noiseD2DBrush Is Nothing Then
+            Try
+                Dim bbp As New BitmapBrushProperties() With {
+                    .ExtendModeX = ExtendMode.Wrap,
+                    .ExtendModeY = ExtendMode.Wrap,
+                    .InterpolationMode = BitmapInterpolationMode.Linear
+                }
+                _noiseD2DBrush = rt.CreateBitmapBrush(_noiseD2DBitmap, bbp)
+                _noiseD2DBrushTile = tile
+            Catch
+                Return Nothing
+            End Try
+        End If
+        Return _noiseD2DBrush
     End Function
 
     Private Sub EnsureNoise()
@@ -716,6 +894,13 @@ Friend NotInheritable Class BackdropRenderer
             _currentFrame = Nothing
             _spareFrame?.Dispose()
             _spareFrame = Nothing
+            ' D2D 缓存与 _currentFrame 共享 _frameLock，统一在这里释放。
+            If _frameD2DBitmap IsNot Nothing Then
+                Try : _frameD2DBitmap.Dispose() : Catch : End Try
+                _frameD2DBitmap = Nothing
+            End If
+            _frameD2DOwnerRT = Nothing
+            _frameD2DUploadedVersion = -1
         End SyncLock
         _capturedBitmap?.Dispose()
         _capturedBitmap = Nothing
@@ -723,6 +908,15 @@ Friend NotInheritable Class BackdropRenderer
         _noiseBitmap = Nothing
         _noiseBrush?.Dispose()
         _noiseBrush = Nothing
+        If _noiseD2DBrush IsNot Nothing Then
+            Try : _noiseD2DBrush.Dispose() : Catch : End Try
+            _noiseD2DBrush = Nothing
+        End If
+        If _noiseD2DBitmap IsNot Nothing Then
+            Try : _noiseD2DBitmap.Dispose() : Catch : End Try
+            _noiseD2DBitmap = Nothing
+        End If
+        _noiseD2DOwnerRT = Nothing
         _blurBufferA = Nothing
         _blurBufferB = Nothing
         _workerIdle.Dispose()

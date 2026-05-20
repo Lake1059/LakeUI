@@ -58,7 +58,7 @@ Partial Class Form_AgentRoom
         ' AgentRoom1
         ' 
         AgentRoom1.AssistantBubbleForeColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
-        AgentRoom1.BackColor = Color.FromArgb(CByte(30), CByte(30), CByte(30))
+        AgentRoom1.BackColor = Color.FromArgb(CByte(40), CByte(0), CByte(0), CByte(0))
         AgentRoom1.CardForeColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
         AgentRoom1.Dock = DockStyle.Fill
         AgentRoom1.Location = New Point(20, 170)
@@ -98,7 +98,7 @@ Partial Class Form_AgentRoom
         ' 
         ' ModernButton4
         ' 
-        ModernButton4.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton4.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton4.BorderRadius = 10
         ModernButton4.BorderSize = 0
         ModernButton4.Dock = DockStyle.Left
@@ -124,7 +124,7 @@ Partial Class Form_AgentRoom
         ' 
         ' ModernButton3
         ' 
-        ModernButton3.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton3.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton3.BorderRadius = 10
         ModernButton3.BorderSize = 0
         ModernButton3.Dock = DockStyle.Left
@@ -149,7 +149,7 @@ Partial Class Form_AgentRoom
         ' 
         ' ModernButton2
         ' 
-        ModernButton2.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton2.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton2.BorderRadius = 10
         ModernButton2.BorderSize = 0
         ModernButton2.Dock = DockStyle.Left
@@ -160,7 +160,7 @@ Partial Class Form_AgentRoom
         ModernButton2.Size = New Size(160, 50)
         ModernButton2.SubText = "技术偏好"
         ModernButton2.TabIndex = 2
-        ModernButton2.Text = "人体工学科技"
+        ModernButton2.Text = "Agent 科技"
         ModernButton2.TextAlign = ModernButton.TextAlignEnum.Left
         ' 
         ' Label2
@@ -174,7 +174,7 @@ Partial Class Form_AgentRoom
         ' 
         ' ModernButton1
         ' 
-        ModernButton1.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton1.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton1.BorderRadius = 10
         ModernButton1.BorderSize = 0
         ModernButton1.Dock = DockStyle.Left
@@ -208,7 +208,7 @@ Partial Class Form_AgentRoom
         ModernTextBox1.BorderSize = 0
         ModernTextBox1.CaretColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
         ModernTextBox1.Location = New Point(10, 271)
-        ModernTextBox1.Margin = New Padding(2, 2, 2, 2)
+        ModernTextBox1.Margin = New Padding(2)
         ModernTextBox1.MultiLine = True
         ModernTextBox1.Name = "ModernTextBox1"
         ModernTextBox1.Padding = New Padding(13, 0, 13, 0)

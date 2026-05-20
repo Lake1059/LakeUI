@@ -12,25 +12,6 @@ Public Class ModernCheckBox
 
     Public Event CheckedChanged As EventHandler
 
-#Region "D2D 资源"
-    Private _dcRT As ID2D1DCRenderTarget
-    Private ReadOnly _ssaaCache As New D2DHelper.BitmapRTCache()
-
-    Private Function GetOrCreateDCRenderTarget() As ID2D1DCRenderTarget
-        If _dcRT Is Nothing Then _dcRT = D2DHelper.CreateDCRenderTarget()
-        Return _dcRT
-    End Function
-
-    Protected Overrides Sub OnHandleDestroyed(e As EventArgs)
-        Try : _ssaaCache.Dispose() : Catch : End Try
-        If _dcRT IsNot Nothing Then
-            Try : _dcRT.Dispose() : Catch : End Try
-            _dcRT = Nothing
-        End If
-        MyBase.OnHandleDestroyed(e)
-    End Sub
-#End Region
-
 #Region "枚举"
     Public Enum CheckModeEnum
         CheckBox
@@ -46,8 +27,12 @@ Public Class ModernCheckBox
 
 #Region "绘制"
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
-        ' 与 ModernButton 一致：透明/半透明背景由 D2D 路径自行采样底图，避免 GDI 默认填底导致黑边
-        If MyBase.BackColor.A < 255 Then Return
+        ' V2 契约（与 ModernButton 一致）：
+        '   • BackgroundSource 已设置 → 跳过基类填底，背景由 OnPaint 内显式穿透绘制；
+        '   • 否则一律走 .NET 自身透明逻辑——半透明 BackColor 由基类把父级背景合成到 HDC，
+        '     不透明色由基类填底。BindDC 之后 DC RT 初始像素即正确底图，
+        '     避免"HDC 残留 → 乱照父窗体其它区域"的故障。
+        If _backgroundSource IsNot Nothing Then Return
         MyBase.OnPaintBackground(e)
     End Sub
 
@@ -55,23 +40,24 @@ Public Class ModernCheckBox
         Dim ssaa As Integer = Math.Max(1, CInt(超采样倍率))
         If Class1.GlobalSSAA <> Class1.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(Class1.GlobalSSAA))
 
-        Using scope = D2DHelper.BeginPaint(e, Me, GetOrCreateDCRenderTarget(), ssaa, _ssaaCache)
-            Dim gRT As ID2D1RenderTarget = scope.GraphicsRenderTarget
+        Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
+            If scope Is Nothing Then Return  ' 设计期 / 无 Form
+            Dim gRT As ID2D1RenderTarget = scope.GraphicsLayer
             Dim dcRT As ID2D1DCRenderTarget = scope.DCRenderTarget
 
-            ' 1) 透明背景采样底图
-            If MyBase.BackColor.A < 255 Then
-                TransparentBackgroundCache.PaintBackgroundFor_D2D(Me, gRT, _backgroundSource)
+            ' 1) 背景层（V2 显式透明穿透）
+            If _backgroundSource IsNot Nothing Then
+                BackgroundPenetrationV2.PaintBackground(Me, scope, _backgroundSource)
             End If
 
             ' 2) 图形层（享受 SSAA）
             绘制图形内容_D2D(gRT)
 
-            ' 3) 把图形层（如果是 BitmapRT）回采到 DC，然后在 DC 上画文字（保留 ClearType 子像素）
+            ' 3) 文字层（DC RT 子像素抗锯齿）
             scope.FlushGraphics()
             绘制文本_D2D(dcRT)
 
-            ' 4) 禁用遮罩（直接覆盖整个 DC，不需要 SSAA）
+            ' 4) 禁用遮罩
             If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
                 RectangleRenderer.绘制矩形背景_D2D(dcRT, New RectangleF(0, 0, Me.Width, Me.Height), 禁用时遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Vertical)
             End If

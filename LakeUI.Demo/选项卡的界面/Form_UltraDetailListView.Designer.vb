@@ -102,7 +102,6 @@ Partial Class Form_UltraDetailListView
         ' UltraDetailListView1
         ' 
         UltraDetailListView1.AllowDragReorder = True
-        UltraDetailListView1.BackColor = Color.Transparent
         UltraDetailListView1.BackgroundColor = Color.FromArgb(CByte(40), CByte(0), CByte(0), CByte(0))
         UltraDetailListView1.BottomLinesSpacing = 10
         ListColumn1.AllowLabelEdit = True

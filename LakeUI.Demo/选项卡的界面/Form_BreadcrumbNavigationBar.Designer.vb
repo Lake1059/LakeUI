@@ -1,5 +1,5 @@
 ﻿<Global.Microsoft.VisualBasic.CompilerServices.DesignerGenerated()> _
-Partial Class Form_ModernTextBox
+Partial Class Form_BreadcrumbNavigationBar
     Inherits System.Windows.Forms.Form
 
     'Form 重写 Dispose，以清理组件列表。
@@ -22,14 +22,14 @@ Partial Class Form_ModernTextBox
     '不要使用代码编辑器修改它。
     <System.Diagnostics.DebuggerStepThrough()> _
     Private Sub InitializeComponent()
+        Dim BreadcrumbItem1 As LakeUI.BreadcrumbNavigationBar.BreadcrumbItem = New BreadcrumbNavigationBar.BreadcrumbItem()
+        Dim BreadcrumbItem2 As LakeUI.BreadcrumbNavigationBar.BreadcrumbItem = New BreadcrumbNavigationBar.BreadcrumbItem()
+        Dim BreadcrumbItem3 As LakeUI.BreadcrumbNavigationBar.BreadcrumbItem = New BreadcrumbNavigationBar.BreadcrumbItem()
+        Dim BreadcrumbItem4 As LakeUI.BreadcrumbNavigationBar.BreadcrumbItem = New BreadcrumbNavigationBar.BreadcrumbItem()
+        Dim BreadcrumbItem5 As LakeUI.BreadcrumbNavigationBar.BreadcrumbItem = New BreadcrumbNavigationBar.BreadcrumbItem()
         ModernPanel1 = New ModernPanel()
-        Panel3 = New Panel()
-        ModernTextBox2 = New ModernTextBox()
-        Label5 = New Label()
-        Panel2 = New Panel()
-        ModernTextBox1 = New ModernTextBox()
-        Label6 = New Label()
-        Label7 = New Label()
+        BreadcrumbNavigationBar1 = New BreadcrumbNavigationBar()
+        HtmlColorLabel1 = New HtmlColorLabel()
         Panel1 = New Panel()
         ModernButton4 = New ModernButton()
         Label4 = New Label()
@@ -40,19 +40,14 @@ Partial Class Form_ModernTextBox
         ModernButton1 = New ModernButton()
         Label1 = New Label()
         ModernPanel1.SuspendLayout()
-        Panel3.SuspendLayout()
-        Panel2.SuspendLayout()
         Panel1.SuspendLayout()
         SuspendLayout()
         ' 
         ' ModernPanel1
         ' 
         ModernPanel1.BorderSize = 0
-        ModernPanel1.Controls.Add(Panel3)
-        ModernPanel1.Controls.Add(Label5)
-        ModernPanel1.Controls.Add(Panel2)
-        ModernPanel1.Controls.Add(Label6)
-        ModernPanel1.Controls.Add(Label7)
+        ModernPanel1.Controls.Add(BreadcrumbNavigationBar1)
+        ModernPanel1.Controls.Add(HtmlColorLabel1)
         ModernPanel1.Controls.Add(Panel1)
         ModernPanel1.Controls.Add(Label1)
         ModernPanel1.Dock = DockStyle.Fill
@@ -61,103 +56,40 @@ Partial Class Form_ModernTextBox
         ModernPanel1.Name = "ModernPanel1"
         ModernPanel1.Padding = New Padding(20)
         ModernPanel1.ScrollBarMode = ModernPanel.ScrollMode.None
-        ModernPanel1.Size = New Size(753, 604)
-        ModernPanel1.TabIndex = 35
+        ModernPanel1.Size = New Size(812, 669)
+        ModernPanel1.TabIndex = 38
         ' 
-        ' Panel3
+        ' BreadcrumbNavigationBar1
         ' 
-        Panel3.Controls.Add(ModernTextBox2)
-        Panel3.Dock = DockStyle.Fill
-        Panel3.Location = New Point(20, 315)
-        Panel3.Name = "Panel3"
-        Panel3.Size = New Size(713, 269)
-        Panel3.TabIndex = 42
+        BreadcrumbNavigationBar1.BackColor = Color.FromArgb(CByte(40), CByte(0), CByte(0), CByte(0))
+        BreadcrumbNavigationBar1.Dock = DockStyle.Top
+        BreadcrumbItem1.Text = "面包"
+        BreadcrumbItem2.Text = "面包"
+        BreadcrumbItem3.Text = "面包"
+        BreadcrumbItem4.Text = "面包"
+        BreadcrumbItem5.Text = "还没找到路是吧"
+        BreadcrumbNavigationBar1.Items.Add(BreadcrumbItem1)
+        BreadcrumbNavigationBar1.Items.Add(BreadcrumbItem2)
+        BreadcrumbNavigationBar1.Items.Add(BreadcrumbItem3)
+        BreadcrumbNavigationBar1.Items.Add(BreadcrumbItem4)
+        BreadcrumbNavigationBar1.Items.Add(BreadcrumbItem5)
+        BreadcrumbNavigationBar1.Location = New Point(20, 191)
+        BreadcrumbNavigationBar1.Name = "BreadcrumbNavigationBar1"
+        BreadcrumbNavigationBar1.Size = New Size(772, 50)
+        BreadcrumbNavigationBar1.TabIndex = 37
         ' 
-        ' ModernTextBox2
+        ' HtmlColorLabel1
         ' 
-        ModernTextBox2.BackColor1 = Color.FromArgb(CByte(120), CByte(0), CByte(0), CByte(0))
-        ModernTextBox2.BackgroundSource = ModernPanel1
-        ModernTextBox2.BorderColor = Color.FromArgb(CByte(80), CByte(220), CByte(220), CByte(220))
-        ModernTextBox2.BorderColorFocus = Color.FromArgb(CByte(120), CByte(220), CByte(220), CByte(220))
-        ModernTextBox2.BorderRadius = 10
-        ModernTextBox2.BorderSize = 2
-        ModernTextBox2.Dock = DockStyle.Fill
-        ModernTextBox2.EnableSyntaxHighlight = True
-        ModernTextBox2.Font = New Font("Microsoft YaHei UI", 10F)
-        ModernTextBox2.LineNumberBackColor = Color.FromArgb(CByte(20), CByte(220), CByte(220), CByte(220))
-        ModernTextBox2.LinkDetection = True
-        ModernTextBox2.Location = New Point(0, 0)
-        ModernTextBox2.Margin = New Padding(2)
-        ModernTextBox2.MultiLine = True
-        ModernTextBox2.Name = "ModernTextBox2"
-        ModernTextBox2.Padding = New Padding(10)
-        ModernTextBox2.ShowLineNumbers = True
-        ModernTextBox2.Size = New Size(713, 269)
-        ModernTextBox2.TabIndex = 39
-        ModernTextBox2.WaterText = "ModernTextBox2"
-        ' 
-        ' Label5
-        ' 
-        Label5.AutoSize = True
-        Label5.Dock = DockStyle.Top
-        Label5.Font = New Font("Microsoft YaHei UI", 10F)
-        Label5.Location = New Point(20, 265)
-        Label5.Name = "Label5"
-        Label5.Padding = New Padding(0, 20, 0, 10)
-        Label5.Size = New Size(570, 50)
-        Label5.TabIndex = 41
-        Label5.Text = "多行模式 + 链接识别 + 行数显示 + VB.NET 基本语法高亮（实现过程请去看 Demo 源码）"
-        ' 
-        ' Panel2
-        ' 
-        Panel2.Controls.Add(ModernTextBox1)
-        Panel2.Dock = DockStyle.Top
-        Panel2.Location = New Point(20, 230)
-        Panel2.Name = "Panel2"
-        Panel2.Size = New Size(713, 35)
-        Panel2.TabIndex = 40
-        ' 
-        ' ModernTextBox1
-        ' 
-        ModernTextBox1.BackColor1 = Color.FromArgb(CByte(120), CByte(0), CByte(0), CByte(0))
-        ModernTextBox1.BackgroundSource = ModernPanel1
-        ModernTextBox1.BorderColor = Color.FromArgb(CByte(80), CByte(220), CByte(220), CByte(220))
-        ModernTextBox1.BorderColorFocus = Color.FromArgb(CByte(120), CByte(220), CByte(220), CByte(220))
-        ModernTextBox1.BorderRadius = 10
-        ModernTextBox1.BorderSize = 2
-        ModernTextBox1.Dock = DockStyle.Fill
-        ModernTextBox1.Font = New Font("Microsoft YaHei UI", 10F)
-        ModernTextBox1.Location = New Point(0, 0)
-        ModernTextBox1.Margin = New Padding(2)
-        ModernTextBox1.Name = "ModernTextBox1"
-        ModernTextBox1.Padding = New Padding(10, 0, 10, 0)
-        ModernTextBox1.Size = New Size(713, 35)
-        ModernTextBox1.TabIndex = 39
-        ModernTextBox1.WaterText = "ModernTextBox1"
-        ' 
-        ' Label6
-        ' 
-        Label6.AutoSize = True
-        Label6.Dock = DockStyle.Top
-        Label6.Font = New Font("Microsoft YaHei UI", 10F)
-        Label6.Location = New Point(20, 180)
-        Label6.Name = "Label6"
-        Label6.Padding = New Padding(0, 20, 0, 10)
-        Label6.Size = New Size(65, 50)
-        Label6.TabIndex = 38
-        Label6.Text = "单行模式"
-        ' 
-        ' Label7
-        ' 
-        Label7.AutoSize = True
-        Label7.Dock = DockStyle.Top
-        Label7.Font = New Font("Microsoft YaHei UI", 10F)
-        Label7.Location = New Point(20, 120)
-        Label7.Name = "Label7"
-        Label7.Padding = New Padding(0, 20, 0, 0)
-        Label7.Size = New Size(345, 60)
-        Label7.TabIndex = 43
-        Label7.Text = "你知道从头做一个文本框要多少代码吗？超过两千行！" & vbCrLf & "Just try it, you will love it!"
+        HtmlColorLabel1.AutoSize = True
+        HtmlColorLabel1.AutoSizeMode = AutoSizeMode.GrowAndShrink
+        HtmlColorLabel1.Dock = DockStyle.Top
+        HtmlColorLabel1.Location = New Point(20, 120)
+        HtmlColorLabel1.Margin = New Padding(2)
+        HtmlColorLabel1.Name = "HtmlColorLabel1"
+        HtmlColorLabel1.Padding = New Padding(0, 20, 0, 10)
+        HtmlColorLabel1.Size = New Size(772, 71)
+        HtmlColorLabel1.TabIndex = 36
+        HtmlColorLabel1.Text = "面包屑导航 Breadcrumb Navigation 这个概念来自童话故事" & ChrW(8220) & "汉赛尔和格莱特" & ChrW(8221) & "，当汉赛尔和格莱特穿过森林时，不小心迷路了，但是他们发现沿途走过的地方都撒下了面包屑，让这些面包屑来帮助他们找到回家的路。"
         ' 
         ' Panel1
         ' 
@@ -171,7 +103,7 @@ Partial Class Form_ModernTextBox
         Panel1.Dock = DockStyle.Top
         Panel1.Location = New Point(20, 70)
         Panel1.Name = "Panel1"
-        Panel1.Size = New Size(713, 50)
+        Panel1.Size = New Size(772, 50)
         Panel1.TabIndex = 35
         ' 
         ' ModernButton4
@@ -181,14 +113,14 @@ Partial Class Form_ModernTextBox
         ModernButton4.BorderSize = 0
         ModernButton4.Dock = DockStyle.Left
         ModernButton4.Font = New Font("Microsoft YaHei UI", 10.8F, FontStyle.Bold, GraphicsUnit.Point, CByte(134))
-        ModernButton4.ForeColor = Color.Salmon
+        ModernButton4.ForeColor = Color.YellowGreen
         ModernButton4.Location = New Point(424, 0)
         ModernButton4.Margin = New Padding(2)
         ModernButton4.Name = "ModernButton4"
         ModernButton4.Size = New Size(80, 50)
         ModernButton4.SubText = "性能负载"
         ModernButton4.TabIndex = 6
-        ModernButton4.Text = "中"
+        ModernButton4.Text = "低"
         ModernButton4.TextAlign = ModernButton.TextAlignEnum.Left
         ' 
         ' Label4
@@ -207,13 +139,14 @@ Partial Class Form_ModernTextBox
         ModernButton3.BorderSize = 0
         ModernButton3.Dock = DockStyle.Left
         ModernButton3.Font = New Font("Microsoft YaHei UI", 10.8F, FontStyle.Bold, GraphicsUnit.Point, CByte(134))
+        ModernButton3.ForeColor = Color.Orchid
         ModernButton3.Location = New Point(296, 0)
         ModernButton3.Margin = New Padding(2)
         ModernButton3.Name = "ModernButton3"
         ModernButton3.Size = New Size(120, 50)
         ModernButton3.SubText = "动画支持"
         ModernButton3.TabIndex = 4
-        ModernButton3.Text = "无"
+        ModernButton3.Text = "全程动画"
         ModernButton3.TextAlign = ModernButton.TextAlignEnum.Left
         ' 
         ' Label3
@@ -238,7 +171,7 @@ Partial Class Form_ModernTextBox
         ModernButton2.Size = New Size(160, 50)
         ModernButton2.SubText = "技术偏好"
         ModernButton2.TabIndex = 2
-        ModernButton2.Text = "天顶星科技"
+        ModernButton2.Text = "人体工学科技"
         ModernButton2.TextAlign = ModernButton.TextAlignEnum.Left
         ' 
         ' Label2
@@ -275,24 +208,23 @@ Partial Class Form_ModernTextBox
         Label1.Location = New Point(20, 20)
         Label1.Name = "Label1"
         Label1.Padding = New Padding(0, 0, 0, 20)
-        Label1.Size = New Size(331, 50)
+        Label1.Size = New Size(449, 50)
         Label1.TabIndex = 34
-        Label1.Text = "现代化文本框 ModernTextBox"
+        Label1.Text = "面包屑导航条 BreadcrumbNavigationBar"
         ' 
-        ' Form_ModernTextBox
+        ' Form_BreadcrumbNavigationBar
         ' 
         AutoScaleDimensions = New SizeF(96F, 96F)
         AutoScaleMode = AutoScaleMode.Dpi
         BackColor = Color.FromArgb(CByte(36), CByte(36), CByte(36))
-        ClientSize = New Size(753, 604)
+        ClientSize = New Size(812, 669)
         Controls.Add(ModernPanel1)
+        Font = New Font("Microsoft YaHei UI", 10F)
         ForeColor = Color.Silver
-        Name = "Form_ModernTextBox"
-        Text = "Form_ModernTextBox"
+        Name = "Form_BreadcrumbNavigationBar"
+        Text = "Form_BreadcrumbNavigationBar"
         ModernPanel1.ResumeLayout(False)
         ModernPanel1.PerformLayout()
-        Panel3.ResumeLayout(False)
-        Panel2.ResumeLayout(False)
         Panel1.ResumeLayout(False)
         ResumeLayout(False)
     End Sub
@@ -307,11 +239,6 @@ Partial Class Form_ModernTextBox
     Friend WithEvents Label2 As Label
     Friend WithEvents ModernButton1 As ModernButton
     Friend WithEvents Label1 As Label
-    Friend WithEvents Label6 As Label
-    Friend WithEvents ModernTextBox1 As ModernTextBox
-    Friend WithEvents Panel3 As Panel
-    Friend WithEvents ModernTextBox2 As ModernTextBox
-    Friend WithEvents Label5 As Label
-    Friend WithEvents Panel2 As Panel
-    Friend WithEvents Label7 As Label
+    Friend WithEvents HtmlColorLabel1 As HtmlColorLabel
+    Friend WithEvents BreadcrumbNavigationBar1 As BreadcrumbNavigationBar
 End Class

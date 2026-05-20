@@ -15,15 +15,7 @@ Imports Vortice.DirectWrite
 Public Class CpuMonitor
 
 #Region "D2D 资源"
-    Private _dcRT As ID2D1DCRenderTarget
-    Private ReadOnly _ssaaCache As New D2DHelper.BitmapRTCache()
-    Private ReadOnly _brushCache As New D2DHelper.SolidColorBrushCache()
-    Private ReadOnly _textFormatCache As New D2DHelper.TextFormatCache()
-
-    Private Function GetOrCreateDCRenderTarget() As ID2D1DCRenderTarget
-        If _dcRT Is Nothing Then _dcRT = D2DHelper.CreateDCRenderTarget()
-        Return _dcRT
-    End Function
+    Private _当前合成器 As WindowCompositor
 #End Region
 
     Public Event SampleUpdated As EventHandler
@@ -290,28 +282,34 @@ Public Class CpuMonitor
         Dim ssaa As Integer = Math.Max(1, CInt(超采样倍率))
         If Class1.GlobalSSAA <> Class1.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(Class1.GlobalSSAA))
 
-        Using scope = D2DHelper.BeginPaint(e, Me, GetOrCreateDCRenderTarget(), ssaa, _ssaaCache)
-            Dim gRT As ID2D1RenderTarget = scope.GraphicsRenderTarget
-            Dim dcRT As ID2D1DCRenderTarget = scope.DCRenderTarget
+        Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
+            If scope Is Nothing Then Return
+            _当前合成器 = scope.Compositor
+            Try
+                Dim gRT As ID2D1RenderTarget = scope.GraphicsLayer
+                Dim dcRT As ID2D1DCRenderTarget = scope.DCRenderTarget
 
-            If 圆角半径值 > 0 OrElse MyBase.BackColor.A < 255 Then
-                TransparentBackgroundCache.PaintBackgroundFor_D2D(Me, gRT, _backgroundSource)
-                If MyBase.BackColor.A > 0 AndAlso MyBase.BackColor.A < 255 Then
-                    Using b = gRT.CreateSolidColorBrush(D2DHelper.ToColor4(MyBase.BackColor))
+                If 圆角半径值 > 0 OrElse MyBase.BackColor.A < 255 Then
+                    If _backgroundSource IsNot Nothing Then
+                        BackgroundPenetrationV2.PaintBackground(Me, scope, _backgroundSource)
+                    End If
+                    If MyBase.BackColor.A > 0 AndAlso MyBase.BackColor.A < 255 Then
+                        Dim b = _当前合成器.BrushCache.Get(gRT, MyBase.BackColor)
                         gRT.FillRectangle(New Vortice.Mathematics.Rect(0, 0, Me.Width, Me.Height), b)
-                    End Using
+                    End If
                 End If
-            End If
 
-            绘制图形内容_D2D(gRT)
-            scope.FlushGraphics()
-            绘制文字内容_D2D(dcRT)
+                绘制图形内容_D2D(gRT)
+                scope.FlushGraphics()
+                绘制文字内容_D2D(dcRT)
 
-            If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
-                Using b = dcRT.CreateSolidColorBrush(D2DHelper.ToColor4(禁用时遮罩颜色))
+                If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
+                    Dim b = _当前合成器.BrushCache.Get(dcRT, 禁用时遮罩颜色)
                     dcRT.FillRectangle(New Vortice.Mathematics.Rect(0, 0, Me.Width, Me.Height), b)
-                End Using
-            End If
+                End If
+            Finally
+                _当前合成器 = Nothing
+            End Try
         End Using
     End Sub
 
@@ -493,7 +491,7 @@ Public Class CpuMonitor
 
         Dim weight As FontWeight = If(Me.Font.Bold, FontWeight.Bold, FontWeight.Normal)
         Dim style As FontStyle = If(Me.Font.Italic, FontStyle.Italic, FontStyle.Normal)
-        Dim fmt = _textFormatCache.Get(Me.Font.FontFamily.Name, weight, style, 文本像素高度(s),
+        Dim fmt = _当前合成器.TextFormatCache.Get(Me.Font.FontFamily.Name, weight, style, 文本像素高度(s),
                                        转文本水平对齐(文字对齐值), 转文本垂直对齐(文字对齐值), True)
         Using layout = D2DHelper.GetDWriteFactory().CreateTextLayout(If(text, ""), fmt, textRect.Width, textRect.Height)
             Using b = rt.CreateSolidColorBrush(D2DHelper.ToColor4(Me.ForeColor))
@@ -915,13 +913,6 @@ Public Class CpuMonitor
 
     Protected Overrides Sub OnHandleDestroyed(e As EventArgs)
         采样定时器.Stop()
-        Try : _ssaaCache.Dispose() : Catch : End Try
-        Try : _brushCache.Dispose() : Catch : End Try
-        Try : _textFormatCache.Dispose() : Catch : End Try
-        If _dcRT IsNot Nothing Then
-            Try : _dcRT.Dispose() : Catch : End Try
-            _dcRT = Nothing
-        End If
         MyBase.OnHandleDestroyed(e)
     End Sub
 

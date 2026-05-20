@@ -185,18 +185,9 @@ Public Class ThisIsYourWindow
         ' ── 毛玻璃 ──
         Public Renderer As BackdropRenderer
         Public BackdropTimer As Timer
-        ' ── D2D 资源（每窗体一份；DC RT 与窗口 HDC 强相关，无法跨窗体共享）──
-        Public DcRT As ID2D1DCRenderTarget
-        Public ReadOnly SsaaCache As New D2DHelper.BitmapRTCache()
-        Public ReadOnly CaptionImageCache As New D2DHelper.D2DBitmapCache()
-        Public ReadOnly IconBitmapCache As New D2DHelper.D2DBitmapCache()
-        ' ── D2D 资源池：每帧大量 CreateSolidColorBrush / CreateTextFormat 太昂贵 ──
-        '   GraphicsBrushCache：跟踪 PaintScope.GraphicsRenderTarget（SSAA 开启时为 BitmapRT，关闭时为 DC RT）。
-        '   DcBrushCache：仅给 DC RT 上的标题文字用（与 GraphicsBrushCache 不能复用，RT 不一致会强制 invalidate）。
-        '   TitleTextFormats：DirectWrite TextFormat 与 RT 无关，可长期复用。
-        Public ReadOnly GraphicsBrushCache As New D2DHelper.SolidColorBrushCache()
-        Public ReadOnly DcBrushCache As New D2DHelper.SolidColorBrushCache()
-        Public ReadOnly TitleTextFormats As New D2DHelper.TextFormatCache()
+        ' ── D2D 资源（V2 占位）──
+        ' V2：DC RT / SSAA 池 / 笔刷缓存 / TextFormat 缓存 / 位图缓存 全部迁到 WindowCompositor（Form 级共享）。
+        ' 这里不再持有任何 D2D 字段；通过 D2DHelperV2.BeginPaint(...) → PaintScopeV2 拿到。
         Public Sub New(form As Form)
             HostForm = form
         End Sub
@@ -342,7 +333,7 @@ Public Class ThisIsYourWindow
     Private Sub 宿主窗口_Paint(sender As Object, e As PaintEventArgs)
         Dim frm = TryCast(sender, Form)
         If frm Is Nothing Then Return
-        PaintWindow(e.Graphics, frm)
+        PaintWindow(e, frm)
         Dim s = 查找状态(frm)
         If s IsNot Nothing AndAlso s.PendingFirstPaintRestore Then
             s.PendingFirstPaintRestore = False
@@ -1594,12 +1585,27 @@ Public Class ThisIsYourWindow
 
 #Region "绘制"
 
-    ''' <summary>为指定窗体执行完整绘制。通常由内部 Paint 事件自动调用。</summary>
-    Public Sub PaintWindow(g As Graphics, targetForm As Form)
+    ''' <summary>
+    ''' 为指定窗体执行完整绘制。通常由内部 Paint 事件自动调用。
+    ''' <para>
+    ''' 绘制流程分三段：① GDI 毛玻璃层（必须留在 GDI 上，原因见函数体内注释）；② D2D V2 scope（DC RT + DirectWrite）；
+    ''' ③ 自定义 <c>CaptionPaint</c> 事件（仍以 GDI <see cref="Graphics"/> 暴露）。
+    ''' </para>
+    ''' <para>
+    ''' <b>D3D11 接入</b>：进入 V2 scope 后会显式 touch <see cref="PaintScopeV2.DeviceContext"/>，
+    ''' 让当前 Form 的 D3D11 / D2D 1.1 设备真正实例化并完成 <see cref="D3D11Globals.DeviceLost"/> 事件订阅。
+    ''' 本控件的实际绘制仍走 DC RT 以保留 DirectWrite ClearType 子像素抗锯齿；
+    ''' DeviceContext 在这里只起到"激活设备 + 监听设备丢失"的角色。一旦 D3D 设备进入丢失态
+    ''' （TDR / 远程桌面切换 / 驱动崩溃），会被本函数捕获并触发 <see cref="WindowCompositor.NotifyDeviceContextException"/>，
+    ''' 下一帧自动用新设备恢复，且只影响本帧像素，不会让进程崩溃。
+    ''' </para>
+    ''' </summary>
+    Public Sub PaintWindow(e As PaintEventArgs, targetForm As Form)
         Dim s = 查找状态(targetForm)
         If s Is Nothing Then Return
         RecalculateButtonBounds(s)
 
+        Dim g As Graphics = e.Graphics
         Dim w As Integer = s.HostForm.ClientSize.Width
         Dim h As Integer = s.HostForm.ClientSize.Height
         If w <= 0 OrElse h <= 0 Then Return
@@ -1614,7 +1620,14 @@ Public Class ThisIsYourWindow
                                            New Rectangle(0, 0, w, Math.Min(h, _标题栏高度)),
                                            fullRect)
 
-        ' ── 1) 毛玻璃层（GDI 路径，BackdropRenderer 仅暴露 GDI 接口）──
+        ' ── 1) 毛玻璃层（GDI 路径）──
+        ' 必须在进入 D2D scope（=BeginPaint → e.Graphics.GetHdc + DCRT.BindDC + BeginDraw）之前完成：
+        ' • BeginPaint 一旦发生，e.Graphics 的 HDC 已被释放给 DC RT 独占，再在 e.Graphics 上画会跨越
+        '   D2D 的 BeginDraw/EndDraw，造成像素丢失或闪烁；
+        ' • BackdropRenderer 的 _currentFrame 是 CPU GDI Bitmap (PArgb)，在 D2D scope 内上传 + 绘制
+        '   实测会出现毛玻璃帧不可见的情况（DC RT 与 HDC 的合成时序边界问题）。
+        ' 因此“必须 GDI+ 的部分”就是这一层 —— 把毛玻璃 / tint / 噪点画在 e.Graphics 上，
+        ' 再进入 D2D scope 继续画标题栏等。
         If useBackdrop Then
             g.SmoothingMode = SmoothingMode.Default
             g.PixelOffsetMode = PixelOffsetMode.Default
@@ -1629,92 +1642,124 @@ Public Class ThisIsYourWindow
             End If
         End If
 
-        ' ── 2) D2D scope：标题栏背景 / 图片 / 遮罩 / 图标 / 按钮 / 边框 / 标题文字 ──
-        Dim ssaa As Integer = 1
-        If Class1.GlobalSSAA <> Class1.SuperSamplingScaleEnum.OFF Then ssaa = CInt(Class1.GlobalSSAA)
-        If s.DcRT Is Nothing Then s.DcRT = D2DHelper.CreateDCRenderTarget()
-        Dim ssaaScale As Integer = Math.Max(1, ssaa)
-        Dim hdc As IntPtr = g.GetHdc()
-        Dim scope As PaintScope
-
+        ' ── 2) D2D V2 scope：标题栏背景 / 图片 / 遮罩 / 图标 / 按钮 / 边框 / 标题文字 ──
+        ' ThisIsYourWindow 只画矩形 / 位图 / DirectWrite 文字（文字在 DC RT 走 ClearType），
+        ' 没有任何需要超采的几何（无圆角、无旋转、无抗锯齿曲线），
+        ' 因此强制 ssaa=1，省下每帧一次离屏 BitmapRT 申请 + Flush 回采的开销。
+        ' Class1.GlobalSSAA 仍然对其他控件（ModernButton 等）生效，这里只是本控件不参与。
+        Const ssaa As Integer = 1
+        Dim deviceLost As Boolean = False
         Try
-            scope = New D2DHelper.PaintScope(g, hdc, s.DcRT, w, h, ssaaScale, s.SsaaCache)
-        Catch
-            Try : g.ReleaseHdc(hdc) : Catch : End Try
-            Throw
-        End Try
-        Using scope
-            Dim gRT As ID2D1RenderTarget = scope.GraphicsRenderTarget
-            Dim dcRT As ID2D1DCRenderTarget = scope.DCRenderTarget
+            Using scope = D2DHelperV2.BeginPaint(e, s.HostForm, ssaa)
+                If scope Is Nothing Then
+                    ' 设计期 / 无 compositor：仅触发外部自定义绘制事件即可。
+                    RaiseEvent CaptionPaint(Me, New CaptionPaintEventArgs(g, New Rectangle(0, 0, w, _标题栏高度), active, s.HostForm))
+                    Return
+                End If
+                Dim compositor = scope.Compositor
 
-            Dim captionRect As New Rectangle(0, 0, w, _标题栏高度)
+                ' ── 2.0 D3D11 设备激活 + 设备丢失订阅触发 ──
+                ' 主动 touch DeviceContext 让本 Form 的 D3D11 / D2D 1.1 设备完成实例化与
+                ' D3D11Globals.DeviceLost 事件订阅。返回 Nothing（设计器 / RDP 早期）也无关紧要：
+                ' 本控件实际绘制走 DC RT 以保留 ClearType；DeviceContext 仅作为"设备状态心跳"存在。
+                Dim ctx As ID2D1DeviceContext = compositor.DeviceContext
 
-            ' 2.1 标题栏底色（仅在没有毛玻璃时绘制）
-            If Not useBackdrop AndAlso _标题栏高度 > 0 Then
-                Dim capColor As Color = If(active, _标题栏背景颜色, _标题栏失焦背景颜色)
-                If capColor.A > 0 Then
-                    Dim b = s.GraphicsBrushCache.Get(gRT, capColor)
+                Dim gRT As ID2D1RenderTarget = scope.GraphicsLayer
+                Dim dcRT As ID2D1DCRenderTarget = scope.DCRenderTarget
+
+                Dim captionRect As New Rectangle(0, 0, w, _标题栏高度)
+
+                ' 2.1 标题栏底色（仅在没有毛玻璃时绘制）
+                If Not useBackdrop AndAlso _标题栏高度 > 0 Then
+                    Dim capColor As Color = If(active, _标题栏背景颜色, _标题栏失焦背景颜色)
+                    If capColor.A > 0 Then
+                        Dim b = compositor.BrushCache.[Get](gRT, capColor)
+                        gRT.FillRectangle(D2DHelper.ToD2DRect(captionRect), b)
+                    End If
+                End If
+
+                ' 2.2 标题栏背景图片（cover 居中裁切）
+                If _标题栏背景图片 IsNot Nothing AndAlso _标题栏高度 > 0 Then
+                    绘制标题栏背景图片_D2D(gRT, compositor, captionRect)
+                End If
+
+                ' 2.3 标题栏遮罩
+                If _标题栏遮罩颜色.A > 0 AndAlso _标题栏高度 > 0 Then
+                    Dim b = compositor.BrushCache.[Get](gRT, _标题栏遮罩颜色)
                     gRT.FillRectangle(D2DHelper.ToD2DRect(captionRect), b)
                 End If
-            End If
 
-            ' 2.2 标题栏背景图片（cover 居中裁切）
-            If _标题栏背景图片 IsNot Nothing AndAlso _标题栏高度 > 0 Then
-                绘制标题栏背景图片_D2D(gRT, s, captionRect)
-            End If
+                ' 2.4 图标
+                绘制图标_D2D(gRT, compositor, s)
 
-            ' 2.3 标题栏遮罩
-            If _标题栏遮罩颜色.A > 0 AndAlso _标题栏高度 > 0 Then
-                Dim b = s.GraphicsBrushCache.Get(gRT, _标题栏遮罩颜色)
-                gRT.FillRectangle(D2DHelper.ToD2DRect(captionRect), b)
-            End If
+                ' 2.5 控制按钮（背景与符号）
+                绘制控制按钮_D2D(gRT, compositor, s, s.CloseRect, HTCLOSE)
+                If s.HostForm.MaximizeBox Then 绘制控制按钮_D2D(gRT, compositor, s, s.MaxRect, HTMAXBUTTON)
+                If s.HostForm.MinimizeBox Then 绘制控制按钮_D2D(gRT, compositor, s, s.MinRect, HTMINBUTTON)
 
-            ' 2.4 图标
-            绘制图标_D2D(gRT, s)
-
-            ' 2.5 控制按钮（背景与符号）
-            绘制控制按钮_D2D(gRT, s, s.CloseRect, HTCLOSE)
-            If s.HostForm.MaximizeBox Then 绘制控制按钮_D2D(gRT, s, s.MaxRect, HTMAXBUTTON)
-            If s.HostForm.MinimizeBox Then 绘制控制按钮_D2D(gRT, s, s.MinRect, HTMINBUTTON)
-
-            ' 2.6 外边框
-            If _边框厚度 > 0 Then
-                Dim bdrColor As Color
-                If useBackdrop AndAlso _边框自动颜色 Then
-                    bdrColor = s.Renderer.DeriveBorderColor(active, If(active, _边框颜色, _边框失焦颜色))
-                Else
-                    bdrColor = If(active, _边框颜色, _边框失焦颜色)
+                ' 2.6 外边框
+                If _边框厚度 > 0 Then
+                    Dim bdrColor As Color
+                    If useBackdrop AndAlso _边框自动颜色 Then
+                        bdrColor = s.Renderer.DeriveBorderColor(active, If(active, _边框颜色, _边框失焦颜色))
+                    Else
+                        bdrColor = If(active, _边框颜色, _边框失焦颜色)
+                    End If
+                    If bdrColor.A > 0 Then
+                        Dim bdr As Integer = _边框厚度
+                        Dim b = compositor.BrushCache.[Get](gRT, bdrColor)
+                        gRT.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(0, 0, w, bdr)), b)
+                        gRT.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(0, h - bdr, w, bdr)), b)
+                        gRT.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(0, bdr, bdr, h - bdr * 2)), b)
+                        gRT.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(w - bdr, bdr, bdr, h - bdr * 2)), b)
+                    End If
                 End If
-                If bdrColor.A > 0 Then
-                    Dim bdr As Integer = _边框厚度
-                    Dim b = s.GraphicsBrushCache.Get(gRT, bdrColor)
-                    gRT.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(0, 0, w, bdr)), b)
-                    gRT.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(0, h - bdr, w, bdr)), b)
-                    gRT.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(0, bdr, bdr, h - bdr * 2)), b)
-                    gRT.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(w - bdr, bdr, bdr, h - bdr * 2)), b)
-                End If
+
+                ' 2.7 SSAA=1 时 FlushGraphics 是 no-op；保留调用以维持 scope 状态机一致性。
+                scope.FlushGraphics()
+
+                ' 2.8 标题文字（D2D / DirectWrite 路径，绘制在 DC RT 上以保留 ClearType 子像素抗锯齿）
+                绘制标题文字_D2D(dcRT, compositor, s)
+            End Using
+        Catch ex As Exception
+            ' D2D / D3D11 设备级错误：通知 compositor 失效相关资源 → 吞掉本帧异常 → 请求下一帧重绘。
+            ' 非设备级错误：原样抛出，让 WinForms 默认的 Paint 异常处理生效（调试时能看到堆栈）。
+            Dim comp = D2DHelperV2.GetCompositor(s.HostForm)
+            If comp IsNot Nothing AndAlso comp.NotifyDeviceContextException(ex) Then
+                deviceLost = True
+            ElseIf D3D11Globals.IsDeviceLostException(ex) Then
+                D3D11Globals.HandleDeviceLost(ex)
+                deviceLost = True
+            Else
+                Throw
             End If
+        End Try
 
-            ' 2.7 把图形层 SSAA 结果回采到 DC
-            scope.FlushGraphics()
-
-            ' 2.8 标题文字（D2D / DirectWrite 路径，绘制在 DC RT 上以保留 ClearType 子像素抗锯齿）
-            绘制标题文字_D2D(dcRT, s)
-        End Using
+        If deviceLost Then
+            ' 让外部 CaptionPaint 仍能在本帧拿到 GDI Graphics（事件契约一致），
+            ' 然后请求下一帧重绘 —— compositor / D3D11 设备会在下一次访问时自动重建。
+            Try
+                RaiseEvent CaptionPaint(Me, New CaptionPaintEventArgs(g, New Rectangle(0, 0, w, _标题栏高度), active, s.HostForm))
+            Catch
+            End Try
+            Try : s.HostForm?.Invalidate() : Catch : End Try
+            Return
+        End If
 
         ' ── 3) 触发外部自定义绘制事件（仍以 GDI Graphics 暴露，保持兼容）──
         Dim captionRect2 As New Rectangle(0, 0, w, _标题栏高度)
         RaiseEvent CaptionPaint(Me, New CaptionPaintEventArgs(g, captionRect2, active, s.HostForm))
     End Sub
 
-    Private Sub 绘制标题栏背景图片_D2D(rt As ID2D1RenderTarget, s As PerFormState, captionRect As Rectangle)
+    Private Sub 绘制标题栏背景图片_D2D(rt As ID2D1RenderTarget, compositor As WindowCompositor, captionRect As Rectangle)
         Dim img As Image = _标题栏背景图片
         If img Is Nothing Then Return
         Dim cw As Integer = captionRect.Width
         Dim ch As Integer = captionRect.Height
         If cw < 1 OrElse ch < 1 Then Return
 
-        Dim bmp = s.CaptionImageCache.GetBitmap(rt, img)
+        Dim cache = compositor.GetBitmapCache(img)
+        Dim bmp = cache?.GetBitmap(rt, img)
         If bmp Is Nothing Then Return
 
         Dim ratioW As Single = CSng(cw) / img.Width
@@ -1740,7 +1785,7 @@ Public Class ThisIsYourWindow
         End Using
     End Sub
 
-    Private Sub 绘制图标_D2D(rt As ID2D1RenderTarget, s As PerFormState)
+    Private Sub 绘制图标_D2D(rt As ID2D1RenderTarget, compositor As WindowCompositor, s As PerFormState)
         If _图标来源 = IconSourceEnum.None OrElse s.IconRect.IsEmpty Then Return
         Dim img As Image = Nothing
         If _图标来源 = IconSourceEnum.Custom Then
@@ -1750,12 +1795,13 @@ Public Class ThisIsYourWindow
                 s.CachedIconBitmap?.Dispose()
                 s.CachedIconBitmap = s.HostForm.Icon.ToBitmap()
                 s.CachedIconSource = s.HostForm.Icon
-                s.IconBitmapCache.Invalidate()
+                ' V2：新 Bitmap 引用即新缓存键，旧条目随 Form Dispose 时一同清理；无需手动 Invalidate。
             End If
             img = s.CachedIconBitmap
         End If
         If img Is Nothing Then Return
-        Dim bmp = s.IconBitmapCache.GetBitmap(rt, img)
+        Dim cache = compositor.GetBitmapCache(img)
+        Dim bmp = cache?.GetBitmap(rt, img)
         If bmp Is Nothing Then Return
         Dim r = s.IconRect
         Dim srcRect As New RectangleF(0, 0, img.Width, img.Height)
@@ -1766,7 +1812,7 @@ Public Class ThisIsYourWindow
                        D2DHelper.ToD2DRect(srcRect))
     End Sub
 
-    Private Sub 绘制控制按钮_D2D(rt As ID2D1RenderTarget, s As PerFormState, rect As Rectangle, htValue As Integer)
+    Private Sub 绘制控制按钮_D2D(rt As ID2D1RenderTarget, compositor As WindowCompositor, s As PerFormState, rect As Rectangle, htValue As Integer)
         If rect.IsEmpty Then Return
         Dim isClose As Boolean = (htValue = HTCLOSE)
         Dim isHover As Boolean = (s.HoverHit = htValue)
@@ -1798,7 +1844,7 @@ Public Class ThisIsYourWindow
         ' 背景
         If bgColor.A > 0 Then
             Dim r As Integer = Math.Min(_按钮圆角半径, CInt(Math.Min(vis.Width, vis.Height)) \ 2)
-            Dim bgBrush = s.GraphicsBrushCache.Get(rt, bgColor)
+            Dim bgBrush = compositor.BrushCache.[Get](rt, bgColor)
             If r > 0 Then
                 Using geo = RectangleRenderer.创建圆角矩形几何(vis, r)
                     rt.FillGeometry(geo, bgBrush)
@@ -1814,7 +1860,7 @@ Public Class ThisIsYourWindow
         Dim cx As Single = vis.X + (vis.Width - sz) / 2.0F
         Dim cy As Single = vis.Y + (vis.Height - sz) / 2.0F
         Dim lw As Single = Math.Max(0.5F, _按钮符号线宽)
-        Dim pen = s.GraphicsBrushCache.Get(rt, symColor)
+        Dim pen = compositor.BrushCache.[Get](rt, symColor)
         If True Then
             Select Case htValue
                 Case HTCLOSE
@@ -1835,7 +1881,7 @@ Public Class ThisIsYourWindow
         End If
     End Sub
 
-    Private Sub 绘制标题文字_D2D(rt As ID2D1DCRenderTarget, s As PerFormState)
+    Private Sub 绘制标题文字_D2D(rt As ID2D1DCRenderTarget, compositor As WindowCompositor, s As PerFormState)
         Dim text As String = s.HostForm.Text
         If String.IsNullOrEmpty(text) Then Return
         Dim font As Font = If(_标题文字字体, s.HostForm.Font)
@@ -1878,8 +1924,8 @@ Public Class ThisIsYourWindow
         Dim weight As Vortice.DirectWrite.FontWeight = If(font.Bold, Vortice.DirectWrite.FontWeight.Bold, Vortice.DirectWrite.FontWeight.Normal)
         Dim style As Vortice.DirectWrite.FontStyle = If(font.Italic, Vortice.DirectWrite.FontStyle.Italic, Vortice.DirectWrite.FontStyle.Normal)
 
-        Dim fmt = s.TitleTextFormats.Get(font.FontFamily.Name, weight, style, sizePx, align, ParagraphAlignment.Center, True)
-        Dim brush = s.DcBrushCache.Get(rt, fgColor)
+        Dim fmt = compositor.TextFormatCache.[Get](font.FontFamily.Name, weight, style, sizePx, align, ParagraphAlignment.Center, True)
+        Dim brush = compositor.BrushCache.[Get](rt, fgColor)
         rt.DrawText(text, fmt, D2DHelper.ToD2DRect(textRect), brush,
                     DrawTextOptions.Clip, Vortice.DCommon.MeasuringMode.Natural)
     End Sub
@@ -1984,16 +2030,8 @@ Public Class ThisIsYourWindow
         _forms.Remove(targetForm.Handle)
 
         s.CachedIconBitmap?.Dispose()
-        Try : s.SsaaCache.Dispose() : Catch : End Try
-        Try : s.CaptionImageCache.Dispose() : Catch : End Try
-        Try : s.IconBitmapCache.Dispose() : Catch : End Try
-        Try : s.GraphicsBrushCache.Dispose() : Catch : End Try
-        Try : s.DcBrushCache.Dispose() : Catch : End Try
-        Try : s.TitleTextFormats.Dispose() : Catch : End Try
-        If s.DcRT IsNot Nothing Then
-            Try : s.DcRT.Dispose() : Catch : End Try
-            s.DcRT = Nothing
-        End If
+        ' V2：D2D 资源（DC RT / SSAA / 笔刷 / TextFormat / 位图缓存）全部由 WindowCompositor 管理，
+        '       会在 Form.HandleDestroyed 时自动释放，这里无需重复清理。
         s.Interceptor?.ReleaseHandle()
         销毁阴影(s)
         If s.BackdropTimer IsNot Nothing Then

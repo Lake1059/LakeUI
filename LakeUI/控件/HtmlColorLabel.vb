@@ -28,33 +28,6 @@ Public Class HtmlColorLabel
 
 #End Region
 
-#Region "D2D 资源"
-    ''' <summary>控件级 DC RenderTarget。与窗口 DC 强相关，无法跨控件共享，由控件持有。</summary>
-    Private _dcRT As ID2D1DCRenderTarget
-    ''' <summary>跨帧复用的 SSAA 离屏 BitmapRT，按 (Width, Height, ssaa) 命中。</summary>
-    Private ReadOnly _ssaaCache As New D2DHelper.BitmapRTCache()
-    ''' <summary>SolidColorBrush 缓存（RT 切换时自动失效）。</summary>
-    Private ReadOnly _brushCache As New D2DHelper.SolidColorBrushCache()
-    ''' <summary>DirectWrite TextFormat 缓存。</summary>
-    Private ReadOnly _textFormatCache As New D2DHelper.TextFormatCache()
-
-    Private Function GetOrCreateDCRenderTarget() As ID2D1DCRenderTarget
-        If _dcRT Is Nothing Then _dcRT = D2DHelper.CreateDCRenderTarget()
-        Return _dcRT
-    End Function
-
-    Protected Overrides Sub OnHandleDestroyed(e As EventArgs)
-        Try : _ssaaCache.Dispose() : Catch : End Try
-        Try : _brushCache.Dispose() : Catch : End Try
-        Try : _textFormatCache.Dispose() : Catch : End Try
-        If _dcRT IsNot Nothing Then
-            Try : _dcRT.Dispose() : Catch : End Try
-            _dcRT = Nothing
-        End If
-        MyBase.OnHandleDestroyed(e)
-    End Sub
-#End Region
-
 #Region "HTML解析"
 
     Private Structure 文本片段
@@ -371,8 +344,18 @@ Public Class HtmlColorLabel
 
 #Region "绘制"
 
+    ''' <summary>当前 OnPaint 内的窗口合成器。仅在 Using scope 期间有效。</summary>
+    Private _当前合成器 As WindowCompositor
+
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
-        If 边框圆角半径 > 0 OrElse MyBase.BackColor.A < 255 Then Return
+        ' V2 契约（与 ModernButton 一致）：
+        '   • BackgroundSource 已设置 → 跳过基类填底，背景由 OnPaint 内显式穿透绘制；
+        '   • 否则一律走 .NET 自身透明逻辑——半透明 BackColor 由基类把父级背景合成到 HDC，
+        '     不透明色由基类填底。BindDC 之后 DC RT 初始像素即正确底图，
+        '     避免"HDC 残留 → 乱照父窗体其它区域"的故障。
+        '   • 圆角 + 不透明 BackColor 时角落会露出方形底色，
+        '     使用方应把 BackColor 设为透明（与 ModernButton 同约定）。
+        If _backgroundSource IsNot Nothing Then Return
         MyBase.OnPaintBackground(e)
     End Sub
 
@@ -390,43 +373,44 @@ Public Class HtmlColorLabel
             极限矩形区域.Height - Me.Padding.Vertical)
         Dim _ssaa As Integer = If(Class1.GlobalSSAA > 1, CInt(Class1.GlobalSSAA), 超采样倍率)
 
-        Using scope = D2DHelper.BeginPaint(e, Me, GetOrCreateDCRenderTarget(), _ssaa, _ssaaCache)
-            Dim gRT As ID2D1RenderTarget = scope.GraphicsRenderTarget
-            Dim dcRT As ID2D1DCRenderTarget = scope.DCRenderTarget
+        Using scope = D2DHelperV2.BeginPaint(e, Me, _ssaa)
+            If scope Is Nothing Then Return
+            _当前合成器 = scope.Compositor
+            Try
+                Dim gRT As ID2D1RenderTarget = scope.GraphicsLayer
+                Dim dcRT As ID2D1DCRenderTarget = scope.DCRenderTarget
 
-            ' 0) 透明背景贴底图：直接画到图形 RT，避免 dcRT.EndDraw 把圆角外像素覆盖为黑。
-            If 是否有圆角 OrElse MyBase.BackColor.A < 255 Then
-                TransparentBackgroundCache.PaintBackgroundFor_D2D(Me, gRT, _backgroundSource)
-            End If
-
-            ' 1) 图形层（享受 SSAA）
-            绘制图形内容_D2D(gRT, 是否有圆角, 极限矩形区域)
-
-            ' 2) 把图形层回采到 DC，然后在 DC 上画文字（DirectWrite ClearType 子像素）
-            scope.FlushGraphics()
-            绘制文本内容_D2D(dcRT, 内容矩形区域)
-
-            ' 3) 禁用遮罩
-            If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
-                If 是否有圆角 Then
-                    Using geo = RectangleRenderer.创建圆角矩形几何(极限矩形区域, 边框圆角半径 * DpiScale())
-                        RectangleRenderer.绘制圆角背景_D2D(dcRT, geo, 极限矩形区域, 禁用时遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Vertical)
-                    End Using
-                Else
-                    RectangleRenderer.绘制矩形背景_D2D(dcRT, 极限矩形区域, 禁用时遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Vertical)
+                ' 0) 背景层：V2 显式穿透
+                If _backgroundSource IsNot Nothing Then
+                    BackgroundPenetrationV2.PaintBackground(Me, scope, _backgroundSource)
                 End If
-            End If
+
+                ' 1) 图形层（享受 SSAA）
+                绘制图形内容_D2D(gRT, 是否有圆角, 极限矩形区域)
+
+                ' 2) 把图形层回采到 DC，然后在 DC 上画文字（DirectWrite ClearType 子像素）
+                scope.FlushGraphics()
+                绘制文本内容_D2D(dcRT, 内容矩形区域)
+
+                ' 3) 禁用遮罩
+                If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
+                    If 是否有圆角 Then
+                        Using geo = RectangleRenderer.创建圆角矩形几何(极限矩形区域, 边框圆角半径 * DpiScale())
+                            RectangleRenderer.绘制圆角背景_D2D(dcRT, geo, 极限矩形区域, 禁用时遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Vertical)
+                        End Using
+                    Else
+                        RectangleRenderer.绘制矩形背景_D2D(dcRT, 极限矩形区域, 禁用时遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Vertical)
+                    End If
+                End If
+            Finally
+                _当前合成器 = Nothing
+            End Try
         End Using
     End Sub
 
-    ''' <summary>
-    ''' 透明背景贴底图：圆角或 BackColor 含 alpha 时，由共享缓存把 BackgroundSource（或 Parent）
-    ''' 的内容采样到本控件区域。本控件直接以 MyBase.BackColor 作为"BackColor 半透明遮罩 +
-    ''' 实色填充"的合一层（A=255 时为实色 BackColor1 等价层，0&lt;A&lt;255 时为半透明遮罩，
-    ''' A=0 时退化为不绘制）。详见 TransparentBackgroundCache 顶部的统一图层契约。
-    ''' </summary>
+    ''' <summary>（已废弃 GDI 透明背景路径，V2 不再使用）</summary>
     Private Sub 绘制父容器背景(g As Graphics)
-        TransparentBackgroundCache.PaintBackgroundFor(Me, g, _backgroundSource)
+        ' no-op
     End Sub
 
     Private Sub 绘制图形内容_D2D(rt As ID2D1RenderTarget, 是否有圆角 As Boolean, 极限矩形区域 As RectangleF)
@@ -666,12 +650,12 @@ Public Class HtmlColorLabel
             Case Else : ta = Vortice.DirectWrite.TextAlignment.Leading : pa = Vortice.DirectWrite.ParagraphAlignment.Near
         End Select
 
-        Dim fmt = _textFormatCache.Get(Me.Font.FontFamily.Name, weight, style, sizePx, ta, pa, False)
+        Dim fmt = _当前合成器.TextFormatCache.Get(Me.Font.FontFamily.Name, weight, style, sizePx, ta, pa, False)
         Try
             fmt.WordWrapping = Vortice.DirectWrite.WordWrapping.Wrap
         Catch
         End Try
-        Dim brush = _brushCache.Get(rt, 文本颜色)
+        Dim brush = _当前合成器.BrushCache.Get(rt, 文本颜色)
         rt.DrawText(text, fmt,
                     New Vortice.Mathematics.Rect(内容区域.X, 内容区域.Y, 内容区域.Width, 内容区域.Height),
                     brush, DrawTextOptions.None, Vortice.DCommon.MeasuringMode.GdiClassic)
@@ -683,10 +667,10 @@ Public Class HtmlColorLabel
         Dim sizePx As Single = font.SizeInPoints * (96.0F / 72.0F) * DpiScale()
         Dim weight As Vortice.DirectWrite.FontWeight = If((font.Style And FontStyle.Bold) <> 0, Vortice.DirectWrite.FontWeight.Bold, Vortice.DirectWrite.FontWeight.Normal)
         Dim style As Vortice.DirectWrite.FontStyle = If((font.Style And FontStyle.Italic) <> 0, Vortice.DirectWrite.FontStyle.Italic, Vortice.DirectWrite.FontStyle.Normal)
-        Dim fmt = _textFormatCache.Get(font.FontFamily.Name, weight, style, sizePx,
+        Dim fmt = _当前合成器.TextFormatCache.Get(font.FontFamily.Name, weight, style, sizePx,
                                        Vortice.DirectWrite.TextAlignment.Leading,
                                        Vortice.DirectWrite.ParagraphAlignment.Near, False)
-        Dim brush = _brushCache.Get(rt, color)
+        Dim brush = _当前合成器.BrushCache.Get(rt, color)
         ' 使用 GDI 经典度量以贴近 TextRenderer.MeasureText 的布局结果
         Dim layoutRect As New Vortice.Mathematics.Rect(pt.X, pt.Y, Math.Max(1, w + 2), Math.Max(1, h + 2))
 

@@ -43,8 +43,11 @@
         Me.ModernTabListControl1.Items(21).BoundControl = Form_ModernColorDialog
         绑定选项卡窗体背景透明(Form_ModernColorDialog.ModernPanel1)
         Me.ModernTabListControl1.Items(22).BoundControl = Form_ExcellentProgressBar
+        绑定选项卡窗体背景透明(Form_ExcellentProgressBar.ModernPanel1)
         Me.ModernTabListControl1.Items(23).BoundControl = Form_RoundDashBoard
+        绑定选项卡窗体背景透明(Form_RoundDashBoard.ModernPanel1)
         Me.ModernTabListControl1.Items(24).BoundControl = Form_JustEmptyControl
+        绑定选项卡窗体背景透明(Form_JustEmptyControl.ModernPanel1)
         Me.ModernTabListControl1.Items(25).BoundControl = Form_ModernCheckBox
         绑定选项卡窗体背景透明(Form_ModernCheckBox.ModernPanel1)
         Me.ModernTabListControl1.Items(26).BoundControl = Form_ThisIsYourWindow
@@ -52,19 +55,27 @@
         Me.ModernTabListControl1.Items(27).BoundControl = Form_MarkDownViewer
         绑定选项卡窗体背景透明(Form_MarkDownViewer.ModernPanel1)
         Me.ModernTabListControl1.Items(28).BoundControl = Form_ProgressRing
+        绑定选项卡窗体背景透明(Form_ProgressRing.ModernPanel1)
         Me.ModernTabListControl1.Items(29).BoundControl = Form_SysTaskBarProgress
+        绑定选项卡窗体背景透明(Form_SysTaskBarProgress.ModernPanel1)
         Me.ModernTabListControl1.Items(30).BoundControl = Form_PixelPictureBox
+        绑定选项卡窗体背景透明(Form_PixelPictureBox.ModernPanel1)
         Me.ModernTabListControl1.Items(31).BoundControl = Form_TaskbarThumbnailToolbar
+        绑定选项卡窗体背景透明(Form_TaskbarThumbnailToolbar.ModernPanel1)
         Me.ModernTabListControl1.Items(32).BoundControl = Form_MsgBox_InputBox_Tip
+        绑定选项卡窗体背景透明(Form_MsgBox_InputBox_Tip.ModernPanel1)
         Me.ModernTabListControl1.Items(33).BoundControl = Form_CpuMonitor
         绑定选项卡窗体背景透明(Form_CpuMonitor.ModernPanel1)
         Me.ModernTabListControl1.Items(34).BoundControl = Form_RamMonitor
         绑定选项卡窗体背景透明(Form_RamMonitor.ModernPanel1)
         Me.ModernTabListControl1.Items(35).BoundControl = Form_GpuMonitor
         绑定选项卡窗体背景透明(Form_GpuMonitor.ModernPanel1)
-
+        Me.ModernTabListControl1.Items(36).BoundControl = Form_BreadcrumbNavigationBar
+        绑定选项卡窗体背景透明(Form_BreadcrumbNavigationBar.ModernPanel1)
         Me.ModernTabListControl1.Items(37).BoundControl = Form_PrecisionTimer
+        绑定选项卡窗体背景透明(Form_PrecisionTimer.ModernPanel1)
         Me.ModernTabListControl1.Items(38).BoundControl = Form_AgentRoom
+        绑定选项卡窗体背景透明(Form_AgentRoom.ModernPanel1)
     End Sub
 
     Private Sub Form1_Shown(sender As Object, e As EventArgs) Handles Me.Shown

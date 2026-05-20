@@ -213,6 +213,22 @@ Public Class AgentRoom
         End Set
     End Property
 
+    Private _backgroundSource As Control = Nothing
+    <Category("LakeUI"),
+     Description("背景采样源（V2 透明背景穿透）。设置后将跨越任意层级直接采样此控件的绘制内容作为透明背景；为空时按 BackColor 协议处理。"),
+     DefaultValue(GetType(Control), Nothing), Browsable(True)>
+    Public Property BackgroundSource As Control
+        Get
+            Return _backgroundSource
+        End Get
+        Set(value As Control)
+            If _backgroundSource IsNot value Then
+                _backgroundSource = value
+                Me.Invalidate()
+            End If
+        End Set
+    End Property
+
     Friend _borderRadius As Integer = 0
     <Category("LakeUI"), Description("控件外框圆角半径"), DefaultValue(0)>
     Public Property BorderRadius As Integer
@@ -808,126 +824,204 @@ Public Class AgentRoom
     End Sub
 #End Region
 #Region "绘制"
-    Protected Overrides Sub OnPaint(e As PaintEventArgs)
-        MyBase.OnPaint(e)
-        EnsureLayout()
-
-        Dim g As Graphics = e.Graphics
-        g.SmoothingMode = Class1.GlobalSmoothingMode
-        g.PixelOffsetMode = Class1.GlobalPixelOffsetMode
-        g.InterpolationMode = Class1.GlobalInterpolationMode
-        g.CompositingQuality = Class1.GlobalCompositingQuality
-
-        ' 背景 + 圆角裁剪
-        Dim bgRect As New RectangleF(0, 0, Width, Height)
-        Using bgPath As GraphicsPath = If(_borderRadius > 0,
-                                          RectangleRenderer.创建圆角矩形路径(bgRect, _borderRadius),
-                                          NewRectPath(bgRect))
-            Using br As New SolidBrush(BackColor)
-                g.FillPath(br, bgPath)
-            End Using
-        End Using
-
-        ' 内容裁剪
-        Dim area As Rectangle = GetContentArea()
-        Dim oldClip = g.Clip
-        g.SetClip(area)
-
-        ' 绘制每条
-        Dim font As Font = Me.Font
-        Dim lineHeight As Integer = TextRenderer.MeasureText("Ag", font).Height
-        For i = 0 To _items.Count - 1
-            Dim it = _items(i)
-            Dim r As Rectangle = it.CachedRect
-            If r.Bottom < area.Top OrElse r.Top > area.Bottom Then Continue For
-            DrawItem(g, it, r, font, lineHeight, i)
-        Next
-
-        g.Clip = oldClip
-        oldClip.Dispose()
-
-        ' 滚动条
-        Dim viewH As Integer = area.Height
-        Dim totalH As Integer = Math.Max(viewH, _contentHeight)
-        If _contentHeight > viewH AndAlso _scrollBarWidth > 0 Then
-            _scrollBar.ComputeLayout(Width, Height, _borderSize, _borderRadius,
-                                     Me.Padding.Top, Me.Padding.Bottom,
-                                     _scrollBarWidth, totalH, viewH, _滚动偏移)
-            _scrollBar.Draw(g, Width, Height, _borderSize, _borderRadius, _scrollBarWidth,
-                             _scrollBarTrackColor, _scrollBarThumbColor, _scrollBarThumbHoverColor)
-        End If
-
-        ' 边框
-        If _borderSize > 0 Then
-            Dim half As Single = _borderSize / 2.0F
-            Dim brRect As New RectangleF(half, half, Width - _borderSize, Height - _borderSize)
-            Using p As GraphicsPath = If(_borderRadius > 0,
-                                         RectangleRenderer.创建圆角矩形路径(brRect, _borderRadius),
-                                         NewRectPath(brRect))
-                Using pen As New Pen(_borderColor, _borderSize)
-                    g.DrawPath(pen, p)
-                End Using
-            End Using
-        End If
+    Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
+        If _backgroundSource IsNot Nothing Then Return
+        MyBase.OnPaintBackground(e)
     End Sub
 
-    Private Function NewRectPath(r As RectangleF) As GraphicsPath
-        Dim p As New GraphicsPath()
-        p.AddRectangle(r)
-        Return p
-    End Function
+    Protected Overrides Sub OnPaint(e As PaintEventArgs)
+        EnsureLayout()
+        If Me.Width < 1 OrElse Me.Height < 1 Then Return
 
-    Private Sub DrawItem(g As Graphics, it As ChatItem, areaItemRect As Rectangle,
-                         font As Font, lineHeight As Integer, itemIndex As Integer)
+        Dim ssaa As Integer = 1
+        If Class1.GlobalSSAA <> Class1.SuperSamplingScaleEnum.OFF Then ssaa = CInt(Class1.GlobalSSAA)
+
+        Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
+            If scope Is Nothing Then Return
+
+            ' 背景层：背景穿透或本控件 BackColor
+            If _backgroundSource IsNot Nothing Then
+                BackgroundPenetrationV2.PaintBackground(Me, scope, _backgroundSource)
+            ElseIf BackColor.A = 255 Then
+                scope.BackgroundLayer.Clear(D2DHelper.ToColor4(BackColor))
+            Else
+                Dim baseBg As Color = If(Parent IsNot Nothing, Parent.BackColor, MyBase.BackColor)
+                If baseBg.A < 255 Then baseBg = Color.FromArgb(255, baseBg)
+                scope.BackgroundLayer.Clear(D2DHelper.ToColor4(baseBg))
+            End If
+
+            Dim gRT As Vortice.Direct2D1.ID2D1RenderTarget = scope.GraphicsLayer
+            Dim brushCache = scope.Compositor.BrushCache
+            Dim bgRect As New RectangleF(0, 0, Width, Height)
+
+            ' 背景填底（圆角）：仅 BackColor 不透明且无 BackgroundSource 时
+            If _backgroundSource Is Nothing AndAlso BackColor.A > 0 Then
+                If _borderRadius > 0 Then
+                    Using geo = RectangleRenderer.创建圆角矩形几何(bgRect, _borderRadius)
+                        RectangleRenderer.绘制圆角背景_D2D(gRT, geo, bgRect, BackColor, Color.Empty, 0, brushCache)
+                    End Using
+                Else
+                    RectangleRenderer.绘制矩形背景_D2D(gRT, bgRect, BackColor, Color.Empty, 0, brushCache)
+                End If
+            End If
+
+            ' 气泡形状 + 选区填充（GraphicsLayer 上、文字之下）
+            Dim area As Rectangle = GetContentArea()
+            Dim font As Font = Me.Font
+            Dim lineHeight As Integer = TextRenderer.MeasureText("Ag", font).Height
+            gRT.PushAxisAlignedClip(New Vortice.RawRectF(area.Left, area.Top, area.Right, area.Bottom),
+                                     Vortice.Direct2D1.AntialiasMode.PerPrimitive)
+            Try
+                For i As Integer = 0 To _items.Count - 1
+                    Dim it = _items(i)
+                    Dim r As Rectangle = it.CachedRect
+                    If r.Bottom < area.Top OrElse r.Top > area.Bottom Then Continue For
+                    DrawItemShapes_D2D(gRT, brushCache, it, r, font, lineHeight, i)
+                Next
+            Finally
+                gRT.PopAxisAlignedClip()
+            End Try
+
+            ' 滚动条
+            Dim viewH As Integer = area.Height
+            Dim totalH As Integer = Math.Max(viewH, _contentHeight)
+            If _contentHeight > viewH AndAlso _scrollBarWidth > 0 Then
+                _scrollBar.ComputeLayout(Width, Height, _borderSize, _borderRadius,
+                                         Me.Padding.Top, Me.Padding.Bottom,
+                                         _scrollBarWidth, totalH, viewH, _滚动偏移)
+                _scrollBar.Draw_D2D(gRT, Width, Height, _borderSize, _borderRadius, _scrollBarWidth,
+                                    _scrollBarTrackColor, _scrollBarThumbColor, _scrollBarThumbHoverColor)
+            End If
+
+            ' 边框
+            If _borderSize > 0 Then
+                Dim half As Single = _borderSize / 2.0F
+                Dim brRect As New RectangleF(half, half, Width - _borderSize, Height - _borderSize)
+                If _borderRadius > 0 Then
+                    Using geo = RectangleRenderer.创建圆角矩形几何(brRect, _borderRadius)
+                        RectangleRenderer.绘制圆角边框_D2D(gRT, geo, _borderColor, _borderSize, brushCache)
+                    End Using
+                Else
+                    RectangleRenderer.绘制矩形边框_D2D(gRT, brRect, _borderColor, _borderSize, brushCache)
+                End If
+            End If
+
+            scope.FlushGraphics()
+
+            ' 文字层：所有气泡文本 + 链接
+            Dim textRT As Vortice.Direct2D1.ID2D1RenderTarget = scope.TextLayer
+            Dim tfc = scope.Compositor.TextFormatCache
+            Dim dpiS As Single = CSng(Me.DeviceDpi) / 96.0F
+            textRT.PushAxisAlignedClip(New Vortice.RawRectF(area.Left, area.Top, area.Right, area.Bottom),
+                                       Vortice.Direct2D1.AntialiasMode.PerPrimitive)
+            Try
+                For i As Integer = 0 To _items.Count - 1
+                    Dim it = _items(i)
+                    Dim r As Rectangle = it.CachedRect
+                    If r.Bottom < area.Top OrElse r.Top > area.Bottom Then Continue For
+                    DrawItemText_D2D(textRT, brushCache, tfc, dpiS, it, r, font, lineHeight)
+                Next
+            Finally
+                textRT.PopAxisAlignedClip()
+            End Try
+        End Using
+    End Sub
+
+    Private Sub DrawItemShapes_D2D(rt As Vortice.Direct2D1.ID2D1RenderTarget,
+                                    brushCache As D2DHelper.SolidColorBrushCache,
+                                    it As ChatItem, areaItemRect As Rectangle,
+                                    font As Font, lineHeight As Integer, itemIndex As Integer)
         Dim isCard As Boolean = (it.Kind = ChatItemKind.Card)
         Dim bubbleAbs As New Rectangle(areaItemRect.X + it.BubbleRect.X,
                                         areaItemRect.Y + it.BubbleRect.Y,
                                         it.BubbleRect.Width, it.BubbleRect.Height)
-
-        Dim backColor As Color, foreColor As Color
+        Dim backColor As Color
         If isCard Then
-            backColor = _cardBackColor : foreColor = _cardForeColor
+            backColor = _cardBackColor
         ElseIf it.Kind = ChatItemKind.UserMessage Then
-            backColor = _userBubbleBackColor : foreColor = _userBubbleForeColor
+            backColor = _userBubbleBackColor
         Else
-            backColor = _assistantBubbleBackColor : foreColor = _assistantBubbleForeColor
+            backColor = _assistantBubbleBackColor
+        End If
+        Dim radius As Integer = If(isCard, _cardRadius, _bubbleRadius)
+        Dim rectF As New RectangleF(bubbleAbs.X, bubbleAbs.Y, bubbleAbs.Width, bubbleAbs.Height)
+        If radius > 0 Then
+            Using geo = RectangleRenderer.创建圆角矩形几何(rectF, radius)
+                RectangleRenderer.绘制圆角背景_D2D(rt, geo, rectF, backColor, Color.Empty, 0, brushCache)
+                If isCard AndAlso _cardBorderSize > 0 Then
+                    RectangleRenderer.绘制圆角边框_D2D(rt, geo, _cardBorderColor, _cardBorderSize, brushCache)
+                End If
+            End Using
+        Else
+            RectangleRenderer.绘制矩形背景_D2D(rt, rectF, backColor, Color.Empty, 0, brushCache)
+            If isCard AndAlso _cardBorderSize > 0 Then
+                RectangleRenderer.绘制矩形边框_D2D(rt, rectF, _cardBorderColor, _cardBorderSize, brushCache)
+            End If
         End If
 
-        Dim radius As Integer = If(isCard, _cardRadius, _bubbleRadius)
-        Using path As GraphicsPath = If(radius > 0,
-                                        RectangleRenderer.创建圆角矩形路径(New RectangleF(bubbleAbs.X, bubbleAbs.Y, bubbleAbs.Width, bubbleAbs.Height), radius),
-                                        NewRectPath(New RectangleF(bubbleAbs.X, bubbleAbs.Y, bubbleAbs.Width, bubbleAbs.Height)))
-            Using br As New SolidBrush(backColor)
-                g.FillPath(br, path)
-            End Using
-            If isCard AndAlso _cardBorderSize > 0 Then
-                Using pen As New Pen(_cardBorderColor, _cardBorderSize)
-                    g.DrawPath(pen, path)
-                End Using
-            End If
-        End Using
+        ' 选区背景
+        DrawSelectionForItem_D2D(rt, brushCache, it, itemIndex, areaItemRect, font, lineHeight)
+    End Sub
 
-        ' 选区背景（先于文字绘制）
-        DrawSelectionForItem(g, it, itemIndex, areaItemRect, font, lineHeight)
+    Private Sub DrawSelectionForItem_D2D(rt As Vortice.Direct2D1.ID2D1RenderTarget,
+                                          brushCache As D2DHelper.SolidColorBrushCache,
+                                          it As ChatItem, itemIndex As Integer,
+                                          areaItemRect As Rectangle, font As Font, lineHeight As Integer)
+        If Not _hasSelection Then Return
+        Dim rangeStart, rangeEnd As TextPos
+        GetNormalizedSelection(rangeStart, rangeEnd)
+        If itemIndex < rangeStart.ItemIndex OrElse itemIndex > rangeEnd.ItemIndex Then Return
+        Dim selStart As Integer = If(itemIndex = rangeStart.ItemIndex, rangeStart.CharIndex, 0)
+        Dim selEnd As Integer = If(itemIndex = rangeEnd.ItemIndex, rangeEnd.CharIndex, it.Text.Length)
+        If selEnd <= selStart Then Return
+        Dim textX As Integer = areaItemRect.X + it.TextOriginX
+        Dim textY As Integer = areaItemRect.Y + it.TextOriginY
+        Dim selBr = brushCache.Get(rt, _selectionBackColor)
+        For li = 0 To it.LineRanges.Count - 1
+            Dim lr = it.LineRanges(li)
+            Dim lineS As Integer = lr.Start, lineE As Integer = lr.Start + lr.Length
+            Dim a As Integer = Math.Max(selStart, lineS)
+            Dim b As Integer = Math.Min(selEnd, lineE)
+            If b <= a Then Continue For
+            Dim line As String = it.Text.Substring(lr.Start, lr.Length)
+            Dim preW As Integer = TextRenderHelper.MeasureTextWidth(line.Substring(0, a - lineS), font, lineHeight)
+            Dim segW As Integer = TextRenderHelper.MeasureTextWidth(line.Substring(a - lineS, b - a), font, lineHeight)
+            rt.FillRectangle(New Vortice.RawRectF(textX + preW, textY + li * lineHeight, textX + preW + segW, textY + li * lineHeight + lineHeight), selBr)
+        Next
+    End Sub
 
-        ' 文本逐行绘制
+    Private Sub DrawItemText_D2D(rt As Vortice.Direct2D1.ID2D1RenderTarget,
+                                  brushCache As D2DHelper.SolidColorBrushCache,
+                                  tfc As D2DHelper.TextFormatCache, dpiS As Single,
+                                  it As ChatItem, areaItemRect As Rectangle, font As Font, lineHeight As Integer)
+        Dim isCard As Boolean = (it.Kind = ChatItemKind.Card)
+        Dim foreColor As Color
+        If isCard Then
+            foreColor = _cardForeColor
+        ElseIf it.Kind = ChatItemKind.UserMessage Then
+            foreColor = _userBubbleForeColor
+        Else
+            foreColor = _assistantBubbleForeColor
+        End If
         Dim textX As Integer = areaItemRect.X + it.TextOriginX
         Dim textY As Integer = areaItemRect.Y + it.TextOriginY
         For li = 0 To it.LineRanges.Count - 1
             Dim lr = it.LineRanges(li)
             Dim line As String = it.Text.Substring(lr.Start, lr.Length)
-            DrawLineWithLinks(g, it, line, lr.Start, textX, textY + li * lineHeight, font, lineHeight, foreColor)
+            DrawLineWithLinks_D2D(rt, brushCache, tfc, dpiS, it, line, lr.Start,
+                                   textX, textY + li * lineHeight, font, lineHeight, foreColor)
         Next
     End Sub
 
-    Private Sub DrawLineWithLinks(g As Graphics, it As ChatItem, line As String, lineStartCharIndex As Integer,
-                                  x As Integer, y As Integer, font As Font, lineHeight As Integer, normalColor As Color)
+    Private Sub DrawLineWithLinks_D2D(rt As Vortice.Direct2D1.ID2D1RenderTarget,
+                                       brushCache As D2DHelper.SolidColorBrushCache,
+                                       tfc As D2DHelper.TextFormatCache, dpiS As Single,
+                                       it As ChatItem, line As String, lineStartCharIndex As Integer,
+                                       x As Integer, y As Integer, font As Font, lineHeight As Integer,
+                                       normalColor As Color)
         If String.IsNullOrEmpty(line) Then Return
-        Dim cursor As Integer = 0
         Dim curX As Integer = x
         Dim lineEnd As Integer = lineStartCharIndex + line.Length
-
-        ' 收集与该行相交的链接段
         Dim segments As New List(Of (s As Integer, e As Integer, isLink As Boolean, url As String))
         Dim p As Integer = lineStartCharIndex
         While p < lineEnd
@@ -944,23 +1038,21 @@ Public Class AgentRoom
                 p = lineEnd
             End If
         End While
-
+        Dim flags As TextFormatFlags = TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine
         For Each seg In segments
             If seg.e <= seg.s Then Continue For
             Dim part As String = line.Substring(seg.s, seg.e - seg.s)
             Dim w As Integer = TextRenderHelper.MeasureTextWidth(part, font, lineHeight)
             If seg.isLink Then
                 Dim col As Color = If(seg.url IsNot Nothing AndAlso seg.url = _hoverLinkUrl, _linkHoverColor, _linkColor)
-                TextRenderer.DrawText(g, part, font, New Point(curX, y), col,
-                                      TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine)
+                D2DTextRenderer.DrawText(rt, part, font, New Rectangle(curX, y, w, lineHeight), col, flags, dpiS, tfc, brushCache)
                 If _linkUnderline Then
-                    Using pen As New Pen(col)
-                        g.DrawLine(pen, curX, y + lineHeight - 2, curX + w, y + lineHeight - 2)
-                    End Using
+                    Dim br = brushCache.Get(rt, col)
+                    rt.DrawLine(New System.Numerics.Vector2(curX, y + lineHeight - 2),
+                                New System.Numerics.Vector2(curX + w, y + lineHeight - 2), br, 1.0F)
                 End If
             Else
-                TextRenderer.DrawText(g, part, font, New Point(curX, y), normalColor,
-                                      TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine)
+                D2DTextRenderer.DrawText(rt, part, font, New Rectangle(curX, y, w, lineHeight), normalColor, flags, dpiS, tfc, brushCache)
             End If
             curX += w
         Next
@@ -982,34 +1074,6 @@ Public Class AgentRoom
     End Function
 #End Region
 #Region "选区与点击"
-    Private Sub DrawSelectionForItem(g As Graphics, it As ChatItem, itemIndex As Integer,
-                                      areaItemRect As Rectangle, font As Font, lineHeight As Integer)
-        If Not _hasSelection Then Return
-        Dim rangeStart, rangeEnd As TextPos
-        GetNormalizedSelection(rangeStart, rangeEnd)
-        If itemIndex < rangeStart.ItemIndex OrElse itemIndex > rangeEnd.ItemIndex Then Return
-
-        Dim selStart As Integer = If(itemIndex = rangeStart.ItemIndex, rangeStart.CharIndex, 0)
-        Dim selEnd As Integer = If(itemIndex = rangeEnd.ItemIndex, rangeEnd.CharIndex, it.Text.Length)
-        If selEnd <= selStart Then Return
-
-        Dim textX As Integer = areaItemRect.X + it.TextOriginX
-        Dim textY As Integer = areaItemRect.Y + it.TextOriginY
-        For li = 0 To it.LineRanges.Count - 1
-            Dim lr = it.LineRanges(li)
-            Dim lineS As Integer = lr.Start, lineE As Integer = lr.Start + lr.Length
-            Dim a As Integer = Math.Max(selStart, lineS)
-            Dim b As Integer = Math.Min(selEnd, lineE)
-            If b <= a Then Continue For
-            Dim line As String = it.Text.Substring(lr.Start, lr.Length)
-            Dim preW As Integer = TextRenderHelper.MeasureTextWidth(line.Substring(0, a - lineS), font, lineHeight)
-            Dim segW As Integer = TextRenderHelper.MeasureTextWidth(line.Substring(a - lineS, b - a), font, lineHeight)
-            Using br As New SolidBrush(_selectionBackColor)
-                g.FillRectangle(br, textX + preW, textY + li * lineHeight, segW, lineHeight)
-            End Using
-        Next
-    End Sub
-
     Private Sub GetNormalizedSelection(ByRef a As TextPos, ByRef b As TextPos)
         a = _selAnchor : b = _selCaret
         If a.ItemIndex > b.ItemIndex OrElse (a.ItemIndex = b.ItemIndex AndAlso a.CharIndex > b.CharIndex) Then

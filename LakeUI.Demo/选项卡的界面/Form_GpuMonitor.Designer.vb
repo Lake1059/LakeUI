@@ -58,6 +58,7 @@ Partial Class Form_GpuMonitor
         ModernPanel1.Margin = New Padding(2)
         ModernPanel1.Name = "ModernPanel1"
         ModernPanel1.Padding = New Padding(20)
+        ModernPanel1.ScrollBarMode = ModernPanel.ScrollMode.None
         ModernPanel1.Size = New Size(724, 599)
         ModernPanel1.TabIndex = 36
         ' 
@@ -68,7 +69,7 @@ Partial Class Form_GpuMonitor
         Panel3.Location = New Point(20, 255)
         Panel3.Name = "Panel3"
         Panel3.Padding = New Padding(0, 20, 0, 0)
-        Panel3.Size = New Size(672, 312)
+        Panel3.Size = New Size(684, 324)
         Panel3.TabIndex = 42
         ' 
         ' ModernTextBox1
@@ -80,12 +81,12 @@ Partial Class Form_GpuMonitor
         ModernTextBox1.Font = New Font("Microsoft YaHei UI", 10F)
         ModernTextBox1.LinkDetection = True
         ModernTextBox1.Location = New Point(0, 20)
-        ModernTextBox1.Margin = New Padding(2, 2, 2, 2)
+        ModernTextBox1.Margin = New Padding(2)
         ModernTextBox1.MultiLine = True
         ModernTextBox1.Name = "ModernTextBox1"
         ModernTextBox1.Padding = New Padding(10)
         ModernTextBox1.ShowLineNumbers = True
-        ModernTextBox1.Size = New Size(672, 292)
+        ModernTextBox1.Size = New Size(684, 304)
         ModernTextBox1.TabIndex = 39
         ' 
         ' Panel7
@@ -97,7 +98,7 @@ Partial Class Form_GpuMonitor
         Panel7.Location = New Point(20, 210)
         Panel7.Name = "Panel7"
         Panel7.Padding = New Padding(0, 10, 0, 0)
-        Panel7.Size = New Size(672, 45)
+        Panel7.Size = New Size(684, 45)
         Panel7.TabIndex = 52
         ' 
         ' ModernButton6
@@ -162,7 +163,7 @@ Partial Class Form_GpuMonitor
         Panel1.Dock = DockStyle.Top
         Panel1.Location = New Point(20, 70)
         Panel1.Name = "Panel1"
-        Panel1.Size = New Size(672, 50)
+        Panel1.Size = New Size(684, 50)
         Panel1.TabIndex = 35
         ' 
         ' ModernButton4

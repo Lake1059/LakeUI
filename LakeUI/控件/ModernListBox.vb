@@ -263,10 +263,23 @@ Public Class ModernListBox
 #End Region
 
 #Region "字段"
-    Private _dcRT As ID2D1DCRenderTarget
-    Private ReadOnly _ssaaCache As New D2DHelper.BitmapRTCache()
-    Private ReadOnly _iconCache As New D2DHelper.D2DBitmapCache()
-    Private ReadOnly _textFormatCache As New D2DHelper.TextFormatCache()
+    Private _当前合成器 As WindowCompositor
+    Private _backgroundSource As Control = Nothing
+
+    <Category("LakeUI"),
+     Description("背景采样源（V2 透明背景穿透）。设置后将跨越任意层级直接采样此控件的绘制内容作为透明背景。"),
+     DefaultValue(GetType(Control), Nothing), Browsable(True)>
+    Public Property BackgroundSource As Control
+        Get
+            Return _backgroundSource
+        End Get
+        Set(value As Control)
+            If _backgroundSource IsNot value Then
+                _backgroundSource = value
+                Me.Invalidate()
+            End If
+        End Set
+    End Property
 
     Private _items As ItemCollection
     Friend _checkStates As New Dictionary(Of Integer, CheckStateEnum)
@@ -1070,20 +1083,9 @@ Public Class ModernListBox
         UpdateStyles()
     End Sub
 
-    Private Function GetOrCreateDCRenderTarget() As ID2D1DCRenderTarget
-        If _dcRT Is Nothing Then _dcRT = D2DHelper.CreateDCRenderTarget()
-        Return _dcRT
-    End Function
-
-    Protected Overrides Sub OnHandleDestroyed(e As EventArgs)
-        Try : _ssaaCache.Dispose() : Catch : End Try
-        Try : _iconCache.Dispose() : Catch : End Try
-        Try : _textFormatCache.Dispose() : Catch : End Try
-        If _dcRT IsNot Nothing Then
-            Try : _dcRT.Dispose() : Catch : End Try
-            _dcRT = Nothing
-        End If
-        MyBase.OnHandleDestroyed(e)
+    Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
+        If _backgroundSource IsNot Nothing Then Return
+        MyBase.OnPaintBackground(e)
     End Sub
 
 #End Region
@@ -1176,9 +1178,16 @@ Public Class ModernListBox
         Dim ssaa As Integer = Math.Max(1, CInt(超采样倍率))
         If Class1.GlobalSSAA <> Class1.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(Class1.GlobalSSAA))
 
-        Using scope = D2DHelper.BeginPaint(e, Me, GetOrCreateDCRenderTarget(), ssaa, _ssaaCache)
-            Dim gRT As ID2D1RenderTarget = scope.GraphicsRenderTarget
-            Dim dcRT As ID2D1DCRenderTarget = scope.DCRenderTarget
+        Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
+            If scope Is Nothing Then Return
+            _当前合成器 = scope.Compositor
+            Try
+                If _backgroundSource IsNot Nothing Then
+                    BackgroundPenetrationV2.PaintBackground(Me, scope, _backgroundSource)
+                End If
+
+                Dim gRT As ID2D1RenderTarget = scope.GraphicsLayer
+                Dim dcRT As ID2D1DCRenderTarget = scope.DCRenderTarget
 
             DrawBackground_D2D(gRT, hasRadius, boundsRect, bc, effBg)
 
@@ -1204,6 +1213,9 @@ Public Class ModernListBox
                     RectangleRenderer.绘制矩形背景_D2D(dcRT, boundsRect, 禁用时遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Vertical)
                 End If
             End If
+            Finally
+                _当前合成器 = Nothing
+            End Try
         End Using
     End Sub
 
@@ -1347,7 +1359,7 @@ Public Class ModernListBox
             If _itemIcons.TryGetIcon(itemText, icon) AndAlso icon IsNot Nothing AndAlso scaledIconW > 0 AndAlso scaledIconH > 0 Then
                 Dim iconX As Integer = textX
                 Dim iconY As Integer = itemY + (scaledH - scaledIconH) \ 2
-                Dim bmp = _iconCache.GetBitmap(rt, icon)
+                Dim bmp = _当前合成器.GetBitmapCache(icon).GetBitmap(rt, icon)
                 If bmp IsNot Nothing Then
                     rt.DrawBitmap(bmp,
                         New Vortice.Mathematics.Rect(iconX, iconY, scaledIconW, scaledIconH),
@@ -1376,7 +1388,7 @@ Public Class ModernListBox
         Dim fontSizePx As Single = Font.SizeInPoints * (96.0F / 72.0F) * s
         Dim fontWeight As Vortice.DirectWrite.FontWeight = If(Font.Bold, Vortice.DirectWrite.FontWeight.Bold, Vortice.DirectWrite.FontWeight.Normal)
         Dim fontStyle As Vortice.DirectWrite.FontStyle = If(Font.Italic, Vortice.DirectWrite.FontStyle.Italic, Vortice.DirectWrite.FontStyle.Normal)
-        Dim fmt = _textFormatCache.Get(Font.FontFamily.Name, fontWeight, fontStyle, fontSizePx,
+        Dim fmt = _当前合成器.TextFormatCache.Get(Font.FontFamily.Name, fontWeight, fontStyle, fontSizePx,
             Vortice.DirectWrite.TextAlignment.Leading, ParagraphAlignment.Center, True)
 
         Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(ForeColor))
@@ -2061,51 +2073,51 @@ Public Class ModernListBox
             Invalidate()
         End Sub
 
+        Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
+            ' 顶层 Form：由 OnPaint 用 D2D 全权接管底色。
+        End Sub
+
         Protected Overrides Sub OnPaint(e As PaintEventArgs)
             Dim w As Integer = ClientRectangle.Width
             Dim h As Integer = ClientRectangle.Height
+            If w < 1 OrElse h < 1 Then Return
             Dim bw As Integer = _owner.提示边框宽度
             Dim radius As Integer = _owner.提示圆角半径
             Dim pad As Padding = _owner.提示内边距
 
-            Using bgBr As New SolidBrush(_owner.提示背景颜色)
-                e.Graphics.FillRectangle(bgBr, 0, 0, w, h)
-            End Using
+            Using scope = D2DHelperV2.BeginPaint(e, Me, 1)
+                If scope Is Nothing Then Return
+                Dim rt = scope.GraphicsLayer
+                Dim brushCache = scope.Compositor.BrushCache
 
-            Dim boundsRect As New RectangleF(0, 0, w - 1, h - 1)
-            If bw > 0 Then
-                Dim half As Single = bw / 2.0F
-                boundsRect.Inflate(-half, -half)
-            End If
+                rt.Clear(D2DHelper.ToColor4(_owner.提示背景颜色))
 
-            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias
-            e.Graphics.PixelOffsetMode = PixelOffsetMode.HighQuality
-            If radius > 0 Then
-                Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(boundsRect, radius)
-                    Using br As New SolidBrush(_owner.提示背景颜色)
-                        e.Graphics.FillPath(br, path)
-                    End Using
-                    If bw > 0 Then
-                        Using pen As New Pen(_owner.提示边框颜色, bw)
-                            pen.LineJoin = Drawing2D.LineJoin.Round
-                            e.Graphics.DrawPath(pen, path)
-                        End Using
-                    End If
-                End Using
-            Else
+                Dim boundsRect As New RectangleF(0, 0, w - 1, h - 1)
                 If bw > 0 Then
-                    Using pen As New Pen(_owner.提示边框颜色, bw)
-                        e.Graphics.DrawRectangle(pen, boundsRect.X, boundsRect.Y, boundsRect.Width, boundsRect.Height)
-                    End Using
+                    Dim half As Single = bw / 2.0F
+                    boundsRect.Inflate(-half, -half)
                 End If
-            End If
 
-            e.Graphics.TextRenderingHint = Drawing.Text.TextRenderingHint.ClearTypeGridFit
-            Dim textRect As New Rectangle(bw + pad.Left, bw + pad.Top,
-                w - bw * 2 - pad.Left - pad.Right,
-                h - bw * 2 - pad.Top - pad.Bottom)
-            TextRenderer.DrawText(e.Graphics, _tipText, _owner.Font, textRect, _owner.提示文本颜色,
-                TextFormatFlags.WordBreak Or TextFormatFlags.NoPadding Or TextFormatFlags.Left Or TextFormatFlags.Top)
+                If radius > 0 Then
+                    Using geo = RectangleRenderer.创建圆角矩形几何(boundsRect, radius)
+                        rt.FillGeometry(geo, brushCache.[Get](rt, _owner.提示背景颜色))
+                        If bw > 0 Then
+                            rt.DrawGeometry(geo, brushCache.[Get](rt, _owner.提示边框颜色), bw)
+                        End If
+                    End Using
+                ElseIf bw > 0 Then
+                    rt.DrawRectangle(D2DHelper.ToD2DRect(boundsRect), brushCache.[Get](rt, _owner.提示边框颜色), bw)
+                End If
+
+                scope.FlushGraphics()
+
+                Dim textRect As New Rectangle(bw + pad.Left, bw + pad.Top,
+                    w - bw * 2 - pad.Left - pad.Right,
+                    h - bw * 2 - pad.Top - pad.Bottom)
+                D2DTextRenderer.DrawText(scope.TextLayer, _tipText, _owner.Font, textRect, _owner.提示文本颜色,
+                    TextFormatFlags.WordBreak Or TextFormatFlags.NoPadding Or TextFormatFlags.Left Or TextFormatFlags.Top,
+                    _owner.DpiScale(), scope.Compositor.TextFormatCache, brushCache)
+            End Using
         End Sub
     End Class
 

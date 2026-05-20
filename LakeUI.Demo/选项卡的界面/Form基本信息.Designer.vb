@@ -46,6 +46,7 @@ Partial Class Form基本信息
         ' ModernTextBox1
         ' 
         ModernTextBox1.BackColor1 = Color.FromArgb(CByte(80), CByte(0), CByte(0), CByte(0))
+        ModernTextBox1.BackgroundSource = ModernPanel1
         ModernTextBox1.BorderRadius = 20
         ModernTextBox1.BorderSize = 0
         ModernTextBox1.CaretColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))

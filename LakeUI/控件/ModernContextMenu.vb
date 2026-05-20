@@ -1,4 +1,4 @@
-Imports System.ComponentModel
+﻿Imports System.ComponentModel
 Imports System.ComponentModel.Design
 Imports System.Drawing.Drawing2D
 Imports System.Numerics
@@ -587,31 +587,10 @@ Public Class ModernContextMenu
         Private 正在关闭动画 As Boolean = False
         Private 最终高度 As Integer
 
-        Private _dcRT As ID2D1DCRenderTarget
-        Private ReadOnly _ssaaCache As New D2DHelper.BitmapRTCache()
-        Private ReadOnly _backdropImageCache As New D2DHelper.D2DBitmapCache()
-        Private ReadOnly _iconCache As New D2DHelper.D2DBitmapCache()
-        Private ReadOnly _graphicsBrushCache As New D2DHelper.SolidColorBrushCache()
-        Private ReadOnly _dcBrushCache As New D2DHelper.SolidColorBrushCache()
-        Private ReadOnly _textFormats As New D2DHelper.TextFormatCache()
+        Private _当前合成器 As WindowCompositor
         Private _backdropRenderer As BackdropRenderer
 
-        Private Function GetOrCreateDCRenderTarget() As ID2D1DCRenderTarget
-            If _dcRT Is Nothing Then _dcRT = D2DHelper.CreateDCRenderTarget()
-            Return _dcRT
-        End Function
-
         Private Sub 释放D2D资源()
-            Try : _ssaaCache.Dispose() : Catch : End Try
-            Try : _backdropImageCache.Dispose() : Catch : End Try
-            Try : _iconCache.Dispose() : Catch : End Try
-            Try : _graphicsBrushCache.Dispose() : Catch : End Try
-            Try : _dcBrushCache.Dispose() : Catch : End Try
-            Try : _textFormats.Dispose() : Catch : End Try
-            If _dcRT IsNot Nothing Then
-                Try : _dcRT.Dispose() : Catch : End Try
-                _dcRT = Nothing
-            End If
             If _backdropRenderer IsNot Nothing Then
                 Try : _backdropRenderer.Dispose() : Catch : End Try
                 _backdropRenderer = Nothing
@@ -758,13 +737,19 @@ Public Class ModernContextMenu
 
             绘制毛玻璃背景(e.Graphics)
 
-            Using scope = D2DHelper.BeginPaint(e, Me, GetOrCreateDCRenderTarget(), ssaa, _ssaaCache)
-                Dim gRT As ID2D1RenderTarget = scope.GraphicsRenderTarget
-                Dim dcRT As ID2D1DCRenderTarget = scope.DCRenderTarget
+            Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
+                If scope Is Nothing Then Return
+                _当前合成器 = scope.Compositor
+                Try
+                    Dim gRT As ID2D1RenderTarget = scope.GraphicsLayer
+                    Dim dcRT As ID2D1DCRenderTarget = scope.DCRenderTarget
 
-                绘制图形内容_D2D(gRT)
-                scope.FlushGraphics()
-                绘制全部文本_D2D(dcRT)
+                    绘制图形内容_D2D(gRT)
+                    scope.FlushGraphics()
+                    绘制全部文本_D2D(dcRT)
+                Finally
+                    _当前合成器 = Nothing
+                End Try
             End Using
         End Sub
 
@@ -785,7 +770,7 @@ Public Class ModernContextMenu
 
         Private Sub 绘制图形内容_D2D(rt As ID2D1RenderTarget)
             If 菜单.毛玻璃模式 = BackdropModeEnum.None OrElse _backdropRenderer Is Nothing OrElse Not _backdropRenderer.HasFrame Then
-                Dim bg = _graphicsBrushCache.Get(rt, 菜单.背景颜色)
+                Dim bg = _当前合成器.BrushCache.Get(rt, 菜单.背景颜色)
                 rt.FillRectangle(D2DHelper.ToD2DRect(ClientRectangle), bg)
             End If
 
@@ -793,7 +778,7 @@ Public Class ModernContextMenu
                 Dim bw As Single = Math.Max(1.0F, 菜单.边框宽度 * DpiScale())
                 Dim cw As Single = ClientSize.Width - 1
                 Dim ch As Single = ClientSize.Height - 1
-                Dim b = _graphicsBrushCache.Get(rt, 菜单.边框颜色)
+                Dim b = _当前合成器.BrushCache.Get(rt, 菜单.边框颜色)
                 rt.FillRectangle(New Vortice.Mathematics.Rect(0, 0, cw, bw), b)
                 rt.FillRectangle(New Vortice.Mathematics.Rect(0, ch - bw, cw, bw), b)
                 rt.FillRectangle(New Vortice.Mathematics.Rect(0, bw, bw, ch - bw * 2), b)
@@ -816,7 +801,7 @@ Public Class ModernContextMenu
 
         Private Sub 绘制分割线_D2D(rt As ID2D1RenderTarget, rect As Rectangle)
             Dim lineY As Single = rect.Y + (rect.Height - 1) / 2.0F
-            Dim b = _graphicsBrushCache.Get(rt, 菜单.分割线颜色)
+            Dim b = _当前合成器.BrushCache.Get(rt, 菜单.分割线颜色)
             rt.FillRectangle(New Vortice.Mathematics.Rect(rect.X, lineY, rect.Width, 1.0F), b)
         End Sub
 
@@ -826,7 +811,7 @@ Public Class ModernContextMenu
                 项目区域列表(0).X, 动画当前Y,
                 项目区域列表(0).Width, 动画当前高度)
             Dim highlightColor As Color = If(鼠标按下, 菜单.按下背景颜色, 菜单.悬停背景颜色)
-            Dim b = _graphicsBrushCache.Get(rt, highlightColor)
+            Dim b = _当前合成器.BrushCache.Get(rt, highlightColor)
             If 菜单.悬停圆角半径 > 0 Then
                 Dim radius As Single = Math.Min(菜单.悬停圆角半径 * DpiScale(), highlightRect.Height / 2.0F)
                 Using geo = RectangleRenderer.创建圆角矩形几何(highlightRect, radius)
@@ -850,7 +835,7 @@ Public Class ModernContextMenu
                 If item.Checked Then 绘制勾选标记_D2D(rt, iconRect)
 
                 If item.Icon IsNot Nothing Then
-                    Dim bmp = _iconCache.GetBitmap(rt, item.Icon)
+                    Dim bmp = _当前合成器.GetBitmapCache(item.Icon).GetBitmap(rt, item.Icon)
                     If bmp IsNot Nothing Then
                         Dim srcRect As New RectangleF(0, 0, item.Icon.Width, item.Icon.Height)
                         rt.DrawBitmap(bmp, D2DHelper.ToD2DRect(iconRect), 1.0F, BitmapInterpolationMode.Linear, D2DHelper.ToD2DRect(srcRect))
@@ -864,122 +849,6 @@ Public Class ModernContextMenu
             End If
         End Sub
 
-        Private Sub 绘制图形内容(g As Graphics)
-            g.SmoothingMode = Class1.GlobalSmoothingMode
-            g.InterpolationMode = Class1.GlobalInterpolationMode
-
-            Using brush As New SolidBrush(菜单.背景颜色)
-                g.FillRectangle(brush, ClientRectangle)
-            End Using
-
-            If 菜单.边框宽度 > 0 Then
-                Dim bw As Integer = CInt(菜单.边框宽度 * DpiScale())
-                Dim cw = ClientSize.Width - 1
-                Dim ch = ClientSize.Height - 1
-                Using brush As New SolidBrush(菜单.边框颜色)
-                    g.FillRectangle(brush, 0, 0, cw, bw)
-                    g.FillRectangle(brush, 0, ch - bw, cw, bw)
-                    g.FillRectangle(brush, 0, bw, bw, ch - bw * 2)
-                    g.FillRectangle(brush, cw - bw, bw, bw, ch - bw * 2)
-                End Using
-            End If
-
-            绘制悬停高亮(g)
-
-            For i = 0 To 菜单.项目列表.Count - 1
-                If i >= 项目区域列表.Count Then Exit For
-                Dim item = 菜单.项目列表(i)
-                Dim rect = 项目区域列表(i)
-                If item.IsSeparator Then
-                    绘制分割线(g, rect)
-                ElseIf Not item.IsDescription Then
-                    绘制项目图形(g, item, rect)
-                End If
-            Next
-        End Sub
-
-        Private Sub 绘制分割线(g As Graphics, rect As Rectangle)
-            Dim lineY As Integer = rect.Y + (rect.Height - 1) \ 2
-            Using brush As New SolidBrush(菜单.分割线颜色)
-                g.FillRectangle(brush, rect.X, lineY, rect.Width, 1)
-            End Using
-        End Sub
-
-        Private Sub 绘制悬停高亮(g As Graphics)
-            If Not 动画显示高亮 Then Return
-            Dim highlightRect As New RectangleF(
-                项目区域列表(0).X, 动画当前Y,
-                项目区域列表(0).Width, 动画当前高度)
-            Dim highlightColor As Color = If(鼠标按下, 菜单.按下背景颜色, 菜单.悬停背景颜色)
-            If 菜单.悬停圆角半径 > 0 Then
-                Dim radius As Integer = Math.Min(CInt(菜单.悬停圆角半径 * DpiScale()), CInt(highlightRect.Height) \ 2)
-                Using path As GraphicsPath = RectangleRenderer.创建圆角矩形路径(highlightRect, radius)
-                    Using brush As New SolidBrush(highlightColor)
-                        g.FillPath(brush, path)
-                    End Using
-                End Using
-            Else
-                Using brush As New SolidBrush(highlightColor)
-                    g.FillRectangle(brush, highlightRect.X, highlightRect.Y, highlightRect.Width, highlightRect.Height)
-                End Using
-            End If
-        End Sub
-
-        Private Sub 绘制项目图形(g As Graphics, item As ModernMenuItem, rect As Rectangle)
-            Dim s As Single = DpiScale()
-            Dim ipL As Integer = CInt(菜单.项目内边距.Left * s)
-            Dim iconCol As Integer = CInt(菜单.有效图标列宽度 * s)
-
-            If iconCol > 0 Then
-                Dim iconX As Integer = rect.X + ipL
-                Dim iconY As Integer = rect.Y + (rect.Height - iconCol) \ 2
-
-                If item.Checked Then
-                    绘制勾选标记(g, New Rectangle(iconX, iconY, iconCol, iconCol))
-                End If
-
-                If item.Icon IsNot Nothing Then
-                    g.DrawImage(item.Icon, New Rectangle(iconX, iconY, iconCol, iconCol))
-                End If
-            End If
-
-            If item.SubMenu IsNot Nothing Then
-                Dim arrowW As Integer = CInt(16 * s)
-                绘制箭头(g, New Rectangle(rect.Right - arrowW, rect.Y, arrowW, rect.Height))
-            End If
-        End Sub
-
-        Private Sub 绘制全部文本(g As Graphics)
-            Dim s As Single = DpiScale()
-            Dim iconCol As Integer = CInt(菜单.有效图标列宽度 * s)
-            Dim ipL As Integer = CInt(菜单.项目内边距.Left * s)
-            Dim ipR As Integer = CInt(菜单.项目内边距.Right * s)
-            Dim ipT As Integer = CInt(菜单.项目内边距.Top * s)
-            Dim ipB As Integer = CInt(菜单.项目内边距.Bottom * s)
-            Dim iconTextGap As Integer = If(iconCol > 0, CInt(菜单.图标文字间距 * s), 0)
-
-            For i = 0 To 菜单.项目列表.Count - 1
-                If i >= 项目区域列表.Count Then Exit For
-                Dim item = 菜单.项目列表(i)
-                If item.IsSeparator Then Continue For
-                Dim rect = 项目区域列表(i)
-                Dim x As Integer = rect.X + ipL + iconCol + iconTextGap
-                Dim font As Font
-                Dim foreColor As Color
-                If item.IsDescription Then
-                    font = If(item.Font, 菜单.说明字体)
-                    foreColor = If(item.ForeColor <> Color.Empty, item.ForeColor, 菜单.说明文本颜色)
-                Else
-                    font = If(item.Font, 菜单.菜单字体)
-                    foreColor = If(item.ForeColor <> Color.Empty, item.ForeColor, 菜单.文本颜色)
-                End If
-                Dim arrowSpace As Integer = If(Not item.IsDescription AndAlso item.SubMenu IsNot Nothing, CInt(20 * s), 0)
-                Dim textRect As New Rectangle(x, rect.Y + ipT, rect.Width - ipL - iconCol - iconTextGap - ipR - arrowSpace, rect.Height - ipT - ipB)
-                TextRenderer.DrawText(g, item.Text, font, textRect, foreColor,
-                    TextFormatFlags.Left Or TextFormatFlags.VerticalCenter Or TextFormatFlags.EndEllipsis Or TextFormatFlags.NoPadding)
-            Next
-        End Sub
-
         Private Sub 绘制全部文本_D2D(rt As ID2D1DCRenderTarget)
             Dim s As Single = DpiScale()
             Dim iconCol As Integer = CInt(菜单.有效图标列宽度 * s)
@@ -988,6 +857,9 @@ Public Class ModernContextMenu
             Dim ipT As Integer = CInt(菜单.项目内边距.Top * s)
             Dim ipB As Integer = CInt(菜单.项目内边距.Bottom * s)
             Dim iconTextGap As Integer = If(iconCol > 0, CInt(菜单.图标文字间距 * s), 0)
+            Dim dpi As Single = DpiScale()
+            Dim tfc = _当前合成器.TextFormatCache
+            Dim brushCache = _当前合成器.BrushCache
 
             For i = 0 To 菜单.项目列表.Count - 1
                 If i >= 项目区域列表.Count Then Exit For
@@ -1007,19 +879,12 @@ Public Class ModernContextMenu
                 If font Is Nothing OrElse foreColor.A = 0 Then Continue For
 
                 Dim arrowSpace As Integer = If(Not item.IsDescription AndAlso item.SubMenu IsNot Nothing, CInt(20 * s), 0)
-                Dim textRect As New RectangleF(x, rect.Y + ipT, rect.Width - ipL - iconCol - iconTextGap - ipR - arrowSpace, rect.Height - ipT - ipB)
+                Dim textRect As New Rectangle(x, rect.Y + ipT, rect.Width - ipL - iconCol - iconTextGap - ipR - arrowSpace, rect.Height - ipT - ipB)
                 If textRect.Width <= 0 OrElse textRect.Height <= 0 Then Continue For
 
-                Dim sizePx As Single = font.SizeInPoints * (96.0F / 72.0F) * s
-                Dim weight As Vortice.DirectWrite.FontWeight = If(font.Bold, Vortice.DirectWrite.FontWeight.Bold, Vortice.DirectWrite.FontWeight.Normal)
-                Dim style As Vortice.DirectWrite.FontStyle = If(font.Italic, Vortice.DirectWrite.FontStyle.Italic, Vortice.DirectWrite.FontStyle.Normal)
-                Dim fmt = _textFormats.Get(font.FontFamily.Name, weight, style, sizePx,
-                                           Vortice.DirectWrite.TextAlignment.Leading,
-                                           Vortice.DirectWrite.ParagraphAlignment.Center,
-                                           True)
-                Dim brush = _dcBrushCache.Get(rt, foreColor)
-                rt.DrawText(If(item.Text, ""), fmt, D2DHelper.ToD2DRect(textRect), brush,
-                            DrawTextOptions.Clip, Vortice.DCommon.MeasuringMode.Natural)
+                D2DTextRenderer.DrawText(rt, If(item.Text, ""), font, textRect, foreColor,
+                    TextFormatFlags.Left Or TextFormatFlags.VerticalCenter Or TextFormatFlags.EndEllipsis Or TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine,
+                    dpi, tfc, brushCache)
             Next
         End Sub
 
@@ -1028,9 +893,9 @@ Public Class ModernContextMenu
             Dim cy As Single = rect.Y + rect.Height / 2.0F
             Dim s As Single = rect.Height * 0.18F
             Dim pw As Single = Math.Max(1.6F, rect.Height * 0.08F)
-            Dim b = _graphicsBrushCache.Get(rt, 菜单.勾选颜色)
-            rt.DrawLine(New Vector2(cx - s, cy), New Vector2(cx - s * 0.35F, cy + s * 0.85F), b, pw)
-            rt.DrawLine(New Vector2(cx - s * 0.35F, cy + s * 0.85F), New Vector2(cx + s, cy - s), b, pw)
+            Dim b = _当前合成器.BrushCache.Get(rt, 菜单.勾选颜色)
+            rt.DrawLine(New System.Numerics.Vector2(cx - s, cy), New System.Numerics.Vector2(cx - s * 0.35F, cy + s * 0.85F), b, pw)
+            rt.DrawLine(New System.Numerics.Vector2(cx - s * 0.35F, cy + s * 0.85F), New System.Numerics.Vector2(cx + s, cy - s), b, pw)
         End Sub
 
         Private Sub 绘制箭头_D2D(rt As ID2D1RenderTarget, rect As Rectangle)
@@ -1039,90 +904,20 @@ Public Class ModernContextMenu
             Dim arrSize As Single = 菜单.箭头大小 * DpiScale()
             Dim arrH As Single = arrSize
             Dim arrW As Single = CSng(arrSize * Math.Sqrt(3.0) / 2.0)
-            Dim b = _graphicsBrushCache.Get(rt, 菜单.箭头颜色)
+            Dim b = _当前合成器.BrushCache.Get(rt, 菜单.箭头颜色)
 
             Using geo = D2DHelper.GetD2DFactory().CreatePathGeometry()
                 Using sink = geo.Open()
-                    sink.BeginFigure(New Vector2(cx - arrW / 2.0F, cy - arrH / 2.0F), FigureBegin.Filled)
-                    sink.AddLine(New Vector2(cx - arrW / 2.0F, cy + arrH / 2.0F))
-                    sink.AddLine(New Vector2(cx + arrW / 2.0F, cy))
-                    sink.EndFigure(FigureEnd.Closed)
+                    sink.BeginFigure(New System.Numerics.Vector2(cx - arrW / 2.0F, cy - arrH / 2.0F), Vortice.Direct2D1.FigureBegin.Filled)
+                    sink.AddLine(New System.Numerics.Vector2(cx - arrW / 2.0F, cy + arrH / 2.0F))
+                    sink.AddLine(New System.Numerics.Vector2(cx + arrW / 2.0F, cy))
+                    sink.EndFigure(Vortice.Direct2D1.FigureEnd.Closed)
                     sink.Close()
                 End Using
                 rt.FillGeometry(geo, b)
             End Using
         End Sub
 
-        Private Sub 绘制勾选标记(g As Graphics, rect As Rectangle)
-            Dim cx As Single = rect.X + rect.Width / 2.0F
-            Dim cy As Single = rect.Y + rect.Height / 2.0F
-            Dim s As Single = rect.Height * 0.18F
-            Dim pw As Single = Math.Max(1.6F, rect.Height * 0.08F)
-
-            Dim oldSmooth = g.SmoothingMode
-            g.SmoothingMode = Class1.GlobalSmoothingMode
-
-            Using path As New GraphicsPath()
-                path.AddLines({
-                    New PointF(cx - s, cy),
-                    New PointF(cx - s * 0.35F, cy + s * 0.85F),
-                    New PointF(cx + s, cy - s)
-                })
-                Using wp As New Pen(Color.Black, pw)
-                    wp.StartCap = LineCap.Round
-                    wp.EndCap = LineCap.Round
-                    wp.LineJoin = System.Drawing.Drawing2D.LineJoin.Round
-                    path.Widen(wp)
-                End Using
-                Using brush As New SolidBrush(菜单.勾选颜色)
-                    g.FillPath(brush, path)
-                End Using
-            End Using
-
-            g.SmoothingMode = oldSmooth
-        End Sub
-
-        Private Sub 绘制箭头(g As Graphics, rect As Rectangle)
-            Dim cx As Single = rect.X + rect.Width / 2.0F
-            Dim cy As Single = rect.Y + rect.Height / 2.0F
-            Dim arrSize As Single = 菜单.箭头大小 * DpiScale()
-            Dim arrH As Single = arrSize
-            Dim arrW As Single = CSng(arrSize * Math.Sqrt(3.0) / 2.0)
-
-            Dim verts() As PointF = {
-                New PointF(cx - arrW / 2.0F, cy - arrH / 2.0F),
-                New PointF(cx - arrW / 2.0F, cy + arrH / 2.0F),
-                New PointF(cx + arrW / 2.0F, cy)
-            }
-            Dim cr As Single = Math.Max(arrSize * 0.2F, 1.0F)
-
-            Dim oldSmooth = g.SmoothingMode
-            g.SmoothingMode = Class1.GlobalSmoothingMode
-
-            Using path As New GraphicsPath()
-                For i As Integer = 0 To 2
-                    Dim curr As PointF = verts(i)
-                    Dim prv As PointF = verts((i + 2) Mod 3)
-                    Dim nxt As PointF = verts((i + 1) Mod 3)
-                    Dim d1x As Single = prv.X - curr.X, d1y As Single = prv.Y - curr.Y
-                    Dim d2x As Single = nxt.X - curr.X, d2y As Single = nxt.Y - curr.Y
-                    Dim l1 As Single = CSng(Math.Sqrt(d1x * d1x + d1y * d1y))
-                    Dim l2 As Single = CSng(Math.Sqrt(d2x * d2x + d2y * d2y))
-                    Dim a As New PointF(curr.X + cr * d1x / l1, curr.Y + cr * d1y / l1)
-                    Dim b As New PointF(curr.X + cr * d2x / l2, curr.Y + cr * d2y / l2)
-                    Dim cp1 As New PointF(a.X + 2.0F / 3.0F * (curr.X - a.X), a.Y + 2.0F / 3.0F * (curr.Y - a.Y))
-                    Dim cp2 As New PointF(b.X + 2.0F / 3.0F * (curr.X - b.X), b.Y + 2.0F / 3.0F * (curr.Y - b.Y))
-                    If i > 0 Then path.AddLine(path.GetLastPoint(), a)
-                    path.AddBezier(a, cp1, cp2, b)
-                Next
-                path.CloseFigure()
-                Using brush As New SolidBrush(菜单.箭头颜色)
-                    g.FillPath(brush, path)
-                End Using
-            End Using
-
-            g.SmoothingMode = oldSmooth
-        End Sub
 
 #End Region
 
