@@ -56,7 +56,9 @@ Partial Class Form_RamMonitor
         ' 
         ' RamMonitor1
         ' 
+        RamMonitor1.BackColor1 = Color.FromArgb(CByte(80), CByte(0), CByte(0), CByte(0))
         RamMonitor1.Dock = DockStyle.Fill
+        RamMonitor1.GraphBackColor = Color.FromArgb(CByte(20), CByte(220), CByte(220), CByte(220))
         RamMonitor1.Location = New Point(20, 170)
         RamMonitor1.Name = "RamMonitor1"
         RamMonitor1.Running = True
@@ -92,7 +94,7 @@ Partial Class Form_RamMonitor
         ' 
         ' ModernButton4
         ' 
-        ModernButton4.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton4.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton4.BorderRadius = 10
         ModernButton4.BorderSize = 0
         ModernButton4.Dock = DockStyle.Left
@@ -118,7 +120,7 @@ Partial Class Form_RamMonitor
         ' 
         ' ModernButton3
         ' 
-        ModernButton3.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton3.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton3.BorderRadius = 10
         ModernButton3.BorderSize = 0
         ModernButton3.Dock = DockStyle.Left
@@ -143,7 +145,7 @@ Partial Class Form_RamMonitor
         ' 
         ' ModernButton2
         ' 
-        ModernButton2.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton2.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton2.BorderRadius = 10
         ModernButton2.BorderSize = 0
         ModernButton2.Dock = DockStyle.Left
@@ -168,7 +170,7 @@ Partial Class Form_RamMonitor
         ' 
         ' ModernButton1
         ' 
-        ModernButton1.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton1.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton1.BorderRadius = 10
         ModernButton1.BorderSize = 0
         ModernButton1.Dock = DockStyle.Left

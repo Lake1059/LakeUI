@@ -528,7 +528,7 @@ Public Class RamMonitor
 
 #Region "绘制"
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
-        If 圆角半径值 > 0 OrElse MyBase.BackColor.A < 255 Then Return
+        If _backgroundSource IsNot Nothing Then Return
         MyBase.OnPaintBackground(e)
     End Sub
 
@@ -545,13 +545,13 @@ Public Class RamMonitor
                 Dim gRT As ID2D1RenderTarget = scope.GraphicsLayer
                 Dim dcRT As ID2D1DCRenderTarget = scope.DCRenderTarget
 
-                If 圆角半径值 > 0 OrElse MyBase.BackColor.A < 255 Then
-                    If _backgroundSource IsNot Nothing Then
-                        BackgroundPenetrationV2.PaintBackground(Me, scope, _backgroundSource)
-                    End If
-                    If MyBase.BackColor.A > 0 AndAlso MyBase.BackColor.A < 255 Then
-                        Dim b = _当前合成器.BrushCache.Get(gRT, MyBase.BackColor)
-                        gRT.FillRectangle(New Vortice.Mathematics.Rect(0, 0, Me.Width, Me.Height), b)
+                If _backgroundSource IsNot Nothing Then
+                    BackgroundPenetrationV2.PaintBackground(Me, scope, _backgroundSource)
+                ElseIf MyBase.BackColor.A > 0 AndAlso MyBase.BackColor.A < 255 Then
+                    Dim bgLayer = scope.BackgroundLayer
+                    Dim b = _当前合成器.BrushCache.Get(bgLayer, MyBase.BackColor)
+                    If b IsNot Nothing Then
+                        bgLayer.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(0, 0, Me.Width, Me.Height)), b)
                     End If
                 End If
 
@@ -693,13 +693,22 @@ Public Class RamMonitor
 
     Private Sub 绘制背景与边框_D2D(rt As ID2D1RenderTarget, rect As RectangleF, s As Single)
         Dim r As Single = 圆角半径值 * s
-        If 核心背景颜色值.A <= 0 Then Return
         If r > 0 Then
             Using geo = RectangleRenderer.创建圆角矩形几何(rect, r)
-                RectangleRenderer.绘制圆角背景_D2D(rt, geo, rect, 核心背景颜色值, Color.Empty, System.Windows.Forms.Orientation.Vertical)
+                If MyBase.BackColor.A > 0 AndAlso MyBase.BackColor.A < 255 Then
+                    RectangleRenderer.绘制圆角背景_D2D(rt, geo, rect, MyBase.BackColor, Color.Empty, System.Windows.Forms.Orientation.Vertical)
+                End If
+                If 主体背景颜色值.A > 0 Then
+                    RectangleRenderer.绘制圆角背景_D2D(rt, geo, rect, 主体背景颜色值, Color.Empty, System.Windows.Forms.Orientation.Vertical)
+                End If
             End Using
         Else
-            RectangleRenderer.绘制矩形背景_D2D(rt, rect, 核心背景颜色值, Color.Empty, System.Windows.Forms.Orientation.Vertical)
+            If MyBase.BackColor.A > 0 AndAlso MyBase.BackColor.A < 255 Then
+                RectangleRenderer.绘制矩形背景_D2D(rt, rect, MyBase.BackColor, Color.Empty, System.Windows.Forms.Orientation.Vertical)
+            End If
+            If 主体背景颜色值.A > 0 Then
+                RectangleRenderer.绘制矩形背景_D2D(rt, rect, 主体背景颜色值, Color.Empty, System.Windows.Forms.Orientation.Vertical)
+            End If
         End If
     End Sub
 
@@ -1105,7 +1114,7 @@ Public Class RamMonitor
     ' ====== 布局 ======
     Private 核心内边距值 As Single = 0
     <Category("LakeUI"), Description("控件内部内容距离边框的内边距。"), DefaultValue(0.0F), Browsable(True)>
-    Public Property CellPadding As Single
+    Public Property ContentPadding As Single
         Get
             Return 核心内边距值
         End Get
@@ -1116,7 +1125,7 @@ Public Class RamMonitor
 
     Private 圆角半径值 As Single = 0
     <Category("LakeUI"), Description("控件区域的圆角半径，0 = 直角。"), DefaultValue(0.0F), Browsable(True)>
-    Public Property CellCornerRadius As Single
+    Public Property CornerRadius As Single
         Get
             Return 圆角半径值
         End Get
@@ -1126,14 +1135,14 @@ Public Class RamMonitor
     End Property
 
     ' ====== 颜色 - 容器 ======
-    Private 核心背景颜色值 As Color = Color.FromArgb(48, 48, 48)
-    <Category("LakeUI"), Description("控件区域背景颜色。"), DefaultValue(GetType(Color), "48, 48, 48"), Browsable(True)>
-    Public Property CellBackColor As Color
+    Private 主体背景颜色值 As Color = Color.FromArgb(48, 48, 48)
+    <Category("LakeUI"), Description("主体背景颜色。"), DefaultValue(GetType(Color), "48, 48, 48"), Browsable(True)>
+    Public Property BackColor1 As Color
         Get
-            Return 核心背景颜色值
+            Return 主体背景颜色值
         End Get
         Set(value As Color)
-            SetValue(核心背景颜色值, value)
+            SetValue(主体背景颜色值, value)
         End Set
     End Property
 

@@ -90,6 +90,7 @@ Partial Class Form_ModernListBox
         ModernListBox2.AllowDragReorder = True
         ModernListBox2.AnimationDuration = 300
         ModernListBox2.AnimationFPS = 0
+        ModernListBox2.BackColor1 = Color.FromArgb(CByte(40), CByte(0), CByte(0), CByte(0))
         ModernListBox2.Dock = DockStyle.Left
         ModernListBox2.EnableCrossState = True
         ModernListBox2.Items.Add("列表项1")
@@ -130,6 +131,7 @@ Partial Class Form_ModernListBox
         ' 
         ' ModernListBox1
         ' 
+        ModernListBox1.BackColor1 = Color.FromArgb(CByte(40), CByte(0), CByte(0), CByte(0))
         ModernListBox1.Dock = DockStyle.Left
         ModernListBox1.Items.Add("列表项")
         ModernListBox1.Items.Add("列表项")
@@ -171,7 +173,7 @@ Partial Class Form_ModernListBox
         ' 
         ' ModernButton4
         ' 
-        ModernButton4.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton4.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton4.BorderRadius = 10
         ModernButton4.BorderSize = 0
         ModernButton4.Dock = DockStyle.Left
@@ -197,7 +199,7 @@ Partial Class Form_ModernListBox
         ' 
         ' ModernButton3
         ' 
-        ModernButton3.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton3.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton3.BorderRadius = 10
         ModernButton3.BorderSize = 0
         ModernButton3.Dock = DockStyle.Left
@@ -223,7 +225,7 @@ Partial Class Form_ModernListBox
         ' 
         ' ModernButton2
         ' 
-        ModernButton2.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton2.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton2.BorderRadius = 10
         ModernButton2.BorderSize = 0
         ModernButton2.Dock = DockStyle.Left
@@ -248,7 +250,7 @@ Partial Class Form_ModernListBox
         ' 
         ' ModernButton1
         ' 
-        ModernButton1.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton1.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton1.BorderRadius = 10
         ModernButton1.BorderSize = 0
         ModernButton1.Dock = DockStyle.Left

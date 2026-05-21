@@ -98,18 +98,18 @@ Partial Class Form_MsgBox_InputBox_Tip
         Panel6.TabIndex = 49
         ' 
         ' ModernButton11
-        ' 
-        ModernButton11.BackColor2 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton11.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
+        ModernButton11.BorderColor = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton11.BorderRadius = 10
-        ModernButton11.BorderSize = 2
+        ModernButton11.BorderSize = 0
+        ModernButton11.HoverBackColor1 = Color.FromArgb(CByte(60), CByte(220), CByte(220), CByte(220))
+        ModernButton11.PressedBackColor1 = Color.FromArgb(CByte(80), CByte(220), CByte(220), CByte(220))
+        ModernButton11.PressedBorderColor = Color.CornflowerBlue
+        ' 
         ModernButton11.Dock = DockStyle.Left
-        ModernButton11.HoverBackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
-        ModernButton11.HoverBackColor2 = SystemColors.WindowFrame
-        ModernButton11.HoverBorderColor = Color.CornflowerBlue
         ModernButton11.Location = New Point(197, 0)
         ModernButton11.Margin = New Padding(2)
         ModernButton11.Name = "ModernButton11"
-        ModernButton11.PressedBorderColor = Color.MediumSlateBlue
         ModernButton11.Size = New Size(187, 35)
         ModernButton11.TabIndex = 7
         ModernButton11.Text = "在控件顶部显示提示"
@@ -123,18 +123,18 @@ Partial Class Form_MsgBox_InputBox_Tip
         JustEmptyControl3.TabIndex = 6
         ' 
         ' ModernButton12
-        ' 
-        ModernButton12.BackColor2 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton12.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
+        ModernButton12.BorderColor = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton12.BorderRadius = 10
-        ModernButton12.BorderSize = 2
+        ModernButton12.BorderSize = 0
+        ModernButton12.HoverBackColor1 = Color.FromArgb(CByte(60), CByte(220), CByte(220), CByte(220))
+        ModernButton12.PressedBackColor1 = Color.FromArgb(CByte(80), CByte(220), CByte(220), CByte(220))
+        ModernButton12.PressedBorderColor = Color.CornflowerBlue
+        ' 
         ModernButton12.Dock = DockStyle.Left
-        ModernButton12.HoverBackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
-        ModernButton12.HoverBackColor2 = SystemColors.WindowFrame
-        ModernButton12.HoverBorderColor = Color.CornflowerBlue
         ModernButton12.Location = New Point(0, 0)
         ModernButton12.Margin = New Padding(2)
         ModernButton12.Name = "ModernButton12"
-        ModernButton12.PressedBorderColor = Color.MediumSlateBlue
         ModernButton12.Size = New Size(187, 35)
         ModernButton12.TabIndex = 5
         ModernButton12.Text = "在鼠标位置显示提示"
@@ -161,18 +161,18 @@ Partial Class Form_MsgBox_InputBox_Tip
         Panel5.TabIndex = 47
         ' 
         ' ModernButton9
-        ' 
-        ModernButton9.BackColor2 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton9.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
+        ModernButton9.BorderColor = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton9.BorderRadius = 10
-        ModernButton9.BorderSize = 2
+        ModernButton9.BorderSize = 0
+        ModernButton9.HoverBackColor1 = Color.FromArgb(CByte(60), CByte(220), CByte(220), CByte(220))
+        ModernButton9.PressedBackColor1 = Color.FromArgb(CByte(80), CByte(220), CByte(220), CByte(220))
+        ModernButton9.PressedBorderColor = Color.CornflowerBlue
+        ' 
         ModernButton9.Dock = DockStyle.Left
-        ModernButton9.HoverBackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
-        ModernButton9.HoverBackColor2 = SystemColors.WindowFrame
-        ModernButton9.HoverBorderColor = Color.CornflowerBlue
         ModernButton9.Location = New Point(0, 0)
         ModernButton9.Margin = New Padding(2)
         ModernButton9.Name = "ModernButton9"
-        ModernButton9.PressedBorderColor = Color.MediumSlateBlue
         ModernButton9.Size = New Size(288, 35)
         ModernButton9.TabIndex = 1
         ModernButton9.Text = "支持原版 InputBox 所有特性"
@@ -199,18 +199,18 @@ Partial Class Form_MsgBox_InputBox_Tip
         Panel4.TabIndex = 45
         ' 
         ' ModernButton10
-        ' 
-        ModernButton10.BackColor2 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton10.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
+        ModernButton10.BorderColor = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton10.BorderRadius = 10
-        ModernButton10.BorderSize = 2
+        ModernButton10.BorderSize = 0
+        ModernButton10.HoverBackColor1 = Color.FromArgb(CByte(60), CByte(220), CByte(220), CByte(220))
+        ModernButton10.PressedBackColor1 = Color.FromArgb(CByte(80), CByte(220), CByte(220), CByte(220))
+        ModernButton10.PressedBorderColor = Color.CornflowerBlue
+        ' 
         ModernButton10.Dock = DockStyle.Left
-        ModernButton10.HoverBackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
-        ModernButton10.HoverBackColor2 = SystemColors.WindowFrame
-        ModernButton10.HoverBorderColor = Color.CornflowerBlue
         ModernButton10.Location = New Point(0, 0)
         ModernButton10.Margin = New Padding(2)
         ModernButton10.Name = "ModernButton10"
-        ModernButton10.PressedBorderColor = Color.MediumSlateBlue
         ModernButton10.Size = New Size(288, 35)
         ModernButton10.TabIndex = 1
         ModernButton10.Text = "浮动的失焦自动关闭的小型对话框"
@@ -239,18 +239,18 @@ Partial Class Form_MsgBox_InputBox_Tip
         Panel3.TabIndex = 43
         ' 
         ' ModernButton7
-        ' 
-        ModernButton7.BackColor2 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton7.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
+        ModernButton7.BorderColor = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton7.BorderRadius = 10
-        ModernButton7.BorderSize = 2
+        ModernButton7.BorderSize = 0
+        ModernButton7.HoverBackColor1 = Color.FromArgb(CByte(60), CByte(220), CByte(220), CByte(220))
+        ModernButton7.PressedBackColor1 = Color.FromArgb(CByte(80), CByte(220), CByte(220), CByte(220))
+        ModernButton7.PressedBorderColor = Color.CornflowerBlue
+        ' 
         ModernButton7.Dock = DockStyle.Left
-        ModernButton7.HoverBackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
-        ModernButton7.HoverBackColor2 = SystemColors.WindowFrame
-        ModernButton7.HoverBorderColor = Color.CornflowerBlue
         ModernButton7.Location = New Point(168, 0)
         ModernButton7.Margin = New Padding(2)
         ModernButton7.Name = "ModernButton7"
-        ModernButton7.PressedBorderColor = Color.MediumSlateBlue
         ModernButton7.Size = New Size(158, 35)
         ModernButton7.TabIndex = 4
         ModernButton7.Text = "窗口遮罩对话框"
@@ -264,18 +264,18 @@ Partial Class Form_MsgBox_InputBox_Tip
         JustEmptyControl2.TabIndex = 3
         ' 
         ' ModernButton8
-        ' 
-        ModernButton8.BackColor2 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton8.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
+        ModernButton8.BorderColor = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton8.BorderRadius = 10
-        ModernButton8.BorderSize = 2
+        ModernButton8.BorderSize = 0
+        ModernButton8.HoverBackColor1 = Color.FromArgb(CByte(60), CByte(220), CByte(220), CByte(220))
+        ModernButton8.PressedBackColor1 = Color.FromArgb(CByte(80), CByte(220), CByte(220), CByte(220))
+        ModernButton8.PressedBorderColor = Color.CornflowerBlue
+        ' 
         ModernButton8.Dock = DockStyle.Left
-        ModernButton8.HoverBackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
-        ModernButton8.HoverBackColor2 = SystemColors.WindowFrame
-        ModernButton8.HoverBorderColor = Color.CornflowerBlue
         ModernButton8.Location = New Point(0, 0)
         ModernButton8.Margin = New Padding(2)
         ModernButton8.Name = "ModernButton8"
-        ModernButton8.PressedBorderColor = Color.MediumSlateBlue
         ModernButton8.Size = New Size(158, 35)
         ModernButton8.TabIndex = 1
         ModernButton8.Text = "全屏遮罩对话框"
@@ -304,18 +304,18 @@ Partial Class Form_MsgBox_InputBox_Tip
         Panel2.TabIndex = 41
         ' 
         ' ModernButton6
-        ' 
-        ModernButton6.BackColor2 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton6.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
+        ModernButton6.BorderColor = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton6.BorderRadius = 10
-        ModernButton6.BorderSize = 2
+        ModernButton6.BorderSize = 0
+        ModernButton6.HoverBackColor1 = Color.FromArgb(CByte(60), CByte(220), CByte(220), CByte(220))
+        ModernButton6.PressedBackColor1 = Color.FromArgb(CByte(80), CByte(220), CByte(220), CByte(220))
+        ModernButton6.PressedBorderColor = Color.CornflowerBlue
+        ' 
         ModernButton6.Dock = DockStyle.Left
-        ModernButton6.HoverBackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
-        ModernButton6.HoverBackColor2 = SystemColors.WindowFrame
-        ModernButton6.HoverBorderColor = Color.CornflowerBlue
         ModernButton6.Location = New Point(298, 0)
         ModernButton6.Margin = New Padding(2)
         ModernButton6.Name = "ModernButton6"
-        ModernButton6.PressedBorderColor = Color.MediumSlateBlue
         ModernButton6.Size = New Size(206, 35)
         ModernButton6.TabIndex = 3
         ModernButton6.Text = "支持自定义按钮文本"
@@ -329,18 +329,18 @@ Partial Class Form_MsgBox_InputBox_Tip
         JustEmptyControl1.TabIndex = 2
         ' 
         ' ModernButton5
-        ' 
-        ModernButton5.BackColor2 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton5.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
+        ModernButton5.BorderColor = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton5.BorderRadius = 10
-        ModernButton5.BorderSize = 2
+        ModernButton5.BorderSize = 0
+        ModernButton5.HoverBackColor1 = Color.FromArgb(CByte(60), CByte(220), CByte(220), CByte(220))
+        ModernButton5.PressedBackColor1 = Color.FromArgb(CByte(80), CByte(220), CByte(220), CByte(220))
+        ModernButton5.PressedBorderColor = Color.CornflowerBlue
+        ' 
         ModernButton5.Dock = DockStyle.Left
-        ModernButton5.HoverBackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
-        ModernButton5.HoverBackColor2 = SystemColors.WindowFrame
-        ModernButton5.HoverBorderColor = Color.CornflowerBlue
         ModernButton5.Location = New Point(0, 0)
         ModernButton5.Margin = New Padding(2)
         ModernButton5.Name = "ModernButton5"
-        ModernButton5.PressedBorderColor = Color.MediumSlateBlue
         ModernButton5.Size = New Size(288, 35)
         ModernButton5.TabIndex = 1
         ModernButton5.Text = "支持原版 MsgBox 所有特性"
@@ -374,7 +374,7 @@ Partial Class Form_MsgBox_InputBox_Tip
         ' 
         ' ModernButton4
         ' 
-        ModernButton4.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton4.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton4.BorderRadius = 10
         ModernButton4.BorderSize = 0
         ModernButton4.Dock = DockStyle.Left
@@ -400,7 +400,7 @@ Partial Class Form_MsgBox_InputBox_Tip
         ' 
         ' ModernButton3
         ' 
-        ModernButton3.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton3.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton3.BorderRadius = 10
         ModernButton3.BorderSize = 0
         ModernButton3.Dock = DockStyle.Left
@@ -425,7 +425,7 @@ Partial Class Form_MsgBox_InputBox_Tip
         ' 
         ' ModernButton2
         ' 
-        ModernButton2.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton2.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton2.BorderRadius = 10
         ModernButton2.BorderSize = 0
         ModernButton2.Dock = DockStyle.Left
@@ -450,7 +450,7 @@ Partial Class Form_MsgBox_InputBox_Tip
         ' 
         ' ModernButton1
         ' 
-        ModernButton1.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton1.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton1.BorderRadius = 10
         ModernButton1.BorderSize = 0
         ModernButton1.Dock = DockStyle.Left

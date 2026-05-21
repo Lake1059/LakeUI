@@ -95,15 +95,20 @@ Partial Class ModernFontDialog
         ' 
         ' ModernListBox1
         ' 
+        ModernListBox1.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernListBox1.BorderRadius = 10
-        ModernListBox1.BorderSize = 2
+        ModernListBox1.BorderSize = 0
         ModernListBox1.Dock = DockStyle.Fill
         ModernListBox1.ItemHeight = 26
+        ModernListBox1.ItemHoverColor = Color.FromArgb(CByte(20), CByte(0), CByte(0), CByte(0))
+        ModernListBox1.ItemSelectedColor = Color.FromArgb(CByte(80), CByte(0), CByte(0), CByte(0))
         ModernListBox1.Location = New Point(20, 96)
         ModernListBox1.Margin = New Padding(2, 2, 2, 2)
         ModernListBox1.Name = "ModernListBox1"
         ModernListBox1.Padding = New Padding(10)
-        ModernListBox1.ScrollBarHoverColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
+        ModernListBox1.ScrollBarColor = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
+        ModernListBox1.ScrollBarHoverColor = Color.FromArgb(CByte(80), CByte(220), CByte(220), CByte(220))
+        ModernListBox1.ScrollBarTrackColor = Color.FromArgb(CByte(20), CByte(220), CByte(220), CByte(220))
         ModernListBox1.ScrollBarWidth = 12
         ModernListBox1.Size = New Size(280, 445)
         ModernListBox1.TabIndex = 3
@@ -118,15 +123,17 @@ Partial Class ModernFontDialog
         ' 
         ' ModernTextBox1
         ' 
+        ModernTextBox1.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernTextBox1.BorderRadius = 10
-        ModernTextBox1.BorderSize = 2
+        ModernTextBox1.BorderSize = 0
         ModernTextBox1.CaretColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
         ModernTextBox1.Dock = DockStyle.Top
         ModernTextBox1.Location = New Point(20, 50)
-        ModernTextBox1.Margin = New Padding(2, 2, 2, 2)
+        ModernTextBox1.Margin = New Padding(2)
         ModernTextBox1.Name = "ModernTextBox1"
         ModernTextBox1.Padding = New Padding(13, 0, 13, 0)
         ModernTextBox1.ScrollBarHoverColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
+        ModernTextBox1.SelectionColor = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernTextBox1.Size = New Size(280, 36)
         ModernTextBox1.TabIndex = 1
         ModernTextBox1.WaterText = "选择字体"
@@ -252,15 +259,20 @@ Partial Class ModernFontDialog
         ' 
         ' ModernListBox3
         ' 
+        ModernListBox3.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernListBox3.BorderRadius = 10
-        ModernListBox3.BorderSize = 2
+        ModernListBox3.BorderSize = 0
         ModernListBox3.Dock = DockStyle.Fill
         ModernListBox3.ItemHeight = 26
+        ModernListBox3.ItemHoverColor = Color.FromArgb(CByte(20), CByte(0), CByte(0), CByte(0))
+        ModernListBox3.ItemSelectedColor = Color.FromArgb(CByte(80), CByte(0), CByte(0), CByte(0))
         ModernListBox3.Location = New Point(20, 96)
         ModernListBox3.Margin = New Padding(2, 2, 2, 2)
         ModernListBox3.Name = "ModernListBox3"
         ModernListBox3.Padding = New Padding(10)
-        ModernListBox3.ScrollBarHoverColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
+        ModernListBox3.ScrollBarColor = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
+        ModernListBox3.ScrollBarHoverColor = Color.FromArgb(CByte(80), CByte(220), CByte(220), CByte(220))
+        ModernListBox3.ScrollBarTrackColor = Color.FromArgb(CByte(20), CByte(220), CByte(220), CByte(220))
         ModernListBox3.ScrollBarWidth = 12
         ModernListBox3.Size = New Size(155, 184)
         ModernListBox3.TabIndex = 3
@@ -275,15 +287,17 @@ Partial Class ModernFontDialog
         ' 
         ' ModernTextBox3
         ' 
+        ModernTextBox3.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernTextBox3.BorderRadius = 10
-        ModernTextBox3.BorderSize = 2
+        ModernTextBox3.BorderSize = 0
         ModernTextBox3.CaretColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
         ModernTextBox3.Dock = DockStyle.Top
         ModernTextBox3.Location = New Point(20, 50)
-        ModernTextBox3.Margin = New Padding(2, 2, 2, 2)
+        ModernTextBox3.Margin = New Padding(2)
         ModernTextBox3.Name = "ModernTextBox3"
         ModernTextBox3.Padding = New Padding(13, 0, 13, 0)
         ModernTextBox3.ScrollBarHoverColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
+        ModernTextBox3.SelectionColor = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernTextBox3.Size = New Size(155, 36)
         ModernTextBox3.TabIndex = 1
         ModernTextBox3.WaterText = "选择字号"
@@ -314,15 +328,20 @@ Partial Class ModernFontDialog
         ' 
         ' ModernListBox2
         ' 
+        ModernListBox2.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernListBox2.BorderRadius = 10
-        ModernListBox2.BorderSize = 2
+        ModernListBox2.BorderSize = 0
         ModernListBox2.Dock = DockStyle.Fill
         ModernListBox2.ItemHeight = 26
+        ModernListBox2.ItemHoverColor = Color.FromArgb(CByte(20), CByte(0), CByte(0), CByte(0))
+        ModernListBox2.ItemSelectedColor = Color.FromArgb(CByte(80), CByte(0), CByte(0), CByte(0))
         ModernListBox2.Location = New Point(20, 96)
         ModernListBox2.Margin = New Padding(2, 2, 2, 2)
         ModernListBox2.Name = "ModernListBox2"
         ModernListBox2.Padding = New Padding(10)
-        ModernListBox2.ScrollBarHoverColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
+        ModernListBox2.ScrollBarColor = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
+        ModernListBox2.ScrollBarHoverColor = Color.FromArgb(CByte(80), CByte(220), CByte(220), CByte(220))
+        ModernListBox2.ScrollBarTrackColor = Color.FromArgb(CByte(20), CByte(220), CByte(220), CByte(220))
         ModernListBox2.ScrollBarWidth = 12
         ModernListBox2.Size = New Size(180, 184)
         ModernListBox2.TabIndex = 3
@@ -337,15 +356,17 @@ Partial Class ModernFontDialog
         ' 
         ' ModernTextBox2
         ' 
+        ModernTextBox2.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernTextBox2.BorderRadius = 10
-        ModernTextBox2.BorderSize = 2
+        ModernTextBox2.BorderSize = 0
         ModernTextBox2.CaretColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
         ModernTextBox2.Dock = DockStyle.Top
         ModernTextBox2.Location = New Point(20, 50)
-        ModernTextBox2.Margin = New Padding(2, 2, 2, 2)
+        ModernTextBox2.Margin = New Padding(2)
         ModernTextBox2.Name = "ModernTextBox2"
         ModernTextBox2.Padding = New Padding(13, 0, 13, 0)
         ModernTextBox2.ScrollBarHoverColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
+        ModernTextBox2.SelectionColor = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernTextBox2.Size = New Size(180, 36)
         ModernTextBox2.TabIndex = 1
         ModernTextBox2.WaterText = "选择字形"
@@ -368,24 +389,24 @@ Partial Class ModernFontDialog
         Panel8.Controls.Add(Label11)
         Panel8.Controls.Add(ModernButton1)
         Panel8.Dock = DockStyle.Bottom
-        Panel8.Location = New Point(300, 481)
+        Panel8.Location = New Point(300, 486)
         Panel8.Name = "Panel8"
         Panel8.Padding = New Padding(20)
-        Panel8.Size = New Size(564, 80)
+        Panel8.Size = New Size(564, 75)
         Panel8.TabIndex = 3
         ' 
         ' ModernButton2
         ' 
-        ModernButton2.BackColor2 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton2.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton2.BorderRadius = 10
-        ModernButton2.BorderSize = 2
+        ModernButton2.BorderSize = 0
         ModernButton2.Dock = DockStyle.Right
-        ModernButton2.HoverBorderColor = Color.CornflowerBlue
+        ModernButton2.HoverBackColor1 = Color.FromArgb(CByte(60), CByte(220), CByte(220), CByte(220))
         ModernButton2.Location = New Point(294, 20)
         ModernButton2.Margin = New Padding(2)
         ModernButton2.Name = "ModernButton2"
-        ModernButton2.PressedBorderColor = Color.MediumSlateBlue
-        ModernButton2.Size = New Size(120, 40)
+        ModernButton2.PressedBackColor1 = Color.FromArgb(CByte(80), CByte(220), CByte(220), CByte(220))
+        ModernButton2.Size = New Size(120, 35)
         ModernButton2.TabIndex = 5
         ModernButton2.Text = "确定"
         ' 
@@ -394,21 +415,21 @@ Partial Class ModernFontDialog
         Label11.Dock = DockStyle.Right
         Label11.Location = New Point(414, 20)
         Label11.Name = "Label11"
-        Label11.Size = New Size(10, 40)
+        Label11.Size = New Size(10, 35)
         Label11.TabIndex = 4
         ' 
         ' ModernButton1
         ' 
-        ModernButton1.BackColor2 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton1.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton1.BorderRadius = 10
-        ModernButton1.BorderSize = 2
+        ModernButton1.BorderSize = 0
         ModernButton1.Dock = DockStyle.Right
-        ModernButton1.HoverBorderColor = Color.CornflowerBlue
+        ModernButton1.HoverBackColor1 = Color.FromArgb(CByte(60), CByte(220), CByte(220), CByte(220))
         ModernButton1.Location = New Point(424, 20)
         ModernButton1.Margin = New Padding(2)
         ModernButton1.Name = "ModernButton1"
-        ModernButton1.PressedBorderColor = Color.MediumSlateBlue
-        ModernButton1.Size = New Size(120, 40)
+        ModernButton1.PressedBackColor1 = Color.FromArgb(CByte(80), CByte(220), CByte(220), CByte(220))
+        ModernButton1.Size = New Size(120, 35)
         ModernButton1.TabIndex = 0
         ModernButton1.Text = "取消"
         ' 
@@ -424,7 +445,7 @@ Partial Class ModernFontDialog
         Panel9.Location = New Point(300, 300)
         Panel9.Name = "Panel9"
         Panel9.Padding = New Padding(20, 0, 20, 0)
-        Panel9.Size = New Size(564, 181)
+        Panel9.Size = New Size(564, 186)
         Panel9.TabIndex = 4
         ' 
         ' Label16

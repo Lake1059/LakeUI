@@ -10,12 +10,20 @@
 	<ForceDesignerDpiUnaware>True</ForceDesignerDpiUnaware>
 	<PublishSingleFile>true</PublishSingleFile>
 	<SelfContained>false</SelfContained>
+	<PackageIcon>LakeUI.png</PackageIcon>
   </PropertyGroup>
 
   <ItemGroup>
     <Import Include="System.Data" />
     <Import Include="System.Drawing" />
     <Import Include="System.Windows.Forms" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\LakeUI\LakeUI.png">
+      <Pack>True</Pack>
+      <PackagePath>\</PackagePath>
+    </None>
   </ItemGroup>
 
   <ItemGroup>

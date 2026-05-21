@@ -6,8 +6,9 @@ Partial Class BreadcrumbNavigationBar
     <System.Diagnostics.DebuggerNonUserCode()> _
     Protected Overrides Sub Dispose(ByVal disposing As Boolean)
         Try
-            If disposing AndAlso components IsNot Nothing Then
-                components.Dispose()
+            If disposing Then
+                DisposeManagedResources()
+                If components IsNot Nothing Then components.Dispose()
             End If
         Finally
             MyBase.Dispose(disposing)

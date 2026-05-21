@@ -1,6 +1,4 @@
-﻿> 写给 AI：此md文件还在施工中，请勿继续读取，如果实在需要，仅供参考以避免干扰你的任务
-
-## 湖界 LakeUI v2
+﻿## 湖界 LakeUI v2
 
 ![](https://img.shields.io/github/stars/Lake1059/LakeUI?label=星标) ![GitHub License](https://img.shields.io/github/license/Lake1059/LakeUI?label=许可证) ![](https://img.shields.io/github/downloads/Lake1059/LakeUI/total?label=Github%20下载量) ![](https://img.shields.io/nuget/dt/LakeUI?label=NuGet%20下载量)
 
@@ -65,7 +63,7 @@ Q群：1087964158
 
 ### 超容器背景映射
 
-这是我想出来的路子，所以是 LakeUI 特别原创，这是一种把控件区域坐标映射到目标控件上来取得目标背景作为自身基础背景的机制，正所谓超容器，不仅可以跨越容器，还可以跨越窗体，只要能访问就可以映射，绝大多数控件都接入了这套机制，只需设置 BackgroundSource 属性来指定目标控件，即可轻松做出像 Web 那样的全透明背景应用。
+这是我想出来的路子，所以是 LakeUI 特别原创，这是一种把控件坐标映射到目标控件上来取得目标背景作为自身基础背景的机制，正所谓超容器，不仅可以跨越容器，还可以跨越窗体，只要能访问就可以映射，绝大多数控件都接入了这套机制，只需设置 BackgroundSource 属性来指定目标控件，即可轻松做出像 Web 那样的全透明背景应用。
 
 ### 矢量几何文字渲染
 
@@ -75,47 +73,47 @@ Q群：1087964158
 
 此处仅列出简要内容用于索引，按照设计时间排序，详细介绍请运行 LakeUI.Demo.exe 来实际上手体验。
 
-|        | 控件名称 / 类名         | 中文名称                   | 制作类型 | 动画支持     | 性能负载 |
-| ------ | ----------------------- | -------------------------- | -------- | ------------ | -------- |
-| 1      | ModernButton            | 现代化按钮                 | 全新     | 背景渐变     | 低 🟢     |
-| 2      | ModernTextBox           | 现代化文本框               | 全新     | 无           | 中 🟡     |
-| 3      | ModernComboBox          | 现代化下拉框               | 全新     | 多数动画     | 低 🟢     |
-| 4      | BooleanSwitch           | 布尔开关                   | 全新     | 全程动画     | 低 🟢     |
-| 5      | QuantumSwitch           | 量子开关                   | 全新     | 全程动画     | 低 🟢     |
-| 6      | ExcellentTrackBar       | 极好的滑动条               | 全新     | 位移动画     | 低 🟢     |
-| *7*    | *ListViewDirectReDraw*  | 列表视图原地重绘           | 原版     | 无           | 增益 ❤️   |
-| 8      | ReDrawContextMenuStrip  | 重绘的上下文菜单           | 原版     | 无           | 增益 ❤️   |
-| 9      | ModernContextMenu       | 现代化上下文菜单           | 全新     | 全程动画     | 低 🟢     |
-| **10** | **UltraDetailListView** | **极致的详细信息列表视图** | **全新** | **半数动画** | **高 🔴** |
-| 11     | ModernTabListControl    | 现代化竖向选项卡           | 全新     | 半数动画     | 低 🟢     |
-| 12     | ModernTabControl        | 现代化横向选项卡           | 全新     | 半数动画     | 低 🟢     |
-| 13     | ModernPanel             | 现代化容器                 | 原版     | 无           | 低 🟢     |
-| 14     | ModernListBox           | 现代化列表框               | 全新     | 半数动画     | 低 🟢     |
-| 15     | HtmlColorLabel          | 支持 HTML 颜色标记的标签   | 全新     | 无           | 低 🟢     |
-| 16     | ModernFontDialog        | 现代化字体选择对话框窗口   | 组合件   | N/A          | 低 🟢     |
-| 17     | ModernColorDialog       | 现代化颜色选择对话框窗口   | 组合件   | N/A          | 低 🟢     |
-| 18     | ExcellentProgressBar    | 极好的进度条               | 全新     | 全程动画     | 低 🟢     |
-| 19     | RoundDashBoard          | 圆形仪表盘                 | 全新     | 全程动画     | 低 🟢     |
-| 20     | *JustEmptyControl*      | (拿来填空白段的)           | N/A      | N/A          | N/A      |
-| 21     | ModernCheckBox          | 现代化复选/单选框          | 全新     | 全程动画     | 低 🟢     |
-| **22** | **ThisIsYourWindow**    | **窗口样式定制器 (D3D11)** | **全新** | **N/A**      | **中 🟡** |
-| 23     | MarkDownViewer          | MarkDown 简易查看器        | 全新     | 无           | 中 🟡     |
-| 24     | ProgressRing            | 无进度的加载动画           | 全新     | 全程动画     | 低 🟢     |
-| 25     | *SysTaskBarProgress*    | 系统任务栏进度显示类       | N/A      | N/A          | 低 🟢     |
-| 26     | PixelPictureBox         | 像素级框选的图片框         | 全新     | 无           | 低 🟢     |
-| 27     | TaskbarThumbnailToolbar | 任务栏缩略图工具栏         | N/A      | N/A          | 低 🟢     |
-| 28     | *DwmWindowStyle*        | DWM 窗口样式控制类         | N/A      | N/A          | N/A      |
-| 29     | *ExMsgBox*              | 重做的消息对话框           | 全新     | 无           | 低 🟢     |
-| 30     | *ExOverlayMsgBox*       | 全屏或窗体遮罩对话框       | 全新     | 渐入渐出     | 低 🟢     |
-| 31     | *ExFloatingBox*         | 浮动的小型对话框           | 全新     | 渐入渐出     | 低 🟢     |
-| 32     | *ExInputBox*            | 重做的输入对话框           | 全新     | 无           | 低 🟢     |
-| 33     | *ExFloatingTip*         | 浮动小提示                 | 全新     | 渐入渐出     | 低 🟢     |
-| 34     | CpuMonitor              | CPU 监控器                 | 全新     | 无           | 低 🟢     |
-| 35     | RamMonitor              | RAM 监控器                 | 全新     | 无           | 低 🟢     |
-| 36     | *GpuMonitor*            | GPU 监控静态类             | 全新     | 无           | 低 🟢     |
-| 37     | BreadcrumbNavigationBar | 面包屑导航条               | 全新     | 无           | 低 🟢     |
-| 38     | PrecisionTimer          | 高精度计时器               | N/A      | 无           | 低 🟢     |
-| 39     | AgentRoom               | 智能体聊天室               | 全新     | 无           | 低 🟢     |
+|        | 控件名称 / 类名         | 中文名称                   | 制作类型 | 性能负载 |
+| ------ | ----------------------- | -------------------------- | -------- | -------- |
+| 1      | ModernButton            | 现代化按钮                 | 全新     | 低 🟢     |
+| 2      | ModernTextBox           | 现代化文本框               | 全新     | 中 🟡     |
+| 3      | ModernComboBox          | 现代化下拉框               | 全新     | 低 🟢     |
+| 4      | BooleanSwitch           | 布尔开关                   | 全新     | 低 🟢     |
+| 5      | QuantumSwitch           | 量子开关                   | 全新     | 低 🟢     |
+| 6      | ExcellentTrackBar       | 极好的滑动条               | 全新     | 低 🟢     |
+| 7      | ListViewDirectReDraw    | 列表视图原地重绘           | 原版     | 增益 ❤️   |
+| 8      | ReDrawContextMenuStrip  | 重绘的上下文菜单           | 原版     | 增益 ❤️   |
+| 9      | ModernContextMenu       | 现代化上下文菜单           | 全新     | 低 🟢     |
+| **10** | **UltraDetailListView** | **极致的详细信息列表视图** | **全新** | **高 🔴** |
+| 11     | ModernTabListControl    | 现代化竖向选项卡           | 全新     | 低 🟢     |
+| 12     | ModernTabControl        | 现代化横向选项卡           | 全新     | 低 🟢     |
+| 13     | ModernPanel             | 现代化容器                 | 原版     | 低 🟢     |
+| 14     | ModernListBox           | 现代化列表框               | 全新     | 低 🟢     |
+| 15     | HtmlColorLabel          | 支持 HTML 颜色标记的标签   | 全新     | 低 🟢     |
+| 16     | ModernFontDialog        | 现代化字体选择对话框窗口   | 组合件   | 低 🟢     |
+| 17     | ModernColorDialog       | 现代化颜色选择对话框窗口   | 组合件   | 低 🟢     |
+| 18     | ExcellentProgressBar    | 极好的进度条               | 全新     | 低 🟢     |
+| 19     | RoundDashBoard          | 圆形仪表盘                 | 全新     | 低 🟢     |
+| 20     | JustEmptyControl        | (拿来填空白段的)           | N/A      | N/A      |
+| 21     | ModernCheckBox          | 现代化复选/单选框          | 全新     | 低 🟢     |
+| **22** | **ThisIsYourWindow**    | **窗口样式定制器 (D3D11)** | **全新** | **中 🟡** |
+| 23     | MarkDownViewer          | MarkDown 简易查看器        | 全新     | 中 🟡     |
+| 24     | ProgressRing            | 无进度的加载动画           | 全新     | 低 🟢     |
+| 25     | SysTaskBarProgress      | 系统任务栏进度显示类       | N/A      | 低 🟢     |
+| 26     | PixelPictureBox         | 像素级框选的图片框         | 全新     | 低 🟢     |
+| 27     | TaskbarThumbnailToolbar | 任务栏缩略图工具栏         | N/A      | 低 🟢     |
+| 28     | DwmWindowStyle          | DWM 窗口样式控制类         | N/A      | N/A      |
+| 29     | ExMsgBox                | 重做的消息对话框           | 全新     | 低 🟢     |
+| 30     | ExOverlayMsgBox         | 全屏或窗体遮罩对话框       | 全新     | 低 🟢     |
+| 31     | ExFloatingBox           | 浮动的小型对话框           | 全新     | 低 🟢     |
+| 32     | ExInputBox              | 重做的输入对话框           | 全新     | 低 🟢     |
+| 33     | ExFloatingTip           | 浮动小提示                 | 全新     | 低 🟢     |
+| 34     | CpuMonitor              | CPU 监控器                 | 全新     | 低 🟢     |
+| 35     | RamMonitor              | RAM 监控器                 | 全新     | 低 🟢     |
+| 36     | GpuMonitor              | GPU 监控静态类             | 全新     | 低 🟢     |
+| 37     | BreadcrumbNavigationBar | 面包屑导航条               | 全新     | 低 🟢     |
+| 38     | PrecisionTimer          | 高精度计时器               | N/A      | 低 🟢     |
+| 39     | AgentRoom               | 智能体聊天室               | 全新     | 低 🟢     |
 
 ## 最值得一试
 

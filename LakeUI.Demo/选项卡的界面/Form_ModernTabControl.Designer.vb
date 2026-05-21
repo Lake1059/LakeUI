@@ -69,9 +69,9 @@ Partial Class Form_ModernTabControl
         Label5.Location = New Point(20, 390)
         Label5.Name = "Label5"
         Label5.Padding = New Padding(0, 20, 0, 20)
-        Label5.Size = New Size(501, 60)
+        Label5.Size = New Size(478, 60)
         Label5.TabIndex = 40
-        Label5.Text = "1.4 新增 Ribbon 模式，开启后显示三角按钮，逻辑与主流软件例如 Office 同步"
+        Label5.Text = "新增 Ribbon 模式，开启后显示三角按钮，逻辑与主流软件例如 Office 同步"
         ' 
         ' ModernTabControl1
         ' 

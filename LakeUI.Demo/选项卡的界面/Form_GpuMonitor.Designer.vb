@@ -102,16 +102,18 @@ Partial Class Form_GpuMonitor
         Panel7.TabIndex = 52
         ' 
         ' ModernButton6
-        ' 
-        ModernButton6.BackColor2 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton6.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
+        ModernButton6.BorderColor = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton6.BorderRadius = 10
-        ModernButton6.BorderSize = 2
+        ModernButton6.BorderSize = 0
+        ModernButton6.HoverBackColor1 = Color.FromArgb(CByte(60), CByte(220), CByte(220), CByte(220))
+        ModernButton6.PressedBackColor1 = Color.FromArgb(CByte(80), CByte(220), CByte(220), CByte(220))
+        ModernButton6.PressedBorderColor = Color.CornflowerBlue
+        ' 
         ModernButton6.Dock = DockStyle.Left
-        ModernButton6.HoverBorderColor = Color.CornflowerBlue
         ModernButton6.Location = New Point(130, 10)
         ModernButton6.Margin = New Padding(2)
         ModernButton6.Name = "ModernButton6"
-        ModernButton6.PressedBorderColor = Color.MediumSlateBlue
         ModernButton6.Size = New Size(120, 35)
         ModernButton6.TabIndex = 9
         ModernButton6.Text = "停止刷新"
@@ -125,16 +127,18 @@ Partial Class Form_GpuMonitor
         Label11.TabIndex = 10
         ' 
         ' ModernButton5
-        ' 
-        ModernButton5.BackColor2 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton5.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
+        ModernButton5.BorderColor = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton5.BorderRadius = 10
-        ModernButton5.BorderSize = 2
+        ModernButton5.BorderSize = 0
+        ModernButton5.HoverBackColor1 = Color.FromArgb(CByte(60), CByte(220), CByte(220), CByte(220))
+        ModernButton5.PressedBackColor1 = Color.FromArgb(CByte(80), CByte(220), CByte(220), CByte(220))
+        ModernButton5.PressedBorderColor = Color.CornflowerBlue
+        ' 
         ModernButton5.Dock = DockStyle.Left
-        ModernButton5.HoverBorderColor = Color.CornflowerBlue
         ModernButton5.Location = New Point(0, 10)
         ModernButton5.Margin = New Padding(2)
         ModernButton5.Name = "ModernButton5"
-        ModernButton5.PressedBorderColor = Color.MediumSlateBlue
         ModernButton5.Size = New Size(120, 35)
         ModernButton5.TabIndex = 11
         ModernButton5.Text = "开始刷新"
@@ -168,7 +172,7 @@ Partial Class Form_GpuMonitor
         ' 
         ' ModernButton4
         ' 
-        ModernButton4.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton4.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton4.BorderRadius = 10
         ModernButton4.BorderSize = 0
         ModernButton4.Dock = DockStyle.Left
@@ -194,7 +198,7 @@ Partial Class Form_GpuMonitor
         ' 
         ' ModernButton3
         ' 
-        ModernButton3.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton3.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton3.BorderRadius = 10
         ModernButton3.BorderSize = 0
         ModernButton3.Dock = DockStyle.Left
@@ -219,7 +223,7 @@ Partial Class Form_GpuMonitor
         ' 
         ' ModernButton2
         ' 
-        ModernButton2.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton2.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton2.BorderRadius = 10
         ModernButton2.BorderSize = 0
         ModernButton2.Dock = DockStyle.Left
@@ -244,7 +248,7 @@ Partial Class Form_GpuMonitor
         ' 
         ' ModernButton1
         ' 
-        ModernButton1.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton1.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton1.BorderRadius = 10
         ModernButton1.BorderSize = 0
         ModernButton1.Dock = DockStyle.Left

@@ -23,39 +23,40 @@ Partial Class Form许可证
     <System.Diagnostics.DebuggerStepThrough()> _
     Private Sub InitializeComponent()
         ModernPanel1 = New ModernPanel()
-        ModernTextBox1 = New ModernTextBox()
+        MarkDownViewer1 = New MarkDownViewer()
         ModernPanel1.SuspendLayout()
         SuspendLayout()
         ' 
         ' ModernPanel1
         ' 
         ModernPanel1.BorderSize = 0
-        ModernPanel1.Controls.Add(ModernTextBox1)
+        ModernPanel1.Controls.Add(MarkDownViewer1)
         ModernPanel1.Dock = DockStyle.Fill
         ModernPanel1.Location = New Point(0, 0)
         ModernPanel1.Name = "ModernPanel1"
+        ModernPanel1.Padding = New Padding(10)
         ModernPanel1.Size = New Size(702, 582)
         ModernPanel1.TabIndex = 4
         ' 
-        ' ModernTextBox1
+        ' MarkDownViewer1
         ' 
-        ModernTextBox1.BackColor1 = Color.Transparent
-        ModernTextBox1.BorderSize = 0
-        ModernTextBox1.CaretColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
-        ModernTextBox1.Dock = DockStyle.Fill
-        ModernTextBox1.Font = New Font("Microsoft YaHei UI", 10.2F, FontStyle.Regular, GraphicsUnit.Point, CByte(134))
-        ModernTextBox1.LinkDetection = True
-        ModernTextBox1.Location = New Point(0, 0)
-        ModernTextBox1.Margin = New Padding(2, 2, 2, 2)
-        ModernTextBox1.MaxUndoCount = 0
-        ModernTextBox1.MultiLine = True
-        ModernTextBox1.Name = "ModernTextBox1"
-        ModernTextBox1.Padding = New Padding(23, 20, 23, 20)
-        ModernTextBox1.ReadOnly = True
-        ModernTextBox1.ScrollBarHoverColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
-        ModernTextBox1.Size = New Size(702, 582)
-        ModernTextBox1.TabIndex = 4
-        ModernTextBox1.Text = "ModernTextBox1"
+        MarkDownViewer1.BackColor1 = Color.FromArgb(CByte(30), CByte(220), CByte(220), CByte(220))
+        MarkDownViewer1.BasePath = Nothing
+        MarkDownViewer1.BlockQuoteForeColor = Color.FromArgb(CByte(160), CByte(160), CByte(160))
+        MarkDownViewer1.BlockSpacing = 20
+        MarkDownViewer1.BorderRadius = 10
+        MarkDownViewer1.Dock = DockStyle.Fill
+        MarkDownViewer1.Font = New Font("Microsoft YaHei UI", 10F)
+        MarkDownViewer1.ForeColor = Color.Silver
+        MarkDownViewer1.HeadingColor = Color.Silver
+        MarkDownViewer1.InlineLineSpacing = 5
+        MarkDownViewer1.Location = New Point(10, 10)
+        MarkDownViewer1.Name = "MarkDownViewer1"
+        MarkDownViewer1.Padding = New Padding(20)
+        MarkDownViewer1.ScrollBarHoverColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
+        MarkDownViewer1.Size = New Size(682, 562)
+        MarkDownViewer1.TabIndex = 0
+        MarkDownViewer1.Text = "MarkDownViewer1"
         ' 
         ' Form许可证
         ' 
@@ -73,5 +74,5 @@ Partial Class Form许可证
     End Sub
 
     Friend WithEvents ModernPanel1 As ModernPanel
-    Friend WithEvents ModernTextBox1 As ModernTextBox
+    Friend WithEvents MarkDownViewer1 As MarkDownViewer
 End Class

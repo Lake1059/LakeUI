@@ -58,7 +58,10 @@ Partial Class Form_AgentRoom
         ' AgentRoom1
         ' 
         AgentRoom1.AssistantBubbleForeColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
-        AgentRoom1.BackColor = Color.FromArgb(CByte(40), CByte(0), CByte(0), CByte(0))
+        AgentRoom1.BackColor = Color.Transparent
+        AgentRoom1.BackColor1 = Color.FromArgb(CByte(80), CByte(0), CByte(0), CByte(0))
+        AgentRoom1.BorderRadius = 10
+        AgentRoom1.BorderSize = 1
         AgentRoom1.CardForeColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
         AgentRoom1.Dock = DockStyle.Fill
         AgentRoom1.Location = New Point(20, 170)
@@ -160,7 +163,7 @@ Partial Class Form_AgentRoom
         ModernButton2.Size = New Size(160, 50)
         ModernButton2.SubText = "技术偏好"
         ModernButton2.TabIndex = 2
-        ModernButton2.Text = "Agent 科技"
+        ModernButton2.Text = "人工智能科技"
         ModernButton2.TextAlign = ModernButton.TextAlignEnum.Left
         ' 
         ' Label2

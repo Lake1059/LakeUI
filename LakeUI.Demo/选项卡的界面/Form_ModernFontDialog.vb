@@ -1,11 +1,13 @@
 ﻿Public Class Form_ModernFontDialog
     Private Sub ModernButton5_Click(sender As Object, e As EventArgs) Handles ModernButton5.Click
         Dim a As New ModernFontDialog
+        Form1.ThisIsYourWindow1.Attach(a)
         a.Show(Me)
     End Sub
 
     Private Sub ModernButton6_Click(sender As Object, e As EventArgs) Handles ModernButton6.Click
         Dim a As New ModernFontDialog
+        Form1.ThisIsYourWindow1.Attach(a)
         a.ShowDialog(Me)
     End Sub
 

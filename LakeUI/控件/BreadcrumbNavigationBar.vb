@@ -1,5 +1,4 @@
 ﻿Imports System.ComponentModel
-Imports System.Drawing.Drawing2D
 Imports Vortice.Direct2D1
 
 ''' <summary>
@@ -14,11 +13,13 @@ Public Class BreadcrumbNavigationBar
     ''' </summary>
     <TypeConverter(GetType(ExpandableObjectConverter))>
     Public Class BreadcrumbItem
-        Friend Owner As BreadcrumbNavigationBar
+        Private _owner As BreadcrumbNavigationBar
         Private _text As String = ""
         Private _toolTip As String = ""
-        Private _hasChildren As Boolean = True
+        Private _hasDropDownExplicit As Boolean? = Nothing
         Private _tag As Object
+        Private _image As Image
+        Private _dropDownMenu As ModernContextMenu
 
         Public Sub New()
         End Sub
@@ -32,6 +33,16 @@ Public Class BreadcrumbNavigationBar
             _tag = tag
         End Sub
 
+        <Browsable(False)>
+        Friend Property Owner As BreadcrumbNavigationBar
+            Get
+                Return _owner
+            End Get
+            Set(value As BreadcrumbNavigationBar)
+                _owner = value
+            End Set
+        End Property
+
         <Category("LakeUI"), Description("节点文本"), DefaultValue(GetType(String), "")>
         Public Property Text As String
             Get
@@ -41,7 +52,7 @@ Public Class BreadcrumbNavigationBar
                 Dim v As String = If(value, "")
                 If _text = v Then Return
                 _text = v
-                Owner?.Invalidate()
+                _owner?.Invalidate()
             End Set
         End Property
 
@@ -55,15 +66,47 @@ Public Class BreadcrumbNavigationBar
             End Set
         End Property
 
-        <Category("LakeUI"), Description("是否含有子项（决定是否显示展开箭头）"), DefaultValue(True)>
-        Public Property HasChildren As Boolean
+        <Category("LakeUI"), Description("是否显示下拉箭头。未显式设置时根据 DropDownMenu 是否为空自动推断。")>
+        Public Property HasDropDown As Boolean
             Get
-                Return _hasChildren
+                If _hasDropDownExplicit.HasValue Then Return _hasDropDownExplicit.Value
+                Return _dropDownMenu IsNot Nothing
             End Get
             Set(value As Boolean)
-                If _hasChildren = value Then Return
-                _hasChildren = value
-                Owner?.Invalidate()
+                If _hasDropDownExplicit.HasValue AndAlso _hasDropDownExplicit.Value = value Then Return
+                _hasDropDownExplicit = value
+                _owner?.Invalidate()
+            End Set
+        End Property
+        Private Function ShouldSerializeHasDropDown() As Boolean
+            Return _hasDropDownExplicit.HasValue
+        End Function
+        Private Sub ResetHasDropDown()
+            _hasDropDownExplicit = Nothing
+            _owner?.Invalidate()
+        End Sub
+
+        <Category("LakeUI"), Description("节点显示在文本前的图标（可选）。"), DefaultValue(GetType(Image), Nothing)>
+        Public Property Image As Image
+            Get
+                Return _image
+            End Get
+            Set(value As Image)
+                If _image Is value Then Return
+                _image = value
+                _owner?.Invalidate()
+            End Set
+        End Property
+
+        <Category("LakeUI"), Description("点击该节点箭头区域时显示的上下文菜单。"), DefaultValue(GetType(ModernContextMenu), Nothing)>
+        Public Property DropDownMenu As ModernContextMenu
+            Get
+                Return _dropDownMenu
+            End Get
+            Set(value As ModernContextMenu)
+                If _dropDownMenu Is value Then Return
+                _dropDownMenu = value
+                _owner?.Invalidate()
             End Set
         End Property
 
@@ -86,16 +129,75 @@ Public Class BreadcrumbNavigationBar
     Public Class BreadcrumbItemCollection
         Inherits ObjectModel.Collection(Of BreadcrumbItem)
 
-        Private ReadOnly _owner As BreadcrumbNavigationBar
+        Private _owner As BreadcrumbNavigationBar
+        Private _suspendCount As Integer = 0
+        Private _dirty As Boolean = False
 
         Friend Sub New(owner As BreadcrumbNavigationBar)
             _owner = owner
         End Sub
 
-        Public Overloads Sub AddRange(items As IEnumerable(Of BreadcrumbItem))
-            For Each it In items
-                Add(it)
+        Friend Sub SetOwnerControl(owner As BreadcrumbNavigationBar)
+            _owner = owner
+            For Each it In Me
+                If it IsNot Nothing Then it.Owner = owner
             Next
+        End Sub
+
+        ''' <summary>
+        ''' 暂停 Items 变更引发的 Invalidate / 内部刷新。需配 EndUpdate 配对调用。
+        ''' </summary>
+        Public Sub BeginUpdate()
+            _suspendCount += 1
+        End Sub
+
+        ''' <summary>
+        ''' 恢复 Items 变更刷新。若 BeginUpdate 期间发生过变更，则触发一次刷新。
+        ''' </summary>
+        Public Sub EndUpdate()
+            If _suspendCount > 0 Then _suspendCount -= 1
+            If _suspendCount = 0 AndAlso _dirty Then
+                _dirty = False
+                _owner?.OnItemsChangedInternal()
+            End If
+        End Sub
+
+        Private Sub NotifyChanged()
+            If _suspendCount > 0 Then
+                _dirty = True
+                Return
+            End If
+            _owner?.OnItemsChangedInternal()
+        End Sub
+
+        Public Function IndexOfTag(tag As Object) As Integer
+            For i As Integer = 0 To Count - 1
+                Dim it As BreadcrumbItem = Me(i)
+                If it Is Nothing Then Continue For
+                If Object.Equals(it.Tag, tag) Then Return i
+            Next
+            Return -1
+        End Function
+
+        Public Function IndexOfText(text As String) As Integer
+            Dim t As String = If(text, "")
+            For i As Integer = 0 To Count - 1
+                Dim it As BreadcrumbItem = Me(i)
+                If it Is Nothing Then Continue For
+                If String.Equals(it.Text, t, StringComparison.Ordinal) Then Return i
+            Next
+            Return -1
+        End Function
+
+        Public Overloads Sub AddRange(items As IEnumerable(Of BreadcrumbItem))
+            BeginUpdate()
+            Try
+                For Each it In items
+                    Add(it)
+                Next
+            Finally
+                EndUpdate()
+            End Try
         End Sub
 
         Public Overloads Function Add(text As String) As BreadcrumbItem
@@ -110,17 +212,23 @@ Public Class BreadcrumbNavigationBar
             Return it
         End Function
 
+        Public Overloads Function Add(text As String, image As Image, tag As Object) As BreadcrumbItem
+            Dim it As New BreadcrumbItem(text, tag) With {.Image = image}
+            Add(it)
+            Return it
+        End Function
+
         Protected Overrides Sub InsertItem(index As Integer, item As BreadcrumbItem)
             If item IsNot Nothing Then item.Owner = _owner
             MyBase.InsertItem(index, item)
-            _owner.OnItemsChangedInternal()
+            NotifyChanged()
         End Sub
 
         Protected Overrides Sub RemoveItem(index As Integer)
             Dim it As BreadcrumbItem = Me(index)
             If it IsNot Nothing Then it.Owner = Nothing
             MyBase.RemoveItem(index)
-            _owner.OnItemsChangedInternal()
+            NotifyChanged()
         End Sub
 
         Protected Overrides Sub ClearItems()
@@ -128,13 +236,13 @@ Public Class BreadcrumbNavigationBar
                 If it IsNot Nothing Then it.Owner = Nothing
             Next
             MyBase.ClearItems()
-            _owner.OnItemsChangedInternal()
+            NotifyChanged()
         End Sub
 
         Protected Overrides Sub SetItem(index As Integer, item As BreadcrumbItem)
             If item IsNot Nothing Then item.Owner = _owner
             MyBase.SetItem(index, item)
-            _owner.OnItemsChangedInternal()
+            NotifyChanged()
         End Sub
     End Class
 #End Region
@@ -153,36 +261,19 @@ Public Class BreadcrumbNavigationBar
     End Class
 
     ''' <summary>
-    ''' 子项请求事件参数：处理程序通过 <see cref="Items"/> 填充子项。
+    ''' 节点选中变更事件参数。
     ''' </summary>
-    Public Class BreadcrumbDropDownOpeningEventArgs
+    Public Class BreadcrumbSelectionChangedEventArgs
         Inherits EventArgs
 
-        Public ReadOnly Property ParentItem As BreadcrumbItem
-        Public ReadOnly Property ParentIndex As Integer
-        ''' <summary>由处理程序填充的子项集合（运行时绑定）。</summary>
-        Public ReadOnly Property Items As New List(Of BreadcrumbItem)
-        Public Property Cancel As Boolean
+        Public ReadOnly Property OldIndex As Integer
+        Public ReadOnly Property NewIndex As Integer
+        Public ReadOnly Property NewItem As BreadcrumbItem
 
-        Public Sub New(parent As BreadcrumbItem, parentIndex As Integer)
-            ParentItem = parent
-            Me.ParentIndex = parentIndex
-        End Sub
-    End Class
-
-    Public Class BreadcrumbDropDownItemClickedEventArgs
-        Inherits EventArgs
-
-        Public ReadOnly Property ParentItem As BreadcrumbItem
-        Public ReadOnly Property ParentIndex As Integer
-        Public ReadOnly Property ChildItem As BreadcrumbItem
-        Public ReadOnly Property ChildIndex As Integer
-
-        Public Sub New(parent As BreadcrumbItem, parentIndex As Integer, child As BreadcrumbItem, childIndex As Integer)
-            Me.ParentItem = parent
-            Me.ParentIndex = parentIndex
-            Me.ChildItem = child
-            Me.ChildIndex = childIndex
+        Public Sub New(oldIndex As Integer, newIndex As Integer, newItem As BreadcrumbItem)
+            Me.OldIndex = oldIndex
+            Me.NewIndex = newIndex
+            Me.NewItem = newItem
         End Sub
     End Class
 #End Region
@@ -190,30 +281,39 @@ Public Class BreadcrumbNavigationBar
 #Region "事件"
     ''' <summary>用户点击了某个面包屑节点文本区域。</summary>
     Public Event ItemClicked As EventHandler(Of BreadcrumbItemEventArgs)
-    ''' <summary>下拉箭头展开前触发；处理程序应在此填充 e.Items。</summary>
-    Public Event DropDownOpening As EventHandler(Of BreadcrumbDropDownOpeningEventArgs)
-    ''' <summary>下拉已展开。</summary>
-    Public Event DropDownOpened As EventHandler(Of BreadcrumbItemEventArgs)
-    ''' <summary>下拉已关闭。</summary>
-    Public Event DropDownClosed As EventHandler(Of BreadcrumbItemEventArgs)
-    ''' <summary>用户在下拉中点击了某个子项。</summary>
-    Public Event DropDownItemClicked As EventHandler(Of BreadcrumbDropDownItemClickedEventArgs)
+    ''' <summary>SelectedIndex 变更后触发。</summary>
+    Public Event SelectedIndexChanged As EventHandler(Of BreadcrumbSelectionChangedEventArgs)
 #End Region
 
 #Region "字段"
     Private _items As BreadcrumbItemCollection
-    Private _hoverNodeIndex As Integer = -1
+    Private _hoverNodeIndex As Integer = -2
     Private _hoverIsArrow As Boolean = False
-    Private _pressedNodeIndex As Integer = -1
+    Private _pressedNodeIndex As Integer = -2
     Private _pressedIsArrow As Boolean = False
-    Private _dropDownForm As DropDownForm = Nothing
-    Private _dropDownArrowIndex As Integer = -1
+    Private _activeDropDownMenu As ModernContextMenu = Nothing
+    Private _dropDownArrowIndex As Integer = -2
+
+    ' 选中节点索引
+    Private _selectedIndex As Integer = -1
+
+    ' ToolTip 组件
+    Private _toolTip As ToolTip
+    Private _lastToolTipIndex As Integer = -2  ' -2 表示尚未设置过
+
+    ' 溢出折叠：当布局总宽超过控件宽度时，把左侧若干节点折叠到一个 "..." 根。
+    ' _overflowStartIndex < 0 表示没有折叠；否则 [0, _overflowStartIndex) 的节点被折叠。
+    Private _overflowStartIndex As Integer = -1
+    Private ReadOnly _overflowItem As New BreadcrumbItem("…")
 
     Private Class NodeLayout
-        Public Index As Integer
+        Public Index As Integer            ' -1 表示溢出折叠根
         Public TextRect As Rectangle
         Public ArrowRect As Rectangle
+        Public IconRect As Rectangle
         Public HasArrow As Boolean
+        Public HasIcon As Boolean
+        Public IsOverflow As Boolean
     End Class
     Private _layoutCache As New List(Of NodeLayout)
 #End Region
@@ -228,16 +328,128 @@ Public Class BreadcrumbNavigationBar
         End Get
     End Property
 
-    Private 背景颜色 As Color = Color.FromArgb(36, 36, 36)
-    <Category("LakeUI"), Description("背景颜色"), DefaultValue(GetType(Color), "36,36,36"), Browsable(True)>
-    Public Overrides Property BackColor As Color
+    <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+    Public Property SelectedIndex As Integer
         Get
-            Return 背景颜色
+            Return _selectedIndex
         End Get
-        Set(value As Color)
-            SetValue(背景颜色, value)
+        Set(value As Integer)
+            Dim v As Integer = value
+            If v < -1 Then v = -1
+            If v >= _items.Count Then v = _items.Count - 1
+            If v = _selectedIndex Then Return
+            Dim oldIdx As Integer = _selectedIndex
+            _selectedIndex = v
+            Dim newItem As BreadcrumbItem = If(v >= 0 AndAlso v < _items.Count, _items(v), Nothing)
+            Invalidate()
+            RaiseEvent SelectedIndexChanged(Me, New BreadcrumbSelectionChangedEventArgs(oldIdx, v, newItem))
         End Set
     End Property
+
+    <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+    Public ReadOnly Property SelectedItem As BreadcrumbItem
+        Get
+            If _selectedIndex < 0 OrElse _selectedIndex >= _items.Count Then Return Nothing
+            Return _items(_selectedIndex)
+        End Get
+    End Property
+
+    Private 选中节点背景 As Color = Color.FromArgb(70, 70, 70)
+    <Category("LakeUI"), Description("当前选中节点的高亮背景颜色"), DefaultValue(GetType(Color), "70,70,70"), Browsable(True)>
+    Public Property SelectedNodeBackColor As Color
+        Get
+            Return 选中节点背景
+        End Get
+        Set(value As Color)
+            SetValue(选中节点背景, value)
+        End Set
+    End Property
+
+    Private 选中节点文本颜色 As Color = Color.White
+    <Category("LakeUI"), Description("当前选中节点的文本颜色"), DefaultValue(GetType(Color), "White"), Browsable(True)>
+    Public Property SelectedNodeForeColor As Color
+        Get
+            Return 选中节点文本颜色
+        End Get
+        Set(value As Color)
+            SetValue(选中节点文本颜色, value)
+        End Set
+    End Property
+
+    Private 启用溢出折叠 As Boolean = True
+    <Category("LakeUI"), Description("总宽度超出控件时是否将左侧节点折叠为省略号根（点击展开为下拉）。"), DefaultValue(True), Browsable(True)>
+    Public Property AutoCollapseOverflow As Boolean
+        Get
+            Return 启用溢出折叠
+        End Get
+        Set(value As Boolean)
+            SetValue(启用溢出折叠, value)
+        End Set
+    End Property
+
+    Private 溢出根文本 As String = "…"
+    <Category("LakeUI"), Description("溢出折叠根显示的文本"), DefaultValue("…"), Browsable(True)>
+    Public Property OverflowRootText As String
+        Get
+            Return 溢出根文本
+        End Get
+        Set(value As String)
+            Dim v As String = If(value, "")
+            If 溢出根文本 = v Then Return
+            溢出根文本 = v
+            _overflowItem.Text = v
+            Invalidate()
+        End Set
+    End Property
+
+    Private 图标大小 As Integer = 16
+    <Category("LakeUI"), Description("节点图标尺寸（DIP，会乘 DPI）"), DefaultValue(16), Browsable(True)>
+    Public Property NodeIconSize As Integer
+        Get
+            Return 图标大小
+        End Get
+        Set(value As Integer)
+            SetValue(图标大小, Math.Max(4, value))
+        End Set
+    End Property
+
+    Private 图标与文本间距 As Integer = 4
+    <Category("LakeUI"), Description("节点图标与文本之间的间距"), DefaultValue(4), Browsable(True)>
+    Public Property NodeIconTextSpacing As Integer
+        Get
+            Return 图标与文本间距
+        End Get
+        Set(value As Integer)
+            SetValue(图标与文本间距, Math.Max(0, value))
+        End Set
+    End Property
+
+    Private 显示焦点框 As Boolean = True
+    <Category("LakeUI"), Description("获得焦点后键盘选中节点是否绘制焦点框"), DefaultValue(True), Browsable(True)>
+    Public Property ShowFocusCues As Boolean
+        Get
+            Return 显示焦点框
+        End Get
+        Set(value As Boolean)
+            SetValue(显示焦点框, value)
+        End Set
+    End Property
+
+    Private 焦点框颜色 As Color = Color.FromArgb(120, 170, 255)
+    <Category("LakeUI"), Description("焦点框颜色"), DefaultValue(GetType(Color), "120,170,255"), Browsable(True)>
+    Public Property FocusCueColor As Color
+        Get
+            Return 焦点框颜色
+        End Get
+        Set(value As Color)
+            SetValue(焦点框颜色, value)
+        End Set
+    End Property
+
+    ' 背景颜色：与 ModernButton 一致，直接使用 MyBase.BackColor。
+    ' • 不透明（A=255） → 由基类 OnPaintBackground 填底；
+    ' • 半透明（0<A<255） → 基类先合成父级背景，再在 D2D 背景层叠加 BackColor 作为遮罩；
+    ' • A=0 → 完全透明，仅依赖 BackgroundSource 或父级。
 
     Private 文本颜色 As Color = Color.Silver
     <Category("LakeUI"), Description("节点文本颜色"), DefaultValue(GetType(Color), "Silver"), Browsable(True)>
@@ -371,7 +583,7 @@ Public Class BreadcrumbNavigationBar
         End Set
     End Property
 
-    Private 超采样倍率 As Integer = 1
+    Private 超采样倍率 As Class1.SuperSamplingScaleEnum = Class1.SuperSamplingScaleEnum.OFF
     <Category("LakeUI"), Description(Class1.超采样抗锯齿描述词), DefaultValue(GetType(Class1.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
     Public Property SuperSamplingScale As Class1.SuperSamplingScaleEnum
         Get
@@ -398,154 +610,6 @@ Public Class BreadcrumbNavigationBar
         End Set
     End Property
 
-    Private 下拉背景颜色 As Color = Color.FromArgb(36, 36, 36)
-    <Category("LakeUI"), Description("下拉列表背景颜色"), DefaultValue(GetType(Color), "36,36,36"), Browsable(True)>
-    Public Property DropDownBackColor As Color
-        Get
-            Return 下拉背景颜色
-        End Get
-        Set(value As Color)
-            SetValue(下拉背景颜色, value)
-        End Set
-    End Property
-
-    Private 下拉悬停颜色 As Color = Color.FromArgb(60, 60, 60)
-    <Category("LakeUI"), Description("下拉项悬停颜色"), DefaultValue(GetType(Color), "60,60,60"), Browsable(True)>
-    Public Property DropDownHoverColor As Color
-        Get
-            Return 下拉悬停颜色
-        End Get
-        Set(value As Color)
-            SetValue(下拉悬停颜色, value)
-        End Set
-    End Property
-
-    Private 下拉文本颜色 As Color = Color.Silver
-    <Category("LakeUI"), Description("下拉项文本颜色"), DefaultValue(GetType(Color), "Silver"), Browsable(True)>
-    Public Property DropDownForeColor As Color
-        Get
-            Return 下拉文本颜色
-        End Get
-        Set(value As Color)
-            SetValue(下拉文本颜色, value)
-        End Set
-    End Property
-
-    Private 下拉边框颜色 As Color = Color.Gray
-    <Category("LakeUI"), Description("下拉边框颜色"), DefaultValue(GetType(Color), "Gray"), Browsable(True)>
-    Public Property DropDownBorderColor As Color
-        Get
-            Return 下拉边框颜色
-        End Get
-        Set(value As Color)
-            SetValue(下拉边框颜色, value)
-        End Set
-    End Property
-
-    Private 下拉边框宽度 As Integer = 1
-    <Category("LakeUI"), Description("下拉边框宽度"), DefaultValue(1), Browsable(True)>
-    Public Property DropDownBorderSize As Integer
-        Get
-            Return 下拉边框宽度
-        End Get
-        Set(value As Integer)
-            SetValue(下拉边框宽度, Math.Max(0, value))
-        End Set
-    End Property
-
-    Private 下拉圆角半径 As Integer = 6
-    <Category("LakeUI"), Description("下拉圆角半径"), DefaultValue(6), Browsable(True)>
-    Public Property DropDownCornerRadius As Integer
-        Get
-            Return 下拉圆角半径
-        End Get
-        Set(value As Integer)
-            SetValue(下拉圆角半径, Math.Max(0, value))
-        End Set
-    End Property
-
-    Private 下拉项高度 As Integer = 30
-    <Category("LakeUI"), Description("下拉项高度"), DefaultValue(30), Browsable(True)>
-    Public Property DropDownItemHeight As Integer
-        Get
-            Return 下拉项高度
-        End Get
-        Set(value As Integer)
-            下拉项高度 = Math.Max(10, value)
-        End Set
-    End Property
-
-    Private 下拉间距 As Integer = 2
-    <Category("LakeUI"), Description("下拉与控件的垂直间距"), DefaultValue(2), Browsable(True)>
-    Public Property DropDownGap As Integer
-        Get
-            Return 下拉间距
-        End Get
-        Set(value As Integer)
-            下拉间距 = value
-        End Set
-    End Property
-
-    Private 下拉最小宽度 As Integer = 160
-    <Category("LakeUI"), Description("下拉最小宽度"), DefaultValue(160), Browsable(True)>
-    Public Property DropDownMinWidth As Integer
-        Get
-            Return 下拉最小宽度
-        End Get
-        Set(value As Integer)
-            下拉最小宽度 = Math.Max(20, value)
-        End Set
-    End Property
-
-    Private 下拉内边距 As New Padding(4)
-    <Category("LakeUI"), Description("下拉内边距"), Browsable(True)>
-    Public Property DropDownPadding As Padding
-        Get
-            Return 下拉内边距
-        End Get
-        Set(value As Padding)
-            下拉内边距 = value
-        End Set
-    End Property
-    Private Function ShouldSerializeDropDownPadding() As Boolean
-        Return 下拉内边距 <> New Padding(4)
-    End Function
-    Private Sub ResetDropDownPadding()
-        下拉内边距 = New Padding(4)
-    End Sub
-
-    Private 下拉项内边距 As Integer = 10
-    <Category("LakeUI"), Description("下拉项左右内边距"), DefaultValue(10), Browsable(True)>
-    Public Property DropDownItemPadding As Integer
-        Get
-            Return 下拉项内边距
-        End Get
-        Set(value As Integer)
-            下拉项内边距 = Math.Max(0, value)
-        End Set
-    End Property
-
-    Private 下拉展开关闭动画时长 As Integer = 150
-    <Category("LakeUI"), Description("下拉展开/关闭动画时长（毫秒），0 = 无动画"), DefaultValue(150), Browsable(True)>
-    Public Property DropDownAnimationDuration As Integer
-        Get
-            Return 下拉展开关闭动画时长
-        End Get
-        Set(value As Integer)
-            SetValue(下拉展开关闭动画时长, Math.Max(0, value))
-        End Set
-    End Property
-
-    Private 下拉动画帧率 As Integer = 60
-    <Category("LakeUI"), Description(Class1.动画帧率描述词), DefaultValue(60), Browsable(True)>
-    Public Property DropDownAnimationFPS As Integer
-        Get
-            Return 下拉动画帧率
-        End Get
-        Set(value As Integer)
-            下拉动画帧率 = Math.Max(0, value)
-        End Set
-    End Property
 #End Region
 
 #Region "初始化"
@@ -558,17 +622,35 @@ Public Class BreadcrumbNavigationBar
                  ControlStyles.SupportsTransparentBackColor Or
                  ControlStyles.ResizeRedraw, True)
         UpdateStyles()
+        TabStop = False
+        MyBase.BackColor = Color.FromArgb(36, 36, 36)
     End Sub
 
     Protected Overrides Sub OnHandleDestroyed(e As EventArgs)
-        CloseDropDown()
+        ' 句柄销毁时不能再走动画路径，避免 ObjectDisposed
+        ImmediatelyDisposeDropDown()
         MyBase.OnHandleDestroyed(e)
     End Sub
 
+    Friend Sub DisposeManagedResources()
+        ImmediatelyDisposeDropDown()
+        If _toolTip IsNot Nothing Then
+            Try : _toolTip.Dispose() : Catch : End Try
+            _toolTip = Nothing
+        End If
+        If _itemImageCache IsNot Nothing Then
+            For Each kv In _itemImageCache
+                Try : kv.Value.Dispose() : Catch : End Try
+            Next
+            _itemImageCache.Clear()
+        End If
+    End Sub
+
     Friend Sub OnItemsChangedInternal()
-        _hoverNodeIndex = -1
-        _pressedNodeIndex = -1
-        If _dropDownForm IsNot Nothing Then CloseDropDown()
+        _hoverNodeIndex = -2
+        _pressedNodeIndex = -2
+        If _selectedIndex >= _items.Count Then _selectedIndex = -1
+        If _activeDropDownMenu IsNot Nothing Then CloseDropDown()
         Invalidate()
     End Sub
 #End Region
@@ -580,25 +662,110 @@ Public Class BreadcrumbNavigationBar
 
     Private Sub RebuildLayout()
         _layoutCache.Clear()
+        _overflowStartIndex = -1
         Dim s As Single = DpiScale()
         Dim padX As Integer = CInt(节点文本左右内边距 * s)
         Dim padY As Integer = CInt(节点垂直内边距 * s)
         Dim aaw As Integer = CInt(箭头区域宽度 * s)
-        Dim h As Integer = ClientRectangle.Height
-        Dim x As Integer = 0
+        Dim iconSize As Integer = CInt(图标大小 * s)
+        Dim iconSpacing As Integer = CInt(图标与文本间距 * s)
+        Dim contentLeft As Integer = Me.Padding.Left
+        Dim contentTop As Integer = Me.Padding.Top
+        Dim contentHeight As Integer = Math.Max(0, ClientRectangle.Height - Me.Padding.Vertical)
+        Dim itemY As Integer = contentTop + padY
+        Dim itemH As Integer = Math.Max(0, contentHeight - padY * 2)
+        Dim availableRight As Integer = ClientRectangle.Width - Me.Padding.Right
+
+        ' 第一遍：先正常排，得到每个节点的宽度。
+        Dim widths As New List(Of Integer)(_items.Count)
+        Dim hasIcons As New List(Of Boolean)(_items.Count)
         For i As Integer = 0 To _items.Count - 1
             Dim item As BreadcrumbItem = _items(i)
-            If item Is Nothing Then Continue For
-            Dim textW As Integer = TextRenderHelper.MeasureTextWidth(item.Text, Font, h)
+            If item Is Nothing Then
+                widths.Add(0)
+                hasIcons.Add(False)
+                Continue For
+            End If
+            Dim showIcon As Boolean = item.Image IsNot Nothing
+            Dim textW As Integer = TextRenderHelper.MeasureTextWidth(item.Text, Font, contentHeight)
             Dim nodeTextW As Integer = textW + padX * 2
+            If showIcon Then nodeTextW += iconSize + iconSpacing
+            Dim total As Integer = nodeTextW
+            If item.HasDropDown Then total += aaw
+            widths.Add(nodeTextW)
+            hasIcons.Add(showIcon)
+        Next
+
+        Dim totalWidth As Integer = contentLeft
+        For i As Integer = 0 To _items.Count - 1
+            totalWidth += widths(i)
+            Dim it As BreadcrumbItem = _items(i)
+            If it IsNot Nothing AndAlso it.HasDropDown Then totalWidth += aaw
+        Next
+
+        Dim overflowStart As Integer = -1
+        If 启用溢出折叠 AndAlso totalWidth > availableRight AndAlso _items.Count > 1 Then
+            ' 始终保留最后一个节点（叶子）；从左侧开始折叠，直到能放下。
+            ' 折叠根本身需要的宽度 = padX*2 + textW("…") + aaw（折叠根总有箭头）。
+            Dim overflowTextW As Integer = TextRenderHelper.MeasureTextWidth(溢出根文本, Font, contentHeight)
+            Dim overflowNodeW As Integer = overflowTextW + padX * 2 + aaw
+
+            For cut As Integer = 1 To _items.Count - 1
+                Dim used As Integer = contentLeft + overflowNodeW
+                For j As Integer = cut To _items.Count - 1
+                    used += widths(j)
+                    Dim it As BreadcrumbItem = _items(j)
+                    If it IsNot Nothing AndAlso it.HasDropDown Then used += aaw
+                Next
+                If used <= availableRight Then
+                    overflowStart = cut
+                    Exit For
+                End If
+            Next
+            ' 即使全都折叠也放不下，至少保留最后一个节点。
+            If overflowStart < 0 Then overflowStart = _items.Count - 1
+        End If
+        _overflowStartIndex = overflowStart
+
+        Dim x As Integer = contentLeft
+
+        ' 添加溢出折叠根
+        If overflowStart > 0 Then
+            Dim overflowTextW As Integer = TextRenderHelper.MeasureTextWidth(溢出根文本, Font, contentHeight)
+            Dim oNodeW As Integer = overflowTextW + padX * 2
+            Dim oLayout As New NodeLayout With {
+                .Index = -1,
+                .IsOverflow = True,
+                .HasArrow = True,
+                .HasIcon = False,
+                .TextRect = New Rectangle(x, itemY, oNodeW, itemH)
+            }
+            x += oNodeW
+            oLayout.ArrowRect = New Rectangle(x, itemY, aaw, itemH)
+            x += aaw
+            _layoutCache.Add(oLayout)
+        End If
+
+        Dim startIdx As Integer = If(overflowStart > 0, overflowStart, 0)
+        For i As Integer = startIdx To _items.Count - 1
+            Dim item As BreadcrumbItem = _items(i)
+            If item Is Nothing Then Continue For
+            Dim showIcon As Boolean = hasIcons(i)
             Dim layout As New NodeLayout With {
                 .Index = i,
-                .TextRect = New Rectangle(x, padY, nodeTextW, h - padY * 2),
-                .HasArrow = item.HasChildren
+                .IsOverflow = False,
+                .HasArrow = item.HasDropDown,
+                .HasIcon = showIcon
             }
-            x += nodeTextW
-            If item.HasChildren Then
-                layout.ArrowRect = New Rectangle(x, padY, aaw, h - padY * 2)
+            Dim nodeW As Integer = widths(i)
+            layout.TextRect = New Rectangle(x, itemY, nodeW, itemH)
+            If showIcon Then
+                Dim iconY As Integer = itemY + Math.Max(0, (itemH - iconSize) \ 2)
+                layout.IconRect = New Rectangle(x + padX, iconY, iconSize, iconSize)
+            End If
+            x += nodeW
+            If item.HasDropDown Then
+                layout.ArrowRect = New Rectangle(x, itemY, aaw, itemH)
                 x += aaw
             Else
                 layout.ArrowRect = Rectangle.Empty
@@ -607,29 +774,40 @@ Public Class BreadcrumbNavigationBar
         Next
     End Sub
 
-    Private Function HitTest(p As Point, ByRef nodeIndex As Integer, ByRef isArrow As Boolean) As Boolean
+    Private Function HitTest(p As Point, ByRef nodeIndex As Integer, ByRef isArrow As Boolean, ByRef isOverflow As Boolean) As Boolean
         nodeIndex = -1
         isArrow = False
+        isOverflow = False
         For Each l In _layoutCache
             If l.TextRect.Contains(p) Then
                 nodeIndex = l.Index
                 isArrow = False
+                isOverflow = l.IsOverflow
                 Return True
             End If
             If l.HasArrow AndAlso l.ArrowRect.Contains(p) Then
                 nodeIndex = l.Index
                 isArrow = True
+                isOverflow = l.IsOverflow
                 Return True
             End If
         Next
         Return False
     End Function
+
+    ' 兼容旧签名（不暴露 IsOverflow）
+    Private Function HitTest(p As Point, ByRef nodeIndex As Integer, ByRef isArrow As Boolean) As Boolean
+        Dim ov As Boolean
+        Return HitTest(p, nodeIndex, isArrow, ov)
+    End Function
 #End Region
 
 #Region "绘制"
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
+        ' V2 契约（参考 ModernButton）：
+        '   • BackgroundSource 已设置 → 跳过 BackColor 整个逻辑，背景由 OnPaint 中 BackgroundPenetrationV2 绘制；
+        '   • 否则一律走 .NET 自身透明逻辑（半透明 BackColor 由基类合成父级背景，不透明色由基类填底）。
         If _backgroundSource IsNot Nothing Then Return
-        If 背景颜色.A < 255 Then Return
         MyBase.OnPaintBackground(e)
     End Sub
 
@@ -648,14 +826,16 @@ Public Class BreadcrumbNavigationBar
                 Return
             End If
 
-            ' 背景层
+            ' 背景层（参考 ModernButton）：
+            '   • 显式 BackgroundSource → 绘制穿透底图（跳过 BackColor）；
+            '   • 否则若 MyBase.BackColor 半透明 → 基类 OnPaintBackground 已把父级背景合成到 DC，
+            '     这里再叠加 BackColor 作为半透明遮罩；
+            '   • 不透明（A=255）已由基类 OnPaintBackground 填底，无需再画。
             If _backgroundSource IsNot Nothing Then
                 BackgroundPenetrationV2.PaintBackground(Me, scope, _backgroundSource)
-            ElseIf 背景颜色.A = 255 Then
-                scope.BackgroundLayer.Clear(D2DHelper.ToColor4(背景颜色))
-            ElseIf 背景颜色.A > 0 Then
+            ElseIf MyBase.BackColor.A > 0 AndAlso MyBase.BackColor.A < 255 Then
                 Dim bgLayer = scope.BackgroundLayer
-                Dim bb = scope.Compositor.BrushCache.[Get](bgLayer, 背景颜色)
+                Dim bb = scope.Compositor.BrushCache.[Get](bgLayer, MyBase.BackColor)
                 If bb IsNot Nothing Then
                     bgLayer.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(0, 0, w, h)), bb)
                 End If
@@ -685,8 +865,7 @@ Public Class BreadcrumbNavigationBar
         Dim radius As Single = 节点圆角半径 * s
 
         For Each l In _layoutCache
-            Dim item As BreadcrumbItem = _items(l.Index)
-            If item Is Nothing Then Continue For
+            Dim isSelected As Boolean = (Not l.IsOverflow) AndAlso (l.Index = _selectedIndex) AndAlso l.Index >= 0
 
             Dim textHover As Boolean = (_hoverNodeIndex = l.Index AndAlso Not _hoverIsArrow)
             Dim textPressed As Boolean = (_pressedNodeIndex = l.Index AndAlso Not _pressedIsArrow)
@@ -695,6 +874,8 @@ Public Class BreadcrumbNavigationBar
                 textHl = 节点按下背景
             ElseIf textHover Then
                 textHl = 节点悬停背景
+            ElseIf isSelected Then
+                textHl = 选中节点背景
             End If
             If textHl <> Color.Empty AndAlso textHl.A > 0 Then
                 FillRoundedRect_D2D(rt, brushCache, l.TextRect, radius, textHl)
@@ -720,6 +901,7 @@ Public Class BreadcrumbNavigationBar
                 Dim chevronDown As Boolean = (_dropDownArrowIndex = l.Index)
                 DrawChevron_D2D(rt, brushCache, l.ArrowRect, arrowClr, chevronDown)
             End If
+
         Next
     End Sub
 
@@ -727,14 +909,63 @@ Public Class BreadcrumbNavigationBar
                                    textFormatCache As D2DHelper.TextFormatCache,
                                    brushCache As D2DHelper.SolidColorBrushCache)
         Dim dpi As Single = DpiScale()
+        Dim s As Single = DpiScale()
+        Dim padX As Integer = CInt(节点文本左右内边距 * s)
+        Dim iconSize As Integer = CInt(图标大小 * s)
+        Dim iconSpacing As Integer = CInt(图标与文本间距 * s)
         For Each l In _layoutCache
-            Dim item As BreadcrumbItem = _items(l.Index)
+            Dim item As BreadcrumbItem
+            If l.IsOverflow Then
+                item = _overflowItem
+            Else
+                If l.Index < 0 OrElse l.Index >= _items.Count Then Continue For
+                item = _items(l.Index)
+            End If
             If item Is Nothing Then Continue For
-            D2DTextRenderer.DrawText(rt, item.Text, Font, l.TextRect, ForeColor,
-                TextFormatFlags.NoPadding Or TextFormatFlags.HorizontalCenter Or
-                TextFormatFlags.VerticalCenter Or TextFormatFlags.SingleLine Or TextFormatFlags.EndEllipsis,
-                dpi, textFormatCache, brushCache)
+
+            ' 文本颜色（选中态优先）
+            Dim isSelected As Boolean = (Not l.IsOverflow) AndAlso (l.Index = _selectedIndex)
+            Dim textColor As Color = If(isSelected, 选中节点文本颜色, ForeColor)
+
+            ' 图标
+            If l.HasIcon AndAlso item.Image IsNot Nothing Then
+                DrawItemImage_D2D(rt, item.Image, l.IconRect)
+            End If
+
+            ' 文本区（避开图标）
+            Dim textRect As Rectangle = l.TextRect
+            If l.HasIcon Then
+                Dim shift As Integer = (iconSize + iconSpacing)
+                textRect = New Rectangle(textRect.X + padX + shift, textRect.Y, textRect.Width - padX - shift, textRect.Height)
+                D2DTextRenderer.DrawText(rt, item.Text, Font, textRect, textColor,
+                    TextFormatFlags.NoPadding Or TextFormatFlags.Left Or
+                    TextFormatFlags.VerticalCenter Or TextFormatFlags.SingleLine Or TextFormatFlags.EndEllipsis,
+                    dpi, textFormatCache, brushCache)
+            Else
+                D2DTextRenderer.DrawText(rt, item.Text, Font, textRect, textColor,
+                    TextFormatFlags.NoPadding Or TextFormatFlags.HorizontalCenter Or
+                    TextFormatFlags.VerticalCenter Or TextFormatFlags.SingleLine Or TextFormatFlags.EndEllipsis,
+                    dpi, textFormatCache, brushCache)
+            End If
         Next
+    End Sub
+
+    Private _itemImageCache As New Dictionary(Of Image, D2DHelper.D2DBitmapCache)
+
+    Private Sub DrawItemImage_D2D(rt As ID2D1RenderTarget, img As Image, dest As Rectangle)
+        If img Is Nothing OrElse dest.Width <= 0 OrElse dest.Height <= 0 Then Return
+        Dim cache As D2DHelper.D2DBitmapCache = Nothing
+        If Not _itemImageCache.TryGetValue(img, cache) Then
+            cache = New D2DHelper.D2DBitmapCache()
+            _itemImageCache(img) = cache
+        End If
+        Dim bmp = cache.GetBitmap(rt, img)
+        If bmp Is Nothing Then Return
+        rt.DrawBitmap(bmp,
+                      D2DHelper.ToD2DRect(New RectangleF(dest.X, dest.Y, dest.Width, dest.Height)),
+                      1.0F,
+                      Vortice.Direct2D1.BitmapInterpolationMode.Linear,
+                      D2DHelper.ToD2DRect(New RectangleF(0, 0, img.Width, img.Height)))
     End Sub
 
     Private Sub FillRoundedRect_D2D(rt As ID2D1RenderTarget, brushCache As D2DHelper.SolidColorBrushCache,
@@ -802,22 +1033,48 @@ Public Class BreadcrumbNavigationBar
         MyBase.OnMouseMove(e)
         Dim idx As Integer
         Dim isArrow As Boolean
-        Dim hit As Boolean = HitTest(e.Location, idx, isArrow)
-        If hit <> (_hoverNodeIndex >= 0) OrElse idx <> _hoverNodeIndex OrElse isArrow <> _hoverIsArrow Then
-            _hoverNodeIndex = If(hit, idx, -1)
+        Dim isOverflow As Boolean
+        Dim hit As Boolean = HitTest(e.Location, idx, isArrow, isOverflow)
+        Dim newHoverIdx As Integer = If(hit, idx, -2)
+        If newHoverIdx <> _hoverNodeIndex OrElse isArrow <> _hoverIsArrow Then
+            _hoverNodeIndex = newHoverIdx
             _hoverIsArrow = isArrow
             Cursor = If(hit, Cursors.Hand, Cursors.Default)
             Invalidate()
         End If
+
+        ' 更新 ToolTip
+        UpdateToolTipForHit(hit, idx, isOverflow)
+    End Sub
+
+    Private Sub UpdateToolTipForHit(hit As Boolean, idx As Integer, isOverflow As Boolean)
+        If _toolTip Is Nothing Then
+            _toolTip = New ToolTip()
+        End If
+        Dim newTipIndex As Integer = If(hit AndAlso Not isOverflow, idx, -1)
+        If newTipIndex = _lastToolTipIndex Then Return
+        _lastToolTipIndex = newTipIndex
+        If newTipIndex >= 0 AndAlso newTipIndex < _items.Count Then
+            Dim it = _items(newTipIndex)
+            If it IsNot Nothing AndAlso Not String.IsNullOrEmpty(it.ToolTip) Then
+                _toolTip.SetToolTip(Me, it.ToolTip)
+                Return
+            End If
+        End If
+        _toolTip.SetToolTip(Me, String.Empty)
     End Sub
 
     Protected Overrides Sub OnMouseLeave(e As EventArgs)
         MyBase.OnMouseLeave(e)
-        If _hoverNodeIndex <> -1 Then
-            _hoverNodeIndex = -1
+        If _hoverNodeIndex <> -2 Then
+            _hoverNodeIndex = -2
             _hoverIsArrow = False
             Cursor = Cursors.Default
             Invalidate()
+        End If
+        If _toolTip IsNot Nothing Then
+            _toolTip.SetToolTip(Me, String.Empty)
+            _lastToolTipIndex = -2
         End If
     End Sub
 
@@ -826,7 +1083,8 @@ Public Class BreadcrumbNavigationBar
         If Not Enabled OrElse e.Button <> MouseButtons.Left Then Return
         Dim idx As Integer
         Dim isArrow As Boolean
-        If HitTest(e.Location, idx, isArrow) Then
+        Dim isOverflow As Boolean
+        If HitTest(e.Location, idx, isArrow, isOverflow) Then
             _pressedNodeIndex = idx
             _pressedIsArrow = isArrow
             Invalidate()
@@ -838,26 +1096,46 @@ Public Class BreadcrumbNavigationBar
         If e.Button <> MouseButtons.Left Then Return
         Dim idx As Integer
         Dim isArrow As Boolean
-        Dim hit As Boolean = HitTest(e.Location, idx, isArrow)
+        Dim isOverflow As Boolean
+        Dim hit As Boolean = HitTest(e.Location, idx, isArrow, isOverflow)
         Dim wasPressedIdx As Integer = _pressedNodeIndex
         Dim wasPressedArrow As Boolean = _pressedIsArrow
-        _pressedNodeIndex = -1
+        _pressedNodeIndex = -2
         _pressedIsArrow = False
         Invalidate()
         If hit AndAlso idx = wasPressedIdx AndAlso isArrow = wasPressedArrow Then
-            If isArrow Then
+            If isOverflow Then
+                ' 溢出根：无论点的是文本还是箭头，都展开折叠列表
+                ToggleDropDown(-1)
+            ElseIf isArrow Then
                 ToggleDropDown(idx)
             Else
                 Dim it = _items(idx)
+                SelectedIndex = idx
                 RaiseEvent ItemClicked(Me, New BreadcrumbItemEventArgs(it, idx))
             End If
         End If
     End Sub
 #End Region
 
+#Region "尺寸"
+    Protected Overrides ReadOnly Property DefaultSize As Size
+        Get
+            Return New Size(300, 28)
+        End Get
+    End Property
+
+    Public Overrides Function GetPreferredSize(proposedSize As Size) As Size
+        Dim s As Single = DpiScale()
+        Dim padY As Integer = CInt(节点垂直内边距 * s)
+        Dim h As Integer = Font.Height + padY * 2 + Me.Padding.Vertical
+        Return New Size(If(proposedSize.Width > 0, proposedSize.Width, MyBase.Width), h)
+    End Function
+#End Region
+
 #Region "下拉控制"
     Private Sub ToggleDropDown(arrowIndex As Integer)
-        If _dropDownForm IsNot Nothing AndAlso _dropDownArrowIndex = arrowIndex Then
+        If _dropDownArrowIndex = arrowIndex Then
             CloseDropDown()
             Return
         End If
@@ -865,69 +1143,70 @@ Public Class BreadcrumbNavigationBar
     End Sub
 
     Private Sub OpenDropDown(arrowIndex As Integer)
-        If arrowIndex < 0 OrElse arrowIndex >= _items.Count Then Return
-        If _dropDownForm IsNot Nothing Then
-            ImmediatelyDisposeDropDown()
+        ' arrowIndex == -1 表示溢出折叠根
+        Dim isOverflow As Boolean = (arrowIndex = -1)
+        If Not isOverflow Then
+            If arrowIndex < 0 OrElse arrowIndex >= _items.Count Then Return
         End If
-        Dim parentItem As BreadcrumbItem = _items(arrowIndex)
-        Dim args As New BreadcrumbDropDownOpeningEventArgs(parentItem, arrowIndex)
-        RaiseEvent DropDownOpening(Me, args)
-        If args.Cancel OrElse args.Items.Count = 0 Then Return
+        Dim menu As ModernContextMenu = GetDropDownMenu(arrowIndex)
+        If menu Is Nothing Then Return
+
+        ImmediatelyDisposeDropDown()
 
         _dropDownArrowIndex = arrowIndex
-        _dropDownForm = New DropDownForm(Me, arrowIndex, parentItem, args.Items)
-        _dropDownForm.ShowDropDown()
+        _activeDropDownMenu = menu
+        RemoveHandler _activeDropDownMenu.MenuClosed, AddressOf DropDownMenu_MenuClosed
+        AddHandler _activeDropDownMenu.MenuClosed, AddressOf DropDownMenu_MenuClosed
+
+        Dim anchorRect As Rectangle = GetDropDownAnchorRect(arrowIndex)
+        Dim pt As Point = PointToScreen(New Point(anchorRect.Left, Height))
+        _activeDropDownMenu.Show(pt.X, pt.Y)
         Invalidate()
-        RaiseEvent DropDownOpened(Me, New BreadcrumbItemEventArgs(parentItem, arrowIndex))
     End Sub
 
-    Friend Sub CloseDropDown()
-        If _dropDownForm Is Nothing Then Return
-        If _dropDownForm.正在关闭动画 Then Return
-        If 下拉展开关闭动画时长 > 0 AndAlso _dropDownForm.IsHandleCreated AndAlso Not _dropDownForm.IsDisposed Then
-            _dropDownForm.开始关闭动画()
-            Return
+    Private Function GetDropDownMenu(arrowIndex As Integer) As ModernContextMenu
+        If arrowIndex >= 0 AndAlso arrowIndex < _items.Count Then
+            Dim item = _items(arrowIndex)
+            If item IsNot Nothing Then Return item.DropDownMenu
         End If
-        ImmediatelyDisposeDropDown()
+        Return Nothing
+    End Function
+
+    Private Function GetDropDownAnchorRect(parentIndex As Integer) As Rectangle
+        For Each l In _layoutCache
+            If parentIndex = -1 Then
+                If l.IsOverflow AndAlso l.HasArrow Then Return l.ArrowRect
+            ElseIf l.Index = parentIndex AndAlso l.HasArrow Then
+                Return l.ArrowRect
+            End If
+        Next
+        Return New Rectangle(0, 0, Width, Height)
+    End Function
+
+    Friend Sub CloseDropDown()
+        If _activeDropDownMenu Is Nothing OrElse _dropDownArrowIndex = -2 Then Return
+        _activeDropDownMenu.Close()
     End Sub
 
     Private Sub ImmediatelyDisposeDropDown()
-        If _dropDownForm Is Nothing Then Return
-        Dim f = _dropDownForm
-        Dim parentIdx As Integer = _dropDownArrowIndex
-        Dim parentItem As BreadcrumbItem = If(parentIdx >= 0 AndAlso parentIdx < _items.Count, _items(parentIdx), Nothing)
-        _dropDownForm = Nothing
-        _dropDownArrowIndex = -1
+        If _activeDropDownMenu Is Nothing OrElse _dropDownArrowIndex = -2 Then Return
+        Dim menu = _activeDropDownMenu
+        RemoveHandler menu.MenuClosed, AddressOf DropDownMenu_MenuClosed
+        _activeDropDownMenu = Nothing
+        _dropDownArrowIndex = -2
         Try
-            f.关闭并释放()
+            menu.Close()
         Catch
         End Try
         Invalidate()
-        RaiseEvent DropDownClosed(Me, New BreadcrumbItemEventArgs(parentItem, parentIdx))
     End Sub
 
-    Friend Sub OnDropDownClosed_FromForm()
-        Dim parentIdx As Integer = _dropDownArrowIndex
-        Dim parentItem As BreadcrumbItem = If(parentIdx >= 0 AndAlso parentIdx < _items.Count, _items(parentIdx), Nothing)
-        _dropDownForm = Nothing
-        _dropDownArrowIndex = -1
+    Private Sub DropDownMenu_MenuClosed(sender As Object, e As EventArgs)
+        Dim menu = TryCast(sender, ModernContextMenu)
+        If menu IsNot Nothing Then RemoveHandler menu.MenuClosed, AddressOf DropDownMenu_MenuClosed
+        _activeDropDownMenu = Nothing
+        _dropDownArrowIndex = -2
         Invalidate()
-        RaiseEvent DropDownClosed(Me, New BreadcrumbItemEventArgs(parentItem, parentIdx))
-    End Sub
-
-    Friend Sub OnDropDownItemClicked_FromForm(parentIndex As Integer, parentItem As BreadcrumbItem, childIndex As Integer, child As BreadcrumbItem)
-        RaiseEvent DropDownItemClicked(Me, New BreadcrumbDropDownItemClickedEventArgs(parentItem, parentIndex, child, childIndex))
-        CloseDropDown()
-    End Sub
-
-    ''' <summary>主动收起当前下拉。</summary>
-    Public Sub CloseAnyDropDown()
-        CloseDropDown()
-    End Sub
-
-    ''' <summary>主动展开指定节点的下拉（会触发 DropDownOpening 让用户填充）。</summary>
-    Public Sub ShowDropDownFor(nodeIndex As Integer)
-        OpenDropDown(nodeIndex)
     End Sub
 #End Region
 
@@ -946,7 +1225,7 @@ Public Class BreadcrumbNavigationBar
 
     Protected Overrides Sub OnSizeChanged(e As EventArgs)
         MyBase.OnSizeChanged(e)
-        If _dropDownForm IsNot Nothing Then CloseDropDown()
+        If _activeDropDownMenu IsNot Nothing Then CloseDropDown()
         Invalidate()
     End Sub
 
@@ -957,332 +1236,9 @@ Public Class BreadcrumbNavigationBar
 
     Protected Overrides Sub OnEnabledChanged(e As EventArgs)
         MyBase.OnEnabledChanged(e)
-        If Not Enabled AndAlso _dropDownForm IsNot Nothing Then CloseDropDown()
+        If Not Enabled AndAlso _activeDropDownMenu IsNot Nothing Then CloseDropDown()
         Invalidate()
     End Sub
-#End Region
-
-#Region "下拉弹窗类"
-    Private Class DropDownForm
-        Inherits PopupForm
-        Implements IMessageFilter
-
-        Private ReadOnly _owner As BreadcrumbNavigationBar
-        Private ReadOnly _parentIndex As Integer
-        Private ReadOnly _parentItem As BreadcrumbItem
-        Private ReadOnly _items As List(Of BreadcrumbItem)
-        Private _hoverIndex As Integer = -1
-        Private _pressedIndex As Integer = -1
-
-#Disable Warning IDE0044
-        Private _finalHeight As Integer
-        Private _finalWidth As Integer
-        Private _originPt As Point
-        Private _useIdle As Boolean = False
-
-        Private ReadOnly 展开关闭秒表 As New Stopwatch()
-        Private 展开关闭计时器 As Timer
-        Private 展开关闭动画中 As Boolean = False
-        Friend 正在关闭动画 As Boolean = False
-#Enable Warning IDE0044
-
-        Private Const WM_LBUTTONDOWN As Integer = &H201
-        Private Const WM_RBUTTONDOWN As Integer = &H204
-        Private Const WM_MBUTTONDOWN As Integer = &H207
-        Private Const WM_NCLBUTTONDOWN As Integer = &HA1
-        Private Const WM_ACTIVATEAPP As Integer = &H1C
-
-        Public Sub New(owner As BreadcrumbNavigationBar, parentIndex As Integer, parentItem As BreadcrumbItem, items As List(Of BreadcrumbItem))
-            _owner = owner
-            _parentIndex = parentIndex
-            _parentItem = parentItem
-            _items = items
-            Me.DoubleBuffered = True
-            Me.AutoScaleMode = AutoScaleMode.Dpi
-            Me.BackColor = owner.下拉背景颜色
-
-            _useIdle = (owner.下拉动画帧率 <= 0)
-            If Not _useIdle Then
-                Dim interval As Integer = Math.Max(1, 1000 \ owner.下拉动画帧率)
-                展开关闭计时器 = New Timer() With {.Interval = interval}
-            End If
-
-            ComputeSize()
-            ComputeLocation()
-            Me.Location = _originPt
-            Me.Size = New Size(_finalWidth, _finalHeight)
-        End Sub
-
-        Private Sub ComputeSize()
-            Dim s As Single = _owner.DpiScale()
-            Dim itemH As Integer = CInt(_owner.下拉项高度 * s)
-            Dim bw As Integer = CInt(_owner.下拉边框宽度 * s)
-            Dim pad As Padding = _owner.下拉内边距
-            Dim itemPad As Integer = CInt(_owner.下拉项内边距 * s)
-            _finalHeight = _items.Count * itemH + bw * 2 + pad.Top + pad.Bottom
-
-            Dim maxTextW As Integer = 0
-            For Each it In _items
-                Dim w = TextRenderHelper.MeasureTextWidth(If(it Is Nothing, "", it.Text), _owner.Font, itemH)
-                If w > maxTextW Then maxTextW = w
-            Next
-            Dim w0 As Integer = maxTextW + itemPad * 2 + bw * 2 + pad.Left + pad.Right
-            Dim minW As Integer = CInt(_owner.下拉最小宽度 * s)
-            _finalWidth = Math.Max(minW, w0)
-        End Sub
-
-        Private Sub ComputeLocation()
-            Dim s As Single = _owner.DpiScale()
-            Dim gap As Integer = CInt(_owner.下拉间距 * s)
-            Dim layout = GetParentArrowRect()
-            Dim anchorScreen As Point = _owner.PointToScreen(New Point(layout.X + layout.Width \ 2, _owner.Height + gap))
-            Dim x As Integer = anchorScreen.X - _finalWidth \ 2
-            Dim y As Integer = anchorScreen.Y
-            Dim scr As Screen = Screen.FromControl(_owner)
-            If x < scr.WorkingArea.Left Then x = scr.WorkingArea.Left
-            If x + _finalWidth > scr.WorkingArea.Right Then x = scr.WorkingArea.Right - _finalWidth
-            If y + _finalHeight > scr.WorkingArea.Bottom Then
-                Dim aboveAnchor As Point = _owner.PointToScreen(New Point(layout.X + layout.Width \ 2, -gap))
-                y = aboveAnchor.Y - _finalHeight
-                If y < scr.WorkingArea.Top Then y = scr.WorkingArea.Top
-            End If
-            _originPt = New Point(x, y)
-        End Sub
-
-        Private Function GetParentArrowRect() As Rectangle
-            For Each l In _owner._layoutCache
-                If l.Index = _parentIndex AndAlso l.HasArrow Then Return l.ArrowRect
-            Next
-            Return New Rectangle(0, 0, _owner.Width, _owner.Height)
-        End Function
-
-        Friend Sub ShowDropDown()
-            Application.AddMessageFilter(Me)
-            If _owner.下拉展开关闭动画时长 > 0 Then
-                Me.Size = New Size(_finalWidth, 1)
-                Me.Show()
-                展开关闭动画中 = True
-                正在关闭动画 = False
-                展开关闭秒表.Restart()
-                启动展开关闭驱动()
-            Else
-                Me.Show()
-            End If
-        End Sub
-
-        Friend Sub 开始关闭动画()
-            If 正在关闭动画 Then Return
-            正在关闭动画 = True
-            展开关闭动画中 = True
-            展开关闭秒表.Restart()
-            启动展开关闭驱动()
-        End Sub
-
-        Private Sub 启动展开关闭驱动()
-            If _useIdle Then
-                AddHandler Application.Idle, AddressOf 展开关闭帧更新
-            Else
-                AddHandler 展开关闭计时器.Tick, AddressOf 展开关闭帧更新
-                展开关闭计时器.Start()
-            End If
-        End Sub
-
-        Private Sub 停止展开关闭驱动()
-            If _useIdle Then
-                RemoveHandler Application.Idle, AddressOf 展开关闭帧更新
-            Else
-                展开关闭计时器.Stop()
-                RemoveHandler 展开关闭计时器.Tick, AddressOf 展开关闭帧更新
-            End If
-        End Sub
-
-        Friend Sub 关闭并释放()
-            停止展开关闭驱动()
-            If 展开关闭计时器 IsNot Nothing Then 展开关闭计时器.Dispose()
-            Application.RemoveMessageFilter(Me)
-            If Not IsDisposed Then Close()
-        End Sub
-
-        Private Sub 展开关闭帧更新(sender As Object, e As EventArgs)
-            Dim duration As Integer = _owner.下拉展开关闭动画时长
-            If duration <= 0 Then
-                停止展开关闭驱动()
-                展开关闭动画中 = False
-                If 正在关闭动画 Then
-                    完成关闭()
-                Else
-                    Me.Location = _originPt
-                    Me.Size = New Size(_finalWidth, _finalHeight)
-                End If
-                Return
-            End If
-            Dim elapsed As Double = 展开关闭秒表.Elapsed.TotalMilliseconds
-            Dim t As Single = CSng(Math.Min(elapsed / duration, 1.0))
-            Dim eased As Single = 1.0F - CSng(Math.Pow(1.0 - t, 3))
-            If 正在关闭动画 Then
-                Dim newH As Integer = Math.Max(1, CInt(_finalHeight * (1.0F - eased)))
-                Me.Size = New Size(_finalWidth, newH)
-            Else
-                Dim newH As Integer = Math.Max(1, CInt(_finalHeight * eased))
-                Me.Size = New Size(_finalWidth, newH)
-            End If
-            Invalidate()
-            If t >= 1.0F Then
-                停止展开关闭驱动()
-                展开关闭动画中 = False
-                If 正在关闭动画 Then
-                    完成关闭()
-                Else
-                    Me.Location = _originPt
-                    Me.Size = New Size(_finalWidth, _finalHeight)
-                    Invalidate()
-                End If
-            End If
-        End Sub
-
-        Private Sub 完成关闭()
-            正在关闭动画 = False
-            展开关闭动画中 = False
-            关闭并释放()
-            _owner.OnDropDownClosed_FromForm()
-        End Sub
-
-        Protected Overrides Sub WndProc(ByRef m As Message)
-            MyBase.WndProc(m)
-            If m.Msg = WM_ACTIVATEAPP AndAlso m.WParam = IntPtr.Zero Then
-                If Not 正在关闭动画 Then BeginInvoke(Sub() _owner.CloseDropDown())
-            End If
-        End Sub
-
-        Public Function PreFilterMessage(ByRef m As Message) As Boolean Implements IMessageFilter.PreFilterMessage
-            Select Case m.Msg
-                Case WM_LBUTTONDOWN, WM_RBUTTONDOWN, WM_MBUTTONDOWN, WM_NCLBUTTONDOWN
-                    Dim screenPos As Point = Control.MousePosition
-                    If Not Bounds.Contains(screenPos) Then
-                        Dim ownerScreen As Rectangle = _owner.RectangleToScreen(_owner.ClientRectangle)
-                        If Not ownerScreen.Contains(screenPos) Then
-                            BeginInvoke(Sub() _owner.CloseDropDown())
-                        End If
-                    End If
-            End Select
-            Return False
-        End Function
-
-        Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
-            ' DropDownForm 是顶层 Form，由 OnPaint 用 D2D 全权接管底色，避免 GDI 闪烁。
-        End Sub
-
-        Protected Overrides Sub OnPaint(e As PaintEventArgs)
-            Dim w As Integer = ClientRectangle.Width
-            Dim h As Integer = ClientRectangle.Height
-            If w < 1 OrElse h < 1 Then Return
-            Dim s As Single = _owner.DpiScale()
-            Dim bw As Integer = CInt(_owner.下拉边框宽度 * s)
-            Dim radius As Single = _owner.下拉圆角半径 * s
-            Dim pad As Padding = _owner.下拉内边距
-            Dim itemH As Integer = CInt(_owner.下拉项高度 * s)
-            Dim itemPad As Integer = CInt(_owner.下拉项内边距 * s)
-
-            Using scope = D2DHelperV2.BeginPaint(e, Me, 1)
-                If scope Is Nothing Then Return
-                Dim rt = scope.GraphicsLayer
-                Dim brushCache = scope.Compositor.BrushCache
-
-                ' 1) 整体底色
-                rt.Clear(D2DHelper.ToColor4(_owner.下拉背景颜色))
-
-                Dim boundsRect As New RectangleF(0, 0, w - 1, h - 1)
-                If bw > 0 Then
-                    Dim half As Single = bw / 2.0F
-                    boundsRect.Inflate(-half, -half)
-                End If
-
-                ' 2) 圆角背景 + 边框
-                If radius > 0 Then
-                    Using geo = RectangleRenderer.创建圆角矩形几何(boundsRect, radius)
-                        rt.FillGeometry(geo, brushCache.[Get](rt, _owner.下拉背景颜色))
-                        If bw > 0 Then
-                            rt.DrawGeometry(geo, brushCache.[Get](rt, _owner.下拉边框颜色), bw)
-                        End If
-                    End Using
-                ElseIf bw > 0 Then
-                    rt.DrawRectangle(D2DHelper.ToD2DRect(boundsRect), brushCache.[Get](rt, _owner.下拉边框颜色), bw)
-                End If
-
-                scope.FlushGraphics()
-
-                ' 3) Item 高亮 + 文字
-                Dim dcRT = scope.DCRenderTarget
-                Dim textRT = scope.TextLayer
-                Dim textFormatCache = scope.Compositor.TextFormatCache
-                Dim dpi As Single = _owner.DpiScale()
-
-                ' 裁剪区域：边框内侧
-                Dim clipRect As New RectangleF(bw, bw, w - bw * 2, h - bw * 2)
-                dcRT.PushAxisAlignedClip(New Vortice.RawRectF(clipRect.Left, clipRect.Top, clipRect.Right, clipRect.Bottom), Vortice.Direct2D1.AntialiasMode.Aliased)
-                Try
-                    For i As Integer = 0 To _items.Count - 1
-                        Dim it As BreadcrumbItem = _items(i)
-                        If it Is Nothing Then Continue For
-                        Dim y As Integer = bw + pad.Top + i * itemH
-                        Dim itemRect As New Rectangle(bw + pad.Left, y, w - bw * 2 - pad.Left - pad.Right, itemH)
-                        If i = _hoverIndex Then
-                            Dim hr As Single = Math.Max(0, radius - 2)
-                            RectangleRenderer.绘制圆角矩形_D2D(dcRT, itemRect, hr, RoundCorners.All, _owner.下拉悬停颜色, brushCache)
-                        End If
-                        Dim textRect As New Rectangle(itemRect.X + itemPad, itemRect.Y, itemRect.Width - itemPad * 2, itemRect.Height)
-                        D2DTextRenderer.DrawText(textRT, it.Text, _owner.Font, textRect, _owner.下拉文本颜色,
-                            TextFormatFlags.Left Or TextFormatFlags.VerticalCenter Or TextFormatFlags.EndEllipsis Or TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine,
-                            dpi, textFormatCache, brushCache)
-                    Next
-                Finally
-                    dcRT.PopAxisAlignedClip()
-                End Try
-            End Using
-        End Sub
-
-        Private Function GetItemIndexAtY(y As Integer) As Integer
-            Dim s As Single = _owner.DpiScale()
-            Dim bw As Integer = CInt(_owner.下拉边框宽度 * s)
-            Dim itemH As Integer = CInt(_owner.下拉项高度 * s)
-            Dim pad As Padding = _owner.下拉内边距
-            Dim idx As Integer = (y - bw - pad.Top) \ itemH
-            If idx < 0 OrElse idx >= _items.Count Then Return -1
-            Return idx
-        End Function
-
-        Protected Overrides Sub OnMouseMove(e As MouseEventArgs)
-            MyBase.OnMouseMove(e)
-            Dim idx As Integer = GetItemIndexAtY(e.Y)
-            If idx <> _hoverIndex Then
-                _hoverIndex = idx
-                Invalidate()
-            End If
-        End Sub
-
-        Protected Overrides Sub OnMouseLeave(e As EventArgs)
-            MyBase.OnMouseLeave(e)
-            If _hoverIndex <> -1 Then
-                _hoverIndex = -1
-                Invalidate()
-            End If
-        End Sub
-
-        Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
-            MyBase.OnMouseDown(e)
-            _pressedIndex = GetItemIndexAtY(e.Y)
-        End Sub
-
-        Protected Overrides Sub OnMouseUp(e As MouseEventArgs)
-            MyBase.OnMouseUp(e)
-            Dim idx As Integer = GetItemIndexAtY(e.Y)
-            If _pressedIndex >= 0 AndAlso idx = _pressedIndex Then
-                Dim child As BreadcrumbItem = _items(idx)
-                _owner.OnDropDownItemClicked_FromForm(_parentIndex, _parentItem, idx, child)
-            End If
-            _pressedIndex = -1
-        End Sub
-    End Class
 #End Region
 
 End Class

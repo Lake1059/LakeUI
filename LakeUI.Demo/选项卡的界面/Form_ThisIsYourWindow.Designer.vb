@@ -99,14 +99,14 @@ Partial Class Form_ThisIsYourWindow
         ModernButton4.BorderSize = 0
         ModernButton4.Dock = DockStyle.Left
         ModernButton4.Font = New Font("Microsoft YaHei UI", 10.8F, FontStyle.Bold, GraphicsUnit.Point, CByte(134))
-        ModernButton4.ForeColor = Color.YellowGreen
+        ModernButton4.ForeColor = Color.Goldenrod
         ModernButton4.Location = New Point(424, 0)
         ModernButton4.Margin = New Padding(2)
         ModernButton4.Name = "ModernButton4"
         ModernButton4.Size = New Size(80, 50)
         ModernButton4.SubText = "性能负载"
         ModernButton4.TabIndex = 6
-        ModernButton4.Text = "低"
+        ModernButton4.Text = "中"
         ModernButton4.TextAlign = ModernButton.TextAlignEnum.Left
         ' 
         ' Label4

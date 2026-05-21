@@ -106,7 +106,7 @@ Partial Class Form_ModernPanel
         ' 
         ' ModernPanel4
         ' 
-        ModernPanel4.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernPanel4.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernPanel4.BorderRadius = 48
         ModernPanel4.BorderSize = 2
         ModernPanel4.Dock = DockStyle.Left
@@ -139,7 +139,7 @@ Partial Class Form_ModernPanel
         ' 
         ' ModernPanel3
         ' 
-        ModernPanel3.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernPanel3.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernPanel3.BorderRadius = 20
         ModernPanel3.BorderSize = 0
         ModernPanel3.Dock = DockStyle.Left
@@ -171,7 +171,7 @@ Partial Class Form_ModernPanel
         ' 
         ' ModernPanel2
         ' 
-        ModernPanel2.BackColor1 = Color.FromArgb(CByte(48), CByte(48), CByte(48))
+        ModernPanel2.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernPanel2.BorderRadius = 10
         ModernPanel2.BorderSize = 2
         ModernPanel2.Dock = DockStyle.Left

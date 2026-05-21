@@ -26,8 +26,8 @@ Partial Class Form_BreadcrumbNavigationBar
         Dim BreadcrumbItem2 As LakeUI.BreadcrumbNavigationBar.BreadcrumbItem = New BreadcrumbNavigationBar.BreadcrumbItem()
         Dim BreadcrumbItem3 As LakeUI.BreadcrumbNavigationBar.BreadcrumbItem = New BreadcrumbNavigationBar.BreadcrumbItem()
         Dim BreadcrumbItem4 As LakeUI.BreadcrumbNavigationBar.BreadcrumbItem = New BreadcrumbNavigationBar.BreadcrumbItem()
-        Dim BreadcrumbItem5 As LakeUI.BreadcrumbNavigationBar.BreadcrumbItem = New BreadcrumbNavigationBar.BreadcrumbItem()
         ModernPanel1 = New ModernPanel()
+        HtmlColorLabel2 = New HtmlColorLabel()
         BreadcrumbNavigationBar1 = New BreadcrumbNavigationBar()
         HtmlColorLabel1 = New HtmlColorLabel()
         Panel1 = New Panel()
@@ -46,6 +46,7 @@ Partial Class Form_BreadcrumbNavigationBar
         ' ModernPanel1
         ' 
         ModernPanel1.BorderSize = 0
+        ModernPanel1.Controls.Add(HtmlColorLabel2)
         ModernPanel1.Controls.Add(BreadcrumbNavigationBar1)
         ModernPanel1.Controls.Add(HtmlColorLabel1)
         ModernPanel1.Controls.Add(Panel1)
@@ -59,24 +60,42 @@ Partial Class Form_BreadcrumbNavigationBar
         ModernPanel1.Size = New Size(812, 669)
         ModernPanel1.TabIndex = 38
         ' 
+        ' HtmlColorLabel2
+        ' 
+        HtmlColorLabel2.AutoSize = True
+        HtmlColorLabel2.AutoSizeMode = AutoSizeMode.GrowAndShrink
+        HtmlColorLabel2.Dock = DockStyle.Top
+        HtmlColorLabel2.Location = New Point(20, 241)
+        HtmlColorLabel2.Margin = New Padding(2)
+        HtmlColorLabel2.Name = "HtmlColorLabel2"
+        HtmlColorLabel2.Padding = New Padding(0, 20, 0, 20)
+        HtmlColorLabel2.Size = New Size(772, 61)
+        HtmlColorLabel2.TabIndex = 38
+        HtmlColorLabel2.Text = "这个玩意我不怎么用，如果有难受的点要及时提"
+        ' 
         ' BreadcrumbNavigationBar1
         ' 
         BreadcrumbNavigationBar1.BackColor = Color.FromArgb(CByte(40), CByte(0), CByte(0), CByte(0))
         BreadcrumbNavigationBar1.Dock = DockStyle.Top
+        BreadcrumbItem1.HasDropDown = True
         BreadcrumbItem1.Text = "面包"
+        BreadcrumbItem2.HasDropDown = True
         BreadcrumbItem2.Text = "面包"
+        BreadcrumbItem3.HasDropDown = True
         BreadcrumbItem3.Text = "面包"
-        BreadcrumbItem4.Text = "面包"
-        BreadcrumbItem5.Text = "还没找到路是吧"
+        BreadcrumbItem4.Text = "还没找到路是吧"
         BreadcrumbNavigationBar1.Items.Add(BreadcrumbItem1)
         BreadcrumbNavigationBar1.Items.Add(BreadcrumbItem2)
         BreadcrumbNavigationBar1.Items.Add(BreadcrumbItem3)
         BreadcrumbNavigationBar1.Items.Add(BreadcrumbItem4)
-        BreadcrumbNavigationBar1.Items.Add(BreadcrumbItem5)
-        BreadcrumbNavigationBar1.Location = New Point(20, 191)
+        BreadcrumbNavigationBar1.Location = New Point(20, 201)
         BreadcrumbNavigationBar1.Name = "BreadcrumbNavigationBar1"
-        BreadcrumbNavigationBar1.Size = New Size(772, 50)
+        BreadcrumbNavigationBar1.NodeHoverBackColor = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
+        BreadcrumbNavigationBar1.NodePressedBackColor = Color.FromArgb(CByte(60), CByte(220), CByte(220), CByte(220))
+        BreadcrumbNavigationBar1.Padding = New Padding(10, 0, 0, 0)
+        BreadcrumbNavigationBar1.Size = New Size(772, 40)
         BreadcrumbNavigationBar1.TabIndex = 37
+        BreadcrumbNavigationBar1.TabStop = False
         ' 
         ' HtmlColorLabel1
         ' 
@@ -86,8 +105,8 @@ Partial Class Form_BreadcrumbNavigationBar
         HtmlColorLabel1.Location = New Point(20, 120)
         HtmlColorLabel1.Margin = New Padding(2)
         HtmlColorLabel1.Name = "HtmlColorLabel1"
-        HtmlColorLabel1.Padding = New Padding(0, 20, 0, 10)
-        HtmlColorLabel1.Size = New Size(772, 71)
+        HtmlColorLabel1.Padding = New Padding(0, 20, 0, 20)
+        HtmlColorLabel1.Size = New Size(772, 81)
         HtmlColorLabel1.TabIndex = 36
         HtmlColorLabel1.Text = "面包屑导航 Breadcrumb Navigation 这个概念来自童话故事" & ChrW(8220) & "汉赛尔和格莱特" & ChrW(8221) & "，当汉赛尔和格莱特穿过森林时，不小心迷路了，但是他们发现沿途走过的地方都撒下了面包屑，让这些面包屑来帮助他们找到回家的路。"
         ' 
@@ -139,14 +158,13 @@ Partial Class Form_BreadcrumbNavigationBar
         ModernButton3.BorderSize = 0
         ModernButton3.Dock = DockStyle.Left
         ModernButton3.Font = New Font("Microsoft YaHei UI", 10.8F, FontStyle.Bold, GraphicsUnit.Point, CByte(134))
-        ModernButton3.ForeColor = Color.Orchid
         ModernButton3.Location = New Point(296, 0)
         ModernButton3.Margin = New Padding(2)
         ModernButton3.Name = "ModernButton3"
         ModernButton3.Size = New Size(120, 50)
         ModernButton3.SubText = "动画支持"
         ModernButton3.TabIndex = 4
-        ModernButton3.Text = "全程动画"
+        ModernButton3.Text = "无"
         ModernButton3.TextAlign = ModernButton.TextAlignEnum.Left
         ' 
         ' Label3
@@ -171,7 +189,7 @@ Partial Class Form_BreadcrumbNavigationBar
         ModernButton2.Size = New Size(160, 50)
         ModernButton2.SubText = "技术偏好"
         ModernButton2.TabIndex = 2
-        ModernButton2.Text = "人体工学科技"
+        ModernButton2.Text = "面包科技"
         ModernButton2.TextAlign = ModernButton.TextAlignEnum.Left
         ' 
         ' Label2
@@ -241,4 +259,5 @@ Partial Class Form_BreadcrumbNavigationBar
     Friend WithEvents Label1 As Label
     Friend WithEvents HtmlColorLabel1 As HtmlColorLabel
     Friend WithEvents BreadcrumbNavigationBar1 As BreadcrumbNavigationBar
+    Friend WithEvents HtmlColorLabel2 As HtmlColorLabel
 End Class

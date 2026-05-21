@@ -190,7 +190,7 @@ Public Class AgentRoom
                      ControlStyles.SupportsTransparentBackColor, True)
         DoubleBuffered = True
         Me.Size = New Size(420, 560)
-        Me.BackColor = Color.FromArgb(30, 30, 30)
+        Me.BackColor = Color.Transparent
 
         _copyContextMenu = New ContextMenuStrip()
         Dim miCopy As New ToolStripMenuItem("复制(&C)")
@@ -226,6 +226,17 @@ Public Class AgentRoom
                 _backgroundSource = value
                 Me.Invalidate()
             End If
+        End Set
+    End Property
+
+    Friend _backColor1 As Color = Color.FromArgb(30, 30, 30)
+    <Category("LakeUI"), Description("主体背景颜色"), DefaultValue(GetType(Color), "30, 30, 30"), Browsable(True)>
+    Public Property BackColor1 As Color
+        Get
+            Return _backColor1
+        End Get
+        Set(value As Color)
+            SetValue(_backColor1, value)
         End Set
     End Property
 
@@ -825,6 +836,7 @@ Public Class AgentRoom
 #End Region
 #Region "绘制"
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
+        ' V2 契约：显式 BackgroundSource 由 OnPaint 内绘制穿透底图；否则交给基类处理透明 BackColor。
         If _backgroundSource IsNot Nothing Then Return
         MyBase.OnPaintBackground(e)
     End Sub
@@ -839,29 +851,38 @@ Public Class AgentRoom
         Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
             If scope Is Nothing Then Return
 
-            ' 背景层：背景穿透或本控件 BackColor
+            ' 背景层：显式 BackgroundSource 绘制穿透底图；半透明 BackColor 作为底层遮罩。
             If _backgroundSource IsNot Nothing Then
                 BackgroundPenetrationV2.PaintBackground(Me, scope, _backgroundSource)
-            ElseIf BackColor.A = 255 Then
-                scope.BackgroundLayer.Clear(D2DHelper.ToColor4(BackColor))
-            Else
-                Dim baseBg As Color = If(Parent IsNot Nothing, Parent.BackColor, MyBase.BackColor)
-                If baseBg.A < 255 Then baseBg = Color.FromArgb(255, baseBg)
-                scope.BackgroundLayer.Clear(D2DHelper.ToColor4(baseBg))
+            ElseIf MyBase.BackColor.A > 0 AndAlso MyBase.BackColor.A < 255 Then
+                Dim bgLayer = scope.BackgroundLayer
+                Dim bgBrush = scope.Compositor.BrushCache.[Get](bgLayer, MyBase.BackColor)
+                If bgBrush IsNot Nothing Then
+                    bgLayer.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(0, 0, Me.Width, Me.Height)), bgBrush)
+                End If
             End If
 
             Dim gRT As Vortice.Direct2D1.ID2D1RenderTarget = scope.GraphicsLayer
             Dim brushCache = scope.Compositor.BrushCache
             Dim bgRect As New RectangleF(0, 0, Width, Height)
 
-            ' 背景填底（圆角）：仅 BackColor 不透明且无 BackgroundSource 时
-            If _backgroundSource Is Nothing AndAlso BackColor.A > 0 Then
-                If _borderRadius > 0 Then
-                    Using geo = RectangleRenderer.创建圆角矩形几何(bgRect, _borderRadius)
-                        RectangleRenderer.绘制圆角背景_D2D(gRT, geo, bgRect, BackColor, Color.Empty, 0, brushCache)
-                    End Using
-                Else
-                    RectangleRenderer.绘制矩形背景_D2D(gRT, bgRect, BackColor, Color.Empty, 0, brushCache)
+            ' 主体背景：BackColor 仅作透明/遮罩协议，BackColor1 负责控件主体填充。
+            Dim backColorMask As Color = MyBase.BackColor
+            If _borderRadius > 0 Then
+                Using geo = RectangleRenderer.创建圆角矩形几何(bgRect, _borderRadius)
+                    If backColorMask.A > 0 AndAlso backColorMask.A < 255 Then
+                        RectangleRenderer.绘制圆角背景_D2D(gRT, geo, bgRect, backColorMask, Color.Empty, 0, brushCache)
+                    End If
+                    If _backColor1.A > 0 Then
+                        RectangleRenderer.绘制圆角背景_D2D(gRT, geo, bgRect, _backColor1, Color.Empty, 0, brushCache)
+                    End If
+                End Using
+            Else
+                If backColorMask.A > 0 AndAlso backColorMask.A < 255 Then
+                    RectangleRenderer.绘制矩形背景_D2D(gRT, bgRect, backColorMask, Color.Empty, 0, brushCache)
+                End If
+                If _backColor1.A > 0 Then
+                    RectangleRenderer.绘制矩形背景_D2D(gRT, bgRect, _backColor1, Color.Empty, 0, brushCache)
                 End If
             End If
 

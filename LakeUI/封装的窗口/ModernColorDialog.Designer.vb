@@ -22,26 +22,26 @@ Partial Class ModernColorDialog
     '不要使用代码编辑器修改它。
     <System.Diagnostics.DebuggerStepThrough()> _
     Private Sub InitializeComponent()
-        Dim ModernMenuItem21 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
-        Dim ModernMenuItem22 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
-        Dim ModernMenuItem23 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
-        Dim ModernMenuItem24 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
-        Dim ModernMenuItem25 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
-        Dim ModernMenuItem26 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
-        Dim ModernMenuItem27 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
-        Dim ModernMenuItem28 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
-        Dim ModernMenuItem29 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
-        Dim ModernMenuItem30 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
-        Dim ModernMenuItem31 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
-        Dim ModernMenuItem32 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
-        Dim ModernMenuItem33 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
-        Dim ModernMenuItem34 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
-        Dim ModernMenuItem35 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
-        Dim ModernMenuItem36 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
-        Dim ModernMenuItem37 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
-        Dim ModernMenuItem38 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
-        Dim ModernMenuItem39 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
-        Dim ModernMenuItem40 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
+        Dim ModernMenuItem1 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
+        Dim ModernMenuItem2 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
+        Dim ModernMenuItem3 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
+        Dim ModernMenuItem4 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
+        Dim ModernMenuItem5 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
+        Dim ModernMenuItem6 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
+        Dim ModernMenuItem7 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
+        Dim ModernMenuItem8 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
+        Dim ModernMenuItem9 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
+        Dim ModernMenuItem10 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
+        Dim ModernMenuItem11 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
+        Dim ModernMenuItem12 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
+        Dim ModernMenuItem13 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
+        Dim ModernMenuItem14 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
+        Dim ModernMenuItem15 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
+        Dim ModernMenuItem16 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
+        Dim ModernMenuItem17 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
+        Dim ModernMenuItem18 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
+        Dim ModernMenuItem19 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
+        Dim ModernMenuItem20 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
         Panel1 = New Panel()
         Panel6 = New Panel()
         ModernListBox1 = New ModernListBox()
@@ -1057,72 +1057,72 @@ Partial Class ModernColorDialog
         ModernContextMenu1.HoverRadius = 5
         ModernContextMenu1.IconSize = 0
         ModernContextMenu1.ItemPadding = New Padding(7, 0, 0, 0)
-        ModernMenuItem21.Font = Nothing
-        ModernMenuItem21.IsDescription = True
-        ModernMenuItem21.Text = "最推荐的做法"
-        ModernMenuItem22.Font = Nothing
-        ModernMenuItem22.Text = "先选择 HTML 颜色来定位到大致颜色，然后使用数值面板进行微调"
-        ModernMenuItem23.Font = Nothing
-        ModernMenuItem23.IsSeparator = True
-        ModernMenuItem24.Font = Nothing
-        ModernMenuItem24.IsDescription = True
-        ModernMenuItem24.Text = "数值面板操作提示"
-        ModernMenuItem25.Font = Nothing
-        ModernMenuItem25.Text = "除了 HEX，所有文本框可以使用鼠标滚轮进行微调"
-        ModernMenuItem26.Font = Nothing
-        ModernMenuItem26.Text = "除了 HEX，所有标签区域可以像实体推子一样快速增加或减少"
-        ModernMenuItem27.Font = Nothing
-        ModernMenuItem27.IsSeparator = True
-        ModernMenuItem28.Font = Nothing
-        ModernMenuItem28.IsDescription = True
-        ModernMenuItem28.Text = "色域图操作提示"
-        ModernMenuItem29.Font = Nothing
-        ModernMenuItem29.Text = "左键选择时，会尝试保留当前亮度来计算新的颜色"
-        ModernMenuItem30.Font = Nothing
-        ModernMenuItem30.Text = "右键选择时，不会保留亮度，而是直接映射颜色"
-        ModernMenuItem31.Font = Nothing
-        ModernMenuItem31.IsSeparator = True
-        ModernMenuItem32.Font = Nothing
-        ModernMenuItem32.IsDescription = True
-        ModernMenuItem32.Text = "性能提示"
-        ModernMenuItem33.Font = Nothing
-        ModernMenuItem33.Text = "色域图由 CPU 即时绘制，为确保准确度不会进行缓存"
-        ModernMenuItem34.Font = Nothing
-        ModernMenuItem34.Text = "当尺寸变化时会重绘，虽然是在后台线程绘制但也非常吃性能"
-        ModernMenuItem35.Font = Nothing
-        ModernMenuItem35.Text = "因此请不要频繁变更此窗口的尺寸"
-        ModernMenuItem36.Font = Nothing
-        ModernMenuItem36.IsSeparator = True
-        ModernMenuItem37.Font = Nothing
-        ModernMenuItem37.IsDescription = True
-        ModernMenuItem37.Text = "并非节约性能"
-        ModernMenuItem38.Font = Nothing
-        ModernMenuItem38.Text = "这个菜单默认是开无限帧率动画的，就看开发者有没有调了"
-        ModernMenuItem39.Font = Nothing
-        ModernMenuItem39.IsSeparator = True
-        ModernMenuItem40.Font = Nothing
-        ModernMenuItem40.IsDescription = True
-        ModernMenuItem40.Text = "Designed by Lake1059, Coding by Claude Opus 4.6"
-        ModernContextMenu1.Items.Add(ModernMenuItem21)
-        ModernContextMenu1.Items.Add(ModernMenuItem22)
-        ModernContextMenu1.Items.Add(ModernMenuItem23)
-        ModernContextMenu1.Items.Add(ModernMenuItem24)
-        ModernContextMenu1.Items.Add(ModernMenuItem25)
-        ModernContextMenu1.Items.Add(ModernMenuItem26)
-        ModernContextMenu1.Items.Add(ModernMenuItem27)
-        ModernContextMenu1.Items.Add(ModernMenuItem28)
-        ModernContextMenu1.Items.Add(ModernMenuItem29)
-        ModernContextMenu1.Items.Add(ModernMenuItem30)
-        ModernContextMenu1.Items.Add(ModernMenuItem31)
-        ModernContextMenu1.Items.Add(ModernMenuItem32)
-        ModernContextMenu1.Items.Add(ModernMenuItem33)
-        ModernContextMenu1.Items.Add(ModernMenuItem34)
-        ModernContextMenu1.Items.Add(ModernMenuItem35)
-        ModernContextMenu1.Items.Add(ModernMenuItem36)
-        ModernContextMenu1.Items.Add(ModernMenuItem37)
-        ModernContextMenu1.Items.Add(ModernMenuItem38)
-        ModernContextMenu1.Items.Add(ModernMenuItem39)
-        ModernContextMenu1.Items.Add(ModernMenuItem40)
+        ModernMenuItem1.Font = Nothing
+        ModernMenuItem1.IsDescription = True
+        ModernMenuItem1.Text = "最推荐的做法"
+        ModernMenuItem2.Font = Nothing
+        ModernMenuItem2.Text = "先选择 HTML 颜色来定位到大致颜色，然后使用数值面板进行微调"
+        ModernMenuItem3.Font = Nothing
+        ModernMenuItem3.IsSeparator = True
+        ModernMenuItem4.Font = Nothing
+        ModernMenuItem4.IsDescription = True
+        ModernMenuItem4.Text = "数值面板操作提示"
+        ModernMenuItem5.Font = Nothing
+        ModernMenuItem5.Text = "除了 HEX，所有文本框可以使用鼠标滚轮进行微调"
+        ModernMenuItem6.Font = Nothing
+        ModernMenuItem6.Text = "除了 HEX，所有标签区域可以像实体推子一样快速增加或减少"
+        ModernMenuItem7.Font = Nothing
+        ModernMenuItem7.IsSeparator = True
+        ModernMenuItem8.Font = Nothing
+        ModernMenuItem8.IsDescription = True
+        ModernMenuItem8.Text = "色域图操作提示"
+        ModernMenuItem9.Font = Nothing
+        ModernMenuItem9.Text = "左键选择时，会尝试保留当前亮度来计算新的颜色"
+        ModernMenuItem10.Font = Nothing
+        ModernMenuItem10.Text = "右键选择时，不会保留亮度，而是直接映射颜色"
+        ModernMenuItem11.Font = Nothing
+        ModernMenuItem11.IsSeparator = True
+        ModernMenuItem12.Font = Nothing
+        ModernMenuItem12.IsDescription = True
+        ModernMenuItem12.Text = "性能提示"
+        ModernMenuItem13.Font = Nothing
+        ModernMenuItem13.Text = "色域图由 CPU 即时绘制，为确保准确度不会进行缓存"
+        ModernMenuItem14.Font = Nothing
+        ModernMenuItem14.Text = "当尺寸变化时会重绘，虽然是在后台线程绘制但也非常吃性能"
+        ModernMenuItem15.Font = Nothing
+        ModernMenuItem15.Text = "因此请不要频繁变更此窗口的尺寸"
+        ModernMenuItem16.Font = Nothing
+        ModernMenuItem16.IsSeparator = True
+        ModernMenuItem17.Font = Nothing
+        ModernMenuItem17.IsDescription = True
+        ModernMenuItem17.Text = "并非节约性能"
+        ModernMenuItem18.Font = Nothing
+        ModernMenuItem18.Text = "这个菜单默认是开无限帧率动画的，就看开发者有没有调了"
+        ModernMenuItem19.Font = Nothing
+        ModernMenuItem19.IsSeparator = True
+        ModernMenuItem20.Font = Nothing
+        ModernMenuItem20.IsDescription = True
+        ModernMenuItem20.Text = "Designed by Lake1059, Coding by Claude Opus 4.6"
+        ModernContextMenu1.Items.Add(ModernMenuItem1)
+        ModernContextMenu1.Items.Add(ModernMenuItem2)
+        ModernContextMenu1.Items.Add(ModernMenuItem3)
+        ModernContextMenu1.Items.Add(ModernMenuItem4)
+        ModernContextMenu1.Items.Add(ModernMenuItem5)
+        ModernContextMenu1.Items.Add(ModernMenuItem6)
+        ModernContextMenu1.Items.Add(ModernMenuItem7)
+        ModernContextMenu1.Items.Add(ModernMenuItem8)
+        ModernContextMenu1.Items.Add(ModernMenuItem9)
+        ModernContextMenu1.Items.Add(ModernMenuItem10)
+        ModernContextMenu1.Items.Add(ModernMenuItem11)
+        ModernContextMenu1.Items.Add(ModernMenuItem12)
+        ModernContextMenu1.Items.Add(ModernMenuItem13)
+        ModernContextMenu1.Items.Add(ModernMenuItem14)
+        ModernContextMenu1.Items.Add(ModernMenuItem15)
+        ModernContextMenu1.Items.Add(ModernMenuItem16)
+        ModernContextMenu1.Items.Add(ModernMenuItem17)
+        ModernContextMenu1.Items.Add(ModernMenuItem18)
+        ModernContextMenu1.Items.Add(ModernMenuItem19)
+        ModernContextMenu1.Items.Add(ModernMenuItem20)
         ModernContextMenu1.MenuPadding = New Padding(10)
         ModernContextMenu1.PopupAnimationDuration = 300
         ModernContextMenu1.PopupAnimationFPS = 0

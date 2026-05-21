@@ -31,10 +31,9 @@ Partial Class Form_RoundDashBoard
         Panel4 = New Panel()
         RoundDashBoard3 = New RoundDashBoard()
         Label7 = New Label()
-        Panel3 = New Panel()
-        RoundDashBoard2 = New RoundDashBoard()
-        Label5 = New Label()
         Panel2 = New Panel()
+        RoundDashBoard2 = New RoundDashBoard()
+        Label9 = New Label()
         RoundDashBoard1 = New RoundDashBoard()
         Label6 = New Label()
         Panel1 = New Panel()
@@ -49,7 +48,6 @@ Partial Class Form_RoundDashBoard
         ModernPanel1.SuspendLayout()
         Panel7.SuspendLayout()
         Panel4.SuspendLayout()
-        Panel3.SuspendLayout()
         Panel2.SuspendLayout()
         Panel1.SuspendLayout()
         SuspendLayout()
@@ -61,8 +59,6 @@ Partial Class Form_RoundDashBoard
         ModernPanel1.Controls.Add(Panel7)
         ModernPanel1.Controls.Add(Panel4)
         ModernPanel1.Controls.Add(Label7)
-        ModernPanel1.Controls.Add(Panel3)
-        ModernPanel1.Controls.Add(Label5)
         ModernPanel1.Controls.Add(Panel2)
         ModernPanel1.Controls.Add(Label6)
         ModernPanel1.Controls.Add(Panel1)
@@ -73,7 +69,7 @@ Partial Class Form_RoundDashBoard
         ModernPanel1.Name = "ModernPanel1"
         ModernPanel1.Padding = New Padding(20)
         ModernPanel1.ScrollBarMode = ModernPanel.ScrollMode.Vertical
-        ModernPanel1.Size = New Size(780, 701)
+        ModernPanel1.Size = New Size(717, 639)
         ModernPanel1.TabIndex = 46
         ' 
         ' Label8
@@ -82,7 +78,7 @@ Partial Class Form_RoundDashBoard
         Label8.Dock = DockStyle.Top
         Label8.Font = New Font("Microsoft YaHei UI", 10F)
         Label8.ForeColor = Color.Gray
-        Label8.Location = New Point(20, 615)
+        Label8.Location = New Point(20, 465)
         Label8.Name = "Label8"
         Label8.Padding = New Padding(0, 10, 0, 10)
         Label8.Size = New Size(247, 40)
@@ -95,23 +91,25 @@ Partial Class Form_RoundDashBoard
         Panel7.Controls.Add(Label11)
         Panel7.Controls.Add(ModernButton5)
         Panel7.Dock = DockStyle.Top
-        Panel7.Location = New Point(20, 570)
+        Panel7.Location = New Point(20, 420)
         Panel7.Name = "Panel7"
         Panel7.Padding = New Padding(0, 10, 0, 0)
-        Panel7.Size = New Size(740, 45)
+        Panel7.Size = New Size(677, 45)
         Panel7.TabIndex = 51
         ' 
         ' ModernButton6
         ' 
-        ModernButton6.BackColor2 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton6.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
+        ModernButton6.BorderColor = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton6.BorderRadius = 10
-        ModernButton6.BorderSize = 2
+        ModernButton6.BorderSize = 0
         ModernButton6.Dock = DockStyle.Left
-        ModernButton6.HoverBorderColor = Color.CornflowerBlue
+        ModernButton6.HoverBackColor1 = Color.FromArgb(CByte(60), CByte(220), CByte(220), CByte(220))
         ModernButton6.Location = New Point(149, 10)
         ModernButton6.Margin = New Padding(2)
         ModernButton6.Name = "ModernButton6"
-        ModernButton6.PressedBorderColor = Color.MediumSlateBlue
+        ModernButton6.PressedBackColor1 = Color.FromArgb(CByte(80), CByte(220), CByte(220), CByte(220))
+        ModernButton6.PressedBorderColor = Color.CornflowerBlue
         ModernButton6.Size = New Size(139, 35)
         ModernButton6.TabIndex = 9
         ModernButton6.Text = "Value = 100"
@@ -126,15 +124,17 @@ Partial Class Form_RoundDashBoard
         ' 
         ' ModernButton5
         ' 
-        ModernButton5.BackColor2 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton5.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
+        ModernButton5.BorderColor = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton5.BorderRadius = 10
-        ModernButton5.BorderSize = 2
+        ModernButton5.BorderSize = 0
         ModernButton5.Dock = DockStyle.Left
-        ModernButton5.HoverBorderColor = Color.CornflowerBlue
+        ModernButton5.HoverBackColor1 = Color.FromArgb(CByte(60), CByte(220), CByte(220), CByte(220))
         ModernButton5.Location = New Point(0, 10)
         ModernButton5.Margin = New Padding(2)
         ModernButton5.Name = "ModernButton5"
-        ModernButton5.PressedBorderColor = Color.MediumSlateBlue
+        ModernButton5.PressedBackColor1 = Color.FromArgb(CByte(80), CByte(220), CByte(220), CByte(220))
+        ModernButton5.PressedBorderColor = Color.CornflowerBlue
         ModernButton5.Size = New Size(139, 35)
         ModernButton5.TabIndex = 11
         ModernButton5.Text = "Value = 0"
@@ -143,9 +143,9 @@ Partial Class Form_RoundDashBoard
         ' 
         Panel4.Controls.Add(RoundDashBoard3)
         Panel4.Dock = DockStyle.Top
-        Panel4.Location = New Point(20, 470)
+        Panel4.Location = New Point(20, 320)
         Panel4.Name = "Panel4"
-        Panel4.Size = New Size(740, 100)
+        Panel4.Size = New Size(677, 100)
         Panel4.TabIndex = 45
         ' 
         ' RoundDashBoard3
@@ -165,53 +165,43 @@ Partial Class Form_RoundDashBoard
         Label7.AutoSize = True
         Label7.Dock = DockStyle.Top
         Label7.Font = New Font("Microsoft YaHei UI", 10F)
-        Label7.Location = New Point(20, 420)
+        Label7.Location = New Point(20, 270)
         Label7.Name = "Label7"
         Label7.Padding = New Padding(0, 20, 0, 10)
         Label7.Size = New Size(199, 50)
         Label7.TabIndex = 44
         Label7.Text = "阻力感动画 + 无限帧率 + 慢放"
         ' 
-        ' Panel3
+        ' Panel2
         ' 
-        Panel3.Controls.Add(RoundDashBoard2)
-        Panel3.Dock = DockStyle.Top
-        Panel3.Location = New Point(20, 320)
-        Panel3.Name = "Panel3"
-        Panel3.Size = New Size(740, 100)
-        Panel3.TabIndex = 43
+        Panel2.Controls.Add(RoundDashBoard2)
+        Panel2.Controls.Add(Label9)
+        Panel2.Controls.Add(RoundDashBoard1)
+        Panel2.Dock = DockStyle.Top
+        Panel2.Location = New Point(20, 170)
+        Panel2.Name = "Panel2"
+        Panel2.Size = New Size(677, 100)
+        Panel2.TabIndex = 41
         ' 
         ' RoundDashBoard2
         ' 
         RoundDashBoard2.Dock = DockStyle.Left
         RoundDashBoard2.FillGradientColor = Color.FromArgb(CByte(192), CByte(0), CByte(192))
-        RoundDashBoard2.Location = New Point(0, 0)
+        RoundDashBoard2.Location = New Point(128, 0)
         RoundDashBoard2.Margin = New Padding(2, 2, 2, 2)
         RoundDashBoard2.Name = "RoundDashBoard2"
         RoundDashBoard2.Size = New Size(100, 100)
-        RoundDashBoard2.TabIndex = 1
+        RoundDashBoard2.TabIndex = 2
         RoundDashBoard2.Value = 100
         ' 
-        ' Label5
+        ' Label9
         ' 
-        Label5.AutoSize = True
-        Label5.Dock = DockStyle.Top
-        Label5.Font = New Font("Microsoft YaHei UI", 10F)
-        Label5.Location = New Point(20, 270)
-        Label5.Name = "Label5"
-        Label5.Padding = New Padding(0, 20, 0, 10)
-        Label5.Size = New Size(51, 50)
-        Label5.TabIndex = 42
-        Label5.Text = "炫彩款"
-        ' 
-        ' Panel2
-        ' 
-        Panel2.Controls.Add(RoundDashBoard1)
-        Panel2.Dock = DockStyle.Top
-        Panel2.Location = New Point(20, 170)
-        Panel2.Name = "Panel2"
-        Panel2.Size = New Size(740, 100)
-        Panel2.TabIndex = 41
+        Label9.Dock = DockStyle.Left
+        Label9.Location = New Point(100, 0)
+        Label9.Margin = New Padding(2, 0, 2, 0)
+        Label9.Name = "Label9"
+        Label9.Size = New Size(28, 100)
+        Label9.TabIndex = 3
         ' 
         ' RoundDashBoard1
         ' 
@@ -233,7 +223,7 @@ Partial Class Form_RoundDashBoard
         Label6.Padding = New Padding(0, 20, 0, 10)
         Label6.Size = New Size(65, 50)
         Label6.TabIndex = 39
-        Label6.Text = "默认样式"
+        Label6.Text = "常规样式"
         ' 
         ' Panel1
         ' 
@@ -247,12 +237,12 @@ Partial Class Form_RoundDashBoard
         Panel1.Dock = DockStyle.Top
         Panel1.Location = New Point(20, 70)
         Panel1.Name = "Panel1"
-        Panel1.Size = New Size(740, 50)
+        Panel1.Size = New Size(677, 50)
         Panel1.TabIndex = 35
         ' 
         ' ModernButton4
         ' 
-        ModernButton4.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton4.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton4.BorderRadius = 10
         ModernButton4.BorderSize = 0
         ModernButton4.Dock = DockStyle.Left
@@ -278,7 +268,7 @@ Partial Class Form_RoundDashBoard
         ' 
         ' ModernButton3
         ' 
-        ModernButton3.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton3.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton3.BorderRadius = 10
         ModernButton3.BorderSize = 0
         ModernButton3.Dock = DockStyle.Left
@@ -304,7 +294,7 @@ Partial Class Form_RoundDashBoard
         ' 
         ' ModernButton2
         ' 
-        ModernButton2.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton2.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton2.BorderRadius = 10
         ModernButton2.BorderSize = 0
         ModernButton2.Dock = DockStyle.Left
@@ -329,7 +319,7 @@ Partial Class Form_RoundDashBoard
         ' 
         ' ModernButton1
         ' 
-        ModernButton1.BackColor1 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
+        ModernButton1.BackColor1 = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
         ModernButton1.BorderRadius = 10
         ModernButton1.BorderSize = 0
         ModernButton1.Dock = DockStyle.Left
@@ -361,7 +351,7 @@ Partial Class Form_RoundDashBoard
         AutoScaleDimensions = New SizeF(96F, 96F)
         AutoScaleMode = AutoScaleMode.Dpi
         BackColor = Color.FromArgb(CByte(36), CByte(36), CByte(36))
-        ClientSize = New Size(780, 701)
+        ClientSize = New Size(717, 639)
         Controls.Add(ModernPanel1)
         Font = New Font("Microsoft YaHei UI", 10.2F, FontStyle.Regular, GraphicsUnit.Point, CByte(134))
         ForeColor = Color.Silver
@@ -371,7 +361,6 @@ Partial Class Form_RoundDashBoard
         ModernPanel1.PerformLayout()
         Panel7.ResumeLayout(False)
         Panel4.ResumeLayout(False)
-        Panel3.ResumeLayout(False)
         Panel2.ResumeLayout(False)
         Panel1.ResumeLayout(False)
         ResumeLayout(False)
@@ -380,8 +369,6 @@ Partial Class Form_RoundDashBoard
     Friend WithEvents ModernPanel1 As ModernPanel
     Friend WithEvents Panel4 As Panel
     Friend WithEvents Label7 As Label
-    Friend WithEvents Panel3 As Panel
-    Friend WithEvents Label5 As Label
     Friend WithEvents Panel2 As Panel
     Friend WithEvents Label6 As Label
     Friend WithEvents Panel1 As Panel
@@ -398,7 +385,8 @@ Partial Class Form_RoundDashBoard
     Friend WithEvents ModernButton6 As ModernButton
     Friend WithEvents Label11 As Label
     Friend WithEvents ModernButton5 As ModernButton
-    Friend WithEvents RoundDashBoard2 As RoundDashBoard
     Friend WithEvents RoundDashBoard3 As RoundDashBoard
     Friend WithEvents Label8 As Label
+    Friend WithEvents RoundDashBoard2 As RoundDashBoard
+    Friend WithEvents Label9 As Label
 End Class
