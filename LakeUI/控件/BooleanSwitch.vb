@@ -181,6 +181,11 @@ Public Class BooleanSwitch
         MyBase.OnDpiChangedAfterParent(e)
         Me.Invalidate()
     End Sub
+
+    Protected Overrides Sub OnFontChanged(e As EventArgs)
+        MyBase.OnFontChanged(e)
+        D2DHelperV2.RefreshFontDependentRendering(Me)
+    End Sub
 #End Region
 
 #Region "通用"

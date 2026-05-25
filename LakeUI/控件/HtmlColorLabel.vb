@@ -43,6 +43,7 @@ Public Class HtmlColorLabel
         Public 字号 As Single
         Public 字体名称 As String
         Public 字体样式 As FontStyle
+        Public 字体样式掩码 As FontStyle
     End Structure
 
     Private Shared ReadOnly 标签正则 As New Regex("<(/?)\s*(\w+)([^>]*)>", RegexOptions.IgnoreCase Or RegexOptions.Compiled)
@@ -146,9 +147,10 @@ Public Class HtmlColorLabel
                     推名记录.Push(False)
                 End If
                 Dim 隐含样式 = 获取标签隐含样式(标签名)
-                Dim 新增样式 = 隐含样式 Or 样式.字体样式
-                If 新增样式 <> FontStyle.Regular Then
-                    字体样式栈.Push(字体样式栈.Peek() Or 新增样式)
+                Dim 指定样式 = 隐含样式 Or 样式.字体样式
+                Dim 指定掩码 = 隐含样式 Or 样式.字体样式掩码
+                If 指定掩码 <> FontStyle.Regular Then
+                    字体样式栈.Push(应用字体样式覆盖(字体样式栈.Peek(), 指定样式, 指定掩码))
                     推样式记录.Push(True)
                 Else
                     推样式记录.Push(False)
@@ -202,18 +204,30 @@ Public Class HtmlColorLabel
                     If fwm.Success Then
                         Dim v = fwm.Groups(1).Value.Trim().ToLowerInvariant()
                         Dim wt As Integer
-                        If v = "bold" OrElse v = "bolder" OrElse (Integer.TryParse(v, wt) AndAlso wt >= 700) Then 结果.字体样式 = 结果.字体样式 Or FontStyle.Bold
+                        Select Case v
+                            Case "bold", "bolder"
+                                设置字体样式位(结果, FontStyle.Bold, True)
+                            Case "normal", "lighter"
+                                设置字体样式位(结果, FontStyle.Bold, False)
+                            Case Else
+                                If Integer.TryParse(v, wt) Then 设置字体样式位(结果, FontStyle.Bold, wt >= 700)
+                        End Select
                     End If
                     Dim fsm = cssFontStyle正则.Match(styleVal)
                     If fsm.Success Then
                         Dim v = fsm.Groups(1).Value.Trim().ToLowerInvariant()
-                        If v = "italic" OrElse v = "oblique" Then 结果.字体样式 = 结果.字体样式 Or FontStyle.Italic
+                        Select Case v
+                            Case "italic", "oblique"
+                                设置字体样式位(结果, FontStyle.Italic, True)
+                            Case "normal"
+                                设置字体样式位(结果, FontStyle.Italic, False)
+                        End Select
                     End If
                     Dim tdm = cssTextDecoration正则.Match(styleVal)
                     If tdm.Success Then
                         Dim v = tdm.Groups(1).Value.Trim().ToLowerInvariant()
-                        If v.Contains("underline") Then 结果.字体样式 = 结果.字体样式 Or FontStyle.Underline
-                        If v.Contains("line-through") Then 结果.字体样式 = 结果.字体样式 Or FontStyle.Strikeout
+                        设置字体样式位(结果, FontStyle.Underline, v.Contains("underline"))
+                        设置字体样式位(结果, FontStyle.Strikeout, v.Contains("line-through"))
                     End If
                 End If
         End Select
@@ -229,6 +243,22 @@ Public Class HtmlColorLabel
             Case Else : Return FontStyle.Regular
         End Select
     End Function
+
+    Private Shared Function 应用字体样式覆盖(当前样式 As FontStyle, 指定样式 As FontStyle, 指定掩码 As FontStyle) As FontStyle
+        If 指定掩码 = FontStyle.Regular Then Return 当前样式
+        Dim 保留样式 = CInt(当前样式) And Not CInt(指定掩码)
+        Dim 覆盖样式 = CInt(指定样式) And CInt(指定掩码)
+        Return CType(保留样式 Or 覆盖样式, FontStyle)
+    End Function
+
+    Private Shared Sub 设置字体样式位(ByRef 样式 As 标签样式, 样式位 As FontStyle, 是否启用 As Boolean)
+        样式.字体样式掩码 = 样式.字体样式掩码 Or 样式位
+        If 是否启用 Then
+            样式.字体样式 = 样式.字体样式 Or 样式位
+        Else
+            样式.字体样式 = CType(CInt(样式.字体样式) And Not CInt(样式位), FontStyle)
+        End If
+    End Sub
 
     Private Function 解析字号值(值 As String) As Single
         If String.IsNullOrWhiteSpace(值) Then Return 0
@@ -749,6 +779,29 @@ Public Class HtmlColorLabel
 
 #Region "通用"
 
+    Private 字体变化已响应 As Boolean
+
+    Public Overrides Property Font As Font
+        Get
+            Return MyBase.Font
+        End Get
+        Set(value As Font)
+            Dim 原字体 = MyBase.Font
+            字体变化已响应 = False
+            MyBase.Font = value
+            If Not 字体变化已响应 AndAlso Not Object.Equals(原字体, MyBase.Font) Then
+                响应字体变化()
+            End If
+        End Set
+    End Property
+
+    Private Sub 响应字体变化()
+        字体变化已响应 = True
+        使缓存失效(True)
+        更新自动尺寸()
+        D2DHelperV2.RefreshFontDependentRendering(Me, invalidateChildren:=False, immediate:=True)
+    End Sub
+
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
@@ -868,9 +921,7 @@ Public Class HtmlColorLabel
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
         MyBase.OnFontChanged(e)
-        使缓存失效(True)
-        更新自动尺寸()
-        Me.Invalidate()
+        响应字体变化()
     End Sub
 
     Protected Overrides Sub OnPaddingChanged(e As EventArgs)

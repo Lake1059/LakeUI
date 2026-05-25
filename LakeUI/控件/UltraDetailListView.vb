@@ -49,8 +49,19 @@ Public Class UltraDetailListView
         <DefaultValue(""), Description("文本内容")>
         Public Property Text As String = ""
 
+        Friend Property Owner As UltraDetailListView
+
+        Private _font As Font = Nothing
         <Description("字体，留空时使用控件默认字体")>
-        Public Property Font As Font = Nothing
+        Public Property Font As Font
+            Get
+                Return _font
+            End Get
+            Set(value As Font)
+                _font = value
+                If Owner IsNot Nothing Then Owner.InvalidateItemFontResources()
+            End Set
+        End Property
 
         <DefaultValue(GetType(Color), ""), Description("前景色，留空时使用控件默认项文本颜色")>
         Public Property ForeColor As Color = Color.Empty
@@ -85,8 +96,19 @@ Public Class UltraDetailListView
         <DefaultValue(""), Description("主文本")>
         Public Property Text As String = ""
 
+        Friend Property Owner As UltraDetailListView
+
+        Private _font As Font = Nothing
         <Description("字体，留空时使用控件默认字体")>
-        Public Property Font As Font = Nothing
+        Public Property Font As Font
+            Get
+                Return _font
+            End Get
+            Set(value As Font)
+                _font = value
+                If Owner IsNot Nothing Then Owner.InvalidateItemFontResources()
+            End Set
+        End Property
 
         <DefaultValue(GetType(Color), ""), Description("前景色，留空时使用控件默认项文本颜色")>
         Public Property ForeColor As Color = Color.Empty
@@ -1820,6 +1842,14 @@ Public Class UltraDetailListView
         Next
     End Sub
 
+    Friend Sub InvalidateItemFontResources()
+        D2DHelperV2.InvalidateTextFormatCache(Me)
+        全部项高度缓存失效()
+        _columnXDirty = True
+        重建显示列表()
+        D2DHelperV2.RefreshFontDependentRendering(Me)
+    End Sub
+
 #End Region
 
 #Region "布局计算"
@@ -3449,12 +3479,14 @@ Public Class UltraDetailListView
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
         MyBase.OnFontChanged(e)
+        D2DHelperV2.InvalidateTextFormatCache(Me)
         全部项高度缓存失效()
         _moreSymbolFont?.Dispose()
         _moreSymbolFont = Nothing
         _moreSymbolFontKey = 0F
+        _columnXDirty = True
         重建显示列表()
-        Me.Invalidate()
+        D2DHelperV2.RefreshFontDependentRendering(Me)
     End Sub
 
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)

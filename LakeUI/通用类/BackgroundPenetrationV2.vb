@@ -44,6 +44,8 @@ Public Module BackgroundPenetrationV2
         Public Painting As Boolean
         Public D2DBmp As ID2D1Bitmap
         Public D2DOwnerRT As WeakReference
+        Public IsSolidColor As Boolean
+        Public SolidArgb As Integer
     End Class
 
     Private ReadOnly _cache As New Dictionary(Of Control, Entry)
@@ -71,7 +73,20 @@ Public Module BackgroundPenetrationV2
         Dim destRect As New Rectangle(0, 0, child.Width, child.Height)
 
         Dim rt = scope.BackgroundLayer
-        Dim d2dBmp = AcquireD2DBitmap(source, rt)
+        Dim isSolid As Boolean
+        Dim solidColor As Color = Color.Empty
+        Dim d2dBmp = AcquireD2DBitmap(source, rt, isSolid, solidColor)
+        If isSolid Then
+            Dim brushCache = scope.Compositor?.BrushCache
+            If brushCache IsNot Nothing Then
+                rt.FillRectangle(D2DHelper.ToD2DRect(destRect), brushCache.Get(rt, solidColor))
+            Else
+                Using b = rt.CreateSolidColorBrush(D2DHelper.ToColor4(solidColor))
+                    rt.FillRectangle(D2DHelper.ToD2DRect(destRect), b)
+                End Using
+            End If
+            Return
+        End If
         If d2dBmp Is Nothing Then Return
         rt.DrawBitmap(d2dBmp,
             D2DHelper.ToD2DRect(destRect),
@@ -99,7 +114,10 @@ Public Module BackgroundPenetrationV2
 
 #Region "缓存内部"
 
-    Private Function AcquireD2DBitmap(source As Control, rt As ID2D1RenderTarget) As ID2D1Bitmap
+    Private Function AcquireD2DBitmap(source As Control, rt As ID2D1RenderTarget,
+                                      ByRef isSolid As Boolean, ByRef solidColor As Color) As ID2D1Bitmap
+        isSolid = False
+        solidColor = Color.Empty
         Dim sw As Integer = source.Width, sh As Integer = source.Height
         Dim entry As Entry = Nothing
         Dim needRebuild As Boolean
@@ -136,6 +154,11 @@ Public Module BackgroundPenetrationV2
         End If
 
         If entry.Bmp Is Nothing Then Return Nothing
+        If entry.IsSolidColor Then
+            isSolid = True
+            solidColor = Color.FromArgb(entry.SolidArgb)
+            Return Nothing
+        End If
 
         ' 上传 / 命中 D2D 位图
         Dim ownerAlive As Boolean = entry.D2DOwnerRT IsNot Nothing AndAlso ReferenceEquals(entry.D2DOwnerRT.Target, rt)
@@ -165,8 +188,10 @@ Public Module BackgroundPenetrationV2
                 End Using
             End Using
         End Using
-        ' 同 V1：修复 D2D + GDI BitBlt 引发的 alpha=0 写穿问题。
-        ForceOpaqueAlpha(entry.Bmp)
+        ' 同 V1：修复 D2D + GDI BitBlt 引发的 alpha=0 写穿问题，并顺手识别纯色采样结果。
+        Dim solidArgb As Integer
+        entry.IsSolidColor = ForceOpaqueAlphaAndDetectSolid(entry.Bmp, solidArgb)
+        entry.SolidArgb = solidArgb
     End Sub
 
 #End Region
@@ -246,35 +271,52 @@ Public Module BackgroundPenetrationV2
         _invokePaint(source, source, pea)
     End Sub
 
-    ''' <summary>把 32bpp 位图的 alpha 全部置为 255（修复 D2D + GDI BitBlt 在 DIB 上的 alpha 写穿）。</summary>
-    Private Sub ForceOpaqueAlpha(bmp As Bitmap)
-        If bmp Is Nothing Then Return
+    ''' <summary>把 32bpp 位图的 alpha 全部置为 255，并检测结果是否为纯色。</summary>
+    Private Function ForceOpaqueAlphaAndDetectSolid(bmp As Bitmap, ByRef solidArgb As Integer) As Boolean
+        solidArgb = 0
+        If bmp Is Nothing Then Return False
         Dim rect As New Rectangle(0, 0, bmp.Width, bmp.Height)
         Dim data As BitmapData = Nothing
         Try
             data = bmp.LockBits(rect, ImageLockMode.ReadWrite, PixelFormat.Format32bppPArgb)
             Dim stride As Integer = data.Stride
+            Dim rowBytes As Integer = Math.Abs(stride)
             Dim h As Integer = data.Height
             Dim w As Integer = data.Width
             Dim scan0 As IntPtr = data.Scan0
-            Dim row(stride - 1) As Byte
+            Dim row(rowBytes - 1) As Byte
+            Dim haveFirst As Boolean = False
+            Dim firstB As Byte = 0, firstG As Byte = 0, firstR As Byte = 0
+            Dim solid As Boolean = True
             For y As Integer = 0 To h - 1
                 Dim rowPtr As IntPtr = IntPtr.Add(scan0, y * stride)
-                Runtime.InteropServices.Marshal.Copy(rowPtr, row, 0, stride)
+                Runtime.InteropServices.Marshal.Copy(rowPtr, row, 0, rowBytes)
                 Dim x As Integer = 3
                 For i As Integer = 0 To w - 1
+                    Dim b As Byte = row(x - 3)
+                    Dim g As Byte = row(x - 2)
+                    Dim r As Byte = row(x - 1)
+                    If Not haveFirst Then
+                        firstB = b : firstG = g : firstR = r
+                        haveFirst = True
+                    ElseIf solid AndAlso (b <> firstB OrElse g <> firstG OrElse r <> firstR) Then
+                        solid = False
+                    End If
                     row(x) = 255
                     x += 4
                 Next
-                Runtime.InteropServices.Marshal.Copy(row, 0, rowPtr, stride)
+                Runtime.InteropServices.Marshal.Copy(row, 0, rowPtr, rowBytes)
             Next
+            If haveFirst Then solidArgb = Color.FromArgb(255, firstR, firstG, firstB).ToArgb()
+            Return solid AndAlso haveFirst
         Catch
+            Return False
         Finally
             If data IsNot Nothing Then
                 Try : bmp.UnlockBits(data) : Catch : End Try
             End If
         End Try
-    End Sub
+    End Function
 
 #End Region
 

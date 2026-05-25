@@ -1223,6 +1223,11 @@ Public Class PixelPictureBox
         Me.Invalidate()
     End Sub
 
+    Protected Overrides Sub OnFontChanged(e As EventArgs)
+        MyBase.OnFontChanged(e)
+        D2DHelperV2.RefreshFontDependentRendering(Me)
+    End Sub
+
 #End Region
 
 End Class

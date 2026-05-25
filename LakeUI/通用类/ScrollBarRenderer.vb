@@ -289,8 +289,9 @@ Public Class ScrollBarRenderer
     Private Shared Sub PushClipLayerIfNeeded(rt As ID2D1RenderTarget,
                                               containerW As Integer, containerH As Integer,
                                               borderWidth As Integer, borderRadius As Integer,
-                                              ByRef layer As ID2D1Layer,
+                                              ByRef clipPushed As Boolean,
                                               ByRef clipGeo As Vortice.Direct2D1.ID2D1Geometry)
+        clipPushed = False
         If borderRadius <= 0 Then Return
         Dim clipRect As New RectangleF(0, 0, containerW - 1, containerH - 1)
         If borderWidth > 0 Then
@@ -298,16 +299,8 @@ Public Class ScrollBarRenderer
             clipRect.Inflate(-half, -half)
         End If
         clipGeo = RectangleRenderer.创建圆角矩形几何(clipRect, borderRadius)
-        layer = rt.CreateLayer(Nothing)
-        rt.PushLayer(New LayerParameters With {
-            .ContentBounds = New Vortice.RawRectF(0, 0, containerW, containerH),
-            .GeometricMask = clipGeo,
-            .MaskAntialiasMode = AntialiasMode.PerPrimitive,
-            .MaskTransform = System.Numerics.Matrix3x2.Identity,
-            .Opacity = 1.0F,
-            .OpacityBrush = Nothing,
-            .LayerOptions = LayerOptions.None
-        }, layer)
+        D2DHelper.PushGeometryClip(rt, clipGeo, New RectangleF(0, 0, containerW, containerH))
+        clipPushed = True
     End Sub
 
     ''' <summary>D2D 版竖向滚动条绘制。调用前需先调用 <see cref="ComputeLayout"/> 计算布局。</summary>
@@ -321,9 +314,9 @@ Public Class ScrollBarRenderer
 
         EnsureBrushes(rt, trackColor, thumbColor, thumbHoverColor)
 
-        Dim layer As ID2D1Layer = Nothing
+        Dim clipPushed As Boolean = False
         Dim clipGeo As ID2D1Geometry = Nothing
-        PushClipLayerIfNeeded(rt, containerW, containerH, borderWidth, borderRadius, layer, clipGeo)
+        PushClipLayerIfNeeded(rt, containerW, containerH, borderWidth, borderRadius, clipPushed, clipGeo)
         Try
             Dim sbH As Integer = TrackRect.Height
             ' 轨道（A=0 表示完全透明，直接跳过以节省一次填充）
@@ -344,9 +337,8 @@ Public Class ScrollBarRenderer
                 rt.FillGeometry(geo, thumbBr)
             End Using
         Finally
-            If layer IsNot Nothing Then
+            If clipPushed Then
                 rt.PopLayer()
-                layer.Dispose()
             End If
             clipGeo?.Dispose()
         End Try
@@ -363,9 +355,9 @@ Public Class ScrollBarRenderer
 
         EnsureBrushes(rt, trackColor, thumbColor, thumbHoverColor)
 
-        Dim layer As ID2D1Layer = Nothing
+        Dim clipPushed As Boolean = False
         Dim clipGeo As ID2D1Geometry = Nothing
-        PushClipLayerIfNeeded(rt, containerW, containerH, borderWidth, borderRadius, layer, clipGeo)
+        PushClipLayerIfNeeded(rt, containerW, containerH, borderWidth, borderRadius, clipPushed, clipGeo)
         Try
             Dim sbW As Integer = TrackRect.Width
             If trackColor.A > 0 Then
@@ -384,9 +376,8 @@ Public Class ScrollBarRenderer
                 rt.FillGeometry(geo, thumbBr)
             End Using
         Finally
-            If layer IsNot Nothing Then
+            If clipPushed Then
                 rt.PopLayer()
-                layer.Dispose()
             End If
             clipGeo?.Dispose()
         End Try

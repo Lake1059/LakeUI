@@ -1351,7 +1351,7 @@ Public Class AgentRoom
     Protected Overrides Sub OnFontChanged(e As EventArgs)
         MyBase.OnFontChanged(e)
         InvalidateAllItemsLayout()
-        Invalidate()
+        D2DHelperV2.RefreshFontDependentRendering(Me)
     End Sub
 
     Protected Overrides Function IsInputKey(keyData As Keys) As Boolean

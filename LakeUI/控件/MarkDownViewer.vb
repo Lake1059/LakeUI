@@ -911,9 +911,9 @@ Public Class MarkDownViewer
         End Get
         Set(value As Font)
             代码字体 = value
-            InvalidateFontCache()
+            DisposeFontCache()
             RebuildLayout()
-            Invalidate()
+            D2DHelperV2.RefreshFontDependentRendering(Me)
         End Set
     End Property
 
@@ -2289,14 +2289,14 @@ Public Class MarkDownViewer
     End Sub
 
     Private Sub InvalidateFontCache()
-        _lastBaseFont = Nothing
+        DisposeFontCache()
     End Sub
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
         MyBase.OnFontChanged(e)
         InvalidateFontCache()
         RebuildLayout()
-        Invalidate()
+        D2DHelperV2.RefreshFontDependentRendering(Me)
     End Sub
 
 #End Region

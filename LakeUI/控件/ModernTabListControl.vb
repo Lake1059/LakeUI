@@ -45,6 +45,8 @@ Public Class ModernTabListControl
             End Get
             Set(value As Font)
                 _tabFont = value
+                If Owner IsNot Nothing Then Owner.InvalidateFontResources()
+                Owner?.RefreshFontDependentRenderingNow()
                 通知父级重绘()
             End Set
         End Property
@@ -225,10 +227,20 @@ Public Class ModernTabListControl
     Protected Overrides Sub OnHandleDestroyed(e As EventArgs)
         Try : 停止帧驱动() : Catch : End Try
         Try : _动画助手.Dispose() : Catch : End Try
+        ReleaseLocalTextFormatCache()
+        ReleaseMoreIndicatorFont()
+        MyBase.OnHandleDestroyed(e)
+    End Sub
+
+    Private Sub ReleaseMoreIndicatorFont()
         If _moreIndicatorFont IsNot Nothing Then
             Try : _moreIndicatorFont.Dispose() : Catch : End Try
             _moreIndicatorFont = Nothing
         End If
+        _moreIndicatorFontKey = Nothing
+    End Sub
+
+    Private Sub ReleaseLocalTextFormatCache()
         Try
             For Each kv In _textFormatCache
                 Try : kv.Value.Ellipsis?.Dispose() : Catch : End Try
@@ -237,7 +249,6 @@ Public Class ModernTabListControl
             _textFormatCache.Clear()
         Catch
         End Try
-        MyBase.OnHandleDestroyed(e)
     End Sub
     Private _搜索框控件 As Control = Nothing
     Private _搜索文本 As String = ""
@@ -764,11 +775,11 @@ Public Class ModernTabListControl
     End Sub
 
     Private _moreIndicatorFont As Font
-    Private _moreIndicatorFontKey As Single
+    Private _moreIndicatorFontKey As String
 
     Private Function 获取更多指示器字体() As Font
         Dim sz As Single = Math.Max(7, Me.Font.Size - 1)
-        Dim key As Single = sz * 1000.0F + Me.Font.FontFamily.Name.GetHashCode() Mod 1000
+        Dim key As String = Me.Font.FontFamily.Name & "|" & sz.ToString(Globalization.CultureInfo.InvariantCulture)
         If _moreIndicatorFont IsNot Nothing AndAlso _moreIndicatorFontKey = key Then
             Return _moreIndicatorFont
         End If
@@ -829,7 +840,7 @@ Public Class ModernTabListControl
             清扫TextFormat缓存(now)
             Return entry
         End If
-        Dim fmt = dw.CreateTextFormat(family, Nothing, weight, style, Vortice.DirectWrite.FontStretch.Normal, sizePx)
+        Dim fmt = D2DHelper.CreateTextFormat(family, weight, style, Vortice.DirectWrite.FontStretch.Normal, sizePx)
         fmt.TextAlignment = hAlign
         fmt.WordWrapping = WordWrapping.NoWrap
         fmt.ParagraphAlignment = ParagraphAlignment.Center
@@ -1481,8 +1492,27 @@ Public Class ModernTabListControl
         Return Me.DeviceDpi / 96.0F
     End Function
 
+    Friend Sub InvalidateFontResources()
+        D2DHelperV2.InvalidateTextFormatCache(Me)
+        ReleaseLocalTextFormatCache()
+        ReleaseMoreIndicatorFont()
+        失效布局缓存()
+    End Sub
+
+    Friend Sub RefreshFontDependentRenderingNow()
+        D2DHelperV2.RefreshFontDependentRendering(Me)
+    End Sub
+
+    Protected Overrides Sub OnFontChanged(e As EventArgs)
+        InvalidateFontResources()
+        MyBase.OnFontChanged(e)
+        同步内容面板布局()
+        D2DHelperV2.RefreshFontDependentRendering(Me)
+    End Sub
+
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
+        InvalidateFontResources()
         同步内容面板布局()
         Me.Invalidate()
     End Sub
@@ -2017,7 +2047,8 @@ Public Class ModernTabListControl
         Set(value As Font)
             If value Is Nothing Then Return
             说明字体值 = value
-            Me.Invalidate()
+            InvalidateFontResources()
+            D2DHelperV2.RefreshFontDependentRendering(Me)
         End Set
     End Property
     Private Function ShouldSerializeDescriptionFont() As Boolean

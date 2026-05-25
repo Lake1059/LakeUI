@@ -516,8 +516,8 @@ Public Class ModernTextBox
             If _showLineNumbers Then
                 RebuildVisualLines()
                 UpdateScrollBar()
-                Invalidate()
             End If
+            D2DHelperV2.RefreshFontDependentRendering(Me)
         End Set
     End Property
     Private Function ShouldSerializeLineNumberFont() As Boolean
@@ -2535,9 +2535,14 @@ Public Class ModernTextBox
         Invalidate()
     End Sub
     Protected Overrides Sub OnFontChanged(e As EventArgs)
+        _underlineFontCache?.Dispose()
+        _underlineFontCache = Nothing
+        _underlineFontBase = Nothing
         MyBase.OnFontChanged(e)
         RebuildVisualLines()
-        Invalidate()
+        UpdateScrollBar()
+        EnsureCaretVisible()
+        D2DHelperV2.RefreshFontDependentRendering(Me)
     End Sub
     Protected Overrides Sub OnBackColorChanged(e As EventArgs)
         MyBase.OnBackColorChanged(e)

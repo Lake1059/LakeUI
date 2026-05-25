@@ -104,6 +104,7 @@ Public Class ModernContextMenu
         Set(value As Font)
             If value Is Nothing Then Return
             SetValue(菜单字体, value)
+            InvalidateFontResources()
         End Set
     End Property
     Private Function ShouldSerializeMenuFont() As Boolean
@@ -134,6 +135,7 @@ Public Class ModernContextMenu
         Set(value As Font)
             If value Is Nothing Then Return
             SetValue(说明字体, value)
+            InvalidateFontResources()
         End Set
     End Property
     Private Function ShouldSerializeDescriptionFont() As Boolean
@@ -527,9 +529,23 @@ Public Class ModernContextMenu
 
     Private 当前弹出窗口 As MenuPopupForm = Nothing
 
+    Friend Sub EnsureItemOwners()
+        For Each item In 项目列表
+            If item IsNot Nothing Then item.Owner = Me
+        Next
+    End Sub
+
+    Friend Sub InvalidateFontResources()
+        EnsureItemOwners()
+        If 当前弹出窗口 IsNot Nothing AndAlso Not 当前弹出窗口.IsDisposed Then
+            当前弹出窗口.RefreshFontResources()
+        End If
+    End Sub
+
     Public Sub Show(x As Integer, y As Integer)
         Close()
         If 项目列表.Count = 0 Then Return
+        EnsureItemOwners()
         当前弹出窗口 = New MenuPopupForm(Me, Nothing)
         当前弹出窗口.ShowAt(x, y)
     End Sub
@@ -643,6 +659,7 @@ Public Class ModernContextMenu
         End Function
 
         Friend Sub ShowAt(x As Integer, y As Integer)
+            菜单.EnsureItemOwners()
             计算布局()
             最终高度 = Me.Height
             Me.Location = New Point(x, y)
@@ -663,6 +680,16 @@ Public Class ModernContextMenu
             Else
                 Me.Show()
             End If
+        End Sub
+
+        Friend Sub RefreshFontResources()
+            菜单.EnsureItemOwners()
+            计算布局()
+            最终高度 = Me.Height
+            If 子菜单弹窗 IsNot Nothing AndAlso Not 子菜单弹窗.IsDisposed Then
+                子菜单弹窗.RefreshFontResources()
+            End If
+            D2DHelperV2.RefreshFontDependentRendering(Me)
         End Sub
 
         Private Sub 准备毛玻璃背景()
@@ -1312,8 +1339,19 @@ Public Class ModernContextMenu
         <Category("LakeUI"), Description("文本"), DefaultValue(GetType(String), ""), Browsable(True)>
         Public Property Text As String = ""
 
+        Friend Property Owner As ModernContextMenu
+
+        Private _font As Font = Nothing
         <Category("LakeUI"), Description("字体"), Browsable(True)>
-        Public Property Font As Font = Nothing
+        Public Property Font As Font
+            Get
+                Return _font
+            End Get
+            Set(value As Font)
+                _font = value
+                Owner?.InvalidateFontResources()
+            End Set
+        End Property
 
         <Category("LakeUI"), Description("文本颜色"), DefaultValue(GetType(Color), ""), Browsable(True)>
         Public Property ForeColor As Color = Color.Empty

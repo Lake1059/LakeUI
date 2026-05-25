@@ -50,6 +50,8 @@ Public Module D3D11Globals
     Private _d2dDevice As ID2D1Device
     Private _isWarp As Boolean
     Private _deviceGeneration As Integer
+    Private _lastCreateFailedTick As Long = Long.MinValue
+    Private Const CreateFailureRetryDelayMs As Long = 2000
 
     ''' <summary>
     ''' 设备丢失或被显式失效时触发。所有持有 per-device 资源（DeviceContext / Bitmap1 / Brush 等）的对象
@@ -83,15 +85,26 @@ Public Module D3D11Globals
     ''' </summary>
     Public Function GetD2DDevice() As ID2D1Device
         If _initialized Then Return _d2dDevice
+        Dim nowTicks As Long = Environment.TickCount64
         SyncLock _lock
             If _initialized Then Return _d2dDevice
+            If _lastCreateFailedTick <> Long.MinValue AndAlso
+               nowTicks - _lastCreateFailedTick < CreateFailureRetryDelayMs Then
+                Return Nothing
+            End If
             Try
                 EnsureCreatedNoLock()
             Catch
                 ' 静默失败：保留 _d2dDevice = Nothing，所有 GetD2DDevice 调用都返回 Nothing。
                 ReleaseAllNoLock()
             End Try
-            _initialized = True
+            If _d2dDevice IsNot Nothing Then
+                _initialized = True
+                _lastCreateFailedTick = Long.MinValue
+            Else
+                _initialized = False
+                _lastCreateFailedTick = Environment.TickCount64
+            End If
         End SyncLock
         Return _d2dDevice
     End Function
@@ -149,11 +162,15 @@ Public Module D3D11Globals
     ''' 调用方应在调用前确保自己不再持有任何对本设备资源的引用，否则后续 Dispose 顺序可能引发异常（已被 try 吞掉）。
     ''' </summary>
     Public Sub InvalidateDevice()
+        Dim hadDevice As Boolean
         SyncLock _lock
-            If Not _initialized Then Return
+            hadDevice = _initialized OrElse _d2dDevice IsNot Nothing OrElse
+                        _dxgiDevice IsNot Nothing OrElse _d3dDevice IsNot Nothing
             ReleaseAllNoLock()
             _initialized = False
+            _lastCreateFailedTick = Long.MinValue
         End SyncLock
+        If Not hadDevice Then Return
         Try
             RaiseEvent DeviceLost(Nothing, EventArgs.Empty)
         Catch

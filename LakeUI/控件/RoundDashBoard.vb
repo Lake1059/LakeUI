@@ -581,6 +581,13 @@ Public Class RoundDashBoard
     End Property
 #End Region
 
+#Region "生命周期"
+    Protected Overrides Sub OnFontChanged(e As EventArgs)
+        MyBase.OnFontChanged(e)
+        D2DHelperV2.RefreshFontDependentRendering(Me)
+    End Sub
+#End Region
+
 #Region "禁用属性"
     <Browsable(False), EditorBrowsable(EditorBrowsableState.Never), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
     Public Shadows Property AutoScroll As Boolean

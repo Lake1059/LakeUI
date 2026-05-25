@@ -151,6 +151,13 @@ Public NotInheritable Class WindowCompositor
         Return isLost
     End Function
 
+    Friend Function NotifyDCRenderTargetException(ex As Exception) As Boolean
+        If Not D3D11Globals.IsDeviceLostException(ex) Then Return False
+        ReleaseDCRenderTargetNoLock()
+        D3D11Globals.HandleDeviceLost(ex)
+        Return True
+    End Function
+
     Private Sub OnDeviceLost(sender As Object, e As EventArgs)
         ' D3D11Globals 已在 UI 线程同步触发，这里直接释放即可。
         ReleaseDeviceContextNoLock()
@@ -164,6 +171,21 @@ Public NotInheritable Class WindowCompositor
         End If
         _deviceContextProbed = False
         _deviceContextGeneration = 0
+    End Sub
+
+    Private Sub ReleaseDCRenderTargetNoLock()
+        Try : BrushCache.Invalidate() : Catch : End Try
+        For Each kv In _bitmapCaches
+            Try : kv.Value.Invalidate() : Catch : End Try
+        Next
+        For Each kv In _ssaaPool
+            Try : kv.Value.Dispose() : Catch : End Try
+        Next
+        _ssaaPool.Clear()
+        If _dcRT IsNot Nothing Then
+            Try : _dcRT.Dispose() : Catch : End Try
+            _dcRT = Nothing
+        End If
     End Sub
 
     ''' <summary>
@@ -245,7 +267,8 @@ Public NotInheritable Class WindowCompositor
         _activePaintScopes += 1
         Try
             Return New PaintScopeV2(Me, e.Graphics, hdc, dcRT, control.Width, control.Height, ssaaScale, disposeCompositorWithScope)
-        Catch
+        Catch ex As Exception
+            Try : NotifyDCRenderTargetException(ex) : Catch : End Try
             EndPaintScope()
             Try : e.Graphics.ReleaseHdc(hdc) : Catch : End Try
             Throw
@@ -270,14 +293,7 @@ Public NotInheritable Class WindowCompositor
             Try : kv.Value.Dispose() : Catch : End Try
         Next
         _bitmapCaches.Clear()
-        For Each kv In _ssaaPool
-            Try : kv.Value.Dispose() : Catch : End Try
-        Next
-        _ssaaPool.Clear()
-        If _dcRT IsNot Nothing Then
-            Try : _dcRT.Dispose() : Catch : End Try
-            _dcRT = Nothing
-        End If
+        ReleaseDCRenderTargetNoLock()
         If _deviceLostHandlerAttached Then
             Try : RemoveHandler D3D11Globals.DeviceLost, AddressOf OnDeviceLost : Catch : End Try
             _deviceLostHandlerAttached = False

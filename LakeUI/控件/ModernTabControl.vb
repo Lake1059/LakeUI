@@ -47,7 +47,9 @@ Public Class ModernTabControl
             End Get
             Set(value As Font)
                 _tabFont = value
+                If Owner IsNot Nothing Then Owner.InvalidateFontResources()
                 通知父级重绘()
+                Owner?.RefreshFontDependentRenderingNow()
             End Set
         End Property
         Private Function ShouldSerializeTabFont() As Boolean
@@ -1385,6 +1387,22 @@ Public Class ModernTabControl
         Return Me.DeviceDpi / 96.0F
     End Function
 
+    Friend Sub InvalidateFontResources()
+        D2DHelperV2.InvalidateTextFormatCache(Me)
+        _缓存宽度 = Nothing
+        _缓存可用宽度 = -1
+    End Sub
+
+    Friend Sub RefreshFontDependentRenderingNow()
+        D2DHelperV2.RefreshFontDependentRendering(Me)
+    End Sub
+
+    Protected Overrides Sub OnFontChanged(e As EventArgs)
+        InvalidateFontResources()
+        MyBase.OnFontChanged(e)
+        D2DHelperV2.RefreshFontDependentRendering(Me)
+    End Sub
+
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
         Me.Invalidate()
@@ -1905,7 +1923,8 @@ Public Class ModernTabControl
         End Get
         Set(value As Font)
             折叠按钮字体值 = value
-            Me.Invalidate()
+            InvalidateFontResources()
+            D2DHelperV2.RefreshFontDependentRendering(Me)
         End Set
     End Property
     Private Function ShouldSerializeCollapseButtonFont() As Boolean

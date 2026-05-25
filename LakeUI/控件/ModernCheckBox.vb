@@ -234,8 +234,6 @@ Public Class ModernCheckBox
         Dim mainText As String = If(MyBase.Text, "")
 
         Dim familyName As String = Me.Font.FontFamily.Name
-        Dim mainWeight As Vortice.DirectWrite.FontWeight = If(Me.Font.Bold, Vortice.DirectWrite.FontWeight.Bold, Vortice.DirectWrite.FontWeight.Normal)
-        Dim mainStyle As Vortice.DirectWrite.FontStyle = If(Me.Font.Italic, Vortice.DirectWrite.FontStyle.Italic, Vortice.DirectWrite.FontStyle.Normal)
         ' DirectWrite 字号必须叠加 DPI 缩放（参考 ModernButton 的注释）
         Dim mainSizePx As Single = Me.Font.SizeInPoints * (96.0F / 72.0F) * s
 
@@ -243,7 +241,7 @@ Public Class ModernCheckBox
         Dim 框区域 As RectangleF = 计算框区域(s)
         Dim 框中心Y As Single = 框区域.Y + 框区域.Height / 2.0F
 
-        Using mainFmt = dw.CreateTextFormat(familyName, Nothing, mainWeight, mainStyle, Vortice.DirectWrite.FontStretch.Normal, mainSizePx)
+        Using mainFmt = D2DHelper.CreateTextFormat(Me.Font, mainSizePx)
             mainFmt.TextAlignment = Vortice.DirectWrite.TextAlignment.Leading
             mainFmt.ParagraphAlignment = Vortice.DirectWrite.ParagraphAlignment.Near
             mainFmt.WordWrapping = Vortice.DirectWrite.WordWrapping.NoWrap
@@ -254,7 +252,7 @@ Public Class ModernCheckBox
 
             If Not String.IsNullOrEmpty(次要文本) Then
                 Dim subSizePx As Single = 次要文本字号 * (96.0F / 72.0F) * s
-                Using subFmt = dw.CreateTextFormat(familyName, Nothing, Vortice.DirectWrite.FontWeight.Normal, Vortice.DirectWrite.FontStyle.Normal, Vortice.DirectWrite.FontStretch.Normal, subSizePx)
+                Using subFmt = D2DHelper.CreateTextFormat(familyName, Vortice.DirectWrite.FontWeight.Normal, Vortice.DirectWrite.FontStyle.Normal, Vortice.DirectWrite.FontStretch.Normal, subSizePx)
                     subFmt.TextAlignment = Vortice.DirectWrite.TextAlignment.Leading
                     subFmt.ParagraphAlignment = Vortice.DirectWrite.ParagraphAlignment.Near
                     subFmt.WordWrapping = Vortice.DirectWrite.WordWrapping.NoWrap
@@ -909,7 +907,7 @@ Public Class ModernCheckBox
         MyBase.OnFontChanged(e)
         重置文本行高缓存()
         更新自动尺寸()
-        Me.Invalidate()
+        D2DHelperV2.RefreshFontDependentRendering(Me)
     End Sub
 
     Protected Overrides Sub OnPaddingChanged(e As EventArgs)

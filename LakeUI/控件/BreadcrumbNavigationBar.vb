@@ -424,17 +424,6 @@ Public Class BreadcrumbNavigationBar
         End Set
     End Property
 
-    Private 显示焦点框 As Boolean = True
-    <Category("LakeUI"), Description("获得焦点后键盘选中节点是否绘制焦点框"), DefaultValue(True), Browsable(True)>
-    Public Property ShowFocusCues As Boolean
-        Get
-            Return 显示焦点框
-        End Get
-        Set(value As Boolean)
-            SetValue(显示焦点框, value)
-        End Set
-    End Property
-
     Private 焦点框颜色 As Color = Color.FromArgb(120, 170, 255)
     <Category("LakeUI"), Description("焦点框颜色"), DefaultValue(GetType(Color), "120,170,255"), Browsable(True)>
     Public Property FocusCueColor As Color
@@ -1220,7 +1209,7 @@ Public Class BreadcrumbNavigationBar
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
         MyBase.OnFontChanged(e)
-        Invalidate()
+        D2DHelperV2.RefreshFontDependentRendering(Me)
     End Sub
 
     Protected Overrides Sub OnSizeChanged(e As EventArgs)

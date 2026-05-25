@@ -1,6 +1,6 @@
 ﻿Imports System.ComponentModel
-Imports System.Drawing.Drawing2D
 Imports System.Numerics
+Imports System.Runtime.InteropServices
 Imports Vortice.Direct2D1
 
 <DefaultEvent("SelectedIndexChanged")>
@@ -786,9 +786,11 @@ Public Class ModernComboBox
             下拉内边距 = value
         End Set
     End Property
+
     Private Function ShouldSerializeDropDownPadding() As Boolean
         Return 下拉内边距 <> Padding.Empty
     End Function
+
     Private Sub ResetDropDownPadding()
         下拉内边距 = Padding.Empty
     End Sub
@@ -1799,17 +1801,101 @@ Public Class ModernComboBox
         Private _scrollBarVisible As Boolean = False
         Private _scrollBar As New ScrollBarRenderer()
 
-        ' V2：D2D 资源由 WindowCompositor 按顶层 Form 共享管理。
+        <DllImport("user32.dll")>
+        Private Shared Function UpdateLayeredWindow(
+            hwnd As IntPtr, hdcDst As IntPtr,
+            ByRef pptDst As W32Point, ByRef psize As W32Size,
+            hdcSrc As IntPtr, ByRef pptSrc As W32Point,
+            crKey As Integer, ByRef pblend As BLENDFUNCTION,
+            dwFlags As Integer) As Boolean
+        End Function
+
+        <DllImport("user32.dll")>
+        Private Shared Function GetDC(hWnd As IntPtr) As IntPtr
+        End Function
+
+        <DllImport("user32.dll")>
+        Private Shared Function ReleaseDC(hWnd As IntPtr, hDC As IntPtr) As Integer
+        End Function
+
+        <DllImport("gdi32.dll")>
+        Private Shared Function CreateCompatibleDC(hdc As IntPtr) As IntPtr
+        End Function
+
+        <DllImport("gdi32.dll")>
+        Private Shared Function DeleteDC(hdc As IntPtr) As Boolean
+        End Function
+
+        <DllImport("gdi32.dll")>
+        Private Shared Function SelectObject(hdc As IntPtr, hgdiobj As IntPtr) As IntPtr
+        End Function
+
+        <DllImport("gdi32.dll")>
+        Private Shared Function DeleteObject(hObject As IntPtr) As Boolean
+        End Function
+
+        <DllImport("gdi32.dll")>
+        Private Shared Function CreateDIBSection(
+            hdc As IntPtr, ByRef pbmi As BITMAPINFO,
+            iUsage As UInteger, ByRef ppvBits As IntPtr,
+            hSection As IntPtr, dwOffset As UInteger) As IntPtr
+        End Function
+
+        <StructLayout(LayoutKind.Sequential)>
+        Private Structure W32Point
+            Public X, Y As Integer
+        End Structure
+
+        <StructLayout(LayoutKind.Sequential)>
+        Private Structure W32Size
+            Public Width, Height As Integer
+        End Structure
+
+        <StructLayout(LayoutKind.Sequential)>
+        Private Structure BLENDFUNCTION
+            Public BlendOp, BlendFlags, SourceConstantAlpha, AlphaFormat As Byte
+        End Structure
+
+        <StructLayout(LayoutKind.Sequential)>
+        Private Structure BITMAPINFOHEADER
+            Public biSize As UInteger
+            Public biWidth, biHeight As Integer
+            Public biPlanes, biBitCount As UShort
+            Public biCompression, biSizeImage As UInteger
+            Public biXPelsPerMeter, biYPelsPerMeter As Integer
+            Public biClrUsed, biClrImportant As UInteger
+        End Structure
+
+        <StructLayout(LayoutKind.Sequential)>
+        Private Structure BITMAPINFO
+            Public Header As BITMAPINFOHEADER
+            Public Colors As Integer
+        End Structure
+
+        Private Const WS_EX_LAYERED As Integer = &H80000
+        Private Const AC_SRC_OVER As Byte = 0
+        Private Const AC_SRC_ALPHA As Byte = 1
+        Private Const ULW_ALPHA As Integer = 2
+        Private Const DIB_RGB_COLORS As UInteger = 0
+        Private Const BI_RGB As UInteger = 0
+
+        ' 下拉窗体是 layered window，使用独立 D2D DC RT 绑定到可复用 DIBSection。
 #Disable Warning IDE0044
         Private _finalHeight As Integer
         Private _originPt As Point
         Private _useIdle As Boolean = False
+        Private _layeredRenderTarget As ID2D1DCRenderTarget = Nothing
+        Private _layeredMemDC As IntPtr = IntPtr.Zero
+        Private _layeredBitmap As IntPtr = IntPtr.Zero
+        Private _layeredPrevBitmap As IntPtr = IntPtr.Zero
+        Private _layeredBits As IntPtr = IntPtr.Zero
+        Private _layeredBufferSize As Size = Size.Empty
+        Private _layeredPixels() As Integer = Array.Empty(Of Integer)()
+        Private _suppressBoundsRender As Boolean = False
 
         ' Overlay 模式
         Private _overlayMode As Boolean = False
-        Private _alignItemScreenY As Integer = 0
-        Private _alignItemDropdownY As Integer = 0
-        Private _closeCenterScreenY As Integer = 0
+        Private _alignItemScreenY, _alignItemDropdownY, _closeCenterScreenY As Integer
 
         ' 展开/关闭动画
         Private ReadOnly 展开关闭秒表 As New Stopwatch()
@@ -1821,14 +1907,48 @@ Public Class ModernComboBox
         Private ReadOnly 悬停秒表 As New Stopwatch()
         Private 悬停计时器 As Timer
 #Enable Warning IDE0044
-        Private 悬停动画起始Y As Single = -1
-        Private 悬停动画目标Y As Single = -1
-        Private 悬停动画当前Y As Single = -1
-        Private 悬停动画起始高度 As Single = 0
-        Private 悬停动画目标高度 As Single = 0
-        Private 悬停动画当前高度 As Single = 0
+        Private 悬停动画起始Y As Single = -1, 悬停动画目标Y As Single = -1, 悬停动画当前Y As Single = -1
+        Private 悬停动画起始高度, 悬停动画目标高度, 悬停动画当前高度 As Single
         Private 悬停动画中 As Boolean = False
         Private 悬停动画显示 As Boolean = False
+
+        Private Structure DropDownLayout
+            Public ReadOnly Bw, Inset, RightCorr, ScrollW, ItemH, VisCount, HlL, HlR As Integer
+            Public ReadOnly Pad As Padding
+
+            Public Sub New(ownerForm As DropDownListForm, w As Integer)
+                Dim owner = ownerForm._owner
+                Dim s As Single = owner.DpiScale()
+                Bw = CInt(owner.下拉边框宽度 * s)
+                Pad = owner.下拉内边距
+                Inset = Math.Max(Bw, 1)
+                RightCorr = If(Bw >= 2, 1, 0)
+                ScrollW = If(ownerForm._scrollBarVisible, ownerForm._scrollBar.GetReservedWidth(w, Inset), 0)
+                ItemH = CInt(owner.下拉项高度 * s)
+                VisCount = Math.Min(owner._items.Count, owner.最大下拉项数)
+                Dim hlLeft As Integer = Inset - owner.下拉高亮左侧偏移
+                Dim hlRight As Integer = Inset + RightCorr - owner.下拉高亮右侧偏移
+                If owner.下拉高亮兼容内边距 Then
+                    hlLeft += Pad.Left
+                    hlRight += Pad.Right
+                End If
+                HlL = hlLeft
+                HlR = hlRight
+            End Sub
+
+            Public Function ClipRect(w As Integer, h As Integer) As RectangleF
+                Return New RectangleF(Inset, Inset, w - Inset * 2 - RightCorr - ScrollW, h - Inset * 2)
+            End Function
+
+            Public Function ItemRect(w As Integer, visualIndex As Integer) As RectangleF
+                Return New RectangleF(HlL, Bw + Pad.Top + visualIndex * ItemH, w - HlL - HlR - ScrollW, ItemH)
+            End Function
+
+            Public Function TextRect(itemRect As RectangleF) As RectangleF
+                Return New RectangleF(itemRect.X + Pad.Left + 4, itemRect.Y,
+                    itemRect.Width - Pad.Left - Pad.Right - 8, itemRect.Height)
+            End Function
+        End Structure
 
         Private Const WM_LBUTTONDOWN As Integer = &H201
         Private Const WM_RBUTTONDOWN As Integer = &H204
@@ -1836,10 +1956,20 @@ Public Class ModernComboBox
         Private Const WM_NCLBUTTONDOWN As Integer = &HA1
         Private Const WM_ACTIVATEAPP As Integer = &H1C
 
+        Protected Overrides ReadOnly Property CreateParams As CreateParams
+            Get
+                Dim cp = MyBase.CreateParams
+                cp.ExStyle = cp.ExStyle Or WS_EX_LAYERED
+                Return cp
+            End Get
+        End Property
+
         Public Sub New(owner As ModernComboBox)
             _owner = owner
             Me.DoubleBuffered = True
-            Me.BackColor = owner.下拉背景颜色
+            SetStyle(ControlStyles.SupportsTransparentBackColor, True)
+            Me.BackColor = Color.Transparent
+            UpdateStyles()
             Me.AutoScaleMode = AutoScaleMode.Dpi
 
             _useIdle = (owner.下拉动画帧率 <= 0)
@@ -1902,6 +2032,10 @@ Public Class ModernComboBox
             End If
         End Sub
 
+        Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
+            ' 下拉窗体底色保持透明，实际背景由 layered 位图使用 DropDownBackColor 覆盖。
+        End Sub
+
         Protected Overrides Sub WndProc(ByRef m As Message)
             MyBase.WndProc(m)
             If m.Msg = WM_ACTIVATEAPP AndAlso m.WParam = IntPtr.Zero Then
@@ -1917,13 +2051,20 @@ Public Class ModernComboBox
                 End If
                 Me.Size = New Size(Me.Width, 1)
                 Me.Show()
+                请求重绘()
                 展开关闭动画中 = True
                 正在关闭动画 = False
                 展开关闭秒表.Restart()
                 启动展开关闭驱动()
             Else
                 Me.Show()
+                请求重绘()
             End If
+        End Sub
+
+        Friend Sub RefreshFontResources()
+            关闭工具提示()
+            请求重绘()
         End Sub
 
         Friend Sub 开始关闭动画()
@@ -1935,21 +2076,42 @@ Public Class ModernComboBox
         End Sub
 
         Private Sub 启动展开关闭驱动()
-            If _useIdle Then
-                AddHandler Application.Idle, AddressOf 展开关闭帧更新
-            Else
-                AddHandler 展开关闭计时器.Tick, AddressOf 展开关闭帧更新
-                展开关闭计时器.Start()
-            End If
+            设置动画驱动(展开关闭计时器, AddressOf 展开关闭帧更新, True)
         End Sub
 
         Private Sub 停止展开关闭驱动()
+            设置动画驱动(展开关闭计时器, AddressOf 展开关闭帧更新, False)
+        End Sub
+
+        Private Sub 设置动画驱动(timer As Timer, handler As EventHandler, enabled As Boolean)
             If _useIdle Then
-                RemoveHandler Application.Idle, AddressOf 展开关闭帧更新
-            Else
-                展开关闭计时器.Stop()
-                RemoveHandler 展开关闭计时器.Tick, AddressOf 展开关闭帧更新
+                If enabled Then
+                    AddHandler Application.Idle, handler
+                Else
+                    RemoveHandler Application.Idle, handler
+                End If
+                Return
             End If
+            If enabled Then
+                AddHandler timer.Tick, handler
+                timer.Start()
+            Else
+                timer.Stop()
+                RemoveHandler timer.Tick, handler
+            End If
+        End Sub
+
+        Private Sub SetBoundsAndRender(location As Point, size As Size)
+            If size.Width <= 0 OrElse size.Height <= 0 Then Return
+            _suppressBoundsRender = True
+            Try
+                If Me.Location <> location OrElse Me.Size <> size Then
+                    SetBounds(location.X, location.Y, size.Width, size.Height)
+                End If
+            Finally
+                _suppressBoundsRender = False
+            End Try
+            请求重绘()
         End Sub
 
         Friend Sub 关闭并释放()
@@ -1958,6 +2120,7 @@ Public Class ModernComboBox
             停止展开关闭驱动()
             If 展开关闭计时器 IsNot Nothing Then 展开关闭计时器.Dispose()
             If 悬停计时器 IsNot Nothing Then 悬停计时器.Dispose()
+            ReleaseLayeredRenderResources()
             Application.RemoveMessageFilter(Me)
             If Not IsDisposed Then Close()
         End Sub
@@ -1970,8 +2133,7 @@ Public Class ModernComboBox
                 If 正在关闭动画 Then
                     完成关闭()
                 Else
-                    Me.Location = _originPt
-                    Me.Size = New Size(Me.Width, _finalHeight)
+                    SetBoundsAndRender(_originPt, New Size(Me.Width, _finalHeight))
                 End If
                 Return
             End If
@@ -1979,32 +2141,32 @@ Public Class ModernComboBox
             Dim elapsed As Double = 展开关闭秒表.Elapsed.TotalMilliseconds
             Dim t As Single = CSng(Math.Min(elapsed / duration, 1.0))
             Dim eased As Single = 1.0F - CSng(Math.Pow(1.0 - t, 3))
+            Dim targetLocation As Point = Me.Location
+            Dim targetSize As Size = Me.Size
 
             If _overlayMode Then
                 If 正在关闭动画 Then
                     Dim curTopY As Integer = CInt(_originPt.Y + (_closeCenterScreenY - _originPt.Y) * eased)
                     Dim curH As Integer = Math.Max(1, CInt(_finalHeight * (1.0F - eased)))
-                    Me.Location = New Point(_originPt.X, curTopY)
-                    Me.Size = New Size(Me.Width, curH)
+                    targetLocation = New Point(_originPt.X, curTopY)
+                    targetSize = New Size(Me.Width, curH)
                 Else
                     Dim topDist As Integer = _alignItemScreenY - _originPt.Y
                     Dim bottomDist As Integer = _finalHeight - topDist
                     Dim curTop As Integer = CInt(topDist * eased)
                     Dim curBottom As Integer = CInt(bottomDist * eased)
                     Dim curH As Integer = Math.Max(1, curTop + curBottom)
-                    Me.Location = New Point(_originPt.X, _alignItemScreenY - curTop)
-                    Me.Size = New Size(Me.Width, curH)
+                    targetLocation = New Point(_originPt.X, _alignItemScreenY - curTop)
+                    targetSize = New Size(Me.Width, curH)
                 End If
             Else
                 If 正在关闭动画 Then
-                    Dim newH As Integer = Math.Max(1, CInt(_finalHeight * (1.0F - eased)))
-                    Me.Size = New Size(Me.Width, newH)
+                    targetSize = New Size(Me.Width, Math.Max(1, CInt(_finalHeight * (1.0F - eased))))
                 Else
-                    Dim newH As Integer = Math.Max(1, CInt(_finalHeight * eased))
-                    Me.Size = New Size(Me.Width, newH)
+                    targetSize = New Size(Me.Width, Math.Max(1, CInt(_finalHeight * eased)))
                 End If
             End If
-            Invalidate()
+            SetBoundsAndRender(targetLocation, targetSize)
 
             If t >= 1.0F Then
                 停止展开关闭驱动()
@@ -2012,9 +2174,10 @@ Public Class ModernComboBox
                 If 正在关闭动画 Then
                     完成关闭()
                 Else
-                    Me.Location = _originPt
-                    Me.Size = New Size(Me.Width, _finalHeight)
-                    Invalidate()
+                    Dim finalSize As New Size(Me.Width, _finalHeight)
+                    If Me.Location <> _originPt OrElse Me.Size <> finalSize Then
+                        SetBoundsAndRender(_originPt, finalSize)
+                    End If
                 End If
             End If
         End Sub
@@ -2041,6 +2204,29 @@ Public Class ModernComboBox
         End Function
 
         Protected Overrides Sub OnPaint(e As PaintEventArgs)
+            RenderLayeredDropDown()
+        End Sub
+
+        Protected Overrides Sub OnSizeChanged(e As EventArgs)
+            MyBase.OnSizeChanged(e)
+            If Not _suppressBoundsRender Then 请求重绘()
+        End Sub
+
+        Protected Overrides Sub OnLocationChanged(e As EventArgs)
+            MyBase.OnLocationChanged(e)
+            If Not _suppressBoundsRender Then 请求重绘()
+        End Sub
+
+        Private Sub 请求重绘()
+            If IsDisposed OrElse Disposing Then Return
+            If IsHandleCreated Then
+                RenderLayeredDropDown()
+            Else
+                MyBase.Invalidate()
+            End If
+        End Sub
+
+        Private Sub RenderLayeredDropDown()
             Dim w As Integer = ClientRectangle.Width
             Dim h As Integer = ClientRectangle.Height
             If w <= 0 OrElse h <= 0 Then Return
@@ -2052,134 +2238,223 @@ Public Class ModernComboBox
                 boundsRect.Inflate(-half, -half)
             End If
 
-            Dim ssaa As Integer = Math.Max(1, CInt(_owner.超采样倍率))
-            If Class1.GlobalSSAA <> Class1.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(Class1.GlobalSSAA))
+            If _scrollBarVisible Then
+                _scrollBar.ComputeLayout(w, h, bw, 0,
+                    _owner.下拉内边距.Top, _owner.下拉内边距.Bottom,
+                    _owner.下拉滚动条宽度,
+                    _owner._items.Count, Math.Min(_owner._items.Count, _owner.最大下拉项数), _scrollOffset)
+            End If
 
-            Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
-                If scope Is Nothing Then Return
-                Dim gRT As ID2D1RenderTarget = scope.GraphicsLayer
-                DrawDropDownBackground_D2D(gRT, boundsRect, bw, w, h)
-                DrawDropDownItemsBackground_D2D(gRT, w, h)
-                scope.FlushGraphics()
+            If Not EnsureLayeredRenderSurface(w, Math.Max(h, _finalHeight)) Then Return
 
-                Dim dcRT As ID2D1DCRenderTarget = scope.DCRenderTarget
-                DrawDropDownItemsText_D2D(dcRT, w, h)
-                If _scrollBarVisible Then
-                    _scrollBar.ComputeLayout(w, h, bw, 0,
-                        _owner.下拉内边距.Top, _owner.下拉内边距.Bottom,
-                        _owner.下拉滚动条宽度,
-                        _owner._items.Count, Math.Min(_owner._items.Count, _owner.最大下拉项数), _scrollOffset)
-                    _scrollBar.Draw_D2D(dcRT, w, h, bw, 0,
-                        _owner.下拉滚动条宽度,
-                        _owner.下拉滚动条轨道颜色, _owner.下拉滚动条颜色, _owner.下拉滚动条悬停颜色)
+            Dim began As Boolean = False
+            Try
+                _layeredRenderTarget.BindDC(_layeredMemDC, New Vortice.RawRect(0, 0, w, h))
+                _layeredRenderTarget.BeginDraw()
+                began = True
+                D2DHelper.ApplyGlobalQuality(_layeredRenderTarget)
+                _layeredRenderTarget.Transform = Matrix3x2.Identity
+                _layeredRenderTarget.Clear(New Vortice.Mathematics.Color4(0.0F, 0.0F, 0.0F, 0.0F))
+
+                DrawDropDownBackground_D2D(_layeredRenderTarget, boundsRect, bw, w, h)
+                DrawDropDownItems_D2D(_layeredRenderTarget, w, h, New DropDownLayout(Me, w))
+                DrawDropDownScrollBar_D2D(_layeredRenderTarget, w, h, bw)
+            Finally
+                If began Then _layeredRenderTarget.EndDraw()
+            End Try
+
+            NormalizeLayeredAlpha(w, h)
+            ApplyLayeredBuffer(Location, Size)
+        End Sub
+
+        Private Function EnsureLayeredRenderSurface(w As Integer, h As Integer) As Boolean
+            If w <= 0 OrElse h <= 0 Then Return False
+            If _layeredMemDC <> IntPtr.Zero AndAlso _layeredBitmap <> IntPtr.Zero AndAlso
+               _layeredBufferSize.Width = w AndAlso _layeredBufferSize.Height >= h Then
+                If _layeredRenderTarget Is Nothing Then _layeredRenderTarget = CreateLayeredRenderTarget()
+                Return _layeredRenderTarget IsNot Nothing
+            End If
+
+            ReleaseLayeredRenderResources()
+
+            Dim screenDC As IntPtr = GetDC(IntPtr.Zero)
+            Try
+                _layeredMemDC = CreateCompatibleDC(screenDC)
+
+                Dim bmi As New BITMAPINFO With {
+                    .Header = New BITMAPINFOHEADER With {
+                        .biSize = CUInt(Marshal.SizeOf(GetType(BITMAPINFOHEADER))),
+                        .biWidth = w,
+                        .biHeight = -h,
+                        .biPlanes = 1,
+                        .biBitCount = 32,
+                        .biCompression = BI_RGB
+                    }
+                }
+                _layeredBitmap = CreateDIBSection(screenDC, bmi, DIB_RGB_COLORS, _layeredBits, IntPtr.Zero, 0UI)
+                If _layeredMemDC = IntPtr.Zero OrElse _layeredBitmap = IntPtr.Zero Then
+                    ReleaseLayeredRenderResources()
+                    Return False
                 End If
-            End Using
+
+                _layeredPrevBitmap = SelectObject(_layeredMemDC, _layeredBitmap)
+                _layeredBufferSize = New Size(w, h)
+                _layeredRenderTarget = CreateLayeredRenderTarget()
+                Return _layeredRenderTarget IsNot Nothing
+            Finally
+                ReleaseDC(IntPtr.Zero, screenDC)
+            End Try
+        End Function
+
+        Private Shared Function CreateLayeredRenderTarget() As ID2D1DCRenderTarget
+            Dim props As New RenderTargetProperties(
+                RenderTargetType.Default,
+                New Vortice.DCommon.PixelFormat(Vortice.DXGI.Format.B8G8R8A8_UNorm, Vortice.DCommon.AlphaMode.Premultiplied),
+                96.0F, 96.0F,
+                RenderTargetUsage.None,
+                Vortice.Direct2D1.FeatureLevel.Default)
+            Return D2DHelper.GetD2DFactory().CreateDCRenderTarget(props)
+        End Function
+
+        Private Sub ReleaseLayeredRenderResources()
+            If _layeredRenderTarget IsNot Nothing Then
+                Try : _layeredRenderTarget.Dispose() : Catch : End Try
+                _layeredRenderTarget = Nothing
+            End If
+            _scrollBar.DisposeBrushes()
+            If _layeredMemDC <> IntPtr.Zero AndAlso _layeredPrevBitmap <> IntPtr.Zero Then
+                SelectObject(_layeredMemDC, _layeredPrevBitmap)
+                _layeredPrevBitmap = IntPtr.Zero
+            End If
+            If _layeredBitmap <> IntPtr.Zero Then
+                DeleteObject(_layeredBitmap)
+                _layeredBitmap = IntPtr.Zero
+            End If
+            If _layeredMemDC <> IntPtr.Zero Then
+                DeleteDC(_layeredMemDC)
+                _layeredMemDC = IntPtr.Zero
+            End If
+            _layeredBits = IntPtr.Zero
+            _layeredBufferSize = Size.Empty
+            _layeredPixels = Array.Empty(Of Integer)()
+        End Sub
+
+        Private Sub NormalizeLayeredAlpha(w As Integer, h As Integer)
+            If _layeredBits = IntPtr.Zero OrElse w <= 0 OrElse h <= 0 Then Return
+            Dim count As Integer = w * h
+            If _layeredPixels.Length < count Then ReDim _layeredPixels(count - 1)
+            Marshal.Copy(_layeredBits, _layeredPixels, 0, count)
+
+            Dim minAlpha As UInteger = CUInt(_owner.下拉背景颜色.A)
+            For i As Integer = 0 To count - 1
+                Dim px As UInteger = ToUnsignedArgb(_layeredPixels(i))
+                Dim alpha As UInteger = (px >> 24) And &HFFUI
+                If minAlpha > 0UI AndAlso alpha < minAlpha Then
+                    _layeredPixels(i) = ToSignedArgb((px And &HFFFFFFUI) Or (minAlpha << 24))
+                ElseIf alpha = 0UI AndAlso (px And &HFFFFFFUI) <> 0UI Then
+                    _layeredPixels(i) = ToSignedArgb((px And &HFFFFFFUI) Or &HFF000000UI)
+                End If
+            Next
+
+            Marshal.Copy(_layeredPixels, 0, _layeredBits, count)
+        End Sub
+
+        Private Shared Function ToUnsignedArgb(value As Integer) As UInteger
+            Dim result As UInteger = CUInt(value And &H7FFFFFFF)
+            If value < 0 Then result = result Or &H80000000UI
+            Return result
+        End Function
+
+        Private Shared Function ToSignedArgb(value As UInteger) As Integer
+            If (value And &H80000000UI) <> 0UI Then
+                Return CInt(value And &H7FFFFFFFUI) Or Integer.MinValue
+            End If
+            Return CInt(value)
+        End Function
+
+        Private Sub ApplyLayeredBuffer(position As Point, bmpSize As Size)
+            If Not IsHandleCreated OrElse _layeredMemDC = IntPtr.Zero OrElse bmpSize.Width <= 0 OrElse bmpSize.Height <= 0 Then Return
+            Dim screenDC As IntPtr = GetDC(IntPtr.Zero)
+
+            Try
+                Dim ptDst As New W32Point With {.X = position.X, .Y = position.Y}
+                Dim sz As New W32Size With {.Width = bmpSize.Width, .Height = bmpSize.Height}
+                Dim ptSrc As New W32Point()
+                Dim blend As New BLENDFUNCTION With {
+                    .BlendOp = AC_SRC_OVER,
+                    .BlendFlags = 0,
+                    .SourceConstantAlpha = 255,
+                    .AlphaFormat = AC_SRC_ALPHA
+                }
+                UpdateLayeredWindow(Me.Handle, screenDC, ptDst, sz, _layeredMemDC, ptSrc, 0, blend, ULW_ALPHA)
+            Finally
+                ReleaseDC(IntPtr.Zero, screenDC)
+            End Try
         End Sub
 
         Private Sub DrawDropDownBackground_D2D(rt As ID2D1RenderTarget, boundsRect As RectangleF, bw As Integer, w As Integer, h As Integer)
-            ' 整体背景填充
-            Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(_owner.下拉背景颜色))
-                rt.FillRectangle(New Vortice.Mathematics.Rect(0, 0, w, h), br)
-            End Using
-            If bw > 0 Then
+            If _owner.下拉背景颜色.A > 0 Then
+                Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(_owner.下拉背景颜色))
+                    rt.FillRectangle(New Vortice.Mathematics.Rect(0, 0, w, h), br)
+                End Using
+            End If
+            If bw > 0 AndAlso _owner.下拉边框颜色.A > 0 Then
                 RectangleRenderer.绘制矩形边框_D2D(rt, boundsRect, _owner.下拉边框颜色, bw)
             End If
         End Sub
 
-        Private Sub DrawDropDownItemsBackground_D2D(rt As ID2D1RenderTarget, w As Integer, h As Integer)
+        Private Sub DrawDropDownItems_D2D(rt As ID2D1RenderTarget, w As Integer, h As Integer, layout As DropDownLayout)
             Dim s As Single = _owner.DpiScale()
-            Dim bw As Integer = CInt(_owner.下拉边框宽度 * s)
-            Dim pad As Padding = _owner.下拉内边距
-            Dim inset As Integer = Math.Max(bw, 1)
-            Dim rightCorr As Integer = If(bw >= 2, 1, 0)
-            Dim scrollW As Integer = If(_scrollBarVisible, _scrollBar.GetReservedWidth(w, inset), 0)
-            Dim itemH As Integer = CInt(_owner.下拉项高度 * s)
-            Dim visCount As Integer = Math.Min(_owner._items.Count, _owner.最大下拉项数)
-
-            Dim clipRect As New RectangleF(inset, inset, w - inset * 2 - rightCorr - scrollW, h - inset * 2)
+            Dim hoverBrush = If(_owner.下拉悬停颜色.A > 0, rt.CreateSolidColorBrush(D2DHelper.ToColor4(_owner.下拉悬停颜色)), Nothing)
+            Dim selectedBrush = If(_owner.下拉选中颜色.A > 0, rt.CreateSolidColorBrush(D2DHelper.ToColor4(_owner.下拉选中颜色)), Nothing)
+            Dim clipRect As RectangleF = layout.ClipRect(w, h)
             rt.PushAxisAlignedClip(New Vortice.RawRectF(clipRect.X, clipRect.Y, clipRect.Right, clipRect.Bottom), AntialiasMode.PerPrimitive)
             Try
-                Dim hlL As Integer = inset - _owner.下拉高亮左侧偏移
-                Dim hlR As Integer = inset + rightCorr - _owner.下拉高亮右侧偏移
-                If _owner.下拉高亮兼容内边距 Then
-                    hlL += pad.Left
-                    hlR += pad.Right
+                If 悬停动画显示 AndAlso hoverBrush IsNot Nothing Then
+                    Dim highlightRect As New RectangleF(layout.HlL, 悬停动画当前Y, w - layout.HlL - layout.HlR - layout.ScrollW, 悬停动画当前高度)
+                    rt.FillRectangle(D2DHelper.ToD2DRect(highlightRect), hoverBrush)
                 End If
 
-                If 悬停动画显示 Then
-                    Dim highlightRect As New RectangleF(hlL, 悬停动画当前Y, w - hlL - hlR - scrollW, 悬停动画当前高度)
-                    Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(_owner.下拉悬停颜色))
-                        rt.FillRectangle(D2DHelper.ToD2DRect(highlightRect), br)
-                    End Using
-                End If
-
-                For i As Integer = 0 To visCount - 1
+                For i As Integer = 0 To layout.VisCount - 1
                     Dim idx As Integer = i + _scrollOffset
                     If idx >= _owner._items.Count Then Exit For
-                    Dim itemY As Integer = bw + pad.Top + i * itemH
-                    Dim itemRect As New RectangleF(hlL, itemY, w - hlL - hlR - scrollW, itemH)
+                    Dim itemRect As RectangleF = layout.ItemRect(w, i)
 
-                    If idx = _owner._selectedIndex Then
-                        Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(_owner.下拉选中颜色))
-                            rt.FillRectangle(D2DHelper.ToD2DRect(itemRect), br)
-                        End Using
-                    ElseIf idx = _hoverIndex AndAlso Not 悬停动画显示 Then
-                        Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(_owner.下拉悬停颜色))
-                            rt.FillRectangle(D2DHelper.ToD2DRect(itemRect), br)
-                        End Using
+                    If idx = _owner._selectedIndex AndAlso selectedBrush IsNot Nothing Then
+                        rt.FillRectangle(D2DHelper.ToD2DRect(itemRect), selectedBrush)
+                    ElseIf idx = _hoverIndex AndAlso Not 悬停动画显示 AndAlso hoverBrush IsNot Nothing Then
+                        rt.FillRectangle(D2DHelper.ToD2DRect(itemRect), hoverBrush)
                     End If
+
+                    DrawSingleLineText_D2D(rt, _owner._items(idx), _owner.Font, _owner.ForeColor,
+                        layout.TextRect(itemRect), s, True)
                 Next
             Finally
                 rt.PopAxisAlignedClip()
+                If hoverBrush IsNot Nothing Then hoverBrush.Dispose()
+                If selectedBrush IsNot Nothing Then selectedBrush.Dispose()
             End Try
         End Sub
 
-        Private Sub DrawDropDownItemsText_D2D(rt As ID2D1RenderTarget, w As Integer, h As Integer)
-            Dim s As Single = _owner.DpiScale()
-            Dim bw As Integer = CInt(_owner.下拉边框宽度 * s)
-            Dim pad As Padding = _owner.下拉内边距
-            Dim inset As Integer = Math.Max(bw, 1)
-            Dim rightCorr As Integer = If(bw >= 2, 1, 0)
-            Dim scrollW As Integer = If(_scrollBarVisible, _scrollBar.GetReservedWidth(w, inset), 0)
-            Dim itemH As Integer = CInt(_owner.下拉项高度 * s)
-            Dim visCount As Integer = Math.Min(_owner._items.Count, _owner.最大下拉项数)
-
-            Dim hlL As Integer = inset - _owner.下拉高亮左侧偏移
-            Dim hlR As Integer = inset + rightCorr - _owner.下拉高亮右侧偏移
-            If _owner.下拉高亮兼容内边距 Then
-                hlL += pad.Left
-                hlR += pad.Right
-            End If
-
-            PushClip_D2D(rt, New RectangleF(inset, inset, w - inset * 2 - rightCorr - scrollW, h - inset * 2))
-            For i As Integer = 0 To visCount - 1
-                Dim idx As Integer = i + _scrollOffset
-                If idx >= _owner._items.Count Then Exit For
-                Dim itemY As Integer = bw + pad.Top + i * itemH
-                Dim itemRect As New RectangleF(hlL, itemY, w - hlL - hlR - scrollW, itemH)
-                Dim textRect As New RectangleF(itemRect.X + pad.Left + 4, itemRect.Y, itemRect.Width - pad.Left - pad.Right - 8, itemRect.Height)
-                DrawSingleLineText_D2D(rt, _owner._items(idx), _owner.Font, _owner.ForeColor, textRect, s, True)
-            Next
-            rt.PopAxisAlignedClip()
+        Private Sub DrawDropDownScrollBar_D2D(rt As ID2D1RenderTarget, w As Integer, h As Integer, bw As Integer)
+            If Not _scrollBarVisible OrElse _scrollBar.TrackRect.IsEmpty Then Return
+            _scrollBar.Draw_D2D(rt, w, h, bw, 0, _owner.下拉滚动条宽度,
+                _owner.下拉滚动条轨道颜色,
+                _owner.下拉滚动条颜色,
+                _owner.下拉滚动条悬停颜色)
         End Sub
 
         Private Function GetItemIndexAtY(y As Integer) As Integer
-            Dim s As Single = _owner.DpiScale()
-            Dim bw As Integer = CInt(_owner.下拉边框宽度 * s)
-            Dim itemH As Integer = CInt(_owner.下拉项高度 * s)
-            Dim idx As Integer = (y - bw - _owner.下拉内边距.Top) \ itemH + _scrollOffset
+            Dim layout As New DropDownLayout(Me, ClientRectangle.Width)
+            Dim idx As Integer = (y - layout.Bw - layout.Pad.Top) \ layout.ItemH + _scrollOffset
             If idx < 0 OrElse idx >= _owner._items.Count Then Return -1
             Return idx
         End Function
 
         Private Function GetItemRect(index As Integer) As RectangleF
-            Dim s As Single = _owner.DpiScale()
-            Dim bw As Integer = CInt(_owner.下拉边框宽度 * s)
-            Dim pad As Padding = _owner.下拉内边距
-            Dim itemH As Integer = CInt(_owner.下拉项高度 * s)
-            Dim visIdx As Integer = index - _scrollOffset
-            Dim itemY As Single = bw + pad.Top + visIdx * itemH
-            Return New RectangleF(0, itemY, ClientRectangle.Width, itemH)
+            Dim layout As New DropDownLayout(Me, ClientRectangle.Width)
+            Return New RectangleF(0, layout.Bw + layout.Pad.Top + (index - _scrollOffset) * layout.ItemH,
+                ClientRectangle.Width, layout.ItemH)
         End Function
 
         Private Sub 更新悬停动画()
@@ -2208,12 +2483,7 @@ Public Class ModernComboBox
                 悬停秒表.Restart()
                 If Not 悬停动画中 Then
                     悬停动画中 = True
-                    If _useIdle Then
-                        AddHandler Application.Idle, AddressOf 悬停帧更新
-                    Else
-                        AddHandler 悬停计时器.Tick, AddressOf 悬停帧更新
-                        悬停计时器.Start()
-                    End If
+                    设置动画驱动(悬停计时器, AddressOf 悬停帧更新, True)
                 End If
             Else
                 悬停动画显示 = False
@@ -2227,7 +2497,7 @@ Public Class ModernComboBox
                 悬停动画当前Y = 悬停动画目标Y
                 悬停动画当前高度 = 悬停动画目标高度
                 停止悬停动画()
-                Invalidate()
+                请求重绘()
                 Return
             End If
 
@@ -2242,18 +2512,13 @@ Public Class ModernComboBox
                 悬停动画当前高度 = 悬停动画目标高度
                 停止悬停动画()
             End If
-            Invalidate()
+            请求重绘()
         End Sub
 
         Private Sub 停止悬停动画()
             If 悬停动画中 Then
                 悬停动画中 = False
-                If _useIdle Then
-                    RemoveHandler Application.Idle, AddressOf 悬停帧更新
-                Else
-                    悬停计时器.Stop()
-                    RemoveHandler 悬停计时器.Tick, AddressOf 悬停帧更新
-                End If
+                设置动画驱动(悬停计时器, AddressOf 悬停帧更新, False)
                 悬停秒表.Stop()
             End If
         End Sub
@@ -2264,18 +2529,18 @@ Public Class ModernComboBox
                 Dim total As Integer = _owner._items.Count
                 Dim vis As Integer = Math.Min(total, _owner.最大下拉项数)
                 _scrollOffset = _scrollBar.DragMove(e.Y, total, vis)
-                Invalidate()
+                请求重绘()
                 Return
             End If
             If _scrollBarVisible Then
-                If _scrollBar.UpdateHover(e.Location) Then Invalidate()
+                If _scrollBar.UpdateHover(e.Location) Then 请求重绘()
             End If
             Dim idx As Integer = GetItemIndexAtY(e.Y)
             If idx <> _hoverIndex Then
                 _hoverIndex = idx
                 更新悬停动画()
                 更新工具提示()
-                Invalidate()
+                请求重绘()
             End If
         End Sub
 
@@ -2288,7 +2553,7 @@ Public Class ModernComboBox
                 Dim newOff As Integer = _scrollBar.TrackClick(e.Location, _scrollOffset, total, vis)
                 If newOff <> _scrollOffset Then
                     _scrollOffset = newOff
-                    Invalidate()
+                    请求重绘()
                     Return
                 End If
             End If
@@ -2311,9 +2576,9 @@ Public Class ModernComboBox
                 _hoverIndex = -1
                 更新悬停动画()
                 关闭工具提示()
-                Invalidate()
+                请求重绘()
             End If
-            If _scrollBar.ResetHover() Then Invalidate()
+            If _scrollBar.ResetHover() Then 请求重绘()
         End Sub
 
         Protected Overrides Sub OnMouseWheel(e As MouseEventArgs)
@@ -2323,7 +2588,7 @@ Public Class ModernComboBox
             Dim vis As Integer = Math.Min(total, _owner.最大下拉项数)
             _scrollOffset = ScrollBarRenderer.HandleWheel(e.Delta, _scrollOffset, total, vis)
             关闭工具提示()
-            Invalidate()
+            请求重绘()
         End Sub
 
         Private _tipForm As ToolTipForm = Nothing
@@ -2636,8 +2901,12 @@ Public Class ModernComboBox
     End Sub
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
+        If _dropDownForm IsNot Nothing AndAlso Not _dropDownForm.IsDisposed Then
+            _dropDownForm.RefreshFontResources()
+        End If
         MyBase.OnFontChanged(e)
-        Invalidate()
+        EnsureCaretVisible()
+        D2DHelperV2.RefreshFontDependentRendering(Me)
     End Sub
 
     Protected Overrides Sub OnMouseWheel(e As MouseEventArgs)

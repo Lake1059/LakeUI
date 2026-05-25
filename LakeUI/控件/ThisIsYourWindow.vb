@@ -400,9 +400,14 @@ Public Class ThisIsYourWindow
         If frm Is Nothing Then Return
         Dim s = 查找状态(frm)
         If s Is Nothing Then Return
-        ' 注意：TextFormatCache 以 (family, weight, style, sizePx, ...) 为键，新字体只是新键，
-        ' 旧键仍占内存；但标题字体一般不会频繁变化，无需主动 Invalidate。这里只触发重绘。
-        InvalidateCaption(frm)
+        D2DHelperV2.InvalidateTextFormatCache(frm)
+        InvalidateCaption(frm, True)
+    End Sub
+
+    Private Sub 使标题字体资源失效()
+        For Each s In _forms.Values
+            If s?.HostForm IsNot Nothing Then D2DHelperV2.InvalidateTextFormatCache(s.HostForm)
+        Next
     End Sub
 
     Private Sub 更新窗口内边距(s As PerFormState)
@@ -622,7 +627,9 @@ Public Class ThisIsYourWindow
             Return _标题文字字体
         End Get
         Set(value As Font)
-            _标题文字字体 = value : 通知重绘()
+            _标题文字字体 = value
+            使标题字体资源失效()
+            通知重绘()
         End Set
     End Property
 
@@ -1259,19 +1266,19 @@ Public Class ThisIsYourWindow
     End Property
 
     Private _毛玻璃模糊次数 As Integer = 3
-    <Category("LakeUI - Backdrop"), Description("box blur 通过次数（1=方框, 3≈高斯）。"), DefaultValue(3)>
+    <Category("LakeUI - Backdrop"), Description("box blur 通过次数（0=不模糊，直出源图后仅叠加 Tint；1=方框，3≈高斯）。"), DefaultValue(3)>
     Public Property BackdropBlurPasses As Integer
         Get
             Return _毛玻璃模糊次数
         End Get
         Set(value As Integer)
-            _毛玻璃模糊次数 = Math.Max(1, Math.Min(5, value))
+            _毛玻璃模糊次数 = Math.Max(0, Math.Min(5, value))
             应用毛玻璃参数()
         End Set
     End Property
 
     Private _毛玻璃下采样 As Integer = 4
-    <Category("LakeUI - Backdrop"), Description("下采样倍率（建议 1/2/4/6/8，越大越快越糊）。"), DefaultValue(4)>
+    <Category("LakeUI - Backdrop"), Description("下采样倍率（建议 1/2/4/6/8，越大越快越糊；BackdropBlurPasses=0 时忽略）。"), DefaultValue(4)>
     Public Property BackdropDownsampleFactor As Integer
         Get
             Return _毛玻璃下采样
@@ -1716,7 +1723,7 @@ Public Class ThisIsYourWindow
                 _共享画刷.Color = tint
                 g.FillRectangle(_共享画刷, backdropRect)
             End If
-            If _毛玻璃噪点不透明度 > 0 Then
+            If _毛玻璃模糊次数 > 0 AndAlso _毛玻璃噪点不透明度 > 0 Then
                 s.Renderer.DrawNoise(g, backdropRect, _毛玻璃噪点不透明度)
             End If
         End If

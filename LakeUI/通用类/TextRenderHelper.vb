@@ -45,11 +45,7 @@ Friend Module TextRenderHelper
     ''' <summary>使用 DirectWrite 创建一个 TextFormat（调用方负责 Dispose）。</summary>
     Friend Function CreateDWriteTextFormat(font As Font, dpiScale As Single) As Vortice.DirectWrite.IDWriteTextFormat
         Dim sizePx As Single = font.SizeInPoints * (96.0F / 72.0F) * dpiScale
-        Dim weight As Vortice.DirectWrite.FontWeight = If(font.Bold, Vortice.DirectWrite.FontWeight.Bold, Vortice.DirectWrite.FontWeight.Normal)
-        Dim style As Vortice.DirectWrite.FontStyle = If(font.Italic, Vortice.DirectWrite.FontStyle.Italic, Vortice.DirectWrite.FontStyle.Normal)
-        Return D2DHelper.GetDWriteFactory().CreateTextFormat(
-            font.FontFamily.Name, Nothing, weight, style,
-            Vortice.DirectWrite.FontStretch.Normal, sizePx)
+        Return D2DHelper.CreateTextFormat(font, sizePx)
     End Function
 
     ''' <summary>使用 DirectWrite 测量单行文本宽度（像素）。</summary>
@@ -66,6 +62,29 @@ Friend Module TextRenderHelper
     ''' <summary>使用 DirectWrite 命中测试，根据 X 坐标返回最近字符列索引（基于 TextLayout 二分测量）。</summary>
     Friend Function FindColFromX_D2D(lineStr As String, x As Single, font As Font, dpiScale As Single) As Integer
         If String.IsNullOrEmpty(lineStr) OrElse x <= 0 Then Return 0
+        Dim n As Integer = lineStr.Length
+        Try
+            Using fmt = CreateDWriteTextFormat(font, dpiScale)
+                fmt.WordWrapping = Vortice.DirectWrite.WordWrapping.NoWrap
+                Using layout = D2DHelper.GetDWriteFactory().CreateTextLayout(lineStr, fmt, Single.MaxValue, Single.MaxValue)
+                    If x >= layout.Metrics.WidthIncludingTrailingWhitespace Then Return n
+
+                    Dim trailing As SharpGen.Runtime.RawBool = False
+                    Dim inside As SharpGen.Runtime.RawBool = False
+                    Dim hit As Vortice.DirectWrite.HitTestMetrics
+                    layout.HitTestPoint(x, 0.0F, trailing, inside, hit)
+
+                    Dim col As Integer = CInt(hit.TextPosition)
+                    If CBool(trailing) Then col += Math.Max(1, CInt(hit.Length))
+                    Return Math.Max(0, Math.Min(n, col))
+                End Using
+            End Using
+        Catch
+            Return FindColFromX_D2DByMeasure(lineStr, x, font, dpiScale)
+        End Try
+    End Function
+
+    Private Function FindColFromX_D2DByMeasure(lineStr As String, x As Single, font As Font, dpiScale As Single) As Integer
         Dim n As Integer = lineStr.Length
         Dim totalW As Single = MeasureTextWidth_D2D(lineStr, font, dpiScale)
         If x >= totalW Then Return n

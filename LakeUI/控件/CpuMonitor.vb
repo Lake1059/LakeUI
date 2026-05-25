@@ -940,7 +940,7 @@ Public Class CpuMonitor
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
         MyBase.OnFontChanged(e)
-        Me.Invalidate()
+        D2DHelperV2.RefreshFontDependentRendering(Me)
     End Sub
 
     Protected Overrides Sub OnForeColorChanged(e As EventArgs)

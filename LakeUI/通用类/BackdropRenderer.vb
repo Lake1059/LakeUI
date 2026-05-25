@@ -176,7 +176,7 @@ Friend NotInheritable Class BackdropRenderer
     Public Sub ApplyParameters(radius As Integer, passes As Integer, downsample As Integer,
                                 parallelism As Integer, noiseScale As Single)
         Volatile.Write(_radius, Math.Max(1, radius))
-        Volatile.Write(_passes, Math.Max(1, Math.Min(5, passes)))
+        Volatile.Write(_passes, Math.Max(0, Math.Min(5, passes)))
         Volatile.Write(_downsample, Math.Max(1, downsample))
         Volatile.Write(_parallelism, Math.Max(1, parallelism))
         _noiseScale = Math.Max(0.1F, noiseScale)
@@ -277,7 +277,8 @@ Friend NotInheritable Class BackdropRenderer
         Dim h As Integer = bounds.Height
         If w < 4 OrElse h < 4 Then Return
 
-        Dim down As Integer = Volatile.Read(_downsample)
+        Dim passes As Integer = Math.Max(0, Volatile.Read(_passes))
+        Dim down As Integer = If(passes <= 0, 1, Volatile.Read(_downsample))
         Dim dw As Integer = Math.Max(2, w \ down)
         Dim dh As Integer = Math.Max(2, h \ down)
 
@@ -360,10 +361,11 @@ Friend NotInheritable Class BackdropRenderer
         End If
 
         ' 3. 模糊
-        Dim radius As Integer = Math.Max(1, Volatile.Read(_radius) \ Math.Max(1, down))
-        Dim passes As Integer = Volatile.Read(_passes)
-        Dim parallelism As Integer = Volatile.Read(_parallelism)
-        BoxBlur(small, radius, passes, parallelism)
+        If passes > 0 Then
+            Dim radius As Integer = Math.Max(1, Volatile.Read(_radius) \ Math.Max(1, down))
+            Dim parallelism As Integer = Volatile.Read(_parallelism)
+            BoxBlur(small, radius, passes, parallelism)
+        End If
 
         ' 4. 平均色（直接对模糊后小图采样取均值，避免再过一次 GDI+ 缩放）
         Dim avg As Integer = ComputeAverage(small)
@@ -417,7 +419,7 @@ Friend NotInheritable Class BackdropRenderer
         If bmp IsNot Nothing AndAlso bmp.Width = w AndAlso bmp.Height = h Then Return bmp
         bmp?.Dispose()
         Try
-            _capturedBitmap = New Bitmap(w, h, PixelFormat.Format32bppArgb)
+            _capturedBitmap = New Bitmap(w, h, PixelFormat.Format32bppRgb)
         Catch
             _capturedBitmap = Nothing
         End Try
@@ -427,7 +429,7 @@ Friend NotInheritable Class BackdropRenderer
 #Region "Box Blur"
 
     Private Sub BoxBlur(bmp As Bitmap, radius As Integer, passes As Integer, parallelism As Integer)
-        If radius < 1 Then Return
+        If radius < 1 OrElse passes < 1 Then Return
         Dim w As Integer = bmp.Width
         Dim h As Integer = bmp.Height
         Dim rect As New Rectangle(0, 0, w, h)
@@ -442,13 +444,27 @@ Friend NotInheritable Class BackdropRenderer
             Dim dst() As Byte = _blurBufferB
             Marshal.Copy(data.Scan0, src, 0, len)
 
-            Dim pOpts As New ParallelOptions With {.MaxDegreeOfParallelism = Math.Max(1, parallelism)}
+            Dim useParallel As Boolean = parallelism > 1 AndAlso (w * h) >= 8192
+            Dim pOpts As ParallelOptions = Nothing
+            If useParallel Then pOpts = New ParallelOptions With {.MaxDegreeOfParallelism = Math.Max(1, parallelism)}
 
             For pass As Integer = 1 To passes
                 ' 水平：src → dst
-                Parallel.For(0, h, pOpts, Sub(y) BoxBlurRowH(src, dst, y, w, stride, radius))
+                If useParallel Then
+                    Parallel.For(0, h, pOpts, Sub(y) BoxBlurRowH(src, dst, y, w, stride, radius))
+                Else
+                    For y As Integer = 0 To h - 1
+                        BoxBlurRowH(src, dst, y, w, stride, radius)
+                    Next
+                End If
                 ' 垂直：dst → src
-                Parallel.For(0, w, pOpts, Sub(x) BoxBlurColV(dst, src, x, h, stride, radius))
+                If useParallel Then
+                    Parallel.For(0, w, pOpts, Sub(x) BoxBlurColV(dst, src, x, h, stride, radius))
+                Else
+                    For x As Integer = 0 To w - 1
+                        BoxBlurColV(dst, src, x, h, stride, radius)
+                    Next
+                End If
             Next
 
             Marshal.Copy(src, 0, data.Scan0, len)
@@ -649,12 +665,12 @@ Friend NotInheritable Class BackdropRenderer
             Dim g As Integer = CInt(sumG \ count)
             Dim b As Integer = CInt(sumB \ count)
             ' 32bppPArgb 是预乘的，反演到非预乘以保持 DeriveBorder/ShadowColor 行为一致
-            If a > 0 AndAlso a < 255 Then
+            If a >= 16 AndAlso a < 255 Then
                 r = Math.Min(255, CInt(r * 255 \ a))
                 g = Math.Min(255, CInt(g * 255 \ a))
                 b = Math.Min(255, CInt(b * 255 \ a))
             End If
-            Return (a << 24) Or (r << 16) Or (g << 8) Or b
+            Return (&HFF << 24) Or (r << 16) Or (g << 8) Or b
         Finally
             bmp.UnlockBits(data)
         End Try
@@ -864,13 +880,36 @@ Friend NotInheritable Class BackdropRenderer
     Public Function DeriveBorderColor(active As Boolean, fallback As Color) As Color
         Dim avg As Color? = GetPublishedAverageColor()
         If Not avg.HasValue Then Return fallback
-        Return Darken(avg.Value, If(active, 0.55, 0.7))
+        Dim c As Color = avg.Value
+        Dim luma As Double = RelativeLuma(c)
+        If luma < 72 Then
+            Return Blend(c, Color.White, If(active, 0.48, 0.34))
+        End If
+        If luma > 205 Then
+            Return Darken(c, If(active, 0.45, 0.58))
+        End If
+        Return Darken(c, If(active, 0.28, 0.42))
     End Function
 
     Public Function DeriveShadowColor(fallback As Color) As Color
         Dim avg As Color? = GetPublishedAverageColor()
         If Not avg.HasValue Then Return fallback
-        Return Darken(avg.Value, 0.75)
+        Dim c As Color = avg.Value
+        Dim luma As Double = RelativeLuma(c)
+        Dim tint As Double = If(luma < 96, 0.5, If(luma > 190, 0.18, 0.3))
+        Return Blend(Color.Black, c, tint)
+    End Function
+
+    Private Shared Function RelativeLuma(c As Color) As Double
+        Return c.R * 0.299 + c.G * 0.587 + c.B * 0.114
+    End Function
+
+    Private Shared Function Blend(a As Color, b As Color, amountB As Double) As Color
+        Dim t As Double = Math.Max(0.0, Math.Min(1.0, amountB))
+        Dim r As Integer = CInt(a.R + (b.R - a.R) * t)
+        Dim g As Integer = CInt(a.G + (b.G - a.G) * t)
+        Dim blue As Integer = CInt(a.B + (b.B - a.B) * t)
+        Return Color.FromArgb(255, r, g, blue)
     End Function
 
     Private Shared Function Darken(c As Color, k As Double) As Color

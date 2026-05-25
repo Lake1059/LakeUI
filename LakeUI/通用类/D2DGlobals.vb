@@ -302,6 +302,235 @@ Public Module D2DHelper
         End Sub
     End Class
 
+    Friend Structure ResolvedTextFont
+        Public Family As String
+        Public Weight As Vortice.DirectWrite.FontWeight
+        Public Style As Vortice.DirectWrite.FontStyle
+        Public Stretch As Vortice.DirectWrite.FontStretch
+    End Structure
+
+    Private Structure FontResolveKey
+        Public FaceName As String
+        Public Weight As Vortice.DirectWrite.FontWeight
+        Public Style As Vortice.DirectWrite.FontStyle
+        Public Stretch As Vortice.DirectWrite.FontStretch
+    End Structure
+
+    Private ReadOnly _fontResolveCache As New Dictionary(Of FontResolveKey, ResolvedTextFont)(16)
+    Private ReadOnly _fontResolveLock As New Object()
+
+    Friend Function ResolveTextFont(font As Font) As ResolvedTextFont
+        If font Is Nothing Then
+            Return CreateFallbackTextFont("", Vortice.DirectWrite.FontWeight.Normal,
+                                          Vortice.DirectWrite.FontStyle.Normal,
+                                          Vortice.DirectWrite.FontStretch.Normal)
+        End If
+
+        Dim familyName As String = If(String.IsNullOrWhiteSpace(font.Name), font.FontFamily.Name, font.Name)
+        Return ResolveTextFont(
+            familyName,
+            If(font.Bold, Vortice.DirectWrite.FontWeight.Bold, Vortice.DirectWrite.FontWeight.Normal),
+            If(font.Italic, Vortice.DirectWrite.FontStyle.Italic, Vortice.DirectWrite.FontStyle.Normal),
+            Vortice.DirectWrite.FontStretch.Normal)
+    End Function
+
+    Friend Function ResolveTextFont(family As String,
+                                    weight As Vortice.DirectWrite.FontWeight,
+                                    style As Vortice.DirectWrite.FontStyle,
+                                    stretch As Vortice.DirectWrite.FontStretch) As ResolvedTextFont
+        Dim fallback = CreateFallbackTextFont(family, weight, style, stretch)
+
+        Dim key As New FontResolveKey With {
+            .FaceName = fallback.Family,
+            .Weight = fallback.Weight,
+            .Style = fallback.Style,
+            .Stretch = fallback.Stretch
+        }
+
+        SyncLock _fontResolveLock
+            Dim cached As ResolvedTextFont = Nothing
+            If _fontResolveCache.TryGetValue(key, cached) Then Return cached
+        End SyncLock
+
+        Dim resolved = ResolveTextFontNameUncached(fallback)
+
+        SyncLock _fontResolveLock
+            _fontResolveCache(key) = resolved
+        End SyncLock
+
+        Return resolved
+    End Function
+
+    Friend Function CreateTextFormat(font As Font, sizePx As Single) As IDWriteTextFormat
+        Return CreateTextFormat(ResolveTextFont(font), sizePx)
+    End Function
+
+    Friend Function CreateTextFormat(family As String,
+                                     weight As Vortice.DirectWrite.FontWeight,
+                                     style As Vortice.DirectWrite.FontStyle,
+                                     stretch As Vortice.DirectWrite.FontStretch,
+                                     sizePx As Single) As IDWriteTextFormat
+        Return CreateTextFormat(ResolveTextFont(family, weight, style, stretch), sizePx)
+    End Function
+
+    Friend Function CreateTextFormat(resolved As ResolvedTextFont, sizePx As Single) As IDWriteTextFormat
+        Return GetDWriteFactory().CreateTextFormat(resolved.Family, Nothing, resolved.Weight,
+                                                   resolved.Style, resolved.Stretch, sizePx)
+    End Function
+
+    Private Function CreateFallbackTextFont(family As String,
+                                            weight As Vortice.DirectWrite.FontWeight,
+                                            style As Vortice.DirectWrite.FontStyle,
+                                            stretch As Vortice.DirectWrite.FontStretch) As ResolvedTextFont
+        Return New ResolvedTextFont With {
+            .Family = If(family, ""),
+            .Weight = If(CInt(weight) <= 0, Vortice.DirectWrite.FontWeight.Normal, weight),
+            .Style = style,
+            .Stretch = If(stretch = Vortice.DirectWrite.FontStretch.Undefined,
+                          Vortice.DirectWrite.FontStretch.Normal, stretch)
+        }
+    End Function
+
+    Private Function ResolveTextFontNameUncached(fallback As ResolvedTextFont) As ResolvedTextFont
+        If String.IsNullOrWhiteSpace(fallback.Family) OrElse DWriteFamilyExists(fallback.Family) Then Return fallback
+
+        Dim candidate As ResolvedTextFont = fallback
+        Dim familyName As String = fallback.Family.Trim()
+        Dim changed As Boolean
+
+        Do
+            changed = ConsumeKnownFontNameSuffix(familyName, candidate)
+        Loop While changed AndAlso familyName.Length > 0
+
+        If familyName.Length > 0 AndAlso
+           Not String.Equals(familyName, fallback.Family, StringComparison.OrdinalIgnoreCase) AndAlso
+           DWriteFamilyExists(familyName) Then
+            candidate.Family = familyName
+            Return candidate
+        End If
+
+        Return fallback
+    End Function
+
+    Private Function ConsumeKnownFontNameSuffix(ByRef familyName As String,
+                                                ByRef resolved As ResolvedTextFont) As Boolean
+        If ConsumeSuffix(familyName, "ExtraBlack") OrElse ConsumeSuffix(familyName, "UltraBlack") OrElse
+           ConsumeSuffix(familyName, "Extra Black") OrElse ConsumeSuffix(familyName, "Ultra Black") Then
+            resolved.Weight = Vortice.DirectWrite.FontWeight.ExtraBlack
+            Return True
+        End If
+        If ConsumeSuffix(familyName, "ExtraBold") OrElse ConsumeSuffix(familyName, "UltraBold") OrElse
+           ConsumeSuffix(familyName, "Extra Bold") OrElse ConsumeSuffix(familyName, "Ultra Bold") Then
+            resolved.Weight = Vortice.DirectWrite.FontWeight.ExtraBold
+            Return True
+        End If
+        If ConsumeSuffix(familyName, "DemiBold") OrElse ConsumeSuffix(familyName, "SemiBold") OrElse
+           ConsumeSuffix(familyName, "Demi Bold") OrElse ConsumeSuffix(familyName, "Semi Bold") Then
+            resolved.Weight = Vortice.DirectWrite.FontWeight.DemiBold
+            Return True
+        End If
+        If ConsumeSuffix(familyName, "ExtraLight") OrElse ConsumeSuffix(familyName, "UltraLight") OrElse
+           ConsumeSuffix(familyName, "Extra Light") OrElse ConsumeSuffix(familyName, "Ultra Light") Then
+            resolved.Weight = Vortice.DirectWrite.FontWeight.ExtraLight
+            Return True
+        End If
+        If ConsumeSuffix(familyName, "SemiLight") OrElse ConsumeSuffix(familyName, "Semi Light") Then
+            resolved.Weight = Vortice.DirectWrite.FontWeight.SemiLight
+            Return True
+        End If
+        If ConsumeSuffix(familyName, "Bold") Then
+            resolved.Weight = Vortice.DirectWrite.FontWeight.Bold
+            Return True
+        End If
+        If ConsumeSuffix(familyName, "Medium") Then
+            resolved.Weight = Vortice.DirectWrite.FontWeight.Medium
+            Return True
+        End If
+        If ConsumeSuffix(familyName, "Regular") OrElse ConsumeSuffix(familyName, "Normal") Then
+            resolved.Weight = Vortice.DirectWrite.FontWeight.Normal
+            Return True
+        End If
+        If ConsumeSuffix(familyName, "Light") Then
+            resolved.Weight = Vortice.DirectWrite.FontWeight.Light
+            Return True
+        End If
+        If ConsumeSuffix(familyName, "Thin") Then
+            resolved.Weight = Vortice.DirectWrite.FontWeight.Thin
+            Return True
+        End If
+        If ConsumeSuffix(familyName, "Black") OrElse ConsumeSuffix(familyName, "Heavy") Then
+            resolved.Weight = Vortice.DirectWrite.FontWeight.Black
+            Return True
+        End If
+        If ConsumeSuffix(familyName, "Italic") Then
+            resolved.Style = Vortice.DirectWrite.FontStyle.Italic
+            Return True
+        End If
+        If ConsumeSuffix(familyName, "Oblique") Then
+            resolved.Style = Vortice.DirectWrite.FontStyle.Oblique
+            Return True
+        End If
+        If ConsumeSuffix(familyName, "UltraCondensed") OrElse ConsumeSuffix(familyName, "Ultra Condensed") Then
+            resolved.Stretch = Vortice.DirectWrite.FontStretch.UltraCondensed
+            Return True
+        End If
+        If ConsumeSuffix(familyName, "ExtraCondensed") OrElse ConsumeSuffix(familyName, "Extra Condensed") Then
+            resolved.Stretch = Vortice.DirectWrite.FontStretch.ExtraCondensed
+            Return True
+        End If
+        If ConsumeSuffix(familyName, "SemiCondensed") OrElse ConsumeSuffix(familyName, "Semi Condensed") Then
+            resolved.Stretch = Vortice.DirectWrite.FontStretch.SemiCondensed
+            Return True
+        End If
+        If ConsumeSuffix(familyName, "Condensed") Then
+            resolved.Stretch = Vortice.DirectWrite.FontStretch.Condensed
+            Return True
+        End If
+        If ConsumeSuffix(familyName, "UltraExpanded") OrElse ConsumeSuffix(familyName, "Ultra Expanded") Then
+            resolved.Stretch = Vortice.DirectWrite.FontStretch.UltraExpanded
+            Return True
+        End If
+        If ConsumeSuffix(familyName, "ExtraExpanded") OrElse ConsumeSuffix(familyName, "Extra Expanded") Then
+            resolved.Stretch = Vortice.DirectWrite.FontStretch.ExtraExpanded
+            Return True
+        End If
+        If ConsumeSuffix(familyName, "SemiExpanded") OrElse ConsumeSuffix(familyName, "Semi Expanded") Then
+            resolved.Stretch = Vortice.DirectWrite.FontStretch.SemiExpanded
+            Return True
+        End If
+        If ConsumeSuffix(familyName, "Expanded") Then
+            resolved.Stretch = Vortice.DirectWrite.FontStretch.Expanded
+            Return True
+        End If
+
+        Return False
+    End Function
+
+    Private Function ConsumeSuffix(ByRef value As String, suffix As String) As Boolean
+        Dim token As String = " " & suffix
+        If Not value.EndsWith(token, StringComparison.OrdinalIgnoreCase) Then
+            token = "-" & suffix
+            If Not value.EndsWith(token, StringComparison.OrdinalIgnoreCase) Then Return False
+        End If
+        value = value.Substring(0, value.Length - token.Length).TrimEnd(" "c, "-"c)
+        Return True
+    End Function
+
+    Private Function DWriteFamilyExists(familyName As String) As Boolean
+        If String.IsNullOrWhiteSpace(familyName) Then Return False
+
+        Dim collection As IDWriteFontCollection = Nothing
+        Try
+            collection = GetDWriteFactory().GetSystemFontCollection(False)
+            Dim index As UInteger = 0
+            Return collection.FindFamilyName(familyName, index)
+        Catch
+            Return False
+        Finally
+            If collection IsNot Nothing Then Try : collection.Dispose() : Catch : End Try
+        End Try
+    End Function
+
     ''' <summary>
     ''' 跨帧复用 <see cref="ID2D1SolidColorBrush"/>。按 (RT 引用, ARGB) 缓存，
     ''' 避免热路径每帧 <c>Using ... CreateSolidColorBrush ... End Using</c> 造成的 D2D 资源分配开销。
@@ -366,6 +595,7 @@ Public Module D2DHelper
             Public Family As String
             Public Weight As Vortice.DirectWrite.FontWeight
             Public Style As Vortice.DirectWrite.FontStyle
+            Public Stretch As Vortice.DirectWrite.FontStretch
             Public SizePx As Single
             Public TextAlign As Vortice.DirectWrite.TextAlignment
             Public ParaAlign As Vortice.DirectWrite.ParagraphAlignment
@@ -379,10 +609,26 @@ Public Module D2DHelper
                               textAlign As Vortice.DirectWrite.TextAlignment,
                               paraAlign As Vortice.DirectWrite.ParagraphAlignment,
                               trimChar As Boolean) As IDWriteTextFormat
+            Return GetResolved(ResolveTextFont(family, weight, style, Vortice.DirectWrite.FontStretch.Normal),
+                               sizePx, textAlign, paraAlign, trimChar)
+        End Function
+
+        Public Function [Get](font As Font, sizePx As Single,
+                              textAlign As Vortice.DirectWrite.TextAlignment,
+                              paraAlign As Vortice.DirectWrite.ParagraphAlignment,
+                              trimChar As Boolean) As IDWriteTextFormat
+            Return GetResolved(ResolveTextFont(font), sizePx, textAlign, paraAlign, trimChar)
+        End Function
+
+        Private Function GetResolved(resolved As ResolvedTextFont, sizePx As Single,
+                                    textAlign As Vortice.DirectWrite.TextAlignment,
+                                    paraAlign As Vortice.DirectWrite.ParagraphAlignment,
+                                    trimChar As Boolean) As IDWriteTextFormat
             Dim k As New Key With {
-                .Family = If(family, ""),
-                .Weight = weight,
-                .Style = style,
+                .Family = If(resolved.Family, ""),
+                .Weight = resolved.Weight,
+                .Style = resolved.Style,
+                .Stretch = resolved.Stretch,
                 .SizePx = sizePx,
                 .TextAlign = textAlign,
                 .ParaAlign = paraAlign,
@@ -390,8 +636,7 @@ Public Module D2DHelper
             }
             Dim fmt As IDWriteTextFormat = Nothing
             If _map.TryGetValue(k, fmt) Then Return fmt
-            fmt = GetDWriteFactory().CreateTextFormat(k.Family, Nothing, weight, style,
-                                                      Vortice.DirectWrite.FontStretch.Normal, sizePx)
+            fmt = CreateTextFormat(resolved, sizePx)
             fmt.TextAlignment = textAlign
             fmt.ParagraphAlignment = paraAlign
             fmt.WordWrapping = WordWrapping.NoWrap
@@ -405,11 +650,15 @@ Public Module D2DHelper
             Return fmt
         End Function
 
-        Public Sub Dispose() Implements IDisposable.Dispose
+        Public Sub Invalidate()
             For Each f In _map.Values
                 Try : f.Dispose() : Catch : End Try
             Next
             _map.Clear()
+        End Sub
+
+        Public Sub Dispose() Implements IDisposable.Dispose
+            Invalidate()
         End Sub
     End Class
 

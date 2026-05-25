@@ -120,6 +120,34 @@ Public Module D2DHelperV2
         End SyncLock
     End Sub
 
+    Public Sub InvalidateTextFormatCache(ctrl As Control)
+        If ctrl Is Nothing OrElse ctrl.IsDisposed Then Return
+        Dim form As Form = If(TypeOf ctrl Is Form, DirectCast(ctrl, Form), ctrl.FindForm())
+        If form Is Nothing OrElse form.IsDisposed Then Return
+
+        SyncLock _compositorsLock
+            Dim comp As WindowCompositor = Nothing
+            If _compositors.TryGetValue(form, comp) Then
+                If comp Is Nothing OrElse comp.IsDisposed Then
+                    _compositors.Remove(form)
+                Else
+                    comp.TextFormatCache.Invalidate()
+                End If
+            End If
+        End SyncLock
+    End Sub
+
+    Public Sub RefreshFontDependentRendering(ctrl As Control, Optional invalidateChildren As Boolean = True, Optional immediate As Boolean = True)
+        InvalidateTextFormatCache(ctrl)
+        If ctrl Is Nothing OrElse ctrl.IsDisposed Then Return
+
+        Try
+            ctrl.Invalidate(ctrl.ClientRectangle, invalidateChildren)
+            If immediate AndAlso ctrl.IsHandleCreated Then ctrl.Update()
+        Catch
+        End Try
+    End Sub
+
 #End Region
 
 #Region "BeginPaint 入口"

@@ -567,7 +567,10 @@ Public Class ExcellentTrackBar
             Return 标签字体
         End Get
         Set(value As Font)
-            SetValue(标签字体, value)
+            If Not EqualityComparer(Of Font).Default.Equals(标签字体, value) Then
+                标签字体 = value
+                D2DHelperV2.RefreshFontDependentRendering(Me)
+            End If
         End Set
     End Property
 
@@ -1163,7 +1166,7 @@ Public Class ExcellentTrackBar
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
         MyBase.OnFontChanged(e)
-        Me.Invalidate()
+        D2DHelperV2.RefreshFontDependentRendering(Me)
     End Sub
 
     Protected Overrides Sub OnResize(e As EventArgs)

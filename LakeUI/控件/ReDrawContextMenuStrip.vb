@@ -215,6 +215,13 @@ Public Class ReDrawContextMenuStrip
         MyBase.OnOpening(e)
     End Sub
 
+    Protected Overrides Sub OnFontChanged(e As EventArgs)
+        MyBase.OnFontChanged(e)
+        _renderer.SyncItems(Me)
+        Invalidate()
+        If IsHandleCreated Then Update()
+    End Sub
+
     Private Class ReDrawContextMenuStripRenderer
         Inherits ToolStripRenderer
 

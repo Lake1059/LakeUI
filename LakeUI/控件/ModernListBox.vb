@@ -2245,8 +2245,10 @@ Public Class ModernListBox
     End Sub
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
+        关闭工具提示()
         MyBase.OnFontChanged(e)
-        Invalidate()
+        校正滚动偏移()
+        D2DHelperV2.RefreshFontDependentRendering(Me)
     End Sub
 
     Protected Overrides Sub OnEnabledChanged(e As EventArgs)

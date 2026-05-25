@@ -1043,6 +1043,14 @@ Public Class ModernPanel
         Me.Invalidate()
     End Sub
 
+    Protected Overrides Sub OnFontChanged(e As EventArgs)
+        MyBase.OnFontChanged(e)
+        _contentSizeDirty = True
+        更新滚动区域()
+        Me.PerformLayout()
+        D2DHelperV2.RefreshFontDependentRendering(Me)
+    End Sub
+
     Protected Overrides Sub OnControlAdded(e As ControlEventArgs)
         MyBase.OnControlAdded(e)
         If e.Control.Dock = DockStyle.None Then

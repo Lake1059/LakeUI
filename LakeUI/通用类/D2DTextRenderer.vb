@@ -43,14 +43,7 @@ Public Module D2DTextRenderer
                        DirectCast(rt.CreateSolidColorBrush(D2DHelper.ToColor4(color)), ID2D1Brush))
         Dim ownsBrush As Boolean = (brushCache Is Nothing)
         Try
-            Dim layoutWidth As Single = Math.Max(1.0F, rect.Width)
-            Dim layoutHeight As Single = Math.Max(1.0F, rect.Height)
-            Using layout = D2DHelper.GetDWriteFactory().CreateTextLayout(text, fmt, layoutWidth, layoutHeight)
-                If (flags And TextFormatFlags.SingleLine) = TextFormatFlags.SingleLine Then
-                    layout.WordWrapping = WordWrapping.NoWrap
-                End If
-                rt.DrawTextLayout(New Vector2(rect.X, rect.Y), layout, brush, DrawTextOptions.Clip)
-            End Using
+            rt.DrawText(text, fmt, D2DHelper.ToD2DRect(rect), brush, DrawTextOptions.Clip)
         Finally
             If ownsBrush AndAlso brush IsNot Nothing Then
                 Try : brush.Dispose() : Catch : End Try
@@ -79,10 +72,7 @@ Public Module D2DTextRenderer
                        DirectCast(rt.CreateSolidColorBrush(D2DHelper.ToColor4(color)), ID2D1Brush))
         Dim ownsBrush As Boolean = (brushCache Is Nothing)
         Try
-            Using layout = D2DHelper.GetDWriteFactory().CreateTextLayout(text, fmt, 100000.0F, 100000.0F)
-                layout.WordWrapping = WordWrapping.NoWrap
-                rt.DrawTextLayout(New Vector2(x, y), layout, brush)
-            End Using
+            rt.DrawText(text, fmt, New Vortice.Mathematics.Rect(x, y, 100000.0F, 100000.0F), brush)
         Finally
             If ownsBrush AndAlso brush IsNot Nothing Then
                 Try : brush.Dispose() : Catch : End Try
@@ -94,10 +84,8 @@ Public Module D2DTextRenderer
     Public Function MeasureWidth(text As String, font As Font, dpiScale As Single) As Integer
         If String.IsNullOrEmpty(text) OrElse font Is Nothing Then Return 0
         Dim sizePx As Single = font.SizeInPoints * (96.0F / 72.0F) * dpiScale
-        Dim weight As FontWeight = If(font.Bold, FontWeight.Bold, FontWeight.Normal)
-        Dim style As FontStyle = If(font.Italic, FontStyle.Italic, FontStyle.Normal)
         Dim dw = D2DHelper.GetDWriteFactory()
-        Using fmt = dw.CreateTextFormat(font.FontFamily.Name, Nothing, weight, style, FontStretch.Normal, sizePx)
+        Using fmt = D2DHelper.CreateTextFormat(font, sizePx)
             fmt.WordWrapping = WordWrapping.NoWrap
             Using layout = dw.CreateTextLayout(text, fmt, 100000.0F, 100000.0F)
                 Return CInt(Math.Ceiling(layout.Metrics.WidthIncludingTrailingWhitespace))
@@ -109,10 +97,8 @@ Public Module D2DTextRenderer
     Public Function MeasureLineHeight(font As Font, dpiScale As Single) As Integer
         If font Is Nothing Then Return 0
         Dim sizePx As Single = font.SizeInPoints * (96.0F / 72.0F) * dpiScale
-        Dim weight As FontWeight = If(font.Bold, FontWeight.Bold, FontWeight.Normal)
-        Dim style As FontStyle = If(font.Italic, FontStyle.Italic, FontStyle.Normal)
         Dim dw = D2DHelper.GetDWriteFactory()
-        Using fmt = dw.CreateTextFormat(font.FontFamily.Name, Nothing, weight, style, FontStretch.Normal, sizePx)
+        Using fmt = D2DHelper.CreateTextFormat(font, sizePx)
             fmt.WordWrapping = WordWrapping.NoWrap
             Using layout = dw.CreateTextLayout("Ag", fmt, 100000.0F, 100000.0F)
                 Return CInt(Math.Ceiling(layout.Metrics.Height))
@@ -124,10 +110,8 @@ Public Module D2DTextRenderer
     Public Function MeasureSize(text As String, font As Font, dpiScale As Single) As SizeF
         If String.IsNullOrEmpty(text) OrElse font Is Nothing Then Return SizeF.Empty
         Dim sizePx As Single = font.SizeInPoints * (96.0F / 72.0F) * dpiScale
-        Dim weight As FontWeight = If(font.Bold, FontWeight.Bold, FontWeight.Normal)
-        Dim style As FontStyle = If(font.Italic, FontStyle.Italic, FontStyle.Normal)
         Dim dw = D2DHelper.GetDWriteFactory()
-        Using fmt = dw.CreateTextFormat(font.FontFamily.Name, Nothing, weight, style, FontStretch.Normal, sizePx)
+        Using fmt = D2DHelper.CreateTextFormat(font, sizePx)
             fmt.WordWrapping = WordWrapping.NoWrap
             Using layout = dw.CreateTextLayout(text, fmt, 100000.0F, 100000.0F)
                 Dim m = layout.Metrics
@@ -139,16 +123,13 @@ Public Module D2DTextRenderer
     Private Function AcquireTextFormat(font As Font, dpiScale As Single, flags As TextFormatFlags,
                                        cache As D2DHelper.TextFormatCache) As IDWriteTextFormat
         Dim sizePx As Single = font.SizeInPoints * (96.0F / 72.0F) * dpiScale
-        Dim weight As FontWeight = If(font.Bold, FontWeight.Bold, FontWeight.Normal)
-        Dim style As FontStyle = If(font.Italic, FontStyle.Italic, FontStyle.Normal)
         Dim textAlign As TextAlignment = MapTextAlignment(flags)
         Dim paraAlign As ParagraphAlignment = MapParagraphAlignment(flags)
         Dim trimChar As Boolean = (flags And TextFormatFlags.EndEllipsis) = TextFormatFlags.EndEllipsis
         If cache IsNot Nothing Then
-            Return cache.[Get](font.FontFamily.Name, weight, style, sizePx, textAlign, paraAlign, trimChar)
+            Return cache.[Get](font, sizePx, textAlign, paraAlign, trimChar)
         End If
-        Dim fmt = D2DHelper.GetDWriteFactory().CreateTextFormat(
-            font.FontFamily.Name, Nothing, weight, style, FontStretch.Normal, sizePx)
+        Dim fmt = D2DHelper.CreateTextFormat(font, sizePx)
         fmt.TextAlignment = textAlign
         fmt.ParagraphAlignment = paraAlign
         fmt.WordWrapping = WordWrapping.NoWrap

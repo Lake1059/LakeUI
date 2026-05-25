@@ -175,8 +175,13 @@ Public NotInheritable Class PaintScopeV2
             Else
                 _graphicsLayer = dcRT
             End If
-        Catch
-            Try : dcRT.EndDraw() : Catch : End Try
+        Catch ex As Exception
+            Try
+                dcRT.EndDraw()
+            Catch endEx As Exception
+                _compositor.NotifyDCRenderTargetException(endEx)
+            End Try
+            Try : _compositor.NotifyDCRenderTargetException(ex) : Catch : End Try
             Throw
         End Try
     End Sub
@@ -204,10 +209,11 @@ Public NotInheritable Class PaintScopeV2
                 1.0F,
                 BitmapInterpolationMode.Linear,
                 New Vortice.Mathematics.Rect(0, 0, _w * _ssaa, _h * _ssaa))
-        Catch
+        Catch ex As Exception
             ' EndDraw / DrawBitmap 失败（如设备丢失）：这块 RT 状态已不可信，
             ' 不归还池避免污染下一帧；吞掉异常让 Dispose 路径继续清理 DC RT。
             healthy = False
+            Try : _compositor.NotifyDCRenderTargetException(ex) : Catch : End Try
         Finally
             If healthy Then
                 ' V2 改进：SSAA RT 归还 compositor 池复用，避免每帧 GPU 资源分配/释放的卡顿。
@@ -230,7 +236,8 @@ Public NotInheritable Class PaintScopeV2
             End Try
             Try
                 DCRenderTarget.EndDraw()
-            Catch
+            Catch ex As Exception
+                Try : _compositor.NotifyDCRenderTargetException(ex) : Catch : End Try
             End Try
             Try
                 _g.ReleaseHdc(_hdc)

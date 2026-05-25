@@ -77,7 +77,7 @@ Public Class ModernButton
 
         If 长按正在进行 AndAlso 长按动画助手.Progress >= 1.0F Then
             长按正在进行 = False
-            BeginInvoke(Sub() MyBase.OnClick(EventArgs.Empty))
+            BeginInvoke(Sub() 触发点击事件(EventArgs.Empty))
         End If
     End Sub
 
@@ -209,16 +209,14 @@ Public Class ModernButton
         ' 必须再乘以 DpiScale()=DeviceDpi/96，让物理像素字号与系统 GDI 文本一致。
         ' 该规则适用于本仓库所有走 D2D + DirectWrite 的文字绘制路径，参考此实现。
         Dim mainSizePx As Single = Me.Font.SizeInPoints * (96.0F / 72.0F) * s
-        Dim mainWeight As Vortice.DirectWrite.FontWeight = If(Me.Font.Bold, Vortice.DirectWrite.FontWeight.Bold, Vortice.DirectWrite.FontWeight.Normal)
-        Dim mainStyle As Vortice.DirectWrite.FontStyle = If(Me.Font.Italic, Vortice.DirectWrite.FontStyle.Italic, Vortice.DirectWrite.FontStyle.Normal)
         Dim familyName As String = Me.Font.FontFamily.Name
 
         Dim dw = D2DHelper.GetDWriteFactory()
 
         If Not String.IsNullOrEmpty(次要文本) Then
             Dim subSizePx As Single = 次要文本字号 * (96.0F / 72.0F) * s
-            Using mainFmt = dw.CreateTextFormat(familyName, Nothing, mainWeight, mainStyle, Vortice.DirectWrite.FontStretch.Normal, mainSizePx)
-                Using subFmt = dw.CreateTextFormat(familyName, Nothing, Vortice.DirectWrite.FontWeight.Normal, Vortice.DirectWrite.FontStyle.Normal, Vortice.DirectWrite.FontStretch.Normal, subSizePx)
+            Using mainFmt = D2DHelper.CreateTextFormat(Me.Font, mainSizePx)
+                Using subFmt = D2DHelper.CreateTextFormat(familyName, Vortice.DirectWrite.FontWeight.Normal, Vortice.DirectWrite.FontStyle.Normal, Vortice.DirectWrite.FontStretch.Normal, subSizePx)
                     mainFmt.TextAlignment = align
                     mainFmt.WordWrapping = WordWrapping.NoWrap
                     mainFmt.ParagraphAlignment = ParagraphAlignment.Near
@@ -246,7 +244,7 @@ Public Class ModernButton
                 End Using
             End Using
         Else
-            Using mainFmt = dw.CreateTextFormat(familyName, Nothing, mainWeight, mainStyle, Vortice.DirectWrite.FontStretch.Normal, mainSizePx)
+            Using mainFmt = D2DHelper.CreateTextFormat(Me.Font, mainSizePx)
                 mainFmt.TextAlignment = align
                 mainFmt.ParagraphAlignment = ParagraphAlignment.Center
                 mainFmt.WordWrapping = WordWrapping.NoWrap
@@ -369,19 +367,90 @@ Public Class ModernButton
     Private 动画前渐变颜色 As Color
     Private 动画前边框颜色 As Color
     Private 助记键触发计时器 As Timer
+    Private 点击后等待鼠标移动 As Boolean = False
+    Private 点击后鼠标屏幕位置 As Point = Point.Empty
+
+    Private Sub 触发点击事件(e As EventArgs)
+        If Not Enabled OrElse IsDisposed Then Return
+
+        直接恢复常规鼠标状态(True)
+        Try
+            MyBase.OnClick(e)
+        Finally
+            If Not IsDisposed AndAlso Enabled Then
+                直接恢复常规鼠标状态(True)
+                延后恢复点击后的常规状态()
+            End If
+        End Try
+    End Sub
+
+    Private Sub 延后恢复点击后的常规状态()
+        If Not IsHandleCreated Then Return
+        Try
+            BeginInvoke(Sub()
+                            If IsDisposed OrElse Not Enabled Then Exit Sub
+                            直接恢复常规鼠标状态(True)
+                        End Sub)
+        Catch ex As ObjectDisposedException
+        Catch ex As InvalidOperationException
+        End Try
+    End Sub
+
+    Private Sub 直接恢复常规鼠标状态(Optional 等待鼠标实际移动 As Boolean = False)
+        If IsDisposed Then Return
+
+        If Capture Then Capture = False
+        鼠标状态 = MouseStateEnum.Normal
+        颜色动画已启用 = False
+        动画助手.StopAnimation()
+        If 长按确认已启用 Then
+            长按正在进行 = False
+            长按动画助手.StopAnimation()
+            长按动画助手.SetImmediate(0)
+        End If
+
+        If 等待鼠标实际移动 Then
+            点击后等待鼠标移动 = True
+            点击后鼠标屏幕位置 = Cursor.Position
+        Else
+            点击后等待鼠标移动 = False
+        End If
+
+        Invalidate()
+        If Visible AndAlso IsHandleCreated Then Update()
+    End Sub
+
+    Private Function 点击后仍在等待同一鼠标位置() As Boolean
+        If Not 点击后等待鼠标移动 Then Return False
+        If Cursor.Position.Equals(点击后鼠标屏幕位置) Then Return True
+
+        点击后等待鼠标移动 = False
+        Return False
+    End Function
+
     Protected Overrides Sub OnClick(e As EventArgs)
         If Not 长按确认已启用 Then
-            MyBase.OnClick(e)
+            触发点击事件(e)
         End If
     End Sub
     Protected Overrides Sub OnMouseEnter(e As EventArgs)
         MyBase.OnMouseEnter(e)
         If Not Enabled Then Return
+        If 点击后仍在等待同一鼠标位置() Then Return
         切换鼠标颜色状态(MouseStateEnum.Hover)
+    End Sub
+    Protected Overrides Sub OnMouseMove(e As MouseEventArgs)
+        MyBase.OnMouseMove(e)
+        If Not Enabled Then Return
+        If 点击后仍在等待同一鼠标位置() Then Return
+        If 鼠标状态 = MouseStateEnum.Normal AndAlso ClientRectangle.Contains(e.Location) Then
+            切换鼠标颜色状态(MouseStateEnum.Hover)
+        End If
     End Sub
     Protected Overrides Sub OnMouseLeave(e As EventArgs)
         MyBase.OnMouseLeave(e)
         If Not Enabled Then Return
+        点击后等待鼠标移动 = False
         切换鼠标颜色状态(MouseStateEnum.Normal)
         If 长按确认已启用 Then
             长按正在进行 = False
@@ -392,6 +461,7 @@ Public Class ModernButton
     Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
         MyBase.OnMouseDown(e)
         If Not Enabled Then Return
+        点击后等待鼠标移动 = False
         切换鼠标颜色状态(MouseStateEnum.Pressed)
         If 长按确认已启用 Then
             长按正在进行 = True
@@ -402,7 +472,11 @@ Public Class ModernButton
     Protected Overrides Sub OnMouseUp(e As MouseEventArgs)
         MyBase.OnMouseUp(e)
         If Not Enabled Then Return
-        切换鼠标颜色状态(If(ClientRectangle.Contains(e.Location), MouseStateEnum.Hover, MouseStateEnum.Normal))
+        If 点击后仍在等待同一鼠标位置() Then
+            直接恢复常规鼠标状态(True)
+        Else
+            切换鼠标颜色状态(If(ClientRectangle.Contains(e.Location), MouseStateEnum.Hover, MouseStateEnum.Normal))
+        End If
         If 长按确认已启用 Then
             长按正在进行 = False
             长按动画助手.StopAnimation()
@@ -414,6 +488,7 @@ Public Class ModernButton
         If Not Enabled Then
             鼠标状态 = MouseStateEnum.Normal
             颜色动画已启用 = False
+            点击后等待鼠标移动 = False
             动画助手.StopAnimation()
             助记键触发计时器?.Stop()
             助记键触发计时器?.Dispose()
@@ -453,11 +528,7 @@ Public Class ModernButton
                 助记键触发计时器.Dispose()
                 助记键触发计时器 = Nothing
 
-                MyBase.OnClick(EventArgs.Empty)
-
-                If Enabled Then
-                    切换鼠标颜色状态(If(ClientRectangle.Contains(PointToClient(Cursor.Position)), MouseStateEnum.Hover, MouseStateEnum.Normal))
-                End If
+                触发点击事件(EventArgs.Empty)
             End Sub
         助记键触发计时器.Start()
     End Sub
@@ -848,6 +919,13 @@ Public Class ModernButton
             SetValue(长按遮罩方向, value)
         End Set
     End Property
+#End Region
+
+#Region "生命周期"
+    Protected Overrides Sub OnFontChanged(e As EventArgs)
+        MyBase.OnFontChanged(e)
+        D2DHelperV2.RefreshFontDependentRendering(Me)
+    End Sub
 #End Region
 
 #Region "禁用属性"
