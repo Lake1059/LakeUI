@@ -66,6 +66,7 @@ Public Class ModernPanel
         UpdateStyles()
         Me.AutoScroll = False
         _lastDeviceDpi = Me.DeviceDpi
+        AddHandler Me.Disposed, Sub() 停止图片动画()
     End Sub
 
 #End Region
@@ -231,18 +232,82 @@ Public Class ModernPanel
 #Region "外观属性 - 背景图片"
 
     Private _image As Image = Nothing
-    ''' <summary>面板背景图片，填充模式由 ImageMode 控制，圆角区域自动裁切。</summary>
-    <Category("LakeUI"), Description("背景图片（填充模式由 ImageMode 控制，自动圆角裁切）"), DefaultValue(GetType(Image), Nothing), Browsable(True)>
+    ''' <summary>面板背景图片，填充模式由 ImageMode 控制，圆角区域自动裁切。
+    ''' 若图片为多帧动画（如 GIF），自动通过 <see cref="ImageAnimator"/> 驱动逐帧重绘。</summary>
+    <Category("LakeUI"), Description("背景图片（填充模式由 ImageMode 控制，自动圆角裁切，支持 GIF 等动图）"), DefaultValue(GetType(Image), Nothing), Browsable(True)>
     Public Property Image As Image
         Get
             Return _image
         End Get
         Set(value As Image)
+            If _image Is value Then Return
+            停止图片动画()
             _image = value
             清除图片缓存()
+            启动图片动画()
             Me.Invalidate()
         End Set
     End Property
+
+    ' GIF / 多帧动画支持：注册到 .NET 自带的 ImageAnimator，逐帧 UpdateFrames + Invalidate。
+    Private _animatedImage As Image = Nothing
+    Private _animationHandler As EventHandler = Nothing
+
+    Private Sub 启动图片动画()
+        If _image Is Nothing Then Return
+        Try
+            If Not ImageAnimator.CanAnimate(_image) Then Return
+        Catch
+            Return
+        End Try
+        _animatedImage = _image
+        _animationHandler = AddressOf 图片动画帧变更
+        Try
+            ImageAnimator.Animate(_animatedImage, _animationHandler)
+        Catch
+            _animatedImage = Nothing
+            _animationHandler = Nothing
+        End Try
+    End Sub
+
+    Private Sub 停止图片动画()
+        If _animatedImage IsNot Nothing AndAlso _animationHandler IsNot Nothing Then
+            Try
+                ImageAnimator.StopAnimate(_animatedImage, _animationHandler)
+            Catch
+            End Try
+        End If
+        _animatedImage = Nothing
+        _animationHandler = Nothing
+    End Sub
+
+    ''' <summary>ImageAnimator 在工作线程上回调。这里只 marshal 到 UI 线程做 UpdateFrames + 失效 D2D 缓存 + Invalidate。</summary>
+    Private Sub 图片动画帧变更(sender As Object, e As EventArgs)
+        If Me.IsDisposed OrElse Not Me.IsHandleCreated Then Return
+        Try
+            Me.BeginInvoke(New MethodInvoker(AddressOf 图片动画帧变更_UI))
+        Catch
+        End Try
+    End Sub
+
+    Private Sub 图片动画帧变更_UI()
+        If Me.IsDisposed Then Return
+        Dim img = _animatedImage
+        If img Is Nothing Then Return
+        Try
+            ImageAnimator.UpdateFrames(img)
+        Catch
+            Return
+        End Try
+        ' 失效 D2D 位图缓存，使下一次 OnPaint 重新上传当前帧。
+        Try
+            Dim comp = D2DHelperV2.GetCompositor(Me)
+            Dim cache = If(comp Is Nothing, Nothing, comp.GetBitmapCache(img))
+            If cache IsNot Nothing Then cache.Invalidate()
+        Catch
+        End Try
+        Me.Invalidate()
+    End Sub
 
     Private _imageFillMode As ImageFillMode = ImageFillMode.Fill
     ''' <summary>背景图片填充模式：Zoom（完整显示）或 Fill（撑满裁切）。</summary>

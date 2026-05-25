@@ -191,6 +191,7 @@ Public Class ModernComboBox
 
     Private _items As ItemCollection
     Private _selectedIndex As Integer = -1
+    Private _pendingSelectedIndexChanged As Boolean = False
     Private _droppedDown As Boolean = False
     Private _dropDownForm As DropDownListForm = Nothing
 
@@ -254,20 +255,7 @@ Public Class ModernComboBox
             Return _selectedIndex
         End Get
         Set(value As Integer)
-            If value < -1 OrElse value >= _items.Count Then value = -1
-            Dim newText As String = If(value >= 0, _items(value), String.Empty)
-            Dim selectedIndexChanged As Boolean = _selectedIndex <> value
-            Dim textChanged As Boolean = _text <> newText
-            If Not selectedIndexChanged AndAlso Not textChanged Then Return
-
-            _selectedIndex = value
-            _text = newText
-            _caretCol = _text.Length
-            _scrollXOffset = 0
-            ClearSelection()
-            Invalidate()
-            If textChanged Then RaiseEvent textChanged(Me, EventArgs.Empty)
-            If selectedIndexChanged Then RaiseEvent selectedIndexChanged(Me, EventArgs.Empty)
+            SetSelectedIndexCore(value, False)
         End Set
     End Property
 
@@ -1363,14 +1351,14 @@ Public Class ModernComboBox
                         OpenDropDown()
                     Else
                         If _selectedIndex < _items.Count - 1 Then
-                            SelectedIndex = _selectedIndex + 1
+                            SetSelectedIndexFromUser(_selectedIndex + 1)
                         End If
                     End If
                     e.Handled = True
                 Case Keys.Up
                     If _droppedDown Then
                         If _selectedIndex > 0 Then
-                            SelectedIndex = _selectedIndex - 1
+                            SetSelectedIndexFromUser(_selectedIndex - 1)
                         End If
                     End If
                     e.Handled = True
@@ -1410,14 +1398,14 @@ Public Class ModernComboBox
                     OpenDropDown()
                 Else
                     If _selectedIndex < _items.Count - 1 Then
-                        SelectedIndex = _selectedIndex + 1
+                        SetSelectedIndexFromUser(_selectedIndex + 1)
                     End If
                 End If
                 e.Handled = True
             Case Keys.Up
                 If _droppedDown Then
                     If _selectedIndex > 0 Then
-                        SelectedIndex = _selectedIndex - 1
+                        SetSelectedIndexFromUser(_selectedIndex - 1)
                     End If
                 End If
                 e.Handled = True
@@ -1782,6 +1770,7 @@ Public Class ModernComboBox
             _droppedDown = False
         End If
         Invalidate()
+        RaisePendingSelectedIndexChanged()
     End Sub
 
     Friend Sub OnDropDownClosed()
@@ -1789,11 +1778,12 @@ Public Class ModernComboBox
         _dropDownForm = Nothing
         Invalidate()
         RaiseEvent DropDownClosed(Me, EventArgs.Empty)
+        RaisePendingSelectedIndexChanged()
     End Sub
 
     Friend Sub OnDropDownItemClicked(index As Integer)
         If index >= 0 AndAlso index < _items.Count Then
-            SelectedIndex = index
+            SetSelectedIndexFromUser(index)
         End If
         CloseDropDown()
     End Sub
@@ -2558,6 +2548,42 @@ Public Class ModernComboBox
         Invalidate()
         RaiseEvent TextChanged(Me, EventArgs.Empty)
         If selectedIndexChanged Then RaiseEvent SelectedIndexChanged(Me, EventArgs.Empty)
+    End Sub
+
+    Private Sub SetSelectedIndexFromUser(value As Integer)
+        SetSelectedIndexCore(value, _droppedDown)
+    End Sub
+
+    Private Sub SetSelectedIndexCore(value As Integer, deferSelectedIndexChanged As Boolean)
+        If value < -1 OrElse value >= _items.Count Then value = -1
+        Dim newText As String = If(value >= 0, _items(value), String.Empty)
+        Dim selectedIndexChanged As Boolean = _selectedIndex <> value
+        Dim textChanged As Boolean = _text <> newText
+        If Not selectedIndexChanged AndAlso Not textChanged Then Return
+
+        _selectedIndex = value
+        _text = newText
+        _caretCol = _text.Length
+        _scrollXOffset = 0
+        ClearSelection()
+        Invalidate()
+        If textChanged Then RaiseEvent TextChanged(Me, EventArgs.Empty)
+        If selectedIndexChanged Then RaiseSelectedIndexChanged(deferSelectedIndexChanged)
+    End Sub
+
+    Private Sub RaiseSelectedIndexChanged(deferSelectedIndexChanged As Boolean)
+        If deferSelectedIndexChanged Then
+            _pendingSelectedIndexChanged = True
+            Return
+        End If
+        _pendingSelectedIndexChanged = False
+        RaiseEvent SelectedIndexChanged(Me, EventArgs.Empty)
+    End Sub
+
+    Private Sub RaisePendingSelectedIndexChanged()
+        If Not _pendingSelectedIndexChanged Then Return
+        _pendingSelectedIndexChanged = False
+        RaiseEvent SelectedIndexChanged(Me, EventArgs.Empty)
     End Sub
 
     Friend Sub OnItemsTextChanged()

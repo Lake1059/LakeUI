@@ -10,7 +10,6 @@
 	<ForceDesignerDpiUnaware>True</ForceDesignerDpiUnaware>
 	<PublishSingleFile>true</PublishSingleFile>
 	<SelfContained>false</SelfContained>
-	<PackageIcon>LakeUI.png</PackageIcon>
   </PropertyGroup>
 
   <ItemGroup>

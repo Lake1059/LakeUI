@@ -272,7 +272,10 @@ Public Class CpuMonitor
 
 #Region "绘制"
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
-        If 圆角半径值 > 0 OrElse MyBase.BackColor.A < 255 Then Return
+        ' V2 契约：
+        '   • BackgroundSource 已设置 → 跳过 BackColor 整个逻辑，背景由 OnPaint 内 BackgroundPenetrationV2 绘制；
+        '   • 否则一律走 .NET 自身透明逻辑（半透明 BackColor 由基类合成父级背景，不透明色由基类填底）。
+        If _backgroundSource IsNot Nothing Then Return
         MyBase.OnPaintBackground(e)
     End Sub
 
@@ -289,13 +292,17 @@ Public Class CpuMonitor
                 Dim gRT As ID2D1RenderTarget = scope.GraphicsLayer
                 Dim dcRT As ID2D1DCRenderTarget = scope.DCRenderTarget
 
-                If 圆角半径值 > 0 OrElse MyBase.BackColor.A < 255 Then
-                    If _backgroundSource IsNot Nothing Then
-                        BackgroundPenetrationV2.PaintBackground(Me, scope, _backgroundSource)
-                    End If
-                    If MyBase.BackColor.A > 0 AndAlso MyBase.BackColor.A < 255 Then
-                        Dim b = _当前合成器.BrushCache.Get(gRT, MyBase.BackColor)
-                        gRT.FillRectangle(New Vortice.Mathematics.Rect(0, 0, Me.Width, Me.Height), b)
+                ' 1) 背景层（1× 直绘）：
+                '    • 显式 BackgroundSource → 绘制穿透底图（跳过 BackColor）；
+                '    • 否则若 MyBase.BackColor 半透明 → 基类 OnPaintBackground 已把父级背景合成到 DC，
+                '      这里再叠加 BackColor 作为半透明遮罩（"颜色覆盖在上面"）。
+                If _backgroundSource IsNot Nothing Then
+                    BackgroundPenetrationV2.PaintBackground(Me, scope, _backgroundSource)
+                ElseIf MyBase.BackColor.A > 0 AndAlso MyBase.BackColor.A < 255 Then
+                    Dim bgLayer = scope.BackgroundLayer
+                    Dim brush = _当前合成器.BrushCache.[Get](bgLayer, MyBase.BackColor)
+                    If brush IsNot Nothing Then
+                        bgLayer.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(0, 0, Me.Width, Me.Height)), brush)
                     End If
                 End If
 

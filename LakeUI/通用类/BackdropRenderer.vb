@@ -385,13 +385,13 @@ Friend NotInheritable Class BackdropRenderer
 
         ' 6. 触发 UI 重绘
         Try
-            If _host IsNot Nothing AndAlso _host.IsHandleCreated AndAlso Not _host.IsDisposed Then
-                _host.BeginInvoke(CType(Sub()
-                                            If Not _host.IsDisposed Then
-                                                If publishedNow Then RaiseEvent AverageCommitted(Me, EventArgs.Empty)
-                                                _host.Invalidate()
-                                            End If
-                                        End Sub, MethodInvoker))
+            Dim host = _host
+            If host IsNot Nothing Then
+                host.BeginInvoke(CType(Sub()
+                                           If host.IsDisposed OrElse Not host.IsHandleCreated Then Return
+                                           If publishedNow Then RaiseEvent AverageCommitted(Me, EventArgs.Empty)
+                                           host.Invalidate()
+                                       End Sub, MethodInvoker))
             End If
         Catch
         End Try

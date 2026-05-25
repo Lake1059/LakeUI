@@ -424,18 +424,11 @@ Public Class ModernTabListControl
 
 #Region "绘制"
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
-        ' 所有绘制在 OnPaint 中完成；当背景透明时由 OnPaint 取父级像素。
-    End Sub
-
-    Private Function 是否需要透明背景() As Boolean
-        Return 标签栏背景颜色.A < 255 OrElse 内容区域背景颜色.A < 255
-    End Function
-
-    Private Sub 绘制父容器背景_V2(scope As PaintScopeV2)
-        ' V2 背景穿透：优先使用显式 BackgroundSource，否则保留原 Parent 行为以兼容旧用法。
-        Dim source As Control = If(_backgroundSource, Parent)
-        If source Is Nothing Then Return
-        BackgroundPenetrationV2.PaintBackground(Me, scope, source)
+        ' V2 契约（与 ModernButton 对齐）：
+        '   • BackgroundSource 已设置 → 跳过 BackColor 整个逻辑，背景由 OnPaint 内 BackgroundPenetrationV2 绘制；
+        '   • 否则一律走 .NET 自身透明逻辑（半透明 BackColor 由基类合成父级背景，不透明色由基类填底）。
+        If _backgroundSource IsNot Nothing Then Return
+        MyBase.OnPaintBackground(e)
     End Sub
 
     Private Function 获取内容面板有效背景色() As Color
@@ -445,7 +438,6 @@ Public Class ModernTabListControl
     End Function
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
-        MyBase.OnPaint(e)
         确保Owner()
         If Me.Width <= 0 OrElse Me.Height <= 0 Then Return
 
@@ -456,21 +448,32 @@ Public Class ModernTabListControl
             If scope Is Nothing Then Return  ' 设计期或无 Form 上下文
             _当前合成器 = scope.Compositor
             Try
-                ' V2 背景穿透：在 BackgroundLayer（DC RT，1×）画底图
-                If 是否需要透明背景() Then
-                    绘制父容器背景_V2(scope)
-                End If
+                Dim compositor = scope.Compositor
                 Dim gRT As ID2D1RenderTarget = scope.GraphicsLayer
                 Dim dcRT As ID2D1DCRenderTarget = scope.DCRenderTarget
 
-                ' 1) 图形层（享受 SSAA）
+                ' 1) 背景层（1× 直绘）：
+                '    • 显式 BackgroundSource → 绘制穿透底图（跳过 BackColor）；
+                '    • 否则若 MyBase.BackColor 半透明 → 基类 OnPaintBackground 已把父级背景合成到 DC，
+                '      这里再叠加 BackColor 作为半透明遮罩（"颜色覆盖在上面"）。
+                If _backgroundSource IsNot Nothing Then
+                    BackgroundPenetrationV2.PaintBackground(Me, scope, _backgroundSource)
+                ElseIf MyBase.BackColor.A > 0 AndAlso MyBase.BackColor.A < 255 Then
+                    Dim bgLayer = scope.BackgroundLayer
+                    Dim brush = compositor.BrushCache.[Get](bgLayer, MyBase.BackColor)
+                    If brush IsNot Nothing Then
+                        bgLayer.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(0, 0, Me.Width, Me.Height)), brush)
+                    End If
+                End If
+
+                ' 2) 图形层（享受 SSAA）
                 绘制图形内容_D2D(gRT)
 
-                ' 2) 把图形层回采到 DC，然后在 DC RT 上绘制文字（DirectWrite 子像素质量）
+                ' 3) 把图形层回采到 DC，然后在 DC RT 上绘制文字（DirectWrite 子像素质量）
                 scope.FlushGraphics()
                 绘制文本与指示器符号_D2D(dcRT)
 
-                ' 3) 滚动条直接画在 DC RT 上（无需 SSAA）
+                ' 4) 滚动条直接画在 DC RT 上（无需 SSAA）
                 If Not _标签栏滚动条.TrackRect.IsEmpty Then
                     Dim sbContainerW As Integer = If(标签页位置 = TabSideEnum.Left, CInt(标签栏宽度 * DpiScale()), Me.Width)
                     _标签栏滚动条.Draw_D2D(dcRT, sbContainerW, Me.Height, 0, 0, CInt(滚动条宽度 * DpiScale()), 滚动条轨道颜色, 滚动条滑块颜色, 滚动条悬停颜色)
