@@ -748,8 +748,9 @@ Public Class ModernComboBox
         End Set
     End Property
 
-    Private 下拉滚动条颜色 As Color = Color.FromArgb(140, 140, 140)
-    <Category("LakeUI"), Description("下拉列表滚动条滑块颜色"), DefaultValue(GetType(Color), "140, 140, 140"), Browsable(True)>
+    Private Shared ReadOnly 默认下拉滚动条颜色 As Color = Color.FromArgb(140, 140, 140)
+    Private 下拉滚动条颜色 As Color = 默认下拉滚动条颜色
+    <Category("LakeUI"), Description("下拉列表滚动条滑块颜色"), Browsable(True)>
     Public Property DropDownScrollBarColor As Color
         Get
             Return 下拉滚动条颜色
@@ -759,8 +760,17 @@ Public Class ModernComboBox
         End Set
     End Property
 
-    Private 下拉滚动条悬停颜色 As Color = Color.FromArgb(200, 200, 200)
-    <Category("LakeUI"), Description("下拉列表滚动条滑块悬停/拖拽颜色"), DefaultValue(GetType(Color), "200, 200, 200"), Browsable(True)>
+    Private Function ShouldSerializeDropDownScrollBarColor() As Boolean
+        Return 下拉滚动条颜色 <> 默认下拉滚动条颜色
+    End Function
+
+    Private Sub ResetDropDownScrollBarColor()
+        下拉滚动条颜色 = 默认下拉滚动条颜色
+    End Sub
+
+    Private Shared ReadOnly 默认下拉滚动条悬停颜色 As Color = Color.FromArgb(200, 200, 200)
+    Private 下拉滚动条悬停颜色 As Color = 默认下拉滚动条悬停颜色
+    <Category("LakeUI"), Description("下拉列表滚动条滑块悬停/拖拽颜色"), Browsable(True)>
     Public Property DropDownScrollBarHoverColor As Color
         Get
             Return 下拉滚动条悬停颜色
@@ -770,8 +780,17 @@ Public Class ModernComboBox
         End Set
     End Property
 
-    Private 下拉滚动条轨道颜色 As Color = Color.FromArgb(20, 255, 255, 255)
-    <Category("LakeUI"), Description("下拉列表滚动条轨道颜色"), DefaultValue(GetType(Color), "20, 255, 255, 255"), Browsable(True)>
+    Private Function ShouldSerializeDropDownScrollBarHoverColor() As Boolean
+        Return 下拉滚动条悬停颜色 <> 默认下拉滚动条悬停颜色
+    End Function
+
+    Private Sub ResetDropDownScrollBarHoverColor()
+        下拉滚动条悬停颜色 = 默认下拉滚动条悬停颜色
+    End Sub
+
+    Private Shared ReadOnly 默认下拉滚动条轨道颜色 As Color = Color.FromArgb(20, 255, 255, 255)
+    Private 下拉滚动条轨道颜色 As Color = 默认下拉滚动条轨道颜色
+    <Category("LakeUI"), Description("下拉列表滚动条轨道颜色"), Browsable(True)>
     Public Property DropDownScrollBarTrackColor As Color
         Get
             Return 下拉滚动条轨道颜色
@@ -780,6 +799,14 @@ Public Class ModernComboBox
             下拉滚动条轨道颜色 = value
         End Set
     End Property
+
+    Private Function ShouldSerializeDropDownScrollBarTrackColor() As Boolean
+        Return 下拉滚动条轨道颜色 <> 默认下拉滚动条轨道颜色
+    End Function
+
+    Private Sub ResetDropDownScrollBarTrackColor()
+        下拉滚动条轨道颜色 = 默认下拉滚动条轨道颜色
+    End Sub
 
     Private 下拉内边距 As Padding = Padding.Empty
     <Category("LakeUI"), Description("下拉列表内边距"), DefaultValue(GetType(Padding), "0, 0, 0, 0"), Browsable(True)>
@@ -1080,9 +1107,18 @@ Public Class ModernComboBox
         Dim backColorMask As Color = MyBase.BackColor
         Dim hasMask As Boolean = backColorMask.A > 0 AndAlso backColorMask.A < 255
         Dim hasFill As Boolean = bgClr.A > 0 OrElse (bgClr2 <> Color.Empty AndAlso bgClr2.A > 0)
-        If Not hasMask AndAlso Not hasFill Then Return
+        Dim arrowBgClr As Color = Color.Empty
+        Dim arrowBgClr2 As Color = Color.Empty
+        Dim hasArrowFill As Boolean = 获取箭头区域背景颜色(arrowBgClr, arrowBgClr2)
+        If Not hasMask AndAlso Not hasFill AndAlso Not hasArrowFill Then Return
         Dim s As Single = DpiScale()
         Dim fillRect As New RectangleF(boundsRect.X, boundsRect.Y, boundsRect.Width + 1, boundsRect.Height + 1)
+
+        If hasArrowFill Then
+            绘制分区背景_D2D(rt, hasRadius, fillRect, s, hasMask, backColorMask, hasFill, bgClr, bgClr2, arrowBgClr, arrowBgClr2)
+            Return
+        End If
+
         If hasRadius Then
             Using geo = RectangleRenderer.创建圆角矩形几何(fillRect, 边框圆角半径 * s)
                 If hasMask Then
@@ -1100,6 +1136,76 @@ Public Class ModernComboBox
                 RectangleRenderer.绘制矩形背景_D2D(rt, fillRect, bgClr, bgClr2, 渐变方向)
             End If
         End If
+    End Sub
+
+    Private Function 获取箭头区域背景颜色(ByRef bgClr As Color, ByRef bgClr2 As Color) As Boolean
+        bgClr = Color.Empty
+        bgClr2 = Color.Empty
+        If Not 启用编辑 OrElse Not _mouseOverArrow Then Return False
+
+        Select Case 鼠标状态
+            Case MouseStateEnum.Hover
+                bgClr = 鼠标移上时背景颜色
+                bgClr2 = 鼠标移上时渐变颜色
+            Case MouseStateEnum.Pressed
+                bgClr = 鼠标按下时背景颜色
+                bgClr2 = 鼠标按下时渐变颜色
+        End Select
+
+        Return bgClr.A > 0 OrElse (bgClr2 <> Color.Empty AndAlso bgClr2.A > 0)
+    End Function
+
+    Private Sub 绘制分区背景_D2D(rt As ID2D1RenderTarget, hasRadius As Boolean, fillRect As RectangleF, s As Single,
+                              hasMask As Boolean, backColorMask As Color,
+                              hasBodyFill As Boolean, bodyBgClr As Color, bodyBgClr2 As Color,
+                              arrowBgClr As Color, arrowBgClr2 As Color)
+        Dim arrowRect As RectangleF = 获取箭头区域背景矩形(fillRect)
+        Dim bodyRect As New RectangleF(fillRect.X, fillRect.Y,
+                                       Math.Max(0, arrowRect.X - fillRect.X),
+                                       fillRect.Height)
+
+        If hasRadius Then
+            Using geo = RectangleRenderer.创建圆角矩形几何(fillRect, 边框圆角半径 * s)
+                If hasMask Then
+                    RectangleRenderer.绘制圆角背景_D2D(rt, geo, fillRect, backColorMask, Color.Empty, 渐变方向)
+                End If
+                If hasBodyFill Then
+                    绘制裁剪背景_D2D(rt, bodyRect, geo, fillRect, bodyBgClr, bodyBgClr2)
+                End If
+                绘制裁剪背景_D2D(rt, arrowRect, geo, arrowRect, arrowBgClr, arrowBgClr2)
+            End Using
+        Else
+            If hasMask Then
+                RectangleRenderer.绘制矩形背景_D2D(rt, fillRect, backColorMask, Color.Empty, 渐变方向)
+            End If
+            If hasBodyFill Then
+                绘制裁剪背景_D2D(rt, bodyRect, Nothing, fillRect, bodyBgClr, bodyBgClr2)
+            End If
+            绘制裁剪背景_D2D(rt, arrowRect, Nothing, arrowRect, arrowBgClr, arrowBgClr2)
+        End If
+    End Sub
+
+    Private Function 获取箭头区域背景矩形(fillRect As RectangleF) As RectangleF
+        Dim arrowX As Single = Math.Max(fillRect.X, ClientRectangle.Width - ArrowAreaWidth)
+        Dim arrowRight As Single = fillRect.Right
+        Return New RectangleF(arrowX, fillRect.Y, Math.Max(0, arrowRight - arrowX), fillRect.Height)
+    End Function
+
+    Private Sub 绘制裁剪背景_D2D(rt As ID2D1RenderTarget, clipRect As RectangleF, geo As ID2D1Geometry,
+                              brushBounds As RectangleF, bgClr As Color, bgClr2 As Color)
+        If clipRect.Width <= 0 OrElse clipRect.Height <= 0 Then Return
+        If bgClr.A = 0 AndAlso (bgClr2 = Color.Empty OrElse bgClr2.A = 0) Then Return
+
+        rt.PushAxisAlignedClip(New Vortice.RawRectF(clipRect.X, clipRect.Y, clipRect.Right, clipRect.Bottom), AntialiasMode.PerPrimitive)
+        Try
+            If geo IsNot Nothing Then
+                RectangleRenderer.绘制圆角背景_D2D(rt, geo, brushBounds, bgClr, bgClr2, 渐变方向)
+            Else
+                RectangleRenderer.绘制矩形背景_D2D(rt, brushBounds, bgClr, bgClr2, 渐变方向)
+            End If
+        Finally
+            rt.PopAxisAlignedClip()
+        End Try
     End Sub
 
     Private Sub 绘制边框_D2D(rt As ID2D1RenderTarget, hasRadius As Boolean, boundsRect As RectangleF, borderClr As Color)
@@ -1126,24 +1232,6 @@ Public Class ModernComboBox
         Dim sepX As Single = w - aaw - If(bi > 0, bi / 2.0F, 0)
         Dim topInset As Integer = Math.Max(Padding.Top, bi)
         Dim bottomInset As Integer = Math.Max(Padding.Bottom, bi)
-
-        ' 箭头区域背景（编辑模式悬停在箭头上时）
-        If 启用编辑 AndAlso _mouseOverArrow Then
-            Dim arrowBgClr As Color = Color.Empty
-            Select Case 鼠标状态
-                Case MouseStateEnum.Hover
-                    arrowBgClr = 鼠标移上时背景颜色
-                Case MouseStateEnum.Pressed
-                    arrowBgClr = 鼠标按下时背景颜色
-            End Select
-            If arrowBgClr <> Color.Empty AndAlso arrowBgClr.A > 0 Then
-                Dim fillX As Single = sepX + If(bi > 0, bi / 2.0F, 0)
-                Dim fillRect As New RectangleF(fillX, topInset, w - fillX - bi, h - topInset - bottomInset)
-                Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(arrowBgClr))
-                    rt.FillRectangle(D2DHelper.ToD2DRect(fillRect), br)
-                End Using
-            End If
-        End If
 
         ' 分隔线
         If 显示分隔线 AndAlso 边框宽度 > 0 Then

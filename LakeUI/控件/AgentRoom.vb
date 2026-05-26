@@ -538,8 +538,9 @@ Public Class AgentRoom
         End Set
     End Property
 
-    Friend _scrollBarTrackColor As Color = Color.Transparent
-    <Category("LakeUI"), Description("滚动条轨道颜色"), DefaultValue(GetType(Color), "Transparent")>
+    Friend Shared ReadOnly 默认ScrollBarTrackColor As Color = Color.Transparent
+    Friend _scrollBarTrackColor As Color = 默认ScrollBarTrackColor
+    <Category("LakeUI"), Description("滚动条轨道颜色")>
     Public Property ScrollBarTrackColor As Color
         Get
             Return _scrollBarTrackColor
@@ -549,8 +550,17 @@ Public Class AgentRoom
         End Set
     End Property
 
-    Friend _scrollBarThumbColor As Color = Color.FromArgb(80, 80, 84)
-    <Category("LakeUI"), Description("滚动条滑块颜色"), DefaultValue(GetType(Color), "80, 80, 84")>
+    Private Function ShouldSerializeScrollBarTrackColor() As Boolean
+        Return _scrollBarTrackColor <> 默认ScrollBarTrackColor
+    End Function
+
+    Private Sub ResetScrollBarTrackColor()
+        ScrollBarTrackColor = 默认ScrollBarTrackColor
+    End Sub
+
+    Friend Shared ReadOnly 默认ScrollBarThumbColor As Color = Color.FromArgb(80, 80, 84)
+    Friend _scrollBarThumbColor As Color = 默认ScrollBarThumbColor
+    <Category("LakeUI"), Description("滚动条滑块颜色")>
     Public Property ScrollBarThumbColor As Color
         Get
             Return _scrollBarThumbColor
@@ -560,8 +570,17 @@ Public Class AgentRoom
         End Set
     End Property
 
-    Friend _scrollBarThumbHoverColor As Color = Color.FromArgb(120, 120, 124)
-    <Category("LakeUI"), Description("滚动条滑块悬停颜色"), DefaultValue(GetType(Color), "120, 120, 124")>
+    Private Function ShouldSerializeScrollBarThumbColor() As Boolean
+        Return _scrollBarThumbColor <> 默认ScrollBarThumbColor
+    End Function
+
+    Private Sub ResetScrollBarThumbColor()
+        ScrollBarThumbColor = 默认ScrollBarThumbColor
+    End Sub
+
+    Friend Shared ReadOnly 默认ScrollBarThumbHoverColor As Color = Color.FromArgb(120, 120, 124)
+    Friend _scrollBarThumbHoverColor As Color = 默认ScrollBarThumbHoverColor
+    <Category("LakeUI"), Description("滚动条滑块悬停颜色")>
     Public Property ScrollBarThumbHoverColor As Color
         Get
             Return _scrollBarThumbHoverColor
@@ -570,6 +589,14 @@ Public Class AgentRoom
             SetValue(_scrollBarThumbHoverColor, value)
         End Set
     End Property
+
+    Private Function ShouldSerializeScrollBarThumbHoverColor() As Boolean
+        Return _scrollBarThumbHoverColor <> 默认ScrollBarThumbHoverColor
+    End Function
+
+    Private Sub ResetScrollBarThumbHoverColor()
+        ScrollBarThumbHoverColor = 默认ScrollBarThumbHoverColor
+    End Sub
 
     Friend _autoScrollToBottom As Boolean = True
     <Category("LakeUI"), Description("新消息时是否自动贴底"), DefaultValue(True)>

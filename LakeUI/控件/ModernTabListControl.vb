@@ -315,6 +315,49 @@ Public Class ModernTabListControl
         _搜索框控件.SetBounds(x, y, w, CInt(_搜索框高度 * s))
     End Sub
 
+    Private Shared Function 搜索词元(text As String) As String()
+        If String.IsNullOrWhiteSpace(text) Then Return Array.Empty(Of String)()
+
+        Dim tokens As New List(Of String)()
+        Dim current As New System.Text.StringBuilder()
+        For Each ch As Char In text
+            If Char.IsWhiteSpace(ch) Then
+                If current.Length > 0 Then
+                    Dim token As String = current.ToString().ToLowerInvariant()
+                    If tokens.IndexOf(token) < 0 Then tokens.Add(token)
+                    current.Clear()
+                End If
+            Else
+                current.Append(Char.ToLowerInvariant(ch))
+            End If
+        Next
+
+        If current.Length > 0 Then
+            Dim token As String = current.ToString().ToLowerInvariant()
+            If tokens.IndexOf(token) < 0 Then tokens.Add(token)
+        End If
+
+        Return tokens.ToArray()
+    End Function
+
+    Private Shared Function 搜索签名(text As String) As String
+        Dim tokens = 搜索词元(text)
+        If tokens.Length = 0 Then Return ""
+        Array.Sort(tokens, StringComparer.Ordinal)
+        Return String.Join(" ", tokens)
+    End Function
+
+    Private Shared Function 标题匹配搜索(text As String, searchTokens As String()) As Boolean
+        If searchTokens Is Nothing OrElse searchTokens.Length = 0 Then Return True
+        If String.IsNullOrWhiteSpace(text) Then Return False
+
+        For Each token As String In searchTokens
+            If token.Length = 0 Then Continue For
+            If text.IndexOf(token, StringComparison.OrdinalIgnoreCase) < 0 Then Return False
+        Next
+        Return True
+    End Function
+
     Private Sub 搜索框文本变更(sender As Object, e As EventArgs)
         Dim ctrl = TryCast(sender, Control)
         If ctrl Is Nothing Then Return
@@ -906,15 +949,16 @@ Public Class ModernTabListControl
         混入哈希(h, If(_搜索框控件 Is Nothing, 0, 1))
         混入哈希(h, 标签页位置.GetHashCode())
         混入哈希(h, 滚动条宽度)
-        混入哈希(h, If(_搜索文本, "").GetHashCode())
+        混入哈希(h, 搜索签名(_搜索文本).GetHashCode())
         混入哈希(h, Me.DeviceDpi)
         ' 项是否分隔/说明会影响项高
+        Dim searchTokens As String() = 搜索词元(_搜索文本)
         For i = 0 To 项目列表.Count - 1
             Dim it = 项目列表(i)
             Dim flag As Integer = If(it.IsSeparator, 1, 0) Or If(it.IsDescription, 2, 0)
             混入哈希(h, flag)
             ' 搜索文本生效时，项是否可见取决于文本内容
-            If Not String.IsNullOrEmpty(_搜索文本) Then
+            If searchTokens.Length > 0 Then
                 混入哈希(h, If(it.Text, "").GetHashCode())
             End If
         Next
@@ -953,7 +997,8 @@ Public Class ModernTabListControl
         If _布局项AbsY数组.Length < count Then ReDim _布局项AbsY数组(Math.Max(count, 4) - 1)
         If _布局项可见数组.Length < count Then ReDim _布局项可见数组(Math.Max(count, 4) - 1)
 
-        Dim hasSearch As Boolean = Not String.IsNullOrEmpty(_搜索文本)
+        Dim searchTokens As String() = 搜索词元(_搜索文本)
+        Dim hasSearch As Boolean = searchTokens.Length > 0
         Dim total As Single = 标签栏内边距.Top * s
         Dim visibleCount As Integer = 0
         For i = 0 To count - 1
@@ -964,7 +1009,7 @@ Public Class ModernTabListControl
             ElseIf it.IsSeparator OrElse it.IsDescription Then
                 visible = True
             Else
-                visible = it.Text IsNot Nothing AndAlso it.Text.IndexOf(_搜索文本, StringComparison.OrdinalIgnoreCase) >= 0
+                visible = 标题匹配搜索(it.Text, searchTokens)
             End If
             _布局项可见数组(i) = visible
 
@@ -1943,8 +1988,9 @@ Public Class ModernTabListControl
         End Set
     End Property
 
-    Private 滚动条轨道颜色 As Color = Color.FromArgb(20, 20, 20)
-    <Category("LakeUI"), Description("标签栏滚动条轨道颜色"), DefaultValue(GetType(Color), "20, 20, 20"), Browsable(True)>
+    Private Shared ReadOnly 默认滚动条轨道颜色 As Color = Color.FromArgb(20, 20, 20)
+    Private 滚动条轨道颜色 As Color = 默认滚动条轨道颜色
+    <Category("LakeUI"), Description("标签栏滚动条轨道颜色"), Browsable(True)>
     Public Property ScrollBarTrackColor As Color
         Get
             Return 滚动条轨道颜色
@@ -1954,8 +2000,17 @@ Public Class ModernTabListControl
         End Set
     End Property
 
-    Private 滚动条滑块颜色 As Color = Color.FromArgb(80, 80, 80)
-    <Category("LakeUI"), Description("标签栏滚动条滑块颜色"), DefaultValue(GetType(Color), "80, 80, 80"), Browsable(True)>
+    Private Function ShouldSerializeScrollBarTrackColor() As Boolean
+        Return 滚动条轨道颜色 <> 默认滚动条轨道颜色
+    End Function
+
+    Private Sub ResetScrollBarTrackColor()
+        ScrollBarTrackColor = 默认滚动条轨道颜色
+    End Sub
+
+    Private Shared ReadOnly 默认滚动条滑块颜色 As Color = Color.FromArgb(80, 80, 80)
+    Private 滚动条滑块颜色 As Color = 默认滚动条滑块颜色
+    <Category("LakeUI"), Description("标签栏滚动条滑块颜色"), Browsable(True)>
     Public Property ScrollBarThumbColor As Color
         Get
             Return 滚动条滑块颜色
@@ -1965,8 +2020,17 @@ Public Class ModernTabListControl
         End Set
     End Property
 
-    Private 滚动条悬停颜色 As Color = Color.FromArgb(120, 120, 120)
-    <Category("LakeUI"), Description("标签栏滚动条滑块悬停颜色"), DefaultValue(GetType(Color), "120, 120, 120"), Browsable(True)>
+    Private Function ShouldSerializeScrollBarThumbColor() As Boolean
+        Return 滚动条滑块颜色 <> 默认滚动条滑块颜色
+    End Function
+
+    Private Sub ResetScrollBarThumbColor()
+        ScrollBarThumbColor = 默认滚动条滑块颜色
+    End Sub
+
+    Private Shared ReadOnly 默认滚动条悬停颜色 As Color = Color.FromArgb(120, 120, 120)
+    Private 滚动条悬停颜色 As Color = 默认滚动条悬停颜色
+    <Category("LakeUI"), Description("标签栏滚动条滑块悬停颜色"), Browsable(True)>
     Public Property ScrollBarThumbHoverColor As Color
         Get
             Return 滚动条悬停颜色
@@ -1975,6 +2039,14 @@ Public Class ModernTabListControl
             SetValue(滚动条悬停颜色, value)
         End Set
     End Property
+
+    Private Function ShouldSerializeScrollBarThumbHoverColor() As Boolean
+        Return 滚动条悬停颜色 <> 默认滚动条悬停颜色
+    End Function
+
+    Private Sub ResetScrollBarThumbHoverColor()
+        ScrollBarThumbHoverColor = 默认滚动条悬停颜色
+    End Sub
 #End Region
 
 #Region "更多指示器属性"

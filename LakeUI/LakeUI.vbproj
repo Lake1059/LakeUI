@@ -58,6 +58,18 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Update="控件\MemberWall.vb">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Update="控件\MemberWall.Designer.vb">
+      <DependentUpon>MemberWall.vb</DependentUpon>
+    </Compile>
+    <EmbeddedResource Update="控件\MemberWall.resx">
+      <DependentUpon>MemberWall.vb</DependentUpon>
+    </EmbeddedResource>
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Vortice.Direct2D1" Version="3.8.3" />
     <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
   </ItemGroup>

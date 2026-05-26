@@ -368,8 +368,9 @@ Public Class ModernTextBox
         End Set
     End Property
 
-    Private 滚动条颜色 As Color = Color.FromArgb(140, 140, 140)
-    <Category("LakeUI"), Description("滚动条滑块颜色"), DefaultValue(GetType(Color), "140, 140, 140"), Browsable(True)>
+    Private Shared ReadOnly 默认滚动条颜色 As Color = Color.FromArgb(140, 140, 140)
+    Private 滚动条颜色 As Color = 默认滚动条颜色
+    <Category("LakeUI"), Description("滚动条滑块颜色"), Browsable(True)>
     Public Property ScrollBarColor As Color
         Get
             Return 滚动条颜色
@@ -379,8 +380,17 @@ Public Class ModernTextBox
         End Set
     End Property
 
-    Private 滚动条悬停颜色 As Color = SystemColors.ScrollBar
-    <Category("LakeUI"), Description("滚动条滑块悬停/拖拽颜色"), DefaultValue(GetType(Color), "ScrollBar"), Browsable(True)>
+    Private Function ShouldSerializeScrollBarColor() As Boolean
+        Return 滚动条颜色 <> 默认滚动条颜色
+    End Function
+
+    Private Sub ResetScrollBarColor()
+        ScrollBarColor = 默认滚动条颜色
+    End Sub
+
+    Private Shared ReadOnly 默认滚动条悬停颜色 As Color = Color.FromArgb(200, 200, 200)
+    Private 滚动条悬停颜色 As Color = 默认滚动条悬停颜色
+    <Category("LakeUI"), Description("滚动条滑块悬停/拖拽颜色"), Browsable(True)>
     Public Property ScrollBarHoverColor As Color
         Get
             Return 滚动条悬停颜色
@@ -390,8 +400,17 @@ Public Class ModernTextBox
         End Set
     End Property
 
-    Private 滚动条轨道颜色 As Color = Color.FromArgb(20, 255, 255, 255)
-    <Category("LakeUI"), Description("滚动条轨道颜色"), DefaultValue(GetType(Color), "20, 255, 255, 255"), Browsable(True)>
+    Private Function ShouldSerializeScrollBarHoverColor() As Boolean
+        Return 滚动条悬停颜色 <> 默认滚动条悬停颜色
+    End Function
+
+    Private Sub ResetScrollBarHoverColor()
+        ScrollBarHoverColor = 默认滚动条悬停颜色
+    End Sub
+
+    Private Shared ReadOnly 默认滚动条轨道颜色 As Color = Color.FromArgb(20, 255, 255, 255)
+    Private 滚动条轨道颜色 As Color = 默认滚动条轨道颜色
+    <Category("LakeUI"), Description("滚动条轨道颜色"), Browsable(True)>
     Public Property ScrollBarTrackColor As Color
         Get
             Return 滚动条轨道颜色
@@ -400,6 +419,14 @@ Public Class ModernTextBox
             SetValue(滚动条轨道颜色, value)
         End Set
     End Property
+
+    Private Function ShouldSerializeScrollBarTrackColor() As Boolean
+        Return 滚动条轨道颜色 <> 默认滚动条轨道颜色
+    End Function
+
+    Private Sub ResetScrollBarTrackColor()
+        ScrollBarTrackColor = 默认滚动条轨道颜色
+    End Sub
 
     Private 启用链接识别 As Boolean = False
     <Category("LakeUI"), Description("是否启用超链接自动识别"), DefaultValue(GetType(Boolean), "False"), Browsable(True)>

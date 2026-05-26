@@ -1764,8 +1764,9 @@ Public Class ModernTabControl
         End Set
     End Property
 
-    Private 滚动条轨道颜色 As Color = Color.FromArgb(20, 20, 20)
-    <Category("LakeUI"), Description("标签栏滚动条轨道颜色"), DefaultValue(GetType(Color), "20, 20, 20"), Browsable(True)>
+    Private Shared ReadOnly 默认滚动条轨道颜色 As Color = Color.FromArgb(20, 20, 20)
+    Private 滚动条轨道颜色 As Color = 默认滚动条轨道颜色
+    <Category("LakeUI"), Description("标签栏滚动条轨道颜色"), Browsable(True)>
     Public Property ScrollBarTrackColor As Color
         Get
             Return 滚动条轨道颜色
@@ -1775,8 +1776,17 @@ Public Class ModernTabControl
         End Set
     End Property
 
-    Private 滚动条滑块颜色 As Color = Color.FromArgb(80, 80, 80)
-    <Category("LakeUI"), Description("标签栏滚动条滑块颜色"), DefaultValue(GetType(Color), "80, 80, 80"), Browsable(True)>
+    Private Function ShouldSerializeScrollBarTrackColor() As Boolean
+        Return 滚动条轨道颜色 <> 默认滚动条轨道颜色
+    End Function
+
+    Private Sub ResetScrollBarTrackColor()
+        ScrollBarTrackColor = 默认滚动条轨道颜色
+    End Sub
+
+    Private Shared ReadOnly 默认滚动条滑块颜色 As Color = Color.FromArgb(80, 80, 80)
+    Private 滚动条滑块颜色 As Color = 默认滚动条滑块颜色
+    <Category("LakeUI"), Description("标签栏滚动条滑块颜色"), Browsable(True)>
     Public Property ScrollBarThumbColor As Color
         Get
             Return 滚动条滑块颜色
@@ -1786,8 +1796,17 @@ Public Class ModernTabControl
         End Set
     End Property
 
-    Private 滚动条悬停颜色 As Color = Color.FromArgb(120, 120, 120)
-    <Category("LakeUI"), Description("标签栏滚动条滑块悬停颜色"), DefaultValue(GetType(Color), "120, 120, 120"), Browsable(True)>
+    Private Function ShouldSerializeScrollBarThumbColor() As Boolean
+        Return 滚动条滑块颜色 <> 默认滚动条滑块颜色
+    End Function
+
+    Private Sub ResetScrollBarThumbColor()
+        ScrollBarThumbColor = 默认滚动条滑块颜色
+    End Sub
+
+    Private Shared ReadOnly 默认滚动条悬停颜色 As Color = Color.FromArgb(120, 120, 120)
+    Private 滚动条悬停颜色 As Color = 默认滚动条悬停颜色
+    <Category("LakeUI"), Description("标签栏滚动条滑块悬停颜色"), Browsable(True)>
     Public Property ScrollBarThumbHoverColor As Color
         Get
             Return 滚动条悬停颜色
@@ -1796,6 +1815,14 @@ Public Class ModernTabControl
             SetValue(滚动条悬停颜色, value)
         End Set
     End Property
+
+    Private Function ShouldSerializeScrollBarThumbHoverColor() As Boolean
+        Return 滚动条悬停颜色 <> 默认滚动条悬停颜色
+    End Function
+
+    Private Sub ResetScrollBarThumbHoverColor()
+        ScrollBarThumbHoverColor = 默认滚动条悬停颜色
+    End Sub
 #End Region
 
 #Region "分割线与说明项属性"
