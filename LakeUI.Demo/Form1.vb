@@ -76,6 +76,8 @@
         绑定选项卡窗体背景透明(Form_PrecisionTimer.ModernPanel1)
         Me.ModernTabListControl1.Items(38).BoundControl = Form_AgentRoom
         绑定选项卡窗体背景透明(Form_AgentRoom.ModernPanel1)
+        Me.ModernTabListControl1.Items(39).BoundControl = Form_ModernNumericUpDown
+        绑定选项卡窗体背景透明(Form_ModernNumericUpDown.ModernPanel1)
     End Sub
 
     Private Sub Form1_Shown(sender As Object, e As EventArgs) Handles Me.Shown

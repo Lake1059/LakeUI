@@ -37,7 +37,7 @@ Public Class ModernComboBox
             MyBase.RemoveItem(index)
             If _owner._selectedIndex = index Then
                 _owner._selectedIndex = -1
-                _owner._text = String.Empty
+                _owner._textRenderer.SetText(String.Empty, 0, True, False)
                 _owner.OnItemsTextChanged()
             ElseIf _owner._selectedIndex > index Then
                 _owner._selectedIndex -= 1
@@ -51,7 +51,7 @@ Public Class ModernComboBox
             Dim hadSelection As Boolean = _owner._selectedIndex >= 0
             _owner._selectedIndex = -1
             If hadSelection Then
-                _owner._text = String.Empty
+                _owner._textRenderer.SetText(String.Empty, 0, True, False)
                 _owner.OnItemsTextChanged()
             End If
             If hadItems Then
@@ -63,7 +63,7 @@ Public Class ModernComboBox
         Protected Overrides Sub SetItem(index As Integer, item As String)
             MyBase.SetItem(index, item)
             If _owner._selectedIndex = index Then
-                _owner._text = item
+                _owner._textRenderer.SetText(item, item.Length, True, False)
             End If
             _owner.Invalidate()
         End Sub
@@ -179,13 +179,7 @@ Public Class ModernComboBox
     End Class
 
 #Region "字段"
-    Private _text As String = String.Empty
-    Private _caretCol As Integer = 0
-    Private _selAnchorCol As Integer = 0
-    Private _hasSelection As Boolean = False
-    Private _caretVisible As Boolean = True
-    Private _caretBlinkTimer As New Timer() With {.Interval = 530}
-    Private _scrollXOffset As Integer = 0
+    Private ReadOnly _textRenderer As SingleLineTextBoxRenderer
     Private _mouseDownSelecting As Boolean = False
     Private _imeComposing As Boolean = False
 
@@ -207,6 +201,18 @@ Public Class ModernComboBox
     ' V2：D2D 资源由 WindowCompositor 按顶层 Form 共享管理，本控件不再持有 _dcRT / _ssaaCache。
 #End Region
 
+#Region "单行文本内核适配"
+    Private Property _text As String
+        Get
+            Return _textRenderer.Text
+        End Get
+        Set(value As String)
+            _textRenderer.SetText(value, _textRenderer.CaretColumn, False, False)
+        End Set
+    End Property
+
+#End Region
+
 #Region "属性"
     <Category("LakeUI"), Description("主要文本"), DefaultValue(GetType(String), ""), Browsable(True),
      DesignerSerializationVisibility(DesignerSerializationVisibility.Visible)>
@@ -222,10 +228,7 @@ Public Class ModernComboBox
             If Not textChanged AndAlso Not selectedIndexChanged Then Return
 
             If textChanged Then
-                _text = v
-                _caretCol = 0
-                _scrollXOffset = 0
-                ClearSelection()
+                _textRenderer.SetText(v, 0, True, False)
             End If
             _selectedIndex = matchIndex
             Invalidate()
@@ -424,7 +427,9 @@ Public Class ModernComboBox
             Return 启用编辑
         End Get
         Set(value As Boolean)
+            If 启用编辑 = value Then Return
             启用编辑 = value
+            _textRenderer.Editable = value
             Invalidate()
         End Set
     End Property
@@ -966,6 +971,8 @@ Public Class ModernComboBox
 
 #Region "初始化"
     Public Sub New()
+        _textRenderer = New SingleLineTextBoxRenderer(Me)
+        AddHandler _textRenderer.TextChanged, Sub() NotifyTextChanged()
         InitializeComponent()
         _items = New ItemCollection(Me)
         _itemToolTips = New ToolTipEntryCollection()
@@ -976,10 +983,6 @@ Public Class ModernComboBox
                  ControlStyles.StandardClick Or
                  ControlStyles.SupportsTransparentBackColor, True)
         UpdateStyles()
-        AddHandler _caretBlinkTimer.Tick, Sub()
-                                              _caretVisible = Not _caretVisible
-                                              Invalidate()
-                                          End Sub
     End Sub
 
     Protected Overrides Sub OnHandleCreated(e As EventArgs)
@@ -987,11 +990,11 @@ Public Class ModernComboBox
         If 启用编辑 Then
             ImeHelper.AssociateDefault(Handle)
         End If
-        _caretBlinkTimer.Start()
+        _textRenderer.StartCaretBlink()
     End Sub
 
     Protected Overrides Sub OnHandleDestroyed(e As EventArgs)
-        _caretBlinkTimer.Stop()
+        _textRenderer.StopCaretBlink()
         CloseDropDown()
         MyBase.OnHandleDestroyed(e)
     End Sub
@@ -1112,68 +1115,8 @@ Public Class ModernComboBox
     End Sub
 
     Private Sub DrawTextContent_D2D(rt As ID2D1DCRenderTarget, w As Integer, h As Integer)
-        Dim bi As Integer = CInt(边框宽度 * DpiScale())
-        Dim textLeft As Integer = Math.Max(Padding.Left, bi)
-        Dim textTop As Integer = Math.Max(Padding.Top, bi)
-        Dim textRight As Integer = Math.Max(Padding.Right, bi)
-        Dim textBottom As Integer = Math.Max(Padding.Bottom, bi)
-        Dim textWidth As Integer = w - textLeft - textRight - ArrowAreaWidth
-        Dim textHeight As Integer = h - textTop - textBottom
-        PushClip_D2D(rt, New RectangleF(textLeft, textTop, textWidth, textHeight))
-
-        Dim singleLineY As Integer = textTop + (textHeight - 行高) \ 2
-        Dim isEmpty As Boolean = String.IsNullOrEmpty(_text)
-
-        If isEmpty AndAlso Not String.IsNullOrEmpty(水印文本) Then
-            Dim waterAlignOff As Integer = GetAlignOffsetX(水印文本, textWidth)
-            DrawSingleLineText_D2D(rt, 水印文本, Font, 水印颜色,
-                New RectangleF(textLeft + waterAlignOff, textTop, textWidth, textHeight), DpiScale(), False)
-        End If
-
-        If Not isEmpty Then
-            If _hasSelection Then
-                DrawSelection_D2D(rt, singleLineY, textLeft, textWidth)
-            End If
-            Dim alignOff As Integer = GetAlignOffsetX(_text, textWidth)
-            DrawSingleLineText_D2D(rt, _text, Font, ForeColor,
-                New RectangleF(textLeft + alignOff - _scrollXOffset, textTop, Short.MaxValue, textHeight), DpiScale(), False)
-        End If
-
-        If Focused AndAlso _caretVisible AndAlso 启用编辑 Then
-            DrawCaret_D2D(rt, textLeft, textTop)
-        End If
-
-        rt.PopAxisAlignedClip()
-    End Sub
-
-    Private Shared Sub PushClip_D2D(rt As ID2D1RenderTarget, rect As RectangleF)
-        rt.PushAxisAlignedClip(New Vortice.RawRectF(rect.Left, rect.Top, rect.Right, rect.Bottom), AntialiasMode.Aliased)
-    End Sub
-
-    Private Sub DrawSelection_D2D(rt As ID2D1RenderTarget, lineY As Integer, textLeft As Integer, textWidth As Integer)
-        Dim minC As Integer = Math.Min(_selAnchorCol, _caretCol)
-        Dim maxC As Integer = Math.Max(_selAnchorCol, _caretCol)
-        Dim alignOff As Integer = GetAlignOffsetX(_text, textWidth)
-        Dim x1 As Integer = textLeft + alignOff + MeasureWidth(_text.Substring(0, minC)) - _scrollXOffset
-        Dim x2 As Integer = textLeft + alignOff + MeasureWidth(_text.Substring(0, maxC)) - _scrollXOffset
-        If x2 <= x1 Then Return
-        Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(选区背景色))
-            rt.FillRectangle(New Vortice.Mathematics.Rect(x1, lineY, x2 - x1, 行高), br)
-        End Using
-    End Sub
-
-    Private Sub DrawCaret_D2D(rt As ID2D1RenderTarget, textLeft As Integer, textTop As Integer)
-        Dim bi As Integer = CInt(边框宽度 * DpiScale())
-        Dim textHeight As Integer = ClientRectangle.Height - Math.Max(Padding.Top, bi) - Math.Max(Padding.Bottom, bi)
-        Dim textWidth As Integer = ClientRectangle.Width - textLeft - Math.Max(Padding.Right, bi) - ArrowAreaWidth
-        Dim alignOff As Integer = GetAlignOffsetX(_text, textWidth)
-        Dim cx As Integer = textLeft + alignOff + MeasureWidth(_text.Substring(0, _caretCol)) - _scrollXOffset
-        Dim lineY As Integer = textTop + (textHeight - 行高) \ 2
-        Dim caretH As Integer = 行高 - 2
-        Dim caretY As Integer = lineY + (行高 - caretH) \ 2
-        Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(光标颜色))
-            rt.FillRectangle(New Vortice.Mathematics.Rect(cx, caretY, CInt(光标线宽 * DpiScale()), caretH), br)
-        End Using
+        SyncTextRenderer()
+        _textRenderer.Draw(rt)
     End Sub
 
     Private Sub 绘制分隔线与箭头_D2D(rt As ID2D1RenderTarget, w As Integer, h As Integer, borderClr As Color)
@@ -1334,7 +1277,6 @@ Public Class ModernComboBox
                 If 启用编辑 Then
                     Dim ch As Char = ChrW(charCode)
                     If Not Char.IsControl(ch) Then
-                        DeleteSelection()
                         InsertTextCore(ch.ToString())
                     End If
                 End If
@@ -1468,10 +1410,8 @@ Public Class ModernComboBox
                 Return
             End If
             _mouseDownSelecting = True
-            Dim col As Integer = HitTestCol(e.X)
-            _caretCol = col
-            _selAnchorCol = _caretCol
-            _hasSelection = False
+            SyncTextRenderer()
+            _textRenderer.BeginMouseSelection(e.X)
             ResetCaretBlink()
             Invalidate()
         End If
@@ -1489,11 +1429,8 @@ Public Class ModernComboBox
             Cursor = Cursors.Default
         End If
         If _mouseDownSelecting AndAlso e.Button = MouseButtons.Left AndAlso 启用编辑 Then
-            Dim col As Integer = HitTestCol(e.X)
-            _caretCol = col
-            _hasSelection = (_caretCol <> _selAnchorCol)
-            EnsureCaretVisible()
-            Invalidate()
+            SyncTextRenderer()
+            _textRenderer.UpdateMouseSelection(e.X)
         ElseIf _mouseOverArrow <> prevOverArrow Then
             Invalidate()
         End If
@@ -1507,202 +1444,88 @@ Public Class ModernComboBox
     End Sub
 
     Private Function HitTestCol(x As Integer) As Integer
-        Dim bi As Integer = CInt(边框宽度 * DpiScale())
-        Dim textLeft As Integer = Math.Max(Padding.Left, bi)
-        Dim textWidth As Integer = ClientRectangle.Width - textLeft - Math.Max(Padding.Right, bi) - ArrowAreaWidth
-        Dim alignOff As Integer = GetAlignOffsetX(_text, textWidth)
-        Return FindColFromX(_text, x - textLeft - alignOff + _scrollXOffset)
-    End Function
-
-    Private Function FindColFromX(lineStr As String, x As Integer) As Integer
-        Return TextRenderHelper.FindColFromX_D2D(lineStr, x, Font, DpiScale())
+        SyncTextRenderer()
+        Return _textRenderer.HitTestColumn(x)
     End Function
 #End Region
 
 #Region "光标移动"
     Private Sub MoveCaret(deltaCol As Integer, extend As Boolean)
-        If Not extend AndAlso _hasSelection AndAlso deltaCol <> 0 Then
-            Dim minC As Integer = Math.Min(_selAnchorCol, _caretCol)
-            Dim maxC As Integer = Math.Max(_selAnchorCol, _caretCol)
-            _caretCol = If(deltaCol < 0, minC, maxC)
-            ClearSelection()
-            EnsureCaretVisible()
-            Invalidate()
-            Return
-        End If
-        If Not extend Then _selAnchorCol = _caretCol
-        _caretCol += deltaCol
-        _caretCol = Math.Max(0, Math.Min(_text.Length, _caretCol))
-        UpdateSelectionFromAnchor(extend)
-        EnsureCaretVisible()
-        Invalidate()
+        SyncTextRenderer()
+        _textRenderer.MoveCaret(deltaCol, extend)
     End Sub
 
     Private Sub MoveCaretHome(extend As Boolean)
-        If Not extend Then _selAnchorCol = _caretCol
-        _caretCol = 0
-        UpdateSelectionFromAnchor(extend)
-        EnsureCaretVisible()
-        Invalidate()
+        SyncTextRenderer()
+        _textRenderer.MoveCaretHome(extend)
     End Sub
 
     Private Sub MoveCaretEnd(extend As Boolean)
-        If Not extend Then _selAnchorCol = _caretCol
-        _caretCol = _text.Length
-        UpdateSelectionFromAnchor(extend)
-        EnsureCaretVisible()
-        Invalidate()
+        SyncTextRenderer()
+        _textRenderer.MoveCaretEnd(extend)
     End Sub
 
     Private Sub MoveCaretWordLeft(extend As Boolean)
-        If Not extend Then _selAnchorCol = _caretCol
-        If _caretCol > 0 Then
-            Dim c As Integer = _caretCol - 1
-            While c > 0 AndAlso Char.IsWhiteSpace(_text(c - 1))
-                c -= 1
-            End While
-            While c > 0 AndAlso Not Char.IsWhiteSpace(_text(c - 1))
-                c -= 1
-            End While
-            _caretCol = c
-        End If
-        UpdateSelectionFromAnchor(extend)
-        EnsureCaretVisible()
-        Invalidate()
+        SyncTextRenderer()
+        _textRenderer.MoveCaretWordLeft(extend)
     End Sub
 
     Private Sub MoveCaretWordRight(extend As Boolean)
-        If Not extend Then _selAnchorCol = _caretCol
-        If _caretCol < _text.Length Then
-            Dim c As Integer = _caretCol
-            While c < _text.Length AndAlso Not Char.IsWhiteSpace(_text(c))
-                c += 1
-            End While
-            While c < _text.Length AndAlso Char.IsWhiteSpace(_text(c))
-                c += 1
-            End While
-            _caretCol = c
-        End If
-        UpdateSelectionFromAnchor(extend)
-        EnsureCaretVisible()
-        Invalidate()
-    End Sub
-
-    Private Sub UpdateSelectionFromAnchor(extend As Boolean)
-        If extend Then
-            _hasSelection = (_caretCol <> _selAnchorCol)
-        Else
-            ClearSelection()
-        End If
+        SyncTextRenderer()
+        _textRenderer.MoveCaretWordRight(extend)
     End Sub
 
     Private Sub EnsureCaretVisible()
-        Dim bi As Integer = CInt(边框宽度 * DpiScale())
-        Dim textLeft As Integer = Math.Max(Padding.Left, bi)
-        Dim areaW As Integer = ClientRectangle.Width - textLeft - Math.Max(Padding.Right, bi) - ArrowAreaWidth
-        If areaW <= 0 Then Return
-        Dim caretX As Integer = MeasureWidth(_text.Substring(0, _caretCol))
-        If 文本对齐 <> TextAlignMode.Left Then
-            Dim lineW As Integer = MeasureWidth(_text)
-            If lineW < areaW Then
-                _scrollXOffset = 0
-                Return
-            End If
-        End If
-        Dim margin As Integer = CInt(光标线宽 * DpiScale()) + 2
-        If caretX - _scrollXOffset < 0 Then
-            _scrollXOffset = Math.Max(0, caretX - margin)
-        ElseIf caretX - _scrollXOffset >= areaW - margin Then
-            _scrollXOffset = caretX - areaW + margin
-        End If
+        SyncTextRenderer()
+        _textRenderer.EnsureCaretVisible()
     End Sub
 #End Region
 
 #Region "文本编辑核心"
     Private Sub InsertTextCore(text As String)
-        DeleteSelection()
-        Dim clean As String = text.Replace(vbCr, "").Replace(vbLf, "")
-        _text = String.Concat(_text.AsSpan(0, _caretCol), clean, _text.AsSpan(_caretCol))
-        _caretCol += clean.Length
-        NotifyTextChanged()
+        SyncTextRenderer()
+        _textRenderer.InsertText(text)
     End Sub
 
     Private Sub HandleBackspace()
-        If _hasSelection Then
-            DeleteSelection()
-        ElseIf _caretCol > 0 Then
-            _text = String.Concat(_text.AsSpan(0, _caretCol - 1), _text.AsSpan(_caretCol))
-            _caretCol -= 1
-        End If
-        NotifyTextChanged()
+        SyncTextRenderer()
+        _textRenderer.HandleBackspace()
     End Sub
 
     Private Sub HandleDelete()
-        If _hasSelection Then
-            DeleteSelection()
-        ElseIf _caretCol < _text.Length Then
-            _text = String.Concat(_text.AsSpan(0, _caretCol), _text.AsSpan(_caretCol + 1))
-        End If
-        NotifyTextChanged()
+        SyncTextRenderer()
+        _textRenderer.HandleDelete()
     End Sub
 
-    Private Sub DeleteSelection()
-        If Not _hasSelection Then Return
-        Dim minC As Integer = Math.Min(_selAnchorCol, _caretCol)
-        Dim maxC As Integer = Math.Max(_selAnchorCol, _caretCol)
-        _text = String.Concat(_text.AsSpan(0, minC), _text.AsSpan(maxC))
-        _caretCol = minC
-        ClearSelection()
-    End Sub
 #End Region
 
 #Region "选区"
     Public Sub SelectAll()
-        _selAnchorCol = 0
-        _caretCol = _text.Length
-        _hasSelection = _text.Length > 0
-        Invalidate()
+        _textRenderer.SelectAll()
     End Sub
 
     Private Sub ClearSelection()
-        _hasSelection = False
-        _selAnchorCol = _caretCol
+        _textRenderer.ClearSelection()
     End Sub
 
     Private Function GetSelectedText() As String
-        If Not _hasSelection Then Return ""
-        Dim minC As Integer = Math.Min(_selAnchorCol, _caretCol)
-        Dim maxC As Integer = Math.Max(_selAnchorCol, _caretCol)
-        Return _text.Substring(minC, maxC - minC)
+        Return _textRenderer.GetSelectedText()
     End Function
 #End Region
 
 #Region "剪贴板"
     Private Sub CopySelection()
-        If _hasSelection Then
-            Try
-                Clipboard.SetText(GetSelectedText())
-            Catch
-            End Try
-        End If
+        _textRenderer.CopySelection()
     End Sub
 
     Private Sub CutSelection()
-        If _hasSelection AndAlso 启用编辑 Then
-            CopySelection()
-            DeleteSelection()
-            NotifyTextChanged()
-        End If
+        _textRenderer.Editable = 启用编辑
+        _textRenderer.CutSelection()
     End Sub
 
     Private Sub PasteText()
-        If Not 启用编辑 Then Return
-        Try
-            If Clipboard.ContainsText() Then
-                InsertTextCore(Clipboard.GetText())
-            End If
-        Catch
-        End Try
+        _textRenderer.Editable = 启用编辑
+        _textRenderer.PasteText()
     End Sub
 #End Region
 
@@ -2718,19 +2541,27 @@ Public Class ModernComboBox
 #Region "输入法 IME"
     Private Sub UpdateImeWindow()
         If Not IsHandleCreated OrElse Not 启用编辑 Then Return
-        Dim bi As Integer = CInt(边框宽度 * DpiScale())
-        Dim imeLeft As Integer = Math.Max(Padding.Left, bi)
-        Dim imeTop As Integer = Math.Max(Padding.Top, bi)
-        Dim textWidth As Integer = ClientRectangle.Width - imeLeft - Math.Max(Padding.Right, bi) - ArrowAreaWidth
-        Dim alignOff As Integer = GetAlignOffsetX(_text, textWidth)
-        Dim cx As Integer = imeLeft + alignOff + MeasureWidth(_text.Substring(0, _caretCol)) - _scrollXOffset
-        Dim textHeight As Integer = ClientRectangle.Height - imeTop - Math.Max(Padding.Bottom, bi)
-        Dim cy As Integer = imeTop + (textHeight - 行高) \ 2 + 行高
-        ImeHelper.SetCompositionPosition(Handle, cx, cy)
+        SyncTextRenderer()
+        Dim point As Point = _textRenderer.GetCaretImeLocation()
+        ImeHelper.SetCompositionPosition(Handle, point.X, point.Y)
     End Sub
 #End Region
 
 #Region "辅助"
+    Private Sub SyncTextRenderer()
+        _textRenderer.Editable = 启用编辑
+        _textRenderer.ForeColor = ForeColor
+        _textRenderer.LineHeight = 行高
+        _textRenderer.CaretWidth = 光标线宽
+        _textRenderer.CaretColor = 光标颜色
+        _textRenderer.SelectionColor = 选区背景色
+        _textRenderer.WaterText = 水印文本
+        _textRenderer.WaterTextForeColor = 水印颜色
+        _textRenderer.TextAlign = CType(文本对齐, SingleLineTextBoxRenderer.TextAlignMode)
+        _textRenderer.BorderSize = 边框宽度
+        _textRenderer.RightReservedWidth = ArrowAreaWidth
+    End Sub
+
     Private ReadOnly Property ArrowAreaWidth As Integer
         Get
             Return Me.Height
@@ -2741,28 +2572,9 @@ Public Class ModernComboBox
         Return Me.DeviceDpi / 96.0F
     End Function
 
-    Private Function MeasureWidth(text As String) As Integer
-        Return CInt(Math.Ceiling(TextRenderHelper.MeasureTextWidth_D2D(text, Font, DpiScale())))
-    End Function
-
     Private Shared Sub DrawSingleLineText_D2D(rt As ID2D1RenderTarget, text As String, font As Font, foreColor As Color,
                                              rect As RectangleF, dpiScale As Single, endEllipsis As Boolean)
-        If String.IsNullOrEmpty(text) OrElse foreColor.A = 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
-        Using fmt = TextRenderHelper.CreateDWriteTextFormat(font, dpiScale)
-            fmt.WordWrapping = Vortice.DirectWrite.WordWrapping.NoWrap
-            fmt.ParagraphAlignment = Vortice.DirectWrite.ParagraphAlignment.Center
-            If endEllipsis Then
-                Try
-                    fmt.SetTrimming(New Vortice.DirectWrite.Trimming With {.Granularity = Vortice.DirectWrite.TrimmingGranularity.Character}, Nothing)
-                Catch
-                End Try
-            End If
-            Using layout = D2DHelper.GetDWriteFactory().CreateTextLayout(text, fmt, rect.Width, rect.Height)
-                Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(foreColor))
-                    rt.DrawTextLayout(New Vector2(rect.X, rect.Y), layout, br)
-                End Using
-            End Using
-        End Using
+        SingleLineTextBoxRenderer.DrawSingleLineText_D2D(rt, text, font, foreColor, rect, dpiScale, endEllipsis)
     End Sub
 
     Private Shared Function MeasureWrappedText_D2D(text As String, font As Font, maxWidth As Integer, dpiScale As Single) As Size
@@ -2791,20 +2603,6 @@ Public Class ModernComboBox
         End Using
     End Sub
 
-    Private Function GetAlignOffsetX(lineStr As String, areaWidth As Integer) As Integer
-        If 文本对齐 = TextAlignMode.Left Then Return 0
-        Dim textW As Integer = MeasureWidth(lineStr)
-        If textW >= areaWidth Then Return 0
-        Select Case 文本对齐
-            Case TextAlignMode.Center
-                Return (areaWidth - textW) \ 2
-            Case TextAlignMode.Right
-                Return areaWidth - textW
-            Case Else
-                Return 0
-        End Select
-    End Function
-
     Private Sub NotifyTextChanged()
         Dim matchIndex As Integer = FindItemIndexExact(_text)
         Dim selectedIndexChanged As Boolean = _selectedIndex <> matchIndex
@@ -2827,10 +2625,7 @@ Public Class ModernComboBox
         If Not selectedIndexChanged AndAlso Not textChanged Then Return
 
         _selectedIndex = value
-        _text = newText
-        _caretCol = _text.Length
-        _scrollXOffset = 0
-        ClearSelection()
+        _textRenderer.SetText(newText, newText.Length, True, False)
         Invalidate()
         If textChanged Then RaiseEvent TextChanged(Me, EventArgs.Empty)
         If selectedIndexChanged Then RaiseSelectedIndexChanged(deferSelectedIndexChanged)
@@ -2861,10 +2656,7 @@ Public Class ModernComboBox
     End Sub
 
     Private Sub ResetCaretBlink()
-        _caretVisible = True
-        _caretBlinkTimer.Stop()
-        _caretBlinkTimer.Start()
-        Invalidate()
+        _textRenderer.ResetCaretBlink()
     End Sub
 
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
@@ -2882,16 +2674,12 @@ Public Class ModernComboBox
             ImeHelper.AssociateDefault(Handle)
             UpdateImeWindow()
         End If
-        _caretVisible = True
-        _caretBlinkTimer.Start()
-        Invalidate()
+        _textRenderer.StartCaretBlink()
     End Sub
 
     Protected Overrides Sub OnLostFocus(e As EventArgs)
         MyBase.OnLostFocus(e)
-        _caretBlinkTimer.Stop()
-        _caretVisible = False
-        Invalidate()
+        _textRenderer.StopCaretBlink()
     End Sub
 
     Protected Overrides Sub OnSizeChanged(e As EventArgs)
@@ -2924,8 +2712,7 @@ Public Class ModernComboBox
         MyBase.OnEnabledChanged(e)
         If Not Enabled Then
             If _droppedDown Then CloseDropDown()
-            _caretBlinkTimer.Stop()
-            _caretVisible = False
+            _textRenderer.StopCaretBlink()
             鼠标状态 = MouseStateEnum.Normal
         End If
         Invalidate()

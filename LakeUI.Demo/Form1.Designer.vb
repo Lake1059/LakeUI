@@ -62,6 +62,7 @@ Partial Class Form1
         Dim ModernTabPage37 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
         Dim ModernTabPage38 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
         Dim ModernTabPage39 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
+        Dim ModernTabPage40 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
         Dim resources As System.ComponentModel.ComponentResourceManager = New System.ComponentModel.ComponentResourceManager(GetType(Form1))
         ModernTabListControl1 = New ModernTabListControl()
         ModernTextBox1 = New ModernTextBox()
@@ -116,6 +117,7 @@ Partial Class Form1
         ModernTabPage37.Text = "BreadcrumbNavigationBar"
         ModernTabPage38.Text = "PrecisionTimer"
         ModernTabPage39.Text = "AgentRoom"
+        ModernTabPage40.Text = "ModernNumericUpDown"
         ModernTabListControl1.Items.Add(ModernTabPage1)
         ModernTabListControl1.Items.Add(ModernTabPage2)
         ModernTabListControl1.Items.Add(ModernTabPage3)
@@ -155,6 +157,7 @@ Partial Class Form1
         ModernTabListControl1.Items.Add(ModernTabPage37)
         ModernTabListControl1.Items.Add(ModernTabPage38)
         ModernTabListControl1.Items.Add(ModernTabPage39)
+        ModernTabListControl1.Items.Add(ModernTabPage40)
         ModernTabListControl1.Location = New Point(0, 0)
         ModernTabListControl1.MoreIndicatorColor = Color.FromArgb(CByte(120), CByte(220), CByte(220), CByte(220))
         ModernTabListControl1.Name = "ModernTabListControl1"
@@ -196,7 +199,7 @@ Partial Class Form1
         ' 
         ' ThisIsYourWindow1
         ' 
-        ThisIsYourWindow1.BackdropBlurRadius = 10
+        ThisIsYourWindow1.BackdropBlurPasses = 0
         ThisIsYourWindow1.BackdropImage = CType(resources.GetObject("ThisIsYourWindow1.BackdropImage"), Image)
         ThisIsYourWindow1.BackdropMaxParallelism = 6
         ThisIsYourWindow1.BackdropMode = ThisIsYourWindow.BackdropModeEnum.Image

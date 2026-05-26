@@ -5,6 +5,7 @@ Imports Vortice.DirectWrite
 
 <DefaultEvent("Click")>
 Public Class ModernButton
+
 #Region "D2D 资源（V2 占位）"
     ' V2：所有 D2D 资源迁移到 WindowCompositor（Form 级共享）；ModernButton 不再持有任何 D2D 字段。
     ' 旧的 _dcRT / _ssaaCache / _backImageCache / _iconCache 已移除。
@@ -21,10 +22,11 @@ Public Class ModernButton
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
         Dim 是否有圆角 As Boolean = 边框圆角半径 > 0
+        Dim s As Single = DpiScale()
 
         Dim 极限矩形区域 As New RectangleF(0, 0, Me.Width, Me.Height)
         If 边框宽度 > 0 Then
-            Dim half As Single = 边框宽度 * DpiScale() / 2.0F
+            Dim half As Single = 边框宽度 * s / 2.0F
             极限矩形区域.Inflate(-half, -half)
         End If
         Dim 内容矩形区域 As New RectangleF(
@@ -32,6 +34,7 @@ Public Class ModernButton
             极限矩形区域.Y + Me.Padding.Top,
             极限矩形区域.Width - Me.Padding.Horizontal,
             极限矩形区域.Height - Me.Padding.Vertical)
+        Dim 图标宽度 As Single = 计算图标占用的水平宽度(内容矩形区域, s)
 
         Dim ssaa As Integer = Math.Max(1, CInt(超采样倍率))
         If Class1.GlobalSSAA <> Class1.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(Class1.GlobalSSAA))
@@ -57,20 +60,20 @@ Public Class ModernButton
 
             ' 2) 图形层（享受 SSAA）
             Dim gRT As ID2D1RenderTarget = scope.GraphicsLayer
-            绘制图形内容_D2D(gRT, compositor, 是否有圆角, 极限矩形区域, 内容矩形区域)
+            绘制图形内容_D2D(gRT, compositor, 是否有圆角, 极限矩形区域, 内容矩形区域, 图标宽度, s)
 
             ' 3) 把图形层（如果是 BitmapRT）回采到 DC，然后在 DC 上画文字（保留 ClearType 子像素）
             scope.FlushGraphics()
-            绘制文本_D2D(dcRT, 内容矩形区域, 计算图标占用的水平宽度(内容矩形区域))
+            绘制文本_D2D(dcRT, 内容矩形区域, 图标宽度, s, compositor.TextFormatCache, compositor.BrushCache)
 
             ' 4) 禁用遮罩（直接覆盖整个 DC，不需要 SSAA）
             If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
                 If 是否有圆角 Then
-                    Using geo = RectangleRenderer.创建圆角矩形几何(极限矩形区域, 边框圆角半径 * DpiScale())
-                        RectangleRenderer.绘制圆角背景_D2D(dcRT, geo, 极限矩形区域, 禁用时遮罩颜色, Color.Empty, 渐变方向)
+                    Using geo = RectangleRenderer.创建圆角矩形几何(极限矩形区域, 边框圆角半径 * s)
+                        RectangleRenderer.绘制圆角背景_D2D(dcRT, geo, 极限矩形区域, 禁用时遮罩颜色, Color.Empty, 渐变方向, compositor.BrushCache)
                     End Using
                 Else
-                    RectangleRenderer.绘制矩形背景_D2D(dcRT, 极限矩形区域, 禁用时遮罩颜色, Color.Empty, 渐变方向)
+                    RectangleRenderer.绘制矩形背景_D2D(dcRT, 极限矩形区域, 禁用时遮罩颜色, Color.Empty, 渐变方向, compositor.BrushCache)
                 End If
             End If
         End Using
@@ -81,7 +84,8 @@ Public Class ModernButton
         End If
     End Sub
 
-    Private Sub 绘制图形内容_D2D(rt As ID2D1RenderTarget, compositor As WindowCompositor, 是否有圆角 As Boolean, 极限矩形区域 As RectangleF, 内容矩形区域 As RectangleF)
+    Private Sub 绘制图形内容_D2D(rt As ID2D1RenderTarget, compositor As WindowCompositor, 是否有圆角 As Boolean, 极限矩形区域 As RectangleF, 内容矩形区域 As RectangleF, 图标宽度 As Single, s As Single)
+        Dim brushCache = compositor.BrushCache
         Dim 背景颜色缓存值 As Color
         Dim 渐变颜色缓存值 As Color
         Dim 边框颜色缓存值 As Color
@@ -95,7 +99,6 @@ Public Class ModernButton
         Else
             根据鼠标状态分配颜色(背景颜色缓存值, 渐变颜色缓存值, 边框颜色缓存值)
         End If
-        Dim s As Single = DpiScale()
         Dim r As Single = 边框圆角半径 * s
         ' BackColor 半透明遮罩层：在采样底图与状态填充色之间叠加；A=0 退化为不绘制，
         ' A=255 走的是普通基类填底路径（不会进入本流程）。详见 TransparentBackgroundCache 契约。
@@ -104,32 +107,32 @@ Public Class ModernButton
         If 是否有圆角 Then
             Using geo = RectangleRenderer.创建圆角矩形几何(极限矩形区域, r)
                 If backColorMask.A > 0 AndAlso backColorMask.A < 255 Then
-                    RectangleRenderer.绘制圆角背景_D2D(rt, geo, 极限矩形区域, backColorMask, Color.Empty, 渐变方向)
+                    RectangleRenderer.绘制圆角背景_D2D(rt, geo, 极限矩形区域, backColorMask, Color.Empty, 渐变方向, brushCache)
                 End If
                 If 背景颜色缓存值.A > 0 OrElse 渐变颜色缓存值.A > 0 Then
-                    RectangleRenderer.绘制圆角背景_D2D(rt, geo, 极限矩形区域, 背景颜色缓存值, 渐变颜色缓存值, 渐变方向)
+                    RectangleRenderer.绘制圆角背景_D2D(rt, geo, 极限矩形区域, 背景颜色缓存值, 渐变颜色缓存值, 渐变方向, brushCache)
                 End If
                 绘制背景图片_D2D(rt, compositor, 极限矩形区域, geo)
                 绘制长按遮罩_D2D(rt, compositor, 极限矩形区域, geo)
                 If 边框颜色缓存值.A > 0 AndAlso 边框宽度 > 0 Then
-                    RectangleRenderer.绘制圆角边框_D2D(rt, geo, 边框颜色缓存值, 边框宽度 * s)
+                    RectangleRenderer.绘制圆角边框_D2D(rt, geo, 边框颜色缓存值, 边框宽度 * s, brushCache)
                 End If
             End Using
         Else
             If backColorMask.A > 0 AndAlso backColorMask.A < 255 Then
-                RectangleRenderer.绘制矩形背景_D2D(rt, 极限矩形区域, backColorMask, Color.Empty, 渐变方向)
+                RectangleRenderer.绘制矩形背景_D2D(rt, 极限矩形区域, backColorMask, Color.Empty, 渐变方向, brushCache)
             End If
             If 背景颜色缓存值.A > 0 OrElse 渐变颜色缓存值.A > 0 Then
-                RectangleRenderer.绘制矩形背景_D2D(rt, 极限矩形区域, 背景颜色缓存值, 渐变颜色缓存值, 渐变方向)
+                RectangleRenderer.绘制矩形背景_D2D(rt, 极限矩形区域, 背景颜色缓存值, 渐变颜色缓存值, 渐变方向, brushCache)
             End If
             绘制背景图片_D2D(rt, compositor, 极限矩形区域, Nothing)
             绘制长按遮罩_D2D(rt, compositor, 极限矩形区域, Nothing)
             If 边框颜色缓存值.A > 0 AndAlso 边框宽度 > 0 Then
-                RectangleRenderer.绘制矩形边框_D2D(rt, 极限矩形区域, 边框颜色缓存值, 边框宽度 * s)
+                RectangleRenderer.绘制矩形边框_D2D(rt, 极限矩形区域, 边框颜色缓存值, 边框宽度 * s, brushCache)
             End If
         End If
 
-        绘制图标_D2D(rt, compositor, 内容矩形区域)
+        绘制图标_D2D(rt, compositor, 内容矩形区域, 图标宽度, s)
     End Sub
 
     Private Sub 绘制背景图片_D2D(rt As ID2D1RenderTarget, compositor As WindowCompositor, area As RectangleF, geo As ID2D1Geometry)
@@ -170,10 +173,9 @@ Public Class ModernButton
         End Try
     End Sub
 
-    Private Sub 绘制图标_D2D(rt As ID2D1RenderTarget, compositor As WindowCompositor, 内容矩形区域 As RectangleF)
-        If 图标 Is Nothing Then Return
-        Dim iconSize As Single = 计算图标占用的水平宽度(内容矩形区域)
-        Dim iconX As Single = 内容矩形区域.X + 图标边距 * DpiScale()
+    Private Sub 绘制图标_D2D(rt As ID2D1RenderTarget, compositor As WindowCompositor, 内容矩形区域 As RectangleF, iconSize As Single, s As Single)
+        If 图标 Is Nothing OrElse iconSize <= 0 Then Return
+        Dim iconX As Single = 内容矩形区域.X + 图标边距 * s
         Dim iconY As Single = 内容矩形区域.Y + (内容矩形区域.Height - iconSize) / 2.0F
         Dim cache = compositor.GetBitmapCache(图标)
         Dim bmp = cache?.GetBitmap(rt, 图标)
@@ -182,8 +184,7 @@ Public Class ModernButton
         End If
     End Sub
 
-    Private Sub 绘制文本_D2D(rt As ID2D1DCRenderTarget, 内容矩形区域 As RectangleF, 图标宽度 As Single)
-        Dim s As Single = DpiScale()
+    Private Sub 绘制文本_D2D(rt As ID2D1DCRenderTarget, 内容矩形区域 As RectangleF, 图标宽度 As Single, s As Single, textFormatCache As D2DHelper.TextFormatCache, brushCache As D2DHelper.SolidColorBrushCache)
         Dim _图标边距 As Single = 图标边距 * s
         Dim _边框圆角半径 As Single = 边框圆角半径 * s
         Dim 图标占用总宽度 As Single = If(图标宽度 > 0, 图标宽度 + _图标边距, 0)
@@ -203,57 +204,39 @@ Public Class ModernButton
 
         Dim mainTextInfo = 解析助记键文本(If(MyBase.Text, ""))
         Dim mainText As String = mainTextInfo.DisplayText
+        If String.IsNullOrEmpty(mainText) AndAlso String.IsNullOrEmpty(次要文本) Then Return
         ' ── ⚠ DirectWrite 字号必须叠加 DPI 缩放（* s）──
         ' DC RT 由 D2DHelper 创建后默认按 96 DPI 像素映射；只用 (Pt * 96/72) 得到的是逻辑像素，
         ' 在 HighDPI 下与 GDI+ TextRenderer 实际渲染尺寸不一致，会出现"换字体/字号像不生效"的现象。
         ' 必须再乘以 DpiScale()=DeviceDpi/96，让物理像素字号与系统 GDI 文本一致。
         ' 该规则适用于本仓库所有走 D2D + DirectWrite 的文字绘制路径，参考此实现。
         Dim mainSizePx As Single = Me.Font.SizeInPoints * (96.0F / 72.0F) * s
-        Dim familyName As String = Me.Font.FontFamily.Name
-
         Dim dw = D2DHelper.GetDWriteFactory()
 
         If Not String.IsNullOrEmpty(次要文本) Then
             Dim subSizePx As Single = 次要文本字号 * (96.0F / 72.0F) * s
-            Using mainFmt = D2DHelper.CreateTextFormat(Me.Font, mainSizePx)
-                Using subFmt = D2DHelper.CreateTextFormat(familyName, Vortice.DirectWrite.FontWeight.Normal, Vortice.DirectWrite.FontStyle.Normal, Vortice.DirectWrite.FontStretch.Normal, subSizePx)
-                    mainFmt.TextAlignment = align
-                    mainFmt.WordWrapping = WordWrapping.NoWrap
-                    mainFmt.ParagraphAlignment = ParagraphAlignment.Near
-                    subFmt.TextAlignment = align
-                    subFmt.WordWrapping = WordWrapping.NoWrap
-                    subFmt.ParagraphAlignment = ParagraphAlignment.Near
-
-                    Using mainLayout = dw.CreateTextLayout(mainText, mainFmt, 文本绘制区域.Width, 文本绘制区域.Height)
-                        Using subLayout = dw.CreateTextLayout(次要文本, subFmt, 文本绘制区域.Width, 文本绘制区域.Height)
-                            应用助记键下划线(mainLayout, mainTextInfo.MnemonicIndex)
-                            Dim mm = mainLayout.Metrics
-                            Dim sm = subLayout.Metrics
-                            Dim _主次文本间距 As Single = 主次文本间距 * s
-                            Dim totalH As Single = mm.Height + _主次文本间距 + sm.Height
-                            Dim startY As Single = 文本绘制区域.Y + (文本绘制区域.Height - totalH) / 2.0F
-
-                            Using fb1 = rt.CreateSolidColorBrush(D2DHelper.ToColor4(文本颜色))
-                                rt.DrawTextLayout(New Vector2(文本绘制区域.X, startY), mainLayout, fb1)
-                            End Using
-                            Using fb2 = rt.CreateSolidColorBrush(D2DHelper.ToColor4(次要文本颜色))
-                                rt.DrawTextLayout(New Vector2(文本绘制区域.X, startY + mm.Height + _主次文本间距), subLayout, fb2)
-                            End Using
-                        End Using
-                    End Using
+            Dim mainFmt = textFormatCache.Get(Me.Font, mainSizePx, align, ParagraphAlignment.Near, False)
+            Dim subFmt = textFormatCache.Get(Me.Font.FontFamily.Name, Vortice.DirectWrite.FontWeight.Normal, Vortice.DirectWrite.FontStyle.Normal, subSizePx, align, ParagraphAlignment.Near, False)
+            Using mainLayout = dw.CreateTextLayout(mainText, mainFmt, 文本绘制区域.Width, 文本绘制区域.Height)
+                Using subLayout = dw.CreateTextLayout(次要文本, subFmt, 文本绘制区域.Width, 文本绘制区域.Height)
+                    应用助记键下划线(mainLayout, mainTextInfo.MnemonicIndex)
+                    Dim mm = mainLayout.Metrics
+                    Dim sm = subLayout.Metrics
+                    Dim _主次文本间距 As Single = 主次文本间距 * s
+                    Dim totalH As Single = mm.Height + _主次文本间距 + sm.Height
+                    Dim startY As Single = 文本绘制区域.Y + (文本绘制区域.Height - totalH) / 2.0F
+                    Dim fb1 = brushCache.Get(rt, 文本颜色)
+                    Dim fb2 = brushCache.Get(rt, 次要文本颜色)
+                    If fb1 IsNot Nothing Then rt.DrawTextLayout(New Vector2(文本绘制区域.X, startY), mainLayout, fb1)
+                    If fb2 IsNot Nothing Then rt.DrawTextLayout(New Vector2(文本绘制区域.X, startY + mm.Height + _主次文本间距), subLayout, fb2)
                 End Using
             End Using
         Else
-            Using mainFmt = D2DHelper.CreateTextFormat(Me.Font, mainSizePx)
-                mainFmt.TextAlignment = align
-                mainFmt.ParagraphAlignment = ParagraphAlignment.Center
-                mainFmt.WordWrapping = WordWrapping.NoWrap
-                Using mainLayout = dw.CreateTextLayout(mainText, mainFmt, 文本绘制区域.Width, 文本绘制区域.Height)
-                    应用助记键下划线(mainLayout, mainTextInfo.MnemonicIndex)
-                    Using fb = rt.CreateSolidColorBrush(D2DHelper.ToColor4(文本颜色))
-                        rt.DrawTextLayout(New Vector2(文本绘制区域.X, 文本绘制区域.Y), mainLayout, fb)
-                    End Using
-                End Using
+            Dim mainFmt = textFormatCache.Get(Me.Font, mainSizePx, align, ParagraphAlignment.Center, False)
+            Using mainLayout = dw.CreateTextLayout(mainText, mainFmt, 文本绘制区域.Width, 文本绘制区域.Height)
+                应用助记键下划线(mainLayout, mainTextInfo.MnemonicIndex)
+                Dim fb = brushCache.Get(rt, 文本颜色)
+                If fb IsNot Nothing Then rt.DrawTextLayout(New Vector2(文本绘制区域.X, 文本绘制区域.Y), mainLayout, fb)
             End Using
         End If
     End Sub
@@ -261,12 +244,15 @@ Public Class ModernButton
     Private Structure 助记键文本信息
         Public DisplayText As String
         Public MnemonicIndex As Integer
-        Public MnemonicChar As Char
     End Structure
 
     Private Function 解析助记键文本(text As String) As 助记键文本信息
-        Dim result As New 助记键文本信息 With {.DisplayText = "", .MnemonicIndex = -1, .MnemonicChar = vbNullChar}
+        Dim result As New 助记键文本信息 With {.DisplayText = "", .MnemonicIndex = -1}
         If String.IsNullOrEmpty(text) Then Return result
+        If text.IndexOf("&"c) < 0 Then
+            result.DisplayText = text
+            Return result
+        End If
 
         Dim sb As New System.Text.StringBuilder(text.Length)
         Dim i As Integer = 0
@@ -280,7 +266,6 @@ Public Class ModernButton
                 End If
                 If i + 1 < text.Length AndAlso result.MnemonicIndex < 0 Then
                     result.MnemonicIndex = sb.Length
-                    result.MnemonicChar = Char.ToUpperInvariant(text(i + 1))
                 End If
                 i += 1
                 Continue While
@@ -298,9 +283,9 @@ Public Class ModernButton
         layout.SetUnderline(True, New TextRange(mnemonicIndex, 1))
     End Sub
 
-    Private Function 计算图标占用的水平宽度(内容矩形区域 As RectangleF) As Single
+    Private Function 计算图标占用的水平宽度(内容矩形区域 As RectangleF, s As Single) As Single
         If 图标 Is Nothing Then Return 0
-        Return Math.Min(内容矩形区域.Height - 图标边距 * DpiScale() * 2, 内容矩形区域.Width * 0.3F)
+        Return Math.Max(0, Math.Min(内容矩形区域.Height - 图标边距 * s * 2, 内容矩形区域.Width * 0.3F))
     End Function
     Private Sub 根据鼠标状态分配颜色(ByRef _背景颜色 As Color, ByRef _渐变颜色 As Color, ByRef _边框颜色 As Color)
         Select Case 鼠标状态
@@ -319,6 +304,7 @@ Public Class ModernButton
         End Select
     End Sub
     Private Sub 切换鼠标颜色状态(新状态 As MouseStateEnum)
+        If 新状态 = 鼠标状态 Then Return
         Dim 当前背景 As Color = Nothing, 当前渐变 As Color = Nothing, 当前边框 As Color = Nothing
         If 颜色动画已启用 Then
             Dim 旧目标背景 As Color = Nothing, 旧目标渐变 As Color = Nothing, 旧目标边框 As Color = Nothing
@@ -373,13 +359,29 @@ Public Class ModernButton
     Private Sub 触发点击事件(e As EventArgs)
         If Not Enabled OrElse IsDisposed Then Return
 
-        直接恢复常规鼠标状态(True)
+        Dim 点击期间进入嵌套消息循环 As Boolean = False
+        Dim 嵌套消息循环探测计时器 As New Timer() With {.Interval = 1}
+        AddHandler 嵌套消息循环探测计时器.Tick,
+            Sub()
+                点击期间进入嵌套消息循环 = True
+                直接恢复常规鼠标状态(True)
+                嵌套消息循环探测计时器.Stop()
+            End Sub
+        嵌套消息循环探测计时器.Start()
+
         Try
             MyBase.OnClick(e)
         Finally
+            嵌套消息循环探测计时器.Stop()
+            嵌套消息循环探测计时器.Dispose()
+
             If Not IsDisposed AndAlso Enabled Then
-                直接恢复常规鼠标状态(True)
-                延后恢复点击后的常规状态()
+                If 点击期间进入嵌套消息循环 Then
+                    直接恢复常规鼠标状态(True)
+                    延后恢复点击后的常规状态()
+                Else
+                    按当前鼠标位置刷新状态()
+                End If
             End If
         End Try
     End Sub
@@ -391,7 +393,6 @@ Public Class ModernButton
                             If IsDisposed OrElse Not Enabled Then Exit Sub
                             直接恢复常规鼠标状态(True)
                         End Sub)
-        Catch ex As ObjectDisposedException
         Catch ex As InvalidOperationException
         End Try
     End Sub
@@ -403,11 +404,7 @@ Public Class ModernButton
         鼠标状态 = MouseStateEnum.Normal
         颜色动画已启用 = False
         动画助手.StopAnimation()
-        If 长按确认已启用 Then
-            长按正在进行 = False
-            长按动画助手.StopAnimation()
-            长按动画助手.SetImmediate(0)
-        End If
+        停止长按确认()
 
         If 等待鼠标实际移动 Then
             点击后等待鼠标移动 = True
@@ -420,6 +417,14 @@ Public Class ModernButton
         If Visible AndAlso IsHandleCreated Then Update()
     End Sub
 
+    Private Sub 按当前鼠标位置刷新状态()
+        点击后等待鼠标移动 = False
+        If IsDisposed OrElse Not Enabled Then Return
+
+        Dim 鼠标在控件内 As Boolean = ClientRectangle.Contains(PointToClient(Cursor.Position))
+        切换鼠标颜色状态(If(鼠标在控件内, MouseStateEnum.Hover, MouseStateEnum.Normal))
+    End Sub
+
     Private Function 点击后仍在等待同一鼠标位置() As Boolean
         If Not 点击后等待鼠标移动 Then Return False
         If Cursor.Position.Equals(点击后鼠标屏幕位置) Then Return True
@@ -427,6 +432,13 @@ Public Class ModernButton
         点击后等待鼠标移动 = False
         Return False
     End Function
+
+    Private Sub 停止长按确认()
+        If Not 长按正在进行 AndAlso 长按动画助手.Progress <= 0 Then Return
+        长按正在进行 = False
+        长按动画助手.StopAnimation()
+        长按动画助手.SetImmediate(0)
+    End Sub
 
     Protected Overrides Sub OnClick(e As EventArgs)
         If Not 长按确认已启用 Then
@@ -452,11 +464,7 @@ Public Class ModernButton
         If Not Enabled Then Return
         点击后等待鼠标移动 = False
         切换鼠标颜色状态(MouseStateEnum.Normal)
-        If 长按确认已启用 Then
-            长按正在进行 = False
-            长按动画助手.StopAnimation()
-            长按动画助手.SetImmediate(0)
-        End If
+        停止长按确认()
     End Sub
     Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
         MyBase.OnMouseDown(e)
@@ -477,11 +485,7 @@ Public Class ModernButton
         Else
             切换鼠标颜色状态(If(ClientRectangle.Contains(e.Location), MouseStateEnum.Hover, MouseStateEnum.Normal))
         End If
-        If 长按确认已启用 Then
-            长按正在进行 = False
-            长按动画助手.StopAnimation()
-            长按动画助手.SetImmediate(0)
-        End If
+        停止长按确认()
     End Sub
     Protected Overrides Sub OnEnabledChanged(e As EventArgs)
         MyBase.OnEnabledChanged(e)
@@ -493,9 +497,7 @@ Public Class ModernButton
             助记键触发计时器?.Stop()
             助记键触发计时器?.Dispose()
             助记键触发计时器 = Nothing
-            长按正在进行 = False
-            长按动画助手.StopAnimation()
-            长按动画助手.SetImmediate(0)
+            停止长按确认()
         End If
         Me.Invalidate()
     End Sub

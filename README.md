@@ -114,6 +114,7 @@ Q群：1087964158
 | 37     | BreadcrumbNavigationBar | 面包屑导航条               | 全新     | 低 🟢     |
 | 38     | PrecisionTimer          | 高精度计时器               | N/A      | 低 🟢     |
 | 39     | AgentRoom               | 智能体聊天室               | 全新     | 低 🟢     |
+| 40     | ModernNumericUpDown     | 现代化数字框               | 全新     | 低 🟢     |
 
 ## 最值得一试
 
