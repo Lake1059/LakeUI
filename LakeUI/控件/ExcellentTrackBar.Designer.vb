@@ -7,6 +7,7 @@ Partial Class ExcellentTrackBar
     Protected Overrides Sub Dispose(ByVal disposing As Boolean)
         Try
             If disposing Then
+                释放标签字体缓存()
                 动画助手.Dispose()
                 If components IsNot Nothing Then
                     components.Dispose()

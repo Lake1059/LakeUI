@@ -585,7 +585,7 @@ Public Module D2DHelper
     End Class
 
     ''' <summary>
-    ''' 跨帧复用 <see cref="IDWriteTextFormat"/>。按 (family, weight, style, sizePx, textAlignment, paragraphAlignment) 缓存。
+    ''' 跨帧复用 <see cref="IDWriteTextFormat"/>。按 (family, weight, style, sizePx, textAlignment, paragraphAlignment, wrap) 缓存。
     ''' DirectWrite TextFormat 不绑定 RT，可全局共享。
     ''' </summary>
     Public Class TextFormatCache
@@ -600,6 +600,7 @@ Public Module D2DHelper
             Public TextAlign As Vortice.DirectWrite.TextAlignment
             Public ParaAlign As Vortice.DirectWrite.ParagraphAlignment
             Public Trim As Boolean
+            Public Wrap As Boolean
         End Structure
 
         Private ReadOnly _map As New Dictionary(Of Key, IDWriteTextFormat)(4)
@@ -609,21 +610,39 @@ Public Module D2DHelper
                               textAlign As Vortice.DirectWrite.TextAlignment,
                               paraAlign As Vortice.DirectWrite.ParagraphAlignment,
                               trimChar As Boolean) As IDWriteTextFormat
+            Return [Get](family, weight, style, sizePx, textAlign, paraAlign, trimChar, False)
+        End Function
+
+        Public Function [Get](family As String, weight As Vortice.DirectWrite.FontWeight,
+                              style As Vortice.DirectWrite.FontStyle, sizePx As Single,
+                              textAlign As Vortice.DirectWrite.TextAlignment,
+                              paraAlign As Vortice.DirectWrite.ParagraphAlignment,
+                              trimChar As Boolean,
+                              wordWrap As Boolean) As IDWriteTextFormat
             Return GetResolved(ResolveTextFont(family, weight, style, Vortice.DirectWrite.FontStretch.Normal),
-                               sizePx, textAlign, paraAlign, trimChar)
+                               sizePx, textAlign, paraAlign, trimChar, wordWrap)
         End Function
 
         Public Function [Get](font As Font, sizePx As Single,
                               textAlign As Vortice.DirectWrite.TextAlignment,
                               paraAlign As Vortice.DirectWrite.ParagraphAlignment,
                               trimChar As Boolean) As IDWriteTextFormat
-            Return GetResolved(ResolveTextFont(font), sizePx, textAlign, paraAlign, trimChar)
+            Return [Get](font, sizePx, textAlign, paraAlign, trimChar, False)
+        End Function
+
+        Public Function [Get](font As Font, sizePx As Single,
+                              textAlign As Vortice.DirectWrite.TextAlignment,
+                              paraAlign As Vortice.DirectWrite.ParagraphAlignment,
+                              trimChar As Boolean,
+                              wordWrap As Boolean) As IDWriteTextFormat
+            Return GetResolved(ResolveTextFont(font), sizePx, textAlign, paraAlign, trimChar, wordWrap)
         End Function
 
         Private Function GetResolved(resolved As ResolvedTextFont, sizePx As Single,
                                     textAlign As Vortice.DirectWrite.TextAlignment,
                                     paraAlign As Vortice.DirectWrite.ParagraphAlignment,
-                                    trimChar As Boolean) As IDWriteTextFormat
+                                    trimChar As Boolean,
+                                    wordWrap As Boolean) As IDWriteTextFormat
             Dim k As New Key With {
                 .Family = If(resolved.Family, ""),
                 .Weight = resolved.Weight,
@@ -632,14 +651,15 @@ Public Module D2DHelper
                 .SizePx = sizePx,
                 .TextAlign = textAlign,
                 .ParaAlign = paraAlign,
-                .Trim = trimChar
+                .Trim = trimChar,
+                .Wrap = wordWrap
             }
             Dim fmt As IDWriteTextFormat = Nothing
             If _map.TryGetValue(k, fmt) Then Return fmt
             fmt = CreateTextFormat(resolved, sizePx)
             fmt.TextAlignment = textAlign
             fmt.ParagraphAlignment = paraAlign
-            fmt.WordWrapping = WordWrapping.NoWrap
+            fmt.WordWrapping = If(wordWrap, WordWrapping.Wrap, WordWrapping.NoWrap)
             If trimChar Then
                 Try
                     fmt.SetTrimming(New Trimming With {.Granularity = TrimmingGranularity.Character}, Nothing)

@@ -680,11 +680,7 @@ Public Class HtmlColorLabel
             Case Else : ta = Vortice.DirectWrite.TextAlignment.Leading : pa = Vortice.DirectWrite.ParagraphAlignment.Near
         End Select
 
-        Dim fmt = _当前合成器.TextFormatCache.Get(Me.Font.FontFamily.Name, weight, style, sizePx, ta, pa, False)
-        Try
-            fmt.WordWrapping = Vortice.DirectWrite.WordWrapping.Wrap
-        Catch
-        End Try
+        Dim fmt = _当前合成器.TextFormatCache.Get(Me.Font.FontFamily.Name, weight, style, sizePx, ta, pa, False, True)
         Dim brush = _当前合成器.BrushCache.Get(rt, 文本颜色)
         rt.DrawText(text, fmt,
                     New Vortice.Mathematics.Rect(内容区域.X, 内容区域.Y, 内容区域.Width, 内容区域.Height),

@@ -560,23 +560,45 @@ Public Class ExcellentTrackBar
         End Set
     End Property
 
-    Private 标签字体 As Font = Nothing
-    <Category("LakeUI"), Description("刻度标签字体，为空时使用控件的 Font"), DefaultValue(GetType(Font), Nothing), Browsable(True)>
-    Public Property LabelFont As Font
+    Private 标签字号 As Single = 9.0F
+    Private 标签字体缓存 As Font = Nothing
+    Private 标签字体缓存键 As String = ""
+
+    <Category("LakeUI"), Description("刻度标签字号，字体名称和样式遵从控件的 Font"), DefaultValue(9.0F), Browsable(True)>
+    Public Property LabelSize As Single
         Get
-            Return 标签字体
+            Return 标签字号
         End Get
-        Set(value As Font)
-            If Not EqualityComparer(Of Font).Default.Equals(标签字体, value) Then
-                标签字体 = value
+        Set(value As Single)
+            If Single.IsNaN(value) OrElse Single.IsInfinity(value) Then value = 9.0F
+            value = Math.Max(1.0F, value)
+            If 标签字号 <> value Then
+                标签字号 = value
+                释放标签字体缓存()
                 D2DHelperV2.RefreshFontDependentRendering(Me)
             End If
         End Set
     End Property
 
     Private Function 获取标签字体() As Font
-        Return If(标签字体, Me.Font)
+        Dim cacheKey As String = Me.Font.FontFamily.Name & "|" &
+                                  CInt(Me.Font.Style).ToString() & "|" &
+                                  标签字号.ToString(Globalization.CultureInfo.InvariantCulture)
+        If 标签字体缓存 Is Nothing OrElse 标签字体缓存键 <> cacheKey Then
+            释放标签字体缓存()
+            标签字体缓存 = New Font(Me.Font.FontFamily, 标签字号, Me.Font.Style, GraphicsUnit.Point)
+            标签字体缓存键 = cacheKey
+        End If
+        Return 标签字体缓存
     End Function
+
+    Private Sub 释放标签字体缓存()
+        If 标签字体缓存 IsNot Nothing Then
+            标签字体缓存.Dispose()
+            标签字体缓存 = Nothing
+            标签字体缓存键 = ""
+        End If
+    End Sub
 
     Private 标签连线颜色 As Color = Color.Gray
     <Category("LakeUI"), Description("刻度标签连线颜色"), DefaultValue(GetType(Color), "Gray"), Browsable(True)>
@@ -1166,6 +1188,7 @@ Public Class ExcellentTrackBar
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
         MyBase.OnFontChanged(e)
+        释放标签字体缓存()
         D2DHelperV2.RefreshFontDependentRendering(Me)
     End Sub
 

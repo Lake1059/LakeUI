@@ -63,6 +63,7 @@ Partial Class Form1
         Dim ModernTabPage38 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
         Dim ModernTabPage39 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
         Dim ModernTabPage40 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
+        Dim ModernTabPage41 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
         Dim resources As System.ComponentModel.ComponentResourceManager = New System.ComponentModel.ComponentResourceManager(GetType(Form1))
         ModernTabListControl1 = New ModernTabListControl()
         ModernTextBox1 = New ModernTextBox()
@@ -74,6 +75,8 @@ Partial Class Form1
         ' 
         ModernTabListControl1.AnimationFPS = 120
         ModernTabListControl1.BackColor = Color.Transparent
+        ModernTabListControl1.ContentBackColor = Color.Transparent
+        ModernTabListControl1.ContentBorderColor = Color.Transparent
         ModernTabListControl1.Controls.Add(ModernTextBox1)
         ModernTabListControl1.Dock = DockStyle.Fill
         ModernTabPage1.IsDescription = True
@@ -118,6 +121,7 @@ Partial Class Form1
         ModernTabPage38.Text = "PrecisionTimer"
         ModernTabPage39.Text = "AgentRoom"
         ModernTabPage40.Text = "ModernNumericUpDown"
+        ModernTabPage41.Text = "[定制品] MemberWall"
         ModernTabListControl1.Items.Add(ModernTabPage1)
         ModernTabListControl1.Items.Add(ModernTabPage2)
         ModernTabListControl1.Items.Add(ModernTabPage3)
@@ -158,6 +162,7 @@ Partial Class Form1
         ModernTabListControl1.Items.Add(ModernTabPage38)
         ModernTabListControl1.Items.Add(ModernTabPage39)
         ModernTabListControl1.Items.Add(ModernTabPage40)
+        ModernTabListControl1.Items.Add(ModernTabPage41)
         ModernTabListControl1.Location = New Point(0, 0)
         ModernTabListControl1.MoreIndicatorColor = Color.FromArgb(CByte(120), CByte(220), CByte(220), CByte(220))
         ModernTabListControl1.Name = "ModernTabListControl1"
@@ -190,7 +195,6 @@ Partial Class Form1
         ModernTextBox1.Margin = New Padding(2)
         ModernTextBox1.Name = "ModernTextBox1"
         ModernTextBox1.Padding = New Padding(13, 0, 13, 0)
-        ModernTextBox1.ScrollBarHoverColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
         ModernTextBox1.Size = New Size(230, 34)
         ModernTextBox1.TabIndex = 12
         ModernTextBox1.TabStop = False
@@ -201,7 +205,6 @@ Partial Class Form1
         ' 
         ThisIsYourWindow1.BackdropBlurPasses = 0
         ThisIsYourWindow1.BackdropImage = CType(resources.GetObject("ThisIsYourWindow1.BackdropImage"), Image)
-        ThisIsYourWindow1.BackdropMaxParallelism = 6
         ThisIsYourWindow1.BackdropMode = ThisIsYourWindow.BackdropModeEnum.Image
         ThisIsYourWindow1.BackdropNoiseScale = 0.5F
         ThisIsYourWindow1.BackdropTintColor = Color.FromArgb(CByte(80), CByte(0), CByte(0), CByte(0))
@@ -239,7 +242,7 @@ Partial Class Form1
         MinimumSize = New Size(1000, 700)
         Name = "Form1"
         StartPosition = FormStartPosition.CenterScreen
-        Text = "LakeUI 2.1.0 DEMO"
+        Text = "LakeUI 2.2.0 DEMO"
         ModernTabListControl1.ResumeLayout(False)
         ResumeLayout(False)
     End Sub

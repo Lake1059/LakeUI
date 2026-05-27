@@ -21,7 +21,7 @@ Imports Vortice.DirectWrite
 '''   GDI TextRenderer 的实际像素尺寸不一致（D2D DC RT 默认按 96 DPI 映射）。
 '''   规则同 ModernButton.vb：sizePx = Font.SizeInPoints * (96/72) * DpiScale。
 ''' • 文本应绘制在 PaintScopeV2.TextLayer（= DC RT），以利用 GDI HDC 的子像素抗锯齿。
-''' • 不处理换行：默认 <see cref="WordWrapping.NoWrap"/>；需要换行的传 <see cref="TextFormatFlags.WordBreak"/>。
+''' • 默认 <see cref="WordWrapping.NoWrap"/>；需要换行的传 <see cref="TextFormatFlags.WordBreak"/>。
 ''' • TextLayout 是一次性资源（按字符串/字号变化），无法跨帧复用；TextFormat 由 cache 复用。
 ''' </summary>
 Public Module D2DTextRenderer
@@ -36,7 +36,8 @@ Public Module D2DTextRenderer
         If rt Is Nothing OrElse String.IsNullOrEmpty(text) OrElse font Is Nothing Then Return
         If rect.Width <= 0 OrElse rect.Height <= 0 Then Return
 
-        Dim fmt = AcquireTextFormat(font, dpiScale, flags, textFormatCache)
+        Dim ownsFormat As Boolean = False
+        Dim fmt = AcquireTextFormat(font, dpiScale, flags, textFormatCache, ownsFormat)
         If fmt Is Nothing Then Return
         Dim brush = If(brushCache IsNot Nothing,
                        DirectCast(brushCache.[Get](rt, color), ID2D1Brush),
@@ -47,6 +48,9 @@ Public Module D2DTextRenderer
         Finally
             If ownsBrush AndAlso brush IsNot Nothing Then
                 Try : brush.Dispose() : Catch : End Try
+            End If
+            If ownsFormat AndAlso fmt IsNot Nothing Then
+                Try : fmt.Dispose() : Catch : End Try
             End If
         End Try
     End Sub
@@ -65,7 +69,8 @@ Public Module D2DTextRenderer
                           brushCache As D2DHelper.SolidColorBrushCache)
         If rt Is Nothing OrElse String.IsNullOrEmpty(text) OrElse font Is Nothing Then Return
         Dim flags As TextFormatFlags = TextFormatFlags.Left Or TextFormatFlags.Top Or TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine
-        Dim fmt = AcquireTextFormat(font, dpiScale, flags, textFormatCache)
+        Dim ownsFormat As Boolean = False
+        Dim fmt = AcquireTextFormat(font, dpiScale, flags, textFormatCache, ownsFormat)
         If fmt Is Nothing Then Return
         Dim brush = If(brushCache IsNot Nothing,
                        DirectCast(brushCache.[Get](rt, color), ID2D1Brush),
@@ -77,66 +82,85 @@ Public Module D2DTextRenderer
             If ownsBrush AndAlso brush IsNot Nothing Then
                 Try : brush.Dispose() : Catch : End Try
             End If
+            If ownsFormat AndAlso fmt IsNot Nothing Then
+                Try : fmt.Dispose() : Catch : End Try
+            End If
         End Try
     End Sub
+
+    ''' <summary>按与 DrawText 相同的 DirectWrite 格式测量文本布局尺寸。</summary>
+    Public Function MeasureText(text As String, font As Font, proposedSize As Size, flags As TextFormatFlags,
+                                dpiScale As Single,
+                                Optional textFormatCache As D2DHelper.TextFormatCache = Nothing) As Size
+        If String.IsNullOrEmpty(text) OrElse font Is Nothing Then Return Size.Empty
+        Dim ownsFormat As Boolean = False
+        Dim fmt = AcquireTextFormat(font, dpiScale, flags, textFormatCache, ownsFormat)
+        If fmt Is Nothing Then Return Size.Empty
+        Try
+            Dim layoutW As Single = NormalizeLayoutExtent(proposedSize.Width)
+            Dim layoutH As Single = NormalizeLayoutExtent(proposedSize.Height)
+            Using layout = D2DHelper.GetDWriteFactory().CreateTextLayout(text, fmt, layoutW, layoutH)
+                Dim m = layout.Metrics
+                Return New Size(
+                    CInt(Math.Ceiling(Math.Max(0.0F, m.WidthIncludingTrailingWhitespace))),
+                    CInt(Math.Ceiling(Math.Max(0.0F, m.Height))))
+            End Using
+        Finally
+            If ownsFormat AndAlso fmt IsNot Nothing Then
+                Try : fmt.Dispose() : Catch : End Try
+            End If
+        End Try
+    End Function
 
     ''' <summary>测量文本宽度（像素）。返回 ceil 的整数，与 TextRenderer.MeasureText 语义接近。</summary>
     Public Function MeasureWidth(text As String, font As Font, dpiScale As Single) As Integer
         If String.IsNullOrEmpty(text) OrElse font Is Nothing Then Return 0
-        Dim sizePx As Single = font.SizeInPoints * (96.0F / 72.0F) * dpiScale
-        Dim dw = D2DHelper.GetDWriteFactory()
-        Using fmt = D2DHelper.CreateTextFormat(font, sizePx)
-            fmt.WordWrapping = WordWrapping.NoWrap
-            Using layout = dw.CreateTextLayout(text, fmt, 100000.0F, 100000.0F)
-                Return CInt(Math.Ceiling(layout.Metrics.WidthIncludingTrailingWhitespace))
-            End Using
-        End Using
+        Dim flags As TextFormatFlags = TextFormatFlags.Left Or TextFormatFlags.Top Or TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine
+        Return MeasureText(text, font, New Size(Integer.MaxValue, Integer.MaxValue), flags, dpiScale).Width
     End Function
 
     ''' <summary>测量行高（像素，含 ascent/descent）。常用于绘制前确定垂直布局。</summary>
     Public Function MeasureLineHeight(font As Font, dpiScale As Single) As Integer
         If font Is Nothing Then Return 0
-        Dim sizePx As Single = font.SizeInPoints * (96.0F / 72.0F) * dpiScale
-        Dim dw = D2DHelper.GetDWriteFactory()
-        Using fmt = D2DHelper.CreateTextFormat(font, sizePx)
-            fmt.WordWrapping = WordWrapping.NoWrap
-            Using layout = dw.CreateTextLayout("Ag", fmt, 100000.0F, 100000.0F)
-                Return CInt(Math.Ceiling(layout.Metrics.Height))
-            End Using
-        End Using
+        Dim flags As TextFormatFlags = TextFormatFlags.Left Or TextFormatFlags.Top Or TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine
+        Return MeasureText("Ag", font, New Size(Integer.MaxValue, Integer.MaxValue), flags, dpiScale).Height
     End Function
 
     ''' <summary>测量 TextLayout 的完整 Metrics（宽 + 高）；调用方可用于精确布局。</summary>
     Public Function MeasureSize(text As String, font As Font, dpiScale As Single) As SizeF
         If String.IsNullOrEmpty(text) OrElse font Is Nothing Then Return SizeF.Empty
-        Dim sizePx As Single = font.SizeInPoints * (96.0F / 72.0F) * dpiScale
-        Dim dw = D2DHelper.GetDWriteFactory()
-        Using fmt = D2DHelper.CreateTextFormat(font, sizePx)
-            fmt.WordWrapping = WordWrapping.NoWrap
-            Using layout = dw.CreateTextLayout(text, fmt, 100000.0F, 100000.0F)
-                Dim m = layout.Metrics
-                Return New SizeF(m.WidthIncludingTrailingWhitespace, m.Height)
-            End Using
-        End Using
+        Dim flags As TextFormatFlags = TextFormatFlags.Left Or TextFormatFlags.Top Or TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine
+        Dim sz = MeasureText(text, font, New Size(Integer.MaxValue, Integer.MaxValue), flags, dpiScale)
+        Return New SizeF(sz.Width, sz.Height)
     End Function
 
     Private Function AcquireTextFormat(font As Font, dpiScale As Single, flags As TextFormatFlags,
-                                       cache As D2DHelper.TextFormatCache) As IDWriteTextFormat
+                                       cache As D2DHelper.TextFormatCache,
+                                       ByRef ownsFormat As Boolean) As IDWriteTextFormat
         Dim sizePx As Single = font.SizeInPoints * (96.0F / 72.0F) * dpiScale
         Dim textAlign As TextAlignment = MapTextAlignment(flags)
         Dim paraAlign As ParagraphAlignment = MapParagraphAlignment(flags)
         Dim trimChar As Boolean = (flags And TextFormatFlags.EndEllipsis) = TextFormatFlags.EndEllipsis
+        Dim wordWrap As Boolean = (flags And TextFormatFlags.WordBreak) = TextFormatFlags.WordBreak AndAlso
+                                  (flags And TextFormatFlags.SingleLine) <> TextFormatFlags.SingleLine
+        ownsFormat = (cache Is Nothing)
         If cache IsNot Nothing Then
-            Return cache.[Get](font, sizePx, textAlign, paraAlign, trimChar)
+            Return cache.[Get](font, sizePx, textAlign, paraAlign, trimChar, wordWrap)
         End If
         Dim fmt = D2DHelper.CreateTextFormat(font, sizePx)
         fmt.TextAlignment = textAlign
         fmt.ParagraphAlignment = paraAlign
-        fmt.WordWrapping = WordWrapping.NoWrap
+        fmt.WordWrapping = If(wordWrap, WordWrapping.Wrap, WordWrapping.NoWrap)
         If trimChar Then
             Try : fmt.SetTrimming(New Trimming With {.Granularity = TrimmingGranularity.Character}, Nothing) : Catch : End Try
         End If
         Return fmt
+    End Function
+
+    Private Function NormalizeLayoutExtent(value As Integer) As Single
+        If value <= 0 Then Return 1.0F
+        If value = Integer.MaxValue Then Return Single.MaxValue
+        Return CSng(value)
     End Function
 
     Private Function MapTextAlignment(flags As TextFormatFlags) As TextAlignment

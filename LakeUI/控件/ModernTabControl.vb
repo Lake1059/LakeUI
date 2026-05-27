@@ -151,6 +151,55 @@ Public Class ModernTabControl
         Public 起始值 As Single = 0.0F
         Public 起始时刻 As Long = 0
     End Class
+
+    ''' <summary>
+    ''' 支持透明背景的内容承载面板。当 BackColor 的 Alpha 为 0 或为透明色时，
+    ''' 通过调用背景源的 Paint 流程取真实像素作为背景。
+    ''' </summary>
+    Private Class 透明内容面板
+        Inherits Panel
+
+        Private _ownerControl As ModernTabControl
+
+        Public Sub New()
+            SetStyle(ControlStyles.SupportsTransparentBackColor Or
+                     ControlStyles.OptimizedDoubleBuffer Or
+                     ControlStyles.AllPaintingInWmPaint Or
+                     ControlStyles.UserPaint Or
+                     ControlStyles.ResizeRedraw, True)
+            UpdateStyles()
+        End Sub
+
+        Friend Sub SetOwnerControl(value As ModernTabControl)
+            _ownerControl = value
+        End Sub
+
+        Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
+            If BackColor.A < 255 Then
+                ' V2 透明背景穿透：source 优先选择 ModernTabControl 的 BackgroundSource，
+                ' 若未指定再回退到控件父级，兼容旧行为。
+                Dim tabCtrl As ModernTabControl = If(_ownerControl, TryCast(Me.Parent, ModernTabControl))
+                Dim source As Control = Nothing
+                If tabCtrl IsNot Nothing Then
+                    source = If(tabCtrl.BackgroundSource, tabCtrl.Parent)
+                End If
+                If source IsNot Nothing Then
+                    Using scope = D2DHelperV2.BeginPaint(e, Me, 1)
+                        If scope IsNot Nothing Then
+                            BackgroundPenetrationV2.PaintBackground(Me, scope, source)
+                        End If
+                    End Using
+                End If
+                If BackColor.A > 0 Then
+                    Using brush As New SolidBrush(BackColor)
+                        e.Graphics.FillRectangle(brush, Me.ClientRectangle)
+                    End Using
+                End If
+            Else
+                MyBase.OnPaintBackground(e)
+            End If
+        End Sub
+    End Class
 #End Region
 
 #Region "构造"
@@ -159,7 +208,7 @@ Public Class ModernTabControl
     Private _动画计时器 As Timer
     Private _动画用Idle As Boolean = False
     Private _动画中 As Boolean = False
-    Private ReadOnly _内容面板 As New Panel()
+    Private ReadOnly _内容面板 As New 透明内容面板()
     Private ReadOnly 项目列表 As New List(Of ModernTab)
     Private _滚动偏移 As Integer = 0
     Private _缓存宽度 As Single() = Nothing
@@ -214,10 +263,12 @@ Public Class ModernTabControl
         SetStyle(ControlStyles.OptimizedDoubleBuffer, True)
         SetStyle(ControlStyles.ResizeRedraw, True)
         SetStyle(ControlStyles.Selectable, True)
+        SetStyle(ControlStyles.SupportsTransparentBackColor, True)
         DoubleBuffered = True
 
         _内容面板.Dock = DockStyle.None
-        _内容面板.BackColor = 内容区域背景颜色
+        _内容面板.SetOwnerControl(Me)
+        _内容面板.BackColor = 获取内容面板有效背景色()
         Me.Controls.Add(_内容面板)
 
         _动画用Idle = (动画帧率值 <= 0)
@@ -374,19 +425,47 @@ Public Class ModernTabControl
 
 #Region "绘制"
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
-        ' 所有绘制在 OnPaint 中完成
+        ' V2 契约（与 ModernTabListControl 对齐）：
+        '   • BackgroundSource 已设置 → 跳过 BackColor 整个逻辑，背景由 OnPaint 内 BackgroundPenetrationV2 绘制；
+        '   • 否则一律走 .NET 自身透明逻辑（半透明 BackColor 由基类合成父级背景，不透明色由基类填底）。
+        If _backgroundSource IsNot Nothing Then Return
+        MyBase.OnPaintBackground(e)
     End Sub
 
+    Private Function 获取内容面板有效背景色() As Color
+        ' Panel 不支持完全透明的 BackColor 显示，需要使用 Transparent 触发透明背景路径。
+        If 内容区域背景颜色.A < 255 Then Return Color.Transparent
+        Return 内容区域背景颜色
+    End Function
+
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
-        MyBase.OnPaint(e)
         确保Owner()
         If Me.Width <= 0 OrElse Me.Height <= 0 Then Return
-        Dim ssaa As Integer = If(Class1.GlobalSSAA > 1, Class1.GlobalSSAA, 超采样倍率)
+
+        Dim ssaa As Integer = Math.Max(1, CInt(超采样倍率))
+        If Class1.GlobalSSAA <> Class1.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(Class1.GlobalSSAA))
+
         Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
             If scope Is Nothing Then Return  ' 设计期 / 无 Form
             _当前合成器 = scope.Compositor
             Try
+                Dim compositor = scope.Compositor
                 Dim gRT As ID2D1RenderTarget = scope.GraphicsLayer
+
+                ' 1) 背景层（1× 直绘）：
+                '    • 显式 BackgroundSource → 绘制穿透底图（跳过 BackColor）；
+                '    • 否则若 MyBase.BackColor 半透明 → 基类 OnPaintBackground 已把父级背景合成到 DC，
+                '      这里再叠加 BackColor 作为半透明遮罩。
+                If _backgroundSource IsNot Nothing Then
+                    BackgroundPenetrationV2.PaintBackground(Me, scope, _backgroundSource)
+                ElseIf MyBase.BackColor.A > 0 AndAlso MyBase.BackColor.A < 255 Then
+                    Dim bgLayer = scope.BackgroundLayer
+                    Dim brush = compositor.BrushCache.[Get](bgLayer, MyBase.BackColor)
+                    If brush IsNot Nothing Then
+                        bgLayer.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(0, 0, Me.Width, Me.Height)), brush)
+                    End If
+                End If
+
                 绘制图形内容_D2D(gRT)
                 scope.FlushGraphics()
 
@@ -402,10 +481,18 @@ Public Class ModernTabControl
         Dim contentRect = 获取内容区域矩形()
         Dim stripRect = 获取标签栏矩形()
 
-        If Not contentRect.IsEmpty Then
+        If Not contentRect.IsEmpty AndAlso 内容区域背景颜色.A = 255 Then
             rt.FillRectangle(D2DHelper.ToD2DRect(contentRect), _当前合成器.BrushCache.Get(rt, 内容区域背景颜色))
         End If
-        rt.FillRectangle(D2DHelper.ToD2DRect(stripRect), _当前合成器.BrushCache.Get(rt, 标签栏背景颜色))
+        If 标签栏背景颜色.A > 0 Then
+            rt.FillRectangle(D2DHelper.ToD2DRect(stripRect), _当前合成器.BrushCache.Get(rt, 标签栏背景颜色))
+        End If
+
+        绘制标签栏背景图片_D2D(rt, stripRect)
+
+        If 标签栏遮罩颜色.A > 0 Then
+            rt.FillRectangle(D2DHelper.ToD2DRect(stripRect), _当前合成器.BrushCache.Get(rt, 标签栏遮罩颜色))
+        End If
 
         rt.PushAxisAlignedClip(New Vortice.RawRectF(stripRect.Left, stripRect.Top, stripRect.Right, stripRect.Bottom), AntialiasMode.PerPrimitive)
         Try
@@ -439,6 +526,33 @@ Public Class ModernTabControl
         End If
     End Sub
 
+    Private Sub 绘制标签栏背景图片_D2D(rt As ID2D1RenderTarget, tabStripRect As Rectangle)
+        If 标签栏背景图片 Is Nothing Then Return
+        Dim img As Image = 标签栏背景图片
+        Dim cw As Integer = tabStripRect.Width
+        Dim ch As Integer = tabStripRect.Height
+        If cw < 1 OrElse ch < 1 Then Return
+
+        Dim bmpCache = _当前合成器?.GetBitmapCache(img)
+        Dim bmp = bmpCache?.GetBitmap(rt, img)
+        If bmp Is Nothing Then Return
+
+        Dim ratioW As Single = CSng(cw) / img.Width
+        Dim ratioH As Single = CSng(ch) / img.Height
+        Dim ratio As Single = Math.Max(ratioW, ratioH)
+        Dim drawW As Single = img.Width * ratio
+        Dim drawH As Single = img.Height * ratio
+        Dim dx As Single = tabStripRect.X + (cw - drawW) / 2.0F
+        Dim dy As Single = tabStripRect.Y + (ch - drawH) / 2.0F
+
+        rt.PushAxisAlignedClip(New Vortice.RawRectF(tabStripRect.Left, tabStripRect.Top, tabStripRect.Right, tabStripRect.Bottom), AntialiasMode.Aliased)
+        Try
+            rt.DrawBitmap(bmp, New Vortice.Mathematics.Rect(dx, dy, drawW, drawH), 1.0F, BitmapInterpolationMode.Linear, Nothing)
+        Finally
+            rt.PopAxisAlignedClip()
+        End Try
+    End Sub
+
     Private Sub 绘制分割线_D2D(rt As ID2D1RenderTarget, index As Integer)
         Dim bounds = 获取标签页项矩形(index)
         If bounds.Width <= 0 OrElse bounds.Height <= 0 Then Return
@@ -453,9 +567,16 @@ Public Class ModernTabControl
         Dim isSelected As Boolean = (_selectedIndex = index)
         Dim hoverProgress As Single = 获取动画进度(index)
 
-        Dim bgColor As Color = If(isSelected, 选中标签页背景颜色, 颜色插值(标签栏背景颜色, 悬停标签页背景颜色, hoverProgress))
+        Dim bgColor As Color
+        If isSelected Then
+            bgColor = 选中标签页背景颜色
+        Else
+            bgColor = 颜色插值(Color.FromArgb(0, 悬停标签页背景颜色), 悬停标签页背景颜色, hoverProgress)
+        End If
         Dim radius As Single = 标签页圆角半径 * s
-        填充圆角或矩形_D2D(rt, bounds, radius, bgColor)
+        If isSelected OrElse hoverProgress > 0.001F Then
+            填充圆角或矩形_D2D(rt, bounds, radius, bgColor)
+        End If
 
         If isSelected AndAlso 选中指示条高度 > 0 Then
             Dim indicatorH As Single = 选中指示条高度 * s
@@ -524,8 +645,10 @@ Public Class ModernTabControl
         If bounds.IsEmpty Then Return
         _折叠按钮缓存矩形 = bounds
         Dim s As Single = DpiScale()
-        Dim bgColor As Color = 颜色插值(标签栏背景颜色, 悬停标签页背景颜色, _折叠按钮动画.当前值)
-        填充圆角或矩形_D2D(rt, bounds, 标签页圆角半径 * s, bgColor)
+        Dim bgColor As Color = 颜色插值(Color.FromArgb(0, 悬停标签页背景颜色), 悬停标签页背景颜色, _折叠按钮动画.当前值)
+        If _折叠按钮动画.当前值 > 0.001F Then
+            填充圆角或矩形_D2D(rt, bounds, 标签页圆角半径 * s, bgColor)
+        End If
         绘制图标_D2D(rt, 折叠按钮图标值, bounds)
     End Sub
 
@@ -798,7 +921,7 @@ Public Class ModernTabControl
                 _内容面板.Bounds = New Rectangle(0, y, Me.Width, 内容H)
                 _内容面板.Visible = True
             End If
-            _内容面板.BackColor = 内容区域背景颜色
+            _内容面板.BackColor = 获取内容面板有效背景色()
             更新鼠标过滤器()
         Else
             停用鼠标过滤器()
@@ -808,7 +931,7 @@ Public Class ModernTabControl
             End If
             Dim contentRect = 获取内容区域矩形()
             _内容面板.Bounds = contentRect
-            _内容面板.BackColor = 内容区域背景颜色
+            _内容面板.BackColor = 获取内容面板有效背景色()
             _内容面板.Visible = (contentRect.Height > 0)
         End If
     End Sub
@@ -1419,6 +1542,24 @@ Public Class ModernTabControl
         End Set
     End Property
 
+    Private _backgroundSource As Control = Nothing
+    <Category("LakeUI"),
+     Description("背景采样源（V2 透明背景穿透）。设置后将跨越任意层级直接采样此控件的绘制内容作为透明背景；为空时按 BackColor 协议处理。"),
+     DefaultValue(GetType(Control), Nothing), Browsable(True)>
+    Public Property BackgroundSource As Control
+        Get
+            Return _backgroundSource
+        End Get
+        Set(value As Control)
+            If _backgroundSource IsNot value Then
+                _backgroundSource = value
+                ' 内容面板上的透明背景来自同一 source。
+                If _内容面板 IsNot Nothing Then _内容面板.Invalidate(True)
+                Me.Invalidate()
+            End If
+        End Set
+    End Property
+
     Private 动画时长值 As Integer = 300
     <Category("LakeUI"), Description(Class1.动画时长描述词), DefaultValue(300), Browsable(True)>
     Public Property AnimationDuration As Integer
@@ -1526,6 +1667,39 @@ Public Class ModernTabControl
         End Get
         Set(value As Color)
             SetValue(标签栏背景颜色, value)
+        End Set
+    End Property
+
+    Private 标签栏背景图片 As Image = Nothing
+    ''' <summary>
+    ''' 标签栏背景图片。图片以居中裁切模式（CenterImage）绘制：
+    ''' 保持比例缩放至撑满标签栏区域，超出部分从中心裁切。
+    ''' 设为 Nothing 则不绘制背景图片。
+    ''' </summary>
+    <Category("LakeUI"), Description("标签栏背景图片（居中裁切模式）。"), DefaultValue(GetType(Image), Nothing), Browsable(True)>
+    Public Property TabStripBackgroundImage As Image
+        Get
+            Return 标签栏背景图片
+        End Get
+        Set(value As Image)
+            标签栏背景图片 = value
+            Me.Invalidate()
+        End Set
+    End Property
+
+    Private 标签栏遮罩颜色 As Color = Color.Transparent
+    ''' <summary>
+    ''' 标签栏半透明遮罩颜色，绘制在背景图片之上、标签页项之下。
+    ''' 可使用半透明颜色为背景图片添加色调或降低对比度，使标签页文字更易读。
+    ''' 设为 Transparent 则不绘制遮罩。
+    ''' </summary>
+    <Category("LakeUI"), Description("标签栏半透明遮罩颜色，绘制在背景图片之上、标签页项之下。"), DefaultValue(GetType(Color), "Transparent"), Browsable(True)>
+    Public Property TabStripOverlayColor As Color
+        Get
+            Return 标签栏遮罩颜色
+        End Get
+        Set(value As Color)
+            SetValue(标签栏遮罩颜色, value)
         End Set
     End Property
 
@@ -1725,7 +1899,7 @@ Public Class ModernTabControl
         End Get
         Set(value As Color)
             SetValue(内容区域背景颜色, value)
-            _内容面板.BackColor = value
+            _内容面板.BackColor = 获取内容面板有效背景色()
         End Set
     End Property
 

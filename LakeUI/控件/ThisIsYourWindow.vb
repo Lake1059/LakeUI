@@ -1289,18 +1289,6 @@ Public Class ThisIsYourWindow
         End Set
     End Property
 
-    Private _毛玻璃并行度 As Integer = Environment.ProcessorCount
-    <Category("LakeUI - Backdrop"), Description("模糊计算最大并行度。"), DefaultValue(0)>
-    Public Property BackdropMaxParallelism As Integer
-        Get
-            Return _毛玻璃并行度
-        End Get
-        Set(value As Integer)
-            _毛玻璃并行度 = If(value <= 0, Environment.ProcessorCount, value)
-            应用毛玻璃参数()
-        End Set
-    End Property
-
     Private _毛玻璃噪点不透明度 As Byte = 18
     <Category("LakeUI - Backdrop"), Description("噪点叠加层不透明度 (0-255)。0 = 关闭噪点。"), DefaultValue(CByte(18))>
     Public Property BackdropNoiseOpacity As Byte
@@ -1387,7 +1375,7 @@ Public Class ThisIsYourWindow
     Private Sub 应用毛玻璃参数()
         For Each s In _forms.Values
             s.Renderer?.ApplyParameters(_毛玻璃模糊半径, _毛玻璃模糊次数, _毛玻璃下采样,
-                                         _毛玻璃并行度, _毛玻璃噪点缩放)
+                                         _毛玻璃噪点缩放)
         Next
         通知重绘()
     End Sub
@@ -1412,7 +1400,7 @@ Public Class ThisIsYourWindow
             If s.Renderer Is Nothing Then
                 s.Renderer = New BackdropRenderer(s.HostForm)
                 s.Renderer.ApplyParameters(_毛玻璃模糊半径, _毛玻璃模糊次数, _毛玻璃下采样,
-                                            _毛玻璃并行度, _毛玻璃噪点缩放)
+                                            _毛玻璃噪点缩放)
                 AddHandler s.Renderer.AverageCommitted, Sub(sender2, ev2)
                                                             If _分层阴影自动颜色 Then
                                                                 If s.ShadowForm IsNot Nothing Then s.ShadowForm.ForceReset()

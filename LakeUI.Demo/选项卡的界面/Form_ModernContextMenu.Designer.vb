@@ -198,7 +198,6 @@ Partial Class Form_ModernContextMenu
         ' 
         ModernContextMenu1.BackdropBlurPasses = 1
         ModernContextMenu1.BackdropBlurRadius = 10
-        ModernContextMenu1.BackdropMaxParallelism = 2
         ModernContextMenu1.BackdropMode = ModernContextMenu.BackdropModeEnum.Auto
         ModernContextMenu1.BackdropTintColor = Color.FromArgb(CByte(80), CByte(0), CByte(0), CByte(0))
         ModernContextMenu1.BorderColor = Color.FromArgb(CByte(80), CByte(220), CByte(220), CByte(220))

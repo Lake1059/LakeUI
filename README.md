@@ -115,6 +115,7 @@ Q群：1087964158
 | 38     | PrecisionTimer          | 高精度计时器               | N/A      | 低 🟢     |
 | 39     | AgentRoom               | 智能体聊天室               | 全新     | 低 🟢     |
 | 40     | ModernNumericUpDown     | 现代化数字框               | 全新     | 低 🟢     |
+| 41     | MemberWall              | 成员墙（3FUI 定制）        | N/A      | N/A      |
 
 ## 最值得一试
 

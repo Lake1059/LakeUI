@@ -1,6 +1,5 @@
 ﻿Imports System.ComponentModel
 Imports System.Numerics
-Imports System.Runtime.InteropServices
 Imports Vortice.Direct2D1
 
 <DefaultEvent("SelectedIndexChanged")>
@@ -354,16 +353,26 @@ Public Class ModernComboBox
         End Set
     End Property
 
-    Private 光标颜色 As Color = Color.FromArgb(220, 220, 220)
-    <Category("LakeUI"), Description("光标颜色"), DefaultValue(GetType(Color), "220,220,220"), Browsable(True)>
+    Private Shared ReadOnly 默认光标颜色 As Color = Color.FromArgb(220, 220, 220)
+    Private 光标颜色 As Color = 默认光标颜色
+    <Category("LakeUI"), Description("光标颜色"), Browsable(True)>
     Public Property CaretColor As Color
         Get
             Return 光标颜色
         End Get
         Set(value As Color)
             SetValue(光标颜色, value)
+            If _textRenderer IsNot Nothing Then _textRenderer.CaretColor = 光标颜色
         End Set
     End Property
+
+    Private Function ShouldSerializeCaretColor() As Boolean
+        Return 光标颜色 <> 默认光标颜色
+    End Function
+
+    Private Sub ResetCaretColor()
+        CaretColor = 默认光标颜色
+    End Sub
 
     Private 选区背景色 As Color = Color.FromArgb(80, 80, 80)
     <Category("LakeUI"), Description("选区背景色"), DefaultValue(GetType(Color), "80,80,80"), Browsable(True)>
@@ -627,6 +636,94 @@ Public Class ModernComboBox
         End Set
     End Property
 
+    Private 下拉毛玻璃模式 As PopupBackdropMode = PopupBackdropMode.None
+    <Category("LakeUI - DropDown Backdrop"), Description("下拉列表毛玻璃背景模式。Auto = 展开前截取下拉所在屏幕区域；Image = 使用 DropDownBackdropImage。"), DefaultValue(GetType(PopupBackdropMode), "None"), Browsable(True)>
+    Public Property DropDownBackdropMode As PopupBackdropMode
+        Get
+            Return 下拉毛玻璃模式
+        End Get
+        Set(value As PopupBackdropMode)
+            SetValue(下拉毛玻璃模式, value)
+        End Set
+    End Property
+
+    Private 下拉毛玻璃图片 As Image = Nothing
+    <Category("LakeUI - DropDown Backdrop"), Description("Image 模式下作为下拉列表毛玻璃源的图片。"), DefaultValue(GetType(Image), Nothing), Browsable(True)>
+    Public Property DropDownBackdropImage As Image
+        Get
+            Return 下拉毛玻璃图片
+        End Get
+        Set(value As Image)
+            SetValue(下拉毛玻璃图片, value)
+        End Set
+    End Property
+
+    Private 下拉毛玻璃Tint颜色 As Color = Color.FromArgb(20, 220, 220, 220)
+    <Category("LakeUI - DropDown Backdrop"), Description("下拉列表毛玻璃 tint 叠加颜色（含 Alpha）。"), DefaultValue(GetType(Color), "20, 220, 220, 220"), Browsable(True)>
+    Public Property DropDownBackdropTintColor As Color
+        Get
+            Return 下拉毛玻璃Tint颜色
+        End Get
+        Set(value As Color)
+            SetValue(下拉毛玻璃Tint颜色, value)
+        End Set
+    End Property
+
+    Private 下拉毛玻璃模糊半径 As Integer = 10
+    <Category("LakeUI - DropDown Backdrop"), Description("下拉列表毛玻璃模糊半径（逻辑像素）。1 - 96。"), DefaultValue(10), Browsable(True)>
+    Public Property DropDownBackdropBlurRadius As Integer
+        Get
+            Return 下拉毛玻璃模糊半径
+        End Get
+        Set(value As Integer)
+            SetValue(下拉毛玻璃模糊半径, Math.Max(1, Math.Min(96, value)))
+        End Set
+    End Property
+
+    Private 下拉毛玻璃模糊次数 As Integer = 1
+    <Category("LakeUI - DropDown Backdrop"), Description("下拉列表毛玻璃 box blur 通过次数（0=不模糊，3≈高斯）。"), DefaultValue(1), Browsable(True)>
+    Public Property DropDownBackdropBlurPasses As Integer
+        Get
+            Return 下拉毛玻璃模糊次数
+        End Get
+        Set(value As Integer)
+            SetValue(下拉毛玻璃模糊次数, Math.Max(0, Math.Min(5, value)))
+        End Set
+    End Property
+
+    Private 下拉毛玻璃下采样 As Integer = 4
+    <Category("LakeUI - DropDown Backdrop"), Description("下拉列表毛玻璃下采样倍率（建议 1/2/4/6/8）。"), DefaultValue(4), Browsable(True)>
+    Public Property DropDownBackdropDownsampleFactor As Integer
+        Get
+            Return 下拉毛玻璃下采样
+        End Get
+        Set(value As Integer)
+            SetValue(下拉毛玻璃下采样, Math.Max(1, value))
+        End Set
+    End Property
+
+    Private 下拉毛玻璃噪点不透明度 As Byte = 0
+    <Category("LakeUI - DropDown Backdrop"), Description("下拉列表毛玻璃噪点叠加层不透明度 (0-255)。0 = 关闭噪点。"), DefaultValue(CByte(0)), Browsable(True)>
+    Public Property DropDownBackdropNoiseOpacity As Byte
+        Get
+            Return 下拉毛玻璃噪点不透明度
+        End Get
+        Set(value As Byte)
+            SetValue(下拉毛玻璃噪点不透明度, value)
+        End Set
+    End Property
+
+    Private 下拉毛玻璃噪点缩放 As Single = 1.0F
+    <Category("LakeUI - DropDown Backdrop"), Description("下拉列表毛玻璃噪点 tile 缩放（>1 颗粒变粗）。"), DefaultValue(1.0F), Browsable(True)>
+    Public Property DropDownBackdropNoiseScale As Single
+        Get
+            Return 下拉毛玻璃噪点缩放
+        End Get
+        Set(value As Single)
+            SetValue(下拉毛玻璃噪点缩放, Math.Max(0.1F, value))
+        End Set
+    End Property
+
     Private 下拉悬停颜色 As Color = Color.FromArgb(60, 60, 60)
     <Category("LakeUI"), Description("下拉列表悬停颜色"), DefaultValue(GetType(Color), "60,60,60"), Browsable(True)>
     Public Property DropDownHoverColor As Color
@@ -646,6 +743,17 @@ Public Class ModernComboBox
         End Get
         Set(value As Color)
             SetValue(下拉选中颜色, value)
+        End Set
+    End Property
+
+    Private 下拉选中文字颜色 As Color = Color.Empty
+    <Category("LakeUI"), Description("下拉列表选中项文字颜色，Empty 时使用 ForeColor"), DefaultValue(GetType(Color), ""), Browsable(True)>
+    Public Property DropDownSelectedForeColor As Color
+        Get
+            Return 下拉选中文字颜色
+        End Get
+        Set(value As Color)
+            SetValue(下拉选中文字颜色, value)
         End Set
     End Property
 
@@ -1087,7 +1195,7 @@ Public Class ModernComboBox
             Dim dcRT As ID2D1DCRenderTarget = scope.DCRenderTarget
             DrawTextContent_D2D(dcRT, w, h)
             绘制分隔线与箭头_D2D(dcRT, w, h, bc)
-            绘制边框_D2D(dcRT, hasRadius, boundsRect, bc)
+            绘制边框_D2D(dcRT, hasRadius, GetBorderRenderRect(boundsRect), bc)
             If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
                 ' 与 绘制背景_D2D 中 fillRect / 半径 保持一致，保证遮罩圆角曲线与背景圆角完全重合。
                 Dim overlayRect As New RectangleF(boundsRect.X, boundsRect.Y, boundsRect.Width + 1, boundsRect.Height + 1)
@@ -1219,6 +1327,11 @@ Public Class ModernComboBox
             RectangleRenderer.绘制矩形边框_D2D(rt, boundsRect, borderClr, 边框宽度 * s)
         End If
     End Sub
+
+    Private Function GetBorderRenderRect(boundsRect As RectangleF) As RectangleF
+        If Not Focused Then Return boundsRect
+        Return New RectangleF(boundsRect.X, boundsRect.Y, boundsRect.Width + 1.0F, boundsRect.Height)
+    End Function
 
     Private Sub DrawTextContent_D2D(rt As ID2D1DCRenderTarget, w As Integer, h As Integer)
         SyncTextRenderer()
@@ -1712,96 +1825,9 @@ Public Class ModernComboBox
         Private _scrollBarVisible As Boolean = False
         Private _scrollBar As New ScrollBarRenderer()
 
-        <DllImport("user32.dll")>
-        Private Shared Function UpdateLayeredWindow(
-            hwnd As IntPtr, hdcDst As IntPtr,
-            ByRef pptDst As W32Point, ByRef psize As W32Size,
-            hdcSrc As IntPtr, ByRef pptSrc As W32Point,
-            crKey As Integer, ByRef pblend As BLENDFUNCTION,
-            dwFlags As Integer) As Boolean
-        End Function
-
-        <DllImport("user32.dll")>
-        Private Shared Function GetDC(hWnd As IntPtr) As IntPtr
-        End Function
-
-        <DllImport("user32.dll")>
-        Private Shared Function ReleaseDC(hWnd As IntPtr, hDC As IntPtr) As Integer
-        End Function
-
-        <DllImport("gdi32.dll")>
-        Private Shared Function CreateCompatibleDC(hdc As IntPtr) As IntPtr
-        End Function
-
-        <DllImport("gdi32.dll")>
-        Private Shared Function DeleteDC(hdc As IntPtr) As Boolean
-        End Function
-
-        <DllImport("gdi32.dll")>
-        Private Shared Function SelectObject(hdc As IntPtr, hgdiobj As IntPtr) As IntPtr
-        End Function
-
-        <DllImport("gdi32.dll")>
-        Private Shared Function DeleteObject(hObject As IntPtr) As Boolean
-        End Function
-
-        <DllImport("gdi32.dll")>
-        Private Shared Function CreateDIBSection(
-            hdc As IntPtr, ByRef pbmi As BITMAPINFO,
-            iUsage As UInteger, ByRef ppvBits As IntPtr,
-            hSection As IntPtr, dwOffset As UInteger) As IntPtr
-        End Function
-
-        <StructLayout(LayoutKind.Sequential)>
-        Private Structure W32Point
-            Public X, Y As Integer
-        End Structure
-
-        <StructLayout(LayoutKind.Sequential)>
-        Private Structure W32Size
-            Public Width, Height As Integer
-        End Structure
-
-        <StructLayout(LayoutKind.Sequential)>
-        Private Structure BLENDFUNCTION
-            Public BlendOp, BlendFlags, SourceConstantAlpha, AlphaFormat As Byte
-        End Structure
-
-        <StructLayout(LayoutKind.Sequential)>
-        Private Structure BITMAPINFOHEADER
-            Public biSize As UInteger
-            Public biWidth, biHeight As Integer
-            Public biPlanes, biBitCount As UShort
-            Public biCompression, biSizeImage As UInteger
-            Public biXPelsPerMeter, biYPelsPerMeter As Integer
-            Public biClrUsed, biClrImportant As UInteger
-        End Structure
-
-        <StructLayout(LayoutKind.Sequential)>
-        Private Structure BITMAPINFO
-            Public Header As BITMAPINFOHEADER
-            Public Colors As Integer
-        End Structure
-
-        Private Const WS_EX_LAYERED As Integer = &H80000
-        Private Const AC_SRC_OVER As Byte = 0
-        Private Const AC_SRC_ALPHA As Byte = 1
-        Private Const ULW_ALPHA As Integer = 2
-        Private Const DIB_RGB_COLORS As UInteger = 0
-        Private Const BI_RGB As UInteger = 0
-
-        ' 下拉窗体是 layered window，使用独立 D2D DC RT 绑定到可复用 DIBSection。
-#Disable Warning IDE0044
         Private _finalHeight As Integer
         Private _originPt As Point
         Private _useIdle As Boolean = False
-        Private _layeredRenderTarget As ID2D1DCRenderTarget = Nothing
-        Private _layeredMemDC As IntPtr = IntPtr.Zero
-        Private _layeredBitmap As IntPtr = IntPtr.Zero
-        Private _layeredPrevBitmap As IntPtr = IntPtr.Zero
-        Private _layeredBits As IntPtr = IntPtr.Zero
-        Private _layeredBufferSize As Size = Size.Empty
-        Private _layeredPixels() As Integer = Array.Empty(Of Integer)()
         Private _suppressBoundsRender As Boolean = False
 
         ' Overlay 模式
@@ -1817,11 +1843,12 @@ Public Class ModernComboBox
         ' 悬停动画
         Private ReadOnly 悬停秒表 As New Stopwatch()
         Private 悬停计时器 As Timer
-#Enable Warning IDE0044
         Private 悬停动画起始Y As Single = -1, 悬停动画目标Y As Single = -1, 悬停动画当前Y As Single = -1
         Private 悬停动画起始高度, 悬停动画目标高度, 悬停动画当前高度 As Single
         Private 悬停动画中 As Boolean = False
         Private 悬停动画显示 As Boolean = False
+
+        Private _backdrop As PopupBackdropRenderer
 
         Private Structure DropDownLayout
             Public ReadOnly Bw, Inset, RightCorr, ScrollW, ItemH, VisCount, HlL, HlR As Integer
@@ -1848,16 +1875,19 @@ Public Class ModernComboBox
             End Sub
 
             Public Function ClipRect(w As Integer, h As Integer) As RectangleF
-                Return New RectangleF(Inset, Inset, w - Inset * 2 - RightCorr - ScrollW, h - Inset * 2)
+                Return New RectangleF(Inset, Inset,
+                    Math.Max(0, w - Inset * 2 - RightCorr - ScrollW),
+                    Math.Max(0, h - Inset * 2))
             End Function
 
             Public Function ItemRect(w As Integer, visualIndex As Integer) As RectangleF
-                Return New RectangleF(HlL, Bw + Pad.Top + visualIndex * ItemH, w - HlL - HlR - ScrollW, ItemH)
+                Return New RectangleF(HlL, Bw + Pad.Top + visualIndex * ItemH,
+                    Math.Max(0, w - HlL - HlR - ScrollW), ItemH)
             End Function
 
             Public Function TextRect(itemRect As RectangleF) As RectangleF
                 Return New RectangleF(itemRect.X + Pad.Left + 4, itemRect.Y,
-                    itemRect.Width - Pad.Left - Pad.Right - 8, itemRect.Height)
+                    Math.Max(0, itemRect.Width - Pad.Left - Pad.Right - 8), itemRect.Height)
             End Function
         End Structure
 
@@ -1867,27 +1897,19 @@ Public Class ModernComboBox
         Private Const WM_NCLBUTTONDOWN As Integer = &HA1
         Private Const WM_ACTIVATEAPP As Integer = &H1C
 
-        Protected Overrides ReadOnly Property CreateParams As CreateParams
-            Get
-                Dim cp = MyBase.CreateParams
-                cp.ExStyle = cp.ExStyle Or WS_EX_LAYERED
-                Return cp
-            End Get
-        End Property
-
         Public Sub New(owner As ModernComboBox)
             _owner = owner
             Me.DoubleBuffered = True
-            SetStyle(ControlStyles.SupportsTransparentBackColor, True)
-            Me.BackColor = Color.Transparent
+            SetStyle(ControlStyles.AllPaintingInWmPaint Or ControlStyles.UserPaint Or ControlStyles.OptimizedDoubleBuffer, True)
+            Me.BackColor = ToOpaqueColor(_owner.下拉背景颜色)
+            ApplyPopupWindowState()
             UpdateStyles()
             Me.AutoScaleMode = AutoScaleMode.Dpi
 
             _useIdle = (owner.下拉动画帧率 <= 0)
             If Not _useIdle Then
-                Dim interval As Integer = Math.Max(1, 1000 \ owner.下拉动画帧率)
-                展开关闭计时器 = New Timer() With {.Interval = interval}
-                悬停计时器 = New Timer() With {.Interval = interval}
+                展开关闭计时器 = CreateFrameTimer(owner.下拉动画帧率)
+                悬停计时器 = CreateFrameTimer(owner.下拉动画帧率)
             End If
 
             Dim visCount As Integer = Math.Min(owner._items.Count, owner.最大下拉项数)
@@ -1903,11 +1925,7 @@ Public Class ModernComboBox
                 Dim alignIndex As Integer = If(owner._selectedIndex >= 0, owner._selectedIndex, 0)
                 If alignIndex >= owner._items.Count Then alignIndex = 0
 
-                Dim maxOff As Integer = Math.Max(0, owner._items.Count - visCount)
-                _scrollOffset = Math.Max(0, Math.Min(maxOff, alignIndex - visCount \ 2))
-                If alignIndex < _scrollOffset Then _scrollOffset = alignIndex
-                If alignIndex >= _scrollOffset + visCount Then _scrollOffset = alignIndex - visCount + 1
-                _scrollOffset = Math.Max(0, Math.Min(maxOff, _scrollOffset))
+                _scrollOffset = CalculateCenteredScrollOffset(owner._items.Count, visCount, alignIndex)
 
                 Dim visIdx As Integer = alignIndex - _scrollOffset
                 _alignItemDropdownY = bw + pad.Top + visIdx * itemH
@@ -1938,13 +1956,87 @@ Public Class ModernComboBox
 
             _scrollBarVisible = owner._items.Count > owner.最大下拉项数
             If Not _overlayMode AndAlso owner._selectedIndex >= 0 Then
-                Dim maxOff As Integer = Math.Max(0, owner._items.Count - visCount)
-                _scrollOffset = Math.Max(0, Math.Min(maxOff, owner._selectedIndex - visCount \ 2))
+                _scrollOffset = CalculateCenteredScrollOffset(owner._items.Count, visCount, owner._selectedIndex)
             End If
         End Sub
 
         Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
-            ' 下拉窗体底色保持透明，实际背景由 layered 位图使用 DropDownBackColor 覆盖。
+            ' 顶层下拉窗体由 OnPaint 里的 D2D 绘制全权接管底色。
+        End Sub
+
+        Private Shared Function CreateFrameTimer(fps As Integer) As Timer
+            Return New Timer() With {.Interval = Math.Max(1, 1000 \ Math.Max(1, fps))}
+        End Function
+
+        Private Shared Function CalculateCenteredScrollOffset(itemCount As Integer, visibleCount As Integer, targetIndex As Integer) As Integer
+            If itemCount <= 0 OrElse visibleCount <= 0 OrElse targetIndex < 0 Then Return 0
+            Dim maxOffset As Integer = Math.Max(0, itemCount - visibleCount)
+            Dim offset As Integer = Math.Max(0, Math.Min(maxOffset, targetIndex - visibleCount \ 2))
+            If targetIndex < offset Then offset = targetIndex
+            If targetIndex >= offset + visibleCount Then offset = targetIndex - visibleCount + 1
+            Return Math.Max(0, Math.Min(maxOffset, offset))
+        End Function
+
+        Private Shared Function ToOpaqueColor(color As Color) As Color
+            Return Color.FromArgb(255, color.R, color.G, color.B)
+        End Function
+
+        Private Function ShouldCaptureTransparentBackground() As Boolean
+            Return _owner.下拉毛玻璃模式 = PopupBackdropMode.None AndAlso _owner.下拉背景颜色.A < 255
+        End Function
+
+        Private Function HasBackdropFrame() As Boolean
+            Return _backdrop IsNot Nothing AndAlso _backdrop.HasFrame
+        End Function
+
+        Private Function DropDownFillColor() As Color
+            Return ToOpaqueColor(_owner.下拉背景颜色)
+        End Function
+
+        Private Sub ApplyPopupWindowState()
+            TransparencyKey = Color.Empty
+            Opacity = 1.0R
+            BackColor = ToOpaqueColor(_owner.下拉背景颜色)
+        End Sub
+
+        Private Sub 准备毛玻璃背景()
+            If _backdrop Is Nothing Then _backdrop = New PopupBackdropRenderer(Me)
+            _backdrop.TransientExcludeOnCapture = False
+
+            If _owner.下拉毛玻璃模式 <> PopupBackdropMode.None Then
+                _backdrop.Configure(_owner.下拉毛玻璃模式,
+                                    _owner.下拉毛玻璃图片,
+                                    _owner.下拉毛玻璃Tint颜色,
+                                    _owner.下拉毛玻璃模糊半径,
+                                    _owner.下拉毛玻璃模糊次数,
+                                    _owner.下拉毛玻璃下采样,
+                                    _owner.下拉毛玻璃噪点不透明度,
+                                    _owner.下拉毛玻璃噪点缩放)
+            ElseIf ShouldCaptureTransparentBackground() Then
+                _backdrop.Configure(PopupBackdropMode.Auto,
+                                    Nothing,
+                                    _owner.下拉背景颜色,
+                                    1,
+                                    0,
+                                    1,
+                                    0,
+                                    1.0F)
+            Else
+                _backdrop.Configure(PopupBackdropMode.None,
+                                    Nothing,
+                                    Color.Transparent,
+                                    1,
+                                    0,
+                                    1,
+                                    0,
+                                    1.0F)
+            End If
+            _backdrop.Prepare(New Rectangle(_originPt, New Size(Me.Width, _finalHeight)), True)
+        End Sub
+
+        Private Sub 绘制毛玻璃背景(g As Graphics)
+            If Not HasBackdropFrame() Then Return
+            _backdrop.Draw(g, New Rectangle(0, 0, ClientSize.Width, ClientSize.Height))
         End Sub
 
         Protected Overrides Sub WndProc(ByRef m As Message)
@@ -1955,6 +2047,8 @@ Public Class ModernComboBox
         End Sub
 
         Friend Sub ShowDropDown()
+            ApplyPopupWindowState()
+            准备毛玻璃背景()
             Application.AddMessageFilter(Me)
             If _owner.下拉展开关闭动画时长 > 0 Then
                 If _overlayMode Then
@@ -2031,7 +2125,10 @@ Public Class ModernComboBox
             停止展开关闭驱动()
             If 展开关闭计时器 IsNot Nothing Then 展开关闭计时器.Dispose()
             If 悬停计时器 IsNot Nothing Then 悬停计时器.Dispose()
-            ReleaseLayeredRenderResources()
+            If _backdrop IsNot Nothing Then
+                _backdrop.Dispose()
+                _backdrop = Nothing
+            End If
             Application.RemoveMessageFilter(Me)
             If Not IsDisposed Then Close()
         End Sub
@@ -2115,7 +2212,8 @@ Public Class ModernComboBox
         End Function
 
         Protected Overrides Sub OnPaint(e As PaintEventArgs)
-            RenderLayeredDropDown()
+            绘制毛玻璃背景(e.Graphics)
+            RenderDropDown(e)
         End Sub
 
         Protected Overrides Sub OnSizeChanged(e As EventArgs)
@@ -2130,24 +2228,17 @@ Public Class ModernComboBox
 
         Private Sub 请求重绘()
             If IsDisposed OrElse Disposing Then Return
-            If IsHandleCreated Then
-                RenderLayeredDropDown()
-            Else
-                MyBase.Invalidate()
-            End If
+            Invalidate()
+            If IsHandleCreated Then Update()
         End Sub
 
-        Private Sub RenderLayeredDropDown()
-            Dim w As Integer = ClientRectangle.Width
-            Dim h As Integer = ClientRectangle.Height
+        Private Sub RenderDropDown(e As PaintEventArgs)
+            Dim w As Integer = ClientSize.Width
+            Dim h As Integer = ClientSize.Height
             If w <= 0 OrElse h <= 0 Then Return
+
             Dim s As Single = _owner.DpiScale()
             Dim bw As Integer = CInt(_owner.下拉边框宽度 * s)
-            Dim boundsRect As New RectangleF(0, 0, w - 1, h - 1)
-            If bw > 0 Then
-                Dim half As Single = bw / 2.0F
-                boundsRect.Inflate(-half, -half)
-            End If
 
             If _scrollBarVisible Then
                 _scrollBar.ComputeLayout(w, h, bw, 0,
@@ -2156,172 +2247,55 @@ Public Class ModernComboBox
                     _owner._items.Count, Math.Min(_owner._items.Count, _owner.最大下拉项数), _scrollOffset)
             End If
 
-            If Not EnsureLayeredRenderSurface(w, Math.Max(h, _finalHeight)) Then Return
-
-            Dim began As Boolean = False
-            Try
-                _layeredRenderTarget.BindDC(_layeredMemDC, New Vortice.RawRect(0, 0, w, h))
-                _layeredRenderTarget.BeginDraw()
-                began = True
-                D2DHelper.ApplyGlobalQuality(_layeredRenderTarget)
-                _layeredRenderTarget.Transform = Matrix3x2.Identity
-                _layeredRenderTarget.Clear(New Vortice.Mathematics.Color4(0.0F, 0.0F, 0.0F, 0.0F))
-
-                DrawDropDownBackground_D2D(_layeredRenderTarget, boundsRect, bw, w, h)
-                DrawDropDownItems_D2D(_layeredRenderTarget, w, h, New DropDownLayout(Me, w))
-                DrawDropDownScrollBar_D2D(_layeredRenderTarget, w, h, bw)
-            Finally
-                If began Then _layeredRenderTarget.EndDraw()
-            End Try
-
-            NormalizeLayeredAlpha(w, h)
-            ApplyLayeredBuffer(Location, Size)
+            Using scope = D2DHelperV2.BeginPaint(e, Me, 1)
+                If scope Is Nothing Then Return
+                Dim rt As ID2D1RenderTarget = scope.GraphicsLayer
+                D2DHelper.ApplyGlobalQuality(rt)
+                rt.Transform = Matrix3x2.Identity
+                DrawDropDownBackground_D2D(rt, DropDownFillColor(), bw, w, h, Not HasBackdropFrame())
+                DrawDropDownItems_D2D(rt, w, h, New DropDownLayout(Me, w))
+                DrawDropDownScrollBar_D2D(rt, w, h, bw)
+            End Using
         End Sub
 
-        Private Function EnsureLayeredRenderSurface(w As Integer, h As Integer) As Boolean
-            If w <= 0 OrElse h <= 0 Then Return False
-            If _layeredMemDC <> IntPtr.Zero AndAlso _layeredBitmap <> IntPtr.Zero AndAlso
-               _layeredBufferSize.Width = w AndAlso _layeredBufferSize.Height >= h Then
-                If _layeredRenderTarget Is Nothing Then _layeredRenderTarget = CreateLayeredRenderTarget()
-                Return _layeredRenderTarget IsNot Nothing
-            End If
-
-            ReleaseLayeredRenderResources()
-
-            Dim screenDC As IntPtr = GetDC(IntPtr.Zero)
-            Try
-                _layeredMemDC = CreateCompatibleDC(screenDC)
-
-                Dim bmi As New BITMAPINFO With {
-                    .Header = New BITMAPINFOHEADER With {
-                        .biSize = CUInt(Marshal.SizeOf(GetType(BITMAPINFOHEADER))),
-                        .biWidth = w,
-                        .biHeight = -h,
-                        .biPlanes = 1,
-                        .biBitCount = 32,
-                        .biCompression = BI_RGB
-                    }
-                }
-                _layeredBitmap = CreateDIBSection(screenDC, bmi, DIB_RGB_COLORS, _layeredBits, IntPtr.Zero, 0UI)
-                If _layeredMemDC = IntPtr.Zero OrElse _layeredBitmap = IntPtr.Zero Then
-                    ReleaseLayeredRenderResources()
-                    Return False
-                End If
-
-                _layeredPrevBitmap = SelectObject(_layeredMemDC, _layeredBitmap)
-                _layeredBufferSize = New Size(w, h)
-                _layeredRenderTarget = CreateLayeredRenderTarget()
-                Return _layeredRenderTarget IsNot Nothing
-            Finally
-                ReleaseDC(IntPtr.Zero, screenDC)
-            End Try
-        End Function
-
-        Private Shared Function CreateLayeredRenderTarget() As ID2D1DCRenderTarget
-            Dim props As New RenderTargetProperties(
-                RenderTargetType.Default,
-                New Vortice.DCommon.PixelFormat(Vortice.DXGI.Format.B8G8R8A8_UNorm, Vortice.DCommon.AlphaMode.Premultiplied),
-                96.0F, 96.0F,
-                RenderTargetUsage.None,
-                Vortice.Direct2D1.FeatureLevel.Default)
-            Return D2DHelper.GetD2DFactory().CreateDCRenderTarget(props)
-        End Function
-
-        Private Sub ReleaseLayeredRenderResources()
-            If _layeredRenderTarget IsNot Nothing Then
-                Try : _layeredRenderTarget.Dispose() : Catch : End Try
-                _layeredRenderTarget = Nothing
-            End If
-            _scrollBar.DisposeBrushes()
-            If _layeredMemDC <> IntPtr.Zero AndAlso _layeredPrevBitmap <> IntPtr.Zero Then
-                SelectObject(_layeredMemDC, _layeredPrevBitmap)
-                _layeredPrevBitmap = IntPtr.Zero
-            End If
-            If _layeredBitmap <> IntPtr.Zero Then
-                DeleteObject(_layeredBitmap)
-                _layeredBitmap = IntPtr.Zero
-            End If
-            If _layeredMemDC <> IntPtr.Zero Then
-                DeleteDC(_layeredMemDC)
-                _layeredMemDC = IntPtr.Zero
-            End If
-            _layeredBits = IntPtr.Zero
-            _layeredBufferSize = Size.Empty
-            _layeredPixels = Array.Empty(Of Integer)()
-        End Sub
-
-        Private Sub NormalizeLayeredAlpha(w As Integer, h As Integer)
-            If _layeredBits = IntPtr.Zero OrElse w <= 0 OrElse h <= 0 Then Return
-            Dim count As Integer = w * h
-            If _layeredPixels.Length < count Then ReDim _layeredPixels(count - 1)
-            Marshal.Copy(_layeredBits, _layeredPixels, 0, count)
-
-            Dim minAlpha As UInteger = CUInt(_owner.下拉背景颜色.A)
-            For i As Integer = 0 To count - 1
-                Dim px As UInteger = ToUnsignedArgb(_layeredPixels(i))
-                Dim alpha As UInteger = (px >> 24) And &HFFUI
-                If minAlpha > 0UI AndAlso alpha < minAlpha Then
-                    _layeredPixels(i) = ToSignedArgb((px And &HFFFFFFUI) Or (minAlpha << 24))
-                ElseIf alpha = 0UI AndAlso (px And &HFFFFFFUI) <> 0UI Then
-                    _layeredPixels(i) = ToSignedArgb((px And &HFFFFFFUI) Or &HFF000000UI)
-                End If
-            Next
-
-            Marshal.Copy(_layeredPixels, 0, _layeredBits, count)
-        End Sub
-
-        Private Shared Function ToUnsignedArgb(value As Integer) As UInteger
-            Dim result As UInteger = CUInt(value And &H7FFFFFFF)
-            If value < 0 Then result = result Or &H80000000UI
-            Return result
-        End Function
-
-        Private Shared Function ToSignedArgb(value As UInteger) As Integer
-            If (value And &H80000000UI) <> 0UI Then
-                Return CInt(value And &H7FFFFFFFUI) Or Integer.MinValue
-            End If
-            Return CInt(value)
-        End Function
-
-        Private Sub ApplyLayeredBuffer(position As Point, bmpSize As Size)
-            If Not IsHandleCreated OrElse _layeredMemDC = IntPtr.Zero OrElse bmpSize.Width <= 0 OrElse bmpSize.Height <= 0 Then Return
-            Dim screenDC As IntPtr = GetDC(IntPtr.Zero)
-
-            Try
-                Dim ptDst As New W32Point With {.X = position.X, .Y = position.Y}
-                Dim sz As New W32Size With {.Width = bmpSize.Width, .Height = bmpSize.Height}
-                Dim ptSrc As New W32Point()
-                Dim blend As New BLENDFUNCTION With {
-                    .BlendOp = AC_SRC_OVER,
-                    .BlendFlags = 0,
-                    .SourceConstantAlpha = 255,
-                    .AlphaFormat = AC_SRC_ALPHA
-                }
-                UpdateLayeredWindow(Me.Handle, screenDC, ptDst, sz, _layeredMemDC, ptSrc, 0, blend, ULW_ALPHA)
-            Finally
-                ReleaseDC(IntPtr.Zero, screenDC)
-            End Try
-        End Sub
-
-        Private Sub DrawDropDownBackground_D2D(rt As ID2D1RenderTarget, boundsRect As RectangleF, bw As Integer, w As Integer, h As Integer)
-            If _owner.下拉背景颜色.A > 0 Then
-                Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(_owner.下拉背景颜色))
+        Private Sub DrawDropDownBackground_D2D(rt As ID2D1RenderTarget, backColor As Color, bw As Integer, w As Integer, h As Integer, fillBackground As Boolean)
+            If fillBackground Then
+                Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(backColor))
                     rt.FillRectangle(New Vortice.Mathematics.Rect(0, 0, w, h), br)
                 End Using
             End If
+
             If bw > 0 AndAlso _owner.下拉边框颜色.A > 0 Then
-                RectangleRenderer.绘制矩形边框_D2D(rt, boundsRect, _owner.下拉边框颜色, bw)
+                DrawDropDownBorder_D2D(rt, w, h, bw)
             End If
+        End Sub
+
+        Private Sub DrawDropDownBorder_D2D(rt As ID2D1RenderTarget, w As Integer, h As Integer, bw As Integer)
+            Dim border As Integer = Math.Min(bw, Math.Min(w, h))
+            If border <= 0 Then Return
+
+            Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(_owner.下拉边框颜色))
+                rt.FillRectangle(New Vortice.Mathematics.Rect(0, 0, w, border), br)
+                If h > border Then rt.FillRectangle(New Vortice.Mathematics.Rect(0, h - border, w, border), br)
+
+                Dim middleHeight As Integer = h - border * 2
+                If middleHeight > 0 Then
+                    rt.FillRectangle(New Vortice.Mathematics.Rect(0, border, border, middleHeight), br)
+                    If w > border Then rt.FillRectangle(New Vortice.Mathematics.Rect(w - border, border, border, middleHeight), br)
+                End If
+            End Using
         End Sub
 
         Private Sub DrawDropDownItems_D2D(rt As ID2D1RenderTarget, w As Integer, h As Integer, layout As DropDownLayout)
             Dim s As Single = _owner.DpiScale()
+            Dim clipRect As RectangleF = layout.ClipRect(w, h)
+            If clipRect.Width <= 0 OrElse clipRect.Height <= 0 Then Return
             Dim hoverBrush = If(_owner.下拉悬停颜色.A > 0, rt.CreateSolidColorBrush(D2DHelper.ToColor4(_owner.下拉悬停颜色)), Nothing)
             Dim selectedBrush = If(_owner.下拉选中颜色.A > 0, rt.CreateSolidColorBrush(D2DHelper.ToColor4(_owner.下拉选中颜色)), Nothing)
-            Dim clipRect As RectangleF = layout.ClipRect(w, h)
+            Dim shouldDrawHover As Boolean = _hoverIndex <> _owner._selectedIndex
             rt.PushAxisAlignedClip(New Vortice.RawRectF(clipRect.X, clipRect.Y, clipRect.Right, clipRect.Bottom), AntialiasMode.PerPrimitive)
             Try
-                If 悬停动画显示 AndAlso hoverBrush IsNot Nothing Then
+                If shouldDrawHover AndAlso 悬停动画显示 AndAlso hoverBrush IsNot Nothing Then
                     Dim highlightRect As New RectangleF(layout.HlL, 悬停动画当前Y, w - layout.HlL - layout.HlR - layout.ScrollW, 悬停动画当前高度)
                     rt.FillRectangle(D2DHelper.ToD2DRect(highlightRect), hoverBrush)
                 End If
@@ -2333,11 +2307,14 @@ Public Class ModernComboBox
 
                     If idx = _owner._selectedIndex AndAlso selectedBrush IsNot Nothing Then
                         rt.FillRectangle(D2DHelper.ToD2DRect(itemRect), selectedBrush)
-                    ElseIf idx = _hoverIndex AndAlso Not 悬停动画显示 AndAlso hoverBrush IsNot Nothing Then
+                    ElseIf shouldDrawHover AndAlso idx = _hoverIndex AndAlso Not 悬停动画显示 AndAlso hoverBrush IsNot Nothing Then
                         rt.FillRectangle(D2DHelper.ToD2DRect(itemRect), hoverBrush)
                     End If
 
-                    DrawSingleLineText_D2D(rt, _owner._items(idx), _owner.Font, _owner.ForeColor,
+                    Dim textColor As Color = If(idx = _owner._selectedIndex AndAlso _owner.下拉选中文字颜色 <> Color.Empty,
+                        _owner.下拉选中文字颜色,
+                        _owner.ForeColor)
+                    DrawSingleLineText_D2D(rt, _owner._items(idx), _owner.Font, textColor,
                         layout.TextRect(itemRect), s, True)
                 Next
             Finally
@@ -2535,6 +2512,7 @@ Public Class ModernComboBox
 
         Private ReadOnly _owner As ModernComboBox
         Private _tipText As String = ""
+        Private _backdrop As PopupBackdropRenderer
 
         ' V2：D2D 资源由 WindowCompositor 按顶层 Form 共享管理。
 
@@ -2542,13 +2520,14 @@ Public Class ModernComboBox
             _owner = owner
             Me.DoubleBuffered = True
             Me.AutoScaleMode = AutoScaleMode.Dpi
-            Me.BackColor = owner.提示背景颜色
+            SetStyle(ControlStyles.AllPaintingInWmPaint Or ControlStyles.UserPaint Or ControlStyles.OptimizedDoubleBuffer, True)
+            ApplyPopupWindowState()
         End Sub
 
         Public Sub ShowTip(text As String, screenLocation As Point)
             _tipText = text
             Dim pad As Padding = _owner.提示内边距
-            Dim bw As Integer = _owner.提示边框宽度
+            Dim bw As Integer = DropDownBorderWidth()
             Dim maxW As Integer = _owner.提示最大宽度
             Dim contentW As Integer = maxW - pad.Left - pad.Right - bw * 2
             If contentW < 10 Then contentW = 10
@@ -2571,23 +2550,90 @@ Public Class ModernComboBox
             End If
             Me.Location = loc
 
+            ApplyPopupWindowState()
+            准备毛玻璃背景()
             If Not Visible Then Me.Show()
             Invalidate()
         End Sub
 
+        Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
+            ' 顶层提示窗体由 OnPaint 里的毛玻璃和 D2D 绘制全权接管底色。
+        End Sub
+
+        Private Shared Function ToOpaqueColor(color As Color) As Color
+            Return Color.FromArgb(255, color.R, color.G, color.B)
+        End Function
+
+        Private Function DropDownBorderWidth() As Integer
+            Return CInt(_owner.下拉边框宽度 * _owner.DpiScale())
+        End Function
+
+        Private Function ShouldCaptureTransparentBackground() As Boolean
+            Return _owner.下拉毛玻璃模式 = PopupBackdropMode.None AndAlso _owner.下拉背景颜色.A < 255
+        End Function
+
+        Private Function HasBackdropFrame() As Boolean
+            Return _backdrop IsNot Nothing AndAlso _backdrop.HasFrame
+        End Function
+
+        Private Function ToolTipFillColor() As Color
+            Return ToOpaqueColor(_owner.下拉背景颜色)
+        End Function
+
+        Private Sub ApplyPopupWindowState()
+            TransparencyKey = Color.Empty
+            Opacity = 1.0R
+            BackColor = ToolTipFillColor()
+        End Sub
+
+        Private Sub 准备毛玻璃背景()
+            If _backdrop Is Nothing Then _backdrop = New PopupBackdropRenderer(Me)
+            _backdrop.TransientExcludeOnCapture = True
+
+            If _owner.下拉毛玻璃模式 <> PopupBackdropMode.None Then
+                _backdrop.Configure(_owner.下拉毛玻璃模式,
+                                    _owner.下拉毛玻璃图片,
+                                    _owner.下拉毛玻璃Tint颜色,
+                                    _owner.下拉毛玻璃模糊半径,
+                                    _owner.下拉毛玻璃模糊次数,
+                                    _owner.下拉毛玻璃下采样,
+                                    _owner.下拉毛玻璃噪点不透明度,
+                                    _owner.下拉毛玻璃噪点缩放)
+            ElseIf ShouldCaptureTransparentBackground() Then
+                _backdrop.Configure(PopupBackdropMode.Auto,
+                                    Nothing,
+                                    _owner.下拉背景颜色,
+                                    1,
+                                    0,
+                                    1,
+                                    0,
+                                    1.0F)
+            Else
+                _backdrop.Configure(PopupBackdropMode.None,
+                                    Nothing,
+                                    Color.Transparent,
+                                    1,
+                                    0,
+                                    1,
+                                    0,
+                                    1.0F)
+            End If
+            _backdrop.Prepare(Me.Bounds, True)
+        End Sub
+
+        Private Sub 绘制毛玻璃背景(g As Graphics)
+            If Not HasBackdropFrame() Then Return
+            _backdrop.Draw(g, New Rectangle(0, 0, ClientSize.Width, ClientSize.Height))
+        End Sub
+
         Protected Overrides Sub OnPaint(e As PaintEventArgs)
+            绘制毛玻璃背景(e.Graphics)
+
             Dim w As Integer = ClientRectangle.Width
             Dim h As Integer = ClientRectangle.Height
             If w <= 0 OrElse h <= 0 Then Return
-            Dim bw As Integer = _owner.提示边框宽度
-            Dim radius As Integer = _owner.提示圆角半径
+            Dim bw As Integer = DropDownBorderWidth()
             Dim pad As Padding = _owner.提示内边距
-
-            Dim boundsRect As New RectangleF(0, 0, w - 1, h - 1)
-            If bw > 0 Then
-                Dim half As Single = bw / 2.0F
-                boundsRect.Inflate(-half, -half)
-            End If
 
             Dim ssaa As Integer = 1
             If Class1.GlobalSSAA <> Class1.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(Class1.GlobalSSAA))
@@ -2595,26 +2641,7 @@ Public Class ModernComboBox
             Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
                 If scope Is Nothing Then Return
                 Dim gRT As ID2D1RenderTarget = scope.GraphicsLayer
-                ' 用背景色填满整个客户区，防止边缘漏像素
-                Using br = gRT.CreateSolidColorBrush(D2DHelper.ToColor4(_owner.提示背景颜色))
-                    gRT.FillRectangle(New Vortice.Mathematics.Rect(0, 0, w, h), br)
-                End Using
-
-                Dim fillRect As New RectangleF(boundsRect.X, boundsRect.Y, boundsRect.Width + 1, boundsRect.Height + 1)
-                If radius > 0 Then
-                    Using geo = RectangleRenderer.创建圆角矩形几何(fillRect, radius)
-                        RectangleRenderer.绘制圆角背景_D2D(gRT, geo, fillRect, _owner.提示背景颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal)
-                    End Using
-                    If bw > 0 Then
-                        Using geo = RectangleRenderer.创建圆角矩形几何(boundsRect, radius)
-                            RectangleRenderer.绘制圆角边框_D2D(gRT, geo, _owner.提示边框颜色, bw)
-                        End Using
-                    End If
-                Else
-                    If bw > 0 Then
-                        RectangleRenderer.绘制矩形边框_D2D(gRT, boundsRect, _owner.提示边框颜色, bw)
-                    End If
-                End If
+                DrawToolTipBackground_D2D(gRT, bw, w, h, Not HasBackdropFrame())
                 scope.FlushGraphics()
 
                 Dim textRect As New RectangleF(bw + pad.Left, bw + pad.Top,
@@ -2622,6 +2649,42 @@ Public Class ModernComboBox
                 h - bw * 2 - pad.Top - pad.Bottom)
                 DrawWrappedText_D2D(scope.DCRenderTarget, _tipText, _owner.Font, _owner.提示文本颜色, textRect, _owner.DpiScale())
             End Using
+        End Sub
+
+        Private Sub DrawToolTipBackground_D2D(rt As ID2D1RenderTarget, bw As Integer, w As Integer, h As Integer, fillBackground As Boolean)
+            If fillBackground Then
+                Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(ToolTipFillColor()))
+                    rt.FillRectangle(New Vortice.Mathematics.Rect(0, 0, w, h), br)
+                End Using
+            End If
+
+            If bw > 0 AndAlso _owner.下拉边框颜色.A > 0 Then
+                DrawToolTipBorder_D2D(rt, w, h, bw)
+            End If
+        End Sub
+
+        Private Sub DrawToolTipBorder_D2D(rt As ID2D1RenderTarget, w As Integer, h As Integer, bw As Integer)
+            Dim border As Integer = Math.Min(bw, Math.Min(w, h))
+            If border <= 0 Then Return
+
+            Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(_owner.下拉边框颜色))
+                rt.FillRectangle(New Vortice.Mathematics.Rect(0, 0, w, border), br)
+                If h > border Then rt.FillRectangle(New Vortice.Mathematics.Rect(0, h - border, w, border), br)
+
+                Dim middleHeight As Integer = h - border * 2
+                If middleHeight > 0 Then
+                    rt.FillRectangle(New Vortice.Mathematics.Rect(0, border, border, middleHeight), br)
+                    If w > border Then rt.FillRectangle(New Vortice.Mathematics.Rect(w - border, border, border, middleHeight), br)
+                End If
+            End Using
+        End Sub
+
+        Protected Overrides Sub Dispose(disposing As Boolean)
+            If disposing AndAlso _backdrop IsNot Nothing Then
+                _backdrop.Dispose()
+                _backdrop = Nothing
+            End If
+            MyBase.Dispose(disposing)
         End Sub
     End Class
 #End Region
@@ -2698,7 +2761,7 @@ Public Class ModernComboBox
         EnsureCaretVisible()
         Invalidate()
         RaiseEvent TextChanged(Me, EventArgs.Empty)
-        If selectedIndexChanged Then RaiseEvent SelectedIndexChanged(Me, EventArgs.Empty)
+        If selectedIndexChanged Then RaiseEvent selectedIndexChanged(Me, EventArgs.Empty)
     End Sub
 
     Private Sub SetSelectedIndexFromUser(value As Integer)
@@ -2715,7 +2778,7 @@ Public Class ModernComboBox
         _selectedIndex = value
         _textRenderer.SetText(newText, newText.Length, True, False)
         Invalidate()
-        If textChanged Then RaiseEvent TextChanged(Me, EventArgs.Empty)
+        If textChanged Then RaiseEvent textChanged(Me, EventArgs.Empty)
         If selectedIndexChanged Then RaiseSelectedIndexChanged(deferSelectedIndexChanged)
     End Sub
 

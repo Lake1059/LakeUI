@@ -1,9 +1,6 @@
 ﻿Imports System.ComponentModel
 Imports System.ComponentModel.Design
-Imports System.Drawing.Drawing2D
-Imports System.Numerics
 Imports Vortice.Direct2D1
-Imports Vortice.DirectWrite
 
 <ToolboxItem(True)>
 <Designer("System.Windows.Forms.Design.ComponentDesigner, System.Design", GetType(IDesigner))>
@@ -431,18 +428,6 @@ Public Class ModernContextMenu
         End Set
     End Property
 
-    Private 毛玻璃并行度 As Integer = Environment.ProcessorCount
-    <Category("LakeUI - Backdrop"), Description("模糊计算最大并行度。0 = Environment.ProcessorCount。"), DefaultValue(0), Browsable(True)>
-    Public Property BackdropMaxParallelism As Integer
-        Get
-            Return 毛玻璃并行度
-        End Get
-        Set(value As Integer)
-            value = If(value <= 0, Environment.ProcessorCount, value)
-            SetValue(毛玻璃并行度, value)
-        End Set
-    End Property
-
     Private 毛玻璃噪点不透明度 As Byte = 18
     <Category("LakeUI - Backdrop"), Description("噪点叠加层不透明度 (0-255)。0 = 关闭噪点。"), DefaultValue(GetType(Byte), "18"), Browsable(True)>
     Public Property BackdropNoiseOpacity As Byte
@@ -604,12 +589,12 @@ Public Class ModernContextMenu
         Private 最终高度 As Integer
 
         Private _当前合成器 As WindowCompositor
-        Private _backdropRenderer As BackdropRenderer
+        Private _backdrop As PopupBackdropRenderer
 
         Private Sub 释放D2D资源()
-            If _backdropRenderer IsNot Nothing Then
-                Try : _backdropRenderer.Dispose() : Catch : End Try
-                _backdropRenderer = Nothing
+            If _backdrop IsNot Nothing Then
+                Try : _backdrop.Dispose() : Catch : End Try
+                _backdrop = Nothing
             End If
         End Sub
 
@@ -692,20 +677,33 @@ Public Class ModernContextMenu
             D2DHelperV2.RefreshFontDependentRendering(Me)
         End Sub
 
-        Private Sub 准备毛玻璃背景()
-            If 菜单.毛玻璃模式 = BackdropModeEnum.None Then
-                If _backdropRenderer IsNot Nothing Then
-                    _backdropRenderer.Dispose()
-                    _backdropRenderer = Nothing
-                End If
-                Return
-            End If
+        Private Shared Function ToPopupBackdropMode(mode As BackdropModeEnum) As PopupBackdropMode
+            Select Case mode
+                Case BackdropModeEnum.Auto
+                    Return PopupBackdropMode.Auto
+                Case BackdropModeEnum.Image
+                    Return PopupBackdropMode.Image
+                Case Else
+                    Return PopupBackdropMode.None
+            End Select
+        End Function
 
-            If _backdropRenderer Is Nothing Then _backdropRenderer = New BackdropRenderer(Me)
-            _backdropRenderer.ApplyParameters(菜单.毛玻璃模糊半径, 菜单.毛玻璃模糊次数, 菜单.毛玻璃下采样, 菜单.毛玻璃并行度, 菜单.毛玻璃噪点缩放)
-            _backdropRenderer.SetSource(菜单.毛玻璃模式 = BackdropModeEnum.Image, 菜单.毛玻璃图片)
-            _backdropRenderer.SetTransientExcludeOnCapture(False)
-            _backdropRenderer.RequestFrame(Me.Bounds, True)
+        Private Function HasBackdropFrame() As Boolean
+            Return _backdrop IsNot Nothing AndAlso _backdrop.HasFrame
+        End Function
+
+        Private Sub 准备毛玻璃背景()
+            If _backdrop Is Nothing Then _backdrop = New PopupBackdropRenderer(Me)
+            _backdrop.TransientExcludeOnCapture = False
+            _backdrop.Configure(ToPopupBackdropMode(菜单.毛玻璃模式),
+                                菜单.毛玻璃图片,
+                                菜单.毛玻璃Tint颜色,
+                                菜单.毛玻璃模糊半径,
+                                菜单.毛玻璃模糊次数,
+                                菜单.毛玻璃下采样,
+                                菜单.毛玻璃噪点不透明度,
+                                菜单.毛玻璃噪点缩放)
+            _backdrop.Prepare(Me.Bounds, True)
         End Sub
 
         Private Sub 计算布局()
@@ -781,22 +779,13 @@ Public Class ModernContextMenu
         End Sub
 
         Private Sub 绘制毛玻璃背景(g As Graphics)
-            If 菜单.毛玻璃模式 = BackdropModeEnum.None OrElse _backdropRenderer Is Nothing OrElse Not _backdropRenderer.HasFrame Then Return
+            If Not HasBackdropFrame() Then Return
             Dim target As New Rectangle(0, 0, ClientSize.Width, ClientSize.Height)
-            If target.Width <= 0 OrElse target.Height <= 0 Then Return
-            _backdropRenderer.DrawTo(g, target)
-            If 菜单.毛玻璃Tint颜色.A > 0 Then
-                Using brush As New SolidBrush(菜单.毛玻璃Tint颜色)
-                    g.FillRectangle(brush, target)
-                End Using
-            End If
-            If 菜单.毛玻璃噪点不透明度 > 0 Then
-                _backdropRenderer.DrawNoise(g, target, 菜单.毛玻璃噪点不透明度)
-            End If
+            _backdrop.Draw(g, target)
         End Sub
 
         Private Sub 绘制图形内容_D2D(rt As ID2D1RenderTarget)
-            If 菜单.毛玻璃模式 = BackdropModeEnum.None OrElse _backdropRenderer Is Nothing OrElse Not _backdropRenderer.HasFrame Then
+            If Not HasBackdropFrame() Then
                 Dim bg = _当前合成器.BrushCache.Get(rt, 菜单.背景颜色)
                 rt.FillRectangle(D2DHelper.ToD2DRect(ClientRectangle), bg)
             End If

@@ -8,8 +8,8 @@ Imports Vortice.Direct2D1
 
 ''' <summary>
 ''' 毛玻璃 / 亚克力效果的核心渲染器。
-''' 按需抓取桌面 DC（窗口背后区域）→ 下采样 → 多次水平 / 垂直 box blur →
-''' 缓存为 <see cref="Bitmap"/>，供 <see cref="ThisIsYourWindow"/> 在 Paint 时铺满整个客户区。
+''' 按需抓取桌面 DC（窗口背后区域）→ 下采样 → 缓存为源帧；
+''' Paint 时优先用 D2D 1.1 GaussianBlur 在 GPU 上处理并贴回 GDI HDC。
 ''' 通过 <see cref="SetWindowDisplayAffinity"/>（Win10 19041+）确保自身不被拍到。
 '''
 ''' === 线程模型 ===
@@ -20,7 +20,7 @@ Imports Vortice.Direct2D1
 ''' • ThreadPool 工作项：<see cref="DrainPendingFrames"/> + <see cref="ProcessFrame"/>，永不直接访问
 '''   <c>_host</c> 的 Handle / IsHandleCreated / IsDisposed（WinForms 会触发跨线程检查），仅使用构造时
 '''   缓存的 <c>_hostHandle</c>；最终回 UI 线程靠 <c>_host.BeginInvoke</c>。
-''' • 双缓冲交换：UI 读 <c>_currentFrame</c>，worker 写 <c>_spareFrame</c>，<c>_frameLock</c> 内交换。
+''' • 双缓冲交换：UI 读 <c>_currentFrame</c> 源帧，worker 写 <c>_spareFrame</c>，<c>_frameLock</c> 内交换。
 ''' • Pending 请求：UI 线程在 <c>_pendingLock</c> 内一次性写齐 4 个坐标 + commit 标志；worker
 '''   在同一锁内做原子快照，避免坐标分量撕裂；commit 走 sticky 语义（已挂的 true 不会被 false 覆盖）。
 ''' • 帧版本：每次 worker 交换 _currentFrame 时 <c>Interlocked.Increment(_frameVersion)</c>，
@@ -28,14 +28,12 @@ Imports Vortice.Direct2D1
 '''
 ''' === 关于 D2D 替代 ===
 ''' • 抓桌面 DC：无 D2D 等价物，仍然必须 <c>BitBlt</c>（DXGI Desktop Duplication 不在本项目权衡范围内）。
-''' • box blur：理论上可改为 <c>ID2D1Effect</c> + <c>CLSID_D2D1GaussianBlur</c>，大半径下 GPU 显著快于
-'''   CPU。但项目 V2 现用的是 <see cref="ID2D1DCRenderTarget"/>（D2D 1.0），effect 管线要求
-'''   <c>ID2D1DeviceContext</c>（D2D 1.1+），并需把回读 CPU 的 average 颜色路径整体迁移；改动面大、
-'''   横跨 <see cref="D2DHelperV2"/>，作为独立议题，暂不在本类内迁移。
+''' • blur：优先走 <c>ID2D1Effect</c> + <c>CLSID_D2D1GaussianBlur</c>。由于 V2 的 DC RT 与 D2D 1.1
+'''   DeviceContext 在阶段 A 不共享资源，结果通过 GDI-compatible target 的 HDC 贴回；设备不可用时降级 CPU box blur。
 ''' • <see cref="DrawTo(ID2D1RenderTarget, Rectangle)"/> / <see cref="DrawNoise(ID2D1RenderTarget, Rectangle, Byte)"/>：
 '''   已迁移到 D2D。<see cref="ThisIsYourWindow"/> 的标题栏 V2 scope 内优先调用 D2D 重载，
 '''   非 V2 路径（或 V2 fallback）仍保留 GDI 重载。
-''' • <see cref="ComputeAverage"/>：D2D 读回 CPU 反而比当前 LockBits 慢，不迁移。
+''' • <see cref="ComputeAverage"/>：直接对下采样源帧取平均，避免为了边框/阴影自动色额外回读 GPU。
 '''
 ''' === D2D 资源缓存 ===
 ''' • <c>_frameD2DBitmap</c>：按 (RT, frameVersion) 失效；帧变 / RT 变才重传。
@@ -98,8 +96,8 @@ Friend NotInheritable Class BackdropRenderer
     Private _radius As Integer = 24
     Private _passes As Integer = 3
     Private _downsample As Integer = 4
-    Private _parallelism As Integer = Environment.ProcessorCount
     Private _noiseScale As Single = 1.0F
+    Private _effectSettingsVersion As Integer = 0
 
     ' ── 待处理请求（最新覆盖最旧，永不堆积）──
     ' 全部字段写读均需在 _pendingLock 内：
@@ -127,6 +125,20 @@ Friend NotInheritable Class BackdropRenderer
     Private _frameD2DBitmap As ID2D1Bitmap
     Private _frameD2DOwnerRT As WeakReference
     Private _frameD2DUploadedVersion As Integer = -1
+
+    ' ── D2D 1.1 GPU blur 缓存（UI 线程独占；设备丢失或目标尺寸变化时重建）──
+    Private _gpuContext As ID2D1DeviceContext
+    Private _gpuGeneration As Integer = -1
+    Private _gpuTarget As ID2D1Bitmap1
+    Private _gpuTargetSize As Size = Size.Empty
+    Private _gpuSource As ID2D1Bitmap1
+    Private _gpuSourceVersion As Integer = -1
+    Private _gpuBlurEffect As ID2D1Effect
+
+    ' GPU 不可用时的 CPU 降级帧；不再暴露并行度，始终使用处理器核心数。
+    Private _cpuBlurredFrame As Bitmap
+    Private _cpuBlurredSourceVersion As Integer = -1
+    Private _cpuBlurredSettingsVersion As Integer = -1
 
     ' ── 抓屏临时位图复用（仅 Auto 模式使用，尺寸 = 窗口逻辑尺寸）──
     Private _capturedBitmap As Bitmap
@@ -174,12 +186,13 @@ Friend NotInheritable Class BackdropRenderer
     End Sub
 
     Public Sub ApplyParameters(radius As Integer, passes As Integer, downsample As Integer,
-                                parallelism As Integer, noiseScale As Single)
+                                noiseScale As Single)
         Volatile.Write(_radius, Math.Max(1, radius))
         Volatile.Write(_passes, Math.Max(0, Math.Min(5, passes)))
         Volatile.Write(_downsample, Math.Max(1, downsample))
-        Volatile.Write(_parallelism, Math.Max(1, parallelism))
         _noiseScale = Math.Max(0.1F, noiseScale)
+        Interlocked.Increment(_effectSettingsVersion)
+        InvalidateDerivedFrameCaches()
     End Sub
 
     ''' <summary>设置渲染来源：Desktop 抓屏 或 Image 静态源图（按 cover 撑满窗口）。</summary>
@@ -198,6 +211,49 @@ Friend NotInheritable Class BackdropRenderer
     ''' </summary>
     Public Sub SetTransientExcludeOnCapture(value As Boolean)
         Volatile.Write(_transientExcludeOnCapture, If(value, 1, 0))
+    End Sub
+
+    Private Sub InvalidateDerivedFrameCaches()
+        If _cpuBlurredFrame IsNot Nothing Then
+            Try : _cpuBlurredFrame.Dispose() : Catch : End Try
+            _cpuBlurredFrame = Nothing
+        End If
+        _cpuBlurredSourceVersion = -1
+        _cpuBlurredSettingsVersion = -1
+
+        If _frameD2DBitmap IsNot Nothing Then
+            Try : _frameD2DBitmap.Dispose() : Catch : End Try
+            _frameD2DBitmap = Nothing
+        End If
+        _frameD2DOwnerRT = Nothing
+        _frameD2DUploadedVersion = -1
+
+        If _gpuBlurEffect IsNot Nothing Then
+            Try : _gpuBlurEffect.Dispose() : Catch : End Try
+            _gpuBlurEffect = Nothing
+        End If
+    End Sub
+
+    Private Sub DisposeGpuResources()
+        If _gpuBlurEffect IsNot Nothing Then
+            Try : _gpuBlurEffect.Dispose() : Catch : End Try
+            _gpuBlurEffect = Nothing
+        End If
+        If _gpuSource IsNot Nothing Then
+            Try : _gpuSource.Dispose() : Catch : End Try
+            _gpuSource = Nothing
+        End If
+        If _gpuTarget IsNot Nothing Then
+            Try : _gpuTarget.Dispose() : Catch : End Try
+            _gpuTarget = Nothing
+        End If
+        If _gpuContext IsNot Nothing Then
+            Try : _gpuContext.Dispose() : Catch : End Try
+            _gpuContext = Nothing
+        End If
+        _gpuSourceVersion = -1
+        _gpuTargetSize = Size.Empty
+        _gpuGeneration = -1
     End Sub
 
     Public ReadOnly Property HasFrame As Boolean
@@ -360,14 +416,7 @@ Friend NotInheritable Class BackdropRenderer
             End Try
         End If
 
-        ' 3. 模糊
-        If passes > 0 Then
-            Dim radius As Integer = Math.Max(1, Volatile.Read(_radius) \ Math.Max(1, down))
-            Dim parallelism As Integer = Volatile.Read(_parallelism)
-            BoxBlur(small, radius, passes, parallelism)
-        End If
-
-        ' 4. 平均色（直接对模糊后小图采样取均值，避免再过一次 GDI+ 缩放）
+        ' 3. 平均色（直接对下采样源帧采样；blur 不改变整体平均色，避免为了自动色回读 GPU。）
         Dim avg As Integer = ComputeAverage(small)
         Volatile.Write(_candidateAverage, avg)
         Dim publishedNow As Boolean = False
@@ -376,7 +425,7 @@ Friend NotInheritable Class BackdropRenderer
             publishedNow = True
         End If
 
-        ' 5. 交换前后帧：旧的 _currentFrame 退役为下次的 _spareFrame，避免分配。
+        ' 4. 交换前后帧：旧的 _currentFrame 退役为下次的 _spareFrame，避免分配。
         '    同时递增 _frameVersion，让 UI 侧 D2D 上传缓存知道需要重传。
         SyncLock _frameLock
             Dim previousCurrent As Bitmap = _currentFrame
@@ -385,7 +434,7 @@ Friend NotInheritable Class BackdropRenderer
             Interlocked.Increment(_frameVersion)
         End SyncLock
 
-        ' 6. 触发 UI 重绘
+        ' 5. 触发 UI 重绘
         Try
             Dim host = _host
             If host IsNot Nothing Then
@@ -678,18 +727,268 @@ Friend NotInheritable Class BackdropRenderer
 
     ''' <summary>把当前缓存帧拉伸绘制到目标矩形（覆盖整个客户区，含标题栏）。</summary>
     Public Sub DrawTo(g As Graphics, target As Rectangle)
-        SyncLock _frameLock
-            If _currentFrame Is Nothing Then Return
-            Dim oldInterp = g.InterpolationMode
-            Dim oldOffset = g.PixelOffsetMode
-            ' 源已模糊，普通 Bilinear 即可，HQ 在大窗口下显著更慢
-            g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.Bilinear
-            g.PixelOffsetMode = PixelOffsetMode.Half
-            g.DrawImage(_currentFrame, target)
-            g.InterpolationMode = oldInterp
-            g.PixelOffsetMode = oldOffset
-        End SyncLock
+        If g Is Nothing OrElse target.Width <= 0 OrElse target.Height <= 0 Then Return
+        If TryDrawGpuBlur(g, target) Then Return
+        DrawCpuFrame(g, target)
     End Sub
+
+    Private Function TryDrawGpuBlur(g As Graphics, target As Rectangle) As Boolean
+        If Volatile.Read(_disposed) <> 0 Then Return False
+        Dim sourceSize As Size = Size.Empty
+        Try
+            If Not EnsureGpuContext() Then Return False
+            If Not EnsureGpuSource(sourceSize) Then Return False
+            If Not EnsureGpuTarget(target.Size) Then Return False
+
+            Dim previousTarget As ID2D1Image = Nothing
+            Dim interop As ID2D1GdiInteropRenderTarget = Nothing
+            Dim sourceHdc As IntPtr = IntPtr.Zero
+            Dim destHdc As IntPtr = IntPtr.Zero
+            Dim drawing As Boolean = False
+
+            Try
+                previousTarget = _gpuContext.Target
+                _gpuContext.Target = _gpuTarget
+                _gpuContext.BeginDraw()
+                drawing = True
+                _gpuContext.Clear(New Vortice.Mathematics.Color4(0, 0, 0, 0))
+
+                Dim oldTransform As Matrix3x2 = _gpuContext.Transform
+                Dim sx As Single = target.Width / CSng(Math.Max(1, sourceSize.Width))
+                Dim sy As Single = target.Height / CSng(Math.Max(1, sourceSize.Height))
+                Try
+                    _gpuContext.Transform = Matrix3x2.CreateScale(sx, sy)
+
+                    Dim image As ID2D1Image = GetGpuOutputImage()
+                    If image Is Nothing Then Return False
+                    Try
+                        _gpuContext.DrawImage(image,
+                                              New Nullable(Of Vector2)(),
+                                              New Nullable(Of Vortice.RawRectF)(),
+                                              Vortice.Direct2D1.InterpolationMode.Linear,
+                                              CompositeMode.SourceOver)
+                    Finally
+                        If image IsNot _gpuSource Then
+                            Try : image.Dispose() : Catch : End Try
+                        End If
+                    End Try
+                Finally
+                    _gpuContext.Transform = oldTransform
+                End Try
+
+                interop = _gpuContext.QueryInterface(Of ID2D1GdiInteropRenderTarget)()
+                If interop Is Nothing Then Return False
+
+                ' GetDC 必须在 BeginDraw/EndDraw 之间调用；它会隐式 flush 当前 D2D 批次。
+                sourceHdc = interop.GetDC(DcInitializeMode.Copy)
+                If sourceHdc = IntPtr.Zero Then Return False
+
+                Dim bltOk As Boolean
+                Try
+                    destHdc = g.GetHdc()
+                    If destHdc = IntPtr.Zero Then Return False
+                    bltOk = BitBlt(destHdc, target.X, target.Y, target.Width, target.Height,
+                                   sourceHdc, 0, 0, SRCCOPY)
+                Finally
+                    If destHdc <> IntPtr.Zero Then
+                        Try : g.ReleaseHdc(destHdc) : Catch : End Try
+                        destHdc = IntPtr.Zero
+                    End If
+                    If sourceHdc <> IntPtr.Zero Then
+                        Try : interop.ReleaseDC(Nothing) : Catch : End Try
+                        sourceHdc = IntPtr.Zero
+                    End If
+                End Try
+
+                _gpuContext.EndDraw()
+                drawing = False
+                Return bltOk
+            Finally
+                If destHdc <> IntPtr.Zero Then
+                    Try : g.ReleaseHdc(destHdc) : Catch : End Try
+                End If
+                If interop IsNot Nothing AndAlso sourceHdc <> IntPtr.Zero Then
+                    Try : interop.ReleaseDC(Nothing) : Catch : End Try
+                End If
+                If drawing Then
+                    Try : _gpuContext.EndDraw() : Catch : End Try
+                End If
+                If _gpuContext IsNot Nothing Then
+                    Try : _gpuContext.Target = previousTarget : Catch : End Try
+                End If
+                If previousTarget IsNot Nothing Then
+                    Try : previousTarget.Dispose() : Catch : End Try
+                End If
+                If interop IsNot Nothing Then
+                    Try : interop.Dispose() : Catch : End Try
+                End If
+            End Try
+        Catch ex As Exception
+            If D3D11Globals.HandleDeviceLost(ex) Then DisposeGpuResources()
+            Return False
+        End Try
+    End Function
+
+    Private Function EnsureGpuContext() As Boolean
+        If _gpuContext IsNot Nothing AndAlso _gpuGeneration = D3D11Globals.DeviceGeneration Then Return True
+        DisposeGpuResources()
+        _gpuContext = D3D11Globals.CreateDeviceContext()
+        If _gpuContext Is Nothing Then Return False
+        _gpuGeneration = D3D11Globals.DeviceGeneration
+        Return True
+    End Function
+
+    Private Function EnsureGpuSource(ByRef sourceSize As Size) As Boolean
+        If _gpuContext Is Nothing Then Return False
+
+        Dim curVer As Integer = Volatile.Read(_frameVersion)
+        If _gpuSource IsNot Nothing AndAlso _gpuSourceVersion = curVer Then
+            Dim ps = _gpuSource.PixelSize
+            sourceSize = New Size(ps.Width, ps.Height)
+            Return True
+        End If
+
+        If _gpuSource IsNot Nothing Then
+            Try : _gpuSource.Dispose() : Catch : End Try
+            _gpuSource = Nothing
+        End If
+        If _gpuBlurEffect IsNot Nothing Then
+            Try : _gpuBlurEffect.Dispose() : Catch : End Try
+            _gpuBlurEffect = Nothing
+        End If
+
+        SyncLock _frameLock
+            If _currentFrame Is Nothing Then Return False
+            Dim data As BitmapData = _currentFrame.LockBits(
+                New Rectangle(0, 0, _currentFrame.Width, _currentFrame.Height),
+                ImageLockMode.ReadOnly,
+                PixelFormat.Format32bppPArgb)
+            Try
+                Dim props As New BitmapProperties1(
+                    New Vortice.DCommon.PixelFormat(Vortice.DXGI.Format.B8G8R8A8_UNorm, Vortice.DCommon.AlphaMode.Premultiplied),
+                    96.0F, 96.0F,
+                    BitmapOptions.None)
+                _gpuSource = _gpuContext.CreateBitmap(
+                    New Vortice.Mathematics.SizeI(_currentFrame.Width, _currentFrame.Height),
+                    data.Scan0, CUInt(data.Stride), props)
+                _gpuSourceVersion = curVer
+                sourceSize = New Size(_currentFrame.Width, _currentFrame.Height)
+            Finally
+                _currentFrame.UnlockBits(data)
+            End Try
+        End SyncLock
+
+        Return _gpuSource IsNot Nothing
+    End Function
+
+    Private Function EnsureGpuTarget(size As Size) As Boolean
+        If _gpuContext Is Nothing OrElse size.Width <= 0 OrElse size.Height <= 0 Then Return False
+        If _gpuTarget IsNot Nothing AndAlso _gpuTargetSize = size Then Return True
+
+        If _gpuTarget IsNot Nothing Then
+            Try : _gpuTarget.Dispose() : Catch : End Try
+            _gpuTarget = Nothing
+        End If
+        _gpuTargetSize = Size.Empty
+
+        Dim props As New BitmapProperties1(
+            New Vortice.DCommon.PixelFormat(Vortice.DXGI.Format.B8G8R8A8_UNorm, Vortice.DCommon.AlphaMode.Premultiplied),
+            96.0F, 96.0F,
+            BitmapOptions.Target Or BitmapOptions.GdiCompatible)
+        _gpuTarget = _gpuContext.CreateBitmap(
+            New Vortice.Mathematics.SizeI(size.Width, size.Height),
+            IntPtr.Zero, 0UI, props)
+        _gpuTargetSize = size
+        Return _gpuTarget IsNot Nothing
+    End Function
+
+    Private Function GetGpuOutputImage() As ID2D1Image
+        If _gpuSource Is Nothing Then Return Nothing
+        Dim passes As Integer = Math.Max(0, Volatile.Read(_passes))
+        If passes <= 0 Then Return _gpuSource
+
+        If _gpuBlurEffect Is Nothing Then
+            _gpuBlurEffect = _gpuContext.CreateEffect(EffectGuids.GaussianBlur)
+            _gpuBlurEffect.SetInput(0UI, _gpuSource, True)
+        End If
+
+        Dim down As Integer = Math.Max(1, Volatile.Read(_downsample))
+        Dim radius As Single = Math.Max(0.1F, Volatile.Read(_radius) / CSng(down))
+        Dim sigma As Single = CSng(Math.Sqrt(passes) * radius / Math.Sqrt(3.0))
+        SetEffectFloat(_gpuBlurEffect, "StandardDeviation", Math.Max(0.1F, sigma))
+        SetEffectEnum(_gpuBlurEffect, "Optimization", CInt(GaussianBlurOptimization.Balanced))
+        SetEffectEnum(_gpuBlurEffect, "BorderMode", CInt(BorderMode.Hard))
+        Return _gpuBlurEffect.Output
+    End Function
+
+    Private Shared Sub SetEffectFloat(effect As ID2D1Effect, name As String, value As Single)
+        Dim bytes = BitConverter.GetBytes(value)
+        effect.SetValueByName(name, PropertyType.Float, bytes, CUInt(bytes.Length))
+    End Sub
+
+    Private Shared Sub SetEffectEnum(effect As ID2D1Effect, name As String, value As Integer)
+        Dim bytes = BitConverter.GetBytes(value)
+        effect.SetValueByName(name, PropertyType.[Enum], bytes, CUInt(bytes.Length))
+    End Sub
+
+    Private Sub DrawCpuFrame(g As Graphics, target As Rectangle)
+        If Math.Max(0, Volatile.Read(_passes)) <= 0 Then
+            SyncLock _frameLock
+                If _currentFrame Is Nothing Then Return
+                DrawBitmapFrame(g, _currentFrame, target)
+            End SyncLock
+            Return
+        End If
+
+        Dim frame As Bitmap = GetCpuRenderableFrame()
+        If frame Is Nothing Then Return
+        DrawBitmapFrame(g, frame, target)
+    End Sub
+
+    Private Shared Sub DrawBitmapFrame(g As Graphics, frame As Bitmap, target As Rectangle)
+        Dim oldInterp = g.InterpolationMode
+        Dim oldOffset = g.PixelOffsetMode
+        g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.Bilinear
+        g.PixelOffsetMode = PixelOffsetMode.Half
+        g.DrawImage(frame, target)
+        g.InterpolationMode = oldInterp
+        g.PixelOffsetMode = oldOffset
+    End Sub
+
+    Private Function GetCpuRenderableFrame() As Bitmap
+        Dim passes As Integer = Math.Max(0, Volatile.Read(_passes))
+        If passes <= 0 Then Return Nothing
+
+        Dim curVer As Integer = Volatile.Read(_frameVersion)
+        Dim settingsVer As Integer = Volatile.Read(_effectSettingsVersion)
+        If _cpuBlurredFrame IsNot Nothing AndAlso
+           _cpuBlurredSourceVersion = curVer AndAlso
+           _cpuBlurredSettingsVersion = settingsVer Then
+            Return _cpuBlurredFrame
+        End If
+
+        Dim working As Bitmap = Nothing
+        SyncLock _frameLock
+            If _currentFrame Is Nothing Then Return Nothing
+            working = New Bitmap(_currentFrame.Width, _currentFrame.Height, PixelFormat.Format32bppPArgb)
+            Using gb As Graphics = Graphics.FromImage(working)
+                gb.CompositingMode = CompositingMode.SourceCopy
+                gb.DrawImageUnscaled(_currentFrame, 0, 0)
+            End Using
+        End SyncLock
+
+        Dim down As Integer = Math.Max(1, Volatile.Read(_downsample))
+        Dim radius As Integer = Math.Max(1, Volatile.Read(_radius) \ down)
+        BoxBlur(working, radius, passes, Environment.ProcessorCount)
+
+        If _cpuBlurredFrame IsNot Nothing Then
+            Try : _cpuBlurredFrame.Dispose() : Catch : End Try
+        End If
+        _cpuBlurredFrame = working
+        _cpuBlurredSourceVersion = curVer
+        _cpuBlurredSettingsVersion = settingsVer
+        Return _cpuBlurredFrame
+    End Function
 
     ''' <summary>
     ''' D2D 重载：把当前缓存帧上传成 <see cref="ID2D1Bitmap"/> 并绘制到目标矩形。
@@ -705,16 +1004,20 @@ Friend NotInheritable Class BackdropRenderer
     Public Sub DrawTo(rt As ID2D1RenderTarget, target As Rectangle)
         If rt Is Nothing OrElse target.Width <= 0 OrElse target.Height <= 0 Then Return
         Dim d2dBmp As ID2D1Bitmap
+        Dim frame As Bitmap = If(Math.Max(0, Volatile.Read(_passes)) > 0, GetCpuRenderableFrame(), Nothing)
         SyncLock _frameLock
-            If _currentFrame Is Nothing Then Return
-            Dim curVer As Integer = Volatile.Read(_frameVersion)
+            If frame Is Nothing Then frame = _currentFrame
+            If frame Is Nothing Then Return
+            Dim curVer As Integer = If(frame Is _currentFrame,
+                                       Volatile.Read(_frameVersion),
+                                       _cpuBlurredSourceVersion Xor _cpuBlurredSettingsVersion)
             Dim ownerAlive As Boolean = _frameD2DOwnerRT IsNot Nothing AndAlso ReferenceEquals(_frameD2DOwnerRT.Target, rt)
             If _frameD2DBitmap Is Nothing OrElse Not ownerAlive OrElse _frameD2DUploadedVersion <> curVer Then
                 If _frameD2DBitmap IsNot Nothing Then
                     Try : _frameD2DBitmap.Dispose() : Catch : End Try
                     _frameD2DBitmap = Nothing
                 End If
-                _frameD2DBitmap = D2DHelper.CreateBitmapFromGdi(rt, _currentFrame)
+                _frameD2DBitmap = D2DHelper.CreateBitmapFromGdi(rt, frame)
                 _frameD2DOwnerRT = New WeakReference(rt)
                 _frameD2DUploadedVersion = curVer
             End If
@@ -940,7 +1243,12 @@ Friend NotInheritable Class BackdropRenderer
             End If
             _frameD2DOwnerRT = Nothing
             _frameD2DUploadedVersion = -1
+            If _cpuBlurredFrame IsNot Nothing Then
+                Try : _cpuBlurredFrame.Dispose() : Catch : End Try
+                _cpuBlurredFrame = Nothing
+            End If
         End SyncLock
+        DisposeGpuResources()
         _capturedBitmap?.Dispose()
         _capturedBitmap = Nothing
         _noiseBitmap?.Dispose()

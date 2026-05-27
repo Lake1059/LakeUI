@@ -89,7 +89,6 @@ Partial Class Form_ExcellentTrackBar
         ExcellentTrackBar3.AnimationDuration = 500
         ExcellentTrackBar3.AnimationFPS = 0
         ExcellentTrackBar3.Dock = DockStyle.Left
-        ExcellentTrackBar3.LabelFont = New Font("MiSans Medium", 9F, FontStyle.Regular, GraphicsUnit.Point, CByte(134))
         ExcellentTrackBar3.LabelLineLength = 15
         TrackLabel2.Position = 1R
         TrackLabel2.Side = ExcellentTrackBar.LabelSideEnum.TopOrLeft

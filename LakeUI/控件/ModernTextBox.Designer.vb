@@ -9,6 +9,7 @@ Partial Class ModernTextBox
             If disposing Then
                 _caretBlinkTimer.Stop()
                 _caretBlinkTimer.Dispose()
+                _scrollAnimationHelper.Dispose()
                 _autoScrollTimer.Stop()
                 _autoScrollTimer.Dispose()
                 If components IsNot Nothing Then
