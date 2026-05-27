@@ -72,7 +72,7 @@ Public NotInheritable Class GpuMonitor
         ''' <summary>PDH 实例匹配用：小写形如 "0xHHHHHHHH_0xLLLLLLLL"。</summary>
         Friend ReadOnly Property LuidKey As String
             Get
-                Return String.Format(CultureInfo.InvariantCulture, "0x{0:x8}_0x{1:x8}", LuidHigh, LuidLow)
+                Return String.Format(CultureInfo.InvariantCulture, "0x{0:x8}_0x{1:x8}", 转无符号32位位模式(LuidHigh), 转无符号32位位模式(LuidLow))
             End Get
         End Property
 
@@ -229,6 +229,7 @@ Public NotInheritable Class GpuMonitor
     Private Structure PDH_FMT_COUNTERVALUE
         <FieldOffset(0)> Public CStatus As Integer
         <FieldOffset(8)> Public doubleValue As Double
+        <FieldOffset(8)> Public largeValue As Long
     End Structure
 
     <DllImport("pdh.dll", CharSet:=CharSet.Unicode)>
@@ -395,7 +396,7 @@ Public NotInheritable Class GpuMonitor
 
                 Dim info As New GpuInfo With {
                     .Index = 适配器.Count,
-                    .LuidLow = CInt(ai.AdapterLuid.LowPart),
+                    .LuidLow = 转有符号32位位模式(ai.AdapterLuid.LowPart),
                     .LuidHigh = ai.AdapterLuid.HighPart,
                     .Name = desc,
                     .Vendor = 识别厂商(desc)
@@ -422,7 +423,7 @@ Public NotInheritable Class GpuMonitor
         NvmlInterop.确保初始化()
         If NvmlInterop.可用 Then
             For Each ad In 适配器
-                Dim dev = NvmlInterop.分配设备(CUInt(ad.Info.LuidLow), ad.Info.LuidHigh)
+                Dim dev = NvmlInterop.分配设备(转无符号32位位模式(ad.Info.LuidLow), ad.Info.LuidHigh)
                 If dev <> IntPtr.Zero Then
                     ad.NvmlDevice = dev
                     NvmlInterop.填充静态信息(dev, ad.Info)
@@ -678,6 +679,14 @@ Public NotInheritable Class GpuMonitor
         For i = 0 To byteSize - 1 : Marshal.WriteByte(p, i, 0) : Next
         Return p
     End Function
+
+    Private Shared Function 转有符号32位位模式(value As UInteger) As Integer
+        Return BitConverter.ToInt32(BitConverter.GetBytes(value), 0)
+    End Function
+
+    Private Shared Function 转无符号32位位模式(value As Integer) As UInteger
+        Return BitConverter.ToUInt32(BitConverter.GetBytes(value), 0)
+    End Function
 #End Region
 
 #Region "PDH 通用查询"
@@ -685,6 +694,7 @@ Public NotInheritable Class GpuMonitor
         Dim t As UInteger = 0
         Dim v As PDH_FMT_COUNTERVALUE
         If PdhGetFormattedCounterValue(h, PDH_FMT_DOUBLE, t, v) <> ERROR_SUCCESS Then Return Double.NaN
+        If v.CStatus <> 0 Then Return Double.NaN
         Return v.doubleValue
     End Function
 
@@ -692,7 +702,8 @@ Public NotInheritable Class GpuMonitor
         Dim t As UInteger = 0
         Dim v As PDH_FMT_COUNTERVALUE
         If PdhGetFormattedCounterValue(h, PDH_FMT_LARGE, t, v) <> ERROR_SUCCESS Then Return 0UL
-        Return CULng(BitConverter.DoubleToInt64Bits(v.doubleValue))   ' 与 doubleValue 共用 8 字节
+        If v.CStatus <> 0 OrElse v.largeValue <= 0L Then Return 0UL
+        Return CULng(v.largeValue)
     End Function
 
     Private Shared Function PdhEnumInstances(objectName As String) As String()
@@ -889,6 +900,7 @@ Friend NotInheritable Class NvmlInterop
         已分配.Clear()
         Dim count As UInteger = 0
         If p_GetCount Is Nothing OrElse p_GetCount(count) <> NVML_SUCCESS Then Return
+        If count = 0UI Then Return
         For i As UInteger = 0 To count - 1UI
             Dim dev As IntPtr
             If p_GetByIndex IsNot Nothing AndAlso p_GetByIndex(i, dev) = NVML_SUCCESS Then 待分配.Enqueue(dev)
@@ -900,13 +912,17 @@ Friend NotInheritable Class NvmlInterop
     ''' <summary>按 LUID 分配 NVML 设备（按 PCI 顺序与 D3DKMT 一一对应；同 LUID 缓存）。</summary>
     Public Shared Function 分配设备(luidLow As UInteger, luidHigh As Integer) As IntPtr
         If Not 可用 Then Return IntPtr.Zero
-        Dim key = (CULng(CUInt(luidHigh)) << 32) Or luidLow
+        Dim key = (CULng(转无符号32位位模式(luidHigh)) << 32) Or CULng(luidLow)
         Dim dev As IntPtr
         If 已分配.TryGetValue(key, dev) Then Return dev
         If 待分配 Is Nothing OrElse 待分配.Count = 0 Then Return IntPtr.Zero
         dev = 待分配.Dequeue()
         已分配(key) = dev
         Return dev
+    End Function
+
+    Private Shared Function 转无符号32位位模式(value As Integer) As UInteger
+        Return BitConverter.ToUInt32(BitConverter.GetBytes(value), 0)
     End Function
 
     Public Shared Sub 填充静态信息(device As IntPtr, info As GpuMonitor.GpuInfo)
