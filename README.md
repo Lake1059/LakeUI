@@ -116,6 +116,7 @@ Q群：1087964158
 | 39     | AgentRoom               | 智能体聊天室               | 全新     | 低 🟢     |
 | 40     | ModernNumericUpDown     | 现代化数字框               | 全新     | 低 🟢     |
 | 41     | MemberWall              | 成员墙（3FUI 定制）        | N/A      | N/A      |
+| 42     | EasyStatesPanel         | 简易状态板（3FUI 定制）    | N/A      | N/A      |
 
 ## 最值得一试
 

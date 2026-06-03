@@ -1836,13 +1836,15 @@ Public Class ModernComboBox
 
         ' 展开/关闭动画
         Private ReadOnly 展开关闭秒表 As New Stopwatch()
-        Private 展开关闭计时器 As Timer
+        Private 展开关闭计时器 As PrecisionTimer
+        Private 展开关闭驱动运行中 As Boolean = False
         Private 展开关闭动画中 As Boolean = False
         Friend 正在关闭动画 As Boolean = False
 
         ' 悬停动画
         Private ReadOnly 悬停秒表 As New Stopwatch()
-        Private 悬停计时器 As Timer
+        Private 悬停计时器 As PrecisionTimer
+        Private 悬停驱动运行中 As Boolean = False
         Private 悬停动画起始Y As Single = -1, 悬停动画目标Y As Single = -1, 悬停动画当前Y As Single = -1
         Private 悬停动画起始高度, 悬停动画目标高度, 悬停动画当前高度 As Single
         Private 悬停动画中 As Boolean = False
@@ -1964,8 +1966,14 @@ Public Class ModernComboBox
             ' 顶层下拉窗体由 OnPaint 里的 D2D 绘制全权接管底色。
         End Sub
 
-        Private Shared Function CreateFrameTimer(fps As Integer) As Timer
-            Return New Timer() With {.Interval = Math.Max(1, 1000 \ Math.Max(1, fps))}
+        Private Function CreateFrameTimer(fps As Integer) As PrecisionTimer
+            Return New PrecisionTimer() With {
+                .Interval = Math.Max(1, CInt(Math.Round(1000.0R / Math.Max(1, fps)))),
+                .DispatchMode = PrecisionTimer.DispatchModeEnum.NonBlocking,
+                .OverrunPolicy = PrecisionTimer.OverrunPolicyEnum.Drop,
+                .WorkerThreadCount = 1,
+                .SynchronizingObject = Me
+            }
         End Function
 
         Private Shared Function CalculateCenteredScrollOffset(itemCount As Integer, visibleCount As Integer, targetIndex As Integer) As Integer
@@ -2056,14 +2064,14 @@ Public Class ModernComboBox
                 End If
                 Me.Size = New Size(Me.Width, 1)
                 Me.Show()
-                请求重绘()
+                请求重绘(True)
                 展开关闭动画中 = True
                 正在关闭动画 = False
                 展开关闭秒表.Restart()
                 启动展开关闭驱动()
             Else
                 Me.Show()
-                请求重绘()
+                请求重绘(True)
             End If
         End Sub
 
@@ -2081,14 +2089,30 @@ Public Class ModernComboBox
         End Sub
 
         Private Sub 启动展开关闭驱动()
+            If 展开关闭驱动运行中 Then Return
+            展开关闭驱动运行中 = True
             设置动画驱动(展开关闭计时器, AddressOf 展开关闭帧更新, True)
         End Sub
 
         Private Sub 停止展开关闭驱动()
+            If Not 展开关闭驱动运行中 Then Return
+            展开关闭驱动运行中 = False
             设置动画驱动(展开关闭计时器, AddressOf 展开关闭帧更新, False)
         End Sub
 
-        Private Sub 设置动画驱动(timer As Timer, handler As EventHandler, enabled As Boolean)
+        Private Sub 启动悬停驱动()
+            If 悬停驱动运行中 Then Return
+            悬停驱动运行中 = True
+            设置动画驱动(悬停计时器, AddressOf 悬停帧更新, True)
+        End Sub
+
+        Private Sub 停止悬停驱动()
+            If Not 悬停驱动运行中 Then Return
+            悬停驱动运行中 = False
+            设置动画驱动(悬停计时器, AddressOf 悬停帧更新, False)
+        End Sub
+
+        Private Sub 设置动画驱动(timer As PrecisionTimer, handler As EventHandler, enabled As Boolean)
             If _useIdle Then
                 If enabled Then
                     AddHandler Application.Idle, handler
@@ -2106,17 +2130,18 @@ Public Class ModernComboBox
             End If
         End Sub
 
-        Private Sub SetBoundsAndRender(location As Point, size As Size)
+        Private Sub SetBoundsAndRender(location As Point, size As Size, Optional forceRender As Boolean = False, Optional immediate As Boolean = False)
             If size.Width <= 0 OrElse size.Height <= 0 Then Return
+            Dim boundsChanged As Boolean = Me.Location <> location OrElse Me.Size <> size
             _suppressBoundsRender = True
             Try
-                If Me.Location <> location OrElse Me.Size <> size Then
+                If boundsChanged Then
                     SetBounds(location.X, location.Y, size.Width, size.Height)
                 End If
             Finally
                 _suppressBoundsRender = False
             End Try
-            请求重绘()
+            If boundsChanged OrElse forceRender Then 请求重绘(immediate)
         End Sub
 
         Friend Sub 关闭并释放()
@@ -2141,7 +2166,7 @@ Public Class ModernComboBox
                 If 正在关闭动画 Then
                     完成关闭()
                 Else
-                    SetBoundsAndRender(_originPt, New Size(Me.Width, _finalHeight))
+                    SetBoundsAndRender(_originPt, New Size(Me.Width, _finalHeight), True, True)
                 End If
                 Return
             End If
@@ -2184,7 +2209,7 @@ Public Class ModernComboBox
                 Else
                     Dim finalSize As New Size(Me.Width, _finalHeight)
                     If Me.Location <> _originPt OrElse Me.Size <> finalSize Then
-                        SetBoundsAndRender(_originPt, finalSize)
+                        SetBoundsAndRender(_originPt, finalSize, True, True)
                     End If
                 End If
             End If
@@ -2226,10 +2251,10 @@ Public Class ModernComboBox
             If Not _suppressBoundsRender Then 请求重绘()
         End Sub
 
-        Private Sub 请求重绘()
+        Private Sub 请求重绘(Optional immediate As Boolean = False)
             If IsDisposed OrElse Disposing Then Return
             Invalidate()
-            If IsHandleCreated Then Update()
+            If immediate AndAlso IsHandleCreated Then Update()
         End Sub
 
         Private Sub RenderDropDown(e As PaintEventArgs)
@@ -2371,7 +2396,7 @@ Public Class ModernComboBox
                 悬停秒表.Restart()
                 If Not 悬停动画中 Then
                     悬停动画中 = True
-                    设置动画驱动(悬停计时器, AddressOf 悬停帧更新, True)
+                    启动悬停驱动()
                 End If
             Else
                 悬停动画显示 = False
@@ -2406,7 +2431,7 @@ Public Class ModernComboBox
         Private Sub 停止悬停动画()
             If 悬停动画中 Then
                 悬停动画中 = False
-                设置动画驱动(悬停计时器, AddressOf 悬停帧更新, False)
+                停止悬停驱动()
                 悬停秒表.Stop()
             End If
         End Sub
