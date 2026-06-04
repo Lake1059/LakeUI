@@ -1,4 +1,4 @@
-﻿Imports System.ComponentModel
+Imports System.ComponentModel
 Imports System.Numerics
 Imports System.Runtime.InteropServices
 Imports System.Threading
@@ -283,7 +283,7 @@ Public Class CpuMonitor
         If Me.Width <= 0 OrElse Me.Height <= 0 Then Return
 
         Dim ssaa As Integer = Math.Max(1, CInt(超采样倍率))
-        If Class1.GlobalSSAA <> Class1.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(Class1.GlobalSSAA))
+        If GlobalOptions.GlobalSSAA <> GlobalOptions.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(GlobalOptions.GlobalSSAA))
 
         Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
             If scope Is Nothing Then Return
@@ -1337,12 +1337,12 @@ Public Class CpuMonitor
 
     ' ====== SSAA ======
     Private 超采样倍率 As Integer = 1
-    <Category("LakeUI"), Description(Class1.超采样抗锯齿描述词), DefaultValue(GetType(Class1.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
-    Public Property SuperSamplingScale As Class1.SuperSamplingScaleEnum
+    <Category("LakeUI"), Description(GlobalOptions.超采样抗锯齿描述词), DefaultValue(GetType(GlobalOptions.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
+    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum
         Get
             Return 超采样倍率
         End Get
-        Set(value As Class1.SuperSamplingScaleEnum)
+        Set(value As GlobalOptions.SuperSamplingScaleEnum)
             SetValue(超采样倍率, value)
         End Set
     End Property

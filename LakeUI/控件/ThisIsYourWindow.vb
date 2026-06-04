@@ -1,4 +1,4 @@
-﻿Imports System.ComponentModel
+Imports System.ComponentModel
 Imports System.Drawing.Drawing2D
 Imports System.Numerics
 Imports System.Reflection
@@ -1720,7 +1720,7 @@ Public Class ThisIsYourWindow
         ' ThisIsYourWindow 只画矩形 / 位图 / DirectWrite 文字（文字在 DC RT 走 ClearType），
         ' 没有任何需要超采的几何（无圆角、无旋转、无抗锯齿曲线），
         ' 因此强制 ssaa=1，省下每帧一次离屏 BitmapRT 申请 + Flush 回采的开销。
-        ' Class1.GlobalSSAA 仍然对其他控件（ModernButton 等）生效，这里只是本控件不参与。
+        ' GlobalOptions.GlobalSSAA 仍然对其他控件（ModernButton 等）生效，这里只是本控件不参与。
         Const ssaa As Integer = 1
         Dim deviceLost As Boolean = False
         Try

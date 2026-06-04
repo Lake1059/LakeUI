@@ -271,30 +271,94 @@ Public Module D2DHelper
     Public Class D2DBitmapCache
         Implements IDisposable
 
-        Private _src As Image
-        Private _rt As ID2D1RenderTarget
-        Private _bmp As ID2D1Bitmap
+        Private NotInheritable Class Entry
+            Public Bitmap As ID2D1Bitmap
+            Public Source As Image
+            Public RenderTarget As ID2D1RenderTarget
+            Public Bytes As Long
+            Public LastUsed As Long
+        End Class
+
+        Private ReadOnly _entries As New Dictionary(Of ID2D1RenderTarget, Entry)()
+        Private _bytes As Long
+        Private _clock As Long
 
         Public Function GetBitmap(rt As ID2D1RenderTarget, src As Image) As ID2D1Bitmap
             If src Is Nothing OrElse rt Is Nothing Then
                 Invalidate()
                 Return Nothing
             End If
-            If _bmp IsNot Nothing AndAlso _src Is src AndAlso _rt Is rt Then Return _bmp
-            Invalidate()
-            _bmp = CreateBitmapFromImage(rt, src)
-            _src = src
-            _rt = rt
-            Return _bmp
+            Dim entry As Entry = Nothing
+            If _entries.TryGetValue(rt, entry) Then
+                If entry.Source Is src AndAlso entry.Bitmap IsNot Nothing Then
+                    entry.LastUsed = NextClock()
+                    Return entry.Bitmap
+                End If
+                RemoveEntry(rt)
+            End If
+
+            Dim bmp = CreateBitmapFromImage(rt, src)
+            If bmp Is Nothing Then Return Nothing
+
+            entry = New Entry With {
+                .Bitmap = bmp,
+                .Source = src,
+                .RenderTarget = rt,
+                .Bytes = EstimateBytes(src),
+                .LastUsed = NextClock()
+            }
+            _entries(rt) = entry
+            _bytes += entry.Bytes
+            TrimToBudget(entry)
+            Return bmp
         End Function
 
         Public Sub Invalidate()
-            If _bmp IsNot Nothing Then
-                Try : _bmp.Dispose() : Catch : End Try
-                _bmp = Nothing
-            End If
-            _src = Nothing
-            _rt = Nothing
+            For Each entry In _entries.Values
+                Try : entry.Bitmap.Dispose() : Catch : End Try
+            Next
+            _entries.Clear()
+            _bytes = 0
+        End Sub
+
+        Public Sub InvalidateFor(rt As ID2D1RenderTarget)
+            If rt Is Nothing Then Return
+            RemoveEntry(rt)
+        End Sub
+
+        Private Function NextClock() As Long
+            _clock += 1
+            Return _clock
+        End Function
+
+        Private Shared Function EstimateBytes(src As Image) As Long
+            If src Is Nothing Then Return 0
+            Return CLng(Math.Max(1, src.Width)) * CLng(Math.Max(1, src.Height)) * 4L
+        End Function
+
+        Private Sub RemoveEntry(rt As ID2D1RenderTarget)
+            Dim entry As Entry = Nothing
+            If Not _entries.TryGetValue(rt, entry) Then Return
+            _entries.Remove(rt)
+            _bytes -= entry.Bytes
+            Try : entry.Bitmap.Dispose() : Catch : End Try
+        End Sub
+
+        Private Sub TrimToBudget(Optional protectedEntry As Entry = Nothing)
+            Dim budget As Long = Math.Max(0L, GlobalOptions.D2DBitmapCacheBudgetBytes)
+            While _bytes > budget AndAlso _entries.Count > 0
+                Dim oldestRt As ID2D1RenderTarget = Nothing
+                Dim oldestEntry As Entry = Nothing
+                For Each kv In _entries
+                    If protectedEntry IsNot Nothing AndAlso ReferenceEquals(kv.Value, protectedEntry) Then Continue For
+                    If oldestEntry Is Nothing OrElse kv.Value.LastUsed < oldestEntry.LastUsed Then
+                        oldestRt = kv.Key
+                        oldestEntry = kv.Value
+                    End If
+                Next
+                If oldestRt Is Nothing Then Exit While
+                RemoveEntry(oldestRt)
+            End While
         End Sub
 
         Public Sub Dispose() Implements IDisposable.Dispose

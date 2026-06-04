@@ -63,6 +63,9 @@ Public Class DownloadFile
     ''' <summary>单次读取/写入缓冲区大小（字节），默认 1MB（1048576）。越大越节省 CPU，越小越节省内存。</summary>
     Public Property BufferSize As Integer = 1024 * 1024
 
+    ''' <summary>附加到每个下载请求的 HTTP 头，例如 Authorization。</summary>
+    Public ReadOnly Property RequestHeaders As IDictionary(Of String, String) = New Dictionary(Of String, String)(StringComparer.OrdinalIgnoreCase)
+
     ''' <summary>已下载字节数。</summary>
     Public ReadOnly Property BytesDownloaded As Long
         Get
@@ -270,6 +273,7 @@ Public Class DownloadFile
 
         Try
             Using req As New HttpRequestMessage(HttpMethod.Head, Url)
+                ApplyRequestHeaders(req)
                 Using resp = Await _sharedClient.Value.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, token).ConfigureAwait(False)
                     If resp.IsSuccessStatusCode Then
                         length = If(resp.Content.Headers.ContentLength, -1L)
@@ -283,6 +287,7 @@ Public Class DownloadFile
 
         If length < 0 Then
             Using req As New HttpRequestMessage(HttpMethod.Get, Url)
+                ApplyRequestHeaders(req)
                 req.Headers.Range = New RangeHeaderValue(0, 0)
                 Using resp = Await _sharedClient.Value.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, token).ConfigureAwait(False)
                     If resp.StatusCode = HttpStatusCode.PartialContent Then
@@ -337,6 +342,7 @@ Public Class DownloadFile
         Interlocked.Exchange(_bytesDownloaded, 0)
 
         Using req As New HttpRequestMessage(HttpMethod.Get, Url)
+            ApplyRequestHeaders(req)
             Using resp = Await _sharedClient.Value.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, token).ConfigureAwait(False)
                 resp.EnsureSuccessStatusCode()
                 If _totalBytes < 0 Then _totalBytes = If(resp.Content.Headers.ContentLength, -1L)
@@ -365,6 +371,7 @@ Public Class DownloadFile
         If segStart > segEnd Then Return
 
         Using req As New HttpRequestMessage(HttpMethod.Get, Url)
+            ApplyRequestHeaders(req)
             req.Headers.Range = New RangeHeaderValue(segStart, segEnd)
             Using resp = Await _sharedClient.Value.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, token).ConfigureAwait(False)
                 If resp.StatusCode <> HttpStatusCode.PartialContent AndAlso resp.StatusCode <> HttpStatusCode.OK Then
@@ -395,6 +402,17 @@ Public Class DownloadFile
         If File.Exists(SavePath) Then File.Delete(SavePath)
         File.Move(partPath, SavePath)
         TryDeleteStateFile()
+    End Sub
+
+    Private Sub ApplyRequestHeaders(req As HttpRequestMessage)
+        If RequestHeaders.Count = 0 Then Return
+
+        For Each header As KeyValuePair(Of String, String) In RequestHeaders
+            If String.IsNullOrWhiteSpace(header.Key) OrElse header.Value Is Nothing Then Continue For
+
+            req.Headers.Remove(header.Key)
+            req.Headers.TryAddWithoutValidation(header.Key, header.Value)
+        Next
     End Sub
 
 #End Region

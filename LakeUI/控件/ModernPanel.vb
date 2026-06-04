@@ -1,4 +1,4 @@
-﻿Imports System.ComponentModel
+Imports System.ComponentModel
 Imports Vortice.Direct2D1
 
 ''' <summary>
@@ -467,12 +467,12 @@ Public Class ModernPanel
 #Region "外观属性 - SSAA"
 
     Private 超采样倍率 As Integer = 1
-    <Category("LakeUI"), Description(Class1.超采样抗锯齿描述词), DefaultValue(GetType(Class1.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
-    Public Property SuperSamplingScale As Class1.SuperSamplingScaleEnum
+    <Category("LakeUI"), Description(GlobalOptions.超采样抗锯齿描述词), DefaultValue(GetType(GlobalOptions.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
+    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum
         Get
             Return 超采样倍率
         End Get
-        Set(value As Class1.SuperSamplingScaleEnum)
+        Set(value As GlobalOptions.SuperSamplingScaleEnum)
             SetValue(超采样倍率, value)
         End Set
     End Property
@@ -787,7 +787,7 @@ Public Class ModernPanel
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
         If Me.Width < 1 OrElse Me.Height < 1 Then Return
 
-        Dim ssaa As Integer = If(Class1.GlobalSSAA > 1, CInt(Class1.GlobalSSAA), 超采样倍率)
+        Dim ssaa As Integer = If(GlobalOptions.GlobalSSAA > 1, CInt(GlobalOptions.GlobalSSAA), 超采样倍率)
         ssaa = Math.Max(1, ssaa)
 
         Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)

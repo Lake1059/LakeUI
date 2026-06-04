@@ -1,6 +1,3 @@
-Imports System.Drawing
-Imports System.Windows.Forms
-
 ''' <summary>
 ''' 弹出控件共用的毛玻璃背景适配层。
 ''' 底层仍使用 <see cref="BackdropRenderer"/>，确保与 <see cref="ThisIsYourWindow"/> 的抓屏、模糊和噪点逻辑保持同步。

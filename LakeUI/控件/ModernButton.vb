@@ -1,4 +1,4 @@
-﻿Imports System.ComponentModel
+Imports System.ComponentModel
 Imports System.Numerics
 Imports Vortice.Direct2D1
 Imports Vortice.DirectWrite
@@ -10,6 +10,12 @@ Public Class ModernButton
     ' V2：所有 D2D 资源迁移到 WindowCompositor（Form 级共享）；ModernButton 不再持有任何 D2D 字段。
     ' 旧的 _dcRT / _ssaaCache / _backImageCache / _iconCache 已移除。
 #End Region
+
+    Public Sub New()
+        InitializeComponent()
+        动画助手.DirtyProvider = AddressOf 按钮动画脏区
+        长按动画助手.DirtyProvider = AddressOf 按钮动画脏区
+    End Sub
 
 #Region "绘制"
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
@@ -37,7 +43,7 @@ Public Class ModernButton
         Dim 图标宽度 As Single = 计算图标占用的水平宽度(内容矩形区域, s)
 
         Dim ssaa As Integer = Math.Max(1, CInt(超采样倍率))
-        If Class1.GlobalSSAA <> Class1.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(Class1.GlobalSSAA))
+        If GlobalOptions.GlobalSSAA <> GlobalOptions.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(GlobalOptions.GlobalSSAA))
 
         Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
             If scope Is Nothing Then Return  ' 设计期或无 Form 上下文
@@ -303,6 +309,43 @@ Public Class ModernButton
                 _边框颜色 = 边框颜色
         End Select
     End Sub
+    Private Sub 按钮动画脏区(helper As AnimationHelperV2, owner As Control, sink As AnimationHelperV2.InvalidateRegionSink)
+        If helper IsNot 长按动画助手 OrElse Not 长按确认已启用 Then
+            sink.InvalidateAll()
+            Return
+        End If
+
+        Dim currentProgress As Single = Math.Clamp(长按动画助手.Progress, 0.0F, 1.0F)
+        Dim dirty As Rectangle = 长按遮罩脏区(长按上次失效进度, currentProgress)
+        长按上次失效进度 = currentProgress
+        If dirty.Width > 0 AndAlso dirty.Height > 0 Then
+            sink.Add(dirty)
+        Else
+            sink.SuppressInvalidate()
+        End If
+    End Sub
+
+    Private Function 长按遮罩脏区(oldProgress As Single, newProgress As Single) As Rectangle
+        Dim oldRect = 长按遮罩客户区矩形(oldProgress)
+        Dim newRect = 长按遮罩客户区矩形(newProgress)
+        If oldRect.IsEmpty Then Return newRect
+        If newRect.IsEmpty Then Return oldRect
+        Return Rectangle.Union(oldRect, newRect)
+    End Function
+
+    Private Function 长按遮罩客户区矩形(progress As Single) As Rectangle
+        If progress <= 0.0F OrElse ClientRectangle.Width <= 0 OrElse ClientRectangle.Height <= 0 Then Return Rectangle.Empty
+        progress = Math.Clamp(progress, 0.0F, 1.0F)
+        Dim w As Integer = Math.Max(1, CInt(Math.Ceiling(ClientRectangle.Width * progress)))
+        Dim rect As Rectangle
+        If 长按遮罩方向 = HoldClickDirectionEnum.LeftToRight Then
+            rect = New Rectangle(0, 0, w, ClientRectangle.Height)
+        Else
+            rect = New Rectangle(ClientRectangle.Width - w, 0, w, ClientRectangle.Height)
+        End If
+        rect.Inflate(2, 2)
+        Return Rectangle.Intersect(ClientRectangle, rect)
+    End Function
     Private Sub 切换鼠标颜色状态(新状态 As MouseStateEnum)
         If 新状态 = 鼠标状态 Then Return
         Dim 当前背景 As Color = Nothing, 当前渐变 As Color = Nothing, 当前边框 As Color = Nothing
@@ -345,9 +388,10 @@ Public Class ModernButton
         Pressed
     End Enum
     Private 鼠标状态 As MouseStateEnum = MouseStateEnum.Normal
-    Private ReadOnly 动画助手 As New AnimationHelper(Me)
-    Private ReadOnly 长按动画助手 As New AnimationHelper(Me) With {.EasingMode = AnimationHelper.EasingModeEnum.EaseInOut, .Duration = 800}
+    Private ReadOnly 动画助手 As New AnimationHelperV2(Me)
+    Private ReadOnly 长按动画助手 As New AnimationHelperV2(Me) With {.EasingMode = AnimationHelperV2.EasingModeEnum.EaseInOut, .Duration = 800}
     Private 长按正在进行 As Boolean = False
+    Private 长按上次失效进度 As Single = -1.0F
     Private 颜色动画已启用 As Boolean = False
     Private 动画前背景颜色 As Color
     Private 动画前渐变颜色 As Color
@@ -553,17 +597,17 @@ Public Class ModernButton
     End Function
 
     Private 超采样倍率 As Integer = 1
-    <Category("LakeUI"), Description(Class1.超采样抗锯齿描述词), DefaultValue(GetType(Class1.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
-    Public Property SuperSamplingScale As Class1.SuperSamplingScaleEnum
+    <Category("LakeUI"), Description(GlobalOptions.超采样抗锯齿描述词), DefaultValue(GetType(GlobalOptions.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
+    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum
         Get
             Return 超采样倍率
         End Get
-        Set(value As Class1.SuperSamplingScaleEnum)
+        Set(value As GlobalOptions.SuperSamplingScaleEnum)
             SetValue(超采样倍率, value)
         End Set
     End Property
 
-    <Category("LakeUI"), Description(Class1.动画时长描述词), DefaultValue(300), Browsable(True)>
+    <Category("LakeUI"), Description(GlobalOptions.动画时长描述词), DefaultValue(300), Browsable(True)>
     Public Property AnimationDuration As Integer
         Get
             Return 动画助手.Duration
@@ -573,7 +617,7 @@ Public Class ModernButton
         End Set
     End Property
 
-    <Category("LakeUI"), Description(Class1.动画帧率描述词), DefaultValue(60), Browsable(True)>
+    <Category("LakeUI"), Description(GlobalOptions.动画帧率描述词), DefaultValue(60), Browsable(True)>
     Public Property AnimationFPS As Integer
         Get
             Return 动画助手.FPS

@@ -392,13 +392,13 @@ Partial Public Class MemberWall
         End Set
     End Property
 
-    Private _superSamplingScale As Class1.SuperSamplingScaleEnum = Class1.SuperSamplingScaleEnum.OFF
-    <Category("LakeUI"), Description(Class1.超采样抗锯齿描述词), DefaultValue(GetType(Class1.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
-    Public Property SuperSamplingScale As Class1.SuperSamplingScaleEnum
+    Private _superSamplingScale As GlobalOptions.SuperSamplingScaleEnum = GlobalOptions.SuperSamplingScaleEnum.OFF
+    <Category("LakeUI"), Description(GlobalOptions.超采样抗锯齿描述词), DefaultValue(GetType(GlobalOptions.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
+    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum
         Get
             Return _superSamplingScale
         End Get
-        Set(value As Class1.SuperSamplingScaleEnum)
+        Set(value As GlobalOptions.SuperSamplingScaleEnum)
             SetValue(_superSamplingScale, value)
         End Set
     End Property
@@ -828,7 +828,7 @@ Partial Public Class MemberWall
         EnsureLayout()
 
         Dim ssaa As Integer = Math.Max(1, CInt(_superSamplingScale))
-        If Class1.GlobalSSAA <> Class1.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(Class1.GlobalSSAA))
+        If GlobalOptions.GlobalSSAA <> GlobalOptions.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(GlobalOptions.GlobalSSAA))
 
         Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
             If scope Is Nothing Then Return

@@ -3,7 +3,6 @@ Imports System.Drawing.Imaging
 Imports System.Numerics
 Imports System.Runtime.InteropServices
 Imports System.Threading
-Imports System.Threading.Tasks
 Imports Vortice.Direct2D1
 
 ''' <summary>

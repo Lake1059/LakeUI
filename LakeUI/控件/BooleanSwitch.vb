@@ -1,4 +1,4 @@
-﻿Imports System.ComponentModel
+Imports System.ComponentModel
 Imports Vortice.Direct2D1
 
 <DefaultEvent("CheckedChanged")>
@@ -24,7 +24,7 @@ Public Class BooleanSwitch
         End If
 
         Dim ssaa As Integer = Math.Max(1, CInt(超采样倍率))
-        If Class1.GlobalSSAA <> Class1.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(Class1.GlobalSSAA))
+        If GlobalOptions.GlobalSSAA <> GlobalOptions.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(GlobalOptions.GlobalSSAA))
 
         Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
             If scope Is Nothing Then Return  ' 设计期 / 无 Form
@@ -220,12 +220,12 @@ Public Class BooleanSwitch
     End Property
 
     Private 超采样倍率 As Integer = 1
-    <Category("LakeUI"), Description(Class1.超采样抗锯齿描述词), DefaultValue(GetType(Class1.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
-    Public Property SuperSamplingScale As Class1.SuperSamplingScaleEnum
+    <Category("LakeUI"), Description(GlobalOptions.超采样抗锯齿描述词), DefaultValue(GetType(GlobalOptions.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
+    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum
         Get
             Return 超采样倍率
         End Get
-        Set(value As Class1.SuperSamplingScaleEnum)
+        Set(value As GlobalOptions.SuperSamplingScaleEnum)
             SetValue(超采样倍率, value)
         End Set
     End Property
@@ -323,7 +323,7 @@ Public Class BooleanSwitch
         End Set
     End Property
 
-    <Category("LakeUI"), Description(Class1.动画时长描述词), DefaultValue(300), Browsable(True)>
+    <Category("LakeUI"), Description(GlobalOptions.动画时长描述词), DefaultValue(300), Browsable(True)>
     Public Property AnimationDuration As Integer
         Get
             Return 动画助手.Duration
@@ -333,7 +333,7 @@ Public Class BooleanSwitch
         End Set
     End Property
 
-    <Category("LakeUI"), Description(Class1.动画帧率描述词), DefaultValue(60), Browsable(True)>
+    <Category("LakeUI"), Description(GlobalOptions.动画帧率描述词), DefaultValue(60), Browsable(True)>
     Public Property AnimationFPS As Integer
         Get
             Return 动画助手.FPS

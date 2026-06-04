@@ -39,10 +39,18 @@ Public NotInheritable Class PaintScopeV2
     Private ReadOnly _w As Integer
     Private ReadOnly _h As Integer
     Private ReadOnly _ssaa As Integer
+    Private ReadOnly _clipRect As Rectangle
+    Private ReadOnly _ssaaLogicalW As Integer
+    Private ReadOnly _ssaaLogicalH As Integer
+    Private ReadOnly _ssaaPixelW As Integer
+    Private ReadOnly _ssaaPixelH As Integer
+    Private _rentedPixelW As Integer
+    Private _rentedPixelH As Integer
     Private _bitmapRT As ID2D1BitmapRenderTarget
     Private _graphicsLayer As ID2D1RenderTarget
     Private _disposed As Boolean
     Private ReadOnly _disposeCompositorWithScope As Boolean
+    Private _dcClipPushed As Boolean
 
     ''' <summary>所属窗口 compositor，可用来访问共享 brush / textformat / bitmap 缓存。</summary>
     Public ReadOnly Property Compositor As WindowCompositor
@@ -132,8 +140,16 @@ Public NotInheritable Class PaintScopeV2
         End Get
     End Property
 
+    ''' <summary>本次 PaintEventArgs 提供的有效失效区域（控件逻辑像素）。</summary>
+    Public ReadOnly Property ClipRectangle As Rectangle
+        Get
+            Return _clipRect
+        End Get
+    End Property
+
     Friend Sub New(compositor As WindowCompositor, g As Graphics, hdc As IntPtr,
                    dcRT As ID2D1DCRenderTarget, w As Integer, h As Integer, ssaa As Integer,
+                   clipRect As Rectangle,
                    Optional disposeCompositorWithScope As Boolean = False)
         _compositor = compositor
         _g = g
@@ -141,6 +157,11 @@ Public NotInheritable Class PaintScopeV2
         _w = w
         _h = h
         _ssaa = Math.Max(1, ssaa)
+        _clipRect = NormalizeClipRect(clipRect, w, h)
+        _ssaaLogicalW = Math.Max(1, _clipRect.Width)
+        _ssaaLogicalH = Math.Max(1, _clipRect.Height)
+        _ssaaPixelW = Math.Max(1, _ssaaLogicalW * _ssaa)
+        _ssaaPixelH = Math.Max(1, _ssaaLogicalH * _ssaa)
         _disposeCompositorWithScope = disposeCompositorWithScope
         DCRenderTarget = dcRT
 
@@ -152,18 +173,24 @@ Public NotInheritable Class PaintScopeV2
         Try
             D2DHelper.ApplyGlobalQuality(dcRT)
             dcRT.Transform = Matrix3x2.Identity
+            dcRT.PushAxisAlignedClip(ToRawRectF(_clipRect), AntialiasMode.Aliased)
+            _dcClipPushed = True
             ' 共享 brush 缓存：RT 引用即将作为绘图目标，确保和当前 RT 绑定一致。
             ' （SolidColorBrushCache 内部按 RT 自动失效，这里无需手动操作。）
 
             If _ssaa > 1 Then
-                Dim pw As Integer = w * _ssaa
-                Dim ph As Integer = h * _ssaa
-                _bitmapRT = _compositor.RentSsaaRT(dcRT, pw, ph)
+                _bitmapRT = _compositor.RentSsaaRT(dcRT, _ssaaPixelW, _ssaaPixelH, _rentedPixelW, _rentedPixelH)
+                If _bitmapRT Is Nothing Then Throw New InvalidOperationException("SSAA render target allocation failed.")
                 Try
                     D2DHelper.ApplyGlobalQuality(_bitmapRT)
                     _bitmapRT.BeginDraw()
                     _bitmapRT.Clear(New Vortice.Mathematics.Color4(0F, 0F, 0F, 0F))
-                    _bitmapRT.Transform = Matrix3x2.CreateScale(_ssaa)
+                    _bitmapRT.PushAxisAlignedClip(
+                        New Vortice.RawRectF(0.0F, 0.0F, _ssaaPixelW, _ssaaPixelH),
+                        AntialiasMode.Aliased)
+                    _bitmapRT.Transform =
+                        Matrix3x2.CreateTranslation(-_clipRect.X, -_clipRect.Y) *
+                        Matrix3x2.CreateScale(_ssaa)
                 Catch
                     ' SSAA RT 初始化失败：直接丢弃这块 RT（不归还池，避免污染），
                     ' 然后把异常交给外层把 DC RT 也 EndDraw。
@@ -177,6 +204,10 @@ Public NotInheritable Class PaintScopeV2
             End If
         Catch ex As Exception
             Try
+                If _dcClipPushed Then
+                    dcRT.PopAxisAlignedClip()
+                    _dcClipPushed = False
+                End If
                 dcRT.EndDraw()
             Catch endEx As Exception
                 _compositor.NotifyDCRenderTargetException(endEx)
@@ -185,6 +216,19 @@ Public NotInheritable Class PaintScopeV2
             Throw
         End Try
     End Sub
+
+    Private Shared Function NormalizeClipRect(rect As Rectangle, w As Integer, h As Integer) As Rectangle
+        Dim bounds As New Rectangle(0, 0, Math.Max(0, w), Math.Max(0, h))
+        If bounds.Width <= 0 OrElse bounds.Height <= 0 Then Return New Rectangle(0, 0, 1, 1)
+        If rect.Width <= 0 OrElse rect.Height <= 0 Then Return bounds
+        Dim clipped = Rectangle.Intersect(bounds, rect)
+        If clipped.Width <= 0 OrElse clipped.Height <= 0 Then Return bounds
+        Return clipped
+    End Function
+
+    Private Shared Function ToRawRectF(rect As Rectangle) As Vortice.RawRectF
+        Return New Vortice.RawRectF(rect.Left, rect.Top, rect.Right, rect.Bottom)
+    End Function
 
     ''' <summary>
     ''' 把 SSAA BitmapRT 的图形结果回采到 DC RT，并把 BitmapRT 归还 compositor 池（不 Dispose）。
@@ -201,14 +245,15 @@ Public NotInheritable Class PaintScopeV2
         Dim healthy As Boolean = True
         Try
             _bitmapRT.Transform = Matrix3x2.Identity
+            _bitmapRT.PopAxisAlignedClip()
             _bitmapRT.EndDraw()
             Dim bmp = _bitmapRT.Bitmap
             DCRenderTarget.DrawBitmap(
                 bmp,
-                New Vortice.Mathematics.Rect(0, 0, _w, _h),
+                New Vortice.Mathematics.Rect(_clipRect.Left, _clipRect.Top, _clipRect.Width, _clipRect.Height),
                 1.0F,
                 BitmapInterpolationMode.Linear,
-                New Vortice.Mathematics.Rect(0, 0, _w * _ssaa, _h * _ssaa))
+                New Vortice.Mathematics.Rect(0, 0, _ssaaPixelW, _ssaaPixelH))
         Catch ex As Exception
             ' EndDraw / DrawBitmap 失败（如设备丢失）：这块 RT 状态已不可信，
             ' 不归还池避免污染下一帧；吞掉异常让 Dispose 路径继续清理 DC RT。
@@ -217,7 +262,7 @@ Public NotInheritable Class PaintScopeV2
         Finally
             If healthy Then
                 ' V2 改进：SSAA RT 归还 compositor 池复用，避免每帧 GPU 资源分配/释放的卡顿。
-                _compositor.ReturnSsaaRT(_bitmapRT, _w * _ssaa, _h * _ssaa)
+                _compositor.ReturnSsaaRT(_bitmapRT, _rentedPixelW, _rentedPixelH)
             Else
                 Try : _bitmapRT.Dispose() : Catch : End Try
             End If
@@ -235,6 +280,10 @@ Public NotInheritable Class PaintScopeV2
             Catch
             End Try
             Try
+                If _dcClipPushed Then
+                    DCRenderTarget.PopAxisAlignedClip()
+                    _dcClipPushed = False
+                End If
                 DCRenderTarget.EndDraw()
             Catch ex As Exception
                 Try : _compositor.NotifyDCRenderTargetException(ex) : Catch : End Try

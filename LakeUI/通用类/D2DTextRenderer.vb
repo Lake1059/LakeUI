@@ -1,4 +1,3 @@
-Imports System.Numerics
 Imports Vortice.Direct2D1
 Imports Vortice.DirectWrite
 

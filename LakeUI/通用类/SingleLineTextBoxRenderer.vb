@@ -23,7 +23,7 @@ Public Class SingleLineTextBoxRenderer
     Private _scrollXOffset As Integer = 0
 
     Public Sub New(owner As Control)
-        If owner Is Nothing Then Throw New ArgumentNullException(NameOf(owner))
+        ArgumentNullException.ThrowIfNull(owner)
         _owner = owner
         AddHandler _caretBlinkTimer.Tick,
             Sub()

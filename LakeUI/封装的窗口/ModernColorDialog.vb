@@ -536,7 +536,7 @@ Public Class ModernColorDialog
         End Using
 
         Using pen As New Pen(Color.FromArgb(120, invColor), 1.0F)
-            g.SmoothingMode = Class1.GlobalSmoothingMode
+            g.SmoothingMode = Drawing2D.SmoothingMode.AntiAlias
             g.DrawEllipse(pen, px - crossSize, py - crossSize, crossSize * 2, crossSize * 2)
         End Using
     End Sub

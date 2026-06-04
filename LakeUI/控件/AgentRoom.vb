@@ -202,13 +202,13 @@ Public Class AgentRoom
     End Sub
 #End Region
 #Region "属性"
-    Friend _superSamplingScale As Class1.SuperSamplingScaleEnum = Class1.SuperSamplingScaleEnum.OFF
-    <Category("LakeUI"), Description(Class1.超采样抗锯齿描述词), DefaultValue(GetType(Class1.SuperSamplingScaleEnum), "OFF")>
-    Public Property SuperSamplingScale As Class1.SuperSamplingScaleEnum
+    Friend _superSamplingScale As GlobalOptions.SuperSamplingScaleEnum = GlobalOptions.SuperSamplingScaleEnum.OFF
+    <Category("LakeUI"), Description(GlobalOptions.超采样抗锯齿描述词), DefaultValue(GetType(GlobalOptions.SuperSamplingScaleEnum), "OFF")>
+    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum
         Get
             Return _superSamplingScale
         End Get
-        Set(value As Class1.SuperSamplingScaleEnum)
+        Set(value As GlobalOptions.SuperSamplingScaleEnum)
             SetValue(_superSamplingScale, value)
         End Set
     End Property
@@ -873,7 +873,7 @@ Public Class AgentRoom
         If Me.Width < 1 OrElse Me.Height < 1 Then Return
 
         Dim ssaa As Integer = 1
-        If Class1.GlobalSSAA <> Class1.SuperSamplingScaleEnum.OFF Then ssaa = CInt(Class1.GlobalSSAA)
+        If GlobalOptions.GlobalSSAA <> GlobalOptions.SuperSamplingScaleEnum.OFF Then ssaa = CInt(GlobalOptions.GlobalSSAA)
 
         Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
             If scope Is Nothing Then Return

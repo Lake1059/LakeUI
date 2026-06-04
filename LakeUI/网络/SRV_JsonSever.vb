@@ -81,6 +81,28 @@ Public Class SRV_JsonSever
         Return Await GetStringAsync(requestAddress, cancellationToken).ConfigureAwait(False)
     End Function
 
+    Public Shared Async Function PostJsonAsync(Of TRequest, TResponse)(serverAddress As String,
+                                                                       requestBody As TRequest,
+                                                                       Optional options As JsonSerializerOptions = Nothing,
+                                                                       Optional cancellationToken As CancellationToken = Nothing,
+                                                                       Optional srvServiceName As String = Nothing) As Task(Of TResponse)
+        ValidateServerAddress(serverAddress)
+
+        Dim requestAddress As String = Await ResolveRequestAddressAsync(serverAddress, srvServiceName, cancellationToken).ConfigureAwait(False)
+        Dim json As String = JsonSerializer.Serialize(requestBody, options)
+
+        Using content As New StringContent(json, Encoding.UTF8, "application/json")
+            Using response As HttpResponseMessage = Await _client.PostAsync(requestAddress, content, cancellationToken).ConfigureAwait(False)
+                Dim responseText As String = Await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(False)
+                If Not response.IsSuccessStatusCode Then Throw New HttpRequestException($"{CInt(response.StatusCode)} {response.ReasonPhrase}: {responseText}")
+
+                Dim result As TResponse = JsonSerializer.Deserialize(Of TResponse)(responseText, options)
+                If result Is Nothing Then Throw New InvalidOperationException("JSON 反序列化结果为空。")
+                Return result
+            End Using
+        End Using
+    End Function
+
 #End Region
 
 #Region " 同步包装（UI 线程友好） "

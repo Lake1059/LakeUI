@@ -401,7 +401,7 @@ Public Class HtmlColorLabel
             极限矩形区域.Y + Me.Padding.Top,
             极限矩形区域.Width - Me.Padding.Horizontal,
             极限矩形区域.Height - Me.Padding.Vertical)
-        Dim _ssaa As Integer = If(Class1.GlobalSSAA > 1, CInt(Class1.GlobalSSAA), 超采样倍率)
+        Dim _ssaa As Integer = If(GlobalOptions.GlobalSSAA > 1, CInt(GlobalOptions.GlobalSSAA), 超采样倍率)
 
         Using scope = D2DHelperV2.BeginPaint(e, Me, _ssaa)
             If scope Is Nothing Then Return
@@ -813,12 +813,12 @@ Public Class HtmlColorLabel
 
     Private 超采样倍率 As Integer = 1
     ''' <summary>超采样抗锯齿倍率；仅影响控件背景与边框绘制。</summary>
-    <Category("LakeUI"), Description(Class1.超采样抗锯齿描述词), DefaultValue(GetType(Class1.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
-    Public Property SuperSamplingScale As Class1.SuperSamplingScaleEnum
+    <Category("LakeUI"), Description(GlobalOptions.超采样抗锯齿描述词), DefaultValue(GetType(GlobalOptions.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
+    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum
         Get
             Return 超采样倍率
         End Get
-        Set(value As Class1.SuperSamplingScaleEnum)
+        Set(value As GlobalOptions.SuperSamplingScaleEnum)
             SetValue(超采样倍率, value)
         End Set
     End Property

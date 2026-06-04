@@ -56,7 +56,7 @@ Friend Class AnimationHelper
 
     ''' <summary>启动通用帧循环，适用于自定义多状态动画。重复调用幂等。</summary>
     Public Sub StartFrameLoop(handler As EventHandler)
-        If handler Is Nothing Then Throw New ArgumentNullException(NameOf(handler))
+        ArgumentNullException.ThrowIfNull(handler)
         If _帧循环中 Then Return
         _帧循环中 = True
         _帧循环处理器 = handler

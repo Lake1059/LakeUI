@@ -1,4 +1,4 @@
-﻿Imports System.ComponentModel
+Imports System.ComponentModel
 Imports System.Drawing.Drawing2D
 Imports System.Net.Http
 Imports System.Runtime.InteropServices
@@ -1647,7 +1647,7 @@ Public Class MarkDownViewer
         Dim s As Single = DpiScale()
 
         Dim ssaa As Integer = 1
-        If Class1.GlobalSSAA > 1 Then ssaa = CInt(Class1.GlobalSSAA)
+        If GlobalOptions.GlobalSSAA > 1 Then ssaa = CInt(GlobalOptions.GlobalSSAA)
 
         Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
             If scope Is Nothing Then Return  ' 设计期 / 无 Form

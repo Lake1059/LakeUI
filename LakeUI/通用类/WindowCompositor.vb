@@ -11,7 +11,7 @@ Imports Vortice.Direct2D1
 ''' • 1 个 <see cref="D2DHelper.SolidColorBrushCache"/>（按 RT 分桶；<see cref="BrushCache"/>）。
 ''' • 1 个 <see cref="D2DHelper.TextFormatCache"/>（DWrite TextFormat 与 RT 无关，全 Form 通用）。
 ''' • 一组 <see cref="D2DHelper.D2DBitmapCache"/>：按 Image 引用建索引，用于图标 / 背景图复用上传。
-''' • 一个 SSAA <see cref="ID2D1BitmapRenderTarget"/> 池：按像素尺寸 (W,H) 共享 1 份，避免每帧分配/释放。
+''' • 一个 SSAA <see cref="ID2D1BitmapRenderTarget"/> 池：按分桶像素尺寸 (W,H) 共享 1 份，避免每帧分配/释放。
 '''
 ''' === 不持有 ===
 ''' • 控件级 SSAA 字段：V2 控件不再持有 _ssaaCache，每次绘制从池中 Rent / Return。
@@ -27,8 +27,8 @@ Imports Vortice.Direct2D1
 ''' • BeginPaint 仅防重入，不提供跨线程互斥；V2 绘制仍必须在 UI 线程完成。
 '''
 ''' === 已知限制 ===
-''' • SSAA 池无 LRU 上限。若控件做"逐像素 Resize 动画"会让池内 key 持续增多；
-'''   常用场景（创建后尺寸基本固定）下池规模为 O(同尺寸不同控件 → 1 个 key)。
+''' • SSAA 池按字节预算做 LRU 修剪。极端大窗口 + 高倍率 SSAA 仍然可能瞬时占用较高显存；
+'''   但归还池时会尽快回落到预算内。
 ''' • DPI 变更不重建 DC RT。BindDC 时给的 rect 即逻辑大小，DPI 切换由控件自身 Invalidate 重绘解决。
 ''' • <see cref="GetBitmapCache"/> 用 <see cref="Image"/> 强引用作 key，若 Image 在外部被 Dispose
 '''   而未通知 compositor，缓存会持有失效 Image 至 Form 销毁；推荐优先用 BackgroundPenetrationV2。
@@ -179,9 +179,11 @@ Public NotInheritable Class WindowCompositor
             Try : kv.Value.Invalidate() : Catch : End Try
         Next
         For Each kv In _ssaaPool
-            Try : kv.Value.Dispose() : Catch : End Try
+            ReleaseRenderTargetCaches(kv.Value.RenderTarget)
+            Try : kv.Value.RenderTarget.Dispose() : Catch : End Try
         Next
         _ssaaPool.Clear()
+        _ssaaPoolBytes = 0
         If _dcRT IsNot Nothing Then
             Try : _dcRT.Dispose() : Catch : End Try
             _dcRT = Nothing
@@ -207,49 +209,124 @@ Public NotInheritable Class WindowCompositor
     End Function
 
     ''' <summary>
-    ''' SSAA 离屏 RT 池：按 (pixelW, pixelH) 共享一份 <see cref="ID2D1BitmapRenderTarget"/>。
+    ''' SSAA 离屏 RT 池：按分桶后的 (pixelW, pixelH) 共享一份 <see cref="ID2D1BitmapRenderTarget"/>。
     '''
     ''' V1 / V2 早期方案是控件内 Create + 帧末 Dispose，避免显存按控件数堆积，但代价是每个 OnPaint
     ''' 在 UI 线程上做一次 GPU 资源分配/释放 —— 多个控件在同一动画 tick 重绘时会形成周期性卡顿。
-    ''' 这里改为按 SSAA 像素尺寸池化：窗口内同尺寸共享 1 份；不同尺寸数量上限受场景控制（通常 &lt;= 控件类型数）。
+    ''' 这里改为按 SSAA 像素尺寸分桶池化：窗口内同桶共享 1 份；不同尺寸由 LRU 字节预算约束。
     ''' </summary>
-    Private ReadOnly _ssaaPool As New Dictionary(Of Long, ID2D1BitmapRenderTarget)()
+    Private NotInheritable Class SsaaPoolEntry
+        Public RenderTarget As ID2D1BitmapRenderTarget
+        Public PixelW As Integer
+        Public PixelH As Integer
+        Public Bytes As Long
+        Public LastUsed As Long
+    End Class
+
+    Private ReadOnly _ssaaPool As New Dictionary(Of Long, SsaaPoolEntry)()
+    Private _ssaaPoolBytes As Long
+    Private _ssaaPoolClock As Long
 
     Private Shared Function MakeSsaaKey(w As Integer, h As Integer) As Long
         Return (CLng(w) << 32) Or (CLng(h) And &HFFFFFFFFL)
     End Function
 
-    ''' <summary>
-    ''' 从 SSAA 池借出指定像素尺寸的 BitmapRT；池中没有时由 <paramref name="owner"/> 即时创建。
-    ''' </summary>
-    ''' <param name="owner">用于 CreateCompatibleRenderTarget 的来源 RT，通常即 DC RT。</param>
-    Friend Function RentSsaaRT(owner As ID2D1RenderTarget, pixelW As Integer, pixelH As Integer) As ID2D1BitmapRenderTarget
-        If _disposed Then Return Nothing
-        Dim key As Long = MakeSsaaKey(pixelW, pixelH)
-        Dim rt As ID2D1BitmapRenderTarget = Nothing
-        If _ssaaPool.TryGetValue(key, rt) Then
-            _ssaaPool.Remove(key)
-            Return rt
-        End If
-        Return owner.CreateCompatibleRenderTarget(New Vortice.Mathematics.SizeI(pixelW, pixelH))
+    Private Shared Function BucketPixels(value As Integer) As Integer
+        value = Math.Max(1, value)
+        Dim bucketSize As Integer = Math.Max(1, GlobalOptions.SsaaRenderTargetPoolBucketSize)
+        Return CInt(Math.Ceiling(value / CDbl(bucketSize)) * bucketSize)
+    End Function
+
+    Private Shared Function EstimateBytes(pixelW As Integer, pixelH As Integer) As Long
+        Return CLng(Math.Max(1, pixelW)) * CLng(Math.Max(1, pixelH)) * 4L
     End Function
 
     ''' <summary>
-    ''' 归还 SSAA RT 至池；同尺寸池中已有时，把多余的 RT 直接 Dispose 以维持 (W,H) → 1 份的不变式。
+    ''' 从 SSAA 池借出至少满足指定像素尺寸的 BitmapRT；池中没有时由 <paramref name="owner"/> 即时创建。
+    ''' </summary>
+    ''' <param name="owner">用于 CreateCompatibleRenderTarget 的来源 RT，通常即 DC RT。</param>
+    Friend Function RentSsaaRT(owner As ID2D1RenderTarget, pixelW As Integer, pixelH As Integer,
+                               ByRef rentedPixelW As Integer, ByRef rentedPixelH As Integer) As ID2D1BitmapRenderTarget
+        If _disposed OrElse owner Is Nothing Then Return Nothing
+        rentedPixelW = BucketPixels(pixelW)
+        rentedPixelH = BucketPixels(pixelH)
+        Dim key As Long = MakeSsaaKey(rentedPixelW, rentedPixelH)
+        Dim entry As SsaaPoolEntry = Nothing
+        If _ssaaPool.TryGetValue(key, entry) Then
+            _ssaaPool.Remove(key)
+            _ssaaPoolBytes -= entry.Bytes
+            entry.LastUsed = NextSsaaClock()
+            Return entry.RenderTarget
+        End If
+        Return owner.CreateCompatibleRenderTarget(New Vortice.Mathematics.SizeI(rentedPixelW, rentedPixelH))
+    End Function
+
+    ''' <summary>
+    ''' 归还 SSAA RT 至池；同桶池中已有时，把多余的 RT 直接 Dispose 以维持 (W,H) → 1 份的不变式。
     ''' compositor 已 Dispose 时也会直接 Dispose 入参，保证无泄漏。
     ''' </summary>
     Friend Sub ReturnSsaaRT(rt As ID2D1BitmapRenderTarget, pixelW As Integer, pixelH As Integer)
         If rt Is Nothing Then Return
         If _disposed Then
+            ReleaseRenderTargetCaches(rt)
             Try : rt.Dispose() : Catch : End Try
             Return
         End If
+        pixelW = BucketPixels(pixelW)
+        pixelH = BucketPixels(pixelH)
         Dim key As Long = MakeSsaaKey(pixelW, pixelH)
         If _ssaaPool.ContainsKey(key) Then
+            ReleaseRenderTargetCaches(rt)
             Try : rt.Dispose() : Catch : End Try
             Return
         End If
-        _ssaaPool(key) = rt
+        Dim entry As New SsaaPoolEntry With {
+            .RenderTarget = rt,
+            .PixelW = pixelW,
+            .PixelH = pixelH,
+            .Bytes = EstimateBytes(pixelW, pixelH),
+            .LastUsed = NextSsaaClock()
+        }
+        If entry.Bytes > Math.Max(0L, GlobalOptions.SsaaRenderTargetPoolBudgetBytes) Then
+            ReleaseRenderTargetCaches(rt)
+            Try : rt.Dispose() : Catch : End Try
+            Return
+        End If
+        _ssaaPool(key) = entry
+        _ssaaPoolBytes += entry.Bytes
+        TrimSsaaPool()
+    End Sub
+
+    Private Function NextSsaaClock() As Long
+        _ssaaPoolClock += 1
+        Return _ssaaPoolClock
+    End Function
+
+    Private Sub TrimSsaaPool()
+        Dim budget As Long = Math.Max(0L, GlobalOptions.SsaaRenderTargetPoolBudgetBytes)
+        While _ssaaPoolBytes > budget AndAlso _ssaaPool.Count > 0
+            Dim oldestKey As Long = 0
+            Dim oldestEntry As SsaaPoolEntry = Nothing
+            For Each kv In _ssaaPool
+                If oldestEntry Is Nothing OrElse kv.Value.LastUsed < oldestEntry.LastUsed Then
+                    oldestKey = kv.Key
+                    oldestEntry = kv.Value
+                End If
+            Next
+            If oldestEntry Is Nothing Then Exit While
+            _ssaaPool.Remove(oldestKey)
+            _ssaaPoolBytes -= oldestEntry.Bytes
+            ReleaseRenderTargetCaches(oldestEntry.RenderTarget)
+            Try : oldestEntry.RenderTarget.Dispose() : Catch : End Try
+        End While
+    End Sub
+
+    Private Sub ReleaseRenderTargetCaches(rt As ID2D1RenderTarget)
+        If rt Is Nothing Then Return
+        Try : BrushCache.InvalidateFor(rt) : Catch : End Try
+        For Each kv In _bitmapCaches
+            Try : kv.Value.InvalidateFor(rt) : Catch : End Try
+        Next
     End Sub
 
     ''' <summary>
@@ -266,7 +343,7 @@ Public NotInheritable Class WindowCompositor
         Dim hdc As IntPtr = e.Graphics.GetHdc()
         _activePaintScopes += 1
         Try
-            Return New PaintScopeV2(Me, e.Graphics, hdc, dcRT, control.Width, control.Height, ssaaScale, disposeCompositorWithScope)
+            Return New PaintScopeV2(Me, e.Graphics, hdc, dcRT, control.Width, control.Height, ssaaScale, e.ClipRectangle, disposeCompositorWithScope)
         Catch ex As Exception
             Try : NotifyDCRenderTargetException(ex) : Catch : End Try
             EndPaintScope()
