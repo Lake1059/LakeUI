@@ -173,7 +173,7 @@ Public Class ModernTabListControl
     Private Shared ReadOnly _共享Stopwatch As Stopwatch = Stopwatch.StartNew()
     Private ReadOnly _标签页动画 As New Dictionary(Of Integer, TabAnimState)
     Private _悬停索引 As Integer = -1
-    Private ReadOnly _动画助手 As New AnimationHelper(Me)
+    Private ReadOnly _动画助手 As New AnimationHelperV2(Me)
     Private _hover动画激活 As Boolean = False
     Private _帧驱动激活 As Boolean = False
     Private ReadOnly _内容面板 As New 透明内容面板()
@@ -218,7 +218,7 @@ Public Class ModernTabListControl
     Private ReadOnly _textFormatCache As New Dictionary(Of String, TextFormatEntry)
     Private _textFormatLastSweepMs As Long = 0
 
-    Private Function 获取项图标缓存(item As ModernTabPage) As D2DHelper.D2DBitmapCache
+    Private Function 获取项图标缓存(item As ModernTabPage) As D2DGlobals.D2DBitmapCache
         If item Is Nothing OrElse item.TabIcon Is Nothing Then Return Nothing
         If _当前合成器 Is Nothing Then Return Nothing
         Return _当前合成器.GetBitmapCache(item.TabIcon)
@@ -271,6 +271,7 @@ Public Class ModernTabListControl
         _内容面板.BackColor = 获取内容面板有效背景色()
         Me.Controls.Add(_内容面板)
 
+        _动画助手.DirtyProvider = AddressOf 帧驱动脏区
         _动画助手.FPS = 动画帧率值
         同步内容面板布局()
     End Sub
@@ -516,7 +517,7 @@ Public Class ModernTabListControl
                     Dim bgLayer = scope.BackgroundLayer
                     Dim brush = compositor.BrushCache.[Get](bgLayer, MyBase.BackColor)
                     If brush IsNot Nothing Then
-                        bgLayer.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(0, 0, Me.Width, Me.Height)), brush)
+                        bgLayer.FillRectangle(D2DGlobals.ToD2DRect(New RectangleF(0, 0, Me.Width, Me.Height)), brush)
                     End If
                 End If
 
@@ -541,17 +542,15 @@ Public Class ModernTabListControl
     Private Sub 绘制图形内容_D2D(rt As ID2D1RenderTarget)
         ' 内容区域背景
         If 内容区域背景颜色.A = 255 Then
-            Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(内容区域背景颜色))
-                rt.FillRectangle(D2DHelper.ToD2DRect(获取内容区域矩形()), br)
-            End Using
+            Dim br = _当前合成器.BrushCache.Get(rt, 内容区域背景颜色)
+            If br IsNot Nothing Then rt.FillRectangle(D2DGlobals.ToD2DRect(获取内容区域矩形()), br)
         End If
 
         Dim tabStripRect = 获取标签栏矩形()
         ' 标签栏背景
         If 标签栏背景颜色.A > 0 Then
-            Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(标签栏背景颜色))
-                rt.FillRectangle(D2DHelper.ToD2DRect(tabStripRect), br)
-            End Using
+            Dim br = _当前合成器.BrushCache.Get(rt, 标签栏背景颜色)
+            If br IsNot Nothing Then rt.FillRectangle(D2DGlobals.ToD2DRect(tabStripRect), br)
         End If
 
         ' 标签栏背景图片（居中裁切）
@@ -559,9 +558,8 @@ Public Class ModernTabListControl
 
         ' 标签栏遮罩
         If 标签栏遮罩颜色.A > 0 Then
-            Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(标签栏遮罩颜色))
-                rt.FillRectangle(D2DHelper.ToD2DRect(tabStripRect), br)
-            End Using
+            Dim br = _当前合成器.BrushCache.Get(rt, 标签栏遮罩颜色)
+            If br IsNot Nothing Then rt.FillRectangle(D2DGlobals.ToD2DRect(tabStripRect), br)
         End If
 
         Dim tabItemClip As Rectangle = tabStripRect
@@ -616,7 +614,7 @@ Public Class ModernTabListControl
         If 内容区域边框宽度 > 0 Then
             Dim contentRect = 获取内容区域矩形()
             Dim r As New RectangleF(contentRect.X, contentRect.Y, contentRect.Width - 1, contentRect.Height - 1)
-            RectangleRenderer.绘制矩形边框_D2D(rt, r, 内容区域边框颜色, 内容区域边框宽度 * DpiScale())
+            RectangleRenderer.绘制矩形边框_D2D(rt, r, 内容区域边框颜色, 内容区域边框宽度 * DpiScale(), _当前合成器.BrushCache)
         End If
     End Sub
 
@@ -651,9 +649,8 @@ Public Class ModernTabListControl
         Dim bounds = 获取标签页项矩形(index)
         Dim lineH As Single = Math.Max(1, DpiScale())
         Dim lineY As Single = bounds.Y + (bounds.Height - lineH) / 2.0F
-        Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(分割线颜色值))
-            rt.FillRectangle(New Vortice.Mathematics.Rect(bounds.X, lineY, bounds.Width, lineH), br)
-        End Using
+        Dim br = _当前合成器.BrushCache.Get(rt, 分割线颜色值)
+        If br IsNot Nothing Then rt.FillRectangle(New Vortice.Mathematics.Rect(bounds.X, lineY, bounds.Width, lineH), br)
     End Sub
 
     Private Sub 绘制标签页项图形_D2D(rt As ID2D1RenderTarget, index As Integer)
@@ -672,14 +669,12 @@ Public Class ModernTabListControl
         If (isSelected OrElse hoverProgress > 0.001F) AndAlso bgColor.A > 0 Then
             If 标签页圆角半径 > 0 Then
                 Using geo = RectangleRenderer.创建圆角矩形几何(bounds, 标签页圆角半径 * s)
-                    Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(bgColor))
-                        rt.FillGeometry(geo, br)
-                    End Using
+                    Dim br = _当前合成器.BrushCache.Get(rt, bgColor)
+                    If br IsNot Nothing Then rt.FillGeometry(geo, br)
                 End Using
             Else
-                Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(bgColor))
-                    rt.FillRectangle(D2DHelper.ToD2DRect(bounds), br)
-                End Using
+                Dim br = _当前合成器.BrushCache.Get(rt, bgColor)
+                If br IsNot Nothing Then rt.FillRectangle(D2DGlobals.ToD2DRect(bounds), br)
             End If
         End If
 
@@ -692,14 +687,12 @@ Public Class ModernTabListControl
             End If
             If 选中指示条圆角半径 > 0 Then
                 Using geo = RectangleRenderer.创建圆角矩形几何(indicatorRect, 选中指示条圆角半径 * s)
-                    Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(选中指示条颜色))
-                        rt.FillGeometry(geo, br)
-                    End Using
+                    Dim br = _当前合成器.BrushCache.Get(rt, 选中指示条颜色)
+                    If br IsNot Nothing Then rt.FillGeometry(geo, br)
                 End Using
             Else
-                Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(选中指示条颜色))
-                    rt.FillRectangle(D2DHelper.ToD2DRect(indicatorRect), br)
-                End Using
+                Dim br = _当前合成器.BrushCache.Get(rt, 选中指示条颜色)
+                If br IsNot Nothing Then rt.FillRectangle(D2DGlobals.ToD2DRect(indicatorRect), br)
             End If
         End If
 
@@ -708,10 +701,10 @@ Public Class ModernTabListControl
             focusBounds.Inflate(-s, -s)
             If 标签页圆角半径 > 0 Then
                 Using geo = RectangleRenderer.创建圆角矩形几何(focusBounds, Math.Max(1, 标签页圆角半径 * s - s))
-                    RectangleRenderer.绘制圆角边框_D2D(rt, geo, 焦点边框颜色, s)
+                    RectangleRenderer.绘制圆角边框_D2D(rt, geo, 焦点边框颜色, s, _当前合成器.BrushCache)
                 End Using
             Else
-                RectangleRenderer.绘制矩形边框_D2D(rt, focusBounds, 焦点边框颜色, s)
+                RectangleRenderer.绘制矩形边框_D2D(rt, focusBounds, 焦点边框颜色, s, _当前合成器.BrushCache)
             End If
         End If
 
@@ -758,7 +751,7 @@ Public Class ModernTabListControl
             clippedTabItemClip = New Rectangle(clippedTabItemClip.X, clippedTabItemClip.Y, clippedTabItemClip.Width, Math.Max(0, clippedTabItemClip.Height - bottomIndicatorH))
         End If
 
-        Dim dw = D2DHelper.GetDWriteFactory()
+        Dim dw = D2DGlobals.GetDWriteFactory()
 
         ' 绘制标签项与说明项文本
         If clippedTabItemClip.Width > 0 AndAlso clippedTabItemClip.Height > 0 Then
@@ -860,9 +853,8 @@ Public Class ModernTabListControl
                 Catch
                 End Try
             End If
-            Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(color))
-                rt.DrawTextLayout(New Vector2(rect.X, rect.Y), layout, br)
-            End Using
+            Dim br = _当前合成器?.BrushCache.Get(rt, color)
+            If br IsNot Nothing Then rt.DrawTextLayout(New Vector2(rect.X, rect.Y), layout, br)
         End Using
     End Sub
 
@@ -883,7 +875,7 @@ Public Class ModernTabListControl
             清扫TextFormat缓存(now)
             Return entry
         End If
-        Dim fmt = D2DHelper.CreateTextFormat(family, weight, style, Vortice.DirectWrite.FontStretch.Normal, sizePx)
+        Dim fmt = D2DGlobals.CreateTextFormat(family, weight, style, Vortice.DirectWrite.FontStretch.Normal, sizePx)
         fmt.TextAlignment = hAlign
         fmt.WordWrapping = WordWrapping.NoWrap
         fmt.ParagraphAlignment = ParagraphAlignment.Center
@@ -1298,6 +1290,10 @@ Public Class ModernTabListControl
     Private Sub 帧Tick_Idle(sender As Object, e As EventArgs)
         帧Tick(sender, e)
         ' Idle 处理后控件 Invalidate 会推送 WM_PAINT，处理完后会再次进入 idle，自然形成 V-Blank 等价节拍。
+    End Sub
+
+    Private Sub 帧驱动脏区(helper As AnimationHelperV2, owner As Control, sink As AnimationHelperV2.InvalidateRegionSink)
+        sink.SuppressInvalidate()
     End Sub
 
     ' 兼容旧调用入口：hover 动画的启动/停止改为对统一帧驱动的请求。

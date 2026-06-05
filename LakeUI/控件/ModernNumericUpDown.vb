@@ -665,34 +665,35 @@ Public Class ModernNumericUpDown
 
         Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
             If scope Is Nothing Then Return
+            Dim brushCache = scope.Compositor.BrushCache
             If _backgroundSource IsNot Nothing Then
                 BackgroundPenetrationV2.PaintBackground(Me, scope, _backgroundSource)
             End If
 
             Dim gRT As ID2D1RenderTarget = scope.GraphicsLayer
-            绘制背景_D2D(gRT, hasRadius, boundsRect, effBg, effBg2)
+            绘制背景_D2D(gRT, brushCache, hasRadius, boundsRect, effBg, effBg2)
             scope.FlushGraphics()
 
             Dim dcRT As ID2D1DCRenderTarget = scope.DCRenderTarget
             SyncTextRendererLayout()
             _textRenderer.Draw(dcRT)
-            绘制按钮_D2D(dcRT, w, h)
-            绘制边框_D2D(dcRT, hasRadius, boundsRect, bc)
+            绘制按钮_D2D(dcRT, brushCache, w, h)
+            绘制边框_D2D(dcRT, brushCache, hasRadius, boundsRect, bc)
 
             If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
                 Dim overlayRect As New RectangleF(boundsRect.X, boundsRect.Y, boundsRect.Width + 1, boundsRect.Height + 1)
                 If hasRadius Then
                     Using geo = RectangleRenderer.创建圆角矩形几何(overlayRect, 边框圆角半径 * DpiScale())
-                        RectangleRenderer.绘制圆角背景_D2D(dcRT, geo, overlayRect, 禁用时遮罩颜色, Color.Empty, 渐变方向)
+                        RectangleRenderer.绘制圆角背景_D2D(dcRT, geo, overlayRect, 禁用时遮罩颜色, Color.Empty, 渐变方向, brushCache)
                     End Using
                 Else
-                    RectangleRenderer.绘制矩形背景_D2D(dcRT, overlayRect, 禁用时遮罩颜色, Color.Empty, 渐变方向)
+                    RectangleRenderer.绘制矩形背景_D2D(dcRT, overlayRect, 禁用时遮罩颜色, Color.Empty, 渐变方向, brushCache)
                 End If
             End If
         End Using
     End Sub
 
-    Private Sub 绘制背景_D2D(rt As ID2D1RenderTarget, hasRadius As Boolean, boundsRect As RectangleF, bgClr As Color, bgClr2 As Color)
+    Private Sub 绘制背景_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache, hasRadius As Boolean, boundsRect As RectangleF, bgClr As Color, bgClr2 As Color)
         Dim backColorMask As Color = MyBase.BackColor
         Dim hasMask As Boolean = backColorMask.A > 0 AndAlso backColorMask.A < 255
         Dim hasFill As Boolean = bgClr.A > 0 OrElse (bgClr2 <> Color.Empty AndAlso bgClr2.A > 0)
@@ -701,28 +702,28 @@ Public Class ModernNumericUpDown
         Dim fillRect As New RectangleF(boundsRect.X, boundsRect.Y, boundsRect.Width + 1, boundsRect.Height + 1)
         If hasRadius Then
             Using geo = RectangleRenderer.创建圆角矩形几何(fillRect, 边框圆角半径 * s)
-                If hasMask Then RectangleRenderer.绘制圆角背景_D2D(rt, geo, fillRect, backColorMask, Color.Empty, 渐变方向)
-                If hasFill Then RectangleRenderer.绘制圆角背景_D2D(rt, geo, fillRect, bgClr, bgClr2, 渐变方向)
+                If hasMask Then RectangleRenderer.绘制圆角背景_D2D(rt, geo, fillRect, backColorMask, Color.Empty, 渐变方向, brushCache)
+                If hasFill Then RectangleRenderer.绘制圆角背景_D2D(rt, geo, fillRect, bgClr, bgClr2, 渐变方向, brushCache)
             End Using
         Else
-            If hasMask Then RectangleRenderer.绘制矩形背景_D2D(rt, fillRect, backColorMask, Color.Empty, 渐变方向)
-            If hasFill Then RectangleRenderer.绘制矩形背景_D2D(rt, fillRect, bgClr, bgClr2, 渐变方向)
+            If hasMask Then RectangleRenderer.绘制矩形背景_D2D(rt, fillRect, backColorMask, Color.Empty, 渐变方向, brushCache)
+            If hasFill Then RectangleRenderer.绘制矩形背景_D2D(rt, fillRect, bgClr, bgClr2, 渐变方向, brushCache)
         End If
     End Sub
 
-    Private Sub 绘制边框_D2D(rt As ID2D1RenderTarget, hasRadius As Boolean, boundsRect As RectangleF, borderClr As Color)
+    Private Sub 绘制边框_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache, hasRadius As Boolean, boundsRect As RectangleF, borderClr As Color)
         If 边框宽度 <= 0 OrElse borderClr.A = 0 Then Return
         Dim s As Single = DpiScale()
         If hasRadius Then
             Using geo = RectangleRenderer.创建圆角矩形几何(boundsRect, 边框圆角半径 * s)
-                RectangleRenderer.绘制圆角边框_D2D(rt, geo, borderClr, 边框宽度 * s)
+                RectangleRenderer.绘制圆角边框_D2D(rt, geo, borderClr, 边框宽度 * s, brushCache)
             End Using
         Else
-            RectangleRenderer.绘制矩形边框_D2D(rt, boundsRect, borderClr, 边框宽度 * s)
+            RectangleRenderer.绘制矩形边框_D2D(rt, boundsRect, borderClr, 边框宽度 * s, brushCache)
         End If
     End Sub
 
-    Private Sub 绘制按钮_D2D(rt As ID2D1RenderTarget, w As Integer, h As Integer)
+    Private Sub 绘制按钮_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache, w As Integer, h As Integer)
         Dim s As Single = DpiScale()
         Dim aaw As Integer = ActualButtonAreaWidth
         If aaw <= 0 Then Return
@@ -738,30 +739,31 @@ Public Class ModernNumericUpDown
 
         Dim upRect As New RectangleF(buttonLeft, topInset, buttonWidth, buttonHeight / 2.0F)
         Dim downRect As New RectangleF(buttonLeft, topInset + buttonHeight / 2.0F, buttonWidth, buttonHeight / 2.0F)
-        绘制按钮背景_D2D(rt, upRect, SpinButtonPart.Up)
-        绘制按钮背景_D2D(rt, downRect, SpinButtonPart.Down)
+        绘制按钮背景_D2D(rt, brushCache, upRect, SpinButtonPart.Up)
+        绘制按钮背景_D2D(rt, brushCache, downRect, SpinButtonPart.Down)
 
         If 分隔线宽度 > 0 AndAlso 分隔线颜色.A > 0 Then
-            Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(分隔线颜色))
+            Dim br = brushCache.Get(rt, 分隔线颜色)
+            If br IsNot Nothing Then
                 Dim lineWidth As Single = 分隔线宽度 * s
                 rt.DrawLine(New Vector2(sepX, topInset), New Vector2(sepX, h - bottomInset), br, lineWidth)
                 Dim midY As Single = topInset + buttonHeight / 2.0F
                 rt.DrawLine(New Vector2(buttonLeft, midY), New Vector2(w - rightInset, midY), br, lineWidth)
-            End Using
+            End If
         End If
 
         Dim upArrowColor As Color = 获取箭头颜色(SpinButtonPart.Up)
         Dim downArrowColor As Color = 获取箭头颜色(SpinButtonPart.Down)
         Dim centerX As Single = buttonLeft + buttonWidth / 2.0F
         If upArrowColor.A > 0 Then
-            绘制圆角三角形_D2D(rt, New PointF(centerX, upRect.Y + upRect.Height / 2.0F), True, upArrowColor)
+            绘制圆角三角形_D2D(rt, brushCache, New PointF(centerX, upRect.Y + upRect.Height / 2.0F), True, upArrowColor)
         End If
         If downArrowColor.A > 0 Then
-            绘制圆角三角形_D2D(rt, New PointF(centerX, downRect.Y + downRect.Height / 2.0F), False, downArrowColor)
+            绘制圆角三角形_D2D(rt, brushCache, New PointF(centerX, downRect.Y + downRect.Height / 2.0F), False, downArrowColor)
         End If
     End Sub
 
-    Private Sub 绘制按钮背景_D2D(rt As ID2D1RenderTarget, rect As RectangleF, part As SpinButtonPart)
+    Private Sub 绘制按钮背景_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache, rect As RectangleF, part As SpinButtonPart)
         Dim c1 As Color = 按钮背景颜色
         Dim c2 As Color = 按钮背景渐变颜色
         If _pressedButton = part AndAlso 鼠标状态 = MouseStateEnum.Pressed Then
@@ -772,7 +774,7 @@ Public Class ModernNumericUpDown
             If 鼠标移上时按钮渐变颜色 <> Color.Empty Then c2 = 鼠标移上时按钮渐变颜色
         End If
         If c1 = Color.Empty AndAlso c2 = Color.Empty Then Return
-        RectangleRenderer.绘制矩形背景_D2D(rt, rect, c1, c2, 渐变方向)
+        RectangleRenderer.绘制矩形背景_D2D(rt, rect, c1, c2, 渐变方向, brushCache)
     End Sub
 
     Private Function 获取箭头颜色(part As SpinButtonPart) As Color
@@ -785,7 +787,7 @@ Public Class ModernNumericUpDown
         Return result
     End Function
 
-    Private Sub 绘制圆角三角形_D2D(rt As ID2D1RenderTarget, center As PointF, up As Boolean, color As Color)
+    Private Sub 绘制圆角三角形_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache, center As PointF, up As Boolean, color As Color)
         Dim scaledArrow As Single = 箭头大小 * DpiScale()
         Dim arrW As Single = scaledArrow
         Dim arrH As Single = CSng(scaledArrow * Math.Sqrt(3.0) / 2.0)
@@ -805,7 +807,7 @@ Public Class ModernNumericUpDown
         End If
         Dim cr As Single = Math.Max(scaledArrow * 0.2F, 1.0F)
 
-        Dim path As ID2D1PathGeometry = D2DHelper.GetD2DFactory().CreatePathGeometry()
+        Dim path As ID2D1PathGeometry = D2DGlobals.GetD2DFactory().CreatePathGeometry()
         Dim sink As ID2D1GeometrySink = path.Open()
         Try
             For i As Integer = 0 To 2
@@ -836,9 +838,8 @@ Public Class ModernNumericUpDown
         End Try
 
         Try
-            Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(color))
-                rt.FillGeometry(path, br)
-            End Using
+            Dim br = brushCache.Get(rt, color)
+            If br IsNot Nothing Then rt.FillGeometry(path, br)
         Finally
             path.Dispose()
         End Try

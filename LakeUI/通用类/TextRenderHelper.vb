@@ -45,7 +45,7 @@ Friend Module TextRenderHelper
     ''' <summary>使用 DirectWrite 创建一个 TextFormat（调用方负责 Dispose）。</summary>
     Friend Function CreateDWriteTextFormat(font As Font, dpiScale As Single) As Vortice.DirectWrite.IDWriteTextFormat
         Dim sizePx As Single = font.SizeInPoints * (96.0F / 72.0F) * dpiScale
-        Return D2DHelper.CreateTextFormat(font, sizePx)
+        Return D2DGlobals.CreateTextFormat(font, sizePx)
     End Function
 
     ''' <summary>使用 DirectWrite 测量单行文本宽度（像素）。</summary>
@@ -53,7 +53,7 @@ Friend Module TextRenderHelper
         If String.IsNullOrEmpty(text) Then Return 0
         Using fmt = CreateDWriteTextFormat(font, dpiScale)
             fmt.WordWrapping = Vortice.DirectWrite.WordWrapping.NoWrap
-            Using layout = D2DHelper.GetDWriteFactory().CreateTextLayout(text, fmt, Single.MaxValue, Single.MaxValue)
+            Using layout = D2DGlobals.GetDWriteFactory().CreateTextLayout(text, fmt, Single.MaxValue, Single.MaxValue)
                 Return layout.Metrics.WidthIncludingTrailingWhitespace
             End Using
         End Using
@@ -66,7 +66,7 @@ Friend Module TextRenderHelper
         Try
             Using fmt = CreateDWriteTextFormat(font, dpiScale)
                 fmt.WordWrapping = Vortice.DirectWrite.WordWrapping.NoWrap
-                Using layout = D2DHelper.GetDWriteFactory().CreateTextLayout(lineStr, fmt, Single.MaxValue, Single.MaxValue)
+                Using layout = D2DGlobals.GetDWriteFactory().CreateTextLayout(lineStr, fmt, Single.MaxValue, Single.MaxValue)
                     If x >= layout.Metrics.WidthIncludingTrailingWhitespace Then Return n
 
                     Dim trailing As SharpGen.Runtime.RawBool = False

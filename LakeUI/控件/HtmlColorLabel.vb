@@ -703,7 +703,7 @@ Public Class HtmlColorLabel
         ' 下划线 / 删除线：DirectWrite 通过 TextLayout SetUnderline/SetStrikethrough 实现
         Dim needsLayout As Boolean = (font.Style And (FontStyle.Underline Or FontStyle.Strikeout)) <> 0
         If needsLayout Then
-            Using layout = D2DHelper.GetDWriteFactory().CreateTextLayout(text, fmt, layoutRect.Right - layoutRect.Left, layoutRect.Bottom - layoutRect.Top)
+            Using layout = D2DGlobals.GetDWriteFactory().CreateTextLayout(text, fmt, layoutRect.Right - layoutRect.Left, layoutRect.Bottom - layoutRect.Top)
                 Dim range As New Vortice.DirectWrite.TextRange(0, text.Length)
                 If (font.Style And FontStyle.Underline) <> 0 Then layout.SetUnderline(True, range)
                 If (font.Style And FontStyle.Strikeout) <> 0 Then layout.SetStrikethrough(True, range)

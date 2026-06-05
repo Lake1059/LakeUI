@@ -27,10 +27,10 @@ Imports Vortice.DXGI
 ''' • 上层调用方（例如 <c>ThisIsYourWindow.PaintWindow</c>）应把所有访问 DeviceContext 的代码用 Try 包裹，
 '''   Catch 后调用 <see cref="HandleDeviceLost"/> 并降级到 DC RT 路径，等待下一帧自动恢复。
 '''
-''' === 与 D2DHelper.GetD2DFactory 的关系 ===
-''' • <c>D2DHelper.GetD2DFactory()</c> 返回 <see cref="ID2D1Factory"/>，仍按原逻辑创建 DC RT 给现有控件用。
+''' === 与 D2DGlobals.GetD2DFactory 的关系 ===
+''' • <c>D2DGlobals.GetD2DFactory()</c> 返回 <see cref="ID2D1Factory"/>，仍按原逻辑创建 DC RT 给现有控件用。
 '''   阶段 A 将其内部实例升级为 <see cref="ID2D1Factory1"/>（接口向下兼容），并通过
-'''   <see cref="D2DHelper.GetD2DFactory1"/> 暴露给本模块以创建 D2D Device。
+'''   <see cref="D2DGlobals.GetD2DFactory1"/> 暴露给本模块以创建 D2D Device。
 ''' • 注意：DC RT（factory.CreateDCRenderTarget）走的是 D2D 隐式 D3D10 设备，与本模块的
 '''   显式 D3D11 设备并非同一对象，因此 DC RT 与 DeviceContext 在阶段 A 不共享资源
 '''   （brush / bitmap 不能互通）。阶段 B 会把 DC RT 改为也由本设备创建以解除该限制。
@@ -179,7 +179,7 @@ Public Module D3D11Globals
     End Sub
 
     Private Sub EnsureCreatedNoLock()
-        Dim factory1 As ID2D1Factory1 = D2DHelper.GetD2DFactory1()
+        Dim factory1 As ID2D1Factory1 = D2DGlobals.GetD2DFactory1()
         If factory1 Is Nothing Then Return
 
         ' BgraSupport 是 D2D interop 的硬性要求；SingleThreaded 与 D2D Factory 单例策略保持一致。

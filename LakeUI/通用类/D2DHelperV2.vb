@@ -9,7 +9,7 @@
 '''
 ''' === 设计理念 ===
 ''' • 共享 DC RT + SSAA 池化 → GPU 资源生命周期与 Form 对齐，PaintScope 只绑定一次 HDC。
-''' • D2DHelper（D2DGlobals.vb）仅保留无 Form 上下文的全局工厂/缓存/质量策略。
+''' • D2DGlobals（D2DGlobals.vb）仅保留无 Form 上下文的全局工厂/缓存/质量策略。
 '''
 ''' === 控件接入清单（迁移到 V2 必做） ===
 ''' 1. 删除自身字段：_dcRT / _ssaaCache / _brushCache / _textFormatCache / _backImageCache。
@@ -25,7 +25,7 @@
 '''              If _backgroundSource IsNot Nothing Then
 '''                  BackgroundPenetrationV2.PaintBackground(Me, scope, _backgroundSource)
 '''              ElseIf BackColor.A > 0 Then
-'''                  scope.BackgroundLayer.Clear(D2DHelper.ToD2DColor(BackColor))
+'''                  scope.BackgroundLayer.Clear(D2DGlobals.ToD2DColor(BackColor))
 '''              End If
 '''              ' (b) 图形层（SSAA RT，回采时按 SsaaScale 缩小）
 '''              绘制图形_D2D(scope.GraphicsLayer, scope.Compositor)

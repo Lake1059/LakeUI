@@ -92,20 +92,20 @@ Public Module BackgroundPenetrationV2
         If isSolid Then
             Dim brushCache = scope.Compositor?.BrushCache
             If brushCache IsNot Nothing Then
-                rt.FillRectangle(D2DHelper.ToD2DRect(destRect), brushCache.Get(rt, solidColor))
+                rt.FillRectangle(D2DGlobals.ToD2DRect(destRect), brushCache.Get(rt, solidColor))
             Else
-                Using b = rt.CreateSolidColorBrush(D2DHelper.ToColor4(solidColor))
-                    rt.FillRectangle(D2DHelper.ToD2DRect(destRect), b)
+                Using b = rt.CreateSolidColorBrush(D2DGlobals.ToColor4(solidColor))
+                    rt.FillRectangle(D2DGlobals.ToD2DRect(destRect), b)
                 End Using
             End If
             Return
         End If
         If d2dBmp Is Nothing Then Return
         rt.DrawBitmap(d2dBmp,
-            D2DHelper.ToD2DRect(destRect),
+            D2DGlobals.ToD2DRect(destRect),
             1.0F,
             BitmapInterpolationMode.Linear,
-            D2DHelper.ToD2DRect(New Rectangle(0, 0, destRect.Width, destRect.Height)))
+            D2DGlobals.ToD2DRect(New Rectangle(0, 0, destRect.Width, destRect.Height)))
     End Sub
 
     ''' <summary>
@@ -269,7 +269,7 @@ Public Module BackgroundPenetrationV2
                     g.DrawImage(src, destRect, srcIntersection, GraphicsUnit.Pixel)
                 End If
             End Using
-            Return D2DHelper.CreateBitmapFromGdi(rt, cropBmp)
+            Return D2DGlobals.CreateBitmapFromGdi(rt, cropBmp)
         End Using
     End Function
 

@@ -821,9 +821,9 @@ Public Class PixelPictureBox
             boundsRect.Inflate(-half, -half)
         End If
         If 背景颜色.A > 0 Then
-            RectangleRenderer.绘制矩形背景_D2D(rt, boundsRect, 背景颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal)
+            RectangleRenderer.绘制矩形背景_D2D(rt, boundsRect, 背景颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal, _当前合成器.BrushCache)
         End If
-        RectangleRenderer.绘制矩形边框_D2D(rt, boundsRect, 边框颜色, 边框宽度 * s)
+        RectangleRenderer.绘制矩形边框_D2D(rt, boundsRect, 边框颜色, 边框宽度 * s, _当前合成器.BrushCache)
     End Sub
 
     Private Sub 绘制图片_D2D(rt As D2D.ID2D1RenderTarget)
@@ -855,7 +855,7 @@ Public Class PixelPictureBox
         rt.PushAxisAlignedClip(New Vortice.RawRectF(clipRect.Left, clipRect.Top, clipRect.Right, clipRect.Bottom), D2D.AntialiasMode.Aliased)
         Try
             Dim srcRect As New RectangleF(0, 0, _image.Width, _image.Height)
-            rt.DrawBitmap(bmp, D2DHelper.ToD2DRect(destRect), 1.0F, D2D.BitmapInterpolationMode.NearestNeighbor, D2DHelper.ToD2DRect(srcRect))
+            rt.DrawBitmap(bmp, D2DGlobals.ToD2DRect(destRect), 1.0F, D2D.BitmapInterpolationMode.NearestNeighbor, D2DGlobals.ToD2DRect(srcRect))
         Finally
             rt.PopAxisAlignedClip()
         End Try
@@ -875,29 +875,29 @@ Public Class PixelPictureBox
         Dim snapB As Single = CSng(Math.Round(selScreen.Bottom))
         Dim snapped As New RectangleF(snapX, snapY, snapR - snapX, snapB - snapY)
 
-        Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(框选填充颜色))
-            rt.FillRectangle(D2DHelper.ToD2DRect(snapped), br)
-        End Using
+        Dim br = _当前合成器.BrushCache.Get(rt, 框选填充颜色)
+        If br IsNot Nothing Then rt.FillRectangle(D2DGlobals.ToD2DRect(snapped), br)
 
         ' 边框居中到像素边缘：向内偏移半个线宽
         Dim halfPen As Single = 框选边框宽度 / 2.0F
         Dim borderRect As New RectangleF(snapped.X + halfPen, snapped.Y + halfPen,
                                           snapped.Width - 框选边框宽度, snapped.Height - 框选边框宽度)
         If borderRect.Width > 0 AndAlso borderRect.Height > 0 Then
-            RectangleRenderer.绘制矩形边框_D2D(rt, borderRect, 框选边框颜色, 框选边框宽度)
+            RectangleRenderer.绘制矩形边框_D2D(rt, borderRect, 框选边框颜色, 框选边框宽度, _当前合成器.BrushCache)
         End If
 
-        Using handleBrush = rt.CreateSolidColorBrush(D2DHelper.ToColor4(手柄颜色)),
-              handlePen = rt.CreateSolidColorBrush(D2DHelper.ToColor4(手柄边框颜色))
+        Dim handleBrush = _当前合成器.BrushCache.Get(rt, 手柄颜色)
+        Dim handlePen = _当前合成器.BrushCache.Get(rt, 手柄边框颜色)
+        If handleBrush IsNot Nothing AndAlso handlePen IsNot Nothing Then
             For Each hp As HandlePosition In AllHandlePositions
                 Dim hr As RectangleF = 获取手柄矩形(hp)
                 If hr.IsEmpty Then Continue For
                 Dim hSnap As New RectangleF(CSng(Math.Round(hr.X)), CSng(Math.Round(hr.Y)),
                                              CSng(Math.Round(hr.Width)), CSng(Math.Round(hr.Height)))
-                rt.FillRectangle(D2DHelper.ToD2DRect(hSnap), handleBrush)
-                rt.DrawRectangle(D2DHelper.ToD2DRect(hSnap), handlePen, 1.0F)
+                rt.FillRectangle(D2DGlobals.ToD2DRect(hSnap), handleBrush)
+                rt.DrawRectangle(D2DGlobals.ToD2DRect(hSnap), handlePen, 1.0F)
             Next
-        End Using
+        End If
     End Sub
 
     Private Sub 绘制垂直滚动条_D2D(rt As D2D.ID2D1RenderTarget)

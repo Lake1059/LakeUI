@@ -30,8 +30,8 @@ Public Module D2DTextRenderer
     ''' </summary>
     Public Sub DrawText(rt As ID2D1RenderTarget, text As String, font As Font, rect As RectangleF, color As Color,
                        flags As TextFormatFlags, dpiScale As Single,
-                       textFormatCache As D2DHelper.TextFormatCache,
-                       brushCache As D2DHelper.SolidColorBrushCache)
+                       textFormatCache As D2DGlobals.TextFormatCache,
+                       brushCache As D2DGlobals.SolidColorBrushCache)
         If rt Is Nothing OrElse String.IsNullOrEmpty(text) OrElse font Is Nothing Then Return
         If rect.Width <= 0 OrElse rect.Height <= 0 Then Return
 
@@ -40,10 +40,10 @@ Public Module D2DTextRenderer
         If fmt Is Nothing Then Return
         Dim brush = If(brushCache IsNot Nothing,
                        DirectCast(brushCache.[Get](rt, color), ID2D1Brush),
-                       DirectCast(rt.CreateSolidColorBrush(D2DHelper.ToColor4(color)), ID2D1Brush))
+                       DirectCast(rt.CreateSolidColorBrush(D2DGlobals.ToColor4(color)), ID2D1Brush))
         Dim ownsBrush As Boolean = (brushCache Is Nothing)
         Try
-            rt.DrawText(text, fmt, D2DHelper.ToD2DRect(rect), brush, DrawTextOptions.Clip)
+            rt.DrawText(text, fmt, D2DGlobals.ToD2DRect(rect), brush, DrawTextOptions.Clip)
         Finally
             If ownsBrush AndAlso brush IsNot Nothing Then
                 Try : brush.Dispose() : Catch : End Try
@@ -56,16 +56,16 @@ Public Module D2DTextRenderer
 
     Public Sub DrawText(rt As ID2D1RenderTarget, text As String, font As Font, rect As Rectangle, color As Color,
                        flags As TextFormatFlags, dpiScale As Single,
-                       textFormatCache As D2DHelper.TextFormatCache,
-                       brushCache As D2DHelper.SolidColorBrushCache)
+                       textFormatCache As D2DGlobals.TextFormatCache,
+                       brushCache As D2DGlobals.SolidColorBrushCache)
         DrawText(rt, text, font, CType(rect, RectangleF), color, flags, dpiScale, textFormatCache, brushCache)
     End Sub
 
     ''' <summary>左上角对齐 + NoPadding 的便捷重载（用于已自行算好坐标的场景）。</summary>
     Public Sub DrawTextAt(rt As ID2D1RenderTarget, text As String, font As Font, x As Single, y As Single, color As Color,
                           dpiScale As Single,
-                          textFormatCache As D2DHelper.TextFormatCache,
-                          brushCache As D2DHelper.SolidColorBrushCache)
+                          textFormatCache As D2DGlobals.TextFormatCache,
+                          brushCache As D2DGlobals.SolidColorBrushCache)
         If rt Is Nothing OrElse String.IsNullOrEmpty(text) OrElse font Is Nothing Then Return
         Dim flags As TextFormatFlags = TextFormatFlags.Left Or TextFormatFlags.Top Or TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine
         Dim ownsFormat As Boolean = False
@@ -73,7 +73,7 @@ Public Module D2DTextRenderer
         If fmt Is Nothing Then Return
         Dim brush = If(brushCache IsNot Nothing,
                        DirectCast(brushCache.[Get](rt, color), ID2D1Brush),
-                       DirectCast(rt.CreateSolidColorBrush(D2DHelper.ToColor4(color)), ID2D1Brush))
+                       DirectCast(rt.CreateSolidColorBrush(D2DGlobals.ToColor4(color)), ID2D1Brush))
         Dim ownsBrush As Boolean = (brushCache Is Nothing)
         Try
             rt.DrawText(text, fmt, New Vortice.Mathematics.Rect(x, y, 100000.0F, 100000.0F), brush)
@@ -90,7 +90,7 @@ Public Module D2DTextRenderer
     ''' <summary>按与 DrawText 相同的 DirectWrite 格式测量文本布局尺寸。</summary>
     Public Function MeasureText(text As String, font As Font, proposedSize As Size, flags As TextFormatFlags,
                                 dpiScale As Single,
-                                Optional textFormatCache As D2DHelper.TextFormatCache = Nothing) As Size
+                                Optional textFormatCache As D2DGlobals.TextFormatCache = Nothing) As Size
         If String.IsNullOrEmpty(text) OrElse font Is Nothing Then Return Size.Empty
         Dim ownsFormat As Boolean = False
         Dim fmt = AcquireTextFormat(font, dpiScale, flags, textFormatCache, ownsFormat)
@@ -98,7 +98,7 @@ Public Module D2DTextRenderer
         Try
             Dim layoutW As Single = NormalizeLayoutExtent(proposedSize.Width)
             Dim layoutH As Single = NormalizeLayoutExtent(proposedSize.Height)
-            Using layout = D2DHelper.GetDWriteFactory().CreateTextLayout(text, fmt, layoutW, layoutH)
+            Using layout = D2DGlobals.GetDWriteFactory().CreateTextLayout(text, fmt, layoutW, layoutH)
                 Dim m = layout.Metrics
                 Return New Size(
                     CInt(Math.Ceiling(Math.Max(0.0F, m.WidthIncludingTrailingWhitespace))),
@@ -134,7 +134,7 @@ Public Module D2DTextRenderer
     End Function
 
     Private Function AcquireTextFormat(font As Font, dpiScale As Single, flags As TextFormatFlags,
-                                       cache As D2DHelper.TextFormatCache,
+                                       cache As D2DGlobals.TextFormatCache,
                                        ByRef ownsFormat As Boolean) As IDWriteTextFormat
         Dim sizePx As Single = font.SizeInPoints * (96.0F / 72.0F) * dpiScale
         Dim textAlign As TextAlignment = MapTextAlignment(flags)
@@ -146,7 +146,7 @@ Public Module D2DTextRenderer
         If cache IsNot Nothing Then
             Return cache.[Get](font, sizePx, textAlign, paraAlign, trimChar, wordWrap)
         End If
-        Dim fmt = D2DHelper.CreateTextFormat(font, sizePx)
+        Dim fmt = D2DGlobals.CreateTextFormat(font, sizePx)
         fmt.TextAlignment = textAlign
         fmt.ParagraphAlignment = paraAlign
         fmt.WordWrapping = If(wordWrap, WordWrapping.Wrap, WordWrapping.NoWrap)

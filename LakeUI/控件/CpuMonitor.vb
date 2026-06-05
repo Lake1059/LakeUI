@@ -302,7 +302,7 @@ Public Class CpuMonitor
                     Dim bgLayer = scope.BackgroundLayer
                     Dim brush = _当前合成器.BrushCache.[Get](bgLayer, MyBase.BackColor)
                     If brush IsNot Nothing Then
-                        bgLayer.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(0, 0, Me.Width, Me.Height)), brush)
+                        bgLayer.FillRectangle(D2DGlobals.ToD2DRect(New RectangleF(0, 0, Me.Width, Me.Height)), brush)
                     End If
                 End If
 
@@ -458,9 +458,8 @@ Public Class CpuMonitor
                 使用核心裁剪_D2D(rt, rect, s,
                     Sub()
                         Dim fillRect As New RectangleF(inner.X, inner.Bottom - fillH, inner.Width, fillH)
-                        Using b = rt.CreateSolidColorBrush(D2DHelper.ToColor4(选择占用颜色(usage)))
-                            rt.FillRectangle(D2DHelper.ToD2DRect(fillRect), b)
-                        End Using
+                        Dim b = _当前合成器.BrushCache.Get(rt, 选择占用颜色(usage))
+                        If b IsNot Nothing Then rt.FillRectangle(D2DGlobals.ToD2DRect(fillRect), b)
                     End Sub)
             End If
         End If
@@ -500,10 +499,9 @@ Public Class CpuMonitor
         Dim style As FontStyle = If(Me.Font.Italic, FontStyle.Italic, FontStyle.Normal)
         Dim fmt = _当前合成器.TextFormatCache.Get(Me.Font.FontFamily.Name, weight, style, 文本像素高度(s),
                                        转文本水平对齐(文字对齐值), 转文本垂直对齐(文字对齐值), True)
-        Using layout = D2DHelper.GetDWriteFactory().CreateTextLayout(If(text, ""), fmt, textRect.Width, textRect.Height)
-            Using b = rt.CreateSolidColorBrush(D2DHelper.ToColor4(Me.ForeColor))
-                rt.DrawTextLayout(New Vector2(textRect.X, textRect.Y), layout, b)
-            End Using
+        Using layout = D2DGlobals.GetDWriteFactory().CreateTextLayout(If(text, ""), fmt, textRect.Width, textRect.Height)
+            Dim b = _当前合成器.BrushCache.Get(rt, Me.ForeColor)
+            If b IsNot Nothing Then rt.DrawTextLayout(New Vector2(textRect.X, textRect.Y), layout, b)
         End Using
     End Sub
 
@@ -515,25 +513,26 @@ Public Class CpuMonitor
         If 核心背景颜色值.A > 0 Then
             If r > 0 Then
                 Using geo = RectangleRenderer.创建圆角矩形几何(rect, r)
-                    RectangleRenderer.绘制圆角背景_D2D(rt, geo, rect, 核心背景颜色值, Color.Empty, System.Windows.Forms.Orientation.Vertical)
+                    RectangleRenderer.绘制圆角背景_D2D(rt, geo, rect, 核心背景颜色值, Color.Empty, System.Windows.Forms.Orientation.Vertical, _当前合成器.BrushCache)
                 End Using
             Else
-                RectangleRenderer.绘制矩形背景_D2D(rt, rect, 核心背景颜色值, Color.Empty, System.Windows.Forms.Orientation.Vertical)
+                RectangleRenderer.绘制矩形背景_D2D(rt, rect, 核心背景颜色值, Color.Empty, System.Windows.Forms.Orientation.Vertical, _当前合成器.BrushCache)
             End If
         End If
 
         If hasBorder Then
             Dim half As Single = bw * 0.5F
             Dim bRect As RectangleF = RectangleF.Inflate(rect, -half, -half)
-            Using b = rt.CreateSolidColorBrush(D2DHelper.ToColor4(核心边框颜色值))
+            Dim b = _当前合成器.BrushCache.Get(rt, 核心边框颜色值)
+            If b IsNot Nothing Then
                 If r > 0 Then
                     Using geo = RectangleRenderer.创建圆角矩形几何(bRect, Math.Max(0, r - half))
                         rt.DrawGeometry(geo, b, bw)
                     End Using
                 Else
-                    rt.DrawRectangle(D2DHelper.ToD2DRect(bRect), b, bw)
+                    rt.DrawRectangle(D2DGlobals.ToD2DRect(bRect), b, bw)
                 End If
-            End Using
+            End If
         End If
     End Sub
 
@@ -545,7 +544,7 @@ Public Class CpuMonitor
         End If
 
         Using geo = RectangleRenderer.创建圆角矩形几何(rect, 圆角半径值 * s)
-            D2DHelper.PushGeometryClip(rt, geo, rect)
+            D2DGlobals.PushGeometryClip(rt, geo, rect)
             Try
                 drawAction()
             Finally
@@ -560,9 +559,8 @@ Public Class CpuMonitor
         If n < 2 Then Return
 
         If 图表背景颜色值.A > 0 Then
-            Using b = rt.CreateSolidColorBrush(D2DHelper.ToColor4(图表背景颜色值))
-                rt.FillRectangle(D2DHelper.ToD2DRect(rect), b)
-            End Using
+            Dim b = _当前合成器.BrushCache.Get(rt, 图表背景颜色值)
+            If b IsNot Nothing Then rt.FillRectangle(D2DGlobals.ToD2DRect(rect), b)
         End If
 
         Dim step_ As Single = rect.Width / (n - 1)
@@ -576,31 +574,32 @@ Public Class CpuMonitor
 
         If 图表填充颜色值.A > 0 Then
             Using geo = 创建历史填充几何(rect, pts)
-                Using b = rt.CreateSolidColorBrush(D2DHelper.ToColor4(图表填充颜色值))
-                    rt.FillGeometry(geo, b)
-                End Using
+                Dim b = _当前合成器.BrushCache.Get(rt, 图表填充颜色值)
+                If b IsNot Nothing Then rt.FillGeometry(geo, b)
             End Using
         End If
 
         Dim lineW As Single = 图表线条粗细值 * s
-        Using b = rt.CreateSolidColorBrush(D2DHelper.ToColor4(图表线条颜色值))
+        Dim lineBrush = _当前合成器.BrushCache.Get(rt, 图表线条颜色值)
+        If lineBrush IsNot Nothing Then
             For i As Integer = 0 To n - 2
-                rt.DrawLine(pts(i), pts(i + 1), b, lineW)
+                rt.DrawLine(pts(i), pts(i + 1), lineBrush, lineW)
             Next
-        End Using
+        End If
 
-        Using b = rt.CreateSolidColorBrush(D2DHelper.ToColor4(占满颜色值))
+        Dim fullBrush = _当前合成器.BrushCache.Get(rt, 占满颜色值)
+        If fullBrush IsNot Nothing Then
             Dim tickW As Single = Math.Max(lineW, 1.5F * s)
             For i As Integer = 0 To n - 1
                 If 历史满载(hist(i)) Then
-                    rt.DrawLine(New Vector2(pts(i).X, pts(i).Y), New Vector2(pts(i).X, rect.Bottom), b, tickW)
+                    rt.DrawLine(New Vector2(pts(i).X, pts(i).Y), New Vector2(pts(i).X, rect.Bottom), fullBrush, tickW)
                 End If
             Next
-        End Using
+        End If
     End Sub
 
     Private Shared Function 创建历史填充几何(rect As RectangleF, pts As Vector2()) As ID2D1PathGeometry
-        Dim geo As ID2D1PathGeometry = D2DHelper.GetD2DFactory().CreatePathGeometry()
+        Dim geo As ID2D1PathGeometry = D2DGlobals.GetD2DFactory().CreatePathGeometry()
         Dim sink As ID2D1GeometrySink = geo.Open()
         Try
             sink.BeginFigure(pts(0), FigureBegin.Filled)

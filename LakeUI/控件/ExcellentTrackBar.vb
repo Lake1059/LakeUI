@@ -31,6 +31,7 @@ Public Class ExcellentTrackBar
     Public Sub New()
         InitializeComponent()
         SetStyle(ControlStyles.Selectable, True)
+        动画助手.DirtyProvider = AddressOf 滑块动画脏区
         标签列表 = New TrackLabelCollection(Me)
         字符串集合 = New StringItemCollection(Me)
     End Sub
@@ -151,7 +152,11 @@ Public Class ExcellentTrackBar
         End If
     End Sub
 
-    Private ReadOnly 动画助手 As New AnimationHelper(Me) With {.Duration = 0}
+    Private ReadOnly 动画助手 As New AnimationHelperV2(Me) With {.Duration = 0}
+
+    Private Sub 滑块动画脏区(helper As AnimationHelperV2, owner As Control, sink As AnimationHelperV2.InvalidateRegionSink)
+        sink.InvalidateAll()
+    End Sub
 
     Private Function DpiScale() As Single
         Return Me.DeviceDpi / 96.0F
@@ -795,9 +800,8 @@ Public Class ExcellentTrackBar
                 绘制滑块文字_D2D(dcRT, thumbRect)
 
                 If Not Enabled Then
-                    Using brush = dcRT.CreateSolidColorBrush(D2DHelper.ToColor4(Color.FromArgb(128, BackColor)))
-                        dcRT.FillRectangle(New Vortice.Mathematics.Rect(0, 0, Me.Width, Me.Height), brush)
-                    End Using
+                    Dim brush = _当前合成器.BrushCache.Get(dcRT, Color.FromArgb(128, BackColor))
+                    If brush IsNot Nothing Then dcRT.FillRectangle(New Vortice.Mathematics.Rect(0, 0, Me.Width, Me.Height), brush)
                 End If
             Finally
                 _当前合成器 = Nothing
@@ -821,15 +825,15 @@ Public Class ExcellentTrackBar
 
         If hasRadius Then
             Using geo = RectangleRenderer.创建圆角矩形几何(trackRect, _轨道圆角半径)
-                RectangleRenderer.绘制圆角背景_D2D(rt, geo, trackRect, 轨道颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal)
+                RectangleRenderer.绘制圆角背景_D2D(rt, geo, trackRect, 轨道颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal, _当前合成器.BrushCache)
                 If 轨道边框宽度 > 0 AndAlso 轨道边框颜色 <> Color.Empty Then
-                    RectangleRenderer.绘制圆角边框_D2D(rt, geo, 轨道边框颜色, _轨道边框宽度)
+                    RectangleRenderer.绘制圆角边框_D2D(rt, geo, 轨道边框颜色, _轨道边框宽度, _当前合成器.BrushCache)
                 End If
             End Using
         Else
-            RectangleRenderer.绘制矩形背景_D2D(rt, trackRect, 轨道颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal)
+            RectangleRenderer.绘制矩形背景_D2D(rt, trackRect, 轨道颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal, _当前合成器.BrushCache)
             If 轨道边框宽度 > 0 AndAlso 轨道边框颜色 <> Color.Empty Then
-                RectangleRenderer.绘制矩形边框_D2D(rt, trackRect, 轨道边框颜色, _轨道边框宽度)
+                RectangleRenderer.绘制矩形边框_D2D(rt, trackRect, 轨道边框颜色, _轨道边框宽度, _当前合成器.BrushCache)
             End If
         End If
 
@@ -847,19 +851,17 @@ Public Class ExcellentTrackBar
 
         If hasRadius Then
             Using geo = RectangleRenderer.创建圆角矩形几何(trackRect, _轨道圆角半径)
-                D2DHelper.PushGeometryClip(rt, geo, trackRect)
+                D2DGlobals.PushGeometryClip(rt, geo, trackRect)
                 Try
-                    Using brush = rt.CreateSolidColorBrush(D2DHelper.ToColor4(轨道填充颜色))
-                        rt.FillRectangle(D2DHelper.ToD2DRect(fillRect), brush)
-                    End Using
+                    Dim brush = _当前合成器.BrushCache.Get(rt, 轨道填充颜色)
+                    If brush IsNot Nothing Then rt.FillRectangle(D2DGlobals.ToD2DRect(fillRect), brush)
                 Finally
                     rt.PopLayer()
                 End Try
             End Using
         Else
-            Using brush = rt.CreateSolidColorBrush(D2DHelper.ToColor4(轨道填充颜色))
-                rt.FillRectangle(D2DHelper.ToD2DRect(fillRect), brush)
-            End Using
+            Dim brush = _当前合成器.BrushCache.Get(rt, 轨道填充颜色)
+            If brush IsNot Nothing Then rt.FillRectangle(D2DGlobals.ToD2DRect(fillRect), brush)
         End If
     End Sub
 
@@ -891,12 +893,12 @@ Public Class ExcellentTrackBar
         Dim currentBorderColor As Color = 获取当前滑块边框颜色()
         If 滑块圆角半径 > 0 Then
             Using geo = RectangleRenderer.创建圆角矩形几何(thumbRect, _滑块圆角半径)
-                RectangleRenderer.绘制圆角背景_D2D(rt, geo, thumbRect, currentColor, 滑块渐变颜色, System.Windows.Forms.Orientation.Vertical)
-                RectangleRenderer.绘制圆角边框_D2D(rt, geo, currentBorderColor, _滑块边框宽度)
+                RectangleRenderer.绘制圆角背景_D2D(rt, geo, thumbRect, currentColor, 滑块渐变颜色, System.Windows.Forms.Orientation.Vertical, _当前合成器.BrushCache)
+                RectangleRenderer.绘制圆角边框_D2D(rt, geo, currentBorderColor, _滑块边框宽度, _当前合成器.BrushCache)
             End Using
         Else
-            RectangleRenderer.绘制矩形背景_D2D(rt, thumbRect, currentColor, 滑块渐变颜色, System.Windows.Forms.Orientation.Vertical)
-            RectangleRenderer.绘制矩形边框_D2D(rt, thumbRect, currentBorderColor, _滑块边框宽度)
+            RectangleRenderer.绘制矩形背景_D2D(rt, thumbRect, currentColor, 滑块渐变颜色, System.Windows.Forms.Orientation.Vertical, _当前合成器.BrushCache)
+            RectangleRenderer.绘制矩形边框_D2D(rt, thumbRect, currentBorderColor, _滑块边框宽度, _当前合成器.BrushCache)
         End If
     End Sub
 
@@ -904,25 +906,25 @@ Public Class ExcellentTrackBar
         If 标签列表.Count = 0 Then Return
         Dim _标签连线长度 As Single = 标签连线长度 * DpiScale()
         Dim trackRect As RectangleF = 计算轨道区域()
-        Using brush = rt.CreateSolidColorBrush(D2DHelper.ToColor4(标签连线颜色))
-            For Each lbl In 标签列表
-                If lbl.Position < 最小值 OrElse lbl.Position > 最大值 Then Continue For
-                Dim coord As Single = 计算值对应轨道坐标(lbl.Position)
-                If 方向 = TrackOrientationEnum.Horizontal Then
-                    If lbl.Side = LabelSideEnum.TopOrLeft Then
-                        rt.DrawLine(New System.Numerics.Vector2(coord, trackRect.Y - 2), New System.Numerics.Vector2(coord, trackRect.Y - 2 - _标签连线长度), brush, 1.0F)
-                    Else
-                        rt.DrawLine(New System.Numerics.Vector2(coord, trackRect.Bottom + 2), New System.Numerics.Vector2(coord, trackRect.Bottom + 2 + _标签连线长度), brush, 1.0F)
-                    End If
+        Dim brush = _当前合成器.BrushCache.Get(rt, 标签连线颜色)
+        If brush Is Nothing Then Return
+        For Each lbl In 标签列表
+            If lbl.Position < 最小值 OrElse lbl.Position > 最大值 Then Continue For
+            Dim coord As Single = 计算值对应轨道坐标(lbl.Position)
+            If 方向 = TrackOrientationEnum.Horizontal Then
+                If lbl.Side = LabelSideEnum.TopOrLeft Then
+                    rt.DrawLine(New System.Numerics.Vector2(coord, trackRect.Y - 2), New System.Numerics.Vector2(coord, trackRect.Y - 2 - _标签连线长度), brush, 1.0F)
                 Else
-                    If lbl.Side = LabelSideEnum.TopOrLeft Then
-                        rt.DrawLine(New System.Numerics.Vector2(trackRect.X - 2, coord), New System.Numerics.Vector2(trackRect.X - 2 - _标签连线长度, coord), brush, 1.0F)
-                    Else
-                        rt.DrawLine(New System.Numerics.Vector2(trackRect.Right + 2, coord), New System.Numerics.Vector2(trackRect.Right + 2 + _标签连线长度, coord), brush, 1.0F)
-                    End If
+                    rt.DrawLine(New System.Numerics.Vector2(coord, trackRect.Bottom + 2), New System.Numerics.Vector2(coord, trackRect.Bottom + 2 + _标签连线长度), brush, 1.0F)
                 End If
-            Next
-        End Using
+            Else
+                If lbl.Side = LabelSideEnum.TopOrLeft Then
+                    rt.DrawLine(New System.Numerics.Vector2(trackRect.X - 2, coord), New System.Numerics.Vector2(trackRect.X - 2 - _标签连线长度, coord), brush, 1.0F)
+                Else
+                    rt.DrawLine(New System.Numerics.Vector2(trackRect.Right + 2, coord), New System.Numerics.Vector2(trackRect.Right + 2 + _标签连线长度, coord), brush, 1.0F)
+                End If
+            End If
+        Next
     End Sub
 
     Private Function 获取文本格式(font As Font, align As DW.TextAlignment, paraAlign As DW.ParagraphAlignment, trimChar As Boolean) As DW.IDWriteTextFormat
@@ -939,34 +941,34 @@ Public Class ExcellentTrackBar
         Dim trackRect As RectangleF = 计算轨道区域()
         Dim labelFont As Font = 获取标签字体()
         Dim fmt = 获取文本格式(labelFont, DW.TextAlignment.Center, DW.ParagraphAlignment.Center, False)
-        Using brush = rt.CreateSolidColorBrush(D2DHelper.ToColor4(标签颜色))
-            For Each lbl In 标签列表
-                If lbl.Position < 最小值 OrElse lbl.Position > 最大值 Then Continue For
-                Dim displayText As String = 获取标签显示文字(lbl)
-                If String.IsNullOrEmpty(displayText) Then Continue For
-                Dim textSize As Size = TextRenderer.MeasureText(displayText, labelFont)
-                Dim coord As Single = 计算值对应轨道坐标(lbl.Position)
-                Dim textRect As RectangleF
-                If 方向 = TrackOrientationEnum.Horizontal Then
-                    Dim textX As Single = coord - textSize.Width / 2.0F
-                    If lbl.Side = LabelSideEnum.TopOrLeft Then
-                        textRect = New RectangleF(textX, trackRect.Y - 2 - _标签连线长度 - textSize.Height, textSize.Width, textSize.Height)
-                    Else
-                        textRect = New RectangleF(textX, trackRect.Bottom + 2 + _标签连线长度, textSize.Width, textSize.Height)
-                    End If
+        Dim brush = _当前合成器.BrushCache.Get(rt, 标签颜色)
+        If brush Is Nothing Then Return
+        For Each lbl In 标签列表
+            If lbl.Position < 最小值 OrElse lbl.Position > 最大值 Then Continue For
+            Dim displayText As String = 获取标签显示文字(lbl)
+            If String.IsNullOrEmpty(displayText) Then Continue For
+            Dim textSize As Size = TextRenderer.MeasureText(displayText, labelFont)
+            Dim coord As Single = 计算值对应轨道坐标(lbl.Position)
+            Dim textRect As RectangleF
+            If 方向 = TrackOrientationEnum.Horizontal Then
+                Dim textX As Single = coord - textSize.Width / 2.0F
+                If lbl.Side = LabelSideEnum.TopOrLeft Then
+                    textRect = New RectangleF(textX, trackRect.Y - 2 - _标签连线长度 - textSize.Height, textSize.Width, textSize.Height)
                 Else
-                    Dim textY As Single = coord - textSize.Height / 2.0F
-                    If lbl.Side = LabelSideEnum.TopOrLeft Then
-                        textRect = New RectangleF(trackRect.X - 2 - _标签连线长度 - textSize.Width, textY, textSize.Width, textSize.Height)
-                    Else
-                        textRect = New RectangleF(trackRect.Right + 2 + _标签连线长度, textY, textSize.Width, textSize.Height)
-                    End If
+                    textRect = New RectangleF(textX, trackRect.Bottom + 2 + _标签连线长度, textSize.Width, textSize.Height)
                 End If
-                If textRect.Width > 0 AndAlso textRect.Height > 0 Then
-                    rt.DrawText(displayText, fmt, D2DHelper.ToD2DRect(textRect), brush)
+            Else
+                Dim textY As Single = coord - textSize.Height / 2.0F
+                If lbl.Side = LabelSideEnum.TopOrLeft Then
+                    textRect = New RectangleF(trackRect.X - 2 - _标签连线长度 - textSize.Width, textY, textSize.Width, textSize.Height)
+                Else
+                    textRect = New RectangleF(trackRect.Right + 2 + _标签连线长度, textY, textSize.Width, textSize.Height)
                 End If
-            Next
-        End Using
+            End If
+            If textRect.Width > 0 AndAlso textRect.Height > 0 Then
+                rt.DrawText(displayText, fmt, D2DGlobals.ToD2DRect(textRect), brush)
+            End If
+        Next
     End Sub
 
     Private Function 格式化显示值(val As Double) As String
@@ -1009,9 +1011,8 @@ Public Class ExcellentTrackBar
         Dim displayText As String = 获取滑块显示文字()
         If String.IsNullOrEmpty(displayText) OrElse thumbRect.Width <= 0 OrElse thumbRect.Height <= 0 Then Return
         Dim fmt = 获取文本格式(Me.Font, DW.TextAlignment.Center, DW.ParagraphAlignment.Center, True)
-        Using brush = rt.CreateSolidColorBrush(D2DHelper.ToColor4(滑块文字颜色))
-            rt.DrawText(displayText, fmt, D2DHelper.ToD2DRect(thumbRect), brush)
-        End Using
+        Dim brush = _当前合成器.BrushCache.Get(rt, 滑块文字颜色)
+        If brush IsNot Nothing Then rt.DrawText(displayText, fmt, D2DGlobals.ToD2DRect(thumbRect), brush)
     End Sub
 #End Region
 

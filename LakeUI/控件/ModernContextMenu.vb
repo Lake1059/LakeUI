@@ -787,7 +787,7 @@ Public Class ModernContextMenu
         Private Sub 绘制图形内容_D2D(rt As ID2D1RenderTarget)
             If Not HasBackdropFrame() Then
                 Dim bg = _当前合成器.BrushCache.Get(rt, 菜单.背景颜色)
-                rt.FillRectangle(D2DHelper.ToD2DRect(ClientRectangle), bg)
+                rt.FillRectangle(D2DGlobals.ToD2DRect(ClientRectangle), bg)
             End If
 
             If 菜单.边框宽度 > 0 Then
@@ -834,7 +834,7 @@ Public Class ModernContextMenu
                     rt.FillGeometry(geo, b)
                 End Using
             Else
-                rt.FillRectangle(D2DHelper.ToD2DRect(highlightRect), b)
+                rt.FillRectangle(D2DGlobals.ToD2DRect(highlightRect), b)
             End If
         End Sub
 
@@ -854,7 +854,7 @@ Public Class ModernContextMenu
                     Dim bmp = _当前合成器.GetBitmapCache(item.Icon).GetBitmap(rt, item.Icon)
                     If bmp IsNot Nothing Then
                         Dim srcRect As New RectangleF(0, 0, item.Icon.Width, item.Icon.Height)
-                        rt.DrawBitmap(bmp, D2DHelper.ToD2DRect(iconRect), 1.0F, BitmapInterpolationMode.Linear, D2DHelper.ToD2DRect(srcRect))
+                        rt.DrawBitmap(bmp, D2DGlobals.ToD2DRect(iconRect), 1.0F, BitmapInterpolationMode.Linear, D2DGlobals.ToD2DRect(srcRect))
                     End If
                 End If
             End If
@@ -922,7 +922,7 @@ Public Class ModernContextMenu
             Dim arrW As Single = CSng(arrSize * Math.Sqrt(3.0) / 2.0)
             Dim b = _当前合成器.BrushCache.Get(rt, 菜单.箭头颜色)
 
-            Using geo = D2DHelper.GetD2DFactory().CreatePathGeometry()
+            Using geo = D2DGlobals.GetD2DFactory().CreatePathGeometry()
                 Using sink = geo.Open()
                     sink.BeginFigure(New System.Numerics.Vector2(cx - arrW / 2.0F, cy - arrH / 2.0F), Vortice.Direct2D1.FigureBegin.Filled)
                     sink.AddLine(New System.Numerics.Vector2(cx - arrW / 2.0F, cy + arrH / 2.0F))

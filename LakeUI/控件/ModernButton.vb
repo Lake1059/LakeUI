@@ -60,7 +60,7 @@ Public Class ModernButton
                 Dim bgLayer = scope.BackgroundLayer
                 Dim brush = compositor.BrushCache.[Get](bgLayer, MyBase.BackColor)
                 If brush IsNot Nothing Then
-                    bgLayer.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(0, 0, Me.Width, Me.Height)), brush)
+                    bgLayer.FillRectangle(D2DGlobals.ToD2DRect(New RectangleF(0, 0, Me.Width, Me.Height)), brush)
                 End If
             End If
 
@@ -144,12 +144,12 @@ Public Class ModernButton
     Private Sub 绘制背景图片_D2D(rt As ID2D1RenderTarget, compositor As WindowCompositor, area As RectangleF, geo As ID2D1Geometry)
         If 背景图片 Is Nothing Then Return
         Dim hasMask As Boolean = geo IsNot Nothing
-        If hasMask Then D2DHelper.PushGeometryClip(rt, geo, area)
+        If hasMask Then D2DGlobals.PushGeometryClip(rt, geo, area)
         Try
             Dim cache = compositor.GetBitmapCache(背景图片)
             Dim bmp = cache?.GetBitmap(rt, 背景图片)
             If bmp IsNot Nothing Then
-                rt.DrawBitmap(bmp, D2DHelper.ToD2DRect(area), 1.0F, BitmapInterpolationMode.Linear, Nothing)
+                rt.DrawBitmap(bmp, D2DGlobals.ToD2DRect(area), 1.0F, BitmapInterpolationMode.Linear, Nothing)
             End If
         Finally
             If hasMask Then rt.PopLayer()
@@ -168,11 +168,11 @@ Public Class ModernButton
             maskRect = New RectangleF(area.Right - w, area.Y, w, area.Height)
         End If
         Dim hasMask As Boolean = geo IsNot Nothing
-        If hasMask Then D2DHelper.PushGeometryClip(rt, geo, area)
+        If hasMask Then D2DGlobals.PushGeometryClip(rt, geo, area)
         Try
             Dim brush = compositor.BrushCache.[Get](rt, 长按遮罩颜色)
             If brush IsNot Nothing Then
-                rt.FillRectangle(D2DHelper.ToD2DRect(maskRect), brush)
+                rt.FillRectangle(D2DGlobals.ToD2DRect(maskRect), brush)
             End If
         Finally
             If hasMask Then rt.PopLayer()
@@ -190,7 +190,7 @@ Public Class ModernButton
         End If
     End Sub
 
-    Private Sub 绘制文本_D2D(rt As ID2D1DCRenderTarget, 内容矩形区域 As RectangleF, 图标宽度 As Single, s As Single, textFormatCache As D2DHelper.TextFormatCache, brushCache As D2DHelper.SolidColorBrushCache)
+    Private Sub 绘制文本_D2D(rt As ID2D1DCRenderTarget, 内容矩形区域 As RectangleF, 图标宽度 As Single, s As Single, textFormatCache As D2DGlobals.TextFormatCache, brushCache As D2DGlobals.SolidColorBrushCache)
         Dim _图标边距 As Single = 图标边距 * s
         Dim _边框圆角半径 As Single = 边框圆角半径 * s
         Dim 图标占用总宽度 As Single = If(图标宽度 > 0, 图标宽度 + _图标边距, 0)
@@ -212,12 +212,12 @@ Public Class ModernButton
         Dim mainText As String = mainTextInfo.DisplayText
         If String.IsNullOrEmpty(mainText) AndAlso String.IsNullOrEmpty(次要文本) Then Return
         ' ── ⚠ DirectWrite 字号必须叠加 DPI 缩放（* s）──
-        ' DC RT 由 D2DHelper 创建后默认按 96 DPI 像素映射；只用 (Pt * 96/72) 得到的是逻辑像素，
+        ' DC RT 由 D2DGlobals 创建后默认按 96 DPI 像素映射；只用 (Pt * 96/72) 得到的是逻辑像素，
         ' 在 HighDPI 下与 GDI+ TextRenderer 实际渲染尺寸不一致，会出现"换字体/字号像不生效"的现象。
         ' 必须再乘以 DpiScale()=DeviceDpi/96，让物理像素字号与系统 GDI 文本一致。
         ' 该规则适用于本仓库所有走 D2D + DirectWrite 的文字绘制路径，参考此实现。
         Dim mainSizePx As Single = Me.Font.SizeInPoints * (96.0F / 72.0F) * s
-        Dim dw = D2DHelper.GetDWriteFactory()
+        Dim dw = D2DGlobals.GetDWriteFactory()
 
         If Not String.IsNullOrEmpty(次要文本) Then
             Dim subSizePx As Single = 次要文本字号 * (96.0F / 72.0F) * s

@@ -551,7 +551,7 @@ Public Class RamMonitor
                     Dim bgLayer = scope.BackgroundLayer
                     Dim b = _当前合成器.BrushCache.Get(bgLayer, MyBase.BackColor)
                     If b IsNot Nothing Then
-                        bgLayer.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(0, 0, Me.Width, Me.Height)), b)
+                        bgLayer.FillRectangle(D2DGlobals.ToD2DRect(New RectangleF(0, 0, Me.Width, Me.Height)), b)
                     End If
                 End If
 
@@ -599,7 +599,7 @@ Public Class RamMonitor
             Dim hasClip As Boolean = 圆角半径值 > 0
             If hasClip Then
                 Using geo = RectangleRenderer.创建圆角矩形几何(rect, 圆角半径值 * s)
-                    D2DHelper.PushGeometryClip(rt, geo, rect)
+                    D2DGlobals.PushGeometryClip(rt, geo, rect)
                     Try
                         绘制历史图表_D2D(rt, graphRect, s)
                     Finally
@@ -614,9 +614,8 @@ Public Class RamMonitor
 
     Private Sub 绘制历史图表_D2D(rt As ID2D1RenderTarget, rect As RectangleF, s As Single)
         If 图表背景颜色值.A > 0 Then
-            Using b = rt.CreateSolidColorBrush(D2DHelper.ToColor4(图表背景颜色值))
-                rt.FillRectangle(D2DHelper.ToD2DRect(rect), b)
-            End Using
+            Dim b = _当前合成器.BrushCache.Get(rt, 图表背景颜色值)
+            If b IsNot Nothing Then rt.FillRectangle(D2DGlobals.ToD2DRect(rect), b)
         End If
 
         Dim hist = 获取历史快照()
@@ -654,27 +653,27 @@ Public Class RamMonitor
         填充堆叠区_D2D(rt, 已用填充颜色值, inUseTop, rect)
 
         If 图表线条颜色值.A > 0 AndAlso 图表线条粗细值 > 0 Then
-            Using b = rt.CreateSolidColorBrush(D2DHelper.ToColor4(图表线条颜色值))
+            Dim b = _当前合成器.BrushCache.Get(rt, 图表线条颜色值)
+            If b IsNot Nothing Then
                 Dim lineW As Single = 图表线条粗细值 * s
                 For i As Integer = 0 To standbyTop.Length - 2
                     rt.DrawLine(standbyTop(i), standbyTop(i + 1), b, lineW)
                 Next
-            End Using
+            End If
         End If
     End Sub
 
-    Private Shared Sub 填充堆叠区_D2D(rt As ID2D1RenderTarget, color As Color, topPts As Vector2(), rect As RectangleF)
+    Private Sub 填充堆叠区_D2D(rt As ID2D1RenderTarget, color As Color, topPts As Vector2(), rect As RectangleF)
         If color.A = 0 Then Return
         If topPts Is Nothing OrElse topPts.Length < 2 Then Return
         Using geo = 创建堆叠填充几何(rect, topPts)
-            Using b = rt.CreateSolidColorBrush(D2DHelper.ToColor4(color))
-                rt.FillGeometry(geo, b)
-            End Using
+            Dim b = _当前合成器.BrushCache.Get(rt, color)
+            If b IsNot Nothing Then rt.FillGeometry(geo, b)
         End Using
     End Sub
 
     Private Shared Function 创建堆叠填充几何(rect As RectangleF, topPts As Vector2()) As ID2D1PathGeometry
-        Dim geo As ID2D1PathGeometry = D2DHelper.GetD2DFactory().CreatePathGeometry()
+        Dim geo As ID2D1PathGeometry = D2DGlobals.GetD2DFactory().CreatePathGeometry()
         Dim sink As ID2D1GeometrySink = geo.Open()
         Try
             sink.BeginFigure(topPts(0), FigureBegin.Filled)
@@ -696,18 +695,18 @@ Public Class RamMonitor
         If r > 0 Then
             Using geo = RectangleRenderer.创建圆角矩形几何(rect, r)
                 If MyBase.BackColor.A > 0 AndAlso MyBase.BackColor.A < 255 Then
-                    RectangleRenderer.绘制圆角背景_D2D(rt, geo, rect, MyBase.BackColor, Color.Empty, System.Windows.Forms.Orientation.Vertical)
+                    RectangleRenderer.绘制圆角背景_D2D(rt, geo, rect, MyBase.BackColor, Color.Empty, System.Windows.Forms.Orientation.Vertical, _当前合成器.BrushCache)
                 End If
                 If 主体背景颜色值.A > 0 Then
-                    RectangleRenderer.绘制圆角背景_D2D(rt, geo, rect, 主体背景颜色值, Color.Empty, System.Windows.Forms.Orientation.Vertical)
+                    RectangleRenderer.绘制圆角背景_D2D(rt, geo, rect, 主体背景颜色值, Color.Empty, System.Windows.Forms.Orientation.Vertical, _当前合成器.BrushCache)
                 End If
             End Using
         Else
             If MyBase.BackColor.A > 0 AndAlso MyBase.BackColor.A < 255 Then
-                RectangleRenderer.绘制矩形背景_D2D(rt, rect, MyBase.BackColor, Color.Empty, System.Windows.Forms.Orientation.Vertical)
+                RectangleRenderer.绘制矩形背景_D2D(rt, rect, MyBase.BackColor, Color.Empty, System.Windows.Forms.Orientation.Vertical, _当前合成器.BrushCache)
             End If
             If 主体背景颜色值.A > 0 Then
-                RectangleRenderer.绘制矩形背景_D2D(rt, rect, 主体背景颜色值, Color.Empty, System.Windows.Forms.Orientation.Vertical)
+                RectangleRenderer.绘制矩形背景_D2D(rt, rect, 主体背景颜色值, Color.Empty, System.Windows.Forms.Orientation.Vertical, _当前合成器.BrushCache)
             End If
         End If
     End Sub
@@ -722,10 +721,10 @@ Public Class RamMonitor
         Dim r As Single = 圆角半径值 * s
         If r > 0 Then
             Using geo = RectangleRenderer.创建圆角矩形几何(rect, r)
-                RectangleRenderer.绘制圆角背景_D2D(rt, geo, rect, 禁用时遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Vertical)
+                RectangleRenderer.绘制圆角背景_D2D(rt, geo, rect, 禁用时遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Vertical, _当前合成器.BrushCache)
             End Using
         Else
-            RectangleRenderer.绘制矩形背景_D2D(rt, rect, 禁用时遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Vertical)
+            RectangleRenderer.绘制矩形背景_D2D(rt, rect, 禁用时遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Vertical, _当前合成器.BrushCache)
         End If
     End Sub
 
@@ -795,10 +794,9 @@ Public Class RamMonitor
         Dim style As FontStyle = If(Me.Font.Italic, FontStyle.Italic, FontStyle.Normal)
         Dim fmt = _当前合成器.TextFormatCache.Get(Me.Font.FontFamily.Name, weight, style, 文本像素高度(s),
                                        转文本水平对齐(align), 转文本垂直对齐(align), True)
-        Using layout = D2DHelper.GetDWriteFactory().CreateTextLayout(If(text, ""), fmt, textRect.Width, textRect.Height)
-            Using b = rt.CreateSolidColorBrush(D2DHelper.ToColor4(Me.ForeColor))
-                rt.DrawTextLayout(New Vector2(textRect.X, textRect.Y), layout, b)
-            End Using
+        Using layout = D2DGlobals.GetDWriteFactory().CreateTextLayout(If(text, ""), fmt, textRect.Width, textRect.Height)
+            Dim b = _当前合成器.BrushCache.Get(rt, Me.ForeColor)
+            If b IsNot Nothing Then rt.DrawTextLayout(New Vector2(textRect.X, textRect.Y), layout, b)
         End Using
     End Sub
 
@@ -817,9 +815,8 @@ Public Class RamMonitor
         Dim xAtSample As Single = graphRect.Right - CSng(n - 1 - idx) * step_
 
         If 悬停线颜色值.A > 0 Then
-            Using b = rt.CreateSolidColorBrush(D2DHelper.ToColor4(悬停线颜色值))
-                rt.DrawLine(New Vector2(xAtSample, graphRect.Top), New Vector2(xAtSample, graphRect.Bottom), b, Math.Max(1.0F, 悬停线粗细值 * s))
-            End Using
+            Dim b = _当前合成器.BrushCache.Get(rt, 悬停线颜色值)
+            If b IsNot Nothing Then rt.DrawLine(New Vector2(xAtSample, graphRect.Top), New Vector2(xAtSample, graphRect.Bottom), b, Math.Max(1.0F, 悬停线粗细值 * s))
         End If
 
         Dim lines As New List(Of (label As String, value As String)) From {
@@ -853,33 +850,32 @@ Public Class RamMonitor
         Dim panelRect As New RectangleF(panelX, panelY, panelW, panelH)
 
         If 悬停面板背景值.A > 0 Then
-            Using b = rt.CreateSolidColorBrush(D2DHelper.ToColor4(悬停面板背景值))
-                rt.FillRectangle(D2DHelper.ToD2DRect(panelRect), b)
-            End Using
+            Dim b = _当前合成器.BrushCache.Get(rt, 悬停面板背景值)
+            If b IsNot Nothing Then rt.FillRectangle(D2DGlobals.ToD2DRect(panelRect), b)
         End If
         If 悬停面板边框值.A > 0 Then
-            Using b = rt.CreateSolidColorBrush(D2DHelper.ToColor4(悬停面板边框值))
-                rt.DrawRectangle(D2DHelper.ToD2DRect(panelRect), b, 1.0F)
-            End Using
+            Dim b = _当前合成器.BrushCache.Get(rt, 悬停面板边框值)
+            If b IsNot Nothing Then rt.DrawRectangle(D2DGlobals.ToD2DRect(panelRect), b, 1.0F)
         End If
 
         Dim fore As Color = If(悬停面板前景值.A > 0, 悬停面板前景值, Me.ForeColor)
-        Using b = rt.CreateSolidColorBrush(D2DHelper.ToColor4(fore))
+        Dim foreBrush = _当前合成器.BrushCache.Get(rt, fore)
+        If foreBrush IsNot Nothing Then
             For i As Integer = 0 To lines.Count - 1
                 Dim rowY As Single = panelRect.Y + panelPad + i * lineH
                 If showOnLeft Then
-                    绘制悬停单行_D2D(rt, fmt, b, lines(i).value, panelRect.Right - panelPad - maxLabel - innerGap - maxValue, rowY, maxValue, lineH)
-                    绘制悬停单行_D2D(rt, fmt, b, lines(i).label, panelRect.Right - panelPad - maxLabel, rowY, maxLabel, lineH)
+                    绘制悬停单行_D2D(rt, fmt, foreBrush, lines(i).value, panelRect.Right - panelPad - maxLabel - innerGap - maxValue, rowY, maxValue, lineH)
+                    绘制悬停单行_D2D(rt, fmt, foreBrush, lines(i).label, panelRect.Right - panelPad - maxLabel, rowY, maxLabel, lineH)
                 Else
-                    绘制悬停单行_D2D(rt, fmt, b, lines(i).label, panelRect.X + panelPad, rowY, maxLabel, lineH)
-                    绘制悬停单行_D2D(rt, fmt, b, lines(i).value, panelRect.X + panelPad + maxLabel + innerGap, rowY, maxValue, lineH)
+                    绘制悬停单行_D2D(rt, fmt, foreBrush, lines(i).label, panelRect.X + panelPad, rowY, maxLabel, lineH)
+                    绘制悬停单行_D2D(rt, fmt, foreBrush, lines(i).value, panelRect.X + panelPad + maxLabel + innerGap, rowY, maxValue, lineH)
                 End If
             Next
-        End Using
+        End If
     End Sub
 
     Private Shared Function 测量单行文字宽度(fmt As IDWriteTextFormat, text As String) As Single
-        Using layout = D2DHelper.GetDWriteFactory().CreateTextLayout(If(text, ""), fmt, 10000.0F, 1000.0F)
+        Using layout = D2DGlobals.GetDWriteFactory().CreateTextLayout(If(text, ""), fmt, 10000.0F, 1000.0F)
             Return CSng(Math.Ceiling(layout.Metrics.WidthIncludingTrailingWhitespace))
         End Using
     End Function
@@ -887,7 +883,7 @@ Public Class RamMonitor
     Private Shared Sub 绘制悬停单行_D2D(rt As ID2D1RenderTarget, fmt As IDWriteTextFormat, brush As ID2D1Brush,
                                       text As String, x As Single, y As Single, w As Single, h As Single)
         If w <= 0 OrElse h <= 0 Then Return
-        Using layout = D2DHelper.GetDWriteFactory().CreateTextLayout(If(text, ""), fmt, w, h)
+        Using layout = D2DGlobals.GetDWriteFactory().CreateTextLayout(If(text, ""), fmt, w, h)
             rt.DrawTextLayout(New Vector2(x, y), layout, brush)
         End Using
     End Sub

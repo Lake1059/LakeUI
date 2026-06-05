@@ -293,7 +293,7 @@ Public Class ModernListBox
     Private _itemIcons As IconEntryCollection
 
     ' 悬停动画
-    Private ReadOnly _hoverAnim As New AnimationHelper(Me) With {.Duration = 0}
+    Private ReadOnly _hoverAnim As New AnimationHelperV2(Me) With {.Duration = 0}
     Private _hoverAnimFromY As Single
     Private _hoverAnimFromH As Single
     Private _hoverAnimToY As Single
@@ -1102,6 +1102,7 @@ Public Class ModernListBox
         _itemToolTips = New ToolTipEntryCollection()
         _itemIcons = New IconEntryCollection()
         InitializeComponent()
+        _hoverAnim.DirtyProvider = AddressOf 悬停动画脏区
         SetStyle(ControlStyles.OptimizedDoubleBuffer Or
                  ControlStyles.AllPaintingInWmPaint Or
                  ControlStyles.UserPaint Or
@@ -1234,10 +1235,10 @@ Public Class ModernListBox
             If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
                 If hasRadius Then
                     Using geo = RectangleRenderer.创建圆角矩形几何(boundsRect, 边框圆角半径 * s)
-                        RectangleRenderer.绘制圆角背景_D2D(dcRT, geo, boundsRect, 禁用时遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Vertical)
+                        RectangleRenderer.绘制圆角背景_D2D(dcRT, geo, boundsRect, 禁用时遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Vertical, _当前合成器.BrushCache)
                     End Using
                 Else
-                    RectangleRenderer.绘制矩形背景_D2D(dcRT, boundsRect, 禁用时遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Vertical)
+                    RectangleRenderer.绘制矩形背景_D2D(dcRT, boundsRect, 禁用时遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Vertical, _当前合成器.BrushCache)
                 End If
             End If
             Finally
@@ -1250,12 +1251,12 @@ Public Class ModernListBox
         Dim s As Single = DpiScale()
         If hasRadius Then
             Using geo = RectangleRenderer.创建圆角矩形几何(boundsRect, 边框圆角半径 * s)
-                RectangleRenderer.绘制圆角背景_D2D(rt, geo, boundsRect, bgClr, Color.Empty, System.Windows.Forms.Orientation.Vertical)
-                RectangleRenderer.绘制圆角边框_D2D(rt, geo, borderClr, 边框宽度 * s)
+                RectangleRenderer.绘制圆角背景_D2D(rt, geo, boundsRect, bgClr, Color.Empty, System.Windows.Forms.Orientation.Vertical, _当前合成器.BrushCache)
+                RectangleRenderer.绘制圆角边框_D2D(rt, geo, borderClr, 边框宽度 * s, _当前合成器.BrushCache)
             End Using
         Else
-            RectangleRenderer.绘制矩形背景_D2D(rt, boundsRect, bgClr, Color.Empty, System.Windows.Forms.Orientation.Vertical)
-            RectangleRenderer.绘制矩形边框_D2D(rt, boundsRect, borderClr, 边框宽度 * s)
+            RectangleRenderer.绘制矩形背景_D2D(rt, boundsRect, bgClr, Color.Empty, System.Windows.Forms.Orientation.Vertical, _当前合成器.BrushCache)
+            RectangleRenderer.绘制矩形边框_D2D(rt, boundsRect, borderClr, 边框宽度 * s, _当前合成器.BrushCache)
         End If
     End Sub
 
@@ -1279,7 +1280,7 @@ Public Class ModernListBox
             _rt = rt
             If radius > 0 Then
                 _geo = RectangleRenderer.创建圆角矩形几何(clipRect, radius)
-                D2DHelper.PushGeometryClip(rt, _geo, clipRect)
+                D2DGlobals.PushGeometryClip(rt, _geo, clipRect)
                 _usesLayer = True
             Else
                 rt.PushAxisAlignedClip(New Vortice.RawRectF(clipRect.X, clipRect.Y, clipRect.Right, clipRect.Bottom), AntialiasMode.PerPrimitive)
@@ -1349,9 +1350,8 @@ Public Class ModernListBox
             Dim t As Single = _hoverAnim.Progress
             Dim animY As Single = _hoverAnimFromY + (_hoverAnimToY - _hoverAnimFromY) * t
             Dim animH As Single = _hoverAnimFromH + (_hoverAnimToH - _hoverAnimFromH) * t
-            Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(项悬停颜色))
-                rt.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(contentRect.X, animY, availW, animH)), br)
-            End Using
+            Dim br = _当前合成器.BrushCache.Get(rt, 项悬停颜色)
+            If br IsNot Nothing Then rt.FillRectangle(D2DGlobals.ToD2DRect(New RectangleF(contentRect.X, animY, availW, animH)), br)
         End If
 
         Dim visCount As Integer = 估算可见行数()
@@ -1363,13 +1363,11 @@ Public Class ModernListBox
 
             Dim itemRect As New RectangleF(contentRect.X, itemY, availW, scaledH)
             If _selectedIndices.Contains(idx) Then
-                Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(项选中颜色))
-                    rt.FillRectangle(D2DHelper.ToD2DRect(itemRect), br)
-                End Using
+                Dim br = _当前合成器.BrushCache.Get(rt, 项选中颜色)
+                If br IsNot Nothing Then rt.FillRectangle(D2DGlobals.ToD2DRect(itemRect), br)
             ElseIf idx = _hoverIndex AndAlso Not _hoverAnimActive Then
-                Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(项悬停颜色))
-                    rt.FillRectangle(D2DHelper.ToD2DRect(itemRect), br)
-                End Using
+                Dim br = _当前合成器.BrushCache.Get(rt, 项悬停颜色)
+                If br IsNot Nothing Then rt.FillRectangle(D2DGlobals.ToD2DRect(itemRect), br)
             End If
 
             Dim itemText As String = _items(idx)
@@ -1418,30 +1416,30 @@ Public Class ModernListBox
         Dim fmt = _当前合成器.TextFormatCache.Get(Font.FontFamily.Name, fontWeight, fontStyle, fontSizePx,
             Vortice.DirectWrite.TextAlignment.Leading, ParagraphAlignment.Center, True)
 
-        Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(ForeColor))
-            Dim visCount As Integer = 估算可见行数()
-            For i As Integer = 0 To visCount - 1
-                Dim idx As Integer = i + _scrollOffset
-                If idx >= _items.Count Then Exit For
-                Dim itemY As Integer = contentRect.Y + i * scaledH
-                If itemY + scaledH > contentRect.Bottom Then Exit For
+        Dim br = _当前合成器.BrushCache.Get(rt, ForeColor)
+        If br Is Nothing Then Return
+        Dim visCount As Integer = 估算可见行数()
+        For i As Integer = 0 To visCount - 1
+            Dim idx As Integer = i + _scrollOffset
+            If idx >= _items.Count Then Exit For
+            Dim itemY As Integer = contentRect.Y + i * scaledH
+            If itemY + scaledH > contentRect.Bottom Then Exit For
 
-                Dim itemText As String = _items(idx)
-                Dim textX As Integer = contentRect.X + scaledPadL
-                If 显示复选框 Then textX = contentRect.X + 获取复选框区域宽度()
+            Dim itemText As String = _items(idx)
+            Dim textX As Integer = contentRect.X + scaledPadL
+            If 显示复选框 Then textX = contentRect.X + 获取复选框区域宽度()
 
-                Dim icon As Image = Nothing
-                If _itemIcons.TryGetIcon(itemText, icon) AndAlso icon IsNot Nothing Then
-                    textX += scaledIconW + scaledIconMR
-                End If
+            Dim icon As Image = Nothing
+            If _itemIcons.TryGetIcon(itemText, icon) AndAlso icon IsNot Nothing Then
+                textX += scaledIconW + scaledIconMR
+            End If
 
-                Dim textRight As Integer = contentRect.X + availW - scaledPadL
-                Dim textWidth As Integer = textRight - textX
-                If textWidth > 0 Then
-                    rt.DrawText(itemText, fmt, New Vortice.Mathematics.Rect(textX, itemY, textWidth, scaledH), br)
-                End If
-            Next
-        End Using
+            Dim textRight As Integer = contentRect.X + availW - scaledPadL
+            Dim textWidth As Integer = textRight - textX
+            If textWidth > 0 Then
+                rt.DrawText(itemText, fmt, New Vortice.Mathematics.Rect(textX, itemY, textWidth, scaledH), br)
+            End If
+        Next
     End Sub
 
     Private Sub 绘制复选框_D2D(rt As ID2D1RenderTarget, x As Integer, y As Integer, state As CheckStateEnum)
@@ -1454,23 +1452,22 @@ Public Class ModernListBox
 
         If scaledRadius > 0 Then
             Using geo = RectangleRenderer.创建圆角矩形几何(rect, scaledRadius)
-                Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(复选框背景颜色))
-                    rt.FillGeometry(geo, br)
-                End Using
-                RectangleRenderer.绘制圆角边框_D2D(rt, geo, 复选框边框颜色, scaledBW)
+                Dim br = _当前合成器.BrushCache.Get(rt, 复选框背景颜色)
+                If br IsNot Nothing Then rt.FillGeometry(geo, br)
+                RectangleRenderer.绘制圆角边框_D2D(rt, geo, 复选框边框颜色, scaledBW, _当前合成器.BrushCache)
             End Using
         Else
-            Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(复选框背景颜色))
-                rt.FillRectangle(D2DHelper.ToD2DRect(rect), br)
-            End Using
-            RectangleRenderer.绘制矩形边框_D2D(rt, rect, 复选框边框颜色, scaledBW)
+            Dim br = _当前合成器.BrushCache.Get(rt, 复选框背景颜色)
+            If br IsNot Nothing Then rt.FillRectangle(D2DGlobals.ToD2DRect(rect), br)
+            RectangleRenderer.绘制矩形边框_D2D(rt, rect, 复选框边框颜色, scaledBW, _当前合成器.BrushCache)
         End If
 
         Dim inset As Single = scaledSize * 0.2F
         Select Case state
             Case CheckStateEnum.Checked
-                Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(复选框勾选颜色))
-                    Using geo = D2DHelper.GetD2DFactory().CreatePathGeometry()
+                Dim br = _当前合成器.BrushCache.Get(rt, 复选框勾选颜色)
+                If br IsNot Nothing Then
+                    Using geo = D2DGlobals.GetD2DFactory().CreatePathGeometry()
                         Using sink = geo.Open()
                             sink.BeginFigure(New Vector2(x + inset, y + scaledSize * 0.5F), FigureBegin.Hollow)
                             sink.AddLine(New Vector2(x + scaledSize * 0.4F, y + scaledSize - inset))
@@ -1480,12 +1477,13 @@ Public Class ModernListBox
                         End Using
                         rt.DrawGeometry(geo, br, scaledMarkW)
                     End Using
-                End Using
+                End If
             Case CheckStateEnum.Crossed
-                Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(复选框叉选颜色))
+                Dim br = _当前合成器.BrushCache.Get(rt, 复选框叉选颜色)
+                If br IsNot Nothing Then
                     rt.DrawLine(New Vector2(x + inset, y + inset), New Vector2(x + scaledSize - inset, y + scaledSize - inset), br, scaledMarkW)
                     rt.DrawLine(New Vector2(x + scaledSize - inset, y + inset), New Vector2(x + inset, y + scaledSize - inset), br, scaledMarkW)
-                End Using
+                End If
         End Select
     End Sub
 
@@ -1494,12 +1492,10 @@ Public Class ModernListBox
         Dim rect As Rectangle = 获取拖选矩形()
         If rect.Width <= 0 OrElse rect.Height <= 0 Then Return
         Dim rectF As New RectangleF(rect.X, rect.Y, rect.Width, rect.Height)
-        Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(选框填充颜色))
-            rt.FillRectangle(D2DHelper.ToD2DRect(rectF), br)
-        End Using
-        Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(选框边框颜色))
-            rt.DrawRectangle(D2DHelper.ToD2DRect(rectF), br, 1.0F)
-        End Using
+        Dim fillBrush = _当前合成器.BrushCache.Get(rt, 选框填充颜色)
+        If fillBrush IsNot Nothing Then rt.FillRectangle(D2DGlobals.ToD2DRect(rectF), fillBrush)
+        Dim borderBrush = _当前合成器.BrushCache.Get(rt, 选框边框颜色)
+        If borderBrush IsNot Nothing Then rt.DrawRectangle(D2DGlobals.ToD2DRect(rectF), borderBrush, 1.0F)
     End Sub
 
     Private Sub 绘制拖动排序指示线_D2D(rt As ID2D1RenderTarget)
@@ -1513,9 +1509,8 @@ Public Class ModernListBox
             lineY = 获取项Y坐标(_dragReorderInsertIndex)
             If lineY < 0 Then Return
         End If
-        Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(拖动排序指示线颜色))
-            rt.DrawLine(New Vector2(contentRect.X, lineY), New Vector2(contentRect.Right, lineY), br, 拖动排序指示线宽 * DpiScale())
-        End Using
+        Dim br = _当前合成器.BrushCache.Get(rt, 拖动排序指示线颜色)
+        If br IsNot Nothing Then rt.DrawLine(New Vector2(contentRect.X, lineY), New Vector2(contentRect.Right, lineY), br, 拖动排序指示线宽 * DpiScale())
     End Sub
 
 #End Region
@@ -1946,6 +1941,36 @@ Public Class ModernListBox
         _hoverAnim.AnimateTo(1)
     End Sub
 
+    Private Sub 悬停动画脏区(helper As AnimationHelperV2, owner As Control, sink As AnimationHelperV2.InvalidateRegionSink)
+        If Not _hoverAnimActive Then
+            sink.SuppressInvalidate()
+            Return
+        End If
+
+        Dim dirty = 获取悬停动画脏区()
+        If dirty.Width > 0 AndAlso dirty.Height > 0 Then
+            sink.Add(dirty)
+        Else
+            sink.InvalidateAll()
+        End If
+    End Sub
+
+    Private Function 获取悬停动画脏区() As Rectangle
+        Dim contentRect = 获取内容区域()
+        If contentRect.Width <= 0 OrElse contentRect.Height <= 0 Then Return ClientRectangle
+
+        Dim inset As Integer = 获取边框内边距()
+        Dim scrollW As Integer = If(Not _scrollBar.TrackRect.IsEmpty, Width - inset - _scrollBar.VisualLeft, 0)
+        Dim availW As Integer = Math.Max(0, contentRect.Width - scrollW)
+        If availW <= 0 Then Return Rectangle.Empty
+
+        Dim top As Integer = CInt(Math.Floor(Math.Min(_hoverAnimFromY, _hoverAnimToY)))
+        Dim bottom As Integer = CInt(Math.Ceiling(Math.Max(_hoverAnimFromY + _hoverAnimFromH, _hoverAnimToY + _hoverAnimToH)))
+        Dim rect As New Rectangle(contentRect.X, top, availW, Math.Max(0, bottom - top))
+        rect.Inflate(2, 2)
+        Return Rectangle.Intersect(ClientRectangle, rect)
+    End Function
+
 #End Region
 
 #Region "键盘导航"
@@ -2117,7 +2142,7 @@ Public Class ModernListBox
                 Dim rt = scope.GraphicsLayer
                 Dim brushCache = scope.Compositor.BrushCache
 
-                rt.Clear(D2DHelper.ToColor4(_owner.提示背景颜色))
+                rt.Clear(D2DGlobals.ToColor4(_owner.提示背景颜色))
 
                 Dim boundsRect As New RectangleF(0, 0, w - 1, h - 1)
                 If bw > 0 Then
@@ -2133,7 +2158,7 @@ Public Class ModernListBox
                         End If
                     End Using
                 ElseIf bw > 0 Then
-                    rt.DrawRectangle(D2DHelper.ToD2DRect(boundsRect), brushCache.[Get](rt, _owner.提示边框颜色), bw)
+                    rt.DrawRectangle(D2DGlobals.ToD2DRect(boundsRect), brushCache.[Get](rt, _owner.提示边框颜色), bw)
                 End If
 
                 scope.FlushGraphics()

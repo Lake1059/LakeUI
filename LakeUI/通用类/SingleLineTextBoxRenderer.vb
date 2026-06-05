@@ -452,7 +452,7 @@ Public Class SingleLineTextBoxRenderer
         Dim x1 As Integer = textLeft + alignOff + MeasureWidth(_text.Substring(0, minC)) - _scrollXOffset
         Dim x2 As Integer = textLeft + alignOff + MeasureWidth(_text.Substring(0, maxC)) - _scrollXOffset
         If x2 <= x1 Then Return
-        Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(SelectionColor))
+        Using br = rt.CreateSolidColorBrush(D2DGlobals.ToColor4(SelectionColor))
             rt.FillRectangle(New Vortice.Mathematics.Rect(x1, lineY, x2 - x1, LineHeight), br)
         End Using
     End Sub
@@ -464,7 +464,7 @@ Public Class SingleLineTextBoxRenderer
         Dim lineY As Integer = CInt(textTop + (area.Height - LineHeight) \ 2)
         Dim caretH As Integer = LineHeight - 2
         Dim caretY As Integer = lineY + (LineHeight - caretH) \ 2
-        Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(CaretColor))
+        Using br = rt.CreateSolidColorBrush(D2DGlobals.ToColor4(CaretColor))
             rt.FillRectangle(New Vortice.Mathematics.Rect(cx, caretY, CInt(CaretWidth * DpiScale()), caretH), br)
         End Using
     End Sub
@@ -485,8 +485,8 @@ Public Class SingleLineTextBoxRenderer
                 Catch
                 End Try
             End If
-            Using layout = D2DHelper.GetDWriteFactory().CreateTextLayout(text, fmt, rect.Width, rect.Height)
-                Using br = rt.CreateSolidColorBrush(D2DHelper.ToColor4(foreColor))
+            Using layout = D2DGlobals.GetDWriteFactory().CreateTextLayout(text, fmt, rect.Width, rect.Height)
+                Using br = rt.CreateSolidColorBrush(D2DGlobals.ToColor4(foreColor))
                     rt.DrawTextLayout(New Vector2(rect.X, rect.Y), layout, br)
                 End Using
             End Using

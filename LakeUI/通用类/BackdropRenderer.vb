@@ -1016,14 +1016,14 @@ Friend NotInheritable Class BackdropRenderer
                     Try : _frameD2DBitmap.Dispose() : Catch : End Try
                     _frameD2DBitmap = Nothing
                 End If
-                _frameD2DBitmap = D2DHelper.CreateBitmapFromGdi(rt, frame)
+                _frameD2DBitmap = D2DGlobals.CreateBitmapFromGdi(rt, frame)
                 _frameD2DOwnerRT = New WeakReference(rt)
                 _frameD2DUploadedVersion = curVer
             End If
             d2dBmp = _frameD2DBitmap
         End SyncLock
         If d2dBmp Is Nothing Then Return
-        rt.DrawBitmap(d2dBmp, D2DHelper.ToD2DRect(target), 1.0F, BitmapInterpolationMode.Linear, Nothing)
+        rt.DrawBitmap(d2dBmp, D2DGlobals.ToD2DRect(target), 1.0F, BitmapInterpolationMode.Linear, Nothing)
     End Sub
 
     ''' <summary>
@@ -1075,7 +1075,7 @@ Friend NotInheritable Class BackdropRenderer
         Dim t = Matrix3x2.CreateScale(tile / CSng(_noiseBitmap.Width)) *
                 Matrix3x2.CreateTranslation(target.X, target.Y)
         brush.Transform = t
-        rt.FillRectangle(D2DHelper.ToD2DRect(target), brush)
+        rt.FillRectangle(D2DGlobals.ToD2DRect(target), brush)
     End Sub
 
     ''' <summary>取得（或重建）匹配 (opacity, tile) 的噪点平铺 TextureBrush。</summary>
@@ -1128,7 +1128,7 @@ Friend NotInheritable Class BackdropRenderer
         End If
 
         If _noiseD2DBitmap Is Nothing Then
-            _noiseD2DBitmap = D2DHelper.CreateBitmapFromGdi(rt, _noiseBitmap)
+            _noiseD2DBitmap = D2DGlobals.CreateBitmapFromGdi(rt, _noiseBitmap)
             If _noiseD2DBitmap Is Nothing Then Return Nothing
             _noiseD2DOwnerRT = New WeakReference(rt)
         End If

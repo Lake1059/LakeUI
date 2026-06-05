@@ -9,6 +9,8 @@ Public Class ExcellentProgressBar
 
     Public Sub New()
         InitializeComponent()
+        动画助手.DirtyProvider = AddressOf 进度动画脏区
+        动画助手2.DirtyProvider = AddressOf 进度动画脏区
     End Sub
 
 #Region "V2 背景穿透"
@@ -67,7 +69,7 @@ Public Class ExcellentProgressBar
                 Dim bgLayer = scope.BackgroundLayer
                 Dim bb = scope.Compositor.BrushCache.[Get](bgLayer, MyBase.BackColor)
                 If bb IsNot Nothing Then
-                    bgLayer.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(0, 0, Me.Width, Me.Height)), bb)
+                    bgLayer.FillRectangle(D2DGlobals.ToD2DRect(New RectangleF(0, 0, Me.Width, Me.Height)), bb)
                 End If
             End If
 
@@ -86,7 +88,7 @@ Public Class ExcellentProgressBar
                     End Using
                 Else
                     Dim mb = brushCache.[Get](dcRT, 禁用时遮罩颜色)
-                    If mb IsNot Nothing Then dcRT.FillRectangle(D2DHelper.ToD2DRect(极限矩形区域), mb)
+                    If mb IsNot Nothing Then dcRT.FillRectangle(D2DGlobals.ToD2DRect(极限矩形区域), mb)
                 End If
             End If
 
@@ -98,8 +100,8 @@ Public Class ExcellentProgressBar
     End Sub
 
     Private Sub 绘制文字_D2D(rt As ID2D1RenderTarget,
-                              textFormatCache As D2DHelper.TextFormatCache,
-                              brushCache As D2DHelper.SolidColorBrushCache)
+                              textFormatCache As D2DGlobals.TextFormatCache,
+                              brushCache As D2DGlobals.SolidColorBrushCache)
         Dim p As Padding = 文字边距
         Dim textRect As New Rectangle(p.Left, p.Top, Me.Width - p.Horizontal - 1, Me.Height - p.Vertical - 1)
         If textRect.Width < 1 OrElse textRect.Height < 1 Then Return
@@ -107,7 +109,7 @@ Public Class ExcellentProgressBar
         D2DTextRenderer.DrawText(rt, Me.Text, Me.Font, textRect, Me.ForeColor, flags, DpiScale(), textFormatCache, brushCache)
     End Sub
 
-    Private Sub 绘制图形内容_D2D(rt As ID2D1RenderTarget, brushCache As D2DHelper.SolidColorBrushCache,
+    Private Sub 绘制图形内容_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache,
                               极限矩形区域 As RectangleF, 内容区域 As RectangleF)
         Dim s As Single = DpiScale()
         Dim _边框圆角半径 As Single = 边框圆角半径 * s
@@ -127,7 +129,7 @@ Public Class ExcellentProgressBar
         End If
     End Sub
 
-    Private Sub 绘制双填充区域_D2D(rt As ID2D1RenderTarget, brushCache As D2DHelper.SolidColorBrushCache,
+    Private Sub 绘制双填充区域_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache,
                                 极限矩形区域 As RectangleF, clipGeo As ID2D1Geometry)
         Dim progress1 As Single = 动画助手.Progress
         Dim progress2 As Single = 动画助手2.Progress
@@ -142,7 +144,7 @@ Public Class ExcellentProgressBar
         End If
     End Sub
 
-    Private Sub 绘制单个填充区域_D2D(rt As ID2D1RenderTarget, brushCache As D2DHelper.SolidColorBrushCache,
+    Private Sub 绘制单个填充区域_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache,
                                   极限矩形区域 As RectangleF, clipGeo As ID2D1Geometry,
                                   progress As Single, baseColor As Color, gradColor As Color, gradDir As Orientation,
                                   gradMode As FillGradientModeEnum)
@@ -164,17 +166,17 @@ Public Class ExcellentProgressBar
         Dim clipPushed As Boolean = False
         If clipGeo IsNot Nothing Then
             ' 用 D2D 几何裁剪到圆角轨道范围内，再在填充矩形里绘制（避免渐变与圆角不一致导致的锯齿）
-            D2DHelper.PushGeometryClip(rt, clipGeo, 极限矩形区域)
+            D2DGlobals.PushGeometryClip(rt, clipGeo, 极限矩形区域)
             clipPushed = True
         End If
         Try
             If gradColor <> Color.Empty AndAlso 渐变参考区域.Width > 0 AndAlso 渐变参考区域.Height > 0 Then
                 Using brush = 创建填充渐变画刷_D2D(rt, 渐变参考区域, baseColor, gradColor, gradDir)
-                    rt.FillRectangle(D2DHelper.ToD2DRect(填充区域), brush)
+                    rt.FillRectangle(D2DGlobals.ToD2DRect(填充区域), brush)
                 End Using
             Else
                 Dim solid = brushCache.[Get](rt, baseColor)
-                If solid IsNot Nothing Then rt.FillRectangle(D2DHelper.ToD2DRect(填充区域), solid)
+                If solid IsNot Nothing Then rt.FillRectangle(D2DGlobals.ToD2DRect(填充区域), solid)
             End If
         Finally
             If clipPushed Then rt.PopLayer()
@@ -194,8 +196,8 @@ Public Class ExcellentProgressBar
             endPt = New System.Numerics.Vector2(区域.Right, 区域.Y)
         End If
         Dim stops() As Vortice.Direct2D1.GradientStop = {
-            New Vortice.Direct2D1.GradientStop With {.Position = 0.0F, .Color = D2DHelper.ToColor4(baseColor)},
-            New Vortice.Direct2D1.GradientStop With {.Position = 1.0F, .Color = D2DHelper.ToColor4(gradColor)}}
+            New Vortice.Direct2D1.GradientStop With {.Position = 0.0F, .Color = D2DGlobals.ToColor4(baseColor)},
+            New Vortice.Direct2D1.GradientStop With {.Position = 1.0F, .Color = D2DGlobals.ToColor4(gradColor)}}
         Dim gsc = rt.CreateGradientStopCollection(stops)
         Try
             Return rt.CreateLinearGradientBrush(New LinearGradientBrushProperties(startPt, endPt), gsc)
@@ -213,8 +215,12 @@ Public Class ExcellentProgressBar
         End If
     End Sub
 
-    Private ReadOnly 动画助手 As New AnimationHelper(Me) With {.EasingMode = AnimationHelper.EasingModeEnum.EaseInOut}
-    Private ReadOnly 动画助手2 As New AnimationHelper(Me) With {.EasingMode = AnimationHelper.EasingModeEnum.EaseInOut}
+    Private ReadOnly 动画助手 As New AnimationHelperV2(Me) With {.EasingMode = AnimationHelperV2.EasingModeEnum.EaseInOut}
+    Private ReadOnly 动画助手2 As New AnimationHelperV2(Me) With {.EasingMode = AnimationHelperV2.EasingModeEnum.EaseInOut}
+
+    Private Sub 进度动画脏区(helper As AnimationHelperV2, owner As Control, sink As AnimationHelperV2.InvalidateRegionSink)
+        sink.InvalidateAll()
+    End Sub
 
     Private Function 计算值比例(val As Integer) As Single
         Dim range As Integer = 最大值 - 最小值

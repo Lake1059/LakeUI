@@ -168,7 +168,7 @@ Partial Public Class EasyStatesPanel
     Private ReadOnly _items As New StateItemCollection(Me)
     Private ReadOnly _scrollBar As New ScrollBarRenderer()
     Private ReadOnly _layoutCache As New List(Of CardLayout)
-    Private ReadOnly _scrollAnimationHelper As New AnimationHelper(Me) With {.Duration = 220, .FPS = 60}
+    Private ReadOnly _scrollAnimationHelper As New AnimationHelperV2(Me) With {.Duration = 220, .FPS = 60}
 
     Private Structure CardLayout
         Public Index As Integer
@@ -192,6 +192,7 @@ Partial Public Class EasyStatesPanel
 
     Public Sub New()
         InitializeComponent()
+        _scrollAnimationHelper.DirtyProvider = AddressOf 滚动动画脏区
         SetStyle(ControlStyles.AllPaintingInWmPaint Or
                  ControlStyles.OptimizedDoubleBuffer Or
                  ControlStyles.UserPaint Or
@@ -766,7 +767,7 @@ Partial Public Class EasyStatesPanel
             ElseIf MyBase.BackColor.A > 0 AndAlso MyBase.BackColor.A < 255 Then
                 Dim brush = compositor.BrushCache.[Get](scope.BackgroundLayer, MyBase.BackColor)
                 If brush IsNot Nothing Then
-                    scope.BackgroundLayer.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(0, 0, Width, Height)), brush)
+                    scope.BackgroundLayer.FillRectangle(D2DGlobals.ToD2DRect(New RectangleF(0, 0, Width, Height)), brush)
                 End If
             End If
 
@@ -791,7 +792,7 @@ Partial Public Class EasyStatesPanel
         End Using
     End Sub
 
-    Private Sub DrawBackgroundAndFrame(rt As ID2D1RenderTarget, brushCache As D2DHelper.SolidColorBrushCache)
+    Private Sub DrawBackgroundAndFrame(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache)
         Dim s As Single = DpiScale()
         Dim rect As New RectangleF(0, 0, Width, Height)
         If _borderSize > 0 Then
@@ -826,7 +827,7 @@ Partial Public Class EasyStatesPanel
         End If
     End Sub
 
-    Private Sub DrawCards(rt As ID2D1RenderTarget, brushCache As D2DHelper.SolidColorBrushCache)
+    Private Sub DrawCards(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache)
         If _cardsViewportRect.Width <= 0 OrElse _cardsViewportRect.Height <= 0 Then Return
         rt.PushAxisAlignedClip(New Vortice.RawRectF(_cardsViewportRect.Left, _cardsViewportRect.Top, _cardsViewportRect.Right, _cardsViewportRect.Bottom),
                                AntialiasMode.PerPrimitive)
@@ -861,14 +862,14 @@ Partial Public Class EasyStatesPanel
         End Try
     End Sub
 
-    Private Sub DrawCardTexts(rt As ID2D1RenderTarget, textFormatCache As D2DHelper.TextFormatCache,
-                              brushCache As D2DHelper.SolidColorBrushCache)
+    Private Sub DrawCardTexts(rt As ID2D1RenderTarget, textFormatCache As D2DGlobals.TextFormatCache,
+                              brushCache As D2DGlobals.SolidColorBrushCache)
         If _cardsViewportRect.Width <= 0 OrElse _cardsViewportRect.Height <= 0 Then Return
         rt.PushAxisAlignedClip(New Vortice.RawRectF(_cardsViewportRect.Left, _cardsViewportRect.Top, _cardsViewportRect.Right, _cardsViewportRect.Bottom),
                                AntialiasMode.PerPrimitive)
         Try
             Dim s As Single = DpiScale()
-            Dim dw = D2DHelper.GetDWriteFactory()
+            Dim dw = D2DGlobals.GetDWriteFactory()
             Dim mainSizePx As Single = Font.SizeInPoints * (96.0F / 72.0F) * s
             Dim padX As Single = _cardHorizontalPadding * s
             Dim padY As Single = _cardVerticalPadding * s
@@ -925,7 +926,7 @@ Partial Public Class EasyStatesPanel
         End Try
     End Sub
 
-    Private Sub DrawDisabledOverlay(rt As ID2D1RenderTarget, brushCache As D2DHelper.SolidColorBrushCache)
+    Private Sub DrawDisabledOverlay(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache)
         Dim s As Single = DpiScale()
         Dim rect As New RectangleF(0, 0, Width, Height)
         If _borderSize > 0 Then
@@ -1000,6 +1001,10 @@ Partial Public Class EasyStatesPanel
         ClampScrollOffsets()
         _layoutDirty = True
         Invalidate()
+    End Sub
+
+    Private Sub 滚动动画脏区(helper As AnimationHelperV2, owner As Control, sink As AnimationHelperV2.InvalidateRegionSink)
+        sink.SuppressInvalidate()
     End Sub
 
     Protected Overrides Sub OnMouseMove(e As MouseEventArgs)

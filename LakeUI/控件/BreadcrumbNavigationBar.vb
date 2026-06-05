@@ -627,12 +627,6 @@ Public Class BreadcrumbNavigationBar
             Try : _toolTip.Dispose() : Catch : End Try
             _toolTip = Nothing
         End If
-        If _itemImageCache IsNot Nothing Then
-            For Each kv In _itemImageCache
-                Try : kv.Value.Dispose() : Catch : End Try
-            Next
-            _itemImageCache.Clear()
-        End If
     End Sub
 
     Friend Sub OnItemsChangedInternal()
@@ -826,7 +820,7 @@ Public Class BreadcrumbNavigationBar
                 Dim bgLayer = scope.BackgroundLayer
                 Dim bb = scope.Compositor.BrushCache.[Get](bgLayer, MyBase.BackColor)
                 If bb IsNot Nothing Then
-                    bgLayer.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(0, 0, w, h)), bb)
+                    bgLayer.FillRectangle(D2DGlobals.ToD2DRect(New RectangleF(0, 0, w, h)), bb)
                 End If
             End If
 
@@ -841,15 +835,15 @@ Public Class BreadcrumbNavigationBar
             If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
                 Dim dcRT = scope.DCRenderTarget
                 Dim mb = brushCache.[Get](dcRT, 禁用时遮罩颜色)
-                If mb IsNot Nothing Then dcRT.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(0, 0, w, h)), mb)
+                If mb IsNot Nothing Then dcRT.FillRectangle(D2DGlobals.ToD2DRect(New RectangleF(0, 0, w, h)), mb)
             End If
 
             ' 文字层（DirectWrite）
-            DrawNodesText_D2D(scope.TextLayer, scope.Compositor.TextFormatCache, brushCache)
+            DrawNodesText_D2D(scope.TextLayer, scope.Compositor, brushCache)
         End Using
     End Sub
 
-    Private Sub DrawNodesShapes_D2D(rt As ID2D1RenderTarget, brushCache As D2DHelper.SolidColorBrushCache)
+    Private Sub DrawNodesShapes_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache)
         Dim s As Single = DpiScale()
         Dim radius As Single = 节点圆角半径 * s
 
@@ -895,8 +889,8 @@ Public Class BreadcrumbNavigationBar
     End Sub
 
     Private Sub DrawNodesText_D2D(rt As ID2D1RenderTarget,
-                                   textFormatCache As D2DHelper.TextFormatCache,
-                                   brushCache As D2DHelper.SolidColorBrushCache)
+                                   compositor As WindowCompositor,
+                                   brushCache As D2DGlobals.SolidColorBrushCache)
         Dim dpi As Single = DpiScale()
         Dim s As Single = DpiScale()
         Dim padX As Integer = CInt(节点文本左右内边距 * s)
@@ -918,7 +912,7 @@ Public Class BreadcrumbNavigationBar
 
             ' 图标
             If l.HasIcon AndAlso item.Image IsNot Nothing Then
-                DrawItemImage_D2D(rt, item.Image, l.IconRect)
+                DrawItemImage_D2D(rt, compositor, item.Image, l.IconRect)
             End If
 
             ' 文本区（避开图标）
@@ -929,41 +923,35 @@ Public Class BreadcrumbNavigationBar
                 D2DTextRenderer.DrawText(rt, item.Text, Font, textRect, textColor,
                     TextFormatFlags.NoPadding Or TextFormatFlags.Left Or
                     TextFormatFlags.VerticalCenter Or TextFormatFlags.SingleLine Or TextFormatFlags.EndEllipsis,
-                    dpi, textFormatCache, brushCache)
+                    dpi, compositor.TextFormatCache, brushCache)
             Else
                 D2DTextRenderer.DrawText(rt, item.Text, Font, textRect, textColor,
                     TextFormatFlags.NoPadding Or TextFormatFlags.HorizontalCenter Or
                     TextFormatFlags.VerticalCenter Or TextFormatFlags.SingleLine Or TextFormatFlags.EndEllipsis,
-                    dpi, textFormatCache, brushCache)
+                    dpi, compositor.TextFormatCache, brushCache)
             End If
         Next
     End Sub
 
-    Private _itemImageCache As New Dictionary(Of Image, D2DHelper.D2DBitmapCache)
-
-    Private Sub DrawItemImage_D2D(rt As ID2D1RenderTarget, img As Image, dest As Rectangle)
+    Private Sub DrawItemImage_D2D(rt As ID2D1RenderTarget, compositor As WindowCompositor, img As Image, dest As Rectangle)
         If img Is Nothing OrElse dest.Width <= 0 OrElse dest.Height <= 0 Then Return
-        Dim cache As D2DHelper.D2DBitmapCache = Nothing
-        If Not _itemImageCache.TryGetValue(img, cache) Then
-            cache = New D2DHelper.D2DBitmapCache()
-            _itemImageCache(img) = cache
-        End If
-        Dim bmp = cache.GetBitmap(rt, img)
+        Dim cache = compositor?.GetBitmapCache(img)
+        Dim bmp = cache?.GetBitmap(rt, img)
         If bmp Is Nothing Then Return
         rt.DrawBitmap(bmp,
-                      D2DHelper.ToD2DRect(New RectangleF(dest.X, dest.Y, dest.Width, dest.Height)),
+                      D2DGlobals.ToD2DRect(New RectangleF(dest.X, dest.Y, dest.Width, dest.Height)),
                       1.0F,
                       Vortice.Direct2D1.BitmapInterpolationMode.Linear,
-                      D2DHelper.ToD2DRect(New RectangleF(0, 0, img.Width, img.Height)))
+                      D2DGlobals.ToD2DRect(New RectangleF(0, 0, img.Width, img.Height)))
     End Sub
 
-    Private Sub FillRoundedRect_D2D(rt As ID2D1RenderTarget, brushCache As D2DHelper.SolidColorBrushCache,
+    Private Sub FillRoundedRect_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache,
                                     r As Rectangle, radius As Single, c As Color)
         If r.Width <= 0 OrElse r.Height <= 0 OrElse c.A = 0 Then Return
         Dim brush = brushCache.[Get](rt, c)
         If brush Is Nothing Then Return
         If radius <= 0.5F Then
-            rt.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(r.X, r.Y, r.Width, r.Height)), brush)
+            rt.FillRectangle(D2DGlobals.ToD2DRect(New RectangleF(r.X, r.Y, r.Width, r.Height)), brush)
             Return
         End If
         Using geo = RectangleRenderer.创建圆角矩形几何(New RectangleF(r.X, r.Y, r.Width, r.Height), radius)
@@ -971,7 +959,7 @@ Public Class BreadcrumbNavigationBar
         End Using
     End Sub
 
-    Private Sub DrawChevron_D2D(rt As ID2D1RenderTarget, brushCache As D2DHelper.SolidColorBrushCache,
+    Private Sub DrawChevron_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache,
                                 area As Rectangle, c As Color, pointDown As Boolean)
         Dim s As Single = DpiScale()
         Dim sz As Single = 箭头大小 * s
@@ -991,7 +979,7 @@ Public Class BreadcrumbNavigationBar
         End If
         Dim brush = brushCache.[Get](rt, c)
         If brush Is Nothing Then Return
-        Dim factory = D2DHelper.GetD2DFactory()
+        Dim factory = D2DGlobals.GetD2DFactory()
         Dim path As ID2D1PathGeometry = factory.CreatePathGeometry()
         Try
             Using sink = path.Open()

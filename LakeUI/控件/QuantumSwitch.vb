@@ -6,6 +6,11 @@ Public Class QuantumSwitch
 
     Public Event StateChanged As EventHandler
 
+    Public Sub New()
+        InitializeComponent()
+        动画助手.DirtyProvider = AddressOf 开关动画脏区
+    End Sub
+
 #Region "V2 透明背景穿透"
     Private _backgroundSource As Control = Nothing
     <Category("LakeUI"),
@@ -63,8 +68,13 @@ Public Class QuantumSwitch
                 BackgroundPenetrationV2.PaintBackground(Me, scope, _backgroundSource)
             End If
 
-            绘制图形内容_D2D(scope.GraphicsLayer, 极限矩形区域)
+            Dim 是未观测状态 As Boolean = 观测者模式 AndAlso 鼠标状态 = MouseStateEnum.Normal
+            绘制图形内容_D2D(scope.GraphicsLayer, scope.Compositor.BrushCache, 极限矩形区域, 是未观测状态)
             scope.FlushGraphics()
+
+            If 是未观测状态 Then
+                绘制不确定态文字_D2D(scope.TextLayer, scope.Compositor, 极限矩形区域)
+            End If
 
             If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
                 Using geo = RectangleRenderer.创建圆角矩形几何(极限矩形区域, CSng(Math.Floor(极限矩形区域.Height / 2.0F)))
@@ -74,19 +84,17 @@ Public Class QuantumSwitch
         End Using
     End Sub
 
-    Private Sub 绘制图形内容_D2D(rt As ID2D1RenderTarget, 极限矩形区域 As RectangleF)
-        Dim 是未观测状态 As Boolean = 观测者模式 AndAlso 鼠标状态 = MouseStateEnum.Normal
-
+    Private Sub 绘制图形内容_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache, 极限矩形区域 As RectangleF, 是未观测状态 As Boolean)
         If 是未观测状态 Then
             ' 未被观测：绘制不确定态外观
-            绘制不确定态_D2D(rt, 极限矩形区域)
+            绘制不确定态_D2D(rt, brushCache, 极限矩形区域)
         Else
             ' 被观测：绘制正常状态
-            绘制正常态_D2D(rt, 极限矩形区域)
+            绘制正常态_D2D(rt, brushCache, 极限矩形区域)
         End If
     End Sub
 
-    Private Sub 绘制正常态_D2D(rt As ID2D1RenderTarget, 极限矩形区域 As RectangleF)
+    Private Sub 绘制正常态_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache, 极限矩形区域 As RectangleF)
         Dim 轨道颜色 As Color = 获取当前轨道颜色()
         Dim 滑块颜色 As Color = 获取当前滑块颜色()
         Dim 当前边框颜色 As Color = 获取当前边框颜色()
@@ -94,11 +102,10 @@ Public Class QuantumSwitch
         ' 绘制轨道（药丸形状）
         Dim 圆角半径 As Single = CSng(Math.Floor(极限矩形区域.Height / 2.0F))
         Using geo = RectangleRenderer.创建圆角矩形几何(极限矩形区域, 圆角半径)
-            Using brush = rt.CreateSolidColorBrush(D2DHelper.ToColor4(轨道颜色))
-                rt.FillGeometry(geo, brush)
-            End Using
+            Dim brush = brushCache.Get(rt, 轨道颜色)
+            If brush IsNot Nothing Then rt.FillGeometry(geo, brush)
             Dim s As Single = DpiScale()
-            RectangleRenderer.绘制圆角边框_D2D(rt, geo, 当前边框颜色, 边框宽度 * s)
+            RectangleRenderer.绘制圆角边框_D2D(rt, geo, 当前边框颜色, 边框宽度 * s, brushCache)
         End Using
 
         ' 绘制滑块（圆形）
@@ -111,58 +118,60 @@ Public Class QuantumSwitch
         Dim 滑块Y As Single = 极限矩形区域.Y + _滑块边距
         Dim 滑块区域 As New RectangleF(滑块X, 滑块Y, 滑块直径, 滑块直径)
         Using geo = RectangleRenderer.创建圆角矩形几何(滑块区域, 滑块直径 / 2.0F)
-            Using brush = rt.CreateSolidColorBrush(D2DHelper.ToColor4(滑块颜色))
-                rt.FillGeometry(geo, brush)
-            End Using
+            Dim brush = brushCache.Get(rt, 滑块颜色)
+            If brush IsNot Nothing Then rt.FillGeometry(geo, brush)
         End Using
     End Sub
 
-    Private Sub 绘制不确定态_D2D(rt As ID2D1RenderTarget, 极限矩形区域 As RectangleF)
+    Private Sub 绘制不确定态_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache, 极限矩形区域 As RectangleF)
         ' 绘制轨道（药丸形状）- 使用不确定态颜色
         Dim 圆角半径 As Single = CSng(Math.Floor(极限矩形区域.Height / 2.0F))
         Using geo = RectangleRenderer.创建圆角矩形几何(极限矩形区域, 圆角半径)
-            Using brush = rt.CreateSolidColorBrush(D2DHelper.ToColor4(不确定态轨道颜色值))
-                rt.FillGeometry(geo, brush)
-            End Using
+            Dim brush = brushCache.Get(rt, 不确定态轨道颜色值)
+            If brush IsNot Nothing Then rt.FillGeometry(geo, brush)
             Dim s As Single = DpiScale()
-            RectangleRenderer.绘制圆角边框_D2D(rt, geo, 获取当前边框颜色(), 边框宽度 * s)
+            RectangleRenderer.绘制圆角边框_D2D(rt, geo, 获取当前边框颜色(), 边框宽度 * s, brushCache)
         End Using
 
         ' 绘制滑块固定在中间位置
         Dim _滑块边距 As Single = 滑块边距值 * DpiScale()
         Dim 滑块直径 As Single = 极限矩形区域.Height - _滑块边距 * 2
         If 滑块直径 <= 0 Then Return
+        Dim 滑块区域 As RectangleF = 计算不确定态滑块区域(极限矩形区域)
+        Using geo = RectangleRenderer.创建圆角矩形几何(滑块区域, 滑块直径 / 2.0F)
+            Dim brush = brushCache.Get(rt, 不确定态滑块颜色值)
+            If brush IsNot Nothing Then rt.FillGeometry(geo, brush)
+        End Using
+    End Sub
+
+    Private Function 计算不确定态滑块区域(极限矩形区域 As RectangleF) As RectangleF
+        Dim _滑块边距 As Single = 滑块边距值 * DpiScale()
+        Dim 滑块直径 As Single = 极限矩形区域.Height - _滑块边距 * 2
+        If 滑块直径 <= 0 Then Return RectangleF.Empty
         Dim 滑块最小X As Single = 极限矩形区域.X + _滑块边距
         Dim 滑块最大X As Single = 极限矩形区域.Right - _滑块边距 - 滑块直径
         Dim 滑块X As Single = 滑块最小X + (滑块最大X - 滑块最小X) * 0.5F
         Dim 滑块Y As Single = 极限矩形区域.Y + _滑块边距
-        Dim 滑块区域 As New RectangleF(滑块X, 滑块Y, 滑块直径, 滑块直径)
-        Using geo = RectangleRenderer.创建圆角矩形几何(滑块区域, 滑块直径 / 2.0F)
-            Using brush = rt.CreateSolidColorBrush(D2DHelper.ToColor4(不确定态滑块颜色值))
-                rt.FillGeometry(geo, brush)
-            End Using
-        End Using
+        Return New RectangleF(滑块X, 滑块Y, 滑块直径, 滑块直径)
+    End Function
 
-        ' 绘制问号符号
-        Dim 字体大小 As Single = 滑块直径 * 0.55F
-        Using f As New Font("Segoe UI", 字体大小, FontStyle.Bold, GraphicsUnit.Pixel)
-            Dim 文字 As String = "?"
-            Using textBmp As New Bitmap(Math.Max(1, CInt(Math.Ceiling(滑块直径))), Math.Max(1, CInt(Math.Ceiling(滑块直径))))
-                Using g As Graphics = Graphics.FromImage(textBmp)
-                    g.Clear(Color.Transparent)
-                    g.TextRenderingHint = Drawing.Text.TextRenderingHint.AntiAliasGridFit
-                    Dim 文字尺寸 As SizeF = g.MeasureString(文字, f)
-                    Dim tx As Single = (滑块直径 - 文字尺寸.Width) / 2.0F
-                    Dim ty As Single = (滑块直径 - 文字尺寸.Height) / 2.0F
-                    Using brush As New SolidBrush(不确定态轨道颜色值)
-                        g.DrawString(文字, f, brush, tx, ty)
-                    End Using
-                End Using
-                Using d2dBmp = D2DHelper.CreateBitmapFromGdi(rt, textBmp)
-                    rt.DrawBitmap(d2dBmp, D2DHelper.ToD2DRect(滑块区域), 1.0F, BitmapInterpolationMode.Linear, New Vortice.Mathematics.Rect(0, 0, textBmp.Width, textBmp.Height))
-                End Using
-            End Using
-        End Using
+    Private Sub 绘制不确定态文字_D2D(rt As ID2D1RenderTarget, compositor As WindowCompositor, 极限矩形区域 As RectangleF)
+        If rt Is Nothing OrElse compositor Is Nothing Then Return
+        Dim 滑块区域 As RectangleF = 计算不确定态滑块区域(极限矩形区域)
+        If 滑块区域.Width <= 0 OrElse 滑块区域.Height <= 0 Then Return
+
+        Dim 字体大小 As Single = 滑块区域.Height * 0.55F
+        Dim fmt = compositor.TextFormatCache.Get("Segoe UI",
+                                                 Vortice.DirectWrite.FontWeight.Bold,
+                                                 Vortice.DirectWrite.FontStyle.Normal,
+                                                 字体大小,
+                                                 Vortice.DirectWrite.TextAlignment.Center,
+                                                 Vortice.DirectWrite.ParagraphAlignment.Center,
+                                                 False)
+        Dim brush = compositor.BrushCache.Get(rt, 不确定态轨道颜色值)
+        If fmt IsNot Nothing AndAlso brush IsNot Nothing Then
+            rt.DrawText("?", fmt, D2DGlobals.ToD2DRect(滑块区域), brush)
+        End If
     End Sub
 
     Private Function 获取当前轨道颜色() As Color
@@ -344,7 +353,11 @@ Public Class QuantumSwitch
         End If
     End Sub
 
-    Private ReadOnly 动画助手 As New AnimationHelper(Me)
+    Private ReadOnly 动画助手 As New AnimationHelperV2(Me)
+
+    Private Sub 开关动画脏区(helper As AnimationHelperV2, owner As Control, sink As AnimationHelperV2.InvalidateRegionSink)
+        sink.InvalidateAll()
+    End Sub
 
     Private Function DpiScale() As Single
         Return Me.DeviceDpi / 96.0F

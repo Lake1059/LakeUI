@@ -885,7 +885,7 @@ Public Class AgentRoom
                 Dim bgLayer = scope.BackgroundLayer
                 Dim bgBrush = scope.Compositor.BrushCache.[Get](bgLayer, MyBase.BackColor)
                 If bgBrush IsNot Nothing Then
-                    bgLayer.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(0, 0, Me.Width, Me.Height)), bgBrush)
+                    bgLayer.FillRectangle(D2DGlobals.ToD2DRect(New RectangleF(0, 0, Me.Width, Me.Height)), bgBrush)
                 End If
             End If
 
@@ -976,7 +976,7 @@ Public Class AgentRoom
     End Sub
 
     Private Sub DrawItemShapes_D2D(rt As Vortice.Direct2D1.ID2D1RenderTarget,
-                                    brushCache As D2DHelper.SolidColorBrushCache,
+                                    brushCache As D2DGlobals.SolidColorBrushCache,
                                     it As ChatItem, areaItemRect As Rectangle,
                                     font As Font, lineHeight As Integer, itemIndex As Integer)
         Dim isCard As Boolean = (it.Kind = ChatItemKind.Card)
@@ -1012,7 +1012,7 @@ Public Class AgentRoom
     End Sub
 
     Private Sub DrawSelectionForItem_D2D(rt As Vortice.Direct2D1.ID2D1RenderTarget,
-                                          brushCache As D2DHelper.SolidColorBrushCache,
+                                          brushCache As D2DGlobals.SolidColorBrushCache,
                                           it As ChatItem, itemIndex As Integer,
                                           areaItemRect As Rectangle, font As Font, lineHeight As Integer)
         If Not _hasSelection Then Return
@@ -1039,8 +1039,8 @@ Public Class AgentRoom
     End Sub
 
     Private Sub DrawItemText_D2D(rt As Vortice.Direct2D1.ID2D1RenderTarget,
-                                  brushCache As D2DHelper.SolidColorBrushCache,
-                                  tfc As D2DHelper.TextFormatCache, dpiS As Single,
+                                  brushCache As D2DGlobals.SolidColorBrushCache,
+                                  tfc As D2DGlobals.TextFormatCache, dpiS As Single,
                                   it As ChatItem, areaItemRect As Rectangle, font As Font, lineHeight As Integer)
         Dim isCard As Boolean = (it.Kind = ChatItemKind.Card)
         Dim foreColor As Color
@@ -1062,8 +1062,8 @@ Public Class AgentRoom
     End Sub
 
     Private Sub DrawLineWithLinks_D2D(rt As Vortice.Direct2D1.ID2D1RenderTarget,
-                                       brushCache As D2DHelper.SolidColorBrushCache,
-                                       tfc As D2DHelper.TextFormatCache, dpiS As Single,
+                                       brushCache As D2DGlobals.SolidColorBrushCache,
+                                       tfc As D2DGlobals.TextFormatCache, dpiS As Single,
                                        it As ChatItem, line As String, lineStartCharIndex As Integer,
                                        x As Integer, y As Integer, font As Font, lineHeight As Integer,
                                        normalColor As Color)

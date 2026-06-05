@@ -1068,7 +1068,7 @@ Public Class ModernTextBox
         Return ssaa
     End Function
 
-    Private Sub 绘制背景_D2D(rt As ID2D1RenderTarget, hasRadius As Boolean, fillRect As RectangleF, brushCache As D2DHelper.SolidColorBrushCache)
+    Private Sub 绘制背景_D2D(rt As ID2D1RenderTarget, hasRadius As Boolean, fillRect As RectangleF, brushCache As D2DGlobals.SolidColorBrushCache)
         ' BackColor 半透明遮罩层：位于采样底图之上、BackColor1（=背景颜色）之下。A=255 不走本路径。
         Dim backColorMask As Color = MyBase.BackColor
         Dim s As Single = DpiScale()
@@ -1091,7 +1091,7 @@ Public Class ModernTextBox
         End If
     End Sub
 
-    Private Sub 绘制边框_D2D(rt As ID2D1RenderTarget, hasRadius As Boolean, boundsRect As RectangleF, borderClr As Color, brushCache As D2DHelper.SolidColorBrushCache)
+    Private Sub 绘制边框_D2D(rt As ID2D1RenderTarget, hasRadius As Boolean, boundsRect As RectangleF, borderClr As Color, brushCache As D2DGlobals.SolidColorBrushCache)
         If 边框宽度 <= 0 OrElse borderClr.A = 0 Then Return
         Dim s As Single = DpiScale()
         If hasRadius Then
@@ -1157,7 +1157,7 @@ Public Class ModernTextBox
                         boundsRect.Inflate(-half, -half)
                     End If
                     Using geo = RectangleRenderer.创建圆角矩形几何(boundsRect, 边框圆角半径 * s)
-                        D2DHelper.PushGeometryClip(rt, geo, boundsRect)
+                        D2DGlobals.PushGeometryClip(rt, geo, boundsRect)
                         FillRectangle_D2D(rt, gutterRect, _lineNumBackColor, brushCache)
                         rt.PopLayer()
                     End Using
@@ -1233,7 +1233,7 @@ Public Class ModernTextBox
     Private Sub DrawVisualLineSelection_D2D(rt As ID2D1RenderTarget, vl As VisualLineInfo, lineY As Single, textLeft As Integer,
                                          alignOff As Integer, scrollX As Integer,
                                          minL As Integer, minC As Integer, maxL As Integer, maxC As Integer,
-                                         brushCache As D2DHelper.SolidColorBrushCache)
+                                         brushCache As D2DGlobals.SolidColorBrushCache)
         Dim li As Integer = vl.LogicalLine
         If li < minL OrElse li > maxL Then Return
         Dim selStart As Integer = If(li = minL, minC, 0)
@@ -1255,7 +1255,7 @@ Public Class ModernTextBox
     End Sub
 
     Private Sub DrawCaret_D2D(rt As ID2D1RenderTarget, textLeft As Integer, textTop As Integer,
-                              brushCache As D2DHelper.SolidColorBrushCache)
+                              brushCache As D2DGlobals.SolidColorBrushCache)
         Dim vi As Integer = GetVisualLineIndex(_caretLine, _caretCol)
         Dim viewH As Integer = TextViewportHeight()
         Dim caretTop As Integer = vi * _scaledLineHeight
@@ -1283,8 +1283,8 @@ Public Class ModernTextBox
 
     Private Sub DrawLineRuns_D2D(rt As ID2D1RenderTarget, lineIndex As Integer, vlStartCol As Integer,
                                   vlLength As Integer, x As Single, lineY As Single,
-                                  textFormatCache As D2DHelper.TextFormatCache,
-                                  brushCache As D2DHelper.SolidColorBrushCache)
+                                  textFormatCache As D2DGlobals.TextFormatCache,
+                                  brushCache As D2DGlobals.SolidColorBrushCache)
         Dim runs = _lineRuns(lineIndex)
         Dim lineStr = _lines(lineIndex)
         Dim vlEnd = vlStartCol + vlLength
@@ -1320,8 +1320,8 @@ Public Class ModernTextBox
     Private Function DrawSegmentsWithLinks_D2D(rt As ID2D1RenderTarget, lineStr As String, startCol As Integer, endCol As Integer,
                                                 x As Single, lineY As Single, baseFore As Color, baseFont As Font,
                                                 links As List(Of LinkRange),
-                                                textFormatCache As D2DHelper.TextFormatCache,
-                                                brushCache As D2DHelper.SolidColorBrushCache) As Single
+                                                textFormatCache As D2DGlobals.TextFormatCache,
+                                                brushCache As D2DGlobals.SolidColorBrushCache) As Single
         Dim pos = startCol
         Dim drawX = x
         For Each link In links
@@ -1353,8 +1353,8 @@ Public Class ModernTextBox
 
     Private Sub DrawTextSegment_D2D(rt As ID2D1RenderTarget, text As String, font As Font, foreColor As Color,
                                     x As Single, y As Single, width As Single, height As Single, underline As Boolean,
-                                    textFormatCache As D2DHelper.TextFormatCache,
-                                    brushCache As D2DHelper.SolidColorBrushCache)
+                                    textFormatCache As D2DGlobals.TextFormatCache,
+                                    brushCache As D2DGlobals.SolidColorBrushCache)
         If rt Is Nothing OrElse String.IsNullOrEmpty(text) OrElse foreColor.A = 0 Then Return
         Dim ownsFormat As Boolean = False
         Dim fmt = AcquireTextFormat_D2D(font, textFormatCache, ownsFormat)
@@ -1362,7 +1362,7 @@ Public Class ModernTextBox
         Try
             Dim layoutWidth As Single = Math.Max(1.0F, width)
             Dim layoutHeight As Single = Math.Max(1.0F, height)
-            Using layout = D2DHelper.GetDWriteFactory().CreateTextLayout(text, fmt, layoutWidth, layoutHeight)
+            Using layout = D2DGlobals.GetDWriteFactory().CreateTextLayout(text, fmt, layoutWidth, layoutHeight)
                 If underline Then
                     layout.SetUnderline(True, New Vortice.DirectWrite.TextRange(0, CUInt(text.Length)))
                 End If
@@ -1384,7 +1384,7 @@ Public Class ModernTextBox
         End Try
     End Sub
 
-    Private Function AcquireTextFormat_D2D(font As Font, textFormatCache As D2DHelper.TextFormatCache,
+    Private Function AcquireTextFormat_D2D(font As Font, textFormatCache As D2DGlobals.TextFormatCache,
                                            ByRef ownsFormat As Boolean) As Vortice.DirectWrite.IDWriteTextFormat
         Dim useFont As Font = If(font, Me.Font)
         If useFont Is Nothing Then Return Nothing
@@ -1408,13 +1408,13 @@ Public Class ModernTextBox
     End Function
 
     Private Function MeasureTextWidth_D2D(text As String, font As Font,
-                                          textFormatCache As D2DHelper.TextFormatCache) As Single
+                                          textFormatCache As D2DGlobals.TextFormatCache) As Single
         If String.IsNullOrEmpty(text) Then Return 0.0F
         Dim ownsFormat As Boolean = False
         Dim fmt = AcquireTextFormat_D2D(font, textFormatCache, ownsFormat)
         If fmt Is Nothing Then Return 0.0F
         Try
-            Using layout = D2DHelper.GetDWriteFactory().CreateTextLayout(text, fmt, Single.MaxValue, Single.MaxValue)
+            Using layout = D2DGlobals.GetDWriteFactory().CreateTextLayout(text, fmt, Single.MaxValue, Single.MaxValue)
                 Return layout.Metrics.WidthIncludingTrailingWhitespace
             End Using
         Finally
@@ -1425,22 +1425,22 @@ Public Class ModernTextBox
     End Function
 
     Private Function GetSolidBrush_D2D(rt As ID2D1RenderTarget, color As Color,
-                                       brushCache As D2DHelper.SolidColorBrushCache,
+                                       brushCache As D2DGlobals.SolidColorBrushCache,
                                        ByRef ownsBrush As Boolean) As ID2D1Brush
         If rt Is Nothing OrElse color.A = 0 Then Return Nothing
         ownsBrush = (brushCache Is Nothing)
         If brushCache IsNot Nothing Then Return brushCache.[Get](rt, color)
-        Return rt.CreateSolidColorBrush(D2DHelper.ToColor4(color))
+        Return rt.CreateSolidColorBrush(D2DGlobals.ToColor4(color))
     End Function
 
     Private Sub FillRectangle_D2D(rt As ID2D1RenderTarget, rect As RectangleF, color As Color,
-                                  brushCache As D2DHelper.SolidColorBrushCache)
+                                  brushCache As D2DGlobals.SolidColorBrushCache)
         If rect.Width <= 0 OrElse rect.Height <= 0 OrElse color.A = 0 Then Return
         Dim brush As ID2D1Brush = Nothing
         Dim ownsBrush As Boolean = False
         Try
             brush = GetSolidBrush_D2D(rt, color, brushCache, ownsBrush)
-            If brush IsNot Nothing Then rt.FillRectangle(D2DHelper.ToD2DRect(rect), brush)
+            If brush IsNot Nothing Then rt.FillRectangle(D2DGlobals.ToD2DRect(rect), brush)
         Finally
             If ownsBrush AndAlso brush IsNot Nothing Then
                 Try : brush.Dispose() : Catch : End Try

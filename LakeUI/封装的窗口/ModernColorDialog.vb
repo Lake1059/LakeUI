@@ -42,8 +42,8 @@ Public Class ModernColorDialog
 
     ' ── 色域图 ──
     Private _chromaticityBitmap As Bitmap = Nothing
-    Private ReadOnly _chromaticityBitmapCache As New D2DHelper.D2DBitmapCache()
-    Private ReadOnly _d2dBrushCache As New D2DHelper.SolidColorBrushCache()
+    Private ReadOnly _chromaticityBitmapCache As New D2DGlobals.D2DBitmapCache()
+    Private ReadOnly _d2dBrushCache As New D2DGlobals.SolidColorBrushCache()
     Private _markerX As Double = 0.3127  ' 当前标记的 CIE xy（默认 D65 白点）
     Private _markerY As Double = 0.329
     Private _renderCts As CancellationTokenSource = Nothing
@@ -446,11 +446,11 @@ Public Class ModernColorDialog
             ' PictureBox 没有 V2 BackgroundSource 概念，A=255 时直接 Clear，A<255 时不画底
             ' （PictureBox 在 ModernColorDialog 内部使用，背景由父窗口提供）。
             If PictureBox1.BackColor.A = 255 Then
-                rt.Clear(D2DHelper.ToColor4(PictureBox1.BackColor))
+                rt.Clear(D2DGlobals.ToColor4(PictureBox1.BackColor))
             ElseIf PictureBox1.BackColor.A > 0 Then
                 Dim b = scope.Compositor.BrushCache.[Get](rt, PictureBox1.BackColor)
                 If b IsNot Nothing Then
-                    rt.FillRectangle(D2DHelper.ToD2DRect(PictureBox1.ClientRectangle), b)
+                    rt.FillRectangle(D2DGlobals.ToD2DRect(PictureBox1.ClientRectangle), b)
                 End If
             End If
 
@@ -461,10 +461,10 @@ Public Class ModernColorDialog
                     Dim destRect As New RectangleF(0, 0, PictureBox1.ClientSize.Width, PictureBox1.ClientSize.Height)
                     rt.DrawBitmap(
                         d2dBitmap,
-                        D2DHelper.ToD2DRect(destRect),
+                        D2DGlobals.ToD2DRect(destRect),
                         1.0F,
                         D2D.BitmapInterpolationMode.Linear,
-                        D2DHelper.ToD2DRect(srcRect))
+                        D2DGlobals.ToD2DRect(srcRect))
                 End If
             End If
 

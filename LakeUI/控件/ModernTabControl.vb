@@ -278,7 +278,7 @@ Public Class ModernTabControl
         同步内容面板布局()
     End Sub
 
-    Private Function 获取图标缓存(img As Image) As D2DHelper.D2DBitmapCache
+    Private Function 获取图标缓存(img As Image) As D2DGlobals.D2DBitmapCache
         If img Is Nothing OrElse _当前合成器 Is Nothing Then Return Nothing
         Return _当前合成器.GetBitmapCache(img)
     End Function
@@ -462,7 +462,7 @@ Public Class ModernTabControl
                     Dim bgLayer = scope.BackgroundLayer
                     Dim brush = compositor.BrushCache.[Get](bgLayer, MyBase.BackColor)
                     If brush IsNot Nothing Then
-                        bgLayer.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(0, 0, Me.Width, Me.Height)), brush)
+                        bgLayer.FillRectangle(D2DGlobals.ToD2DRect(New RectangleF(0, 0, Me.Width, Me.Height)), brush)
                     End If
                 End If
 
@@ -482,16 +482,16 @@ Public Class ModernTabControl
         Dim stripRect = 获取标签栏矩形()
 
         If Not contentRect.IsEmpty AndAlso 内容区域背景颜色.A = 255 Then
-            rt.FillRectangle(D2DHelper.ToD2DRect(contentRect), _当前合成器.BrushCache.Get(rt, 内容区域背景颜色))
+            rt.FillRectangle(D2DGlobals.ToD2DRect(contentRect), _当前合成器.BrushCache.Get(rt, 内容区域背景颜色))
         End If
         If 标签栏背景颜色.A > 0 Then
-            rt.FillRectangle(D2DHelper.ToD2DRect(stripRect), _当前合成器.BrushCache.Get(rt, 标签栏背景颜色))
+            rt.FillRectangle(D2DGlobals.ToD2DRect(stripRect), _当前合成器.BrushCache.Get(rt, 标签栏背景颜色))
         End If
 
         绘制标签栏背景图片_D2D(rt, stripRect)
 
         If 标签栏遮罩颜色.A > 0 Then
-            rt.FillRectangle(D2DHelper.ToD2DRect(stripRect), _当前合成器.BrushCache.Get(rt, 标签栏遮罩颜色))
+            rt.FillRectangle(D2DGlobals.ToD2DRect(stripRect), _当前合成器.BrushCache.Get(rt, 标签栏遮罩颜色))
         End If
 
         rt.PushAxisAlignedClip(New Vortice.RawRectF(stripRect.Left, stripRect.Top, stripRect.Right, stripRect.Bottom), AntialiasMode.PerPrimitive)
@@ -557,7 +557,7 @@ Public Class ModernTabControl
         Dim bounds = 获取标签页项矩形(index)
         If bounds.Width <= 0 OrElse bounds.Height <= 0 Then Return
         Dim lineX As Single = bounds.X + (bounds.Width - 1) / 2.0F
-        rt.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(lineX, bounds.Y, 1, bounds.Height)), _当前合成器.BrushCache.Get(rt, 分割线颜色值))
+        rt.FillRectangle(D2DGlobals.ToD2DRect(New RectangleF(lineX, bounds.Y, 1, bounds.Height)), _当前合成器.BrushCache.Get(rt, 分割线颜色值))
     End Sub
 
     Private Sub 绘制标签页项图形_D2D(rt As ID2D1RenderTarget, index As Integer)
@@ -617,7 +617,7 @@ Public Class ModernTabControl
                 rt.FillGeometry(geo, _当前合成器.BrushCache.Get(rt, color))
             End Using
         Else
-            rt.FillRectangle(D2DHelper.ToD2DRect(rect), _当前合成器.BrushCache.Get(rt, color))
+            rt.FillRectangle(D2DGlobals.ToD2DRect(rect), _当前合成器.BrushCache.Get(rt, color))
         End If
     End Sub
 
@@ -636,7 +636,7 @@ Public Class ModernTabControl
         Dim iconSize As Single = 图标尺寸 * s
         Dim pad As Single = 标签页文本内边距 * s
         Dim iconRect As New RectangleF(bounds.X + pad, bounds.Y + (bounds.Height - iconSize) / 2.0F, iconSize, iconSize)
-        rt.DrawBitmap(bmp, D2DHelper.ToD2DRect(iconRect), 1.0F, BitmapInterpolationMode.Linear,
+        rt.DrawBitmap(bmp, D2DGlobals.ToD2DRect(iconRect), 1.0F, BitmapInterpolationMode.Linear,
             New Vortice.Mathematics.Rect(0, 0, img.Width, img.Height))
     End Sub
 
@@ -726,7 +726,7 @@ Public Class ModernTabControl
         Dim style As Vortice.DirectWrite.FontStyle = If(font.Italic, Vortice.DirectWrite.FontStyle.Italic, Vortice.DirectWrite.FontStyle.Normal)
         Dim sizePx As Single = font.SizeInPoints * (96.0F / 72.0F) * DpiScale()
         Dim fmt = _当前合成器.TextFormatCache.Get(font.FontFamily.Name, weight, style, sizePx, TextAlignment.Center, ParagraphAlignment.Center, True)
-        rt.DrawText(text, fmt, D2DHelper.ToD2DRect(rect), _当前合成器.BrushCache.Get(rt, color), DrawTextOptions.Clip)
+        rt.DrawText(text, fmt, D2DGlobals.ToD2DRect(rect), _当前合成器.BrushCache.Get(rt, color), DrawTextOptions.Clip)
     End Sub
 
 #End Region

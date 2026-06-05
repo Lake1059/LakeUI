@@ -384,6 +384,15 @@ Public Class UltraDetailListView
 
 #End Region
 
+#Region "构造"
+
+    Public Sub New()
+        InitializeComponent()
+        _hoverAnim.DirtyProvider = AddressOf 悬停动画脏区
+    End Sub
+
+#End Region
+
 #Region "显示行"
 
     Private Enum DisplayRowType
@@ -663,7 +672,7 @@ Public Class UltraDetailListView
         Dim measureText As String = If(String.IsNullOrEmpty(text), "Ag", text)
         Dim measureFont As Font = If(font, Me.Font)
         Dim safeSize As New Size(Math.Max(1, proposedSize.Width), Math.Max(1, proposedSize.Height))
-        Dim cache As D2DHelper.TextFormatCache = Nothing
+        Dim cache As D2DGlobals.TextFormatCache = Nothing
         If _当前合成器 IsNot Nothing Then cache = _当前合成器.TextFormatCache
         Return D2DTextRenderer.MeasureText(measureText, measureFont, safeSize, flags, DpiScale(), cache)
     End Function
@@ -715,12 +724,12 @@ Public Class UltraDetailListView
 
     Private Sub 填充矩形_D2D(rt As Vortice.Direct2D1.ID2D1RenderTarget, rect As RectangleF, color As Color)
         If color.A = 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
-        rt.FillRectangle(D2DHelper.ToD2DRect(rect), 获取D2D画刷(rt, color))
+        rt.FillRectangle(D2DGlobals.ToD2DRect(rect), 获取D2D画刷(rt, color))
     End Sub
 
     Private Sub 描边矩形_D2D(rt As Vortice.Direct2D1.ID2D1RenderTarget, rect As RectangleF, color As Color, strokeWidth As Single)
         If color.A = 0 OrElse strokeWidth <= 0 Then Return
-        rt.DrawRectangle(D2DHelper.ToD2DRect(rect), 获取D2D画刷(rt, color), strokeWidth)
+        rt.DrawRectangle(D2DGlobals.ToD2DRect(rect), 获取D2D画刷(rt, color), strokeWidth)
     End Sub
 
     Private Sub 绘制水平线_D2D(rt As Vortice.Direct2D1.ID2D1RenderTarget, x1 As Single, x2 As Single, y As Single, color As Color, strokeWidth As Single)
@@ -735,7 +744,7 @@ Public Class UltraDetailListView
         rt.DrawLine(New System.Numerics.Vector2(x, y1), New System.Numerics.Vector2(x, y2), br, strokeWidth)
     End Sub
 
-    Private Sub 绘制背景与边框_D2D(rt As Vortice.Direct2D1.ID2D1RenderTarget, brushCache As D2DHelper.SolidColorBrushCache)
+    Private Sub 绘制背景与边框_D2D(rt As Vortice.Direct2D1.ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache)
         Dim s As Single = DpiScale()
         Dim boundsRect As New RectangleF(0, 0, Me.Width - 1, Me.Height - 1)
         If 边框宽度 > 0 Then
@@ -811,7 +820,7 @@ Public Class UltraDetailListView
         If path Is Nothing OrElse path.PointCount = 0 Then Return Nothing
         Dim pts() As PointF = path.PathPoints
         Dim types() As Byte = path.PathTypes
-        Dim geo = D2DHelper.GetD2DFactory().CreatePathGeometry()
+        Dim geo = D2DGlobals.GetD2DFactory().CreatePathGeometry()
         Dim sink = geo.Open()
         Try
             Dim figureOpen As Boolean = False
@@ -871,13 +880,13 @@ Public Class UltraDetailListView
         Dim startPt As New System.Numerics.Vector2(rect.X, If(isTop, rect.Y, rect.Bottom - 1))
         Dim endPt As New System.Numerics.Vector2(rect.X, If(isTop, rect.Bottom - 1, rect.Y))
         Dim stops() As Vortice.Direct2D1.GradientStop = {
-            New Vortice.Direct2D1.GradientStop With {.Position = 0F, .Color = D2DHelper.ToColor4(c1)},
-            New Vortice.Direct2D1.GradientStop With {.Position = 1.0F, .Color = D2DHelper.ToColor4(c2)}}
+            New Vortice.Direct2D1.GradientStop With {.Position = 0F, .Color = D2DGlobals.ToColor4(c1)},
+            New Vortice.Direct2D1.GradientStop With {.Position = 1.0F, .Color = D2DGlobals.ToColor4(c2)}}
         Dim gsc = rt.CreateGradientStopCollection(stops, Vortice.Direct2D1.Gamma.StandardRgb, Vortice.Direct2D1.ExtendMode.Clamp)
         Try
             Dim props As New Vortice.Direct2D1.LinearGradientBrushProperties With {.StartPoint = startPt, .EndPoint = endPt}
             Using br = rt.CreateLinearGradientBrush(props, gsc)
-                rt.FillRectangle(D2DHelper.ToD2DRect(rect), br)
+                rt.FillRectangle(D2DGlobals.ToD2DRect(rect), br)
             End Using
         Finally
             gsc.Dispose()
@@ -977,34 +986,16 @@ Public Class UltraDetailListView
         End If
     End Sub
 
-    Protected Overrides Sub OnHandleDestroyed(e As EventArgs)
-        释放D2D资源()
-        MyBase.OnHandleDestroyed(e)
-    End Sub
-
-    Private Sub 释放D2D资源()
-        For Each c In _iconBitmaps.Values
-            Try : c.Dispose() : Catch : End Try
-        Next
-        _iconBitmaps.Clear()
-    End Sub
-
     Private Sub 释放GDI缓存()
         _moreSymbolFont?.Dispose()
         _moreSymbolFont = Nothing
         _moreSymbolFontKey = 0F
-        释放D2D资源()
     End Sub
 
     Private Function 获取D2D位图(rt As Vortice.Direct2D1.ID2D1RenderTarget, src As Image) As Vortice.Direct2D1.ID2D1Bitmap
         If src Is Nothing OrElse rt Is Nothing Then Return Nothing
-        If _当前合成器 IsNot Nothing Then Return _当前合成器.GetBitmapCache(src).GetBitmap(rt, src)
-        Dim cache As D2DHelper.D2DBitmapCache = Nothing
-        If Not _iconBitmaps.TryGetValue(src, cache) Then
-            cache = New D2DHelper.D2DBitmapCache()
-            _iconBitmaps(src) = cache
-        End If
-        Return cache.GetBitmap(rt, src)
+        Dim cache = _当前合成器?.GetBitmapCache(src)
+        Return cache?.GetBitmap(rt, src)
     End Function
 
     ''' <summary>确保 _columnXCache 是最新的。所有需要列 X 的路径调用此方法后用 _columnXCache 数组与 _columnXCount。
@@ -1670,16 +1661,15 @@ Public Class UltraDetailListView
     Private _moreSymbolFont As Font = Nothing
     Private _moreSymbolFontKey As Single = 0F
 
-    ' --- D2D 资源 ---
+    ' --- V2 绘制上下文 ---
     Private _当前合成器 As WindowCompositor
-    Private ReadOnly _iconBitmaps As New Dictionary(Of Image, D2DHelper.D2DBitmapCache)
 
     Private _columnResizeIndex As Integer = -1
     Private _columnResizeStartX As Integer = 0
     Private _columnResizeStartWidth As Integer = 0
     Private Const ColumnResizeHitZone As Integer = 4
 
-    Private ReadOnly _hoverAnim As New AnimationHelper(Me) With {.Duration = 150}
+    Private ReadOnly _hoverAnim As New AnimationHelperV2(Me) With {.Duration = 150}
     Private _hoverAnimFromY As Single
     Private _hoverAnimFromH As Single
     Private _hoverAnimToY As Single
@@ -2019,7 +2009,7 @@ Public Class UltraDetailListView
                 If _backgroundSource IsNot Nothing Then
                     BackgroundPenetrationV2.PaintBackground(Me, scope, _backgroundSource)
                 ElseIf 背景颜色.A = 255 Then
-                    scope.BackgroundLayer.Clear(D2DHelper.ToColor4(背景颜色))
+                    scope.BackgroundLayer.Clear(D2DGlobals.ToColor4(背景颜色))
                 End If
                 Dim gRT = scope.GraphicsLayer
                 绘制背景与边框_D2D(gRT, scope.Compositor.BrushCache)
@@ -2036,7 +2026,7 @@ Public Class UltraDetailListView
                     Dim clipPushed As Boolean = False
                     Try
                         If clipGeo IsNot Nothing Then
-                            D2DHelper.PushGeometryClip(gRT, clipGeo, clipRect)
+                            D2DGlobals.PushGeometryClip(gRT, clipGeo, clipRect)
                             clipPushed = True
                         Else
                             gRT.PushAxisAlignedClip(New Vortice.RawRectF(clipRect.Left, clipRect.Top, clipRect.Right, clipRect.Bottom), Vortice.Direct2D1.AntialiasMode.PerPrimitive)
@@ -2073,7 +2063,7 @@ Public Class UltraDetailListView
                     Dim textClipPushed As Boolean = False
                     Try
                         If textClipGeo IsNot Nothing Then
-                            D2DHelper.PushGeometryClip(textRT, textClipGeo, textClipRect)
+                            D2DGlobals.PushGeometryClip(textRT, textClipGeo, textClipRect)
                             textClipPushed = True
                         Else
                             textRT.PushAxisAlignedClip(New Vortice.RawRectF(textClipRect.Left, textClipRect.Top, textClipRect.Right, textClipRect.Bottom), Vortice.Direct2D1.AntialiasMode.PerPrimitive)
@@ -3465,6 +3455,34 @@ Public Class UltraDetailListView
         _hoverAnim.SetImmediate(0)
         _hoverAnim.AnimateTo(1)
     End Sub
+
+    Private Sub 悬停动画脏区(helper As AnimationHelperV2, owner As Control, sink As AnimationHelperV2.InvalidateRegionSink)
+        If Not _hoverAnimActive Then
+            sink.SuppressInvalidate()
+            Return
+        End If
+
+        Dim dirty = 获取悬停动画脏区()
+        If dirty.Width > 0 AndAlso dirty.Height > 0 Then
+            sink.Add(dirty)
+        Else
+            sink.InvalidateAll()
+        End If
+    End Sub
+
+    Private Function 获取悬停动画脏区() As Rectangle
+        Dim contentRect = 获取内容区域()
+        If contentRect.Width <= 0 OrElse contentRect.Height <= 0 Then Return ClientRectangle
+
+        Dim itemFocusW As Integer = 获取项焦点宽度(contentRect)
+        If itemFocusW <= 0 Then Return Rectangle.Empty
+
+        Dim top As Integer = CInt(Math.Floor(Math.Min(_hoverAnimFromY, _hoverAnimToY)))
+        Dim bottom As Integer = CInt(Math.Ceiling(Math.Max(_hoverAnimFromY + _hoverAnimFromH, _hoverAnimToY + _hoverAnimToH)))
+        Dim rect As New Rectangle(contentRect.X, top, itemFocusW, Math.Max(0, bottom - top))
+        rect.Inflate(2, 2)
+        Return Rectangle.Intersect(ClientRectangle, rect)
+    End Function
 
 #End Region
 

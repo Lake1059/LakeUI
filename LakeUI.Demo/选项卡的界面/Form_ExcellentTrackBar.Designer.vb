@@ -90,15 +90,15 @@ Partial Class Form_ExcellentTrackBar
         ExcellentTrackBar3.AnimationFPS = 0
         ExcellentTrackBar3.Dock = DockStyle.Left
         ExcellentTrackBar3.LabelLineLength = 15
-        TrackLabel2.Position = 1R
+        TrackLabel2.Position = 1.0R
         TrackLabel2.Side = ExcellentTrackBar.LabelSideEnum.TopOrLeft
-        TrackLabel3.Position = 2R
-        TrackLabel4.Position = 3R
+        TrackLabel3.Position = 2.0R
+        TrackLabel4.Position = 3.0R
         TrackLabel4.Side = ExcellentTrackBar.LabelSideEnum.TopOrLeft
-        TrackLabel5.Position = 4R
-        TrackLabel6.Position = 5R
+        TrackLabel5.Position = 4.0R
+        TrackLabel6.Position = 5.0R
         TrackLabel6.Side = ExcellentTrackBar.LabelSideEnum.TopOrLeft
-        TrackLabel7.Position = 6R
+        TrackLabel7.Position = 6.0R
         ExcellentTrackBar3.Labels.Add(TrackLabel1)
         ExcellentTrackBar3.Labels.Add(TrackLabel2)
         ExcellentTrackBar3.Labels.Add(TrackLabel3)
@@ -108,7 +108,7 @@ Partial Class Form_ExcellentTrackBar
         ExcellentTrackBar3.Labels.Add(TrackLabel7)
         ExcellentTrackBar3.Location = New Point(0, 0)
         ExcellentTrackBar3.Margin = New Padding(2, 2, 2, 2)
-        ExcellentTrackBar3.Maximum = 6R
+        ExcellentTrackBar3.Maximum = 6.0R
         ExcellentTrackBar3.Name = "ExcellentTrackBar3"
         ExcellentTrackBar3.Size = New Size(416, 100)
         ExcellentTrackBar3.StringItems.Add("veryslow")
@@ -118,7 +118,6 @@ Partial Class Form_ExcellentTrackBar
         ExcellentTrackBar3.StringItems.Add("fast")
         ExcellentTrackBar3.StringItems.Add("faster")
         ExcellentTrackBar3.StringItems.Add("veryfast")
-        ExcellentTrackBar3.SuperSamplingScale = Class1.SuperSamplingScaleEnum.x2
         ExcellentTrackBar3.TabIndex = 24
         ExcellentTrackBar3.ThumbBorderWidth = 0
         ExcellentTrackBar3.ThumbColor = Color.IndianRed

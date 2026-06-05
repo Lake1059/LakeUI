@@ -7,61 +7,22 @@ Imports Vortice.DXGI
 ''' <summary>
 ''' Direct2D / DirectWrite 全局共享层（V2 体系的"共享基座"）。
 '''
-''' V1 时代的 <c>D2DHelper</c> 模块原本同时承担：①全局工厂与质量策略 / 类型转换 / 资源缓存
+''' 旧兼容模块原本同时承担：①全局工厂与质量策略 / 类型转换 / 资源缓存
 ''' （进程级，跨控件复用），②控件级 <c>PaintScope</c> 渲染管线（含 SSAA BitmapRT 缓存）。
 ''' V2 的窗口级合成器（<see cref="WindowCompositor"/> / <see cref="PaintScopeV2"/>）已完全取代后者，
 ''' 因此本文件只保留①里的"全局基座"，控件级 PaintScope 已从代码库移除。
 '''
-''' 这里保留模块名 <c>D2DHelper</c>，让所有 <c>D2DHelper.ToColor4 / ToD2DRect / ApplyGlobalQuality / ...</c>
-''' 的调用沿用原路径无需大改。
+''' 全局设置项集中放在 <see cref="GlobalOptions"/>；本模块只负责执行 D2D / DWrite 资源创建、
+''' 类型转换、上传缓存与把当前全局设置应用到 RenderTarget。
 ''' </summary>
-Public Module D2DHelper
+Public Module D2DGlobals
 
 #Region "全局质量策略"
 
-    ''' <summary>D2D 文本渲染模式。</summary>
-    Public Enum TextQualityMode
-        ''' <summary>ClearType（默认）：兼容 MacType / 第三方钩子，保留子像素信息。</summary>
-        ClearType
-        ''' <summary>灰度抗锯齿：稳定、无彩边，但锐度略低于 ClearType。</summary>
-        Grayscale
-        ''' <summary>不抗锯齿：仅用于像素艺术 / 极小字号场景。</summary>
-        Aliased
-        ''' <summary>
-        ''' Outline（仿 MacType "几何渲染"档）：使用 DirectWrite 的 RenderingMode.Outline，
-        ''' 把字形当作纯矢量几何路径直接交给 D2D 抗锯齿管线绘制，
-        ''' <b>完全跳过字体的 TrueType hinting 字节码与 GASP 表</b>。
-        ''' 优点：彻底绕过"小字号禁用抗锯齿/强制贴格"策略，所有字号统一最高质量；
-        ''' 副作用：Outline 模式不支持子像素 ClearType，会自动落回灰度 AA；极小字号（&lt; 10pt）会显得稍"虚"。
-        ''' 启用本模式后 MacType 等基于 GDI 的钩子对 D2D 路径无效（D2D 本来就不经过 GDI）。
-        ''' </summary>
-        Outline
-    End Enum
-
-    ''' <summary>全局图形抗锯齿模式（不影响文字）。</summary>
-    Public Property GlobalAntialiasMode As AntialiasMode = AntialiasMode.PerPrimitive
-
-    ''' <summary>全局文本质量。默认 ClearType 以兼容第三方文字渲染钩子。</summary>
-    Public Property GlobalTextQuality As TextQualityMode = TextQualityMode.ClearType
-
     ''' <summary>
-    ''' Outline 模式的可调参数。所有字段都可在运行时改写；改写后调用
-    ''' <see cref="InvalidateOutlineRenderingParams"/> 让下一帧生效。
+    ''' 丢弃缓存的 Outline RenderingParams。请优先通过
+    ''' <see cref="GlobalOptions.InvalidateOutlineRenderingParams"/> 调用。
     ''' </summary>
-    Public Class OutlineTextOptions
-        Public Property Gamma As Single = 1.4F
-        Public Property EnhancedContrast As Single = 0.5F
-        Public Property GrayscaleEnhancedContrast As Single = 1.0F
-        Public Property ClearTypeLevel As Single = 0.0F
-        Public Property PixelGeometry As Vortice.DirectWrite.PixelGeometry = Vortice.DirectWrite.PixelGeometry.Rgb
-        Public Property RenderingMode As Vortice.DirectWrite.RenderingMode = Vortice.DirectWrite.RenderingMode.Outline
-        Public Property GridFitMode As Vortice.DirectWrite.GridFitMode = Vortice.DirectWrite.GridFitMode.Disabled
-    End Class
-
-    ''' <summary>Outline 模式的可调参数。</summary>
-    Public ReadOnly Property OutlineText As New OutlineTextOptions()
-
-    ''' <summary>修改 <see cref="OutlineText"/> 后调用，丢弃缓存的 RenderingParams 让下一帧重建。</summary>
     Public Sub InvalidateOutlineRenderingParams()
         SyncLock _factoryLock
             If _outlineRenderingParams IsNot Nothing Then
@@ -78,15 +39,15 @@ Public Module D2DHelper
     ''' </summary>
     Public Sub ApplyGlobalQuality(rt As ID2D1RenderTarget)
         If rt Is Nothing Then Return
-        rt.AntialiasMode = GlobalAntialiasMode
-        Select Case GlobalTextQuality
-            Case TextQualityMode.Grayscale
+        rt.AntialiasMode = GlobalOptions.GlobalAntialiasMode
+        Select Case GlobalOptions.GlobalTextQuality
+            Case GlobalOptions.TextQualityMode.Grayscale
                 rt.TextAntialiasMode = Vortice.Direct2D1.TextAntialiasMode.Grayscale
                 rt.TextRenderingParams = Nothing
-            Case TextQualityMode.Aliased
+            Case GlobalOptions.TextQualityMode.Aliased
                 rt.TextAntialiasMode = Vortice.Direct2D1.TextAntialiasMode.Aliased
                 rt.TextRenderingParams = Nothing
-            Case TextQualityMode.Outline
+            Case GlobalOptions.TextQualityMode.Outline
                 ' Outline 渲染模式产生的是几何 alpha 覆盖，不携带子像素信息，
                 ' 必须搭配 Grayscale TextAntialiasMode；用 Cleartype 反而会触发 D2D 内部回退路径。
                 rt.TextAntialiasMode = Vortice.Direct2D1.TextAntialiasMode.Grayscale
@@ -104,7 +65,7 @@ Public Module D2DHelper
             SyncLock _factoryLock
                 If _outlineRenderingParams Is Nothing Then
                     Dim dw = GetDWriteFactory()
-                    Dim opt = OutlineText
+                    Dim opt = GlobalOptions.OutlineText
 
                     Dim dw2 As IDWriteFactory2 = TryCast(dw, IDWriteFactory2)
                     If dw2 IsNot Nothing Then

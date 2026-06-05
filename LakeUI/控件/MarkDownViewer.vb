@@ -571,7 +571,7 @@ Public Class MarkDownViewer
 
     ' V2 渲染资源（共享 DC RT / brush / textformat / SSAA 来自 WindowCompositor，仅图片缓存按 URL 本地持有）
     Private _当前合成器 As WindowCompositor
-    Private ReadOnly _d2dImageCaches As New Dictionary(Of String, D2DHelper.D2DBitmapCache)
+    Private ReadOnly _d2dImageCaches As New Dictionary(Of String, D2DGlobals.D2DBitmapCache)
     Private _backgroundSource As Control = Nothing
 
     <Category("LakeUI"),
@@ -1721,7 +1721,7 @@ Public Class MarkDownViewer
             Case BlockKind.HorizontalRule
                 Dim ruleThick As Integer = Math.Max(1, CInt(分隔线粗细 * s))
                 Dim ruleY As Integer = drawY + (vl.Height - ruleThick) \ 2
-                rt.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(textLeft + CInt(4 * s), ruleY, clipW - CInt(8 * s), ruleThick)), _当前合成器.BrushCache.Get(rt, 分隔线颜色))
+                rt.FillRectangle(D2DGlobals.ToD2DRect(New RectangleF(textLeft + CInt(4 * s), ruleY, clipW - CInt(8 * s), ruleThick)), _当前合成器.BrushCache.Get(rt, 分隔线颜色))
 
             Case BlockKind.BlockQuote
                 Dim barH As Integer = vl.Height
@@ -1733,7 +1733,7 @@ Public Class MarkDownViewer
                     End If
                 End If
                 Dim barColor As Color = If(block.AlertKind <> AlertKind.None, GetAlertColor(block.AlertKind), 引用条颜色)
-                rt.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(textLeft + CInt(4 * s), drawY, CInt(3 * s), barH)), _当前合成器.BrushCache.Get(rt, barColor))
+                rt.FillRectangle(D2DGlobals.ToD2DRect(New RectangleF(textLeft + CInt(4 * s), drawY, CInt(3 * s), barH)), _当前合成器.BrushCache.Get(rt, barColor))
 
             Case BlockKind.CodeBlock
                 Dim padT As Integer = CInt(代码块内边距.Top * s)
@@ -1742,11 +1742,11 @@ Public Class MarkDownViewer
                 Dim isLastCodeLine = (vli = _visualLines.Count - 1 OrElse _visualLines(vli + 1).BlockIndex <> vl.BlockIndex)
                 Dim bgY = drawY - If(isFirstCodeLine, padT, 0)
                 Dim bgH = vl.Height + If(isFirstCodeLine, padT, 0) + If(isLastCodeLine, padB, 0)
-                rt.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(textLeft, bgY, clipW, bgH)), _当前合成器.BrushCache.Get(rt, 代码背景颜色))
+                rt.FillRectangle(D2DGlobals.ToD2DRect(New RectangleF(textLeft, bgY, clipW, bgH)), _当前合成器.BrushCache.Get(rt, 代码背景颜色))
 
             Case BlockKind.UnorderedListItem
                 Dim bulletR As Integer = CInt(3 * s)
-                Using geo = D2DHelper.GetD2DFactory().CreateEllipseGeometry(New Ellipse(New System.Numerics.Vector2(textLeft + CInt(6 * s) + bulletR, drawY + vl.Height \ 2 - CInt(2 * s) + bulletR), bulletR, bulletR))
+                Using geo = D2DGlobals.GetD2DFactory().CreateEllipseGeometry(New Ellipse(New System.Numerics.Vector2(textLeft + CInt(6 * s) + bulletR, drawY + vl.Height \ 2 - CInt(2 * s) + bulletR), bulletR, bulletR))
                     rt.FillGeometry(geo, _当前合成器.BrushCache.Get(rt, 文本颜色))
                 End Using
 
@@ -1765,7 +1765,7 @@ Public Class MarkDownViewer
                         Dim sepThick As Integer = Math.Max(1, CInt(标题分隔线粗细 * s))
                         Dim sepGap As Integer = CInt(标题分隔线间距 * s)
                         Dim sepY As Integer = drawY + vl.Height + sepGap
-                        rt.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(textLeft, sepY, clipW, sepThick)), _当前合成器.BrushCache.Get(rt, 标题分隔线颜色))
+                        rt.FillRectangle(D2DGlobals.ToD2DRect(New RectangleF(textLeft, sepY, clipW, sepThick)), _当前合成器.BrushCache.Get(rt, 标题分隔线颜色))
                     End If
                 End If
         End Select
@@ -1794,7 +1794,7 @@ Public Class MarkDownViewer
         Dim rowTop As Integer = drawY - topPad
 
         If vl.TableRowIndex = 0 AndAlso block.HasHeader Then
-            rt.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(textLeft, rowTop, totalW, logicalRowH)), _当前合成器.BrushCache.Get(rt, 表头背景颜色))
+            rt.FillRectangle(D2DGlobals.ToD2DRect(New RectangleF(textLeft, rowTop, totalW, logicalRowH)), _当前合成器.BrushCache.Get(rt, 表头背景颜色))
         End If
 
         Dim lineBrush = _当前合成器.BrushCache.Get(rt, 表格边框颜色)
@@ -1832,12 +1832,12 @@ Public Class MarkDownViewer
                     Dim cache = GetD2DImageCache(frag.Url)
                     Dim bmp = cache?.GetBitmap(rt, frag.ImageObj)
                     If bmp IsNot Nothing Then
-                        rt.DrawBitmap(bmp, D2DHelper.ToD2DRect(imgRect), 1.0F, BitmapInterpolationMode.Linear,
+                        rt.DrawBitmap(bmp, D2DGlobals.ToD2DRect(imgRect), 1.0F, BitmapInterpolationMode.Linear,
                             New Vortice.Mathematics.Rect(0, 0, bmp.Size.Width, bmp.Size.Height))
                     End If
                 Else
                     Dim placeholderColor = Color.FromArgb(80, 80, 80)
-                    rt.DrawRectangle(D2DHelper.ToD2DRect(imgRect), _当前合成器.BrushCache.Get(rt, placeholderColor), Math.Max(1.0F, s))
+                    rt.DrawRectangle(D2DGlobals.ToD2DRect(imgRect), _当前合成器.BrushCache.Get(rt, placeholderColor), Math.Max(1.0F, s))
                     If Not String.IsNullOrEmpty(frag.Text) Then
                         DrawText_D2D(rt, frag.Text, frag.UseFont, Color.FromArgb(120, 120, 120), imgRect, D2DTextAlign.Center, True)
                     End If
@@ -1909,7 +1909,7 @@ Public Class MarkDownViewer
         Dim x1 As Integer = fragX + If(safeS > 0, TextRenderHelper.MeasureTextWidth(frag.Text.Substring(0, safeS), frag.UseFont, lineH), 0)
         Dim x2 As Integer = fragX + TextRenderHelper.MeasureTextWidth(frag.Text.Substring(0, safeE), frag.UseFont, lineH)
         If x2 > x1 Then
-            rt.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(x1, drawY, x2 - x1, lineH)), _当前合成器.BrushCache.Get(rt, 选中背景颜色))
+            rt.FillRectangle(D2DGlobals.ToD2DRect(New RectangleF(x1, drawY, x2 - x1, lineH)), _当前合成器.BrushCache.Get(rt, 选中背景颜色))
         End If
     End Sub
 
@@ -1927,7 +1927,7 @@ Public Class MarkDownViewer
         Dim paraAlign As Vortice.DirectWrite.ParagraphAlignment = If(verticalCenter, Vortice.DirectWrite.ParagraphAlignment.Center, Vortice.DirectWrite.ParagraphAlignment.Near)
         Dim sizePx As Single = font.SizeInPoints * DeviceDpi / 72.0F
         Dim fmt = _当前合成器.TextFormatCache.Get(font.FontFamily.Name, weight, style, sizePx, textAlign, paraAlign, True)
-        rt.DrawText(text, fmt, D2DHelper.ToD2DRect(rect), _当前合成器.BrushCache.Get(rt, color))
+        rt.DrawText(text, fmt, D2DGlobals.ToD2DRect(rect), _当前合成器.BrushCache.Get(rt, color))
     End Sub
 
 
@@ -2476,11 +2476,11 @@ Public Class MarkDownViewer
         _d2dImageCaches.Clear()
     End Sub
 
-    Private Function GetD2DImageCache(url As String) As D2DHelper.D2DBitmapCache
+    Private Function GetD2DImageCache(url As String) As D2DGlobals.D2DBitmapCache
         If String.IsNullOrEmpty(url) Then Return Nothing
-        Dim cache As D2DHelper.D2DBitmapCache = Nothing
+        Dim cache As D2DGlobals.D2DBitmapCache = Nothing
         If Not _d2dImageCaches.TryGetValue(url, cache) Then
-            cache = New D2DHelper.D2DBitmapCache()
+            cache = New D2DGlobals.D2DBitmapCache()
             _d2dImageCaches(url) = cache
         End If
         Return cache

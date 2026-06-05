@@ -1746,7 +1746,7 @@ Public Class ThisIsYourWindow
                     Dim capColor As Color = If(active, _标题栏背景颜色, _标题栏失焦背景颜色)
                     If capColor.A > 0 Then
                         Dim b = compositor.BrushCache.[Get](gRT, capColor)
-                        gRT.FillRectangle(D2DHelper.ToD2DRect(captionRect), b)
+                        gRT.FillRectangle(D2DGlobals.ToD2DRect(captionRect), b)
                     End If
                 End If
 
@@ -1758,7 +1758,7 @@ Public Class ThisIsYourWindow
                 ' 2.3 标题栏遮罩
                 If _标题栏遮罩颜色.A > 0 AndAlso captionRect.Width > 0 AndAlso captionRect.Height > 0 Then
                     Dim b = compositor.BrushCache.[Get](gRT, _标题栏遮罩颜色)
-                    gRT.FillRectangle(D2DHelper.ToD2DRect(captionRect), b)
+                    gRT.FillRectangle(D2DGlobals.ToD2DRect(captionRect), b)
                 End If
 
                 ' 2.4 图标
@@ -1781,12 +1781,12 @@ Public Class ThisIsYourWindow
                         Dim bdr As Integer = Math.Min(_边框厚度, Math.Max(0, Math.Min(w, h)))
                         Dim b = compositor.BrushCache.[Get](gRT, bdrColor)
                         If bdr > 0 Then
-                            gRT.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(0, 0, w, Math.Min(bdr, h))), b)
-                            If h > bdr Then gRT.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(0, h - bdr, w, bdr)), b)
+                            gRT.FillRectangle(D2DGlobals.ToD2DRect(New RectangleF(0, 0, w, Math.Min(bdr, h))), b)
+                            If h > bdr Then gRT.FillRectangle(D2DGlobals.ToD2DRect(New RectangleF(0, h - bdr, w, bdr)), b)
                             Dim sideH As Integer = h - bdr * 2
                             If sideH > 0 Then
-                                gRT.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(0, bdr, Math.Min(bdr, w), sideH)), b)
-                                If w > bdr Then gRT.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(w - bdr, bdr, bdr, sideH)), b)
+                                gRT.FillRectangle(D2DGlobals.ToD2DRect(New RectangleF(0, bdr, Math.Min(bdr, w), sideH)), b)
+                                If w > bdr Then gRT.FillRectangle(D2DGlobals.ToD2DRect(New RectangleF(w - bdr, bdr, bdr, sideH)), b)
                             End If
                         End If
                     End If
@@ -1847,8 +1847,8 @@ Public Class ThisIsYourWindow
         Dim dy As Single = captionRect.Y + (ch - drawH) / 2.0F
 
         ' 用 captionRect 做矩形几何裁剪，避免图像溢出标题栏。
-        Using clipGeo = D2DHelper.GetD2DFactory().CreateRectangleGeometry(New RectangleF(captionRect.X, captionRect.Y, cw, ch))
-            D2DHelper.PushGeometryClip(rt, clipGeo, New RectangleF(captionRect.X, captionRect.Y, cw, ch))
+        Using clipGeo = D2DGlobals.GetD2DFactory().CreateRectangleGeometry(New RectangleF(captionRect.X, captionRect.Y, cw, ch))
+            D2DGlobals.PushGeometryClip(rt, clipGeo, New RectangleF(captionRect.X, captionRect.Y, cw, ch))
             Try
                 rt.DrawBitmap(bmp,
                               New Vortice.Mathematics.Rect(dx, dy, drawW, drawH),
@@ -1885,7 +1885,7 @@ Public Class ThisIsYourWindow
                       New Vortice.Mathematics.Rect(r.X, r.Y, r.Width, r.Height),
                       1.0F,
                       BitmapInterpolationMode.Linear,
-                       D2DHelper.ToD2DRect(srcRect))
+                       D2DGlobals.ToD2DRect(srcRect))
     End Sub
 
     Private Sub 绘制控制按钮_D2D(rt As ID2D1RenderTarget, compositor As WindowCompositor, s As PerFormState, rect As Rectangle, htValue As Integer)
@@ -1926,7 +1926,7 @@ Public Class ThisIsYourWindow
                     rt.FillGeometry(geo, bgBrush)
                 End Using
             Else
-                rt.FillRectangle(D2DHelper.ToD2DRect(vis), bgBrush)
+                rt.FillRectangle(D2DGlobals.ToD2DRect(vis), bgBrush)
             End If
         End If
 
@@ -2004,7 +2004,7 @@ Public Class ThisIsYourWindow
 
         Dim fmt = compositor.TextFormatCache.[Get](font.FontFamily.Name, weight, style, sizePx, align, ParagraphAlignment.Center, True)
         Dim brush = compositor.BrushCache.[Get](rt, fgColor)
-        rt.DrawText(text, fmt, D2DHelper.ToD2DRect(textRect), brush,
+        rt.DrawText(text, fmt, D2DGlobals.ToD2DRect(textRect), brush,
                     DrawTextOptions.Clip, Vortice.DCommon.MeasuringMode.Natural)
     End Sub
 

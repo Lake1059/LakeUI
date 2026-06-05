@@ -803,7 +803,7 @@ Public Class ModernPanel
                 Dim bgLayer = scope.BackgroundLayer
                 Dim brush = scope.Compositor.BrushCache.[Get](bgLayer, MyBase.BackColor)
                 If brush IsNot Nothing Then
-                    bgLayer.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(0, 0, Me.Width, Me.Height)), brush)
+                    bgLayer.FillRectangle(D2DGlobals.ToD2DRect(New RectangleF(0, 0, Me.Width, Me.Height)), brush)
                 End If
             End If
 
@@ -894,10 +894,10 @@ Public Class ModernPanel
             drawW, drawH)
 
         Dim hasMask As Boolean = geo IsNot Nothing
-        If hasMask Then D2DHelper.PushGeometryClip(rt, geo, area)
+        If hasMask Then D2DGlobals.PushGeometryClip(rt, geo, area)
         Try
             Dim srcRect As New RectangleF(0, 0, srcW, srcH)
-            rt.DrawBitmap(bmp, D2DHelper.ToD2DRect(destRect), 1.0F, BitmapInterpolationMode.Linear, D2DHelper.ToD2DRect(srcRect))
+            rt.DrawBitmap(bmp, D2DGlobals.ToD2DRect(destRect), 1.0F, BitmapInterpolationMode.Linear, D2DGlobals.ToD2DRect(srcRect))
         Finally
             If hasMask Then rt.PopLayer()
         End Try

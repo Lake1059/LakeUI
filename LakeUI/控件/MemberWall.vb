@@ -750,10 +750,10 @@ Partial Public Class MemberWall
         Dim y As Single = 0.0F
         Dim rowH As Single = 0.0F
         Dim hasAny As Boolean = False
-        Dim dw = D2DHelper.GetDWriteFactory()
+        Dim dw = D2DGlobals.GetDWriteFactory()
         Dim sizePx As Single = Font.SizeInPoints * (96.0F / 72.0F) * s
 
-        Using fmt = D2DHelper.CreateTextFormat(Font, sizePx)
+        Using fmt = D2DGlobals.CreateTextFormat(Font, sizePx)
             fmt.WordWrapping = WordWrapping.NoWrap
             For i As Integer = 0 To _items.Count - 1
                 Dim it = _items(i)
@@ -839,7 +839,7 @@ Partial Public Class MemberWall
             ElseIf MyBase.BackColor.A > 0 AndAlso MyBase.BackColor.A < 255 Then
                 Dim brush = compositor.BrushCache.[Get](scope.BackgroundLayer, MyBase.BackColor)
                 If brush IsNot Nothing Then
-                    scope.BackgroundLayer.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(0, 0, Width, Height)), brush)
+                    scope.BackgroundLayer.FillRectangle(D2DGlobals.ToD2DRect(New RectangleF(0, 0, Width, Height)), brush)
                 End If
             End If
 
@@ -866,7 +866,7 @@ Partial Public Class MemberWall
         End Using
     End Sub
 
-    Private Sub DrawBackgroundAndFrame(rt As ID2D1RenderTarget, brushCache As D2DHelper.SolidColorBrushCache)
+    Private Sub DrawBackgroundAndFrame(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache)
         Dim s As Single = DpiScale()
         Dim rect As New RectangleF(0, 0, Width, Height)
         If _borderSize > 0 Then
@@ -901,7 +901,7 @@ Partial Public Class MemberWall
         End If
     End Sub
 
-    Private Sub DrawCards(rt As ID2D1RenderTarget, brushCache As D2DHelper.SolidColorBrushCache)
+    Private Sub DrawCards(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache)
         If _cardsViewportRect.Width <= 0 OrElse _cardsViewportRect.Height <= 0 Then Return
         rt.PushAxisAlignedClip(New Vortice.RawRectF(_cardsViewportRect.Left, _cardsViewportRect.Top, _cardsViewportRect.Right, _cardsViewportRect.Bottom),
                                AntialiasMode.PerPrimitive)
@@ -946,7 +946,7 @@ Partial Public Class MemberWall
     End Sub
 
     Private Sub DrawCardOverlay(rt As ID2D1RenderTarget, geo As ID2D1Geometry, rect As RectangleF, index As Integer,
-                                brushCache As D2DHelper.SolidColorBrushCache)
+                                brushCache As D2DGlobals.SolidColorBrushCache)
         Dim overlay As Color = Color.Empty
         If _pressedIndex = index Then
             overlay = _pressedOverlayColor
@@ -961,8 +961,8 @@ Partial Public Class MemberWall
         End If
     End Sub
 
-    Private Sub DrawCardTexts(rt As ID2D1RenderTarget, textFormatCache As D2DHelper.TextFormatCache,
-                              brushCache As D2DHelper.SolidColorBrushCache)
+    Private Sub DrawCardTexts(rt As ID2D1RenderTarget, textFormatCache As D2DGlobals.TextFormatCache,
+                              brushCache As D2DGlobals.SolidColorBrushCache)
         If _cardsViewportRect.Width <= 0 OrElse _cardsViewportRect.Height <= 0 Then Return
         rt.PushAxisAlignedClip(New Vortice.RawRectF(_cardsViewportRect.Left, _cardsViewportRect.Top, _cardsViewportRect.Right, _cardsViewportRect.Bottom),
                                AntialiasMode.PerPrimitive)
@@ -990,7 +990,7 @@ Partial Public Class MemberWall
         End Try
     End Sub
 
-    Private Sub DrawDisabledOverlay(rt As ID2D1RenderTarget, brushCache As D2DHelper.SolidColorBrushCache)
+    Private Sub DrawDisabledOverlay(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache)
         Dim s As Single = DpiScale()
         Dim rect As New RectangleF(0, 0, Width, Height)
         If _borderSize > 0 Then

@@ -134,7 +134,6 @@ Partial Class Form_ListViewDirectReDraw
         ModernTextBox2.ReadOnly = True
         ModernTextBox2.ScrollBarHoverColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
         ModernTextBox2.Size = New Size(744, 120)
-        ModernTextBox2.SuperSamplingScale = Class1.SuperSamplingScaleEnum.x2
         ModernTextBox2.TabIndex = 41
         ModernTextBox2.Text = "ModernTextBox2"
         ' 
@@ -167,7 +166,6 @@ Partial Class Form_ListViewDirectReDraw
         ModernTextBox1.ReadOnly = True
         ModernTextBox1.ScrollBarHoverColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
         ModernTextBox1.Size = New Size(744, 120)
-        ModernTextBox1.SuperSamplingScale = Class1.SuperSamplingScaleEnum.x2
         ModernTextBox1.TabIndex = 39
         ModernTextBox1.Text = "ModernTextBox1"
         ' 

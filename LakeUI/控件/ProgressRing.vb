@@ -53,7 +53,7 @@ Public Class ProgressRing
                 Dim bgLayer = scope.BackgroundLayer
                 Dim brush = scope.Compositor.BrushCache.[Get](bgLayer, MyBase.BackColor)
                 If brush IsNot Nothing Then
-                    bgLayer.FillRectangle(D2DHelper.ToD2DRect(New RectangleF(0, 0, Me.Width, Me.Height)), brush)
+                    bgLayer.FillRectangle(D2DGlobals.ToD2DRect(New RectangleF(0, 0, Me.Width, Me.Height)), brush)
                 End If
             End If
 
@@ -77,7 +77,7 @@ Public Class ProgressRing
         End Using
     End Sub
 
-    Private Sub 绘制Win11样式_D2D(rt As ID2D1RenderTarget, brushCache As D2DHelper.SolidColorBrushCache)
+    Private Sub 绘制Win11样式_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache)
         Dim s As Single = DpiScale()
         Dim 中心X As Single = Me.Width / 2.0F
         Dim 中心Y As Single = Me.Height / 2.0F
@@ -131,7 +131,7 @@ Public Class ProgressRing
         Dim startAngle As Single = n * totalPerCycle + baseRotation * t + sweepOffset - 90.0F
         If sweepAngle <= 0.05F Then Return
 
-        Using strokeStyle = D2DHelper.GetD2DFactory().CreateStrokeStyle(
+        Using strokeStyle = D2DGlobals.GetD2DFactory().CreateStrokeStyle(
             New StrokeStyleProperties With {
                 .StartCap = CapStyle.Round,
                 .EndCap = CapStyle.Round,
@@ -148,7 +148,7 @@ Public Class ProgressRing
         End Using
     End Sub
 
-    Private Sub 绘制Win10样式_D2D(rt As ID2D1RenderTarget, brushCache As D2DHelper.SolidColorBrushCache)
+    Private Sub 绘制Win10样式_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache)
         Dim s As Single = DpiScale()
         Dim 中心X As Single = Me.Width / 2.0F
         Dim 中心Y As Single = Me.Height / 2.0F
@@ -189,7 +189,7 @@ Public Class ProgressRing
         Dim startPoint As New Vector2(cx + CSng(Math.Cos(startRad)) * rx, cy + CSng(Math.Sin(startRad)) * ry)
         Dim endPoint As New Vector2(cx + CSng(Math.Cos(endRad)) * rx, cy + CSng(Math.Sin(endRad)) * ry)
 
-        Dim path As ID2D1PathGeometry = D2DHelper.GetD2DFactory().CreatePathGeometry()
+        Dim path As ID2D1PathGeometry = D2DGlobals.GetD2DFactory().CreatePathGeometry()
         Dim sink As ID2D1GeometrySink = path.Open()
         Try
             sink.BeginFigure(startPoint, FigureBegin.Hollow)

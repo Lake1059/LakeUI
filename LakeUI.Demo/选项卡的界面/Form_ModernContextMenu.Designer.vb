@@ -231,7 +231,6 @@ Partial Class Form_ModernContextMenu
         ModernContextMenu1.PressedBackColor = Color.FromArgb(CByte(80), CByte(220), CByte(220), CByte(220))
         ModernContextMenu1.SeparatorColor = Color.FromArgb(CByte(80), CByte(220), CByte(220), CByte(220))
         ModernContextMenu1.SeparatorHeight = 20
-        ModernContextMenu1.SuperSamplingScale = Class1.SuperSamplingScaleEnum.x2
         ' 
         ' Form_ModernContextMenu
         ' 

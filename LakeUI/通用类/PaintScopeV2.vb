@@ -171,7 +171,7 @@ Public NotInheritable Class PaintScopeV2
         ' 会卡在"已 BeginDraw 未 EndDraw"状态，下一次 BindDC 会 D2DERR_WRONG_STATE，
         ' 整个 Form 的 V2 绘制就此失效。
         Try
-            D2DHelper.ApplyGlobalQuality(dcRT)
+            D2DGlobals.ApplyGlobalQuality(dcRT)
             dcRT.Transform = Matrix3x2.Identity
             dcRT.PushAxisAlignedClip(ToRawRectF(_clipRect), AntialiasMode.Aliased)
             _dcClipPushed = True
@@ -182,7 +182,7 @@ Public NotInheritable Class PaintScopeV2
                 _bitmapRT = _compositor.RentSsaaRT(dcRT, _ssaaPixelW, _ssaaPixelH, _rentedPixelW, _rentedPixelH)
                 If _bitmapRT Is Nothing Then Throw New InvalidOperationException("SSAA render target allocation failed.")
                 Try
-                    D2DHelper.ApplyGlobalQuality(_bitmapRT)
+                    D2DGlobals.ApplyGlobalQuality(_bitmapRT)
                     _bitmapRT.BeginDraw()
                     _bitmapRT.Clear(New Vortice.Mathematics.Color4(0F, 0F, 0F, 0F))
                     _bitmapRT.PushAxisAlignedClip(

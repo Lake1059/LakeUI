@@ -256,17 +256,17 @@ Public Class ScrollBarRenderer
 
         If _trackBrush Is Nothing OrElse Not _trackBrushColor.Equals(trackColor) Then
             _trackBrush?.Dispose()
-            _trackBrush = rt.CreateSolidColorBrush(D2DHelper.ToColor4(trackColor))
+            _trackBrush = rt.CreateSolidColorBrush(D2DGlobals.ToColor4(trackColor))
             _trackBrushColor = trackColor
         End If
         If _thumbBrush Is Nothing OrElse Not _thumbBrushColor.Equals(thumbColor) Then
             _thumbBrush?.Dispose()
-            _thumbBrush = rt.CreateSolidColorBrush(D2DHelper.ToColor4(thumbColor))
+            _thumbBrush = rt.CreateSolidColorBrush(D2DGlobals.ToColor4(thumbColor))
             _thumbBrushColor = thumbColor
         End If
         If _thumbHoverBrush Is Nothing OrElse Not _thumbHoverBrushColor.Equals(thumbHoverColor) Then
             _thumbHoverBrush?.Dispose()
-            _thumbHoverBrush = rt.CreateSolidColorBrush(D2DHelper.ToColor4(thumbHoverColor))
+            _thumbHoverBrush = rt.CreateSolidColorBrush(D2DGlobals.ToColor4(thumbHoverColor))
             _thumbHoverBrushColor = thumbHoverColor
         End If
     End Sub
@@ -299,7 +299,7 @@ Public Class ScrollBarRenderer
             clipRect.Inflate(-half, -half)
         End If
         clipGeo = RectangleRenderer.创建圆角矩形几何(clipRect, borderRadius)
-        D2DHelper.PushGeometryClip(rt, clipGeo, New RectangleF(0, 0, containerW, containerH))
+        D2DGlobals.PushGeometryClip(rt, clipGeo, New RectangleF(0, 0, containerW, containerH))
         clipPushed = True
     End Sub
 

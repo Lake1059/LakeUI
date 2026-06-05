@@ -6,6 +6,11 @@ Public Class BooleanSwitch
 
     Public Event CheckedChanged As EventHandler
 
+    Public Sub New()
+        InitializeComponent()
+        动画助手.DirtyProvider = AddressOf 开关动画脏区
+    End Sub
+
 #Region "绘制"
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
         ' V2: BackgroundSource 已指定时跳过基类填底，由 OnPaint 显式画穿透层。
@@ -33,29 +38,28 @@ Public Class BooleanSwitch
                 BackgroundPenetrationV2.PaintBackground(Me, scope, _backgroundSource)
             End If
 
-            绘制图形内容_D2D(scope.GraphicsLayer, 极限矩形区域)
+            绘制图形内容_D2D(scope.GraphicsLayer, scope.Compositor.BrushCache, 极限矩形区域)
             scope.FlushGraphics()
 
             If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
                 Using geo = RectangleRenderer.创建圆角矩形几何(极限矩形区域, CSng(Math.Floor(极限矩形区域.Height / 2.0F)))
-                    RectangleRenderer.绘制圆角背景_D2D(scope.DCRenderTarget, geo, 极限矩形区域, 禁用时遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Vertical)
+                    RectangleRenderer.绘制圆角背景_D2D(scope.DCRenderTarget, geo, 极限矩形区域, 禁用时遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Vertical, scope.Compositor.BrushCache)
                 End Using
             End If
         End Using
     End Sub
 
-    Private Sub 绘制图形内容_D2D(rt As ID2D1RenderTarget, 极限矩形区域 As RectangleF)
+    Private Sub 绘制图形内容_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache, 极限矩形区域 As RectangleF)
         Dim 轨道颜色 As Color = 获取当前轨道颜色()
         Dim 滑块颜色 As Color = 获取当前滑块颜色()
         Dim 当前边框颜色 As Color = 获取当前边框颜色()
 
         Dim 圆角半径 As Single = CSng(Math.Floor(极限矩形区域.Height / 2.0F))
         Using geo = RectangleRenderer.创建圆角矩形几何(极限矩形区域, 圆角半径)
-            Using brush = rt.CreateSolidColorBrush(D2DHelper.ToColor4(轨道颜色))
-                rt.FillGeometry(geo, brush)
-            End Using
+            Dim brush = brushCache.Get(rt, 轨道颜色)
+            If brush IsNot Nothing Then rt.FillGeometry(geo, brush)
             Dim s As Single = DpiScale()
-            RectangleRenderer.绘制圆角边框_D2D(rt, geo, 当前边框颜色, 边框宽度 * s)
+            RectangleRenderer.绘制圆角边框_D2D(rt, geo, 当前边框颜色, 边框宽度 * s, brushCache)
         End Using
 
         Dim _滑块边距 As Single = 滑块边距值 * DpiScale()
@@ -67,9 +71,8 @@ Public Class BooleanSwitch
         Dim 滑块Y As Single = 极限矩形区域.Y + _滑块边距
         Dim 滑块区域 As New RectangleF(滑块X, 滑块Y, 滑块直径, 滑块直径)
         Using geo = RectangleRenderer.创建圆角矩形几何(滑块区域, 滑块直径 / 2.0F)
-            Using brush = rt.CreateSolidColorBrush(D2DHelper.ToColor4(滑块颜色))
-                rt.FillGeometry(geo, brush)
-            End Using
+            Dim brush = brushCache.Get(rt, 滑块颜色)
+            If brush IsNot Nothing Then rt.FillGeometry(geo, brush)
         End Using
     End Sub
 
@@ -196,7 +199,11 @@ Public Class BooleanSwitch
         End If
     End Sub
 
-    Private ReadOnly 动画助手 As New AnimationHelper(Me)
+    Private ReadOnly 动画助手 As New AnimationHelperV2(Me)
+
+    Private Sub 开关动画脏区(helper As AnimationHelperV2, owner As Control, sink As AnimationHelperV2.InvalidateRegionSink)
+        sink.InvalidateAll()
+    End Sub
 
     Private Function DpiScale() As Single
         Return Me.DeviceDpi / 96.0F

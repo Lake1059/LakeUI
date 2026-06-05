@@ -8,6 +8,7 @@ Public Class ModernCheckBox
     Public Sub New()
         InitializeComponent()
         SetStyle(ControlStyles.StandardDoubleClick, False)
+        动画助手.DirtyProvider = AddressOf 勾选动画脏区
     End Sub
 
     Public Event CheckedChanged As EventHandler
@@ -42,6 +43,7 @@ Public Class ModernCheckBox
 
         Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
             If scope Is Nothing Then Return  ' 设计期 / 无 Form
+            Dim compositor = scope.Compositor
             Dim gRT As ID2D1RenderTarget = scope.GraphicsLayer
             Dim dcRT As ID2D1DCRenderTarget = scope.DCRenderTarget
 
@@ -51,20 +53,20 @@ Public Class ModernCheckBox
             End If
 
             ' 2) 图形层（享受 SSAA）
-            绘制图形内容_D2D(gRT)
+            绘制图形内容_D2D(gRT, compositor.BrushCache)
 
             ' 3) 文字层（DC RT 子像素抗锯齿）
             scope.FlushGraphics()
-            绘制文本_D2D(dcRT)
+            绘制文本_D2D(dcRT, compositor)
 
             ' 4) 禁用遮罩
             If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
-                RectangleRenderer.绘制矩形背景_D2D(dcRT, New RectangleF(0, 0, Me.Width, Me.Height), 禁用时遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Vertical)
+                RectangleRenderer.绘制矩形背景_D2D(dcRT, New RectangleF(0, 0, Me.Width, Me.Height), 禁用时遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Vertical, compositor.BrushCache)
             End If
         End Using
     End Sub
 
-    Private Sub 绘制图形内容_D2D(rt As ID2D1RenderTarget)
+    Private Sub 绘制图形内容_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache)
         Dim s As Single = DpiScale()
         Dim 当前框边框宽度 As Single = 框边框宽度 * s
         Dim 框区域 As RectangleF = 计算框区域(s)
@@ -73,9 +75,9 @@ Public Class ModernCheckBox
         Dim 当前框边框色 As Color = 获取鼠标状态颜色(框边框颜色值, 鼠标移上时框边框颜色, 鼠标按下时框边框颜色)
 
         If 当前模式 = CheckModeEnum.CheckBox Then
-            绘制方框_D2D(rt, 框区域, 当前框背景色, 当前框边框色, 当前框边框宽度, s)
+            绘制方框_D2D(rt, brushCache, 框区域, 当前框背景色, 当前框边框色, 当前框边框宽度, s)
         Else
-            绘制圆框_D2D(rt, 框区域, 当前框背景色, 当前框边框色, 当前框边框宽度, s)
+            绘制圆框_D2D(rt, brushCache, 框区域, 当前框背景色, 当前框边框色, 当前框边框宽度, s)
         End If
     End Sub
 
@@ -101,41 +103,37 @@ Public Class ModernCheckBox
         Return New RectangleF(框X, 框Y, 框尺寸, 框尺寸)
     End Function
 
-    Private Sub 绘制方框_D2D(rt As ID2D1RenderTarget, 框区域 As RectangleF, 背景色 As Color, 边框色 As Color, 边框宽 As Single, s As Single)
+    Private Sub 绘制方框_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache, 框区域 As RectangleF, 背景色 As Color, 边框色 As Color, 边框宽 As Single, s As Single)
         Dim 圆角 As Single = 框圆角半径 * s
         If 圆角 > 0 Then
             Using geo = RectangleRenderer.创建圆角矩形几何(框区域, 圆角)
                 If 背景色.A > 0 Then
-                    Using brush = rt.CreateSolidColorBrush(D2DHelper.ToColor4(背景色))
-                        rt.FillGeometry(geo, brush)
-                    End Using
+                    Dim brush = brushCache.Get(rt, 背景色)
+                    If brush IsNot Nothing Then rt.FillGeometry(geo, brush)
                 End If
                 If 边框宽 > 0 AndAlso 边框色.A > 0 Then
-                    Using brush = rt.CreateSolidColorBrush(D2DHelper.ToColor4(边框色))
-                        rt.DrawGeometry(geo, brush, 边框宽)
-                    End Using
+                    Dim brush = brushCache.Get(rt, 边框色)
+                    If brush IsNot Nothing Then rt.DrawGeometry(geo, brush, 边框宽)
                 End If
             End Using
         Else
             If 背景色.A > 0 Then
-                Using brush = rt.CreateSolidColorBrush(D2DHelper.ToColor4(背景色))
-                    rt.FillRectangle(D2DHelper.ToD2DRect(框区域), brush)
-                End Using
+                Dim brush = brushCache.Get(rt, 背景色)
+                If brush IsNot Nothing Then rt.FillRectangle(D2DGlobals.ToD2DRect(框区域), brush)
             End If
             If 边框宽 > 0 AndAlso 边框色.A > 0 Then
-                Using brush = rt.CreateSolidColorBrush(D2DHelper.ToColor4(边框色))
-                    rt.DrawRectangle(D2DHelper.ToD2DRect(框区域), brush, 边框宽)
-                End Using
+                Dim brush = brushCache.Get(rt, 边框色)
+                If brush IsNot Nothing Then rt.DrawRectangle(D2DGlobals.ToD2DRect(框区域), brush, 边框宽)
             End If
         End If
         ' 绘制勾号笔迹动画
         Dim progress As Single = 动画助手.Progress
         If progress > 0.001F Then
-            绘制勾号_D2D(rt, 框区域, progress, s)
+            绘制勾号_D2D(rt, brushCache, 框区域, progress, s)
         End If
     End Sub
 
-    Private Sub 绘制勾号_D2D(rt As ID2D1RenderTarget, 框区域 As RectangleF, progress As Single, s As Single)
+    Private Sub 绘制勾号_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache, 框区域 As RectangleF, progress As Single, s As Single)
         Dim 当前勾号色 As Color = 获取鼠标状态颜色(勾号颜色值, 鼠标移上时勾号颜色, 鼠标按下时勾号颜色)
         Dim 内边距 As Single = 框内边距 * s + 框边框宽度 * s / 2.0F
         Dim x1 As Single = 框区域.X + 内边距
@@ -152,7 +150,7 @@ Public Class ModernCheckBox
         Dim 可见长度 As Single = 总长度 * progress
 
         ' 用进度截断的两段折线（动画效果同 GDI 版本）
-        Dim path As ID2D1PathGeometry = D2DHelper.GetD2DFactory().CreatePathGeometry()
+        Dim path As ID2D1PathGeometry = D2DGlobals.GetD2DFactory().CreatePathGeometry()
         Dim sink As ID2D1GeometrySink = path.Open()
         Try
             sink.BeginFigure(New Vector2(x1, y1), FigureBegin.Hollow)
@@ -175,23 +173,23 @@ Public Class ModernCheckBox
             sink.Dispose()
         End Try
         Try
-            Using brush = rt.CreateSolidColorBrush(D2DHelper.ToColor4(当前勾号色))
-                Using strokeStyle = D2DHelper.GetD2DFactory().CreateStrokeStyle(
-                    New StrokeStyleProperties With {
-                        .StartCap = CapStyle.Round,
-                        .EndCap = CapStyle.Round,
-                        .LineJoin = Vortice.Direct2D1.LineJoin.Round,
-                        .DashStyle = Vortice.Direct2D1.DashStyle.Solid,
-                        .MiterLimit = 10.0F})
-                    rt.DrawGeometry(path, brush, 笔宽, strokeStyle)
-                End Using
+            Dim brush = brushCache.Get(rt, 当前勾号色)
+            If brush Is Nothing Then Return
+            Using strokeStyle = D2DGlobals.GetD2DFactory().CreateStrokeStyle(
+                New StrokeStyleProperties With {
+                    .StartCap = CapStyle.Round,
+                    .EndCap = CapStyle.Round,
+                    .LineJoin = Vortice.Direct2D1.LineJoin.Round,
+                    .DashStyle = Vortice.Direct2D1.DashStyle.Solid,
+                    .MiterLimit = 10.0F})
+                rt.DrawGeometry(path, brush, 笔宽, strokeStyle)
             End Using
         Finally
             path.Dispose()
         End Try
     End Sub
 
-    Private Sub 绘制圆框_D2D(rt As ID2D1RenderTarget, 框区域 As RectangleF, 背景色 As Color, 边框色 As Color, 边框宽 As Single, s As Single)
+    Private Sub 绘制圆框_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache, 框区域 As RectangleF, 背景色 As Color, 边框色 As Color, 边框宽 As Single, s As Single)
         Dim cx As Single = 框区域.X + 框区域.Width / 2.0F
         Dim cy As Single = 框区域.Y + 框区域.Height / 2.0F
         Dim rx As Single = 框区域.Width / 2.0F
@@ -199,14 +197,12 @@ Public Class ModernCheckBox
         Dim e As New Ellipse(New Vector2(cx, cy), rx, ry)
 
         If 背景色.A > 0 Then
-            Using brush = rt.CreateSolidColorBrush(D2DHelper.ToColor4(背景色))
-                rt.FillEllipse(e, brush)
-            End Using
+            Dim brush = brushCache.Get(rt, 背景色)
+            If brush IsNot Nothing Then rt.FillEllipse(e, brush)
         End If
         If 边框宽 > 0 AndAlso 边框色.A > 0 Then
-            Using brush = rt.CreateSolidColorBrush(D2DHelper.ToColor4(边框色))
-                rt.DrawEllipse(e, brush, 边框宽)
-            End Using
+            Dim brush = brushCache.Get(rt, 边框色)
+            If brush IsNot Nothing Then rt.DrawEllipse(e, brush, 边框宽)
         End If
 
         ' 绘制内圆缩放动画
@@ -217,13 +213,12 @@ Public Class ModernCheckBox
             If 最大半径 < 1 Then 最大半径 = 1
             Dim 当前半径 As Single = 最大半径 * progress
             Dim inner As New Ellipse(New Vector2(cx, cy), 当前半径, 当前半径)
-            Using brush = rt.CreateSolidColorBrush(D2DHelper.ToColor4(当前勾号色))
-                rt.FillEllipse(inner, brush)
-            End Using
+            Dim brush = brushCache.Get(rt, 当前勾号色)
+            If brush IsNot Nothing Then rt.FillEllipse(inner, brush)
         End If
     End Sub
 
-    Private Sub 绘制文本_D2D(rt As ID2D1DCRenderTarget)
+    Private Sub 绘制文本_D2D(rt As ID2D1DCRenderTarget, compositor As WindowCompositor)
         Dim s As Single = DpiScale()
         Dim 框尺寸 As Single = 操作框尺寸 * s
         Dim 间距 As Single = 框文本间距 * s
@@ -237,54 +232,45 @@ Public Class ModernCheckBox
         ' DirectWrite 字号必须叠加 DPI 缩放（参考 ModernButton 的注释）
         Dim mainSizePx As Single = Me.Font.SizeInPoints * (96.0F / 72.0F) * s
 
-        Dim dw = D2DHelper.GetDWriteFactory()
+        Dim dw = D2DGlobals.GetDWriteFactory()
+        Dim textFormatCache = compositor.TextFormatCache
+        Dim brushCache = compositor.BrushCache
         Dim 框区域 As RectangleF = 计算框区域(s)
         Dim 框中心Y As Single = 框区域.Y + 框区域.Height / 2.0F
 
-        Using mainFmt = D2DHelper.CreateTextFormat(Me.Font, mainSizePx)
-            mainFmt.TextAlignment = Vortice.DirectWrite.TextAlignment.Leading
-            mainFmt.ParagraphAlignment = Vortice.DirectWrite.ParagraphAlignment.Near
-            mainFmt.WordWrapping = Vortice.DirectWrite.WordWrapping.NoWrap
-            Try
-                mainFmt.SetTrimming(New Vortice.DirectWrite.Trimming With {.Granularity = Vortice.DirectWrite.TrimmingGranularity.Character}, Nothing)
-            Catch
-            End Try
+        Dim mainWeight As Vortice.DirectWrite.FontWeight = If(Me.Font.Bold, Vortice.DirectWrite.FontWeight.Bold, Vortice.DirectWrite.FontWeight.Normal)
+        Dim mainStyle As Vortice.DirectWrite.FontStyle = If(Me.Font.Italic, Vortice.DirectWrite.FontStyle.Italic, Vortice.DirectWrite.FontStyle.Normal)
+        Dim mainFmt = textFormatCache.Get(familyName, mainWeight, mainStyle, mainSizePx,
+                                          Vortice.DirectWrite.TextAlignment.Leading,
+                                          Vortice.DirectWrite.ParagraphAlignment.Near,
+                                          True)
 
-            If Not String.IsNullOrEmpty(次要文本) Then
-                Dim subSizePx As Single = 次要文本字号 * (96.0F / 72.0F) * s
-                Using subFmt = D2DHelper.CreateTextFormat(familyName, Vortice.DirectWrite.FontWeight.Normal, Vortice.DirectWrite.FontStyle.Normal, Vortice.DirectWrite.FontStretch.Normal, subSizePx)
-                    subFmt.TextAlignment = Vortice.DirectWrite.TextAlignment.Leading
-                    subFmt.ParagraphAlignment = Vortice.DirectWrite.ParagraphAlignment.Near
-                    subFmt.WordWrapping = Vortice.DirectWrite.WordWrapping.NoWrap
-                    Try
-                        subFmt.SetTrimming(New Vortice.DirectWrite.Trimming With {.Granularity = Vortice.DirectWrite.TrimmingGranularity.Character}, Nothing)
-                    Catch
-                    End Try
-                    Using mainLayout = dw.CreateTextLayout(mainText, mainFmt, 文本可用宽度, Me.Height)
-                        Using subLayout = dw.CreateTextLayout(次要文本, subFmt, 文本可用宽度, Me.Height)
-                            Dim mainMetrics = mainLayout.Metrics
-                            Dim subMetrics = subLayout.Metrics
-                            Dim _主次间距 As Single = 主次文本间距 * s
-                            Dim 主文本Y As Single = 框中心Y - mainMetrics.Height / 2.0F
-                            Using fb1 = rt.CreateSolidColorBrush(D2DHelper.ToColor4(文本颜色))
-                                rt.DrawTextLayout(New Vector2(文本X, 主文本Y), mainLayout, fb1)
-                            End Using
-                            Using fb2 = rt.CreateSolidColorBrush(D2DHelper.ToColor4(次要文本颜色))
-                                rt.DrawTextLayout(New Vector2(文本X, 主文本Y + mainMetrics.Height + _主次间距), subLayout, fb2)
-                            End Using
-                        End Using
-                    End Using
-                End Using
-            Else
-                Using mainLayout = dw.CreateTextLayout(mainText, mainFmt, 文本可用宽度, Me.Height)
+        If Not String.IsNullOrEmpty(次要文本) Then
+            Dim subSizePx As Single = 次要文本字号 * (96.0F / 72.0F) * s
+            Dim subFmt = textFormatCache.Get(familyName, Vortice.DirectWrite.FontWeight.Normal,
+                                             Vortice.DirectWrite.FontStyle.Normal, subSizePx,
+                                             Vortice.DirectWrite.TextAlignment.Leading,
+                                             Vortice.DirectWrite.ParagraphAlignment.Near,
+                                             True)
+            Using mainLayout = dw.CreateTextLayout(mainText, mainFmt, 文本可用宽度, Me.Height)
+                Using subLayout = dw.CreateTextLayout(次要文本, subFmt, 文本可用宽度, Me.Height)
                     Dim mainMetrics = mainLayout.Metrics
+                    Dim _主次间距 As Single = 主次文本间距 * s
                     Dim 主文本Y As Single = 框中心Y - mainMetrics.Height / 2.0F
-                    Using fb = rt.CreateSolidColorBrush(D2DHelper.ToColor4(文本颜色))
-                        rt.DrawTextLayout(New Vector2(文本X, 主文本Y), mainLayout, fb)
-                    End Using
+                    Dim fb1 = brushCache.Get(rt, 文本颜色)
+                    If fb1 IsNot Nothing Then rt.DrawTextLayout(New Vector2(文本X, 主文本Y), mainLayout, fb1)
+                    Dim fb2 = brushCache.Get(rt, 次要文本颜色)
+                    If fb2 IsNot Nothing Then rt.DrawTextLayout(New Vector2(文本X, 主文本Y + mainMetrics.Height + _主次间距), subLayout, fb2)
                 End Using
-            End If
-        End Using
+            End Using
+        Else
+            Using mainLayout = dw.CreateTextLayout(mainText, mainFmt, 文本可用宽度, Me.Height)
+                Dim mainMetrics = mainLayout.Metrics
+                Dim 主文本Y As Single = 框中心Y - mainMetrics.Height / 2.0F
+                Dim fb = brushCache.Get(rt, 文本颜色)
+                If fb IsNot Nothing Then rt.DrawTextLayout(New Vector2(文本X, 主文本Y), mainLayout, fb)
+            End Using
+        End If
     End Sub
 #End Region
 
@@ -420,7 +406,11 @@ Public Class ModernCheckBox
         End If
     End Sub
 
-    Private ReadOnly 动画助手 As New AnimationHelper(Me)
+    Private ReadOnly 动画助手 As New AnimationHelperV2(Me)
+
+    Private Sub 勾选动画脏区(helper As AnimationHelperV2, owner As Control, sink As AnimationHelperV2.InvalidateRegionSink)
+        sink.InvalidateAll()
+    End Sub
 
     Private Function DpiScale() As Single
         Return Me.DeviceDpi / 96.0F

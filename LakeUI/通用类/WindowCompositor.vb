@@ -7,10 +7,10 @@ Imports Vortice.Direct2D1
 ''' • 1 个共享 <see cref="ID2D1DCRenderTarget"/>（背景层 / 文字层 / 1× 图形层共用）
 '''   - 每次 <see cref="BeginPaint"/> BindDC 到当前控件 HDC；窗口内所有控件共用同一份 RT 实例。
 '''   - DC RT 不支持嵌套 BindDC / BeginDraw；同一 Form 内绘制重入时直接返回 Nothing，由调用方跳过本次 V2 绘制。
-'''   - <see cref="D2DHelper.SolidColorBrushCache"/> 内部按 RT 分桶，因此 BindDC 不会让 brush 失效。
-''' • 1 个 <see cref="D2DHelper.SolidColorBrushCache"/>（按 RT 分桶；<see cref="BrushCache"/>）。
-''' • 1 个 <see cref="D2DHelper.TextFormatCache"/>（DWrite TextFormat 与 RT 无关，全 Form 通用）。
-''' • 一组 <see cref="D2DHelper.D2DBitmapCache"/>：按 Image 引用建索引，用于图标 / 背景图复用上传。
+'''   - <see cref="D2DGlobals.SolidColorBrushCache"/> 内部按 RT 分桶，因此 BindDC 不会让 brush 失效。
+''' • 1 个 <see cref="D2DGlobals.SolidColorBrushCache"/>（按 RT 分桶；<see cref="BrushCache"/>）。
+''' • 1 个 <see cref="D2DGlobals.TextFormatCache"/>（DWrite TextFormat 与 RT 无关，全 Form 通用）。
+''' • 一组 <see cref="D2DGlobals.D2DBitmapCache"/>：按 Image 引用建索引，用于图标 / 背景图复用上传。
 ''' • 一个 SSAA <see cref="ID2D1BitmapRenderTarget"/> 池：按分桶像素尺寸 (W,H) 共享 1 份，避免每帧分配/释放。
 '''
 ''' === 不持有 ===
@@ -47,13 +47,13 @@ Public NotInheritable Class WindowCompositor
     Private _activePaintScopes As Integer
 
     ''' <summary>Image → D2DBitmapCache 映射；为长期存在的图标 / 背景图复用 D2D 上传。</summary>
-    Private ReadOnly _bitmapCaches As New Dictionary(Of Image, D2DHelper.D2DBitmapCache)()
+    Private ReadOnly _bitmapCaches As New Dictionary(Of Image, D2DGlobals.D2DBitmapCache)()
 
     ''' <summary>共享的 SolidColorBrush 缓存（按 RT 切换自动失效）。</summary>
-    Public ReadOnly Property BrushCache As New D2DHelper.SolidColorBrushCache()
+    Public ReadOnly Property BrushCache As New D2DGlobals.SolidColorBrushCache()
 
     ''' <summary>共享的 DirectWrite TextFormat 缓存。</summary>
-    Public ReadOnly Property TextFormatCache As New D2DHelper.TextFormatCache()
+    Public ReadOnly Property TextFormatCache As New D2DGlobals.TextFormatCache()
 
     ''' <summary>所属 Form。</summary>
     Public ReadOnly Property Form As Form
@@ -89,7 +89,7 @@ Public NotInheritable Class WindowCompositor
     Friend Function GetOrCreateDCRenderTarget() As ID2D1DCRenderTarget
         If _disposed Then Return Nothing
         If _dcRT Is Nothing Then
-            _dcRT = D2DHelper.CreateDCRenderTarget()
+            _dcRT = D2DGlobals.CreateDCRenderTarget()
         End If
         Return _dcRT
     End Function
@@ -191,18 +191,18 @@ Public NotInheritable Class WindowCompositor
     End Sub
 
     ''' <summary>
-    ''' 取（按需创建）一份 <see cref="Image"/> 对应的 <see cref="D2DHelper.D2DBitmapCache"/>。
+    ''' 取（按需创建）一份 <see cref="Image"/> 对应的 <see cref="D2DGlobals.D2DBitmapCache"/>。
     ''' Key 为 Image 引用本身（不复制，不哈希像素）。
     ''' </summary>
     ''' <remarks>
     ''' 适用于 ImageList 中长期存在的图标 / 背景图。调用方在 Image 被替换时应负责丢弃旧 Image
     ''' 的引用以便随 Form Dispose 时一同清理；不要把临时 Bitmap（如 OnPaint 内 new 出来的）放进来。
     ''' </remarks>
-    Friend Function GetBitmapCache(src As Image) As D2DHelper.D2DBitmapCache
+    Friend Function GetBitmapCache(src As Image) As D2DGlobals.D2DBitmapCache
         If _disposed OrElse src Is Nothing Then Return Nothing
-        Dim cache As D2DHelper.D2DBitmapCache = Nothing
+        Dim cache As D2DGlobals.D2DBitmapCache = Nothing
         If Not _bitmapCaches.TryGetValue(src, cache) Then
-            cache = New D2DHelper.D2DBitmapCache()
+            cache = New D2DGlobals.D2DBitmapCache()
             _bitmapCaches(src) = cache
         End If
         Return cache
