@@ -47,18 +47,39 @@ Public Module BackgroundPenetrationV2
             Public D2DOwnerRT As WeakReference
         End Class
 
+        Public Class ConsumerEntry
+            Public ChildRef As WeakReference
+            Public SourceRect As Rectangle
+            Public DestRect As Rectangle
+        End Class
+
         Public Bmp As Bitmap
         Public Width As Integer
         Public Height As Integer
+        Public BitmapBytes As Long
+        Public LastUsed As Long
         Public FullDirty As Boolean = True
         Public ReadOnly DirtyRects As New List(Of Rectangle)()
         Public Painting As Boolean
         Public ReadOnly Crops As New List(Of CropEntry)()
+        Public ReadOnly Consumers As New List(Of ConsumerEntry)()
         Public IsSolidColor As Boolean
         Public SolidArgb As Integer
     End Class
 
+    Private Structure ConsumerInvalidation
+        Public ReadOnly Child As Control
+        Public ReadOnly Rect As Rectangle
+
+        Public Sub New(child As Control, rect As Rectangle)
+            Me.Child = child
+            Me.Rect = rect
+        End Sub
+    End Structure
+
     Private ReadOnly _cache As New Dictionary(Of Control, Entry)
+    Private _sourceBitmapBytes As Long
+    Private _clock As Long
 
 #Region "公开 API"
 
@@ -84,11 +105,13 @@ Public Module BackgroundPenetrationV2
 
         Dim offset As Point = ComputeOffset(child, source)
         Dim srcRect As New Rectangle(offset.X + destRect.X, offset.Y + destRect.Y, destRect.Width, destRect.Height)
+        Dim mappedSourceRect As New Rectangle(offset, childBounds.Size)
 
         Dim rt = scope.BackgroundLayer
         Dim isSolid As Boolean
         Dim solidColor As Color = Color.Empty
         Dim d2dBmp = AcquireD2DBitmap(source, rt, srcRect, isSolid, solidColor)
+        RegisterConsumer(source, child, mappedSourceRect, childBounds)
         If isSolid Then
             Dim brushCache = scope.Compositor?.BrushCache
             If brushCache IsNot Nothing Then
@@ -117,12 +140,41 @@ Public Module BackgroundPenetrationV2
     ''' </remarks>
     Public Sub Invalidate(source As Control)
         If source Is Nothing Then Return
+        Dim invalidations As New List(Of ConsumerInvalidation)()
         SyncLock _cache
             Dim entry As Entry = Nothing
             If _cache.TryGetValue(source, entry) Then
                 entry.FullDirty = True
                 InvalidateCropEntries(entry, Nothing)
+                CollectConsumerInvalidations(entry, Nothing, invalidations)
             End If
+        End SyncLock
+        FlushConsumerInvalidations(invalidations)
+    End Sub
+
+    Private Sub RegisterConsumer(source As Control, child As Control, sourceRect As Rectangle, destRect As Rectangle)
+        If source Is Nothing OrElse child Is Nothing Then Return
+        SyncLock _cache
+            Dim entry As Entry = Nothing
+            If Not _cache.TryGetValue(source, entry) Then Return
+
+            For i As Integer = entry.Consumers.Count - 1 To 0 Step -1
+                Dim consumer = entry.Consumers(i)
+                Dim existingChild = TryCast(consumer.ChildRef.Target, Control)
+                If existingChild Is Nothing OrElse existingChild.IsDisposed Then
+                    entry.Consumers.RemoveAt(i)
+                ElseIf existingChild Is child Then
+                    consumer.SourceRect = sourceRect
+                    consumer.DestRect = destRect
+                    Return
+                End If
+            Next
+
+            entry.Consumers.Add(New Entry.ConsumerEntry With {
+                .ChildRef = New WeakReference(child),
+                .SourceRect = sourceRect,
+                .DestRect = destRect
+            })
         End SyncLock
     End Sub
 
@@ -145,8 +197,11 @@ Public Module BackgroundPenetrationV2
                 AddHandler source.Invalidated, AddressOf OnSourceInvalidated
                 AddHandler source.Resize, AddressOf OnSourceResized
             End If
+            entry.LastUsed = NextClock()
             If entry.Painting Then Return Nothing
-            Dim sizeOk As Boolean = (entry.Bmp IsNot Nothing AndAlso entry.Width = sw AndAlso entry.Height = sh)
+            ' Pure-color entries intentionally drop Bmp to save RAM; the cached SolidArgb is still valid
+            ' while the source size matches and no invalidation has marked it dirty.
+            Dim sizeOk As Boolean = ((entry.Bmp IsNot Nothing OrElse entry.IsSolidColor) AndAlso entry.Width = sw AndAlso entry.Height = sh)
             If Not sizeOk Then
                 entry.FullDirty = True
                 InvalidateCropEntries(entry, Nothing)
@@ -161,14 +216,21 @@ Public Module BackgroundPenetrationV2
             Finally
                 SyncLock _cache
                     entry.Painting = False
+                    entry.LastUsed = NextClock()
+                    TrimSourceBitmaps(entry)
                 End SyncLock
             End Try
         End If
 
-        If entry.Bmp Is Nothing Then Return Nothing
         If entry.IsSolidColor Then
             isSolid = True
             solidColor = Color.FromArgb(entry.SolidArgb)
+            Return Nothing
+        End If
+        If entry.Bmp Is Nothing Then
+            SyncLock _cache
+                entry.FullDirty = True
+            End SyncLock
             Return Nothing
         End If
 
@@ -178,10 +240,12 @@ Public Module BackgroundPenetrationV2
     Private Sub RebuildGdiBitmap(source As Control, entry As Entry, sw As Integer, sh As Integer)
         Dim fullRebuild As Boolean = entry.FullDirty OrElse entry.Bmp Is Nothing OrElse entry.Width <> sw OrElse entry.Height <> sh
         If entry.Bmp Is Nothing OrElse entry.Width <> sw OrElse entry.Height <> sh Then
-            entry.Bmp?.Dispose()
+            ReleaseSourceBitmap(entry)
             entry.Bmp = New Bitmap(sw, sh, PixelFormat.Format32bppPArgb)
             entry.Width = sw
             entry.Height = sh
+            entry.BitmapBytes = EstimateBitmapBytes(sw, sh)
+            _sourceBitmapBytes += entry.BitmapBytes
             fullRebuild = True
         End If
 
@@ -222,6 +286,11 @@ Public Module BackgroundPenetrationV2
             Dim solidArgb As Integer
             entry.IsSolidColor = ForceOpaqueAlphaAndDetectSolid(entry.Bmp, solidArgb)
             entry.SolidArgb = solidArgb
+            If entry.IsSolidColor Then
+                ' Pure color sources can be redrawn from SolidArgb; keeping the full CPU bitmap only wastes RAM.
+                InvalidateCropEntries(entry, Nothing)
+                ReleaseSourceBitmap(entry)
+            End If
         Else
             ForceOpaqueAlpha(entry.Bmp, repaintRects)
             entry.IsSolidColor = False
@@ -290,6 +359,42 @@ Public Module BackgroundPenetrationV2
         End While
     End Sub
 
+    Private Function NextClock() As Long
+        _clock += 1
+        Return _clock
+    End Function
+
+    Private Function EstimateBitmapBytes(w As Integer, h As Integer) As Long
+        Return CLng(Math.Max(1, w)) * CLng(Math.Max(1, h)) * 4L
+    End Function
+
+    Private Sub ReleaseSourceBitmap(entry As Entry)
+        If entry Is Nothing OrElse entry.Bmp Is Nothing Then Return
+        Try : entry.Bmp.Dispose() : Catch : End Try
+        entry.Bmp = Nothing
+        _sourceBitmapBytes -= entry.BitmapBytes
+        If _sourceBitmapBytes < 0 Then _sourceBitmapBytes = 0
+        entry.BitmapBytes = 0
+    End Sub
+
+    Private Sub TrimSourceBitmaps(protectedEntry As Entry)
+        Dim budget As Long = Math.Max(0L, GlobalOptions.BackgroundPenetrationSourceBitmapBudgetBytes)
+        While _sourceBitmapBytes > budget
+            Dim oldest As Entry = Nothing
+            For Each kv In _cache
+                Dim candidate = kv.Value
+                If candidate Is Nothing OrElse candidate Is protectedEntry Then Continue For
+                If candidate.Bmp Is Nothing OrElse candidate.Painting Then Continue For
+                If oldest Is Nothing OrElse candidate.LastUsed < oldest.LastUsed Then oldest = candidate
+            Next
+            If oldest Is Nothing Then Exit While
+            ' The crop uploads depend on the old bitmap pixels; drop them together and resample on next paint.
+            InvalidateCropEntries(oldest, Nothing)
+            ReleaseSourceBitmap(oldest)
+            oldest.FullDirty = True
+        End While
+    End Sub
+
     Private Function DirtyRectsIntersect(entry As Entry, rect As Rectangle) As Boolean
         If entry.FullDirty Then Return True
         For Each dirty In entry.DirtyRects
@@ -308,6 +413,59 @@ Public Module BackgroundPenetrationV2
         Next
     End Sub
 
+    Private Sub CollectConsumerInvalidations(entry As Entry, dirtyRect As Rectangle?, invalidations As List(Of ConsumerInvalidation))
+        If entry Is Nothing OrElse invalidations Is Nothing Then Return
+
+        For i As Integer = entry.Consumers.Count - 1 To 0 Step -1
+            Dim consumer = entry.Consumers(i)
+            Dim child = TryCast(consumer.ChildRef.Target, Control)
+            If child Is Nothing OrElse child.IsDisposed Then
+                entry.Consumers.RemoveAt(i)
+                Continue For
+            End If
+
+            If Not dirtyRect.HasValue Then
+                invalidations.Add(New ConsumerInvalidation(child, consumer.DestRect))
+                Continue For
+            End If
+
+            Dim sourceIntersection = Rectangle.Intersect(consumer.SourceRect, dirtyRect.Value)
+            If sourceIntersection.Width <= 0 OrElse sourceIntersection.Height <= 0 Then Continue For
+
+            Dim destRect As New Rectangle(
+                consumer.DestRect.X + sourceIntersection.X - consumer.SourceRect.X,
+                consumer.DestRect.Y + sourceIntersection.Y - consumer.SourceRect.Y,
+                sourceIntersection.Width,
+                sourceIntersection.Height)
+            invalidations.Add(New ConsumerInvalidation(child, destRect))
+        Next
+    End Sub
+
+    Private Sub FlushConsumerInvalidations(invalidations As List(Of ConsumerInvalidation))
+        If invalidations Is Nothing OrElse invalidations.Count = 0 Then Return
+
+        Dim merged As New Dictionary(Of Control, Rectangle)()
+        For Each item In invalidations
+            Dim child = item.Child
+            If child Is Nothing OrElse child.IsDisposed Then Continue For
+            Dim rect As Rectangle = Rectangle.Intersect(New Rectangle(Point.Empty, child.ClientSize), item.Rect)
+            If rect.Width <= 0 OrElse rect.Height <= 0 Then Continue For
+
+            Dim existing As Rectangle = Rectangle.Empty
+            If merged.TryGetValue(child, existing) Then
+                merged(child) = Rectangle.Union(existing, rect)
+            Else
+                merged(child) = rect
+            End If
+        Next
+
+        For Each kv In merged
+            Dim child = kv.Key
+            If child Is Nothing OrElse child.IsDisposed OrElse Not child.IsHandleCreated Then Continue For
+            child.Invalidate(kv.Value)
+        Next
+    End Sub
+
 #End Region
 
 #Region "source 事件"
@@ -315,6 +473,7 @@ Public Module BackgroundPenetrationV2
     Private Sub OnSourceInvalidated(sender As Object, e As InvalidateEventArgs)
         Dim source = TryCast(sender, Control)
         If source Is Nothing Then Return
+        Dim invalidations As New List(Of ConsumerInvalidation)()
         SyncLock _cache
             Dim entry As Entry = Nothing
             If _cache.TryGetValue(source, entry) Then
@@ -322,24 +481,30 @@ Public Module BackgroundPenetrationV2
                 If dirtyRect.Width <= 0 OrElse dirtyRect.Height <= 0 Then
                     entry.FullDirty = True
                     InvalidateCropEntries(entry, Nothing)
+                    CollectConsumerInvalidations(entry, Nothing, invalidations)
                 Else
                     entry.DirtyRects.Add(dirtyRect)
                     InvalidateCropEntries(entry, dirtyRect)
+                    CollectConsumerInvalidations(entry, dirtyRect, invalidations)
                 End If
             End If
         End SyncLock
+        FlushConsumerInvalidations(invalidations)
     End Sub
 
     Private Sub OnSourceResized(sender As Object, e As EventArgs)
         Dim source = TryCast(sender, Control)
         If source Is Nothing Then Return
+        Dim invalidations As New List(Of ConsumerInvalidation)()
         SyncLock _cache
             Dim entry As Entry = Nothing
             If _cache.TryGetValue(source, entry) Then
                 entry.FullDirty = True
                 InvalidateCropEntries(entry, Nothing)
+                CollectConsumerInvalidations(entry, Nothing, invalidations)
             End If
         End SyncLock
+        FlushConsumerInvalidations(invalidations)
     End Sub
 
     Private Sub OnSourceDisposed(sender As Object, e As EventArgs)
@@ -351,8 +516,9 @@ Public Module BackgroundPenetrationV2
         SyncLock _cache
             Dim entry As Entry = Nothing
             If _cache.TryGetValue(source, entry) Then
-                Try : entry.Bmp?.Dispose() : Catch : End Try
+                ReleaseSourceBitmap(entry)
                 InvalidateCropEntries(entry, Nothing)
+                entry.Consumers.Clear()
                 _cache.Remove(source)
             End If
         End SyncLock

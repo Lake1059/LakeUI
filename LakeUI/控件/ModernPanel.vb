@@ -1,4 +1,6 @@
 Imports System.ComponentModel
+Imports System.Diagnostics
+Imports System.Drawing.Imaging
 Imports Vortice.Direct2D1
 
 ''' <summary>
@@ -233,7 +235,7 @@ Public Class ModernPanel
 
     Private _image As Image = Nothing
     ''' <summary>面板背景图片，填充模式由 ImageMode 控制，圆角区域自动裁切。
-    ''' 若图片为多帧动画（如 GIF），自动通过 <see cref="ImageAnimator"/> 驱动逐帧重绘。</summary>
+    ''' 若图片为多帧动画（如 GIF），会按原始帧延迟驱动逐帧重绘。</summary>
     <Category("LakeUI"), Description("背景图片（填充模式由 ImageMode 控制，自动圆角裁切，支持 GIF 等动图）"), DefaultValue(GetType(Image), Nothing), Browsable(True)>
     Public Property Image As Image
         Get
@@ -249,65 +251,467 @@ Public Class ModernPanel
         End Set
     End Property
 
-    ' GIF / 多帧动画支持：注册到 .NET 自带的 ImageAnimator，逐帧 UpdateFrames + Invalidate。
+    ' GIF / 多帧动画支持：直接读取原始帧延迟并按帧推进，避免 ImageAnimator 的全局调度节拍抖动。
+    Private Const PropertyTagFrameDelay As Integer = &H5100
+    Private Const PropertyTagLoopCount As Integer = &H5101
+    Private Const DefaultAnimationFrameDelayMs As Integer = 100
+    Private Const MinimumAnimationFrameDelayMs As Integer = 10
+
     Private _animatedImage As Image = Nothing
-    Private _animationHandler As EventHandler = Nothing
+    Private _animationTimer As PrecisionTimer = Nothing
+    Private _animationFrameDimension As FrameDimension = Nothing
+    Private _animationFrameDelays As Integer() = Array.Empty(Of Integer)()
+    Private _animationFrameCount As Integer = 0
+    Private _animationFrameIndex As Integer = 0
+    Private _animationTimerIntervalMs As Integer = DefaultAnimationFrameDelayMs
+    Private _animationNextFrameTicks As Long = 0
+    Private _animationLoopLimit As Integer = 0
+    Private _animationCompletedLoops As Integer = 0
+    Private _animationHostForm As Form = Nothing
+    Private ReadOnly _animationVisibilitySources As New List(Of Control)()
+    Private _animationFrameImage As Bitmap = Nothing
+    Private _animationFrameImageSource As Image = Nothing
+    Private _animationFrameImageIndex As Integer = -1
 
     Private Sub 启动图片动画()
-        If _image Is Nothing Then Return
-        Try
-            If Not ImageAnimator.CanAnimate(_image) Then Return
-        Catch
-            Return
-        End Try
-        _animatedImage = _image
-        _animationHandler = AddressOf 图片动画帧变更
-        Try
-            ImageAnimator.Animate(_animatedImage, _animationHandler)
-        Catch
-            _animatedImage = Nothing
-            _animationHandler = Nothing
-        End Try
+        If Not 准备图片动画(_image) Then Return
+        更新图片动画运行状态()
     End Sub
 
     Private Sub 停止图片动画()
-        If _animatedImage IsNot Nothing AndAlso _animationHandler IsNot Nothing Then
-            Try
-                ImageAnimator.StopAnimate(_animatedImage, _animationHandler)
-            Catch
-            End Try
+        停止图片动画计时器(True)
+        更新图片动画宿主窗体订阅(Nothing)
+        清除图片动画可见性订阅()
+        清除动画帧图片缓存()
+        If _animatedImage IsNot Nothing AndAlso _animatedImage IsNot _image Then
+            Try : _animatedImage.Dispose() : Catch : End Try
         End If
         _animatedImage = Nothing
-        _animationHandler = Nothing
+        _animationFrameDimension = Nothing
+        _animationFrameDelays = Array.Empty(Of Integer)()
+        _animationFrameCount = 0
+        _animationFrameIndex = 0
+        _animationLoopLimit = 0
+        _animationCompletedLoops = 0
     End Sub
 
-    ''' <summary>ImageAnimator 在工作线程上回调。这里只 marshal 到 UI 线程做 UpdateFrames + 失效 D2D 缓存 + Invalidate。</summary>
-    Private Sub 图片动画帧变更(sender As Object, e As EventArgs)
-        If Me.IsDisposed OrElse Not Me.IsHandleCreated Then Return
+    Private Function 准备图片动画(img As Image) As Boolean
+        _animatedImage = Nothing
+        _animationFrameDimension = Nothing
+        _animationFrameDelays = Array.Empty(Of Integer)()
+        _animationFrameCount = 0
+        _animationFrameIndex = 0
+        _animationLoopLimit = 0
+        _animationCompletedLoops = 0
+        _animationNextFrameTicks = 0
+
+        If img Is Nothing Then Return False
+
+        Dim dimension As FrameDimension = 获取图片动画维度(img)
+        If dimension Is Nothing Then Return False
+
+        Dim frameCount As Integer
         Try
-            Me.BeginInvoke(New MethodInvoker(AddressOf 图片动画帧变更_UI))
+            frameCount = img.GetFrameCount(dimension)
+        Catch
+            Return False
+        End Try
+        If frameCount <= 1 Then Return False
+
+        Dim animationImage As Image
+        Try
+            animationImage = CType(img.Clone(), Image)
+            If animationImage.GetFrameCount(dimension) <= 1 Then
+                animationImage.Dispose()
+                Return False
+            End If
+        Catch
+            Return False
+        End Try
+
+        _animatedImage = animationImage
+        _animationFrameDimension = dimension
+        _animationFrameCount = frameCount
+        _animationFrameDelays = 读取图片动画帧延迟(img, frameCount)
+        _animationTimerIntervalMs = 计算图片动画计时器间隔(_animationFrameDelays)
+        _animationLoopLimit = 读取图片动画循环次数(img)
+
+        Return True
+    End Function
+
+    Private Function 获取图片动画维度(img As Image) As FrameDimension
+        Try
+            For Each guid In img.FrameDimensionsList
+                Dim dimension As New FrameDimension(guid)
+                If img.GetFrameCount(dimension) > 1 Then Return dimension
+            Next
         Catch
         End Try
-    End Sub
+        Return Nothing
+    End Function
 
-    Private Sub 图片动画帧变更_UI()
-        If Me.IsDisposed Then Return
+    Private Function 读取图片动画帧延迟(img As Image, frameCount As Integer) As Integer()
+        Dim delays(frameCount - 1) As Integer
+        For i As Integer = 0 To delays.Length - 1
+            delays(i) = DefaultAnimationFrameDelayMs
+        Next
+
+        Try
+            If Array.IndexOf(img.PropertyIdList, PropertyTagFrameDelay) < 0 Then Return delays
+            Dim item = img.GetPropertyItem(PropertyTagFrameDelay)
+            If item Is Nothing OrElse item.Value Is Nothing Then Return delays
+
+            Dim available As Integer = Math.Min(frameCount, item.Value.Length \ 4)
+            For i As Integer = 0 To available - 1
+                Dim hundredths As Integer = BitConverter.ToInt32(item.Value, i * 4)
+                If hundredths > 0 Then
+                    delays(i) = Math.Max(MinimumAnimationFrameDelayMs, hundredths * 10)
+                Else
+                    delays(i) = MinimumAnimationFrameDelayMs
+                End If
+            Next
+        Catch
+        End Try
+
+        Return delays
+    End Function
+
+    Private Function 读取图片动画循环次数(img As Image) As Integer
+        Try
+            If Array.IndexOf(img.PropertyIdList, PropertyTagLoopCount) < 0 Then Return 0
+            Dim item = img.GetPropertyItem(PropertyTagLoopCount)
+            If item Is Nothing OrElse item.Value Is Nothing OrElse item.Value.Length < 2 Then Return 0
+            Return CInt(BitConverter.ToUInt16(item.Value, 0))
+        Catch
+            Return 0
+        End Try
+    End Function
+
+    Private Function 计算图片动画计时器间隔(delays As Integer()) As Integer
+        If delays Is Nothing OrElse delays.Length = 0 Then Return DefaultAnimationFrameDelayMs
+        Dim interval As Integer = Math.Max(1, delays(0))
+        For i As Integer = 1 To delays.Length - 1
+            interval = 最大公约数(interval, Math.Max(1, delays(i)))
+        Next
+        Return Math.Max(MinimumAnimationFrameDelayMs, interval)
+    End Function
+
+    Private Shared Function 最大公约数(a As Integer, b As Integer) As Integer
+        a = Math.Abs(a)
+        b = Math.Abs(b)
+        If a = 0 Then Return Math.Max(1, b)
+        If b = 0 Then Return Math.Max(1, a)
+        While b <> 0
+            Dim t As Integer = a Mod b
+            a = b
+            b = t
+        End While
+        Return Math.Max(1, a)
+    End Function
+
+    Private Sub 更新图片动画运行状态()
+        更新图片动画宿主窗体订阅(If(Me.IsHandleCreated, Me.FindForm(), Nothing))
+
         Dim img = _animatedImage
-        If img Is Nothing Then Return
-        Try
-            ImageAnimator.UpdateFrames(img)
-        Catch
+        If img Is Nothing OrElse _animationFrameCount <= 1 Then
+            停止图片动画计时器(False)
             Return
-        End Try
-        ' 失效 D2D 位图缓存，使下一次 OnPaint 重新上传当前帧。
+        End If
+
+        If 图片动画可以渲染() Then
+            恢复图片动画渲染()
+        Else
+            停止图片动画计时器(False)
+        End If
+    End Sub
+
+    Private Function 图片动画可以渲染() As Boolean
+        If Me.IsDisposed OrElse Not Me.IsHandleCreated Then Return False
+        If Me.Width <= 0 OrElse Me.Height <= 0 Then Return False
+
+        Dim ctrl As Control = Me
+        While ctrl IsNot Nothing
+            If Not ctrl.Visible Then Return False
+            ctrl = ctrl.Parent
+        End While
+
+        Dim host = Me.FindForm()
+        If host IsNot Nothing Then
+            If Not host.Visible OrElse host.WindowState = FormWindowState.Minimized Then Return False
+        End If
+
+        Return True
+    End Function
+
+    Private Sub 恢复图片动画渲染()
+        If _animationTimer Is Nothing Then
+            _animationTimer = New PrecisionTimer() With {
+                .DispatchMode = PrecisionTimer.DispatchModeEnum.NonBlocking,
+                .OverrunPolicy = PrecisionTimer.OverrunPolicyEnum.Drop,
+                .WorkerThreadCount = 1,
+                .SynchronizingObject = Me,
+                .AutoReset = True
+            }
+            AddHandler _animationTimer.Tick, AddressOf 图片动画计时器触发
+        End If
+
+        _animationTimer.Interval = Math.Max(1, _animationTimerIntervalMs)
+        If _animationTimer.IsRunning Then Return
+
+        _animationNextFrameTicks = Stopwatch.GetTimestamp() + 毫秒转StopwatchTicks(获取当前图片动画帧延迟())
         Try
-            Dim comp = D2DHelperV2.GetCompositor(Me)
-            Dim cache = If(comp Is Nothing, Nothing, comp.GetBitmapCache(img))
-            If cache IsNot Nothing Then cache.Invalidate()
+            _animationTimer.Start()
+        Catch
+            停止图片动画计时器(True)
+        End Try
+        Me.Invalidate(获取背景图片刷新区域(), False)
+    End Sub
+
+    Private Sub 停止图片动画计时器(disposeTimer As Boolean)
+        _animationNextFrameTicks = 0
+        If _animationTimer Is Nothing Then Return
+
+        Try
+            _animationTimer.Stop()
         Catch
         End Try
-        Me.Invalidate()
+
+        If disposeTimer Then
+            Try
+                RemoveHandler _animationTimer.Tick, AddressOf 图片动画计时器触发
+                _animationTimer.Dispose()
+            Catch
+            End Try
+            _animationTimer = Nothing
+        End If
     End Sub
+
+    Private Sub 图片动画计时器触发(sender As Object, e As EventArgs)
+        If Me.IsDisposed Then Return
+        If Not 图片动画可以渲染() Then
+            停止图片动画计时器(False)
+            Return
+        End If
+
+        If _animatedImage Is Nothing OrElse _animationFrameDimension Is Nothing OrElse _animationFrameCount <= 1 Then Return
+
+        Dim nowTicks As Long = Stopwatch.GetTimestamp()
+        If _animationNextFrameTicks <= 0 Then
+            _animationNextFrameTicks = nowTicks + 毫秒转StopwatchTicks(获取当前图片动画帧延迟())
+            Return
+        End If
+        If nowTicks < _animationNextFrameTicks Then Return
+
+        Dim frameChanged As Boolean = False
+        Dim maxCatchUpFrames As Integer = Math.Max(1, _animationFrameCount * 2)
+        Dim advanced As Integer = 0
+
+        Do
+            If Not 推进图片动画一帧() Then Exit Do
+            frameChanged = True
+            advanced += 1
+            _animationNextFrameTicks += 毫秒转StopwatchTicks(获取当前图片动画帧延迟())
+        Loop While advanced < maxCatchUpFrames AndAlso nowTicks >= _animationNextFrameTicks
+
+        If advanced >= maxCatchUpFrames AndAlso nowTicks >= _animationNextFrameTicks Then
+            _animationNextFrameTicks = nowTicks + 毫秒转StopwatchTicks(获取当前图片动画帧延迟())
+        End If
+
+        If frameChanged Then
+            失效背景图片上传缓存()
+            Me.Invalidate(获取背景图片刷新区域(), False)
+        End If
+    End Sub
+
+    Private Function 推进图片动画一帧() As Boolean
+        Dim img = _animatedImage
+        If img Is Nothing OrElse _animationFrameDimension Is Nothing OrElse _animationFrameCount <= 1 Then Return False
+
+        Dim nextIndex As Integer = _animationFrameIndex + 1
+        If nextIndex >= _animationFrameCount Then
+            If _animationLoopLimit > 0 Then
+                _animationCompletedLoops += 1
+                If _animationCompletedLoops >= _animationLoopLimit Then
+                    停止图片动画计时器(False)
+                    Return False
+                End If
+            End If
+            nextIndex = 0
+        End If
+
+        _animationFrameIndex = nextIndex
+        Return True
+    End Function
+
+    Private Function 获取当前图片动画帧延迟() As Integer
+        If _animationFrameDelays Is Nothing OrElse _animationFrameDelays.Length = 0 Then Return DefaultAnimationFrameDelayMs
+        Dim index As Integer = Math.Max(0, Math.Min(_animationFrameIndex, _animationFrameDelays.Length - 1))
+        Return Math.Max(1, _animationFrameDelays(index))
+    End Function
+
+    Private Shared Function 毫秒转StopwatchTicks(milliseconds As Integer) As Long
+        Return Math.Max(1L, CLng(Stopwatch.Frequency * (Math.Max(1, milliseconds) / 1000.0)))
+    End Function
+
+    Private Sub 失效背景图片上传缓存()
+        清除动画帧图片缓存()
+    End Sub
+
+    Private Function 获取背景图片刷新区域() As Rectangle
+        If _image Is Nothing OrElse Me.ClientSize.Width <= 0 OrElse Me.ClientSize.Height <= 0 Then Return Me.ClientRectangle
+
+        Dim s As Single = DpiScale()
+        Dim area As New RectangleF(0, 0, Me.Width, Me.Height)
+        If 边框宽度 > 0 Then
+            Dim half As Single = 边框宽度 * s / 2.0F
+            area.Inflate(-half, -half)
+        End If
+
+        Dim srcW As Single = _image.Width
+        Dim srcH As Single = _image.Height
+        If srcW <= 0 OrElse srcH <= 0 OrElse area.Width <= 0 OrElse area.Height <= 0 Then Return Me.ClientRectangle
+
+        Dim ratioW As Single = area.Width / srcW
+        Dim ratioH As Single = area.Height / srcH
+        Dim ratio As Single = If(_imageFillMode = ImageFillMode.Fill, Math.Max(ratioW, ratioH), Math.Min(ratioW, ratioH))
+        Dim drawW As Single = srcW * ratio
+        Dim drawH As Single = srcH * ratio
+        Dim destRect As New RectangleF(
+            area.X + (area.Width - drawW) / 2.0F,
+            area.Y + (area.Height - drawH) / 2.0F,
+            drawW,
+            drawH)
+
+        Dim invalidRect As Rectangle = Rectangle.Ceiling(destRect)
+        invalidRect.Inflate(2, 2)
+        invalidRect = Rectangle.Intersect(Me.ClientRectangle, invalidRect)
+        If invalidRect.Width <= 0 OrElse invalidRect.Height <= 0 Then Return Me.ClientRectangle
+        Return invalidRect
+    End Function
+
+    Private Sub 更新图片动画宿主窗体订阅(host As Form)
+        If _animationHostForm Is host Then Return
+
+        If _animationHostForm IsNot Nothing Then
+            RemoveHandler _animationHostForm.VisibleChanged, AddressOf 图片动画宿主状态变更
+            RemoveHandler _animationHostForm.Resize, AddressOf 图片动画宿主状态变更
+            RemoveHandler _animationHostForm.Disposed, AddressOf 图片动画宿主状态变更
+        End If
+
+        _animationHostForm = host
+
+        If _animationHostForm IsNot Nothing Then
+            AddHandler _animationHostForm.VisibleChanged, AddressOf 图片动画宿主状态变更
+            AddHandler _animationHostForm.Resize, AddressOf 图片动画宿主状态变更
+            AddHandler _animationHostForm.Disposed, AddressOf 图片动画宿主状态变更
+        End If
+    End Sub
+
+    Private Sub 图片动画宿主状态变更(sender As Object, e As EventArgs)
+        更新图片动画运行状态()
+    End Sub
+
+    Private Sub 更新图片动画可见性订阅()
+        清除图片动画可见性订阅()
+
+        Dim ctrl As Control = Me.Parent
+        While ctrl IsNot Nothing
+            If Not TypeOf ctrl Is Form Then
+                AddHandler ctrl.VisibleChanged, AddressOf 图片动画父级状态变更
+                AddHandler ctrl.ParentChanged, AddressOf 图片动画父级状态变更
+                AddHandler ctrl.Disposed, AddressOf 图片动画父级状态变更
+                _animationVisibilitySources.Add(ctrl)
+            End If
+            ctrl = ctrl.Parent
+        End While
+    End Sub
+
+    Private Sub 清除图片动画可见性订阅()
+        For Each ctrl In _animationVisibilitySources
+            Try
+                RemoveHandler ctrl.VisibleChanged, AddressOf 图片动画父级状态变更
+                RemoveHandler ctrl.ParentChanged, AddressOf 图片动画父级状态变更
+                RemoveHandler ctrl.Disposed, AddressOf 图片动画父级状态变更
+            Catch
+            End Try
+        Next
+        _animationVisibilitySources.Clear()
+    End Sub
+
+    Private Sub 图片动画父级状态变更(sender As Object, e As EventArgs)
+        更新图片动画可见性订阅()
+        更新图片动画运行状态()
+    End Sub
+
+    Private Sub 清除动画帧图片缓存()
+        If _animationFrameImage IsNot Nothing Then
+            Try : _animationFrameImage.Dispose() : Catch : End Try
+            _animationFrameImage = Nothing
+        End If
+        _animationFrameImageSource = Nothing
+        _animationFrameImageIndex = -1
+    End Sub
+
+    Private Function 获取背景图片位图_D2D(rt As ID2D1RenderTarget, compositor As WindowCompositor,
+                                       ByRef shouldDispose As Boolean) As ID2D1Bitmap
+        shouldDispose = False
+        If _image Is Nothing OrElse rt Is Nothing Then Return Nothing
+
+        If _animatedImage IsNot Nothing AndAlso _animationFrameDimension IsNot Nothing AndAlso _animationFrameCount > 1 Then
+            shouldDispose = True
+            Return 获取动画帧位图_D2D(rt)
+        End If
+
+        If compositor Is Nothing Then Return Nothing
+        Dim cache = compositor.GetBitmapCache(_image)
+        Return If(cache Is Nothing, Nothing, cache.GetBitmap(rt, _image))
+    End Function
+
+    Private Function 获取动画帧位图_D2D(rt As ID2D1RenderTarget) As ID2D1Bitmap
+        If _image Is Nothing OrElse rt Is Nothing Then Return Nothing
+
+        Dim frameImage As Bitmap = 获取动画帧图像()
+        If frameImage Is Nothing Then Return Nothing
+
+        Return D2DGlobals.CreateBitmapFromGdi(rt, frameImage)
+    End Function
+
+    Private Function 获取动画帧图像() As Bitmap
+        Dim img = _animatedImage
+        If img Is Nothing OrElse _animationFrameDimension Is Nothing Then Return Nothing
+
+        If _animationFrameImage IsNot Nothing AndAlso
+           _animationFrameImageSource Is img AndAlso
+           _animationFrameImageIndex = _animationFrameIndex Then
+            Return _animationFrameImage
+        End If
+
+        清除动画帧图片缓存()
+
+        Dim frameImage As Bitmap = Nothing
+        Try
+            SyncLock img
+                img.SelectActiveFrame(_animationFrameDimension, _animationFrameIndex)
+                frameImage = New Bitmap(img.Width, img.Height, PixelFormat.Format32bppPArgb)
+                frameImage.SetResolution(img.HorizontalResolution, img.VerticalResolution)
+                Using g = Graphics.FromImage(frameImage)
+                    g.DrawImage(img, 0, 0, img.Width, img.Height)
+                End Using
+            End SyncLock
+
+            _animationFrameImage = frameImage
+            frameImage = Nothing
+            _animationFrameImageSource = img
+            _animationFrameImageIndex = _animationFrameIndex
+        Catch
+            If frameImage IsNot Nothing Then
+                Try : frameImage.Dispose() : Catch : End Try
+            End If
+            清除动画帧图片缓存()
+        End Try
+
+        Return _animationFrameImage
+    End Function
 
     Private _imageFillMode As ImageFillMode = ImageFillMode.Fill
     ''' <summary>背景图片填充模式：Zoom（完整显示）或 Fill（撑满裁切）。</summary>
@@ -588,10 +992,9 @@ Public Class ModernPanel
 
     ' V2：D2D 资源全部移到 WindowCompositor（Form 级共享），控件本身不再持有任何 D2D 字段。
 
-    ''' <summary>V2 占位：保留原有调用点签名，背景图缓存由 WindowCompositor.GetBitmapCache 共享，
-    ''' 这里只在 Image 切换时调用 Me.Invalidate 触发一次重绘，让上传缓存按 Image 引用自然失效。</summary>
+    ''' <summary>清理控件级动图帧上传缓存；静态背景图缓存仍由 WindowCompositor 共享管理。</summary>
     Private Sub 清除图片缓存()
-        ' no-op：V2 缓存按 Image 引用在 WindowCompositor 内共享，无需控件级失效。
+        清除动画帧图片缓存()
     End Sub
 
 #End Region
@@ -873,33 +1276,38 @@ Public Class ModernPanel
 
     ''' <summary>D2D 绘制背景图片：按 ImageMode 计算目标矩形，圆角下用几何裁切。</summary>
     Private Sub 绘制背景图片_D2D(rt As ID2D1RenderTarget, compositor As WindowCompositor, area As RectangleF, geo As ID2D1Geometry)
-        If _image Is Nothing OrElse compositor Is Nothing Then Return
-        Dim cache = compositor.GetBitmapCache(_image)
-        Dim bmp = If(cache Is Nothing, Nothing, cache.GetBitmap(rt, _image))
+        If _image Is Nothing Then Return
+        Dim shouldDisposeBitmap As Boolean
+        Dim bmp = 获取背景图片位图_D2D(rt, compositor, shouldDisposeBitmap)
         If bmp Is Nothing Then Return
-
-        Dim srcW As Single = _image.Width
-        Dim srcH As Single = _image.Height
-        If srcW <= 0 OrElse srcH <= 0 Then Return
-        Dim ratioW As Single = area.Width / srcW
-        Dim ratioH As Single = area.Height / srcH
-        Dim ratio As Single = If(_imageFillMode = ImageFillMode.Fill,
-                                 Math.Max(ratioW, ratioH),
-                                 Math.Min(ratioW, ratioH))
-        Dim drawW As Single = srcW * ratio
-        Dim drawH As Single = srcH * ratio
-        Dim destRect As New RectangleF(
-            area.X + (area.Width - drawW) / 2.0F,
-            area.Y + (area.Height - drawH) / 2.0F,
-            drawW, drawH)
-
-        Dim hasMask As Boolean = geo IsNot Nothing
-        If hasMask Then D2DGlobals.PushGeometryClip(rt, geo, area)
         Try
-            Dim srcRect As New RectangleF(0, 0, srcW, srcH)
-            rt.DrawBitmap(bmp, D2DGlobals.ToD2DRect(destRect), 1.0F, BitmapInterpolationMode.Linear, D2DGlobals.ToD2DRect(srcRect))
+            Dim srcW As Single = _image.Width
+            Dim srcH As Single = _image.Height
+            If srcW <= 0 OrElse srcH <= 0 Then Return
+            Dim ratioW As Single = area.Width / srcW
+            Dim ratioH As Single = area.Height / srcH
+            Dim ratio As Single = If(_imageFillMode = ImageFillMode.Fill,
+                                     Math.Max(ratioW, ratioH),
+                                     Math.Min(ratioW, ratioH))
+            Dim drawW As Single = srcW * ratio
+            Dim drawH As Single = srcH * ratio
+            Dim destRect As New RectangleF(
+                area.X + (area.Width - drawW) / 2.0F,
+                area.Y + (area.Height - drawH) / 2.0F,
+                drawW, drawH)
+
+            Dim hasMask As Boolean = geo IsNot Nothing
+            If hasMask Then D2DGlobals.PushGeometryClip(rt, geo, area)
+            Try
+                Dim srcRect As New RectangleF(0, 0, srcW, srcH)
+                rt.DrawBitmap(bmp, D2DGlobals.ToD2DRect(destRect), 1.0F, BitmapInterpolationMode.Linear, D2DGlobals.ToD2DRect(srcRect))
+            Finally
+                If hasMask Then rt.PopLayer()
+            End Try
         Finally
-            If hasMask Then rt.PopLayer()
+            If shouldDisposeBitmap Then
+                Try : bmp.Dispose() : Catch : End Try
+            End If
         End Try
     End Sub
 
@@ -1024,6 +1432,30 @@ Public Class ModernPanel
 #End Region
 
 #Region "生命周期"
+
+    Protected Overrides Sub OnHandleCreated(e As EventArgs)
+        MyBase.OnHandleCreated(e)
+        更新图片动画可见性订阅()
+        更新图片动画运行状态()
+    End Sub
+
+    Protected Overrides Sub OnHandleDestroyed(e As EventArgs)
+        停止图片动画计时器(False)
+        更新图片动画宿主窗体订阅(Nothing)
+        清除图片动画可见性订阅()
+        MyBase.OnHandleDestroyed(e)
+    End Sub
+
+    Protected Overrides Sub OnVisibleChanged(e As EventArgs)
+        MyBase.OnVisibleChanged(e)
+        更新图片动画运行状态()
+    End Sub
+
+    Protected Overrides Sub OnParentChanged(e As EventArgs)
+        MyBase.OnParentChanged(e)
+        更新图片动画可见性订阅()
+        更新图片动画运行状态()
+    End Sub
 
     Protected Overrides Sub OnPaddingChanged(e As EventArgs)
         MyBase.OnPaddingChanged(e)

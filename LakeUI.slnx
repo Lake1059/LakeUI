@@ -2,6 +2,9 @@
   <Project Path="LakeUI.Demo/LakeUI.Demo.vbproj">
     <BuildType Project="Debug" />
   </Project>
+  <Project Path="LakeUI.Notifications/LakeUI.Notifications.csproj">
+    <BuildType Project="Debug" />
+  </Project>
   <Project Path="LakeUI/LakeUI.vbproj">
     <BuildType Project="Debug" />
   </Project>

@@ -30,8 +30,8 @@ Imports Vortice.Direct2D1
 ''' • SSAA 池按字节预算做 LRU 修剪。极端大窗口 + 高倍率 SSAA 仍然可能瞬时占用较高显存；
 '''   但归还池时会尽快回落到预算内。
 ''' • DPI 变更不重建 DC RT。BindDC 时给的 rect 即逻辑大小，DPI 切换由控件自身 Invalidate 重绘解决。
-''' • <see cref="GetBitmapCache"/> 用 <see cref="Image"/> 强引用作 key，若 Image 在外部被 Dispose
-'''   而未通知 compositor，缓存会持有失效 Image 至 Form 销毁；推荐优先用 BackgroundPenetrationV2。
+''' • <see cref="GetBitmapCache"/> 用 <see cref="Image"/> 强引用作 key，因此临时 Bitmap 不应进入该缓存。
+'''   索引有 LRU 上限会释放旧引用，但外部替换 / Dispose 后仍推荐让控件切到新的 Image 引用。
 ''' </summary>
 Public NotInheritable Class WindowCompositor
     Implements IDisposable
@@ -47,7 +47,13 @@ Public NotInheritable Class WindowCompositor
     Private _activePaintScopes As Integer
 
     ''' <summary>Image → D2DBitmapCache 映射；为长期存在的图标 / 背景图复用 D2D 上传。</summary>
-    Private ReadOnly _bitmapCaches As New Dictionary(Of Image, D2DGlobals.D2DBitmapCache)()
+    Private NotInheritable Class BitmapCacheEntry
+        Public Cache As D2DGlobals.D2DBitmapCache
+        Public LastUsed As Long
+    End Class
+
+    Private ReadOnly _bitmapCaches As New Dictionary(Of Image, BitmapCacheEntry)()
+    Private _bitmapCacheClock As Long
 
     ''' <summary>共享的 SolidColorBrush 缓存（按 RT 切换自动失效）。</summary>
     Public ReadOnly Property BrushCache As New D2DGlobals.SolidColorBrushCache()
@@ -176,7 +182,7 @@ Public NotInheritable Class WindowCompositor
     Private Sub ReleaseDCRenderTargetNoLock()
         Try : BrushCache.Invalidate() : Catch : End Try
         For Each kv In _bitmapCaches
-            Try : kv.Value.Invalidate() : Catch : End Try
+            Try : kv.Value.Cache.Invalidate() : Catch : End Try
         Next
         For Each kv In _ssaaPool
             ReleaseRenderTargetCaches(kv.Value.RenderTarget)
@@ -195,18 +201,48 @@ Public NotInheritable Class WindowCompositor
     ''' Key 为 Image 引用本身（不复制，不哈希像素）。
     ''' </summary>
     ''' <remarks>
-    ''' 适用于 ImageList 中长期存在的图标 / 背景图。调用方在 Image 被替换时应负责丢弃旧 Image
-    ''' 的引用以便随 Form Dispose 时一同清理；不要把临时 Bitmap（如 OnPaint 内 new 出来的）放进来。
+    ''' 适用于 ImageList 中长期存在的图标 / 背景图。字典 key 是强引用，内部会按 LRU 上限释放旧索引；
+    ''' 但调用方仍不要把临时 Bitmap（如 OnPaint 内 new 出来的）放进来。
     ''' </remarks>
     Friend Function GetBitmapCache(src As Image) As D2DGlobals.D2DBitmapCache
         If _disposed OrElse src Is Nothing Then Return Nothing
-        Dim cache As D2DGlobals.D2DBitmapCache = Nothing
-        If Not _bitmapCaches.TryGetValue(src, cache) Then
-            cache = New D2DGlobals.D2DBitmapCache()
-            _bitmapCaches(src) = cache
+        Dim entry As BitmapCacheEntry = Nothing
+        If _bitmapCaches.TryGetValue(src, entry) Then
+            entry.LastUsed = NextBitmapCacheClock()
+            Return entry.Cache
         End If
+        Dim cache = New D2DGlobals.D2DBitmapCache()
+        _bitmapCaches(src) = New BitmapCacheEntry With {
+            .Cache = cache,
+            .LastUsed = NextBitmapCacheClock()
+        }
+        ' The dictionary key is a strong Image reference; trim the index so replaced images do not live until Form dispose.
+        TrimBitmapCacheIndex(src)
         Return cache
     End Function
+
+    Private Function NextBitmapCacheClock() As Long
+        _bitmapCacheClock += 1
+        Return _bitmapCacheClock
+    End Function
+
+    Private Sub TrimBitmapCacheIndex(protectedImage As Image)
+        Dim maxImages As Integer = Math.Max(0, GlobalOptions.D2DBitmapCacheMaxImagesPerCompositor)
+        While _bitmapCaches.Count > maxImages AndAlso _bitmapCaches.Count > 0
+            Dim oldestImage As Image = Nothing
+            Dim oldestEntry As BitmapCacheEntry = Nothing
+            For Each kv In _bitmapCaches
+                If protectedImage IsNot Nothing AndAlso kv.Key Is protectedImage Then Continue For
+                If oldestEntry Is Nothing OrElse kv.Value.LastUsed < oldestEntry.LastUsed Then
+                    oldestImage = kv.Key
+                    oldestEntry = kv.Value
+                End If
+            Next
+            If oldestImage Is Nothing Then Exit While
+            _bitmapCaches.Remove(oldestImage)
+            Try : oldestEntry.Cache.Dispose() : Catch : End Try
+        End While
+    End Sub
 
     ''' <summary>
     ''' SSAA 离屏 RT 池：按分桶后的 (pixelW, pixelH) 共享一份 <see cref="ID2D1BitmapRenderTarget"/>。
@@ -325,7 +361,7 @@ Public NotInheritable Class WindowCompositor
         If rt Is Nothing Then Return
         Try : BrushCache.InvalidateFor(rt) : Catch : End Try
         For Each kv In _bitmapCaches
-            Try : kv.Value.InvalidateFor(rt) : Catch : End Try
+            Try : kv.Value.Cache.InvalidateFor(rt) : Catch : End Try
         Next
     End Sub
 
@@ -367,7 +403,7 @@ Public NotInheritable Class WindowCompositor
         Try : BrushCache.Dispose() : Catch : End Try
         Try : TextFormatCache.Dispose() : Catch : End Try
         For Each kv In _bitmapCaches
-            Try : kv.Value.Dispose() : Catch : End Try
+            Try : kv.Value.Cache.Dispose() : Catch : End Try
         Next
         _bitmapCaches.Clear()
         ReleaseDCRenderTargetNoLock()

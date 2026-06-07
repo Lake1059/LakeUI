@@ -78,6 +78,8 @@
         绑定选项卡窗体背景透明(Form_AgentRoom.ModernPanel1)
         Me.ModernTabListControl1.Items(39).BoundControl = Form_ModernNumericUpDown
         绑定选项卡窗体背景透明(Form_ModernNumericUpDown.ModernPanel1)
+        Me.ModernTabListControl1.Items(42).BoundControl = Form_LakeUINotifications
+        绑定选项卡窗体背景透明(Form_LakeUINotifications.ModernPanel1)
     End Sub
 
     Private Sub Form1_Shown(sender As Object, e As EventArgs) Handles Me.Shown

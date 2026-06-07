@@ -1,7 +1,6 @@
 Imports System.ComponentModel
 Imports System.Numerics
 Imports System.Runtime.InteropServices
-Imports System.Threading
 Imports Microsoft.Win32
 Imports Vortice.Direct2D1
 Imports Vortice.DirectWrite
@@ -16,7 +15,38 @@ Public Class CpuMonitor
 
 #Region "D2D 资源"
     Private _当前合成器 As WindowCompositor
+    Private _布局缓存 As 绘制布局信息
+    Private _历史点缓存 As Vector2() = Array.Empty(Of Vector2)()
 #End Region
+
+    Private Structure 核心布局项
+        Public GlobalIndex As Integer
+        Public CellRect As RectangleF
+        Public InnerRect As RectangleF
+        Public TextRect As RectangleF
+        Public GraphRect As RectangleF
+    End Structure
+
+    Private NotInheritable Class 绘制布局信息
+        Public ControlWidth As Integer
+        Public ControlHeight As Integer
+        Public Dpi As Integer
+        Public StartIndex As Integer
+        Public Count As Integer
+        Public Columns As Integer
+        Public Rows As Integer
+        Public Simplified As Boolean
+        Public PaddingValue As Padding
+        Public TextPaddingValue As Padding
+        Public CellSpacing As Single
+        Public CellPadding As Single
+        Public CellBorderThickness As Single
+        Public FontSizeInPoints As Single
+        Public TextMode As TextModeEnum
+        Public TextAlign As ContentAlignment
+        Public Scale As Single
+        Public Items As 核心布局项()
+    End Class
 
     Public Event SampleUpdated As EventHandler
 
@@ -88,6 +118,8 @@ Public Class CpuMonitor
         Private ReadOnly Property 总核心数 As Integer
         Private Property 上次Idle As Long()
         Private Property 上次总计 As Long()
+        Private Property 样本Idle As Long()
+        Private Property 样本总计 As Long()
         Private Property 当前占用 As Single()
         Private ReadOnly Property 采样锁 As New Object()
 
@@ -97,6 +129,8 @@ Public Class CpuMonitor
             If 总核心数 <= 0 Then 总核心数 = Environment.ProcessorCount
             ReDim 上次Idle(总核心数 - 1)
             ReDim 上次总计(总核心数 - 1)
+            ReDim 样本Idle(总核心数 - 1)
+            ReDim 样本总计(总核心数 - 1)
             ReDim 当前占用(总核心数 - 1)
             Try
                 Sample()
@@ -131,6 +165,15 @@ Public Class CpuMonitor
             End SyncLock
         End Function
 
+        Public Sub CopyUsages(ByRef target As Single())
+            SyncLock 采样锁
+                If target Is Nothing OrElse target.Length <> 当前占用.Length Then
+                    target = New Single(当前占用.Length - 1) {}
+                End If
+                Array.Copy(当前占用, target, 当前占用.Length)
+            End SyncLock
+        End Sub
+
         Private Shared ReadOnly 单项大小 As Integer = Marshal.SizeOf(Of SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION)()
         Private 样本缓冲 As IntPtr = IntPtr.Zero
         Private 样本缓冲大小 As Integer = 0
@@ -154,45 +197,46 @@ Public Class CpuMonitor
         End Sub
 
         Public Sub Sample()
-            Dim idleArr(总核心数 - 1) As Long
-            Dim totalArr(总核心数 - 1) As Long
-
-            If 处理器组.Length <= 1 Then
-                查询当前组(idleArr, totalArr, 0)
-            Else
-                Dim 索引 As Integer = 0
-                For Each g In 处理器组
-                    Dim offset As Integer = 索引
-                    Dim groupId As UShort = g.Group
-                    Dim count As Integer = g.Count
-                    Dim t As New Thread(
-                        Sub()
-                            Try
-                                Dim ga As New GROUP_AFFINITY()
-                                If count >= IntPtr.Size * 8 Then
-                                    ga.Mask = New UIntPtr(UInt64.MaxValue)
-                                Else
-                                    ga.Mask = New UIntPtr((1UL << count) - 1UL)
-                                End If
-                                ga.Group = groupId
-                                Dim prev As New GROUP_AFFINITY()
-                                SetThreadGroupAffinity(GetCurrentThread(), ga, prev)
-                                查询当前组(idleArr, totalArr, offset, count)
-                            Catch
-                            End Try
-                        End Sub) With {
-                        .IsBackground = True
-                        }
-                    t.Start()
-                    t.Join()
-                    索引 += count
-                Next
-            End If
-
             SyncLock 采样锁
+                Array.Clear(样本Idle, 0, 样本Idle.Length)
+                Array.Clear(样本总计, 0, 样本总计.Length)
+
+                If 处理器组.Length <= 1 Then
+                    查询当前组(样本Idle, 样本总计, 0)
+                Else
+                    Dim 索引 As Integer = 0
+                    Dim threadHandle As IntPtr = GetCurrentThread()
+                    For Each g In 处理器组
+                        Dim offset As Integer = 索引
+                        Dim groupId As UShort = g.Group
+                        Dim count As Integer = g.Count
+                        Try
+                            Dim ga As New GROUP_AFFINITY()
+                            If count >= IntPtr.Size * 8 Then
+                                ga.Mask = New UIntPtr(UInt64.MaxValue)
+                            Else
+                                ga.Mask = New UIntPtr((1UL << count) - 1UL)
+                            End If
+                            ga.Group = groupId
+                            Dim prev As New GROUP_AFFINITY()
+                            Dim changed As Boolean = SetThreadGroupAffinity(threadHandle, ga, prev)
+                            Try
+                                查询当前组(样本Idle, 样本总计, offset, count)
+                            Finally
+                                If changed Then
+                                    Dim ignored As New GROUP_AFFINITY()
+                                    SetThreadGroupAffinity(threadHandle, prev, ignored)
+                                End If
+                            End Try
+                        Catch
+                        End Try
+                        索引 += count
+                    Next
+                End If
+
                 For i As Integer = 0 To 总核心数 - 1
-                    Dim 总 As Long = totalArr(i)
-                    Dim idle As Long = idleArr(i)
+                    Dim 总 As Long = 样本总计(i)
+                    Dim idle As Long = 样本Idle(i)
                     Dim dTotal As Long = 总 - 上次总计(i)
                     Dim dIdle As Long = idle - 上次Idle(i)
                     If dTotal > 0 Then
@@ -306,9 +350,14 @@ Public Class CpuMonitor
                     End If
                 End If
 
-                绘制图形内容_D2D(gRT)
-                scope.FlushGraphics()
-                绘制文字内容_D2D(dcRT)
+                Dim layout = 获取绘制布局()
+                If layout IsNot Nothing Then
+                    绘制图形内容_D2D(gRT, layout)
+                    scope.FlushGraphics()
+                    绘制文字内容_D2D(dcRT, layout)
+                Else
+                    scope.FlushGraphics()
+                End If
 
                 If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
                     Dim b = _当前合成器.BrushCache.Get(dcRT, 禁用时遮罩颜色)
@@ -320,11 +369,11 @@ Public Class CpuMonitor
         End Using
     End Sub
 
-    Private Sub 绘制图形内容_D2D(rt As ID2D1RenderTarget)
+    Private Function 获取绘制布局() As 绘制布局信息
         Dim s As Single = DpiScale()
         Dim range = 获取显示范围()
         Dim count As Integer = range.Count
-        If count <= 0 Then Return
+        If count <= 0 Then Return Nothing
         Dim startIndex As Integer = range.Start
 
         Dim simplified As Boolean = 应使用简化模式(count)
@@ -335,54 +384,124 @@ Public Class CpuMonitor
         Dim gap As Single = 网格间距值 * s
         Dim cellW As Single = (Math.Max(0, Me.Width - (pad.Left + pad.Right) * s) - gap * (cols - 1)) / cols
         Dim cellH As Single = (Math.Max(0, Me.Height - (pad.Top + pad.Bottom) * s) - gap * (rows - 1)) / rows
-        If cellW < 2 OrElse cellH < 2 Then Return
+        If cellW < 2 OrElse cellH < 2 Then Return Nothing
 
-        Dim usages() As Single = 最近占用
-        Dim history()() As Single = If(Not simplified, 获取历史快照(), Nothing)
+        Dim cached = _布局缓存
+        If cached IsNot Nothing AndAlso
+           cached.ControlWidth = Me.Width AndAlso
+           cached.ControlHeight = Me.Height AndAlso
+           cached.Dpi = Me.DeviceDpi AndAlso
+           cached.StartIndex = startIndex AndAlso
+           cached.Count = count AndAlso
+           cached.Columns = cols AndAlso
+           cached.Rows = rows AndAlso
+           cached.Simplified = simplified AndAlso
+           cached.PaddingValue = pad AndAlso
+           cached.TextPaddingValue = 文字内边距值 AndAlso
+           cached.CellSpacing = 网格间距值 AndAlso
+           cached.CellPadding = 核心内边距值 AndAlso
+           cached.CellBorderThickness = 核心边框粗细值 AndAlso
+           cached.FontSizeInPoints = Me.Font.SizeInPoints AndAlso
+           cached.TextMode = 文字模式 AndAlso
+           cached.TextAlign = 文字对齐值 Then
+            Return cached
+        End If
+
+        Dim layout As New 绘制布局信息 With {
+            .ControlWidth = Me.Width,
+            .ControlHeight = Me.Height,
+            .Dpi = Me.DeviceDpi,
+            .StartIndex = startIndex,
+            .Count = count,
+            .Columns = cols,
+            .Rows = rows,
+            .Simplified = simplified,
+            .PaddingValue = pad,
+            .TextPaddingValue = 文字内边距值,
+            .CellSpacing = 网格间距值,
+            .CellPadding = 核心内边距值,
+            .CellBorderThickness = 核心边框粗细值,
+            .FontSizeInPoints = Me.Font.SizeInPoints,
+            .TextMode = 文字模式,
+            .TextAlign = 文字对齐值,
+            .Scale = s,
+            .Items = New 核心布局项(count - 1) {}
+        }
+
+        Dim textStripH As Single = 0
+        If 文字模式 <> TextModeEnum.None Then
+            Dim tp As Padding = 文字内边距值
+            textStripH = 文本行像素高度(s) + (tp.Top + tp.Bottom) * s
+        End If
+        Dim textAtBottom As Boolean = 是底部文字对齐(文字对齐值)
 
         For slot As Integer = 0 To count - 1
             Dim i As Integer = startIndex + slot
             Dim x As Single = pad.Left * s + (slot Mod cols) * (cellW + gap)
             Dim y As Single = pad.Top * s + (slot \ cols) * (cellH + gap)
-            Dim usage As Single = If(usages IsNot Nothing AndAlso i < usages.Length, usages(i), 0)
-            Dim hist As Single() = If(history IsNot Nothing AndAlso i < history.Length, history(i), Nothing)
             Dim cellRect As New RectangleF(x, y, cellW, cellH)
-            If simplified Then
-                绘制简化核心_D2D(rt, cellRect, usage, s)
-            Else
-                绘制常规核心图形_D2D(rt, cellRect, hist, s)
+            Dim inner As RectangleF = 计算内部矩形(cellRect, s)
+            Dim item As New 核心布局项 With {
+                .GlobalIndex = i,
+                .CellRect = cellRect,
+                .InnerRect = inner
+            }
+
+            If inner.Width > 0 AndAlso inner.Height > 0 Then
+                If simplified Then
+                    item.TextRect = inner
+                Else
+                    Dim stripH As Single = If(文字模式 = TextModeEnum.None, 0, Math.Min(inner.Height, textStripH))
+                    Dim graphH As Single = Math.Max(0, inner.Height - stripH)
+                    Dim graphY As Single = If(textAtBottom, inner.Y, inner.Y + stripH)
+                    item.GraphRect = New RectangleF(inner.X, graphY, inner.Width, graphH)
+                    If stripH > 0 Then
+                        Dim textY As Single = If(textAtBottom, inner.Bottom - stripH, inner.Y)
+                        item.TextRect = New RectangleF(inner.X, textY, inner.Width, stripH)
+                    End If
+                End If
             End If
+
+            layout.Items(slot) = item
         Next
+
+        _布局缓存 = layout
+        Return layout
+    End Function
+
+    Private Sub 绘制图形内容_D2D(rt As ID2D1RenderTarget, layout As 绘制布局信息)
+        Dim usages() As Single = 最近占用
+        Dim s As Single = layout.Scale
+        Dim canDrawHistory As Boolean = Not layout.Simplified AndAlso 显示历史图表 AndAlso 启用历史记录
+
+        If canDrawHistory Then
+            SyncLock 历史锁
+                For Each item In layout.Items
+                    Dim hist As Single() = If(item.GlobalIndex >= 0 AndAlso item.GlobalIndex < 历史数据.Count, 历史数据(item.GlobalIndex), Nothing)
+                    绘制常规核心图形_D2D(rt, item, hist, 历史写入位置, s)
+                Next
+            End SyncLock
+        Else
+            For Each item In layout.Items
+                Dim usage As Single = If(usages IsNot Nothing AndAlso item.GlobalIndex < usages.Length, usages(item.GlobalIndex), 0)
+                If layout.Simplified Then
+                    绘制简化核心_D2D(rt, item, usage, s)
+                Else
+                    绘制常规核心图形_D2D(rt, item, Nothing, 0, s)
+                End If
+            Next
+        End If
     End Sub
 
-    Private Sub 绘制文字内容_D2D(rt As ID2D1RenderTarget)
-        Dim s As Single = DpiScale()
-        Dim range = 获取显示范围()
-        Dim count As Integer = range.Count
-        If count <= 0 Then Return
-        Dim startIndex As Integer = range.Start
-
-        Dim simplified As Boolean = 应使用简化模式(count)
-        Dim cols As Integer = 计算列数(count, simplified)
-        Dim rows As Integer = CInt(Math.Ceiling(count / CDbl(cols)))
-
-        Dim pad As Padding = Me.Padding
-        Dim gap As Single = 网格间距值 * s
-        Dim cellW As Single = (Math.Max(0, Me.Width - (pad.Left + pad.Right) * s) - gap * (cols - 1)) / cols
-        Dim cellH As Single = (Math.Max(0, Me.Height - (pad.Top + pad.Bottom) * s) - gap * (rows - 1)) / rows
-        If cellW < 2 OrElse cellH < 2 Then Return
-
+    Private Sub 绘制文字内容_D2D(rt As ID2D1RenderTarget, layout As 绘制布局信息)
         Dim usages() As Single = 最近占用
-        For slot As Integer = 0 To count - 1
-            Dim i As Integer = startIndex + slot
-            Dim x As Single = pad.Left * s + (slot Mod cols) * (cellW + gap)
-            Dim y As Single = pad.Top * s + (slot \ cols) * (cellH + gap)
-            Dim usage As Single = If(usages IsNot Nothing AndAlso i < usages.Length, usages(i), 0)
-            Dim cellRect As New RectangleF(x, y, cellW, cellH)
-            If simplified Then
-                绘制简化核心文字_D2D(rt, cellRect, usage, s)
+        Dim s As Single = layout.Scale
+        For Each item In layout.Items
+            Dim usage As Single = If(usages IsNot Nothing AndAlso item.GlobalIndex < usages.Length, usages(item.GlobalIndex), 0)
+            If layout.Simplified Then
+                绘制简化核心文字_D2D(rt, item, usage, s)
             Else
-                绘制常规核心文字_D2D(rt, cellRect, i, usage, s)
+                绘制常规核心文字_D2D(rt, item, usage, s)
             End If
         Next
     End Sub
@@ -403,61 +522,35 @@ Public Class CpuMonitor
         Return r
     End Function
 
-    Private Sub 绘制常规核心图形_D2D(rt As ID2D1RenderTarget, rect As RectangleF, hist As Single(), s As Single)
-        Dim inner As RectangleF = 计算内部矩形(rect, s)
+    Private Sub 绘制常规核心图形_D2D(rt As ID2D1RenderTarget, item As 核心布局项, hist As Single(), historyStart As Integer, s As Single)
+        绘制核心背景与边框_D2D(rt, item.CellRect, s)
+        If item.InnerRect.Width <= 0 OrElse item.InnerRect.Height <= 0 Then Return
 
-        绘制核心背景与边框_D2D(rt, rect, s)
-        If inner.Width <= 0 OrElse inner.Height <= 0 Then Return
-
-        ' 计算文字条高度以便历史图表避让
-        Dim tp As Padding = 文字内边距值
-        Dim textStripH As Single = 0
-        If 文字模式 <> TextModeEnum.None Then
-            textStripH = Math.Min(inner.Height, 文本像素高度(s) + (tp.Top + tp.Bottom) * s)
-        End If
-
-        ' 垂直底部对齐 → 文字位于底部；其余 → 置于顶部
-        Dim textAtBottom As Boolean = (文字对齐值 = ContentAlignment.BottomLeft OrElse
-                                        文字对齐值 = ContentAlignment.BottomCenter OrElse
-                                        文字对齐值 = ContentAlignment.BottomRight)
-
-        Dim graphH As Single = Math.Max(0, inner.Height - textStripH)
-        Dim graphY As Single = If(textAtBottom, inner.Y, inner.Y + textStripH)
-
-        If 显示历史图表 AndAlso hist IsNot Nothing AndAlso hist.Length >= 2 AndAlso graphH >= 2 Then
-            使用核心裁剪_D2D(rt, rect, s,
+        If 显示历史图表 AndAlso hist IsNot Nothing AndAlso hist.Length >= 2 AndAlso item.GraphRect.Height >= 2 Then
+            使用核心裁剪_D2D(rt, item.CellRect, s,
                 Sub()
-                    绘制历史图表_D2D(rt, New RectangleF(inner.X, graphY, inner.Width, graphH), hist, s)
+                    绘制历史图表_D2D(rt, item.GraphRect, hist, historyStart, s)
                 End Sub)
         End If
     End Sub
 
-    Private Sub 绘制常规核心文字_D2D(rt As ID2D1RenderTarget, rect As RectangleF, index As Integer, usage As Single, s As Single)
-        Dim inner As RectangleF = 计算内部矩形(rect, s)
-        If inner.Width <= 0 OrElse inner.Height <= 0 Then Return
+    Private Sub 绘制常规核心文字_D2D(rt As ID2D1RenderTarget, item As 核心布局项, usage As Single, s As Single)
+        If item.TextRect.Width <= 0 OrElse item.TextRect.Height <= 0 Then Return
 
-        Dim 文本 As String = 构造核心文字(index, usage)
+        Dim 文本 As String = 构造核心文字(item.GlobalIndex, usage)
         If String.IsNullOrEmpty(文本) Then Return
 
-        Dim tp As Padding = 文字内边距值
-        Dim textStripH As Single = Math.Min(inner.Height, 文本像素高度(s) + (tp.Top + tp.Bottom) * s)
-        Dim textAtBottom As Boolean = (文字对齐值 = ContentAlignment.BottomLeft OrElse
-                                        文字对齐值 = ContentAlignment.BottomCenter OrElse
-                                        文字对齐值 = ContentAlignment.BottomRight)
-        Dim textY As Single = If(textAtBottom, inner.Bottom - textStripH, inner.Y)
-        绘制文字_D2D(rt, New RectangleF(inner.X, textY, inner.Width, textStripH), 文本, s)
+        绘制文字_D2D(rt, item.TextRect, 文本, s)
     End Sub
 
-    Private Sub 绘制简化核心_D2D(rt As ID2D1RenderTarget, rect As RectangleF, usage As Single, s As Single)
-        Dim inner As RectangleF = 计算内部矩形(rect, s)
-
-        绘制核心背景与边框_D2D(rt, rect, s)
-        If inner.Width > 0 AndAlso inner.Height > 0 Then
-            Dim fillH As Single = inner.Height * Math.Max(0.0F, Math.Min(1.0F, usage))
+    Private Sub 绘制简化核心_D2D(rt As ID2D1RenderTarget, item As 核心布局项, usage As Single, s As Single)
+        绘制核心背景与边框_D2D(rt, item.CellRect, s)
+        If item.InnerRect.Width > 0 AndAlso item.InnerRect.Height > 0 Then
+            Dim fillH As Single = item.InnerRect.Height * 限制占用值(usage)
             If fillH > 0 Then
-                使用核心裁剪_D2D(rt, rect, s,
+                使用核心裁剪_D2D(rt, item.CellRect, s,
                     Sub()
-                        Dim fillRect As New RectangleF(inner.X, inner.Bottom - fillH, inner.Width, fillH)
+                        Dim fillRect As New RectangleF(item.InnerRect.X, item.InnerRect.Bottom - fillH, item.InnerRect.Width, fillH)
                         Dim b = _当前合成器.BrushCache.Get(rt, 选择占用颜色(usage))
                         If b IsNot Nothing Then rt.FillRectangle(D2DGlobals.ToD2DRect(fillRect), b)
                     End Sub)
@@ -465,10 +558,9 @@ Public Class CpuMonitor
         End If
     End Sub
 
-    Private Sub 绘制简化核心文字_D2D(rt As ID2D1RenderTarget, rect As RectangleF, usage As Single, s As Single)
-        Dim inner As RectangleF = 计算内部矩形(rect, s)
-        If inner.Width > 0 AndAlso inner.Height > 0 Then
-            绘制文字_D2D(rt, inner, CInt(Math.Round(usage * 100)).ToString() & "%", s)
+    Private Sub 绘制简化核心文字_D2D(rt As ID2D1RenderTarget, item As 核心布局项, usage As Single, s As Single)
+        If item.TextRect.Width > 0 AndAlso item.TextRect.Height > 0 Then
+            绘制文字_D2D(rt, item.TextRect, 百分比文本(usage), s)
         End If
     End Sub
 
@@ -476,6 +568,22 @@ Public Class CpuMonitor
     Private Function 选择占用颜色(usage As Single) As Color
         If usage >= 占满阈值值 Then Return 占满颜色值
         Return 当前条颜色值
+    End Function
+
+    Private Shared Function 限制占用值(usage As Single) As Single
+        If usage < 0.0F Then Return 0.0F
+        If usage > 1.0F Then Return 1.0F
+        Return usage
+    End Function
+
+    Private Shared Function 百分比文本(usage As Single) As String
+        Return CInt(Math.Round(限制占用值(usage) * 100)).ToString() & "%"
+    End Function
+
+    Private Shared Function 是底部文字对齐(a As ContentAlignment) As Boolean
+        Return a = ContentAlignment.BottomLeft OrElse
+               a = ContentAlignment.BottomCenter OrElse
+               a = ContentAlignment.BottomRight
     End Function
 
     ''' <summary>计算核心内部可绘制区域：同时考虑 CellPadding 与边框厚度，确保内容不会覆盖边框。</summary>
@@ -499,10 +607,8 @@ Public Class CpuMonitor
         Dim style As FontStyle = If(Me.Font.Italic, FontStyle.Italic, FontStyle.Normal)
         Dim fmt = _当前合成器.TextFormatCache.Get(Me.Font.FontFamily.Name, weight, style, 文本像素高度(s),
                                        转文本水平对齐(文字对齐值), 转文本垂直对齐(文字对齐值), True)
-        Using layout = D2DGlobals.GetDWriteFactory().CreateTextLayout(If(text, ""), fmt, textRect.Width, textRect.Height)
-            Dim b = _当前合成器.BrushCache.Get(rt, Me.ForeColor)
-            If b IsNot Nothing Then rt.DrawTextLayout(New Vector2(textRect.X, textRect.Y), layout, b)
-        End Using
+        Dim b = _当前合成器.BrushCache.Get(rt, Me.ForeColor)
+        If b IsNot Nothing Then rt.DrawText(If(text, ""), fmt, D2DGlobals.ToD2DRect(textRect), b, DrawTextOptions.Clip)
     End Sub
 
     Private Sub 绘制核心背景与边框_D2D(rt As ID2D1RenderTarget, rect As RectangleF, s As Single)
@@ -553,7 +659,7 @@ Public Class CpuMonitor
         End Using
     End Sub
 
-    Private Sub 绘制历史图表_D2D(rt As ID2D1RenderTarget, rect As RectangleF, hist As Single(), s As Single)
+    Private Sub 绘制历史图表_D2D(rt As ID2D1RenderTarget, rect As RectangleF, hist As Single(), historyStart As Integer, s As Single)
         If rect.Width < 2 OrElse rect.Height < 2 Then Return
         Dim n As Integer = hist.Length
         If n < 2 Then Return
@@ -564,16 +670,17 @@ Public Class CpuMonitor
         End If
 
         Dim step_ As Single = rect.Width / (n - 1)
-        Dim pts(n - 1) As Vector2
+        If _历史点缓存.Length < n Then
+            _历史点缓存 = New Vector2(n - 1) {}
+        End If
+        Dim pts As Vector2() = _历史点缓存
         For i As Integer = 0 To n - 1
-            Dim v As Single = hist(i)
-            If v < 0 Then v = 0
-            If v > 1 Then v = 1
+            Dim v As Single = 限制占用值(hist(历史数组索引(i, n, historyStart)))
             pts(i) = New Vector2(rect.X + i * step_, rect.Bottom - v * rect.Height)
         Next
 
         If 图表填充颜色值.A > 0 Then
-            Using geo = 创建历史填充几何(rect, pts)
+            Using geo = 创建历史填充几何(rect, pts, n)
                 Dim b = _当前合成器.BrushCache.Get(rt, 图表填充颜色值)
                 If b IsNot Nothing Then rt.FillGeometry(geo, b)
             End Using
@@ -591,19 +698,26 @@ Public Class CpuMonitor
         If fullBrush IsNot Nothing Then
             Dim tickW As Single = Math.Max(lineW, 1.5F * s)
             For i As Integer = 0 To n - 1
-                If 历史满载(hist(i)) Then
+                If 历史满载(hist(历史数组索引(i, n, historyStart))) Then
                     rt.DrawLine(New Vector2(pts(i).X, pts(i).Y), New Vector2(pts(i).X, rect.Bottom), fullBrush, tickW)
                 End If
             Next
         End If
     End Sub
 
-    Private Shared Function 创建历史填充几何(rect As RectangleF, pts As Vector2()) As ID2D1PathGeometry
+    Private Shared Function 历史数组索引(logicalIndex As Integer, length As Integer, startIndex As Integer) As Integer
+        If length <= 0 Then Return 0
+        Dim idx As Integer = startIndex + logicalIndex
+        If idx >= length Then idx -= length
+        Return idx
+    End Function
+
+    Private Shared Function 创建历史填充几何(rect As RectangleF, pts As Vector2(), count As Integer) As ID2D1PathGeometry
         Dim geo As ID2D1PathGeometry = D2DGlobals.GetD2DFactory().CreatePathGeometry()
         Dim sink As ID2D1GeometrySink = geo.Open()
         Try
             sink.BeginFigure(pts(0), FigureBegin.Filled)
-            For i As Integer = 1 To pts.Length - 1
+            For i As Integer = 1 To count - 1
                 sink.AddLine(pts(i))
             Next
             sink.AddLine(New Vector2(rect.Right, rect.Bottom))
@@ -618,6 +732,10 @@ Public Class CpuMonitor
 
     Private Function 文本像素高度(s As Single) As Single
         Return Me.Font.SizeInPoints * (96.0F / 72.0F) * s
+    End Function
+
+    Private Function 文本行像素高度(s As Single) As Single
+        Return CSng(Math.Ceiling(Me.Font.GetHeight(96.0F * s)) + Math.Ceiling(s))
     End Function
 
     Private Shared Function 转文本水平对齐(a As ContentAlignment) As TextAlignment
@@ -643,9 +761,9 @@ Public Class CpuMonitor
             Case TextModeEnum.IndexOnly
                 Return "CPU " & index
             Case TextModeEnum.PercentOnly
-                Return CInt(Math.Round(usage * 100)).ToString() & "%"
+                Return 百分比文本(usage)
             Case Else ' IndexAndPercent
-                Return "CPU " & index & " - " & CInt(Math.Round(usage * 100)).ToString() & "%"
+                Return "CPU " & index & " - " & 百分比文本(usage)
         End Select
     End Function
 
@@ -672,7 +790,9 @@ Public Class CpuMonitor
     Private ReadOnly 采样定时器 As New System.Windows.Forms.Timer() With {.Interval = 1000}
     Private ReadOnly 历史数据 As New List(Of Single())()
     Private ReadOnly 历史锁 As New Object()
+    Private 历史写入位置 As Integer = 0
     Private 最近占用 As Single() = Array.Empty(Of Single)()
+    Private _挂起期间需要采样 As Boolean = False
 
     Private ReadOnly Property 逻辑核心数 As Integer
         Get
@@ -695,6 +815,7 @@ Public Class CpuMonitor
                     历史数据.Add(New Single(记录长度值 - 1) {})
 #Enable Warning CA1861 ' 不要将常量数组作为参数
                 Next
+                历史写入位置 = 0
             End SyncLock
             最近占用 = New Single(逻辑核心数 - 1) {}
             If 采样器实例 IsNot Nothing Then
@@ -706,60 +827,51 @@ Public Class CpuMonitor
     Private Sub 采样定时器_Tick(sender As Object, e As EventArgs)
         If DesignMode Then Return
         If 采样器实例 Is Nothing Then Return
+        If Not 应执行采样刷新() Then
+            _挂起期间需要采样 = True
+            更新采样定时器状态()
+            Return
+        End If
         Try
             采样器实例.Sample()
         Catch
             Return
         End Try
 
-        Dim usages() As Single = 采样器实例.GetUsages()
-        最近占用 = usages
+        应用采样结果(invalidateControl:=True, raiseUpdated:=True)
+    End Sub
+
+    Private Sub 应用采样结果(invalidateControl As Boolean, raiseUpdated As Boolean)
+        If 采样器实例 Is Nothing Then Return
+        采样器实例.CopyUsages(最近占用)
+        Dim usages() As Single = 最近占用
 
         ' 简化模式不记录历史
         If Not 简化模式值 AndAlso 启用历史记录 Then
             SyncLock 历史锁
+                Dim writeIndex As Integer = Math.Min(历史写入位置, Math.Max(0, 记录长度值 - 1))
                 For i As Integer = 0 To Math.Min(usages.Length, 历史数据.Count) - 1
                     Dim arr = 历史数据(i)
                     If arr Is Nothing OrElse arr.Length <> 记录长度值 Then
                         arr = New Single(记录长度值 - 1) {}
                         历史数据(i) = arr
                     End If
-                    If arr.Length > 1 Then
-                        Array.Copy(arr, 1, arr, 0, arr.Length - 1)
-                    End If
-                    arr(arr.Length - 1) = usages(i)
+                    arr(writeIndex) = usages(i)
                 Next
+                历史写入位置 = (writeIndex + 1) Mod 记录长度值
             End SyncLock
         End If
 
-        Me.Invalidate()
-        RaiseEvent SampleUpdated(Me, EventArgs.Empty)
+        If invalidateControl Then Me.Invalidate()
+        If raiseUpdated Then RaiseEvent SampleUpdated(Me, EventArgs.Empty)
     End Sub
-
-    Private Function 获取历史快照() As Single()()
-        Dim n As Integer = 逻辑核心数
-        Dim result(n - 1)() As Single
-        SyncLock 历史锁
-            For i As Integer = 0 To n - 1
-                If Not 简化模式值 AndAlso 启用历史记录 AndAlso i < 历史数据.Count Then
-                    ' 采样定时器 Tick 与 OnPaint 均运行在 UI 线程，无需克隆；
-                    ' 仅交出只读引用以避免大核数下重复分配 Single() 数组。
-                    result(i) = 历史数据(i)
-                Else
-                    result(i) = Nothing
-                End If
-            Next
-        End SyncLock
-        Return result
-    End Function
 
     ''' <summary>手动立即执行一次采样（不等待定时器）。</summary>
     Public Sub ForceSample()
         If 采样器实例 Is Nothing Then Return
         Try
             采样器实例.Sample()
-            最近占用 = 采样器实例.GetUsages()
-            Me.Invalidate()
+            应用采样结果(invalidateControl:=True, raiseUpdated:=True)
         Catch
         End Try
     End Sub
@@ -768,8 +880,14 @@ Public Class CpuMonitor
     Public Sub Reset()
         SyncLock 历史锁
             For i As Integer = 0 To 历史数据.Count - 1
-                历史数据(i) = New Single(记录长度值 - 1) {}
+                Dim arr = 历史数据(i)
+                If arr Is Nothing OrElse arr.Length <> 记录长度值 Then
+                    历史数据(i) = New Single(记录长度值 - 1) {}
+                Else
+                    Array.Clear(arr, 0, arr.Length)
+                End If
             Next
+            历史写入位置 = 0
         End SyncLock
         Me.Invalidate()
     End Sub
@@ -901,25 +1019,66 @@ Public Class CpuMonitor
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
+            清除布局缓存()
             Me.Invalidate()
         End If
+    End Sub
+
+    Private Sub 清除布局缓存()
+        _布局缓存 = Nothing
     End Sub
 
     Private Function DpiScale() As Single
         Return Me.DeviceDpi / 96.0F
     End Function
 
+    Private Function 应执行采样刷新() As Boolean
+        Return 正在运行 AndAlso
+               Me.IsHandleCreated AndAlso
+               Not Me.IsDisposed AndAlso
+               Not DesignMode AndAlso
+               Me.Visible
+    End Function
+
+    Private Sub 更新采样定时器状态()
+        If DesignMode Then Return
+        Dim shouldRun As Boolean = 应执行采样刷新()
+        If shouldRun Then
+            If Not 采样定时器.Enabled Then 采样定时器.Start()
+            If _挂起期间需要采样 Then
+                _挂起期间需要采样 = False
+                ForceSample()
+            End If
+        ElseIf 采样定时器.Enabled Then
+            采样定时器.Stop()
+        End If
+    End Sub
+
     Protected Overrides Sub OnHandleCreated(e As EventArgs)
         MyBase.OnHandleCreated(e)
+        清除布局缓存()
         If Not DesignMode Then
             确保采样器()
-            If 正在运行 Then 采样定时器.Start()
+            更新采样定时器状态()
         End If
     End Sub
 
     Protected Overrides Sub OnHandleDestroyed(e As EventArgs)
         采样定时器.Stop()
         MyBase.OnHandleDestroyed(e)
+    End Sub
+
+    Protected Overrides Sub OnVisibleChanged(e As EventArgs)
+        MyBase.OnVisibleChanged(e)
+        清除布局缓存()
+        If Not Me.Visible Then _挂起期间需要采样 = True
+        更新采样定时器状态()
+    End Sub
+
+    Protected Overrides Sub OnParentChanged(e As EventArgs)
+        MyBase.OnParentChanged(e)
+        清除布局缓存()
+        更新采样定时器状态()
     End Sub
 
     Protected Overrides Sub OnEnabledChanged(e As EventArgs)
@@ -929,16 +1088,19 @@ Public Class CpuMonitor
 
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
+        清除布局缓存()
         Me.Invalidate()
     End Sub
 
     Protected Overrides Sub OnPaddingChanged(e As EventArgs)
         MyBase.OnPaddingChanged(e)
+        清除布局缓存()
         Me.Invalidate()
     End Sub
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
         MyBase.OnFontChanged(e)
+        清除布局缓存()
         D2DHelperV2.RefreshFontDependentRendering(Me)
     End Sub
 
@@ -977,10 +1139,10 @@ Public Class CpuMonitor
             正在运行 = value
             If value Then
                 确保采样器()
-                If Me.IsHandleCreated AndAlso Not DesignMode Then 采样定时器.Start()
             Else
-                采样定时器.Stop()
+                _挂起期间需要采样 = False
             End If
+            更新采样定时器状态()
             Me.Invalidate()
         End Set
     End Property
@@ -1281,10 +1443,13 @@ Public Class CpuMonitor
                     Dim old = 历史数据(i)
                     If old IsNot Nothing Then
                         Dim copy As Integer = Math.Min(old.Length, value)
-                        Array.Copy(old, old.Length - copy, newArr, value - copy, copy)
+                        For j As Integer = 0 To copy - 1
+                            newArr(value - copy + j) = old(历史数组索引(j + (old.Length - copy), old.Length, 历史写入位置))
+                        Next
                     End If
                     历史数据(i) = newArr
                 Next
+                历史写入位置 = 0
             End SyncLock
             Me.Invalidate()
         End Set

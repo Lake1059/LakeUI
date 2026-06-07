@@ -2,14 +2,25 @@
 
   <PropertyGroup>
 	<OutputType>WinExe</OutputType>
-	<TargetFramework>net10.0-windows</TargetFramework>
+	<TargetFramework>net10.0-windows10.0.17763.0</TargetFramework>
 	<StartupObject>Sub Main</StartupObject>
 	<UseWindowsForms>true</UseWindowsForms>
 	<MyType>WindowsForms</MyType>
 	<ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
 	<ForceDesignerDpiUnaware>True</ForceDesignerDpiUnaware>
-	<PublishSingleFile>true</PublishSingleFile>
 	<SelfContained>false</SelfContained>
+	<WindowsPackageType>None</WindowsPackageType>
+	<RuntimeIdentifier>win-x64</RuntimeIdentifier>
+	<WindowsAppSdkBootstrapInitialize>false</WindowsAppSdkBootstrapInitialize>
+	<WindowsAppSdkDeploymentManagerInitialize>false</WindowsAppSdkDeploymentManagerInitialize>
+	<WindowsAppSdkAutoInitialize>false</WindowsAppSdkAutoInitialize>
+	<WindowsAppSdkIncludeVersionInfo>false</WindowsAppSdkIncludeVersionInfo>
+	<WindowsAppSdkUndockedRegFreeWinRTInitialize>false</WindowsAppSdkUndockedRegFreeWinRTInitialize>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(PublishSingleFile)'=='true'">
+	<EnableMsixTooling>true</EnableMsixTooling>
+	<IncludeAllContentForSelfExtract>true</IncludeAllContentForSelfExtract>
   </PropertyGroup>
 
   <ItemGroup>
@@ -26,6 +37,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\LakeUI.Notifications\LakeUI.Notifications.csproj" />
     <ProjectReference Include="..\LakeUI\LakeUI.vbproj" />
   </ItemGroup>
 

@@ -139,6 +139,52 @@ Public Class GlobalOptions
     Public Shared Property D2DBitmapCacheBudgetBytes As Long = 64L * 1024L * 1024L
 
     ''' <summary>
+    ''' 每个窗口 compositor 可保留的 Image 上传缓存索引数量。
+    ''' </summary>
+    ''' <remarks>
+    ''' <para>默认值：256。该限制只控制 Image -&gt; D2DBitmapCache 的强引用索引数量，不改变单个 Image 的上传缓存预算。</para>
+    ''' <para>这主要用于运行时频繁替换图标 / 背景图的场景：旧 Image 若只被 compositor 字典持有，会在超过上限后按 LRU 释放。</para>
+    ''' <para>调小会更快释放旧 Image 引用，但图片反复切换时会增加重新上传次数；调大则更偏向复用。</para>
+    ''' </remarks>
+    Public Shared Property D2DBitmapCacheMaxImagesPerCompositor As Integer = 256
+
+    ''' <summary>
+    ''' 每个 RenderTarget 可保留的纯色 D2D 画刷数量。
+    ''' </summary>
+    ''' <remarks>
+    ''' <para>默认值：256。动画插值颜色可能产生大量只用一两帧的 ARGB，超过上限后按近似 LRU 释放旧画刷。</para>
+    ''' <para>该设置不影响颜色精度或视觉效果；命中率下降时只会增加少量 CreateSolidColorBrush 开销。</para>
+    ''' </remarks>
+    Public Shared Property D2DBrushCacheMaxEntriesPerRenderTarget As Integer = 256
+
+    ''' <summary>
+    ''' 每个窗口 compositor 可保留的 DirectWrite TextFormat 数量。
+    ''' </summary>
+    ''' <remarks>
+    ''' <para>默认值：128。TextFormat 与 RT 无关，适合复用；但主题/字体/字号频繁变化时也需要上限避免长期堆积。</para>
+    ''' <para>该设置不缓存 TextLayout，因此不会改变文字排版结果；超过上限只会让较久未用的 TextFormat 在下次需要时重建。</para>
+    ''' </remarks>
+    Public Shared Property DWriteTextFormatCacheMaxEntriesPerCompositor As Integer = 128
+
+    ''' <summary>
+    ''' BackgroundPenetrationV2 可保留的 CPU 源位图预算。
+    ''' </summary>
+    ''' <remarks>
+    ''' <para>默认值：64 MiB，单位为字节。该预算只作用于 GDI backing bitmap，不影响 D2D 裁剪上传缓存数量。</para>
+    ''' <para>纯色源会在识别后立即丢弃 backing bitmap；非纯色源超过预算时按 LRU 丢弃，下一次绘制会完整重采，视觉结果不变。</para>
+    ''' </remarks>
+    Public Shared Property BackgroundPenetrationSourceBitmapBudgetBytes As Long = 64L * 1024L * 1024L
+
+    ''' <summary>
+    ''' BackdropRenderer CPU blur 字节缓冲的保留上限。
+    ''' </summary>
+    ''' <remarks>
+    ''' <para>默认值：32 MiB，单位为字节，分别作用于 BoxBlur 的两块 scratch buffer。</para>
+    ''' <para>GPU blur 可用时这些缓冲不是画质所需；CPU fallback 用完后若容量明显超出当前帧需求，会被缩回以释放 RAM。</para>
+    ''' </remarks>
+    Public Shared Property BackdropCpuBlurBufferRetainBytes As Long = 32L * 1024L * 1024L
+
+    ''' <summary>
     ''' 每个 BackgroundSource 可保留的 D2D 裁剪上传缓存数量。
     ''' </summary>
     ''' <remarks>

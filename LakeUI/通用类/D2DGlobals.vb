@@ -563,22 +563,56 @@ Public Module D2DGlobals
     Public Class SolidColorBrushCache
         Implements IDisposable
 
-        Private ReadOnly _buckets As New Dictionary(Of ID2D1RenderTarget, Dictionary(Of Integer, ID2D1SolidColorBrush))(4)
+        Private NotInheritable Class BrushEntry
+            Public Brush As ID2D1SolidColorBrush
+            Public LastUsed As Long
+        End Class
+
+        Private ReadOnly _buckets As New Dictionary(Of ID2D1RenderTarget, Dictionary(Of Integer, BrushEntry))(4)
+        Private _clock As Long
 
         Public Function [Get](rt As ID2D1RenderTarget, c As Color) As ID2D1SolidColorBrush
             If rt Is Nothing Then Return Nothing
-            Dim bucket As Dictionary(Of Integer, ID2D1SolidColorBrush) = Nothing
+            Dim bucket As Dictionary(Of Integer, BrushEntry) = Nothing
             If Not _buckets.TryGetValue(rt, bucket) Then
-                bucket = New Dictionary(Of Integer, ID2D1SolidColorBrush)(8)
+                bucket = New Dictionary(Of Integer, BrushEntry)(8)
                 _buckets(rt) = bucket
             End If
             Dim key As Integer = c.ToArgb()
-            Dim b As ID2D1SolidColorBrush = Nothing
-            If bucket.TryGetValue(key, b) Then Return b
-            b = rt.CreateSolidColorBrush(ToColor4(c))
-            bucket(key) = b
+            Dim entry As BrushEntry = Nothing
+            If bucket.TryGetValue(key, entry) Then
+                entry.LastUsed = NextClock()
+                Return entry.Brush
+            End If
+            Dim b = rt.CreateSolidColorBrush(ToColor4(c))
+            bucket(key) = New BrushEntry With {.Brush = b, .LastUsed = NextClock()}
+            ' Animation colors can create many one-off ARGB brushes; LRU keeps exact colors without unbounded growth.
+            TrimBucket(bucket, key)
             Return b
         End Function
+
+        Private Function NextClock() As Long
+            _clock += 1
+            Return _clock
+        End Function
+
+        Private Sub TrimBucket(bucket As Dictionary(Of Integer, BrushEntry), protectedKey As Integer)
+            Dim maxEntries As Integer = Math.Max(0, GlobalOptions.D2DBrushCacheMaxEntriesPerRenderTarget)
+            While bucket.Count > maxEntries AndAlso bucket.Count > 0
+                Dim oldestKey As Integer = 0
+                Dim oldestEntry As BrushEntry = Nothing
+                For Each kv In bucket
+                    If kv.Key = protectedKey Then Continue For
+                    If oldestEntry Is Nothing OrElse kv.Value.LastUsed < oldestEntry.LastUsed Then
+                        oldestKey = kv.Key
+                        oldestEntry = kv.Value
+                    End If
+                Next
+                If oldestEntry Is Nothing Then Exit While
+                bucket.Remove(oldestKey)
+                Try : oldestEntry.Brush.Dispose() : Catch : End Try
+            End While
+        End Sub
 
         Public Sub Invalidate()
             InvalidateInternal()
@@ -586,10 +620,10 @@ Public Module D2DGlobals
 
         Public Sub InvalidateFor(rt As ID2D1RenderTarget)
             If rt Is Nothing Then Return
-            Dim bucket As Dictionary(Of Integer, ID2D1SolidColorBrush) = Nothing
+            Dim bucket As Dictionary(Of Integer, BrushEntry) = Nothing
             If _buckets.TryGetValue(rt, bucket) Then
-                For Each b In bucket.Values
-                    Try : b.Dispose() : Catch : End Try
+                For Each entry In bucket.Values
+                    Try : entry.Brush.Dispose() : Catch : End Try
                 Next
                 _buckets.Remove(rt)
             End If
@@ -597,8 +631,8 @@ Public Module D2DGlobals
 
         Private Sub InvalidateInternal()
             For Each bucket In _buckets.Values
-                For Each b In bucket.Values
-                    Try : b.Dispose() : Catch : End Try
+                For Each entry In bucket.Values
+                    Try : entry.Brush.Dispose() : Catch : End Try
                 Next
             Next
             _buckets.Clear()
@@ -628,7 +662,13 @@ Public Module D2DGlobals
             Public Wrap As Boolean
         End Structure
 
-        Private ReadOnly _map As New Dictionary(Of Key, IDWriteTextFormat)(4)
+        Private NotInheritable Class TextFormatEntry
+            Public Format As IDWriteTextFormat
+            Public LastUsed As Long
+        End Class
+
+        Private ReadOnly _map As New Dictionary(Of Key, TextFormatEntry)(4)
+        Private _clock As Long
 
         Public Function [Get](family As String, weight As Vortice.DirectWrite.FontWeight,
                               style As Vortice.DirectWrite.FontStyle, sizePx As Single,
@@ -679,8 +719,12 @@ Public Module D2DGlobals
                 .Trim = trimChar,
                 .Wrap = wordWrap
             }
+            Dim entry As TextFormatEntry = Nothing
+            If _map.TryGetValue(k, entry) Then
+                entry.LastUsed = NextClock()
+                Return entry.Format
+            End If
             Dim fmt As IDWriteTextFormat = Nothing
-            If _map.TryGetValue(k, fmt) Then Return fmt
             fmt = CreateTextFormat(resolved, sizePx)
             fmt.TextAlignment = textAlign
             fmt.ParagraphAlignment = paraAlign
@@ -691,13 +735,40 @@ Public Module D2DGlobals
                 Catch
                 End Try
             End If
-            _map(k) = fmt
+            _map(k) = New TextFormatEntry With {.Format = fmt, .LastUsed = NextClock()}
+            ' TextLayout remains per draw; trimming only TextFormat preserves layout quality while bounding cache lifetime.
+            TrimToLimit(k)
             Return fmt
         End Function
 
+        Private Function NextClock() As Long
+            _clock += 1
+            Return _clock
+        End Function
+
+        Private Sub TrimToLimit(protectedKey As Key)
+            Dim maxEntries As Integer = Math.Max(0, GlobalOptions.DWriteTextFormatCacheMaxEntriesPerCompositor)
+            While _map.Count > maxEntries AndAlso _map.Count > 0
+                Dim oldestKey As Key = Nothing
+                Dim oldestEntry As TextFormatEntry = Nothing
+                Dim found As Boolean = False
+                For Each kv In _map
+                    If kv.Key.Equals(protectedKey) Then Continue For
+                    If oldestEntry Is Nothing OrElse kv.Value.LastUsed < oldestEntry.LastUsed Then
+                        oldestKey = kv.Key
+                        oldestEntry = kv.Value
+                        found = True
+                    End If
+                Next
+                If Not found Then Exit While
+                _map.Remove(oldestKey)
+                Try : oldestEntry.Format.Dispose() : Catch : End Try
+            End While
+        End Sub
+
         Public Sub Invalidate()
-            For Each f In _map.Values
-                Try : f.Dispose() : Catch : End Try
+            For Each entry In _map.Values
+                Try : entry.Format.Dispose() : Catch : End Try
             Next
             _map.Clear()
         End Sub

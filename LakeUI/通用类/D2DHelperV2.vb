@@ -56,6 +56,12 @@ Public Module D2DHelperV2
     <ThreadStatic>
     Private _backgroundSamplingPaintDepth As Integer
 
+    Friend ReadOnly Property IsBackgroundSamplingPaint As Boolean
+        Get
+            Return _backgroundSamplingPaintDepth > 0
+        End Get
+    End Property
+
     Friend Function EnterBackgroundSamplingPaint() As IDisposable
         _backgroundSamplingPaintDepth += 1
         Return New BackgroundSamplingPaintScope()

@@ -233,6 +233,25 @@ Friend NotInheritable Class BackdropRenderer
         End If
     End Sub
 
+    Private Sub ReleaseCpuBlurredFrame()
+        SyncLock _frameLock
+            If _cpuBlurredFrame IsNot Nothing Then
+                Try : _cpuBlurredFrame.Dispose() : Catch : End Try
+                _cpuBlurredFrame = Nothing
+            End If
+            _cpuBlurredSourceVersion = -1
+            _cpuBlurredSettingsVersion = -1
+        End SyncLock
+    End Sub
+
+    Private Sub ReleaseCaptureBitmap()
+        Dim old = _capturedBitmap
+        _capturedBitmap = Nothing
+        If old IsNot Nothing Then
+            Try : old.Dispose() : Catch : End Try
+        End If
+    End Sub
+
     Private Sub DisposeGpuResources()
         If _gpuBlurEffect IsNot Nothing Then
             Try : _gpuBlurEffect.Dispose() : Catch : End Try
@@ -341,6 +360,7 @@ Friend NotInheritable Class BackdropRenderer
         Dim small As Bitmap = AcquireSpareFrame(dw, dh)
         Dim useImage As Boolean = (Volatile.Read(_sourceMode) = 1)
         If useImage Then
+            ReleaseCaptureBitmap()
             ' 从静态源图按 cover 撑满 → 直接缩到 dw×dh
             Dim src As Image
             SyncLock _sourceLock
@@ -482,15 +502,16 @@ Friend NotInheritable Class BackdropRenderer
         Dim h As Integer = bmp.Height
         Dim rect As New Rectangle(0, 0, w, h)
         Dim data = bmp.LockBits(rect, ImageLockMode.ReadWrite, PixelFormat.Format32bppPArgb)
+        Dim bufferLen As Integer = 0
         Try
             Dim stride As Integer = data.Stride
-            Dim len As Integer = stride * h
+            bufferLen = stride * h
             ' 复用缓冲，按需扩容
-            If _blurBufferA Is Nothing OrElse _blurBufferA.Length < len Then ReDim _blurBufferA(len - 1)
-            If _blurBufferB Is Nothing OrElse _blurBufferB.Length < len Then ReDim _blurBufferB(len - 1)
+            If _blurBufferA Is Nothing OrElse _blurBufferA.Length < bufferLen Then ReDim _blurBufferA(bufferLen - 1)
+            If _blurBufferB Is Nothing OrElse _blurBufferB.Length < bufferLen Then ReDim _blurBufferB(bufferLen - 1)
             Dim src() As Byte = _blurBufferA
             Dim dst() As Byte = _blurBufferB
-            Marshal.Copy(data.Scan0, src, 0, len)
+            Marshal.Copy(data.Scan0, src, 0, bufferLen)
 
             Dim useParallel As Boolean = parallelism > 1 AndAlso (w * h) >= 8192
             Dim pOpts As ParallelOptions = Nothing
@@ -515,10 +536,18 @@ Friend NotInheritable Class BackdropRenderer
                 End If
             Next
 
-            Marshal.Copy(src, 0, data.Scan0, len)
+            Marshal.Copy(src, 0, data.Scan0, bufferLen)
         Finally
             bmp.UnlockBits(data)
         End Try
+        If bufferLen > 0 Then TrimBlurBuffers(bufferLen)
+    End Sub
+
+    Private Sub TrimBlurBuffers(requiredBytes As Integer)
+        Dim retain As Long = Math.Max(0L, GlobalOptions.BackdropCpuBlurBufferRetainBytes)
+        Dim keep As Integer = CInt(Math.Min(Integer.MaxValue, Math.Max(CLng(requiredBytes), retain)))
+        If _blurBufferA IsNot Nothing AndAlso _blurBufferA.Length > keep * 2L Then ReDim _blurBufferA(keep - 1)
+        If _blurBufferB IsNot Nothing AndAlso _blurBufferB.Length > keep * 2L Then ReDim _blurBufferB(keep - 1)
     End Sub
 
     ''' <summary>
@@ -731,6 +760,15 @@ Friend NotInheritable Class BackdropRenderer
         DrawCpuFrame(g, target)
     End Sub
 
+    ''' <summary>
+    ''' 使用 GDI+ 把当前帧绘制到目标。适用于带 Alpha 的离屏位图，避免 GPU HDC BitBlt
+    ''' 绕过 GDI+ 的预乘 Alpha 合成。
+    ''' </summary>
+    Friend Sub DrawToCpu(g As Graphics, target As Rectangle)
+        If g Is Nothing OrElse target.Width <= 0 OrElse target.Height <= 0 Then Return
+        DrawCpuFrame(g, target)
+    End Sub
+
     Private Function TryDrawGpuBlur(g As Graphics, target As Rectangle) As Boolean
         If Volatile.Read(_disposed) <> 0 Then Return False
         Dim sourceSize As Size = Size.Empty
@@ -801,6 +839,7 @@ Friend NotInheritable Class BackdropRenderer
 
                 _gpuContext.EndDraw()
                 drawing = False
+                If bltOk Then ReleaseCpuBlurredFrame()
                 Return bltOk
             Finally
                 If destHdc <> IntPtr.Zero Then

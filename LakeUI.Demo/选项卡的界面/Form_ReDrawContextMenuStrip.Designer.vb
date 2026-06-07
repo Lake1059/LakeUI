@@ -178,7 +178,6 @@ Partial Class Form_ReDrawContextMenuStrip
         ModernTextBox1.Name = "ModernTextBox1"
         ModernTextBox1.Padding = New Padding(10, 8, 8, 8)
         ModernTextBox1.ReadOnly = True
-        ModernTextBox1.ScrollBarHoverColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
         ModernTextBox1.Size = New Size(648, 120)
         ModernTextBox1.TabIndex = 39
         ModernTextBox1.Text = "ModernTextBox1"

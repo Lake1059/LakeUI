@@ -172,6 +172,7 @@ Public Class ThisIsYourWindow
         Public CachedIconBitmap As Bitmap
         Public CachedIconSource As Icon
         Public CloseRect, MaxRect, MinRect, IconRect As Rectangle
+        Public LastTitleTextDirtyRect As Rectangle = Rectangle.Empty
         Public ShadowForm As ShadowWindow
         Public IsInSizeMove As Boolean = False
         Public AnimatingShow As Boolean = False
@@ -401,8 +402,33 @@ Public Class ThisIsYourWindow
         Dim s = 查找状态(frm)
         If s Is Nothing Then Return
         D2DHelperV2.InvalidateTextFormatCache(frm)
-        InvalidateCaption(frm, True)
+        InvalidateTitleText(s)
     End Sub
+
+    Private Sub HostForm_TextChanged(sender As Object, e As EventArgs)
+        Dim frm = TryCast(sender, Form)
+        If frm Is Nothing Then Return
+        Dim s = 查找状态(frm)
+        If s Is Nothing Then Return
+        InvalidateTitleText(s)
+    End Sub
+
+    Private Sub InvalidateTitleText(s As PerFormState)
+        If s Is Nothing OrElse s.HostForm Is Nothing OrElse s.HostForm.IsDisposed OrElse Not s.HostForm.IsHandleCreated Then Return
+        RecalculateButtonBounds(s)
+        Dim newDirty As Rectangle = 获取标题文字脏区(s)
+        Dim dirty As Rectangle = 合并脏区(s.LastTitleTextDirtyRect, newDirty)
+        s.LastTitleTextDirtyRect = newDirty
+        If dirty.Width > 0 AndAlso dirty.Height > 0 Then
+            s.HostForm.Invalidate(dirty)
+        End If
+    End Sub
+
+    Private Shared Function 合并脏区(a As Rectangle, b As Rectangle) As Rectangle
+        If a.Width <= 0 OrElse a.Height <= 0 Then Return b
+        If b.Width <= 0 OrElse b.Height <= 0 Then Return a
+        Return Rectangle.Union(a, b)
+    End Function
 
     Private Sub 使标题字体资源失效()
         For Each s In _forms.Values
@@ -1705,7 +1731,11 @@ Public Class ThisIsYourWindow
         If useBackdrop Then
             g.SmoothingMode = SmoothingMode.Default
             g.PixelOffsetMode = PixelOffsetMode.Default
-            s.Renderer.DrawTo(g, backdropRect)
+            If D2DHelperV2.IsBackgroundSamplingPaint Then
+                s.Renderer.DrawToCpu(g, backdropRect)
+            Else
+                s.Renderer.DrawTo(g, backdropRect)
+            End If
             Dim tint = If(active, _毛玻璃Tint颜色, _毛玻璃Tint失焦颜色)
             If tint.A > 0 Then
                 _共享画刷.Color = tint
@@ -1957,15 +1987,10 @@ Public Class ThisIsYourWindow
         End If
     End Sub
 
-    Private Sub 绘制标题文字_D2D(rt As ID2D1DCRenderTarget, compositor As WindowCompositor, s As PerFormState)
-        Dim text As String = s.HostForm.Text
-        If String.IsNullOrEmpty(text) Then Return
-        Dim font As Font = If(_标题文字字体, s.HostForm.Font)
-        If font Is Nothing Then Return
-        Dim fgColor As Color = If(s.Activated, _标题文字颜色, _标题文字失焦颜色)
-        If fgColor.A = 0 Then Return
+    Private Function 获取标题文字布局矩形(s As PerFormState) As RectangleF
+        If s Is Nothing OrElse s.HostForm Is Nothing Then Return RectangleF.Empty
         Dim captionRect As Rectangle = 获取标题栏内容矩形(s.HostForm.ClientSize.Width, s.HostForm.ClientSize.Height)
-        If captionRect.Width <= 0 OrElse captionRect.Height <= 0 Then Return
+        If captionRect.Width <= 0 OrElse captionRect.Height <= 0 Then Return RectangleF.Empty
 
         Dim leftEdge, rightEdge As Integer
         If _按钮位置 = ButtonPositionEnum.Right Then
@@ -1986,7 +2011,26 @@ Public Class ThisIsYourWindow
             rightEdge = captionRect.Right - _标题文字右边距
         End If
 
-        Dim textRect As New RectangleF(leftEdge, captionRect.Top, Math.Max(0, rightEdge - leftEdge), captionRect.Height)
+        Return New RectangleF(leftEdge, captionRect.Top, Math.Max(0, rightEdge - leftEdge), captionRect.Height)
+    End Function
+
+    Private Function 获取标题文字脏区(s As PerFormState) As Rectangle
+        Dim textRect As RectangleF = 获取标题文字布局矩形(s)
+        If textRect.Width <= 0 OrElse textRect.Height <= 0 Then Return Rectangle.Empty
+        Dim dirty As Rectangle = Rectangle.Ceiling(textRect)
+        dirty.Inflate(2, 2)
+        Return Rectangle.Intersect(New Rectangle(Point.Empty, s.HostForm.ClientSize), dirty)
+    End Function
+
+    Private Sub 绘制标题文字_D2D(rt As ID2D1DCRenderTarget, compositor As WindowCompositor, s As PerFormState)
+        Dim text As String = s.HostForm.Text
+        If String.IsNullOrEmpty(text) Then Return
+        Dim font As Font = If(_标题文字字体, s.HostForm.Font)
+        If font Is Nothing Then Return
+        Dim fgColor As Color = If(s.Activated, _标题文字颜色, _标题文字失焦颜色)
+        If fgColor.A = 0 Then Return
+
+        Dim textRect As RectangleF = 获取标题文字布局矩形(s)
         If textRect.Width <= 0 OrElse textRect.Height <= 0 Then Return
 
         Dim align As Vortice.DirectWrite.TextAlignment
@@ -2092,6 +2136,7 @@ Public Class ThisIsYourWindow
         AddHandler targetForm.FormClosed, AddressOf 宿主窗口_FormClosed
         AddHandler targetForm.HandleDestroyed, AddressOf 宿主窗口_HandleDestroyed
         AddHandler targetForm.FontChanged, AddressOf 宿主窗口_FontChanged
+        AddHandler targetForm.TextChanged, AddressOf HostForm_TextChanged
         RecalculateButtonBounds(s)
         更新窗口内边距(s)
         targetForm.Invalidate()
@@ -2149,6 +2194,7 @@ Public Class ThisIsYourWindow
         RemoveHandler targetForm.FormClosed, AddressOf 宿主窗口_FormClosed
         RemoveHandler targetForm.HandleDestroyed, AddressOf 宿主窗口_HandleDestroyed
         RemoveHandler targetForm.FontChanged, AddressOf 宿主窗口_FontChanged
+        RemoveHandler targetForm.TextChanged, AddressOf HostForm_TextChanged
         targetForm.Padding = s.OriginalPadding
     End Sub
 

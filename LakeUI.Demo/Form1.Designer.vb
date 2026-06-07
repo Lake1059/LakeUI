@@ -65,6 +65,7 @@ Partial Class Form1
         Dim ModernTabPage40 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
         Dim ModernTabPage41 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
         Dim ModernTabPage42 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
+        Dim ModernTabPage43 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
         Dim resources As System.ComponentModel.ComponentResourceManager = New System.ComponentModel.ComponentResourceManager(GetType(Form1))
         ModernTabListControl1 = New ModernTabListControl()
         ModernTextBox1 = New ModernTextBox()
@@ -124,6 +125,7 @@ Partial Class Form1
         ModernTabPage40.Text = "ModernNumericUpDown"
         ModernTabPage41.Text = "[定制品] MemberWall"
         ModernTabPage42.Text = "[定制品] EasyStatesPanel"
+        ModernTabPage43.Text = "LakeUI.Notifications"
         ModernTabListControl1.Items.Add(ModernTabPage1)
         ModernTabListControl1.Items.Add(ModernTabPage2)
         ModernTabListControl1.Items.Add(ModernTabPage3)
@@ -166,6 +168,7 @@ Partial Class Form1
         ModernTabListControl1.Items.Add(ModernTabPage40)
         ModernTabListControl1.Items.Add(ModernTabPage41)
         ModernTabListControl1.Items.Add(ModernTabPage42)
+        ModernTabListControl1.Items.Add(ModernTabPage43)
         ModernTabListControl1.Location = New Point(0, 0)
         ModernTabListControl1.MoreIndicatorColor = Color.FromArgb(CByte(120), CByte(220), CByte(220), CByte(220))
         ModernTabListControl1.Name = "ModernTabListControl1"
@@ -245,7 +248,7 @@ Partial Class Form1
         MinimumSize = New Size(1000, 700)
         Name = "Form1"
         StartPosition = FormStartPosition.CenterScreen
-        Text = "LakeUI 2.6.0 DEMO"
+        Text = "LakeUI 2.7.0 DEMO"
         ModernTabListControl1.ResumeLayout(False)
         ResumeLayout(False)
     End Sub

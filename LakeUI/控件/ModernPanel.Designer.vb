@@ -7,6 +7,7 @@ Partial Class ModernPanel
     Protected Overrides Sub Dispose(ByVal disposing As Boolean)
         Try
             If disposing Then
+                停止图片动画()
                 清除图片缓存()
                 If components IsNot Nothing Then
                     components.Dispose()
