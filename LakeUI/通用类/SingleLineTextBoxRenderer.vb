@@ -28,7 +28,7 @@ Public Class SingleLineTextBoxRenderer
         AddHandler _caretBlinkTimer.Tick,
             Sub()
                 _caretVisible = Not _caretVisible
-                _owner.Invalidate()
+                InvalidateOwner()
             End Sub
     End Sub
 
@@ -54,6 +54,10 @@ Public Class SingleLineTextBoxRenderer
     Public Property RightReservedWidth As Integer = 0
     Public Property TextFilter As Func(Of String, String)
     Public Property CandidateValidator As Func(Of String, Boolean)
+    Public Property TextAreaProvider As Func(Of RectangleF)
+    Public Property DpiScaleProvider As Func(Of Single)
+    Public Property InvalidateAction As Action
+    Public Property FocusProvider As Func(Of Boolean)
 
     Public Property CaretColumn As Integer
         Get
@@ -64,7 +68,7 @@ Public Class SingleLineTextBoxRenderer
             _selAnchorCol = _caretCol
             _hasSelection = False
             EnsureCaretVisible()
-            _owner.Invalidate()
+            InvalidateOwner()
         End Set
     End Property
 
@@ -75,7 +79,7 @@ Public Class SingleLineTextBoxRenderer
         Set(value As Integer)
             _selAnchorCol = Math.Max(0, Math.Min(_text.Length, value))
             _hasSelection = (_caretCol <> _selAnchorCol)
-            _owner.Invalidate()
+            InvalidateOwner()
         End Set
     End Property
 
@@ -85,7 +89,7 @@ Public Class SingleLineTextBoxRenderer
         End Get
         Set(value As Boolean)
             _hasSelection = value AndAlso _caretCol <> _selAnchorCol
-            _owner.Invalidate()
+            InvalidateOwner()
         End Set
     End Property
 
@@ -96,7 +100,7 @@ Public Class SingleLineTextBoxRenderer
         Set(value As Boolean)
             If _caretVisible = value Then Return
             _caretVisible = value
-            _owner.Invalidate()
+            InvalidateOwner()
         End Set
     End Property
 
@@ -106,7 +110,7 @@ Public Class SingleLineTextBoxRenderer
         End Get
         Set(value As Integer)
             _scrollXOffset = Math.Max(0, value)
-            _owner.Invalidate()
+            InvalidateOwner()
         End Set
     End Property
 
@@ -125,7 +129,7 @@ Public Class SingleLineTextBoxRenderer
         If resetScroll Then _scrollXOffset = 0
         ClearSelection(False)
         EnsureCaretVisible()
-        _owner.Invalidate()
+        InvalidateOwner()
         If changed AndAlso raiseTextChanged Then RaiseEvent TextChanged(_owner, EventArgs.Empty)
     End Sub
 
@@ -152,7 +156,7 @@ Public Class SingleLineTextBoxRenderer
                     New RectangleF(area.X + alignOff - _scrollXOffset, area.Y, Short.MaxValue, area.Height), DpiScale(), False)
             End If
 
-            If _owner.Focused AndAlso _caretVisible AndAlso Editable Then
+            If IsFocused() AndAlso _caretVisible AndAlso Editable Then
                 DrawCaret_D2D(rt, CInt(area.X), CInt(area.Y))
             End If
         Finally
@@ -177,7 +181,7 @@ Public Class SingleLineTextBoxRenderer
         _caretCol = HitTestColumn(x)
         _hasSelection = (_caretCol <> _selAnchorCol)
         EnsureCaretVisible()
-        _owner.Invalidate()
+        InvalidateOwner()
     End Sub
 
     Public Sub MoveCaret(deltaCol As Integer, extend As Boolean)
@@ -187,14 +191,14 @@ Public Class SingleLineTextBoxRenderer
             _caretCol = If(deltaCol < 0, minC, maxC)
             ClearSelection(False)
             EnsureCaretVisible()
-            _owner.Invalidate()
+            InvalidateOwner()
             Return
         End If
         If Not extend Then _selAnchorCol = _caretCol
         _caretCol = Math.Max(0, Math.Min(_text.Length, _caretCol + deltaCol))
         UpdateSelectionFromAnchor(extend)
         EnsureCaretVisible()
-        _owner.Invalidate()
+        InvalidateOwner()
     End Sub
 
     Public Sub MoveCaretHome(extend As Boolean)
@@ -202,7 +206,7 @@ Public Class SingleLineTextBoxRenderer
         _caretCol = 0
         UpdateSelectionFromAnchor(extend)
         EnsureCaretVisible()
-        _owner.Invalidate()
+        InvalidateOwner()
     End Sub
 
     Public Sub MoveCaretEnd(extend As Boolean)
@@ -210,7 +214,7 @@ Public Class SingleLineTextBoxRenderer
         _caretCol = _text.Length
         UpdateSelectionFromAnchor(extend)
         EnsureCaretVisible()
-        _owner.Invalidate()
+        InvalidateOwner()
     End Sub
 
     Public Sub MoveCaretWordLeft(extend As Boolean)
@@ -227,7 +231,7 @@ Public Class SingleLineTextBoxRenderer
         End If
         UpdateSelectionFromAnchor(extend)
         EnsureCaretVisible()
-        _owner.Invalidate()
+        InvalidateOwner()
     End Sub
 
     Public Sub MoveCaretWordRight(extend As Boolean)
@@ -244,7 +248,7 @@ Public Class SingleLineTextBoxRenderer
         End If
         UpdateSelectionFromAnchor(extend)
         EnsureCaretVisible()
-        _owner.Invalidate()
+        InvalidateOwner()
     End Sub
 
     Public Sub InsertText(text As String)
@@ -294,13 +298,13 @@ Public Class SingleLineTextBoxRenderer
         _selAnchorCol = 0
         _caretCol = _text.Length
         _hasSelection = _text.Length > 0
-        _owner.Invalidate()
+        InvalidateOwner()
     End Sub
 
-    Public Sub ClearSelection(Optional invalidateOwner As Boolean = True)
+    Public Sub ClearSelection(Optional invalidateOwnerFlag As Boolean = True)
         _hasSelection = False
         _selAnchorCol = _caretCol
-        If invalidateOwner Then _owner.Invalidate()
+        If invalidateOwnerFlag Then InvalidateOwner()
     End Sub
 
     Public Sub DeleteSelection()
@@ -370,35 +374,35 @@ Public Class SingleLineTextBoxRenderer
     Public Sub StartCaretBlink()
         _caretVisible = True
         _caretBlinkTimer.Start()
-        _owner.Invalidate()
+        InvalidateOwner()
     End Sub
 
     Public Sub StopCaretBlink()
         _caretBlinkTimer.Stop()
         _caretVisible = False
-        _owner.Invalidate()
+        InvalidateOwner()
     End Sub
 
     Public Sub ResetCaretBlink()
         _caretVisible = True
         _caretBlinkTimer.Stop()
         _caretBlinkTimer.Start()
-        _owner.Invalidate()
+        InvalidateOwner()
     End Sub
 
-    Private Function DeleteSelectionCore(invalidateOwner As Boolean) As Boolean
+    Private Function DeleteSelectionCore(invalidateOwnerFlag As Boolean) As Boolean
         If Not _hasSelection Then Return False
         Dim minC As Integer = Math.Min(_selAnchorCol, _caretCol)
         Dim maxC As Integer = Math.Max(_selAnchorCol, _caretCol)
         _text = String.Concat(_text.AsSpan(0, minC), _text.AsSpan(maxC))
         _caretCol = minC
-        ClearSelection(invalidateOwner)
+        ClearSelection(invalidateOwnerFlag)
         Return True
     End Function
 
     Private Sub RaiseTextChangedFromEdit()
         EnsureCaretVisible()
-        _owner.Invalidate()
+        InvalidateOwner()
         RaiseEvent TextChanged(_owner, EventArgs.Empty)
     End Sub
 
@@ -411,6 +415,11 @@ Public Class SingleLineTextBoxRenderer
     End Sub
 
     Private Function GetTextArea() As RectangleF
+        If TextAreaProvider IsNot Nothing Then
+            Dim provided = TextAreaProvider.Invoke()
+            If provided.Width > 0 AndAlso provided.Height > 0 Then Return provided
+        End If
+
         Dim bi As Integer = CInt(BorderSize * DpiScale())
         Dim textLeft As Integer = Math.Max(_owner.Padding.Left, bi)
         Dim textTop As Integer = Math.Max(_owner.Padding.Top, bi)
@@ -424,8 +433,22 @@ Public Class SingleLineTextBoxRenderer
     End Function
 
     Private Function DpiScale() As Single
+        If DpiScaleProvider IsNot Nothing Then Return Math.Max(0.01F, DpiScaleProvider.Invoke())
         Return _owner.DeviceDpi / 96.0F
     End Function
+
+    Private Function IsFocused() As Boolean
+        If FocusProvider IsNot Nothing Then Return FocusProvider.Invoke()
+        Return _owner.Focused
+    End Function
+
+    Private Sub InvalidateOwner()
+        If InvalidateAction IsNot Nothing Then
+            InvalidateAction.Invoke()
+        Else
+            _owner.Invalidate()
+        End If
+    End Sub
 
     Private Function MeasureWidth(text As String) As Integer
         Return CInt(Math.Ceiling(TextRenderHelper.MeasureTextWidth_D2D(text, _owner.Font, DpiScale())))
@@ -497,3 +520,4 @@ Public Class SingleLineTextBoxRenderer
         Return If(text, String.Empty).Replace(vbCr, String.Empty).Replace(vbLf, String.Empty)
     End Function
 End Class
+
