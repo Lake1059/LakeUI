@@ -61,6 +61,8 @@ Public Class CpuMonitor
                     ControlStyles.OptimizedDoubleBuffer Or
                     ControlStyles.SupportsTransparentBackColor Or
                     ControlStyles.ResizeRedraw, True)
+        If components Is Nothing Then components = New Container()
+        components.Add(采样定时器)
         AddHandler 采样定时器.Tick, AddressOf 采样定时器_Tick
     End Sub
 

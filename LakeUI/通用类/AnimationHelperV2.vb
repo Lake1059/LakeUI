@@ -386,6 +386,9 @@ Friend Class AnimationHelperV2
             Public ReadOnly Rectangles As New List(Of Rectangle)()
         End Class
 
+        Private Const MaxDirtyRectsPerControl As Integer = 8
+        Private Const FullInvalidateAreaRatio As Double = 0.65
+
         Private ReadOnly _helpers As New List(Of AnimationHelperV2)()
         Private ReadOnly _timer As New PrecisionTimer()
         Private ReadOnly _invalidations As New Dictionary(Of Control, InvalidationBucket)()
@@ -547,12 +550,54 @@ Friend Class AnimationHelperV2
                 bucket.Rectangles.Clear()
             ElseIf Not bucket.Full Then
                 For Each rect In sink.Rectangles
-                    bucket.Rectangles.Add(Rectangle.Intersect(owner.ClientRectangle, rect))
+                    AddInvalidationRect(owner, bucket, rect)
                 Next
             End If
 
             If Not _inTick Then FlushInvalidations()
         End Sub
+
+        Private Sub AddInvalidationRect(owner As Control, bucket As InvalidationBucket, rect As Rectangle)
+            If owner Is Nothing OrElse bucket Is Nothing OrElse bucket.Full Then Return
+            rect = Rectangle.Intersect(owner.ClientRectangle, rect)
+            If rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+
+            Dim mergedRect As Rectangle = rect
+            Dim mergedAny As Boolean
+            Do
+                mergedAny = False
+                For i As Integer = bucket.Rectangles.Count - 1 To 0 Step -1
+                    Dim existing = bucket.Rectangles(i)
+                    If existing.IntersectsWith(mergedRect) OrElse existing.Contains(mergedRect) OrElse mergedRect.Contains(existing) Then
+                        mergedRect = Rectangle.Union(existing, mergedRect)
+                        bucket.Rectangles.RemoveAt(i)
+                        mergedAny = True
+                    End If
+                Next
+            Loop While mergedAny
+
+            bucket.Rectangles.Add(mergedRect)
+            If ShouldPromoteToFullInvalidation(owner, bucket) Then
+                bucket.Full = True
+                bucket.Rectangles.Clear()
+            End If
+        End Sub
+
+        Private Function ShouldPromoteToFullInvalidation(owner As Control, bucket As InvalidationBucket) As Boolean
+            If bucket.Rectangles.Count <= 0 Then Return False
+            If bucket.Rectangles.Count > MaxDirtyRectsPerControl Then Return True
+
+            Dim clientArea As Long = CLng(Math.Max(1, owner.ClientSize.Width)) * CLng(Math.Max(1, owner.ClientSize.Height))
+            Dim unionRect As Rectangle = Rectangle.Empty
+            Dim totalArea As Long = 0
+            For Each rect In bucket.Rectangles
+                unionRect = If(unionRect.IsEmpty, rect, Rectangle.Union(unionRect, rect))
+                totalArea += CLng(rect.Width) * CLng(rect.Height)
+            Next
+            Dim unionArea As Long = CLng(Math.Max(0, unionRect.Width)) * CLng(Math.Max(0, unionRect.Height))
+            Dim threshold As Long = CLng(clientArea * FullInvalidateAreaRatio)
+            Return unionArea >= threshold OrElse totalArea >= threshold
+        End Function
 
         Private Sub FlushInvalidations()
             If _invalidations.Count = 0 Then Return

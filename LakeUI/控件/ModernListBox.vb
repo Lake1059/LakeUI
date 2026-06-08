@@ -205,9 +205,14 @@ Public Class ModernListBox
         End Sub
 
         Public Overloads Sub AddRange(collection As IEnumerable(Of String))
-            For Each s In collection
-                Add(s)
-            Next
+            _owner.BeginInternalUpdate()
+            Try
+                For Each s In collection
+                    Add(s)
+                Next
+            Finally
+                _owner.EndInternalUpdate(True)
+            End Try
         End Sub
 
         Protected Overrides Sub InsertItem(index As Integer, item As String)
@@ -222,7 +227,7 @@ Public Class ModernListBox
             _owner._selectedIndices = adjusted
             _owner.调整复选状态索引_插入(index)
             _owner.校正滚动偏移()
-            _owner.Invalidate()
+            If _owner._updateCount <= 0 Then _owner.Invalidate()
         End Sub
 
         Protected Overrides Sub RemoveItem(index As Integer)
@@ -241,7 +246,7 @@ Public Class ModernListBox
             _owner._selectedIndices = adjusted
             _owner.调整复选状态索引_移除(index)
             _owner.校正滚动偏移()
-            _owner.Invalidate()
+            If _owner._updateCount <= 0 Then _owner.Invalidate()
         End Sub
 
         Protected Overrides Sub ClearItems()
@@ -250,13 +255,13 @@ Public Class ModernListBox
             _owner._selectedIndices.Clear()
             _owner._checkStates.Clear()
             _owner._scrollOffset = 0
-            _owner.Invalidate()
+            If _owner._updateCount <= 0 Then _owner.Invalidate()
             _owner.OnSelectionChanged()
         End Sub
 
         Protected Overrides Sub SetItem(index As Integer, item As String)
             MyBase.SetItem(index, item)
-            _owner.Invalidate()
+            If _owner._updateCount <= 0 Then _owner.Invalidate()
         End Sub
     End Class
 
@@ -325,6 +330,8 @@ Public Class ModernListBox
     ' 工具提示
     Private _tipForm As ToolTipForm = Nothing
     Private _tipHoverIndex As Integer = -1
+    Private _updateCount As Integer = 0
+    Private _pendingSelectionChanged As Boolean = False
 #End Region
 
 #Region "属性 - 集合"
@@ -1765,40 +1772,45 @@ Public Class ModernListBox
     Private Sub 执行多项拖动排序()
         If _dragReorderSourceIndices.Count = 0 OrElse _dragReorderInsertIndex < 0 Then Return
 
-        Dim sortedSrc = _dragReorderSourceIndices.OrderBy(Function(x) x).ToList()
+        BeginInternalUpdate()
+        Try
+            Dim sortedSrc = _dragReorderSourceIndices.OrderBy(Function(x) x).ToList()
 
-        Dim insertBefore As Integer = _dragReorderInsertIndex
+            Dim insertBefore As Integer = _dragReorderInsertIndex
 
-        Dim countBefore As Integer = sortedSrc.Where(Function(i) i < insertBefore).Count()
-        Dim targetSlot As Integer = insertBefore - countBefore
+            Dim countBefore As Integer = sortedSrc.Where(Function(i) i < insertBefore).Count()
+            Dim targetSlot As Integer = insertBefore - countBefore
 
-        Dim movedTexts As New List(Of String)
-        Dim movedStates As New List(Of CheckStateEnum)
-        For Each idx In sortedSrc
-            movedTexts.Add(_items(idx))
-            movedStates.Add(获取复选状态(idx))
-        Next
+            Dim movedTexts As New List(Of String)
+            Dim movedStates As New List(Of CheckStateEnum)
+            For Each idx In sortedSrc
+                movedTexts.Add(_items(idx))
+                movedStates.Add(获取复选状态(idx))
+            Next
 
-        For i = sortedSrc.Count - 1 To 0 Step -1
-            _items.RemoveAt(sortedSrc(i))
-        Next
+            For i = sortedSrc.Count - 1 To 0 Step -1
+                _items.RemoveAt(sortedSrc(i))
+            Next
 
-        targetSlot = Math.Max(0, Math.Min(targetSlot, _items.Count))
+            targetSlot = Math.Max(0, Math.Min(targetSlot, _items.Count))
 
-        For i = 0 To movedTexts.Count - 1
-            _items.Insert(targetSlot + i, movedTexts(i))
-            设置复选状态(targetSlot + i, movedStates(i))
-        Next
+            For i = 0 To movedTexts.Count - 1
+                _items.Insert(targetSlot + i, movedTexts(i))
+                设置复选状态(targetSlot + i, movedStates(i))
+            Next
 
-        _selectedIndices.Clear()
-        For i = 0 To movedTexts.Count - 1
-            _selectedIndices.Add(targetSlot + i)
-        Next
-        _selectedIndex = targetSlot
-        _selectionAnchor = targetSlot
+            _selectedIndices.Clear()
+            For i = 0 To movedTexts.Count - 1
+                _selectedIndices.Add(targetSlot + i)
+            Next
+            _selectedIndex = targetSlot
+            _selectionAnchor = targetSlot
 
-        RaiseEvent ItemOrderChanged(Me, EventArgs.Empty)
-        RaiseEvent SelectedIndexChanged(Me, EventArgs.Empty)
+            RaiseEvent ItemOrderChanged(Me, EventArgs.Empty)
+            _pendingSelectionChanged = True
+        Finally
+            EndInternalUpdate(True)
+        End Try
     End Sub
 
 #End Region
@@ -2085,6 +2097,8 @@ Public Class ModernListBox
 
         Private ReadOnly _owner As ModernListBox
         Private _tipText As String = ""
+        Private _lastMeasureKey As String = Nothing
+        Private _lastMeasuredSize As Size = Size.Empty
 
         Public Sub New(owner As ModernListBox)
             _owner = owner
@@ -2101,9 +2115,17 @@ Public Class ModernListBox
             Dim contentW As Integer = maxW - pad.Left - pad.Right - bw * 2
             If contentW < 10 Then contentW = 10
 
-            Dim measured As Size = TextRenderer.MeasureText(_tipText, _owner.Font,
-                New Size(contentW, Integer.MaxValue),
-                TextFormatFlags.WordBreak Or TextFormatFlags.NoPadding)
+            Dim measureKey As String = String.Concat(_tipText, ChrW(0), contentW, ChrW(0), _owner.Font.GetHashCode(), ChrW(0), _owner.DeviceDpi)
+            Dim measured As Size
+            If String.Equals(_lastMeasureKey, measureKey, StringComparison.Ordinal) Then
+                measured = _lastMeasuredSize
+            Else
+                measured = TextRenderer.MeasureText(_tipText, _owner.Font,
+                    New Size(contentW, Integer.MaxValue),
+                    TextFormatFlags.WordBreak Or TextFormatFlags.NoPadding)
+                _lastMeasureKey = measureKey
+                _lastMeasuredSize = measured
+            End If
 
             Dim w As Integer = Math.Min(maxW, measured.Width + pad.Left + pad.Right + bw * 2)
             Dim h As Integer = measured.Height + pad.Top + pad.Bottom + bw * 2
@@ -2331,14 +2353,34 @@ Public Class ModernListBox
         Return Me.DeviceDpi / 96.0F
     End Function
 
+    Private Sub BeginInternalUpdate()
+        _updateCount += 1
+    End Sub
+
+    Private Sub EndInternalUpdate(Optional invalidateAfter As Boolean = True)
+        _updateCount -= 1
+        If _updateCount > 0 Then Return
+        _updateCount = 0
+        校正滚动偏移()
+        If _pendingSelectionChanged Then
+            _pendingSelectionChanged = False
+            RaiseEvent SelectedIndexChanged(Me, EventArgs.Empty)
+        End If
+        If invalidateAfter Then Invalidate()
+    End Sub
+
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
-            Invalidate()
+            If _updateCount <= 0 Then Invalidate()
         End If
     End Sub
 
     Friend Sub OnSelectionChanged()
+        If _updateCount > 0 Then
+            _pendingSelectionChanged = True
+            Return
+        End If
         Invalidate()
         RaiseEvent SelectedIndexChanged(Me, EventArgs.Empty)
     End Sub

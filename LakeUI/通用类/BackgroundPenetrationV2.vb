@@ -45,6 +45,7 @@ Public Module BackgroundPenetrationV2
             Public Height As Integer
             Public D2DBmp As ID2D1Bitmap
             Public D2DOwnerRT As WeakReference
+            Public LastUsed As Long
         End Class
 
         Public Class ConsumerEntry
@@ -206,7 +207,7 @@ Public Module BackgroundPenetrationV2
                 entry.FullDirty = True
                 InvalidateCropEntries(entry, Nothing)
             End If
-            needRebuild = entry.FullDirty OrElse DirtyRectsIntersect(entry, New Rectangle(0, 0, sw, sh))
+            needRebuild = entry.FullDirty OrElse DirtyRectsIntersect(entry, sourceRect)
             If needRebuild Then entry.Painting = True
         End SyncLock
 
@@ -307,6 +308,7 @@ Public Module BackgroundPenetrationV2
         For Each crop In entry.Crops
             Dim ownerAlive As Boolean = crop.D2DOwnerRT IsNot Nothing AndAlso ReferenceEquals(crop.D2DOwnerRT.Target, rt)
             If ownerAlive AndAlso crop.Width = cropWidth AndAlso crop.Height = cropHeight AndAlso crop.SourceRect.Equals(sourceRect) Then
+                crop.LastUsed = NextClock()
                 Return crop.D2DBmp
             End If
         Next
@@ -316,7 +318,8 @@ Public Module BackgroundPenetrationV2
             .Width = cropWidth,
             .Height = cropHeight,
             .D2DBmp = CreateCropD2DBitmap(entry.Bmp, sourceRect, cropWidth, cropHeight, rt),
-            .D2DOwnerRT = New WeakReference(rt)
+            .D2DOwnerRT = New WeakReference(rt),
+            .LastUsed = NextClock()
         }
         If newCrop.D2DBmp Is Nothing Then Return Nothing
         entry.Crops.Add(newCrop)
@@ -327,16 +330,20 @@ Public Module BackgroundPenetrationV2
     Private Function CreateCropD2DBitmap(src As Bitmap, sourceRect As Rectangle, cropWidth As Integer,
                                          cropHeight As Integer, rt As ID2D1RenderTarget) As ID2D1Bitmap
         If src Is Nothing OrElse rt Is Nothing Then Return Nothing
+        Dim srcBounds As New Rectangle(0, 0, src.Width, src.Height)
+        Dim srcIntersection = Rectangle.Intersect(srcBounds, sourceRect)
+        If srcIntersection.Width <= 0 OrElse srcIntersection.Height <= 0 Then Return Nothing
+        If srcIntersection.Width = cropWidth AndAlso srcIntersection.Height = cropHeight AndAlso
+           srcIntersection.X = sourceRect.X AndAlso srcIntersection.Y = sourceRect.Y Then
+            Return D2DGlobals.CreateBitmapFromGdi(rt, src, srcIntersection)
+        End If
+
         Using cropBmp As New Bitmap(cropWidth, cropHeight, PixelFormat.Format32bppPArgb)
             Using g = Graphics.FromImage(cropBmp)
                 g.Clear(Color.Transparent)
-                Dim srcBounds As New Rectangle(0, 0, src.Width, src.Height)
-                Dim srcIntersection = Rectangle.Intersect(srcBounds, sourceRect)
-                If srcIntersection.Width > 0 AndAlso srcIntersection.Height > 0 Then
-                    Dim destRect As New Rectangle(srcIntersection.X - sourceRect.X, srcIntersection.Y - sourceRect.Y,
-                                                  srcIntersection.Width, srcIntersection.Height)
-                    g.DrawImage(src, destRect, srcIntersection, GraphicsUnit.Pixel)
-                End If
+                Dim destRect As New Rectangle(srcIntersection.X - sourceRect.X, srcIntersection.Y - sourceRect.Y,
+                                              srcIntersection.Width, srcIntersection.Height)
+                g.DrawImage(src, destRect, srcIntersection, GraphicsUnit.Pixel)
             End Using
             Return D2DGlobals.CreateBitmapFromGdi(rt, cropBmp)
         End Using
@@ -346,15 +353,18 @@ Public Module BackgroundPenetrationV2
         Dim maxCropsPerSource As Integer = Math.Max(0, GlobalOptions.BackgroundPenetrationCropCacheMaxEntriesPerSource)
         While entry.Crops.Count > maxCropsPerSource
             Dim removeIndex As Integer = -1
+            Dim oldestUsed As Long = Long.MaxValue
             For i As Integer = 0 To entry.Crops.Count - 1
-                If protectedCrop Is Nothing OrElse Not ReferenceEquals(entry.Crops(i), protectedCrop) Then
+                Dim candidate = entry.Crops(i)
+                If protectedCrop IsNot Nothing AndAlso ReferenceEquals(candidate, protectedCrop) Then Continue For
+                If candidate.LastUsed < oldestUsed Then
+                    oldestUsed = candidate.LastUsed
                     removeIndex = i
-                    Exit For
                 End If
             Next
             If removeIndex < 0 Then Exit While
-            Dim crop = entry.Crops(removeIndex)
-            Try : crop.D2DBmp?.Dispose() : Catch : End Try
+            Dim removedCrop = entry.Crops(removeIndex)
+            Try : removedCrop.D2DBmp?.Dispose() : Catch : End Try
             entry.Crops.RemoveAt(removeIndex)
         End While
     End Sub
@@ -402,6 +412,47 @@ Public Module BackgroundPenetrationV2
         Next
         Return False
     End Function
+
+    Private Sub AddDirtyRect(entry As Entry, dirtyRect As Rectangle, sourceBounds As Rectangle)
+        If entry Is Nothing OrElse dirtyRect.Width <= 0 OrElse dirtyRect.Height <= 0 Then Return
+        dirtyRect = Rectangle.Intersect(sourceBounds, dirtyRect)
+        If dirtyRect.Width <= 0 OrElse dirtyRect.Height <= 0 Then Return
+
+        If entry.FullDirty Then Return
+
+        Dim mergedRect As Rectangle = dirtyRect
+        Dim mergedAny As Boolean
+        Do
+            mergedAny = False
+            For i As Integer = entry.DirtyRects.Count - 1 To 0 Step -1
+                Dim existing = entry.DirtyRects(i)
+                If existing.IntersectsWith(mergedRect) OrElse existing.Contains(mergedRect) OrElse mergedRect.Contains(existing) Then
+                    mergedRect = Rectangle.Union(existing, mergedRect)
+                    entry.DirtyRects.RemoveAt(i)
+                    mergedAny = True
+                End If
+            Next
+        Loop While mergedAny
+
+        entry.DirtyRects.Add(mergedRect)
+
+        Dim maxRects As Integer = Math.Max(1, GlobalOptions.BackgroundPenetrationDirtyRectMaxCount)
+        Dim ratio As Single = Math.Max(0.05F, Math.Min(1.0F, GlobalOptions.BackgroundPenetrationFullDirtyAreaRatio))
+        Dim unionRect As Rectangle = Rectangle.Empty
+        Dim totalArea As Long = 0
+        For Each rect In entry.DirtyRects
+            unionRect = If(unionRect.IsEmpty, rect, Rectangle.Union(unionRect, rect))
+            totalArea += CLng(rect.Width) * CLng(rect.Height)
+        Next
+        Dim sourceArea As Long = CLng(Math.Max(1, sourceBounds.Width)) * CLng(Math.Max(1, sourceBounds.Height))
+        Dim unionArea As Long = CLng(Math.Max(0, unionRect.Width)) * CLng(Math.Max(0, unionRect.Height))
+        If entry.DirtyRects.Count > maxRects OrElse
+           unionArea >= CLng(sourceArea * ratio) OrElse
+           totalArea >= CLng(sourceArea * ratio) Then
+            entry.FullDirty = True
+            entry.DirtyRects.Clear()
+        End If
+    End Sub
 
     Private Sub InvalidateCropEntries(entry As Entry, dirtyRect As Rectangle?)
         For i As Integer = entry.Crops.Count - 1 To 0 Step -1
@@ -480,12 +531,18 @@ Public Module BackgroundPenetrationV2
                 Dim dirtyRect As Rectangle = If(e IsNot Nothing, e.InvalidRect, Rectangle.Empty)
                 If dirtyRect.Width <= 0 OrElse dirtyRect.Height <= 0 Then
                     entry.FullDirty = True
+                    entry.DirtyRects.Clear()
                     InvalidateCropEntries(entry, Nothing)
                     CollectConsumerInvalidations(entry, Nothing, invalidations)
                 Else
-                    entry.DirtyRects.Add(dirtyRect)
+                    AddDirtyRect(entry, dirtyRect, New Rectangle(0, 0, source.Width, source.Height))
                     InvalidateCropEntries(entry, dirtyRect)
-                    CollectConsumerInvalidations(entry, dirtyRect, invalidations)
+                    If entry.FullDirty Then
+                        InvalidateCropEntries(entry, Nothing)
+                        CollectConsumerInvalidations(entry, Nothing, invalidations)
+                    Else
+                        CollectConsumerInvalidations(entry, dirtyRect, invalidations)
+                    End If
                 End If
             End If
         End SyncLock
@@ -500,6 +557,7 @@ Public Module BackgroundPenetrationV2
             Dim entry As Entry = Nothing
             If _cache.TryGetValue(source, entry) Then
                 entry.FullDirty = True
+                entry.DirtyRects.Clear()
                 InvalidateCropEntries(entry, Nothing)
                 CollectConsumerInvalidations(entry, Nothing, invalidations)
             End If

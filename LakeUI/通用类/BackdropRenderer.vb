@@ -358,6 +358,8 @@ Friend NotInheritable Class BackdropRenderer
 
         ' 1+2. 准备下采样源 —— 复用 _spareFrame 作为下采样目标，避免每帧两次大位图分配。
         Dim small As Bitmap = AcquireSpareFrame(dw, dh)
+        Dim smallCommitted As Boolean = False
+        Try
         Dim useImage As Boolean = (Volatile.Read(_sourceMode) = 1)
         If useImage Then
             ReleaseCaptureBitmap()
@@ -449,6 +451,7 @@ Friend NotInheritable Class BackdropRenderer
         SyncLock _frameLock
             Dim previousCurrent As Bitmap = _currentFrame
             _currentFrame = small
+            smallCommitted = True
             _spareFrame = previousCurrent
             Interlocked.Increment(_frameVersion)
         End SyncLock
@@ -465,6 +468,9 @@ Friend NotInheritable Class BackdropRenderer
             End If
         Catch
         End Try
+        Finally
+            If Not smallCommitted Then ReturnSpareFrame(small)
+        End Try
     End Sub
 
     ''' <summary>取得（必要时分配）合适尺寸的备用下采样位图。</summary>
@@ -480,6 +486,17 @@ Friend NotInheritable Class BackdropRenderer
         bmp?.Dispose()
         Return New Bitmap(dw, dh, PixelFormat.Format32bppPArgb)
     End Function
+
+    Private Sub ReturnSpareFrame(bmp As Bitmap)
+        If bmp Is Nothing Then Return
+        SyncLock _frameLock
+            If _spareFrame Is Nothing Then
+                _spareFrame = bmp
+                Return
+            End If
+        End SyncLock
+        Try : bmp.Dispose() : Catch : End Try
+    End Sub
 
     ''' <summary>取得（必要时分配）抓屏临时位图。</summary>
     Private Function AcquireCaptureBitmap(w As Integer, h As Integer) As Bitmap

@@ -59,6 +59,13 @@ Public Class ModernTextBox
             Me.Url = url
         End Sub
     End Structure
+    Private Structure MeasureKey
+        Public LineIndex As Integer
+        Public StartCol As Integer
+        Public Length As Integer
+        Public FontKey As Integer
+        Public TextVersion As Integer
+    End Structure
     Public Structure SyntaxToken
         Public StartCol As Integer
         Public Length As Integer
@@ -134,7 +141,12 @@ Public Class ModernTextBox
     Private _scaledCaretWidth As Integer = 2
     Private _scaledLineNumPadL As Integer = 6
     Private _scaledLineNumPadR As Integer = 8
+    Private _measureVersion As Integer
+    Private ReadOnly _lineWidthCache As New Dictionary(Of MeasureKey, Integer)(128)
+    Private ReadOnly _textWidthCache As New Dictionary(Of String, Integer)(32)
     Private Const ScrollStopThreshold As Single = 0.25F
+    Private Const MaxLineWidthCacheEntries As Integer = 4096
+    Private Const MaxTextWidthCacheEntries As Integer = 512
 #End Region
 
 #Region "属性"
@@ -714,7 +726,10 @@ Public Class ModernTextBox
             Return _passwordChar
         End Get
         Set(value As Char)
+            If _passwordChar = value Then Return
             _passwordChar = value
+            InvalidateMeasureCache()
+            RefreshVisualLayout(True)
             Invalidate()
         End Set
     End Property
@@ -848,6 +863,7 @@ Public Class ModernTextBox
 
         ' 检测链接
         DetectLinksInLine(newLineIndex)
+        InvalidateMeasureCache()
 
         ' 增量追加视觉行，不做全量 RebuildVisualLines
         Dim areaW As Integer = If(IsHandleCreated, TextAreaWidth(), 0)
@@ -941,6 +957,8 @@ Public Class ModernTextBox
             line += 1
             col = 0
         End While
+        InvalidateMeasureCache()
+        RefreshVisualLayout(True)
         Invalidate()
     End Sub
     Public Sub SetLineFormat(lineIndex As Integer, startCol As Integer, length As Integer,
@@ -951,6 +969,8 @@ Public Class ModernTextBox
         length = Math.Min(length, _lines(lineIndex).Length - startCol)
         If length <= 0 Then Return
         ApplyFormatToLine(lineIndex, startCol, length, foreColor, runFont)
+        InvalidateMeasureCache()
+        RefreshVisualLayout(True)
         Invalidate()
     End Sub
     Public Sub ClearFormat(startPos As Integer, length As Integer)
@@ -960,6 +980,8 @@ Public Class ModernTextBox
         For i = 0 To _lineRuns.Count - 1
             _lineRuns(i) = Nothing
         Next
+        InvalidateMeasureCache()
+        RefreshVisualLayout(True)
         Invalidate()
     End Sub
 #End Region
@@ -2125,6 +2147,7 @@ Public Class ModernTextBox
         While _lineRuns.Count < _lines.Count
             _lineRuns.Add(Nothing)
         End While
+        InvalidateMeasureCache()
         _caretLine = Math.Min(snap.CaretLine, _lines.Count - 1)
         _caretCol = Math.Min(snap.CaretCol, _lines(_caretLine).Length)
         ClearSelection()
@@ -2328,28 +2351,78 @@ Public Class ModernTextBox
 
 #Region "度量与布局"
     Private Function MeasureWidth(text As String) As Integer
-        Return CInt(Math.Ceiling(TextRenderHelper.MeasureTextWidth_D2D(GetDisplayText(text), Font, DpiScale())))
+        If String.IsNullOrEmpty(text) Then Return 0
+        Dim displayText = GetDisplayText(text)
+        Dim cached As Integer = 0
+        If _textWidthCache.TryGetValue(displayText, cached) Then Return cached
+        cached = CInt(Math.Ceiling(TextRenderHelper.MeasureTextWidth_D2D(displayText, Font, DpiScale())))
+        If _textWidthCache.Count >= MaxTextWidthCacheEntries Then _textWidthCache.Clear()
+        _textWidthCache(displayText) = cached
+        Return cached
     End Function
     Private Function MeasureLineWidth(lineIndex As Integer, startCol As Integer, length As Integer) As Integer
         If length <= 0 Then Return 0
+        If lineIndex < 0 OrElse lineIndex >= _lines.Count Then Return 0
+        startCol = Math.Max(0, Math.Min(startCol, _lines(lineIndex).Length))
+        length = Math.Max(0, Math.Min(length, _lines(lineIndex).Length - startCol))
+        If length <= 0 Then Return 0
+
+        Dim key As New MeasureKey With {
+            .LineIndex = lineIndex,
+            .StartCol = startCol,
+            .Length = length,
+            .FontKey = GetLineMeasureFontKey(lineIndex, startCol, length),
+            .TextVersion = _measureVersion
+        }
+        Dim cachedWidth As Integer = 0
+        If _lineWidthCache.TryGetValue(key, cachedWidth) Then Return cachedWidth
+
         Dim runs = _lineRuns(lineIndex)
+        Dim totalWidth As Integer
         If runs Is Nothing OrElse runs.Count = 0 Then
-            Return MeasureWidth(_lines(lineIndex).Substring(startCol, length))
+            totalWidth = MeasureWidth(_lines(lineIndex).Substring(startCol, length))
+        Else
+            Dim endCol = startCol + length
+            Dim lineStr = _lines(lineIndex)
+            For Each r In runs
+                Dim rEnd = r.StartCol + r.Length
+                Dim segStart = Math.Max(r.StartCol, startCol)
+                Dim segEnd = Math.Min(rEnd, endCol)
+                If segStart >= segEnd Then Continue For
+                Dim useFont = If(r.RunFont, Font)
+                Dim segText = GetDisplayText(lineStr.Substring(segStart, segEnd - segStart))
+                totalWidth += CInt(Math.Ceiling(TextRenderHelper.MeasureTextWidth_D2D(segText, useFont, DpiScale())))
+            Next
         End If
-        Dim endCol = startCol + length
-        Dim totalWidth = 0
-        Dim lineStr = _lines(lineIndex)
-        For Each r In runs
-            Dim rEnd = r.StartCol + r.Length
-            Dim segStart = Math.Max(r.StartCol, startCol)
-            Dim segEnd = Math.Min(rEnd, endCol)
-            If segStart >= segEnd Then Continue For
-            Dim useFont = If(r.RunFont, Font)
-            Dim segText = GetDisplayText(lineStr.Substring(segStart, segEnd - segStart))
-            totalWidth += CInt(Math.Ceiling(TextRenderHelper.MeasureTextWidth_D2D(segText, useFont, DpiScale())))
-        Next
+        If _lineWidthCache.Count >= MaxLineWidthCacheEntries Then _lineWidthCache.Clear()
+        _lineWidthCache(key) = totalWidth
         Return totalWidth
     End Function
+
+    Private Function GetLineMeasureFontKey(lineIndex As Integer, startCol As Integer, length As Integer) As Integer
+        Dim hash As New System.HashCode()
+        hash.Add(Font)
+        hash.Add(_passwordChar)
+        hash.Add(启用多行)
+        Dim runs = _lineRuns(lineIndex)
+        If runs Is Nothing OrElse runs.Count = 0 Then Return hash.ToHashCode()
+        Dim endCol As Integer = startCol + length
+        For Each r In runs
+            Dim segStart = Math.Max(r.StartCol, startCol)
+            Dim segEnd = Math.Min(r.StartCol + r.Length, endCol)
+            If segStart >= segEnd Then Continue For
+            Dim useFont = If(r.RunFont, Font)
+            hash.Add(useFont)
+            hash.Add(r.ForeColor.ToArgb())
+        Next
+        Return hash.ToHashCode()
+    End Function
+
+    Private Sub InvalidateMeasureCache()
+        _measureVersion += 1
+        _lineWidthCache.Clear()
+        _textWidthCache.Clear()
+    End Sub
     Private Function FindColFromXForLine(lineIndex As Integer, vlStartCol As Integer, vlLength As Integer, x As Integer) As Integer
         If x <= 0 Then Return vlStartCol
         Dim runs = _lineRuns(lineIndex)
@@ -2366,7 +2439,7 @@ Public Class ModernTextBox
             If segStart >= segEnd Then Continue For
             Dim useFont = If(r.RunFont, Font)
             Dim segText = GetDisplayText(lineStr.Substring(segStart, segEnd - segStart))
-            Dim segWidth = CInt(Math.Ceiling(TextRenderHelper.MeasureTextWidth_D2D(segText, useFont, DpiScale())))
+            Dim segWidth = MeasureLineWidth(lineIndex, segStart, segEnd - segStart)
             If accWidth + segWidth > x Then
                 Dim localCol = TextRenderHelper.FindColFromX_D2D(segText, x - accWidth, useFont, DpiScale())
                 Return segStart + localCol
@@ -2698,6 +2771,7 @@ Public Class ModernTextBox
 
 #Region "语法高亮"
     Private Sub ApplySyntaxHighlighting()
+        InvalidateMeasureCache()
         _lineStates.Clear()
         For i = 0 To _lines.Count - 1
             _lineStates.Add(0)
@@ -2713,6 +2787,7 @@ Public Class ModernTextBox
     End Sub
     Private Sub ApplySyntaxHighlightingToLine(lineIndex As Integer)
         If Not _enableSyntaxHighlight OrElse _syntaxHighlighter Is Nothing Then Return
+        InvalidateMeasureCache()
         Dim prevState As Integer = If(lineIndex > 0 AndAlso lineIndex - 1 < _lineStates.Count, _lineStates(lineIndex - 1), 0)
         Dim result = _syntaxHighlighter.HighlightLine(lineIndex, _lines(lineIndex), prevState)
         While _lineStates.Count <= lineIndex
@@ -2723,6 +2798,7 @@ Public Class ModernTextBox
     End Sub
     Private Sub UpdateSyntaxHighlightingFrom(fromLine As Integer, toLine As Integer)
         If Not _enableSyntaxHighlight OrElse _syntaxHighlighter Is Nothing Then Return
+        InvalidateMeasureCache()
         Dim prevState As Integer = If(fromLine > 0, _lineStates(fromLine - 1), 0)
         For i As Integer = fromLine To _lines.Count - 1
             Dim oldEndState As Integer = _lineStates(i)
@@ -2750,6 +2826,7 @@ Public Class ModernTextBox
 #Region "通用辅助"
     Private Sub SetLinesFromString(s As String)
         Dim normalized As String = If(s, "").Replace(vbCr, "")
+        InvalidateMeasureCache()
         _lines = New List(Of String)(normalized.Split(vbLf))
         If _lines.Count = 0 Then _lines.Add("")
         _lineRuns = New List(Of List(Of TextRun))(_lines.Count)
@@ -2772,6 +2849,7 @@ Public Class ModernTextBox
         FinalizeTextChanged()
     End Sub
     Private Sub FinalizeTextChanged()
+        InvalidateMeasureCache()
         RefreshVisualLayout(True)
         Invalidate()
         OnTextChanged(EventArgs.Empty)
@@ -2805,6 +2883,7 @@ Public Class ModernTextBox
         _scaledCaretWidth = CInt(Math.Round(光标线宽 * _cachedDpiScale))
         _scaledLineNumPadL = CInt(Math.Round(_lineNumPadLeft * _cachedDpiScale))
         _scaledLineNumPadR = CInt(Math.Round(_lineNumPadRight * _cachedDpiScale))
+        InvalidateMeasureCache()
     End Sub
     Private Function IsWordWrapActive() As Boolean
         Return 启用多行 AndAlso _wordWrap
@@ -2887,6 +2966,7 @@ Public Class ModernTextBox
         _underlineFontCache?.Dispose()
         _underlineFontCache = Nothing
         _underlineFontBase = Nothing
+        InvalidateMeasureCache()
         MyBase.OnFontChanged(e)
         RefreshVisualLayout(True)
         D2DHelperV2.RefreshFontDependentRendering(Me)

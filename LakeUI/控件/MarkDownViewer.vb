@@ -13,6 +13,24 @@ Imports Vortice.Direct2D1
 Public Class MarkDownViewer
     Public Event LinkClicked As EventHandler(Of LinkClickedEventArgs)
 
+    ''' <summary>
+    ''' 每个控件可保留的 GDI 图片缓存条目上限。
+    ''' </summary>
+    ''' <remarks>
+    ''' <para>默认值：64。长文档或流式内容引用大量图片时按 LRU 丢弃最久未使用的图片，下一次显示再重新加载；视觉结果不变。</para>
+    ''' <para>该预算仅限制控件持有的 Image/Bitmap RAM 对象，同时会释放对应 D2D 上传缓存引用。</para>
+    ''' </remarks>
+    Public Shared Property MarkDownViewerImageCacheMaxEntries As Integer = 64
+
+    ''' <summary>
+    ''' 每个控件可保留的 GDI 图片缓存近似字节预算。
+    ''' </summary>
+    ''' <remarks>
+    ''' <para>默认值：64 MiB。估算按 Width x Height x 4 字节计算，避免大图集合长期占用托管/GDI 内存。</para>
+    ''' <para>设置为 0 表示不保留已加载图片缓存；图片仍会在需要时加载并参与当前布局。</para>
+    ''' </remarks>
+    Public Shared Property MarkDownViewerImageCacheBudgetBytes As Long = 64L * 1024L * 1024L
+
 #Region "文档模型"
 
     ''' <summary>内联元素类型。</summary>
@@ -527,6 +545,30 @@ Public Class MarkDownViewer
         Public Bottom As Integer
     End Structure
 
+    Private Structure TextWidthKey
+        Implements IEquatable(Of TextWidthKey)
+
+        Public Text As String
+        Public FontHash As Integer
+        Public LineHeight As Integer
+        Public Version As Integer
+
+        Public Overloads Function Equals(other As TextWidthKey) As Boolean Implements IEquatable(Of TextWidthKey).Equals
+            Return FontHash = other.FontHash AndAlso
+                   LineHeight = other.LineHeight AndAlso
+                   Version = other.Version AndAlso
+                   String.Equals(Text, other.Text, StringComparison.Ordinal)
+        End Function
+
+        Public Overrides Function Equals(obj As Object) As Boolean
+            Return TypeOf obj Is TextWidthKey AndAlso Equals(DirectCast(obj, TextWidthKey))
+        End Function
+
+        Public Overrides Function GetHashCode() As Integer
+            Return System.HashCode.Combine(Text, FontHash, LineHeight, Version)
+        End Function
+    End Structure
+
 #End Region
 
 #Region "字段"
@@ -560,13 +602,18 @@ Public Class MarkDownViewer
     ' 字体缓存
     Private _fontCache As Dictionary(Of String, Font) = Nothing
     Private _lastBaseFont As Font = Nothing
+    Private _measureVersion As Integer
+    Private ReadOnly _textWidthCache As New Dictionary(Of TextWidthKey, Integer)(512)
+    Private Const MaxTextWidthCacheEntries As Integer = 4096
 
     ' 鼠标链接
     Private _mouseDownLinkUrl As String = Nothing
 
     ' 图片缓存
     Private ReadOnly _imageCache As New Dictionary(Of String, Image)
+    Private ReadOnly _imageLastUsed As New Dictionary(Of String, Long)
     Private ReadOnly _imageLoadingUrls As New HashSet(Of String)
+    Private _imageCacheClock As Long
     Private Shared ReadOnly _httpClient As New HttpClient() With {.Timeout = TimeSpan.FromSeconds(30)}
 
     ' V2 渲染资源（共享 DC RT / brush / textformat / SSAA 来自 WindowCompositor，仅图片缓存按 URL 本地持有）
@@ -1230,6 +1277,7 @@ Public Class MarkDownViewer
     End Sub
 
     Private Sub RebuildLayout()
+        InvalidateMeasureCache()
         _visualLines.Clear()
         _tableColumnWidths.Clear()
         _totalContentHeight = 0
@@ -1297,7 +1345,9 @@ Public Class MarkDownViewer
         UpdateScrollBarState()
         If _scrollBarVisible <> prevVisible AndAlso _scrollBarVisible Then
             RebuildLayout()
+            Return
         End If
+        TrimImageCache(GetActiveImageUrls())
     End Sub
 
     ''' <summary>判断两个相邻块是否属于同一元素组（使用行内行距而非段落行距）。</summary>
@@ -1344,11 +1394,11 @@ Public Class MarkDownViewer
         ' 计算每列最小宽度（单行时的理想宽度）
         Dim lineH As Integer = CInt(Math.Ceiling(Font.GetHeight(DeviceDpi)))
         Dim colWidths(colCount - 1) As Integer
-        Dim minColW As Integer = cellPadding * 2 + TextRenderHelper.MeasureTextWidth("W", Font, lineH)
+        Dim minColW As Integer = cellPadding * 2 + MeasureTextWidthCached("W", Font, lineH)
         For Each row In block.TableRows
             For ci As Integer = 0 To Math.Min(row.Count, colCount) - 1
                 Dim cellText = GetCellPlainText(row(ci))
-                Dim tw = TextRenderHelper.MeasureTextWidth(cellText, Font, lineH) + cellPadding * 2
+                Dim tw = MeasureTextWidthCached(cellText, Font, lineH) + cellPadding * 2
                 If tw > colWidths(ci) Then colWidths(ci) = tw
             Next
         Next
@@ -1578,7 +1628,7 @@ Public Class MarkDownViewer
                 End If
                 fitLen = Math.Max(1, fitLen)
                 Dim segText = inlText.Substring(pos, fitLen)
-                Dim segW = TextRenderHelper.MeasureTextWidth(segText, inlFont, textLineH)
+                Dim segW = MeasureTextWidthCached(segText, inlFont, textLineH)
                 Dim frag As New VisualFragment With {
                     .InlineIndex = ii, .CharStart = pos, .CharLength = fitLen,
                     .X = x, .Width = segW, .Text = segText,
@@ -1620,13 +1670,13 @@ Public Class MarkDownViewer
 
     Private Function FindFitLength(text As String, font As Font, maxWidth As Integer, lineH As Integer) As Integer
         If maxWidth <= 0 Then Return 0
-        If TextRenderHelper.MeasureTextWidth(text, font, lineH) <= maxWidth Then Return text.Length
+        If MeasureTextWidthCached(text, font, lineH) <= maxWidth Then Return text.Length
         Dim lo As Integer = 1
         Dim hi As Integer = text.Length
         Dim best As Integer = 0
         While lo <= hi
             Dim mid As Integer = (lo + hi) \ 2
-            If TextRenderHelper.MeasureTextWidth(text.Substring(0, mid), font, lineH) <= maxWidth Then
+            If MeasureTextWidthCached(text.Substring(0, mid), font, lineH) <= maxWidth Then
                 best = mid
                 lo = mid + 1
             Else
@@ -1906,8 +1956,8 @@ Public Class MarkDownViewer
         If eChar <= sChar OrElse frag.Text Is Nothing Then Return
         Dim safeS = Math.Min(sChar, frag.Text.Length)
         Dim safeE = Math.Min(eChar, frag.Text.Length)
-        Dim x1 As Integer = fragX + If(safeS > 0, TextRenderHelper.MeasureTextWidth(frag.Text.Substring(0, safeS), frag.UseFont, lineH), 0)
-        Dim x2 As Integer = fragX + TextRenderHelper.MeasureTextWidth(frag.Text.Substring(0, safeE), frag.UseFont, lineH)
+        Dim x1 As Integer = fragX + If(safeS > 0, MeasureTextWidthCached(frag.Text.Substring(0, safeS), frag.UseFont, lineH), 0)
+        Dim x2 As Integer = fragX + MeasureTextWidthCached(frag.Text.Substring(0, safeE), frag.UseFont, lineH)
         If x2 > x1 Then
             rt.FillRectangle(D2DGlobals.ToD2DRect(New RectangleF(x1, drawY, x2 - x1, lineH)), _当前合成器.BrushCache.Get(rt, 选中背景颜色))
         End If
@@ -2317,6 +2367,7 @@ Public Class MarkDownViewer
 
     Private Sub InvalidateFontCache()
         DisposeFontCache()
+        InvalidateMeasureCache()
     End Sub
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
@@ -2351,7 +2402,10 @@ Public Class MarkDownViewer
     Private Function TryGetOrLoadImage(resolvedUrl As String) As Image
         If String.IsNullOrEmpty(resolvedUrl) Then Return Nothing
         Dim cached As Image = Nothing
-        If _imageCache.TryGetValue(resolvedUrl, cached) Then Return cached
+        If _imageCache.TryGetValue(resolvedUrl, cached) Then
+            If cached IsNot Nothing Then _imageLastUsed(resolvedUrl) = NextImageCacheClock()
+            Return cached
+        End If
         If _imageLoadingUrls.Contains(resolvedUrl) Then Return Nothing
         If resolvedUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase) OrElse
            resolvedUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase) Then
@@ -2359,7 +2413,7 @@ Public Class MarkDownViewer
             Return Nothing
         End If
         Dim img = LoadImageFromFile(resolvedUrl)
-        _imageCache(resolvedUrl) = img
+        StoreImageCacheEntry(resolvedUrl, img)
         Return img
     End Function
 
@@ -2400,7 +2454,7 @@ Public Class MarkDownViewer
                                      Dim bmp As New Bitmap(original)
                                      If IsHandleCreated Then
                                          BeginInvoke(Sub()
-                                                         _imageCache(url) = bmp
+                                                         StoreImageCacheEntry(url, bmp)
                                                          _imageLoadingUrls.Remove(url)
                                                          RebuildLayout()
                                                          Invalidate()
@@ -2440,9 +2494,88 @@ Public Class MarkDownViewer
         If IsHandleCreated Then
             BeginInvoke(Sub()
                             _imageCache(url) = Nothing
+                            _imageLastUsed.Remove(url)
                             _imageLoadingUrls.Remove(url)
                         End Sub)
         End If
+    End Sub
+
+    Private Function NextImageCacheClock() As Long
+        _imageCacheClock += 1
+        Return _imageCacheClock
+    End Function
+
+    Private Shared Function EstimateImageBytes(img As Image) As Long
+        If img Is Nothing Then Return 0
+        Return CLng(Math.Max(1, img.Width)) * CLng(Math.Max(1, img.Height)) * 4L
+    End Function
+
+    Private Sub StoreImageCacheEntry(url As String, img As Image)
+        Dim old As Image = Nothing
+        If _imageCache.TryGetValue(url, old) AndAlso old IsNot Nothing AndAlso Not Object.ReferenceEquals(old, img) Then
+            old.Dispose()
+        End If
+        _imageCache(url) = img
+        If img IsNot Nothing Then
+            _imageLastUsed(url) = NextImageCacheClock()
+        Else
+            _imageLastUsed.Remove(url)
+        End If
+    End Sub
+
+    Private Function GetActiveImageUrls() As HashSet(Of String)
+        Dim active As New HashSet(Of String)(StringComparer.Ordinal)
+        For Each visualLine In _visualLines
+            For Each fragment In visualLine.Fragments
+                If fragment.Kind = InlineKind.Image AndAlso Not String.IsNullOrEmpty(fragment.Url) Then
+                    active.Add(fragment.Url)
+                End If
+            Next
+        Next
+        Return active
+    End Function
+
+    Private Sub TrimImageCache(protectedUrls As HashSet(Of String))
+        Dim maxEntries As Integer = Math.Max(0, MarkDownViewerImageCacheMaxEntries)
+        Dim budgetBytes As Long = Math.Max(0, MarkDownViewerImageCacheBudgetBytes)
+        If maxEntries = Integer.MaxValue AndAlso budgetBytes = Long.MaxValue Then Return
+
+        Dim liveEntries As Integer = 0
+        Dim totalBytes As Long = 0
+        For Each kvp In _imageCache
+            If kvp.Value IsNot Nothing Then
+                liveEntries += 1
+                totalBytes += EstimateImageBytes(kvp.Value)
+            End If
+        Next
+
+        While liveEntries > maxEntries OrElse totalBytes > budgetBytes
+            Dim removeUrl As String = Nothing
+            Dim oldest As Long = Long.MaxValue
+            For Each kvp In _imageCache
+                If kvp.Value Is Nothing Then Continue For
+                If protectedUrls IsNot Nothing AndAlso protectedUrls.Contains(kvp.Key) Then Continue For
+                Dim lastUsed As Long = 0
+                If Not _imageLastUsed.TryGetValue(kvp.Key, lastUsed) Then lastUsed = 0
+                If lastUsed < oldest Then
+                    oldest = lastUsed
+                    removeUrl = kvp.Key
+                End If
+            Next
+            If String.IsNullOrEmpty(removeUrl) Then Exit While
+
+            Dim img = _imageCache(removeUrl)
+            totalBytes -= EstimateImageBytes(img)
+            liveEntries -= 1
+            img?.Dispose()
+            _imageCache.Remove(removeUrl)
+            _imageLastUsed.Remove(removeUrl)
+            Dim d2dCache As D2DGlobals.D2DBitmapCache = Nothing
+            If _d2dImageCaches.TryGetValue(removeUrl, d2dCache) Then
+                d2dCache.Dispose()
+                _d2dImageCaches.Remove(removeUrl)
+            End If
+        End While
     End Sub
 
     Private Sub DisposeImageCache()
@@ -2451,6 +2584,7 @@ Public Class MarkDownViewer
             img?.Dispose()
         Next
         _imageCache.Clear()
+        _imageLastUsed.Clear()
         _imageLoadingUrls.Clear()
     End Sub
 
@@ -2489,6 +2623,33 @@ Public Class MarkDownViewer
 #End Region
 
 #Region "辅助方法"
+
+    Private Sub InvalidateMeasureCache()
+        _measureVersion += 1
+        _textWidthCache.Clear()
+    End Sub
+
+    Private Function GetFontMeasureHash(font As Font) As Integer
+        If font Is Nothing Then Return 0
+        Return System.HashCode.Combine(font.FontFamily.Name, font.Style, font.SizeInPoints, font.Unit)
+    End Function
+
+    Private Function MeasureTextWidthCached(text As String, font As Font, lineH As Integer) As Integer
+        If String.IsNullOrEmpty(text) Then Return 0
+        Dim key As New TextWidthKey With {
+            .Text = text,
+            .FontHash = GetFontMeasureHash(font),
+            .LineHeight = lineH,
+            .Version = _measureVersion
+        }
+        Dim cached As Integer = 0
+        If _textWidthCache.TryGetValue(key, cached) Then Return cached
+
+        cached = TextRenderHelper.MeasureTextWidth(text, font, lineH)
+        If _textWidthCache.Count >= MaxTextWidthCacheEntries Then _textWidthCache.Clear()
+        _textWidthCache(key) = cached
+        Return cached
+    End Function
 
     Private Function GetAlertColor(kind As AlertKind) As Color
         Select Case kind

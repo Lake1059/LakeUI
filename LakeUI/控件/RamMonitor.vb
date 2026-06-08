@@ -29,6 +29,8 @@ Public Class RamMonitor
                     ControlStyles.OptimizedDoubleBuffer Or
                     ControlStyles.SupportsTransparentBackColor Or
                     ControlStyles.ResizeRedraw, True)
+        If components Is Nothing Then components = New Container()
+        components.Add(采样定时器)
         AddHandler 采样定时器.Tick, AddressOf 采样定时器_Tick
     End Sub
 
@@ -417,6 +419,7 @@ Public Class RamMonitor
     Private ReadOnly 历史数据 As New List(Of HistoryPoint)()
     Private ReadOnly 历史锁 As New Object()
     Private 最近样本 As RamSampler.MemorySample
+    Private _挂起期间需要采样 As Boolean
 
     ' 图表几何（用于悬停命中测试）
     Private _图表矩形 As RectangleF
@@ -468,6 +471,11 @@ Public Class RamMonitor
 
     Private Sub 采样定时器_Tick(sender As Object, e As EventArgs)
         If DesignMode OrElse 采样器实例 Is Nothing Then Return
+        If Not 应执行采样刷新() Then
+            _挂起期间需要采样 = True
+            更新采样定时器状态()
+            Return
+        End If
         Try
             最近样本 = RamSampler.Sample()
         Catch
@@ -992,6 +1000,28 @@ Public Class RamMonitor
         Return Me.DeviceDpi / 96.0F
     End Function
 
+    Private Function 应执行采样刷新() As Boolean
+        Return 正在运行 AndAlso
+               Me.IsHandleCreated AndAlso
+               Not Me.IsDisposed AndAlso
+               Not DesignMode AndAlso
+               Me.Visible
+    End Function
+
+    Private Sub 更新采样定时器状态()
+        If DesignMode Then Return
+        Dim shouldRun As Boolean = 应执行采样刷新()
+        If shouldRun Then
+            If Not 采样定时器.Enabled Then 采样定时器.Start()
+            If _挂起期间需要采样 Then
+                _挂起期间需要采样 = False
+                ForceSample()
+            End If
+        ElseIf 采样定时器.Enabled Then
+            采样定时器.Stop()
+        End If
+    End Sub
+
     Protected Overrides Sub OnMouseMove(e As MouseEventArgs)
         MyBase.OnMouseMove(e)
         If Not 启用悬停读数值 Then Return
@@ -1020,14 +1050,24 @@ Public Class RamMonitor
         MyBase.OnHandleCreated(e)
         If Not DesignMode Then
             确保采样器()
-            If 正在运行 Then 采样定时器.Start()
+            更新采样定时器状态()
         End If
     End Sub
 
     Protected Overrides Sub OnHandleDestroyed(e As EventArgs)
         采样定时器.Stop()
-        采样定时器.Dispose()
         MyBase.OnHandleDestroyed(e)
+    End Sub
+
+    Protected Overrides Sub OnVisibleChanged(e As EventArgs)
+        MyBase.OnVisibleChanged(e)
+        If Not Me.Visible Then _挂起期间需要采样 = True
+        更新采样定时器状态()
+    End Sub
+
+    Protected Overrides Sub OnParentChanged(e As EventArgs)
+        MyBase.OnParentChanged(e)
+        更新采样定时器状态()
     End Sub
 
     Protected Overrides Sub OnEnabledChanged(e As EventArgs)
@@ -1069,7 +1109,7 @@ Public Class RamMonitor
             正在运行 = value
             If value Then
                 确保采样器()
-                If Me.IsHandleCreated AndAlso Not DesignMode Then 采样定时器.Start()
+                更新采样定时器状态()
             Else
                 采样定时器.Stop()
             End If

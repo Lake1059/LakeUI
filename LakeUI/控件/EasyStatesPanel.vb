@@ -238,9 +238,26 @@ Partial Public Class EasyStatesPanel
         Return Math.Max(2.0F, CSng(Math.Ceiling(2.0F * Math.Max(1.0F, dpiScale))))
     End Function
 
-    Private Function CreateSubTextFont() As Font
-        Return New Font(Me.Font.FontFamily, Math.Max(1.0F, CSng(_subTextSize)), System.Drawing.FontStyle.Regular, GraphicsUnit.Point)
+    Private _subTextFontCache As Font
+    Private _subTextFontCacheKey As String
+
+    Private Function GetSubTextFont() As Font
+        Dim size As Single = Math.Max(1.0F, CSng(_subTextSize))
+        Dim key As String = Me.Font.FontFamily.Name & "|" & size.ToString(Globalization.CultureInfo.InvariantCulture)
+        If _subTextFontCache IsNot Nothing AndAlso _subTextFontCacheKey = key Then Return _subTextFontCache
+        ReleaseSubTextFont()
+        _subTextFontCache = New Font(Me.Font.FontFamily, size, System.Drawing.FontStyle.Regular, GraphicsUnit.Point)
+        _subTextFontCacheKey = key
+        Return _subTextFontCache
     End Function
+
+    Private Sub ReleaseSubTextFont()
+        If _subTextFontCache IsNot Nothing Then
+            Try : _subTextFontCache.Dispose() : Catch : End Try
+            _subTextFontCache = Nothing
+        End If
+        _subTextFontCacheKey = Nothing
+    End Sub
 
 #End Region
 
@@ -359,7 +376,12 @@ Partial Public Class EasyStatesPanel
             Return _subTextSize
         End Get
         Set(value As Integer)
-            SetValue(_subTextSize, Math.Max(1, value), True)
+            value = Math.Max(1, value)
+            If _subTextSize = value Then Return
+            _subTextSize = value
+            ReleaseSubTextFont()
+            _layoutDirty = True
+            Invalidate()
         End Set
     End Property
 
@@ -711,9 +733,8 @@ Partial Public Class EasyStatesPanel
         Dim flags As TextFormatFlags = TextFormatFlags.Left Or TextFormatFlags.Top Or TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine
         Dim mainH As Single = Math.Max(1, D2DTextRenderer.MeasureText("Ag", Font, New Size(Integer.MaxValue, Integer.MaxValue), flags, s).Height)
         Dim subH As Single
-        Using subFont = CreateSubTextFont()
-            subH = Math.Max(1, D2DTextRenderer.MeasureText("Ag", subFont, New Size(Integer.MaxValue, Integer.MaxValue), flags, s).Height)
-        End Using
+        Dim subFont = GetSubTextFont()
+        subH = Math.Max(1, D2DTextRenderer.MeasureText("Ag", subFont, New Size(Integer.MaxValue, Integer.MaxValue), flags, s).Height)
         Dim totalTextH As Single = mainH + subH + _mainSubTextSpacing * s
         Return Math.Max(_cardMinHeight * s, totalTextH + _cardVerticalPadding * s * 2.0F + TextRenderGuard(s))
     End Function
@@ -727,6 +748,15 @@ Partial Public Class EasyStatesPanel
                                  Math.Max(1, _contentHeight),
                                  Math.Max(1, CInt(Math.Floor(_cardsViewportRect.Height))),
                                  CInt(Math.Round(_scrollOffset)))
+    End Sub
+
+    Private Sub UpdateScrollBarForCurrentOffset()
+        If Not _showVScroll Then Return
+        Dim s As Single = DpiScale()
+        Dim borderPx As Integer = CInt(Math.Round(_borderSize * s))
+        Dim radiusPx As Integer = CInt(Math.Round(_borderRadius * s))
+        Dim inset As Single = Math.Max(borderPx, If(_borderRadius > 0, radiusPx / 2.0F, 0.0F))
+        ComputeScrollBarLayout(borderPx, radiusPx, inset)
     End Sub
 
     Private Function MaxScrollOffset() As Single
@@ -874,13 +904,13 @@ Partial Public Class EasyStatesPanel
             Dim padX As Single = _cardHorizontalPadding * s
             Dim padY As Single = _cardVerticalPadding * s
             Dim lineGap As Single = _mainSubTextSpacing * s
-            Using subFont = CreateSubTextFont()
-                Dim subSizePx As Single = subFont.SizeInPoints * (96.0F / 72.0F) * s
-                Dim mainFmt = textFormatCache.Get(Font, mainSizePx, TextAlignment.Leading, ParagraphAlignment.Near, True)
-                Dim subFmt = textFormatCache.Get(subFont.FontFamily.Name, Vortice.DirectWrite.FontWeight.Normal, Vortice.DirectWrite.FontStyle.Normal,
-                                                 subSizePx, TextAlignment.Leading, ParagraphAlignment.Near, True)
+            Dim subFont = GetSubTextFont()
+            Dim subSizePx As Single = subFont.SizeInPoints * (96.0F / 72.0F) * s
+            Dim mainFmt = textFormatCache.Get(Font, mainSizePx, TextAlignment.Leading, ParagraphAlignment.Near, True)
+            Dim subFmt = textFormatCache.Get(subFont.FontFamily.Name, Vortice.DirectWrite.FontWeight.Normal, Vortice.DirectWrite.FontStyle.Normal,
+                                             subSizePx, TextAlignment.Leading, ParagraphAlignment.Near, True)
 
-                For Each l In _layoutCache
+            For Each l In _layoutCache
                     If l.Index < 0 OrElse l.Index >= _items.Count Then Continue For
                     Dim it = _items(l.Index)
                     If it Is Nothing Then Continue For
@@ -919,8 +949,7 @@ Partial Public Class EasyStatesPanel
                             End If
                         End Using
                     End Using
-                Next
-            End Using
+            Next
         Finally
             rt.PopAxisAlignedClip()
         End Try
@@ -967,7 +996,7 @@ Partial Public Class EasyStatesPanel
             _scrollOffset = target
             _scrollTargetOffset = target
         End If
-        _layoutDirty = True
+        UpdateScrollBarForCurrentOffset()
         Invalidate()
     End Sub
 
@@ -999,7 +1028,7 @@ Partial Public Class EasyStatesPanel
             StopScrollAnimation()
         End If
         ClampScrollOffsets()
-        _layoutDirty = True
+        UpdateScrollBarForCurrentOffset()
         Invalidate()
     End Sub
 
@@ -1083,12 +1112,14 @@ Partial Public Class EasyStatesPanel
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
         MyBase.OnFontChanged(e)
+        ReleaseSubTextFont()
         _layoutDirty = True
         D2DHelperV2.RefreshFontDependentRendering(Me)
     End Sub
 
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
+        ReleaseSubTextFont()
         _layoutDirty = True
         Invalidate()
     End Sub

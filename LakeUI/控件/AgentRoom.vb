@@ -142,12 +142,39 @@ Public Class AgentRoom
     End Class
 #End Region
 #Region "字段"
+    Private Structure TextWidthKey
+        Implements IEquatable(Of TextWidthKey)
+
+        Public Text As String
+        Public FontHash As Integer
+        Public LineHeight As Integer
+        Public Version As Integer
+
+        Public Overloads Function Equals(other As TextWidthKey) As Boolean Implements IEquatable(Of TextWidthKey).Equals
+            Return FontHash = other.FontHash AndAlso
+                   LineHeight = other.LineHeight AndAlso
+                   Version = other.Version AndAlso
+                   String.Equals(Text, other.Text, StringComparison.Ordinal)
+        End Function
+
+        Public Overrides Function Equals(obj As Object) As Boolean
+            Return TypeOf obj Is TextWidthKey AndAlso Equals(DirectCast(obj, TextWidthKey))
+        End Function
+
+        Public Overrides Function GetHashCode() As Integer
+            Return System.HashCode.Combine(Text, FontHash, LineHeight, Version)
+        End Function
+    End Structure
+
     Friend ReadOnly _items As New ChatItemCollection(Me)
     Friend ReadOnly _scrollBar As New ScrollBarRenderer()
     Friend _滚动偏移 As Integer = 0
     Friend _contentHeight As Integer = 0
     Friend _contentHeightDirty As Boolean = True
     Friend _pinnedToBottom As Boolean = True
+    Private _measureVersion As Integer
+    Private ReadOnly _textWidthCache As New Dictionary(Of TextWidthKey, Integer)(512)
+    Private Const MaxTextWidthCacheEntries As Integer = 4096
 
     Friend _hoverLinkUrl As String = Nothing
 
@@ -169,7 +196,7 @@ Public Class AgentRoom
             Return False
         End Function
         Public Overrides Function GetHashCode() As Integer
-            Return ItemIndex * 31 Xor CharIndex
+            Return System.HashCode.Combine(ItemIndex, CharIndex)
         End Function
     End Structure
     Friend _selAnchor As New TextPos(-1, 0)
@@ -728,11 +755,38 @@ Public Class AgentRoom
     End Sub
 
     Private Sub InvalidateAllItemsLayout()
+        InvalidateMeasureCache()
         For Each it In _items
             it.NeedsRelayout = True
         Next
         _contentHeightDirty = True
     End Sub
+
+    Private Sub InvalidateMeasureCache()
+        _measureVersion += 1
+        _textWidthCache.Clear()
+    End Sub
+
+    Private Function GetFontMeasureHash(font As Font) As Integer
+        If font Is Nothing Then Return 0
+        Return System.HashCode.Combine(font.FontFamily.Name, font.Style, font.SizeInPoints, font.Unit)
+    End Function
+
+    Private Function MeasureTextWidthCached(text As String, font As Font, lineHeight As Integer) As Integer
+        If String.IsNullOrEmpty(text) Then Return 0
+        Dim key As New TextWidthKey With {
+            .Text = text,
+            .FontHash = GetFontMeasureHash(font),
+            .LineHeight = lineHeight,
+            .Version = _measureVersion
+        }
+        Dim cached As Integer = 0
+        If _textWidthCache.TryGetValue(key, cached) Then Return cached
+        cached = TextRenderHelper.MeasureTextWidth(text, font, lineHeight)
+        If _textWidthCache.Count >= MaxTextWidthCacheEntries Then _textWidthCache.Clear()
+        _textWidthCache(key) = cached
+        Return cached
+    End Function
 
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
@@ -823,13 +877,13 @@ Public Class AgentRoom
         Dim contentMaxW As Integer = Math.Max(10, maxBubbleW - pad.Horizontal - borderExtra)
 
         ' 折行
-        ChatTextHelper.WrapLines(it.Text, font, lineHeight, contentMaxW, it.LineRanges)
+        ChatTextHelper.WrapLines(it.Text, font, lineHeight, contentMaxW, it.LineRanges, AddressOf MeasureTextWidthCached)
 
         ' 计算实际气泡宽度（取最长行）
         Dim usedTextW As Integer = 0
         For Each lr In it.LineRanges
             Dim s As String = it.Text.Substring(lr.Start, lr.Length)
-            Dim w As Integer = TextRenderHelper.MeasureTextWidth(s, font, lineHeight)
+            Dim w As Integer = MeasureTextWidthCached(s, font, lineHeight)
             If w > usedTextW Then usedTextW = w
         Next
 
@@ -1032,8 +1086,8 @@ Public Class AgentRoom
             Dim b As Integer = Math.Min(selEnd, lineE)
             If b <= a Then Continue For
             Dim line As String = it.Text.Substring(lr.Start, lr.Length)
-            Dim preW As Integer = TextRenderHelper.MeasureTextWidth(line.Substring(0, a - lineS), font, lineHeight)
-            Dim segW As Integer = TextRenderHelper.MeasureTextWidth(line.Substring(a - lineS, b - a), font, lineHeight)
+            Dim preW As Integer = MeasureTextWidthCached(line.Substring(0, a - lineS), font, lineHeight)
+            Dim segW As Integer = MeasureTextWidthCached(line.Substring(a - lineS, b - a), font, lineHeight)
             rt.FillRectangle(New Vortice.RawRectF(textX + preW, textY + li * lineHeight, textX + preW + segW, textY + li * lineHeight + lineHeight), selBr)
         Next
     End Sub
@@ -1070,40 +1124,52 @@ Public Class AgentRoom
         If String.IsNullOrEmpty(line) Then Return
         Dim curX As Integer = x
         Dim lineEnd As Integer = lineStartCharIndex + line.Length
-        Dim segments As New List(Of (s As Integer, e As Integer, isLink As Boolean, url As String))
+        Dim flags As TextFormatFlags = TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine
         Dim p As Integer = lineStartCharIndex
         While p < lineEnd
             Dim link = FindLinkAt(it, p)
             If link.HasValue AndAlso link.Value.Start < lineEnd Then
                 If link.Value.Start > p Then
-                    segments.Add((p - lineStartCharIndex, link.Value.Start - lineStartCharIndex, False, Nothing))
+                    DrawTextSegment_D2D(rt, brushCache, tfc, dpiS, line,
+                                        p - lineStartCharIndex, link.Value.Start - p,
+                                        Nothing, curX, y, font, lineHeight, normalColor, flags)
                 End If
                 Dim segE As Integer = Math.Min(lineEnd, link.Value.Start + link.Value.Length)
-                segments.Add((Math.Max(p, link.Value.Start) - lineStartCharIndex, segE - lineStartCharIndex, True, link.Value.Url))
+                Dim segStart As Integer = Math.Max(p, link.Value.Start)
+                DrawTextSegment_D2D(rt, brushCache, tfc, dpiS, line,
+                                    segStart - lineStartCharIndex, segE - segStart,
+                                    link.Value.Url, curX, y, font, lineHeight, normalColor, flags)
                 p = segE
             Else
-                segments.Add((p - lineStartCharIndex, lineEnd - lineStartCharIndex, False, Nothing))
+                DrawTextSegment_D2D(rt, brushCache, tfc, dpiS, line,
+                                    p - lineStartCharIndex, lineEnd - p,
+                                    Nothing, curX, y, font, lineHeight, normalColor, flags)
                 p = lineEnd
             End If
         End While
-        Dim flags As TextFormatFlags = TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine
-        For Each seg In segments
-            If seg.e <= seg.s Then Continue For
-            Dim part As String = line.Substring(seg.s, seg.e - seg.s)
-            Dim w As Integer = TextRenderHelper.MeasureTextWidth(part, font, lineHeight)
-            If seg.isLink Then
-                Dim col As Color = If(seg.url IsNot Nothing AndAlso seg.url = _hoverLinkUrl, _linkHoverColor, _linkColor)
+    End Sub
+
+    Private Sub DrawTextSegment_D2D(rt As Vortice.Direct2D1.ID2D1RenderTarget,
+                                    brushCache As D2DGlobals.SolidColorBrushCache,
+                                    tfc As D2DGlobals.TextFormatCache, dpiS As Single,
+                                    line As String, startIndex As Integer, length As Integer, url As String,
+                                    ByRef curX As Integer, y As Integer, font As Font, lineHeight As Integer,
+                                    normalColor As Color, flags As TextFormatFlags)
+        If length <= 0 Then Return
+        Dim part As String = line.Substring(startIndex, length)
+        Dim w As Integer = MeasureTextWidthCached(part, font, lineHeight)
+        If url IsNot Nothing Then
+                Dim col As Color = If(url = _hoverLinkUrl, _linkHoverColor, _linkColor)
                 D2DTextRenderer.DrawText(rt, part, font, New Rectangle(curX, y, w, lineHeight), col, flags, dpiS, tfc, brushCache)
                 If _linkUnderline Then
                     Dim br = brushCache.Get(rt, col)
                     rt.DrawLine(New System.Numerics.Vector2(curX, y + lineHeight - 2),
                                 New System.Numerics.Vector2(curX + w, y + lineHeight - 2), br, 1.0F)
                 End If
-            Else
-                D2DTextRenderer.DrawText(rt, part, font, New Rectangle(curX, y, w, lineHeight), normalColor, flags, dpiS, tfc, brushCache)
-            End If
-            curX += w
-        Next
+        Else
+            D2DTextRenderer.DrawText(rt, part, font, New Rectangle(curX, y, w, lineHeight), normalColor, flags, dpiS, tfc, brushCache)
+        End If
+        curX += w
     End Sub
 
     Private Function FindLinkAt(it As ChatItem, charIndex As Integer) As LinkSpan?
@@ -1451,7 +1517,8 @@ Friend Module ChatTextHelper
 
     ''' <summary>把文本按 maxWidth 折行（按字符），保留换行符。</summary>
     Public Sub WrapLines(text As String, font As Font, lineHeight As Integer, maxWidth As Integer,
-                         output As List(Of LineRange))
+                         output As List(Of LineRange),
+                         Optional measureWidth As Func(Of String, Font, Integer, Integer) = Nothing)
         output.Clear()
         If text Is Nothing Then text = ""
         Dim n As Integer = text.Length
@@ -1468,7 +1535,7 @@ Friend Module ChatTextHelper
             ' 在 [i, segEnd) 内按宽度分段
             Dim p As Integer = i
             While p < segEnd
-                Dim fitLen As Integer = FitLength(text, p, segEnd, font, lineHeight, maxWidth)
+                Dim fitLen As Integer = FitLength(text, p, segEnd, font, lineHeight, maxWidth, measureWidth)
                 If fitLen <= 0 Then fitLen = 1
                 ' 优先在空白处断行
                 If p + fitLen < segEnd Then
@@ -1502,20 +1569,27 @@ Friend Module ChatTextHelper
     End Sub
 
     Private Function FitLength(text As String, start As Integer, [end] As Integer,
-                               font As Font, lineHeight As Integer, maxWidth As Integer) As Integer
+                               font As Font, lineHeight As Integer, maxWidth As Integer,
+                               measureWidth As Func(Of String, Font, Integer, Integer)) As Integer
         Dim total As Integer = [end] - start
         If total <= 0 Then Return 0
         Dim full As String = text.Substring(start, total)
-        If TextRenderHelper.MeasureTextWidth(full, font, lineHeight) <= maxWidth Then Return total
+        If InvokeMeasureWidth(full, font, lineHeight, measureWidth) <= maxWidth Then Return total
         Dim lo As Integer = 1, hi As Integer = total
         While lo < hi
             Dim mid As Integer = (lo + hi + 1) \ 2
-            If TextRenderHelper.MeasureTextWidth(text.Substring(start, mid), font, lineHeight) <= maxWidth Then
+            If InvokeMeasureWidth(text.Substring(start, mid), font, lineHeight, measureWidth) <= maxWidth Then
                 lo = mid
             Else
                 hi = mid - 1
             End If
         End While
         Return lo
+    End Function
+
+    Private Function InvokeMeasureWidth(text As String, font As Font, lineHeight As Integer,
+                                        measureWidth As Func(Of String, Font, Integer, Integer)) As Integer
+        If measureWidth IsNot Nothing Then Return measureWidth(text, font, lineHeight)
+        Return TextRenderHelper.MeasureTextWidth(text, font, lineHeight)
     End Function
 End Module

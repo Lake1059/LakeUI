@@ -206,15 +206,24 @@ Public Module D2DGlobals
     ''' <summary>直接从 GDI <see cref="Bitmap"/> 上传为 <see cref="ID2D1Bitmap"/>。调用方负责 Dispose。</summary>
     Public Function CreateBitmapFromGdi(rt As ID2D1RenderTarget, bmp As Bitmap) As ID2D1Bitmap
         If rt Is Nothing OrElse bmp Is Nothing Then Return Nothing
+        Return CreateBitmapFromGdi(rt, bmp, New Rectangle(0, 0, bmp.Width, bmp.Height))
+    End Function
+
+    ''' <summary>直接从 GDI <see cref="Bitmap"/> 的指定区域上传为 <see cref="ID2D1Bitmap"/>。调用方负责 Dispose。</summary>
+    Public Function CreateBitmapFromGdi(rt As ID2D1RenderTarget, bmp As Bitmap, sourceRect As Rectangle) As ID2D1Bitmap
+        If rt Is Nothing OrElse bmp Is Nothing Then Return Nothing
+        sourceRect = Rectangle.Intersect(New Rectangle(0, 0, bmp.Width, bmp.Height), sourceRect)
+        If sourceRect.Width <= 0 OrElse sourceRect.Height <= 0 Then Return Nothing
+
         Dim data As BitmapData = bmp.LockBits(
-            New Rectangle(0, 0, bmp.Width, bmp.Height),
+            sourceRect,
             ImageLockMode.ReadOnly,
             System.Drawing.Imaging.PixelFormat.Format32bppPArgb)
         Try
             Dim props As New BitmapProperties(
                 New Vortice.DCommon.PixelFormat(Format.B8G8R8A8_UNorm, Vortice.DCommon.AlphaMode.Premultiplied))
             Return rt.CreateBitmap(
-                New Vortice.Mathematics.SizeI(bmp.Width, bmp.Height),
+                New Vortice.Mathematics.SizeI(sourceRect.Width, sourceRect.Height),
                 data.Scan0, CUInt(data.Stride), props)
         Finally
             bmp.UnlockBits(data)
@@ -341,8 +350,14 @@ Public Module D2DGlobals
         Public Stretch As Vortice.DirectWrite.FontStretch
     End Structure
 
-    Private ReadOnly _fontResolveCache As New Dictionary(Of FontResolveKey, ResolvedTextFont)(16)
+    Private NotInheritable Class FontResolveEntry
+        Public Value As ResolvedTextFont
+        Public LastUsed As Long
+    End Class
+
+    Private ReadOnly _fontResolveCache As New Dictionary(Of FontResolveKey, FontResolveEntry)(16)
     Private ReadOnly _fontResolveLock As New Object()
+    Private _fontResolveClock As Long
 
     Friend Function ResolveTextFont(font As Font) As ResolvedTextFont
         If font Is Nothing Then
@@ -373,18 +388,49 @@ Public Module D2DGlobals
         }
 
         SyncLock _fontResolveLock
-            Dim cached As ResolvedTextFont = Nothing
-            If _fontResolveCache.TryGetValue(key, cached) Then Return cached
+            Dim cached As FontResolveEntry = Nothing
+            If _fontResolveCache.TryGetValue(key, cached) Then
+                cached.LastUsed = NextFontResolveClock()
+                Return cached.Value
+            End If
         End SyncLock
 
         Dim resolved = ResolveTextFontNameUncached(fallback)
 
         SyncLock _fontResolveLock
-            _fontResolveCache(key) = resolved
+            _fontResolveCache(key) = New FontResolveEntry With {
+                .Value = resolved,
+                .LastUsed = NextFontResolveClock()
+            }
+            TrimFontResolveCache(key)
         End SyncLock
 
         Return resolved
     End Function
+
+    Private Function NextFontResolveClock() As Long
+        _fontResolveClock += 1
+        Return _fontResolveClock
+    End Function
+
+    Private Sub TrimFontResolveCache(protectedKey As FontResolveKey)
+        Dim maxEntries As Integer = Math.Max(0, GlobalOptions.DWriteFontResolveCacheMaxEntries)
+        While _fontResolveCache.Count > maxEntries AndAlso _fontResolveCache.Count > 0
+            Dim oldestKey As FontResolveKey = Nothing
+            Dim oldestEntry As FontResolveEntry = Nothing
+            Dim found As Boolean
+            For Each kv In _fontResolveCache
+                If kv.Key.Equals(protectedKey) Then Continue For
+                If oldestEntry Is Nothing OrElse kv.Value.LastUsed < oldestEntry.LastUsed Then
+                    oldestKey = kv.Key
+                    oldestEntry = kv.Value
+                    found = True
+                End If
+            Next
+            If Not found Then Exit While
+            _fontResolveCache.Remove(oldestKey)
+        End While
+    End Sub
 
     Friend Function CreateTextFormat(font As Font, sizePx As Single) As IDWriteTextFormat
         Return CreateTextFormat(ResolveTextFont(font), sizePx)

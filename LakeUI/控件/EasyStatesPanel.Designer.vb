@@ -9,6 +9,7 @@ Partial Class EasyStatesPanel
             If disposing Then
                 _scrollBar.DisposeBrushes()
                 _scrollAnimationHelper.Dispose()
+                ReleaseSubTextFont()
                 If components IsNot Nothing Then
                     components.Dispose()
                 End If

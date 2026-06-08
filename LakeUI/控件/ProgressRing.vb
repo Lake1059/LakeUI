@@ -6,6 +6,7 @@ Public Class ProgressRing
 
     Public Sub New()
         InitializeComponent()
+        AddHandler 计时器.Tick, AddressOf 动画帧回调
     End Sub
 
 #Region "V2 背景穿透"
@@ -131,20 +132,11 @@ Public Class ProgressRing
         Dim startAngle As Single = n * totalPerCycle + baseRotation * t + sweepOffset - 90.0F
         If sweepAngle <= 0.05F Then Return
 
-        Using strokeStyle = D2DGlobals.GetD2DFactory().CreateStrokeStyle(
-            New StrokeStyleProperties With {
-                .StartCap = CapStyle.Round,
-                .EndCap = CapStyle.Round,
-                .DashCap = CapStyle.Flat,
-                .LineJoin = Vortice.Direct2D1.LineJoin.Round,
-                .DashStyle = Vortice.Direct2D1.DashStyle.Solid,
-                .MiterLimit = 10.0F})
-            Using geo = 创建圆弧几何(绘制矩形, startAngle, sweepAngle)
-                Dim brush = brushCache.[Get](rt, 圆弧颜色)
-                If brush IsNot Nothing Then
-                    rt.DrawGeometry(geo, brush, 画笔宽度, strokeStyle)
-                End If
-            End Using
+        Using geo = 创建圆弧几何(绘制矩形, startAngle, sweepAngle)
+            Dim brush = brushCache.[Get](rt, 圆弧颜色)
+            If brush IsNot Nothing Then
+                rt.DrawGeometry(geo, brush, 画笔宽度, 获取圆头描边样式())
+            End If
         End Using
     End Sub
 
@@ -228,6 +220,7 @@ Public Class ProgressRing
 #Region "通用"
     Private ReadOnly 秒表 As New Stopwatch()
     Private ReadOnly 计时器 As New System.Windows.Forms.Timer()
+    Private _圆头描边样式 As ID2D1StrokeStyle
     Private 动画运行中 As Boolean = False
 
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
@@ -243,13 +236,12 @@ Public Class ProgressRing
 
     ''' <summary>开始播放动画</summary>
     Public Sub StartAnimation()
-        If 动画运行中 Then Return
-        If Not Me.IsHandleCreated Then Return
-        动画运行中 = True
-        秒表.Restart()
+        If Not 动画运行中 Then
+            动画运行中 = True
+            秒表.Restart()
+        End If
         计时器.Interval = Math.Max(1, CInt(1000.0 / 动画帧率值))
-        AddHandler 计时器.Tick, AddressOf 动画帧回调
-        计时器.Start()
+        更新动画计时器状态()
     End Sub
 
     ''' <summary>停止播放动画</summary>
@@ -257,7 +249,6 @@ Public Class ProgressRing
         If Not 动画运行中 Then Return
         动画运行中 = False
         计时器.Stop()
-        RemoveHandler 计时器.Tick, AddressOf 动画帧回调
         秒表.Stop()
         Me.Invalidate()
     End Sub
@@ -271,20 +262,79 @@ Public Class ProgressRing
     End Property
 
     Private Sub 动画帧回调(sender As Object, e As EventArgs)
-        Me.Invalidate()
+        If Not 应运行动画计时器() Then
+            更新动画计时器状态()
+            Return
+        End If
+        Me.Invalidate(Me.ClientRectangle, False)
+    End Sub
+
+    Private Function 应运行动画计时器() As Boolean
+        Return 动画运行中 AndAlso
+               Me.IsHandleCreated AndAlso
+               Not Me.IsDisposed AndAlso
+               Me.Visible AndAlso
+               Me.Enabled
+    End Function
+
+    Private Sub 更新动画计时器状态()
+        If 应运行动画计时器() Then
+            If Not 计时器.Enabled Then 计时器.Start()
+        ElseIf 计时器.Enabled Then
+            计时器.Stop()
+        End If
+    End Sub
+
+    Private Function 获取圆头描边样式() As ID2D1StrokeStyle
+        If _圆头描边样式 Is Nothing Then
+            _圆头描边样式 = D2DGlobals.GetD2DFactory().CreateStrokeStyle(
+                New StrokeStyleProperties With {
+                    .StartCap = CapStyle.Round,
+                    .EndCap = CapStyle.Round,
+                    .DashCap = CapStyle.Flat,
+                    .LineJoin = Vortice.Direct2D1.LineJoin.Round,
+                    .DashStyle = Vortice.Direct2D1.DashStyle.Solid,
+                    .MiterLimit = 10.0F})
+        End If
+        Return _圆头描边样式
+    End Function
+
+    Private Sub 释放描边样式()
+        If _圆头描边样式 Is Nothing Then Return
+        Try : _圆头描边样式.Dispose() : Catch : End Try
+        _圆头描边样式 = Nothing
     End Sub
 
     Protected Overrides Sub OnHandleCreated(e As EventArgs)
         MyBase.OnHandleCreated(e)
-        If 自动启动 AndAlso Not DesignMode Then
+        If 自动启动 AndAlso Not DesignMode AndAlso Not 动画运行中 Then
             StartAnimation()
+        Else
+            更新动画计时器状态()
         End If
+    End Sub
+
+    Protected Overrides Sub OnHandleDestroyed(e As EventArgs)
+        计时器.Stop()
+        MyBase.OnHandleDestroyed(e)
+    End Sub
+
+    Protected Overrides Sub OnVisibleChanged(e As EventArgs)
+        MyBase.OnVisibleChanged(e)
+        更新动画计时器状态()
+    End Sub
+
+    Protected Overrides Sub OnParentChanged(e As EventArgs)
+        MyBase.OnParentChanged(e)
+        更新动画计时器状态()
     End Sub
 
     Protected Overrides Sub OnEnabledChanged(e As EventArgs)
         MyBase.OnEnabledChanged(e)
         If Not Enabled Then
             StopAnimation()
+        Else
+            更新动画计时器状态()
         End If
         Me.Invalidate()
     End Sub

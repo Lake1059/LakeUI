@@ -19,9 +19,14 @@ Public Class ModernComboBox
         End Sub
 
         Public Overloads Sub AddRange(collection As IEnumerable(Of String))
-            For Each s In collection
-                Add(s)
-            Next
+            _owner.BeginInternalUpdate()
+            Try
+                For Each s In collection
+                    Add(s)
+                Next
+            Finally
+                _owner.EndInternalUpdate(True)
+            End Try
         End Sub
 
         Protected Overrides Sub InsertItem(index As Integer, item As String)
@@ -29,7 +34,7 @@ Public Class ModernComboBox
             If _owner._selectedIndex >= 0 AndAlso index <= _owner._selectedIndex Then
                 _owner._selectedIndex += 1
             End If
-            _owner.Invalidate()
+            If _owner._updateCount <= 0 Then _owner.Invalidate()
         End Sub
 
         Protected Overrides Sub RemoveItem(index As Integer)
@@ -41,7 +46,7 @@ Public Class ModernComboBox
             ElseIf _owner._selectedIndex > index Then
                 _owner._selectedIndex -= 1
             End If
-            _owner.Invalidate()
+            If _owner._updateCount <= 0 Then _owner.Invalidate()
         End Sub
 
         Protected Overrides Sub ClearItems()
@@ -56,7 +61,7 @@ Public Class ModernComboBox
             If hadItems Then
                 _owner.OnSelectedIndexChangedExternal()
             End If
-            _owner.Invalidate()
+            If _owner._updateCount <= 0 Then _owner.Invalidate()
         End Sub
 
         Protected Overrides Sub SetItem(index As Integer, item As String)
@@ -64,7 +69,7 @@ Public Class ModernComboBox
             If _owner._selectedIndex = index Then
                 _owner._textRenderer.SetText(item, item.Length, True, False)
             End If
-            _owner.Invalidate()
+            If _owner._updateCount <= 0 Then _owner.Invalidate()
         End Sub
     End Class
 
@@ -187,6 +192,7 @@ Public Class ModernComboBox
     Private _pendingSelectedIndexChanged As Boolean = False
     Private _droppedDown As Boolean = False
     Private _dropDownForm As DropDownListForm = Nothing
+    Private _updateCount As Integer = 0
 
     Private Enum MouseStateEnum
         Normal
@@ -2534,6 +2540,8 @@ Public Class ModernComboBox
         Private ReadOnly _owner As ModernComboBox
         Private _tipText As String = ""
         Private _backdrop As PopupBackdropRenderer
+        Private _lastMeasureKey As String = Nothing
+        Private _lastMeasuredSize As Size = Size.Empty
 
         ' V2：D2D 资源由 WindowCompositor 按顶层 Form 共享管理。
 
@@ -2553,7 +2561,15 @@ Public Class ModernComboBox
             Dim contentW As Integer = maxW - pad.Left - pad.Right - bw * 2
             If contentW < 10 Then contentW = 10
 
-            Dim measured As Size = MeasureWrappedText_D2D(_tipText, _owner.Font, contentW, _owner.DpiScale())
+            Dim measureKey As String = String.Concat(_tipText, ChrW(0), contentW, ChrW(0), _owner.Font.GetHashCode(), ChrW(0), _owner.DeviceDpi)
+            Dim measured As Size
+            If String.Equals(_lastMeasureKey, measureKey, StringComparison.Ordinal) Then
+                measured = _lastMeasuredSize
+            Else
+                measured = MeasureWrappedText_D2D(_tipText, _owner.Font, contentW, _owner.DpiScale())
+                _lastMeasureKey = measureKey
+                _lastMeasuredSize = measured
+            End If
 
             Dim w As Integer = Math.Min(maxW, measured.Width + pad.Left + pad.Right + bw * 2)
             Dim h As Integer = measured.Height + pad.Top + pad.Bottom + bw * 2
@@ -2743,6 +2759,17 @@ Public Class ModernComboBox
         Return Me.DeviceDpi / 96.0F
     End Function
 
+    Private Sub BeginInternalUpdate()
+        _updateCount += 1
+    End Sub
+
+    Private Sub EndInternalUpdate(Optional invalidateAfter As Boolean = True)
+        _updateCount -= 1
+        If _updateCount > 0 Then Return
+        _updateCount = 0
+        If invalidateAfter Then Invalidate()
+    End Sub
+
     Private Shared Sub DrawSingleLineText_D2D(rt As ID2D1RenderTarget, text As String, font As Font, foreColor As Color,
                                              rect As RectangleF, dpiScale As Single, endEllipsis As Boolean)
         SingleLineTextBoxRenderer.DrawSingleLineText_D2D(rt, text, font, foreColor, rect, dpiScale, endEllipsis)
@@ -2817,7 +2844,7 @@ Public Class ModernComboBox
     End Sub
 
     Friend Sub OnItemsTextChanged()
-        Invalidate()
+        If _updateCount <= 0 Then Invalidate()
         RaiseEvent TextChanged(Me, EventArgs.Empty)
     End Sub
 
@@ -2832,7 +2859,7 @@ Public Class ModernComboBox
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
-            Invalidate()
+            If _updateCount <= 0 Then Invalidate()
         End If
     End Sub
 #End Region

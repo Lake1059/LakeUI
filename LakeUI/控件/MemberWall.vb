@@ -719,19 +719,28 @@ Partial Public Class MemberWall
         ClampScrollOffset()
 
         If _showVScroll Then
-            Dim scrollW As Integer = CInt(Math.Round(_scrollBarWidth * s))
-            Dim padTop As Integer = Math.Max(0, CInt(Math.Round(_cardsViewportRect.Top - inset - ScrollBarRenderer.Margin)))
-            Dim padBottom As Integer = Math.Max(0, CInt(Math.Round(Height - _cardsViewportRect.Bottom - inset - ScrollBarRenderer.Margin)))
-            _scrollBar.ComputeLayout(Width, Height, borderPx, radiusPx, padTop, padBottom, scrollW,
-                                     Math.Max(1, _contentHeight),
-                                     Math.Max(1, CInt(Math.Floor(_cardsViewportRect.Height))),
-                                     _scrollOffset)
+            UpdateScrollBarForCurrentOffset()
         Else
             _scrollBar.TrackRect = Rectangle.Empty
             _scrollBar.ThumbRect = Rectangle.Empty
         End If
 
         _layoutDirty = False
+    End Sub
+
+    Private Sub UpdateScrollBarForCurrentOffset()
+        If Not _showVScroll Then Return
+        Dim s As Single = DpiScale()
+        Dim borderPx As Integer = CInt(Math.Round(_borderSize * s))
+        Dim radiusPx As Integer = CInt(Math.Round(_borderRadius * s))
+        Dim inset As Single = Math.Max(borderPx, If(_borderRadius > 0, radiusPx / 2.0F, 0.0F))
+        Dim scrollW As Integer = CInt(Math.Round(_scrollBarWidth * s))
+        Dim padTop As Integer = Math.Max(0, CInt(Math.Round(_cardsViewportRect.Top - inset - ScrollBarRenderer.Margin)))
+        Dim padBottom As Integer = Math.Max(0, CInt(Math.Round(Height - _cardsViewportRect.Bottom - inset - ScrollBarRenderer.Margin)))
+        _scrollBar.ComputeLayout(Width, Height, borderPx, radiusPx, padTop, padBottom, scrollW,
+                                 Math.Max(1, _contentHeight),
+                                 Math.Max(1, CInt(Math.Floor(_cardsViewportRect.Height))),
+                                 _scrollOffset)
     End Sub
 
     Private Function BuildCardLayout(layoutWidth As Single, searchTokens As String(), target As List(Of CardLayout)) As Integer
@@ -1019,7 +1028,7 @@ Partial Public Class MemberWall
             Dim newOff = _scrollBar.DragMove(e.Y, Math.Max(1, _contentHeight), Math.Max(1, CInt(Math.Floor(_cardsViewportRect.Height))))
             If newOff <> _scrollOffset Then
                 _scrollOffset = newOff
-                _layoutDirty = True
+                UpdateScrollBarForCurrentOffset()
                 Invalidate()
             End If
             Return
@@ -1054,7 +1063,7 @@ Partial Public Class MemberWall
             Dim newOff = _scrollBar.TrackClick(e.Location, _scrollOffset, Math.Max(1, _contentHeight), Math.Max(1, CInt(Math.Floor(_cardsViewportRect.Height))))
             If newOff <> _scrollOffset Then
                 _scrollOffset = newOff
-                _layoutDirty = True
+                UpdateScrollBarForCurrentOffset()
                 Invalidate()
                 Return
             End If
@@ -1100,7 +1109,7 @@ Partial Public Class MemberWall
         Dim newOff = ScrollBarRenderer.HandleWheel(e.Delta, _scrollOffset, Math.Max(1, _contentHeight), Math.Max(1, CInt(Math.Floor(_cardsViewportRect.Height))), _scrollStep)
         If newOff <> _scrollOffset Then
             _scrollOffset = newOff
-            _layoutDirty = True
+            UpdateScrollBarForCurrentOffset()
             Invalidate()
         End If
     End Sub

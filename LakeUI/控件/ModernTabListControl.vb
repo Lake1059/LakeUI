@@ -25,6 +25,12 @@ Public Class ModernTabListControl
             If Owner IsNot Nothing Then Owner.Invalidate()
         End Sub
 
+        Private Sub 通知父级布局变更()
+            If Owner Is Nothing Then Return
+            Owner.失效布局缓存()
+            Owner.Invalidate()
+        End Sub
+
         Private _text As String = "ModernTabPage"
         <Category("LakeUI"), Description("标签页标题文本"), DefaultValue("ModernTabPage"), Browsable(True)>
         Public Property Text As String
@@ -32,8 +38,10 @@ Public Class ModernTabListControl
                 Return _text
             End Get
             Set(value As String)
-                _text = If(value, "")
-                通知父级重绘()
+                value = If(value, "")
+                If _text = value Then Return
+                _text = value
+                通知父级布局变更()
             End Set
         End Property
 
@@ -90,11 +98,31 @@ Public Class ModernTabListControl
             End Set
         End Property
 
+        Private _isSeparator As Boolean
         <Category("LakeUI"), Description("是否是分割线"), DefaultValue(False), Browsable(True)>
-        Public Property IsSeparator As Boolean = False
+        Public Property IsSeparator As Boolean
+            Get
+                Return _isSeparator
+            End Get
+            Set(value As Boolean)
+                If _isSeparator = value Then Return
+                _isSeparator = value
+                通知父级布局变更()
+            End Set
+        End Property
 
+        Private _isDescription As Boolean
         <Category("LakeUI"), Description("是否是小字说明项（不可选中）"), DefaultValue(False), Browsable(True)>
-        Public Property IsDescription As Boolean = False
+        Public Property IsDescription As Boolean
+            Get
+                Return _isDescription
+            End Get
+            Set(value As Boolean)
+                If _isDescription = value Then Return
+                _isDescription = value
+                通知父级布局变更()
+            End Set
+        End Property
 
         <Category("LakeUI"), Description("绑定的内容控件，切换到此选项卡时将显示该控件"), DefaultValue(GetType(Control), Nothing), Browsable(True)>
         Public Property BoundControl As Control = Nothing
@@ -204,9 +232,7 @@ Public Class ModernTabListControl
     Private _布局有滚动条 As Boolean
     Private _布局标签栏矩形 As Rectangle
     Private _布局内容区矩形 As Rectangle
-    Private _布局签名 As Integer = 0
     Private _布局已生成 As Boolean = False
-    Private _布局时刻Ms As Long = 0
 
     ' DirectWrite TextFormat 缓存（V2：使用 compositor 共享 TextFormatCache；
     ' 仍保留本地条目记录省略号 trimming sign 以便释放）
@@ -226,7 +252,6 @@ Public Class ModernTabListControl
 
     Protected Overrides Sub OnHandleDestroyed(e As EventArgs)
         Try : 停止帧驱动() : Catch : End Try
-        Try : _动画助手.Dispose() : Catch : End Try
         ReleaseLocalTextFormatCache()
         ReleaseMoreIndicatorFont()
         MyBase.OnHandleDestroyed(e)
@@ -252,6 +277,7 @@ Public Class ModernTabListControl
     End Sub
     Private _搜索框控件 As Control = Nothing
     Private _搜索文本 As String = ""
+    Private _搜索词元缓存 As String() = Array.Empty(Of String)()
     Private _搜索框高度 As Integer = 30
     Private _搜索框原始父级 As Control = Nothing
     Private _搜索框原始边界 As Rectangle
@@ -341,13 +367,6 @@ Public Class ModernTabListControl
         Return tokens.ToArray()
     End Function
 
-    Private Shared Function 搜索签名(text As String) As String
-        Dim tokens = 搜索词元(text)
-        If tokens.Length = 0 Then Return ""
-        Array.Sort(tokens, StringComparer.Ordinal)
-        Return String.Join(" ", tokens)
-    End Function
-
     Private Shared Function 标题匹配搜索(text As String, searchTokens As String()) As Boolean
         If searchTokens Is Nothing OrElse searchTokens.Length = 0 Then Return True
         If String.IsNullOrWhiteSpace(text) Then Return False
@@ -363,7 +382,9 @@ Public Class ModernTabListControl
         Dim ctrl = TryCast(sender, Control)
         If ctrl Is Nothing Then Return
         _搜索文本 = If(ctrl.Text, "")
+        _搜索词元缓存 = 搜索词元(_搜索文本)
         _滚动偏移 = 0
+        失效布局缓存()
         限制滚动范围()
         Invalidate()
     End Sub
@@ -909,64 +930,9 @@ Public Class ModernTabListControl
 #End Region
 
 #Region "布局"
-    ''' <summary>
-    ''' 计算"会影响布局"的内容签名。任何会改变项位置/可见性/容器尺寸的字段变化都需要纳入。
-    ''' 注意：仅用于"已生成的本帧布局缓存还能复用一帧"的判断，TTL 内若签名一致就直接返回。
-    ''' </summary>
-    Private Shared Sub 混入哈希(ByRef h As Integer, v As Integer)
-        ' VB 的 Integer/UInteger 算术都会做溢出检查，这里走 Long 再按 32 位裁剪。
-        Dim hl As Long = CLng(h) And &HFFFFFFFFL
-        Dim vl As Long = CLng(v) And &HFFFFFFFFL
-        Dim mixed As Long = ((hl * 31L) Xor vl) And &HFFFFFFFFL
-        ' 转回 Int32（保留位模式，不抛溢出）
-        If mixed > Integer.MaxValue Then
-            h = CInt(mixed - &H100000000L)
-        Else
-            h = CInt(mixed)
-        End If
-    End Sub
-
-    Private Function 计算布局签名() As Integer
-        Dim h As Integer = 17
-        混入哈希(h, Me.Width)
-        混入哈希(h, Me.Height)
-        混入哈希(h, 项目列表.Count)
-        混入哈希(h, 标签页项高度)
-        混入哈希(h, 标签页项间距)
-        混入哈希(h, 标签栏宽度)
-        混入哈希(h, 标签栏内边距.GetHashCode())
-        混入哈希(h, 分割线高度值)
-        混入哈希(h, 说明项高度值)
-        混入哈希(h, _搜索框高度)
-        混入哈希(h, If(_搜索框控件 Is Nothing, 0, 1))
-        混入哈希(h, 标签页位置.GetHashCode())
-        混入哈希(h, 滚动条宽度)
-        混入哈希(h, 搜索签名(_搜索文本).GetHashCode())
-        混入哈希(h, Me.DeviceDpi)
-        ' 项是否分隔/说明会影响项高
-        Dim searchTokens As String() = 搜索词元(_搜索文本)
-        For i = 0 To 项目列表.Count - 1
-            Dim it = 项目列表(i)
-            Dim flag As Integer = If(it.IsSeparator, 1, 0) Or If(it.IsDescription, 2, 0)
-            混入哈希(h, flag)
-            ' 搜索文本生效时，项是否可见取决于文本内容
-            If searchTokens.Length > 0 Then
-                混入哈希(h, If(it.Text, "").GetHashCode())
-            End If
-        Next
-        Return h
-    End Function
-
-    ''' <summary>
-    ''' 一帧的开始处调用：在 TTL(1s) 内若签名一致则复用上一帧的布局数组；否则重算 O(n)。
-    ''' 把所有"几何派生"集中到一处，避免外部 O(n²) 累加。
-    ''' </summary>
+    ''' <summary>按显式失效重建布局，后续几何查询直接复用数组。</summary>
     Private Sub 确保布局缓存()
-        Dim now As Long = _共享Stopwatch.ElapsedMilliseconds
-        Dim sig As Integer = 计算布局签名()
-        If _布局已生成 AndAlso _布局签名 = sig AndAlso (now - _布局时刻Ms) <= 缓存有效期Ms Then
-            Return
-        End If
+        If _布局已生成 Then Return
 
         Dim s As Single = DpiScale()
         Dim count As Integer = 项目列表.Count
@@ -985,11 +951,14 @@ Public Class ModernTabListControl
         _布局视口高度 = Math.Max(0, Me.Height - _布局搜索区高度)
 
         ' 项可见 / 高度 / 总高
-        If _布局项高度数组.Length < count Then ReDim _布局项高度数组(Math.Max(count, 4) - 1)
-        If _布局项AbsY数组.Length < count Then ReDim _布局项AbsY数组(Math.Max(count, 4) - 1)
-        If _布局项可见数组.Length < count Then ReDim _布局项可见数组(Math.Max(count, 4) - 1)
+        Dim requiredCapacity As Integer = Math.Max(count, 4)
+        If _布局项高度数组.Length < count OrElse _布局项高度数组.Length > requiredCapacity * 2 Then
+            ReDim _布局项高度数组(requiredCapacity - 1)
+            ReDim _布局项AbsY数组(requiredCapacity - 1)
+            ReDim _布局项可见数组(requiredCapacity - 1)
+        End If
 
-        Dim searchTokens As String() = 搜索词元(_搜索文本)
+        Dim searchTokens As String() = _搜索词元缓存
         Dim hasSearch As Boolean = searchTokens.Length > 0
         Dim total As Single = 标签栏内边距.Top * s
         Dim visibleCount As Integer = 0
@@ -1035,8 +1004,6 @@ Public Class ModernTabListControl
         _布局项X = x
         _布局项W = itemW
 
-        _布局签名 = sig
-        _布局时刻Ms = now
         _布局已生成 = True
     End Sub
 
@@ -1143,6 +1110,7 @@ Public Class ModernTabListControl
 
     Protected Overrides Sub OnResize(e As EventArgs)
         MyBase.OnResize(e)
+        失效布局缓存()
         同步内容面板布局()
         限制滚动范围()
         Invalidate()
@@ -1150,6 +1118,7 @@ Public Class ModernTabListControl
 
     Protected Overrides Sub OnLayout(e As LayoutEventArgs)
         MyBase.OnLayout(e)
+        失效布局缓存()
         同步内容面板布局()
         Invalidate()
     End Sub
@@ -1259,12 +1228,7 @@ Public Class ModernTabListControl
 
         ' ---------- 3) 失活时停掉调度源 ----------
         If hoverActive OrElse scrollActive Then
-            ' 滚动只刷标签栏；hover 涉及整体内容（指示器等），需要全控件刷新。
-            If hoverActive Then
-                Me.Invalidate()
-            Else
-                Me.Invalidate(获取标签栏矩形())
-            End If
+            Me.Invalidate(获取标签栏矩形())
         Else
             停止帧驱动()
         End If
@@ -1328,7 +1292,7 @@ Public Class ModernTabListControl
             _滚动目标 = _滚动偏移
             _滚动速度 = 0
             停止滚动动画()
-            Me.Invalidate()
+            Me.Invalidate(获取标签栏矩形())
             Return
         End If
 
@@ -1356,7 +1320,7 @@ Public Class ModernTabListControl
             End If
             needInvalidate = True
         End If
-        If needInvalidate Then Me.Invalidate()
+        If needInvalidate Then Me.Invalidate(获取标签栏矩形())
     End Sub
 
     Protected Overrides Sub OnMouseLeave(e As EventArgs)
@@ -1369,7 +1333,7 @@ Public Class ModernTabListControl
             needInvalidate = True
         End If
         If _标签栏滚动条.ResetHover() Then needInvalidate = True
-        If needInvalidate Then Me.Invalidate()
+        If needInvalidate Then Me.Invalidate(获取标签栏矩形())
     End Sub
 
     Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
@@ -1400,7 +1364,7 @@ Public Class ModernTabListControl
         MyBase.OnMouseUp(e)
         If _标签栏滚动条.IsDragging Then
             _标签栏滚动条.EndDrag()
-            Me.Invalidate()
+            Me.Invalidate(获取标签栏矩形())
         End If
     End Sub
 
@@ -1512,12 +1476,12 @@ Public Class ModernTabListControl
 
     Protected Overrides Sub OnGotFocus(e As EventArgs)
         MyBase.OnGotFocus(e)
-        Me.Invalidate()
+        Me.Invalidate(获取标签栏矩形())
     End Sub
 
     Protected Overrides Sub OnLostFocus(e As EventArgs)
         MyBase.OnLostFocus(e)
-        Me.Invalidate()
+        Me.Invalidate(获取标签栏矩形())
     End Sub
 #End Region
 
@@ -1527,6 +1491,14 @@ Public Class ModernTabListControl
             field = value
             Me.Invalidate()
         End If
+    End Sub
+
+    Private Sub SetLayoutValue(Of T)(ByRef field As T, value As T)
+        If EqualityComparer(Of T).Default.Equals(field, value) Then Return
+        field = value
+        失效布局缓存()
+        限制滚动范围()
+        Me.Invalidate()
     End Sub
 
     Private Function DpiScale() As Single
@@ -1626,7 +1598,9 @@ Public Class ModernTabListControl
         Set(value As TabSideEnum)
             If 标签页位置 <> value Then
                 标签页位置 = value
+                失效布局缓存()
                 同步内容面板布局()
+                限制滚动范围()
                 Me.Invalidate()
             End If
         End Set
@@ -1639,9 +1613,12 @@ Public Class ModernTabListControl
             Return 标签栏宽度
         End Get
         Set(value As Integer)
+            value = Math.Max(20, value)
             If 标签栏宽度 <> value Then
-                标签栏宽度 = Math.Max(20, value)
+                标签栏宽度 = value
+                失效布局缓存()
                 同步内容面板布局()
+                限制滚动范围()
                 Me.Invalidate()
             End If
         End Set
@@ -1717,17 +1694,20 @@ Public Class ModernTabListControl
             End If
             _搜索框控件 = value
             _搜索文本 = ""
+            _搜索词元缓存 = Array.Empty(Of String)()
             If _搜索框控件 IsNot Nothing Then
                 _搜索文本 = If(_搜索框控件.Text, "")
+                _搜索词元缓存 = 搜索词元(_搜索文本)
                 _搜索框原始父级 = _搜索框控件.Parent
                 _搜索框原始边界 = _搜索框控件.Bounds
                 _搜索框控件.BackColor = 标签栏背景颜色
                 If _搜索框控件.Parent IsNot Me Then Me.Controls.Add(_搜索框控件)
                 _搜索框控件.BringToFront()
                 AddHandler _搜索框控件.TextChanged, AddressOf 搜索框文本变更
-                同步搜索框布局()
             End If
             _滚动偏移 = 0
+            失效布局缓存()
+            同步搜索框布局()
             限制滚动范围()
             Invalidate()
         End Set
@@ -1742,6 +1722,7 @@ Public Class ModernTabListControl
             value = Math.Max(1, value)
             If _搜索框高度 <> value Then
                 _搜索框高度 = value
+                失效布局缓存()
                 同步搜索框布局()
                 限制滚动范围()
                 Invalidate()
@@ -1758,10 +1739,7 @@ Public Class ModernTabListControl
             Return 标签页项高度
         End Get
         Set(value As Integer)
-            If 标签页项高度 <> value Then
-                标签页项高度 = Math.Max(16, value)
-                Me.Invalidate()
-            End If
+            SetLayoutValue(标签页项高度, Math.Max(16, value))
         End Set
     End Property
 
@@ -1772,7 +1750,7 @@ Public Class ModernTabListControl
             Return 标签页项间距
         End Get
         Set(value As Integer)
-            SetValue(标签页项间距, value)
+            SetLayoutValue(标签页项间距, value)
         End Set
     End Property
 
@@ -1783,7 +1761,11 @@ Public Class ModernTabListControl
             Return 标签栏内边距
         End Get
         Set(value As Padding)
+            If 标签栏内边距 = value Then Return
             标签栏内边距 = value
+            失效布局缓存()
+            同步内容面板布局()
+            限制滚动范围()
             Me.Invalidate()
         End Set
     End Property
@@ -1980,7 +1962,7 @@ Public Class ModernTabListControl
             Return 滚动条宽度
         End Get
         Set(value As Integer)
-            SetValue(滚动条宽度, value)
+            SetLayoutValue(滚动条宽度, value)
         End Set
     End Property
 
@@ -2089,7 +2071,7 @@ Public Class ModernTabListControl
         End Get
         Set(value As Integer)
             If value < 1 Then value = 1
-            SetValue(分割线高度值, value)
+            SetLayoutValue(分割线高度值, value)
         End Set
     End Property
 
@@ -2101,7 +2083,7 @@ Public Class ModernTabListControl
         End Get
         Set(value As Integer)
             If value < 1 Then value = 1
-            SetValue(说明项高度值, value)
+            SetLayoutValue(说明项高度值, value)
         End Set
     End Property
 

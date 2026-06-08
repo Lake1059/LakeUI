@@ -5,6 +5,8 @@ Imports Vortice.Direct2D1
 ''' 供组合控件复用的单行轻量文本框内核：负责文本绘制、光标、选区、滚动、命中测试与基础编辑。
 ''' </summary>
 Public Class SingleLineTextBoxRenderer
+    Implements IDisposable
+
     Public Event TextChanged As EventHandler
 
     Public Enum TextAlignMode
@@ -21,6 +23,11 @@ Public Class SingleLineTextBoxRenderer
     Private _hasSelection As Boolean = False
     Private _caretVisible As Boolean = True
     Private _scrollXOffset As Integer = 0
+    Private _caretBlinkRequested As Boolean
+    Private _disposed As Boolean
+    Private ReadOnly _prefixWidthCache As New Dictionary(Of Integer, Integer)(4)
+    Private _measureFontKey As String = String.Empty
+    Private _measureDpiScale As Single = -1.0F
 
     Public Sub New(owner As Control)
         ArgumentNullException.ThrowIfNull(owner)
@@ -30,6 +37,12 @@ Public Class SingleLineTextBoxRenderer
                 _caretVisible = Not _caretVisible
                 InvalidateOwner()
             End Sub
+        AddHandler _owner.VisibleChanged, AddressOf OwnerStateChanged
+        AddHandler _owner.HandleCreated, AddressOf OwnerStateChanged
+        AddHandler _owner.HandleDestroyed, AddressOf OwnerStateChanged
+        AddHandler _owner.FontChanged, AddressOf OwnerMetricsChanged
+        AddHandler _owner.DpiChangedAfterParent, AddressOf OwnerMetricsChanged
+        AddHandler _owner.Disposed, AddressOf OwnerDisposed
     End Sub
 
     Public Property Text As String
@@ -120,7 +133,7 @@ Public Class SingleLineTextBoxRenderer
         Dim changed As Boolean = _text <> v
         If Not changed AndAlso caretColumn < 0 AndAlso Not resetScroll Then Return
 
-        _text = v
+        If changed Then AssignTextValue(v)
         If caretColumn >= 0 Then
             _caretCol = Math.Max(0, Math.Min(_text.Length, caretColumn))
         ElseIf changed Then
@@ -265,7 +278,7 @@ Public Class SingleLineTextBoxRenderer
 
         Dim candidate As String = String.Concat(_text.AsSpan(0, startCol), clean, _text.AsSpan(endCol))
         If CandidateValidator IsNot Nothing AndAlso Not CandidateValidator.Invoke(candidate) Then Return
-        _text = candidate
+        AssignTextValue(candidate)
         _caretCol = startCol + clean.Length
         ClearSelection(False)
         RaiseTextChangedFromEdit()
@@ -276,7 +289,7 @@ Public Class SingleLineTextBoxRenderer
         If _hasSelection Then
             changed = DeleteSelectionCore(False)
         ElseIf _caretCol > 0 Then
-            _text = String.Concat(_text.AsSpan(0, _caretCol - 1), _text.AsSpan(_caretCol))
+            AssignTextValue(String.Concat(_text.AsSpan(0, _caretCol - 1), _text.AsSpan(_caretCol)))
             _caretCol -= 1
             changed = True
         End If
@@ -288,7 +301,7 @@ Public Class SingleLineTextBoxRenderer
         If _hasSelection Then
             changed = DeleteSelectionCore(False)
         ElseIf _caretCol < _text.Length Then
-            _text = String.Concat(_text.AsSpan(0, _caretCol), _text.AsSpan(_caretCol + 1))
+            AssignTextValue(String.Concat(_text.AsSpan(0, _caretCol), _text.AsSpan(_caretCol + 1)))
             changed = True
         End If
         If changed Then RaiseTextChangedFromEdit()
@@ -347,7 +360,7 @@ Public Class SingleLineTextBoxRenderer
         Dim areaW As Integer = CInt(area.Width)
         If areaW <= 0 Then Return
         _caretCol = Math.Max(0, Math.Min(_text.Length, _caretCol))
-        Dim caretX As Integer = MeasureWidth(_text.Substring(0, _caretCol))
+        Dim caretX As Integer = MeasurePrefixWidth(_caretCol)
         If TextAlign <> TextAlignMode.Left Then
             Dim lineW As Integer = MeasureWidth(_text)
             If lineW < areaW Then
@@ -366,35 +379,82 @@ Public Class SingleLineTextBoxRenderer
     Public Function GetCaretImeLocation() As Point
         Dim area As RectangleF = GetTextArea()
         Dim alignOff As Integer = GetAlignOffsetX(_text, CInt(area.Width))
-        Dim cx As Integer = CInt(area.X + alignOff + MeasureWidth(_text.Substring(0, _caretCol)) - _scrollXOffset)
+        Dim cx As Integer = CInt(area.X + alignOff + MeasurePrefixWidth(_caretCol) - _scrollXOffset)
         Dim cy As Integer = CInt(area.Y + (area.Height - LineHeight) \ 2 + LineHeight)
         Return New Point(cx, cy)
     End Function
 
     Public Sub StartCaretBlink()
+        If _disposed Then Return
+        _caretBlinkRequested = True
         _caretVisible = True
-        _caretBlinkTimer.Start()
+        UpdateCaretTimerState()
         InvalidateOwner()
     End Sub
 
     Public Sub StopCaretBlink()
+        _caretBlinkRequested = False
         _caretBlinkTimer.Stop()
         _caretVisible = False
         InvalidateOwner()
     End Sub
 
     Public Sub ResetCaretBlink()
+        If _disposed Then Return
+        _caretBlinkRequested = True
         _caretVisible = True
         _caretBlinkTimer.Stop()
-        _caretBlinkTimer.Start()
+        UpdateCaretTimerState()
         InvalidateOwner()
+    End Sub
+
+    Private Sub OwnerStateChanged(sender As Object, e As EventArgs)
+        UpdateCaretTimerState()
+    End Sub
+
+    Private Sub OwnerMetricsChanged(sender As Object, e As EventArgs)
+        ClearMeasureCache()
+    End Sub
+
+    Private Sub OwnerDisposed(sender As Object, e As EventArgs)
+        Dispose()
+    End Sub
+
+    Private Sub UpdateCaretTimerState()
+        If _disposed Then Return
+        Dim shouldRun As Boolean = _caretBlinkRequested AndAlso
+                                   Editable AndAlso
+                                   _owner.IsHandleCreated AndAlso
+                                   Not _owner.IsDisposed AndAlso
+                                   _owner.Visible AndAlso
+                                   _owner.Enabled AndAlso
+                                   IsFocused()
+        If shouldRun Then
+            If Not _caretBlinkTimer.Enabled Then _caretBlinkTimer.Start()
+        ElseIf _caretBlinkTimer.Enabled Then
+            _caretBlinkTimer.Stop()
+        End If
+    End Sub
+
+    Public Sub Dispose() Implements IDisposable.Dispose
+        If _disposed Then Return
+        _disposed = True
+        Try : _caretBlinkTimer.Stop() : Catch : End Try
+        Try : _caretBlinkTimer.Dispose() : Catch : End Try
+        Try : RemoveHandler _owner.VisibleChanged, AddressOf OwnerStateChanged : Catch : End Try
+        Try : RemoveHandler _owner.HandleCreated, AddressOf OwnerStateChanged : Catch : End Try
+        Try : RemoveHandler _owner.HandleDestroyed, AddressOf OwnerStateChanged : Catch : End Try
+        Try : RemoveHandler _owner.FontChanged, AddressOf OwnerMetricsChanged : Catch : End Try
+        Try : RemoveHandler _owner.DpiChangedAfterParent, AddressOf OwnerMetricsChanged : Catch : End Try
+        Try : RemoveHandler _owner.Disposed, AddressOf OwnerDisposed : Catch : End Try
+        _prefixWidthCache.Clear()
     End Sub
 
     Private Function DeleteSelectionCore(invalidateOwnerFlag As Boolean) As Boolean
         If Not _hasSelection Then Return False
         Dim minC As Integer = Math.Min(_selAnchorCol, _caretCol)
         Dim maxC As Integer = Math.Max(_selAnchorCol, _caretCol)
-        _text = String.Concat(_text.AsSpan(0, minC), _text.AsSpan(maxC))
+        AssignTextValue(String.Concat(_text.AsSpan(0, minC), _text.AsSpan(maxC)))
         _caretCol = minC
         ClearSelection(invalidateOwnerFlag)
         Return True
@@ -404,6 +464,11 @@ Public Class SingleLineTextBoxRenderer
         EnsureCaretVisible()
         InvalidateOwner()
         RaiseEvent TextChanged(_owner, EventArgs.Empty)
+    End Sub
+
+    Private Sub AssignTextValue(value As String)
+        _text = If(value, String.Empty)
+        ClearMeasureCache()
     End Sub
 
     Private Sub UpdateSelectionFromAnchor(extend As Boolean)
@@ -454,6 +519,34 @@ Public Class SingleLineTextBoxRenderer
         Return CInt(Math.Ceiling(TextRenderHelper.MeasureTextWidth_D2D(text, _owner.Font, DpiScale())))
     End Function
 
+    Private Function MeasurePrefixWidth(length As Integer) As Integer
+        length = Math.Max(0, Math.Min(_text.Length, length))
+        EnsureMeasureCacheKey()
+        Dim width As Integer
+        If _prefixWidthCache.TryGetValue(length, width) Then Return width
+        width = If(length = 0, 0, MeasureWidth(_text.Substring(0, length)))
+        _prefixWidthCache(length) = width
+        Return width
+    End Function
+
+    Private Sub EnsureMeasureCacheKey()
+        Dim font = _owner.Font
+        Dim fontKey As String = font.Name & "|" &
+                                font.SizeInPoints.ToString(Globalization.CultureInfo.InvariantCulture) & "|" &
+                                CInt(font.Style).ToString(Globalization.CultureInfo.InvariantCulture)
+        Dim dpi As Single = DpiScale()
+        If _measureFontKey = fontKey AndAlso Math.Abs(_measureDpiScale - dpi) < 0.0001F Then Return
+        _measureFontKey = fontKey
+        _measureDpiScale = dpi
+        _prefixWidthCache.Clear()
+    End Sub
+
+    Private Sub ClearMeasureCache()
+        _prefixWidthCache.Clear()
+        _measureFontKey = String.Empty
+        _measureDpiScale = -1.0F
+    End Sub
+
     Private Function GetAlignOffsetX(lineStr As String, areaWidth As Integer) As Integer
         If TextAlign = TextAlignMode.Left Then Return 0
         Dim textW As Integer = MeasureWidth(lineStr)
@@ -472,8 +565,8 @@ Public Class SingleLineTextBoxRenderer
         Dim minC As Integer = Math.Min(_selAnchorCol, _caretCol)
         Dim maxC As Integer = Math.Max(_selAnchorCol, _caretCol)
         Dim alignOff As Integer = GetAlignOffsetX(_text, textWidth)
-        Dim x1 As Integer = textLeft + alignOff + MeasureWidth(_text.Substring(0, minC)) - _scrollXOffset
-        Dim x2 As Integer = textLeft + alignOff + MeasureWidth(_text.Substring(0, maxC)) - _scrollXOffset
+        Dim x1 As Integer = textLeft + alignOff + MeasurePrefixWidth(minC) - _scrollXOffset
+        Dim x2 As Integer = textLeft + alignOff + MeasurePrefixWidth(maxC) - _scrollXOffset
         If x2 <= x1 Then Return
         Using br = rt.CreateSolidColorBrush(D2DGlobals.ToColor4(SelectionColor))
             rt.FillRectangle(New Vortice.Mathematics.Rect(x1, lineY, x2 - x1, LineHeight), br)
@@ -483,7 +576,7 @@ Public Class SingleLineTextBoxRenderer
     Private Sub DrawCaret_D2D(rt As ID2D1RenderTarget, textLeft As Integer, textTop As Integer)
         Dim area As RectangleF = GetTextArea()
         Dim alignOff As Integer = GetAlignOffsetX(_text, CInt(area.Width))
-        Dim cx As Integer = textLeft + alignOff + MeasureWidth(_text.Substring(0, _caretCol)) - _scrollXOffset
+        Dim cx As Integer = textLeft + alignOff + MeasurePrefixWidth(_caretCol) - _scrollXOffset
         Dim lineY As Integer = CInt(textTop + (area.Height - LineHeight) \ 2)
         Dim caretH As Integer = LineHeight - 2
         Dim caretY As Integer = lineY + (LineHeight - caretH) \ 2

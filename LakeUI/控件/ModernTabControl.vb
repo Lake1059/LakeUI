@@ -34,7 +34,10 @@ Public Class ModernTabControl
                 Return _text
             End Get
             Set(value As String)
-                _text = If(value, "")
+                value = If(value, "")
+                If String.Equals(_text, value, StringComparison.Ordinal) Then Return
+                _text = value
+                Owner?.InvalidateLayoutCache()
                 通知父级重绘()
             End Set
         End Property
@@ -87,13 +90,26 @@ Public Class ModernTabControl
                 Return _tabIcon
             End Get
             Set(value As Image)
+                If Object.ReferenceEquals(_tabIcon, value) Then Return
                 _tabIcon = value
+                Owner?.InvalidateLayoutCache()
                 通知父级重绘()
             End Set
         End Property
 
+        Private _isSeparator As Boolean = False
         <Category("LakeUI"), Description("是否是分割线"), DefaultValue(False), Browsable(True)>
-        Public Property IsSeparator As Boolean = False
+        Public Property IsSeparator As Boolean
+            Get
+                Return _isSeparator
+            End Get
+            Set(value As Boolean)
+                If _isSeparator = value Then Return
+                _isSeparator = value
+                Owner?.InvalidateLayoutCache()
+                通知父级重绘()
+            End Set
+        End Property
 
         <Category("LakeUI"), Description("绑定的内容控件，切换到此选项卡时将显示该控件"), DefaultValue(GetType(Control), Nothing), Browsable(True)>
         Public Property BoundControl As Control = Nothing
@@ -305,6 +321,7 @@ Public Class ModernTabControl
         If _selectedIndex >= 项目列表.Count Then
             _selectedIndex = 项目列表.Count - 1
         End If
+        InvalidateLayoutCache()
         _标签页动画.Clear()
         _悬停索引 = -1
         限制滚动范围()
@@ -1060,9 +1077,9 @@ Public Class ModernTabControl
         Invalidate()
     End Sub
 
-    Protected Overrides Sub OnInvalidated(e As InvalidateEventArgs)
+    Friend Sub InvalidateLayoutCache()
         _缓存宽度 = Nothing
-        MyBase.OnInvalidated(e)
+        _缓存可用宽度 = -1
     End Sub
 
     Private _上一个父级 As Control = Nothing
@@ -1512,8 +1529,7 @@ Public Class ModernTabControl
 
     Friend Sub InvalidateFontResources()
         D2DHelperV2.InvalidateTextFormatCache(Me)
-        _缓存宽度 = Nothing
-        _缓存可用宽度 = -1
+        InvalidateLayoutCache()
     End Sub
 
     Friend Sub RefreshFontDependentRenderingNow()
@@ -1528,6 +1544,7 @@ Public Class ModernTabControl
 
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
+        InvalidateLayoutCache()
         Me.Invalidate()
     End Sub
 
@@ -1623,6 +1640,7 @@ Public Class ModernTabControl
         Set(value As TabSizingEnum)
             If 标签页尺寸模式 <> value Then
                 标签页尺寸模式 = value
+                InvalidateLayoutCache()
                 _滚动偏移 = 0
                 限制滚动范围()
                 Me.Invalidate()
@@ -1710,7 +1728,9 @@ Public Class ModernTabControl
             Return 标签栏内边距
         End Get
         Set(value As Padding)
+            If 标签栏内边距.Equals(value) Then Return
             标签栏内边距 = value
+            InvalidateLayoutCache()
             Me.Invalidate()
         End Set
     End Property
@@ -1726,6 +1746,7 @@ Public Class ModernTabControl
         Set(value As Integer)
             If 标签页最小宽度 <> value Then
                 标签页最小宽度 = Math.Max(16, value)
+                InvalidateLayoutCache()
                 Me.Invalidate()
             End If
         End Set
@@ -1738,7 +1759,10 @@ Public Class ModernTabControl
             Return 标签页项间距
         End Get
         Set(value As Integer)
-            SetValue(标签页项间距, value)
+            If 标签页项间距 = value Then Return
+            标签页项间距 = value
+            InvalidateLayoutCache()
+            Me.Invalidate()
         End Set
     End Property
 
@@ -1815,7 +1839,10 @@ Public Class ModernTabControl
             Return 标签页文本内边距
         End Get
         Set(value As Integer)
-            SetValue(标签页文本内边距, value)
+            If 标签页文本内边距 = value Then Return
+            标签页文本内边距 = value
+            InvalidateLayoutCache()
+            Me.Invalidate()
         End Set
     End Property
 #End Region
@@ -1828,7 +1855,10 @@ Public Class ModernTabControl
             Return 图标尺寸
         End Get
         Set(value As Integer)
-            SetValue(图标尺寸, value)
+            If 图标尺寸 = value Then Return
+            图标尺寸 = value
+            InvalidateLayoutCache()
+            Me.Invalidate()
         End Set
     End Property
 
@@ -1839,7 +1869,10 @@ Public Class ModernTabControl
             Return 图标与文本间距
         End Get
         Set(value As Integer)
-            SetValue(图标与文本间距, value)
+            If 图标与文本间距 = value Then Return
+            图标与文本间距 = value
+            InvalidateLayoutCache()
+            Me.Invalidate()
         End Set
     End Property
 #End Region
@@ -2019,7 +2052,10 @@ Public Class ModernTabControl
         End Get
         Set(value As Integer)
             If value < 1 Then value = 1
-            SetValue(分割线宽度值, value)
+            If 分割线宽度值 = value Then Return
+            分割线宽度值 = value
+            InvalidateLayoutCache()
+            Me.Invalidate()
         End Set
     End Property
 #End Region
@@ -2034,6 +2070,7 @@ Public Class ModernTabControl
         Set(value As Boolean)
             If Ribbon模式值 <> value Then
                 Ribbon模式值 = value
+                InvalidateLayoutCache()
                 _浮层显示 = False
                 同步内容面板布局()
                 限制滚动范围()
@@ -2099,7 +2136,10 @@ Public Class ModernTabControl
             Return 折叠按钮折叠文本值
         End Get
         Set(value As String)
-            折叠按钮折叠文本值 = If(value, "")
+            value = If(value, "")
+            If String.Equals(折叠按钮折叠文本值, value, StringComparison.Ordinal) Then Return
+            折叠按钮折叠文本值 = value
+            InvalidateLayoutCache()
             Me.Invalidate()
         End Set
     End Property
@@ -2111,7 +2151,10 @@ Public Class ModernTabControl
             Return 折叠按钮展开文本值
         End Get
         Set(value As String)
-            折叠按钮展开文本值 = If(value, "")
+            value = If(value, "")
+            If String.Equals(折叠按钮展开文本值, value, StringComparison.Ordinal) Then Return
+            折叠按钮展开文本值 = value
+            InvalidateLayoutCache()
             Me.Invalidate()
         End Set
     End Property
@@ -2123,8 +2166,10 @@ Public Class ModernTabControl
             Return 折叠按钮字体值
         End Get
         Set(value As Font)
+            If Object.ReferenceEquals(折叠按钮字体值, value) Then Return
             折叠按钮字体值 = value
             InvalidateFontResources()
+            Me.Invalidate()
             D2DHelperV2.RefreshFontDependentRendering(Me)
         End Set
     End Property
@@ -2161,7 +2206,9 @@ Public Class ModernTabControl
             Return 折叠按钮图标值
         End Get
         Set(value As Image)
+            If Object.ReferenceEquals(折叠按钮图标值, value) Then Return
             折叠按钮图标值 = value
+            InvalidateLayoutCache()
             Me.Invalidate()
         End Set
     End Property

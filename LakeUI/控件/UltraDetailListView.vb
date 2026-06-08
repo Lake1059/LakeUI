@@ -46,8 +46,20 @@ Public Class UltraDetailListView
     ''' <summary>附加文本行，可独立设置字体和颜色。</summary>
     <TypeConverter(GetType(ExpandableObjectConverter))>
     Public Class TextLine
+        Private _text As String = ""
+
         <DefaultValue(""), Description("文本内容")>
-        Public Property Text As String = ""
+        Public Property Text As String
+            Get
+                Return _text
+            End Get
+            Set(value As String)
+                value = If(value, "")
+                If String.Equals(_text, value, StringComparison.Ordinal) Then Return
+                _text = value
+                If Owner IsNot Nothing Then Owner.InvalidateItemTextResources()
+            End Set
+        End Property
 
         Friend Property Owner As UltraDetailListView
 
@@ -58,6 +70,7 @@ Public Class UltraDetailListView
                 Return _font
             End Get
             Set(value As Font)
+                If Object.ReferenceEquals(_font, value) Then Return
                 _font = value
                 If Owner IsNot Nothing Then Owner.InvalidateItemFontResources()
             End Set
@@ -93,8 +106,20 @@ Public Class UltraDetailListView
     ''' 通过 ExtraLines 添加同一单元格内的附加文本行。</summary>
     <TypeConverter(GetType(ExpandableObjectConverter))>
     Public Class ListSubItem
+        Private _text As String = ""
+
         <DefaultValue(""), Description("主文本")>
-        Public Property Text As String = ""
+        Public Property Text As String
+            Get
+                Return _text
+            End Get
+            Set(value As String)
+                value = If(value, "")
+                If String.Equals(_text, value, StringComparison.Ordinal) Then Return
+                _text = value
+                If Owner IsNot Nothing Then Owner.InvalidateItemTextResources()
+            End Set
+        End Property
 
         Friend Property Owner As UltraDetailListView
 
@@ -105,6 +130,7 @@ Public Class UltraDetailListView
                 Return _font
             End Get
             Set(value As Font)
+                If Object.ReferenceEquals(_font, value) Then Return
                 _font = value
                 If Owner IsNot Nothing Then Owner.InvalidateItemFontResources()
             End Set
@@ -248,20 +274,64 @@ Public Class UltraDetailListView
     ''' <summary>列定义。</summary>
     <TypeConverter(GetType(ExpandableObjectConverter))>
     Public Class ListColumn
+        Private _text As String = ""
+        Private _width As Integer = 100
+        Private _headerPadding As Padding = New Padding(10, 0, 0, 0)
+        Private _wordWrapHeightFixed As Boolean = False
+
+        Friend Property Owner As UltraDetailListView
+
         <DefaultValue(""), Description("列标题文本")>
-        Public Property Text As String = ""
+        Public Property Text As String
+            Get
+                Return _text
+            End Get
+            Set(value As String)
+                value = If(value, "")
+                If String.Equals(_text, value, StringComparison.Ordinal) Then Return
+                _text = value
+                If Owner IsNot Nothing Then Owner.InvalidateColumnVisual()
+            End Set
+        End Property
 
         <DefaultValue(100), Description("列宽度")>
-        Public Property Width As Integer = 100
+        Public Property Width As Integer
+            Get
+                Return _width
+            End Get
+            Set(value As Integer)
+                If _width = value Then Return
+                _width = value
+                If Owner IsNot Nothing Then Owner.InvalidateColumnLayout()
+            End Set
+        End Property
 
         <DefaultValue(GetType(Padding), "10, 0, 0, 0"), Description("列标题文字内边距")>
-        Public Property HeaderPadding As Padding = New Padding(10, 0, 0, 0)
+        Public Property HeaderPadding As Padding
+            Get
+                Return _headerPadding
+            End Get
+            Set(value As Padding)
+                If _headerPadding.Equals(value) Then Return
+                _headerPadding = value
+                If Owner IsNot Nothing Then Owner.InvalidateColumnVisual()
+            End Set
+        End Property
 
         <DefaultValue(False), Description("是否允许慢速单击编辑此列的子项主文本")>
         Public Property AllowLabelEdit As Boolean = False
 
         <DefaultValue(False), Description("自动换行时是否固定高度（不参与项高度计算）；启用后此列内容超出由其他列决定的行高时以省略号截断")>
-        Public Property WordWrapHeightFixed As Boolean = False
+        Public Property WordWrapHeightFixed As Boolean
+            Get
+                Return _wordWrapHeightFixed
+            End Get
+            Set(value As Boolean)
+                If _wordWrapHeightFixed = value Then Return
+                _wordWrapHeightFixed = value
+                If Owner IsNot Nothing Then Owner.InvalidateColumnLayout()
+            End Set
+        End Property
 
         Public Sub New()
         End Sub
@@ -295,21 +365,30 @@ Public Class UltraDetailListView
         End Sub
 
         Protected Overrides Sub InsertItem(index As Integer, item As ListColumn)
+            If item IsNot Nothing Then item.Owner = _owner
             MyBase.InsertItem(index, item)
             _owner.全部项高度缓存失效()
             _owner.RefreshItems()
         End Sub
         Protected Overrides Sub RemoveItem(index As Integer)
+            Dim oldItem = Me(index)
+            If oldItem IsNot Nothing AndAlso Object.ReferenceEquals(oldItem.Owner, _owner) Then oldItem.Owner = Nothing
             MyBase.RemoveItem(index)
             _owner.全部项高度缓存失效()
             _owner.RefreshItems()
         End Sub
         Protected Overrides Sub SetItem(index As Integer, item As ListColumn)
+            Dim oldItem = Me(index)
+            If oldItem IsNot Nothing AndAlso Object.ReferenceEquals(oldItem.Owner, _owner) Then oldItem.Owner = Nothing
+            If item IsNot Nothing Then item.Owner = _owner
             MyBase.SetItem(index, item)
             _owner.全部项高度缓存失效()
             _owner.RefreshItems()
         End Sub
         Protected Overrides Sub ClearItems()
+            For Each oldItem In Me
+                If oldItem IsNot Nothing AndAlso Object.ReferenceEquals(oldItem.Owner, _owner) Then oldItem.Owner = Nothing
+            Next
             MyBase.ClearItems()
             _owner.全部项高度缓存失效()
             _owner.RefreshItems()
@@ -365,18 +444,27 @@ Public Class UltraDetailListView
         End Sub
 
         Protected Overrides Sub InsertItem(index As Integer, item As ListItem)
+            _owner.AttachItem(item)
             MyBase.InsertItem(index, item)
             _owner.RefreshItems()
         End Sub
         Protected Overrides Sub RemoveItem(index As Integer)
+            Dim oldItem = Me(index)
+            _owner.DetachItem(oldItem)
             MyBase.RemoveItem(index)
             _owner.RefreshItems()
         End Sub
         Protected Overrides Sub SetItem(index As Integer, item As ListItem)
+            Dim oldItem = Me(index)
+            _owner.DetachItem(oldItem)
+            _owner.AttachItem(item)
             MyBase.SetItem(index, item)
             _owner.RefreshItems()
         End Sub
         Protected Overrides Sub ClearItems()
+            For Each oldItem In Me
+                _owner.DetachItem(oldItem)
+            Next
             MyBase.ClearItems()
             _owner.RefreshItems()
         End Sub
@@ -613,6 +701,8 @@ Public Class UltraDetailListView
     ''' <summary>重建显示列表并刷新控件。修改数据后调用此方法。</summary>
     Public Sub RefreshItems()
         If _updateCount > 0 Then Return
+        InvalidateMeasureCache()
+        AttachAllItems()
         重建显示列表()
         Me.Invalidate()
     End Sub
@@ -620,6 +710,133 @@ Public Class UltraDetailListView
 #End Region
 
 #Region "辅助方法"
+
+    Private Structure TextMeasureKey
+        Implements IEquatable(Of TextMeasureKey)
+
+        Public Text As String
+        Public FontHash As Integer
+        Public ProposedWidth As Integer
+        Public ProposedHeight As Integer
+        Public Flags As TextFormatFlags
+        Public DpiX96 As Integer
+        Public Version As Integer
+
+        Public Overloads Function Equals(other As TextMeasureKey) As Boolean Implements IEquatable(Of TextMeasureKey).Equals
+            Return FontHash = other.FontHash AndAlso
+                   ProposedWidth = other.ProposedWidth AndAlso
+                   ProposedHeight = other.ProposedHeight AndAlso
+                   Flags = other.Flags AndAlso
+                   DpiX96 = other.DpiX96 AndAlso
+                   Version = other.Version AndAlso
+                   String.Equals(Text, other.Text, StringComparison.Ordinal)
+        End Function
+
+        Public Overrides Function Equals(obj As Object) As Boolean
+            Return TypeOf obj Is TextMeasureKey AndAlso Equals(DirectCast(obj, TextMeasureKey))
+        End Function
+
+        Public Overrides Function GetHashCode() As Integer
+            Return System.HashCode.Combine(Text, FontHash, ProposedWidth, ProposedHeight, Flags, DpiX96, Version)
+        End Function
+    End Structure
+
+    Private _measureVersion As Integer
+    Private ReadOnly _textMeasureCache As New Dictionary(Of TextMeasureKey, Size)(512)
+    Private Const MaxTextMeasureCacheEntries As Integer = 4096
+
+    Friend Sub InvalidateItemTextResources()
+        InvalidateMeasureCache()
+        全部项高度缓存失效()
+        If _updateCount <= 0 Then
+            重建显示列表()
+            Me.Invalidate()
+        End If
+    End Sub
+
+    Friend Sub InvalidateColumnLayout()
+        InvalidateMeasureCache()
+        全部项高度缓存失效()
+        _columnXDirty = True
+        If _updateCount <= 0 Then
+            重建显示列表()
+            Me.Invalidate()
+        End If
+    End Sub
+
+    Friend Sub InvalidateColumnVisual()
+        D2DHelperV2.InvalidateTextFormatCache(Me)
+        If _updateCount <= 0 Then Me.Invalidate()
+    End Sub
+
+    Private Function AttachItem(item As ListItem) As Boolean
+        If item Is Nothing Then Return False
+        Dim changed As Boolean = False
+        For Each subItem In item.SubItems
+            changed = AttachSubItem(subItem) OrElse changed
+        Next
+        For Each line In item.BottomLines
+            changed = AttachTextLine(line) OrElse changed
+        Next
+        If changed Then item.InvalidateCache()
+        Return changed
+    End Function
+
+    Private Sub AttachAllItems()
+        For Each item In _items
+            AttachItem(item)
+        Next
+    End Sub
+
+    Private Sub DetachItem(item As ListItem)
+        If item Is Nothing Then Return
+        For Each subItem In item.SubItems
+            DetachSubItem(subItem)
+        Next
+        For Each line In item.BottomLines
+            DetachTextLine(line)
+        Next
+        item.InvalidateCache()
+    End Sub
+
+    Private Function AttachSubItem(subItem As ListSubItem) As Boolean
+        If subItem Is Nothing Then Return False
+        Dim changed As Boolean = Not Object.ReferenceEquals(subItem.Owner, Me)
+        subItem.Owner = Me
+        For Each line In subItem.ExtraLines
+            changed = AttachTextLine(line) OrElse changed
+        Next
+        Return changed
+    End Function
+
+    Private Sub DetachSubItem(subItem As ListSubItem)
+        If subItem Is Nothing Then Return
+        If Object.ReferenceEquals(subItem.Owner, Me) Then subItem.Owner = Nothing
+        For Each line In subItem.ExtraLines
+            DetachTextLine(line)
+        Next
+    End Sub
+
+    Private Function AttachTextLine(line As TextLine) As Boolean
+        If line Is Nothing Then Return False
+        Dim changed As Boolean = Not Object.ReferenceEquals(line.Owner, Me)
+        line.Owner = Me
+        Return changed
+    End Function
+
+    Private Sub DetachTextLine(line As TextLine)
+        If line IsNot Nothing AndAlso Object.ReferenceEquals(line.Owner, Me) Then line.Owner = Nothing
+    End Sub
+
+    Private Sub InvalidateMeasureCache()
+        _measureVersion += 1
+        _textMeasureCache.Clear()
+    End Sub
+
+    Private Function GetMeasureFontHash(font As Font) As Integer
+        If font Is Nothing Then Return 0
+        Return System.HashCode.Combine(font.FontFamily.Name, font.Style, font.SizeInPoints, font.Unit)
+    End Function
 
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
@@ -672,9 +889,24 @@ Public Class UltraDetailListView
         Dim measureText As String = If(String.IsNullOrEmpty(text), "Ag", text)
         Dim measureFont As Font = If(font, Me.Font)
         Dim safeSize As New Size(Math.Max(1, proposedSize.Width), Math.Max(1, proposedSize.Height))
+        Dim key As New TextMeasureKey With {
+            .Text = measureText,
+            .FontHash = GetMeasureFontHash(measureFont),
+            .ProposedWidth = safeSize.Width,
+            .ProposedHeight = safeSize.Height,
+            .Flags = flags,
+            .DpiX96 = CInt(Math.Round(DpiScale() * 96.0F)),
+            .Version = _measureVersion
+        }
+        Dim cached As Size
+        If _textMeasureCache.TryGetValue(key, cached) Then Return cached
+
         Dim cache As D2DGlobals.TextFormatCache = Nothing
         If _当前合成器 IsNot Nothing Then cache = _当前合成器.TextFormatCache
-        Return D2DTextRenderer.MeasureText(measureText, measureFont, safeSize, flags, DpiScale(), cache)
+        Dim measured = D2DTextRenderer.MeasureText(measureText, measureFont, safeSize, flags, DpiScale(), cache)
+        If _textMeasureCache.Count >= MaxTextMeasureCacheEntries Then _textMeasureCache.Clear()
+        _textMeasureCache(key) = measured
+        Return measured
     End Function
 
     Private Function 测量文本高度_D2D(text As String, font As Font, proposedSize As Size, flags As TextFormatFlags) As Integer
@@ -1857,6 +2089,7 @@ Public Class UltraDetailListView
     End Function
 
     Private Sub 全部项高度缓存失效()
+        InvalidateMeasureCache()
         For Each itm In _items
             itm.InvalidateCache()
         Next
@@ -1866,7 +2099,10 @@ Public Class UltraDetailListView
         D2DHelperV2.InvalidateTextFormatCache(Me)
         全部项高度缓存失效()
         _columnXDirty = True
-        重建显示列表()
+        If _updateCount <= 0 Then
+            重建显示列表()
+            Me.Invalidate()
+        End If
         D2DHelperV2.RefreshFontDependentRendering(Me)
     End Sub
 
@@ -2396,10 +2632,7 @@ Public Class UltraDetailListView
             隐藏截断提示()
             Dim delta As Integer = e.X - _columnResizeStartX
             _columns(_columnResizeIndex).Width = Math.Max(30, _columnResizeStartWidth + delta)
-            全部项高度缓存失效()
-            重建显示列表()
             校正横向滚动偏移()
-            Me.Invalidate()
             Return
         End If
 
@@ -3097,8 +3330,6 @@ Public Class UltraDetailListView
                 RaiseEvent AfterLabelEdit(Me, args)
                 If Not args.CancelEdit Then
                     row.Item.SubItems(_editColumnIndex).Text = args.Label
-                    row.Item.InvalidateCache()
-                    重建显示列表()
                 End If
             End If
         End If
