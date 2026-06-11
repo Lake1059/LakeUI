@@ -122,6 +122,7 @@ Q群：1087964158
 | 41     | MemberWall                                             | 成员墙（3FUI 定制）        | N/A      | N/A      |
 | 42     | EasyStatesPanel                                        | 简易状态板（3FUI 定制）    | N/A      | N/A      |
 | 43     | [LakeUI.Notifications](LakeUI.Notifications/README.md) | 封装的 Win10/11 系统通知   | N/A      | N/A      |
+| 44     | Ultra2DChart                                           | 极致的二维图表             | 全新     | 中 🟡     |
 
 ## 最值得一试
 
