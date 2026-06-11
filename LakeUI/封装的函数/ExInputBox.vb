@@ -1,5 +1,4 @@
-﻿Imports System.Drawing.Drawing2D
-Imports System.Runtime.InteropServices
+﻿Imports System.Runtime.InteropServices
 
 ' ═══════════════════════════════════════════════════════════════════════════
 '  ExInputBox — LakeUI 自定义输入框
@@ -234,6 +233,7 @@ Friend Class ExInputBoxForm
     End Function
 
     Private Const WM_NCLBUTTONDOWN As Integer = &HA1
+    Private Const WM_EXITSIZEMOVE As Integer = &H232
     Private Const HT_CAPTION As Integer = &H2
     Private Const DWMWA_WINDOW_CORNER_PREFERENCE As Integer = 33
     Private Const DWMWCP_ROUND As Integer = 2
@@ -291,6 +291,7 @@ Friend Class ExInputBoxForm
 
     Private ReadOnly 主题 As ExInputBoxTheme
     Private ReadOnly 拥有者 As IWin32Window
+    Private ReadOnly 毛玻璃 As MessageDialogBackdropController
     Private 返回文本 As String = String.Empty
     Private 正在主动关闭 As Boolean = False
     Private 已确认 As Boolean = False
@@ -352,6 +353,7 @@ Friend Class ExInputBoxForm
     Public Sub New(prompt As String, title As String, defaultResponse As String, xPos As Integer, yPos As Integer, theme As ExInputBoxTheme, owner As IWin32Window)
         主题 = If(theme, New ExInputBoxTheme())
         拥有者 = owner
+        毛玻璃 = New MessageDialogBackdropController(Me)
 
         Me.FormBorderStyle = FormBorderStyle.None
         Me.ShowInTaskbar = False
@@ -375,8 +377,9 @@ Friend Class ExInputBoxForm
         缩放常量()
 
         ' 字体
-        标题字体 = New Font("Microsoft YaHei UI", 10.0F, FontStyle.Regular)
-        提示字体 = New Font("Microsoft YaHei UI", 9.5F, FontStyle.Regular)
+        Dim fontName = MessageDialogRendering.ResolveDialogFontName(owner, Me)
+        标题字体 = New Font(fontName, 10.0F, FontStyle.Regular)
+        提示字体 = New Font(fontName, 9.5F, FontStyle.Regular)
 
         ' 构建界面
         构建提示标签(prompt)
@@ -429,7 +432,8 @@ Friend Class ExInputBoxForm
             .ForeColor = 主题.MessageForeColor,
             .BackColor = Color.Transparent,
             .Font = 提示字体,
-            .UseMnemonic = False
+            .UseMnemonic = False,
+            .Visible = False
         }
         Me.Controls.Add(提示标签)
     End Sub
@@ -437,7 +441,7 @@ Friend Class ExInputBoxForm
     Private Sub 构建输入框(defaultResponse As String)
         输入框 = New ModernTextBox() With {
             .Text = defaultResponse,
-            .Font = New Font("Microsoft YaHei UI", 9.5F, FontStyle.Regular),
+            .Font = New Font(MessageDialogRendering.ResolveDialogFontName(拥有者, Me), 9.5F, FontStyle.Regular),
             .BackColor1 = 主题.InputBackColor,
             .ForeColor = 主题.InputForeColor,
             .BorderColor = 主题.InputBorderColor,
@@ -449,6 +453,14 @@ Friend Class ExInputBoxForm
             .TabStop = True,
             .TabIndex = 0
         }
+        If MessageDialogRendering.IsGlassEnabled() Then
+            Dim inputOverlay = Color.FromArgb(40, 220, 220, 220)
+            输入框.BackColor = Color.Transparent
+            输入框.BackColor1 = inputOverlay
+            输入框.BorderColor = inputOverlay
+            输入框.BorderColorFocus = inputOverlay
+            输入框.BackgroundSource = Me
+        End If
         Me.Controls.Add(输入框)
     End Sub
 
@@ -460,7 +472,7 @@ Friend Class ExInputBoxForm
         确定按钮 = New ModernButton() With {
             .Text = sOK,
             .Size = New Size(按钮宽度, 按钮高度),
-            .Font = New Font("Microsoft YaHei UI", 9.0F),
+            .Font = New Font(MessageDialogRendering.ResolveDialogFontName(拥有者, Me), 9.0F),
             .BorderRadius = 主题.ButtonBorderRadius,
             .BorderSize = 1,
             .AnimationDuration = 150,
@@ -472,7 +484,12 @@ Friend Class ExInputBoxForm
             .HoverBackColor1 = 主题.AccentButtonHoverBackColor,
             .PressedBackColor1 = 主题.AccentButtonPressedBackColor
         }
-        DirectCast(确定按钮, Control).BackColor = 主题.ButtonAreaBackColor
+        MessageDialogRendering.ApplyButtonStyle(
+            确定按钮, Me, True,
+            主题.ButtonBackColor, 主题.ButtonForeColor, 主题.ButtonBorderColor,
+            主题.ButtonHoverBackColor, 主题.ButtonPressedBackColor,
+            主题.AccentButtonBackColor, 主题.AccentButtonForeColor, 主题.AccentButtonBorderColor,
+            主题.AccentButtonHoverBackColor, 主题.AccentButtonPressedBackColor)
         AddHandler 确定按钮.Click, AddressOf 确定按钮点击
         Me.Controls.Add(确定按钮)
 
@@ -480,7 +497,7 @@ Friend Class ExInputBoxForm
         取消按钮 = New ModernButton() With {
             .Text = sCancel,
             .Size = New Size(按钮宽度, 按钮高度),
-            .Font = New Font("Microsoft YaHei UI", 9.0F),
+            .Font = New Font(MessageDialogRendering.ResolveDialogFontName(拥有者, Me), 9.0F),
             .BorderRadius = 主题.ButtonBorderRadius,
             .BorderSize = 1,
             .AnimationDuration = 150,
@@ -492,7 +509,12 @@ Friend Class ExInputBoxForm
             .HoverBackColor1 = 主题.ButtonHoverBackColor,
             .PressedBackColor1 = 主题.ButtonPressedBackColor
         }
-        DirectCast(取消按钮, Control).BackColor = 主题.ButtonAreaBackColor
+        MessageDialogRendering.ApplyButtonStyle(
+            取消按钮, Me, False,
+            主题.ButtonBackColor, 主题.ButtonForeColor, 主题.ButtonBorderColor,
+            主题.ButtonHoverBackColor, 主题.ButtonPressedBackColor,
+            主题.AccentButtonBackColor, 主题.AccentButtonForeColor, 主题.AccentButtonBorderColor,
+            主题.AccentButtonHoverBackColor, 主题.AccentButtonPressedBackColor)
         AddHandler 取消按钮.Click, AddressOf 取消按钮点击
         Me.Controls.Add(取消按钮)
     End Sub
@@ -540,12 +562,8 @@ Friend Class ExInputBoxForm
         ' 定位窗口
         If xPos >= 0 AndAlso yPos >= 0 Then
             Me.Location = New Point(xPos, yPos)
-        ElseIf 拥有者 IsNot Nothing AndAlso TypeOf 拥有者 Is Control Then
-            Dim 父窗口 = DirectCast(拥有者, Control)
-            Me.Location = New Point(
-                父窗口.Left + (父窗口.Width - 窗体宽度) \ 2,
-                父窗口.Top + (父窗口.Height - 窗体高度) \ 2)
-            Me.StartPosition = FormStartPosition.Manual
+        ElseIf 拥有者 IsNot Nothing Then
+            MessageDialogRendering.CenterOnOwner(Me, 拥有者)
         End If
     End Sub
 
@@ -553,58 +571,47 @@ Friend Class ExInputBoxForm
 
 #Region "绘制"
 
-    Protected Overrides Sub OnPaint(e As PaintEventArgs)
-        Dim g = e.Graphics
-        g.SmoothingMode = SmoothingMode.AntiAlias
-        g.TextRenderingHint = Drawing.Text.TextRenderingHint.ClearTypeGridFit
-
-        ' 标题栏背景
-        Using brush As New SolidBrush(主题.TitleBarBackColor)
-            g.FillRectangle(brush, 标题栏区域)
-        End Using
-
-        ' 标题文字
-        Dim 标题文字区域 As New Rectangle(标题左边距, 0, 标题栏区域.Width - 关闭按钮宽 - 标题左边距 * 2, 标题栏高度)
-        TextRenderer.DrawText(g, Me.Text, 标题字体, 标题文字区域, 主题.TitleForeColor,
-            TextFormatFlags.VerticalCenter Or TextFormatFlags.Left Or TextFormatFlags.EndEllipsis Or TextFormatFlags.NoPadding)
-
-        ' 关闭按钮
-        绘制关闭按钮(g)
-
-        ' 内容区背景
-        Using brush As New SolidBrush(主题.ContentBackColor)
-            g.FillRectangle(brush, 内容区域)
-        End Using
-
-        ' 按钮区背景
-        Using brush As New SolidBrush(主题.ButtonAreaBackColor)
-            g.FillRectangle(brush, 按钮区域)
-        End Using
-
-        ' 边框
-        Using pen As New Pen(主题.FormBorderColor, 1)
-            g.DrawRectangle(pen, 0, 0, Me.Width - 1, Me.Height - 1)
-        End Using
+    Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
+        If Not 毛玻璃.Enabled Then MyBase.OnPaintBackground(e)
     End Sub
 
-    Private Sub 绘制关闭按钮(g As Graphics)
-        If 关闭按下 Then
-            Using brush As New SolidBrush(Color.FromArgb(180, 主题.CloseButtonHoverBackColor))
-                g.FillRectangle(brush, 关闭按钮区域)
-            End Using
-        ElseIf 关闭悬停 Then
-            Using brush As New SolidBrush(主题.CloseButtonHoverBackColor)
-                g.FillRectangle(brush, 关闭按钮区域)
-            End Using
-        End If
+    Protected Overrides Sub OnShown(e As EventArgs)
+        MyBase.OnShown(e)
+        If 拥有者 IsNot Nothing Then MessageDialogRendering.CenterOnOwner(Me, 拥有者)
+        毛玻璃.Prepare()
+        Invalidate()
+    End Sub
 
-        Dim xColor As Color = If(关闭悬停 OrElse 关闭按下, 主题.CloseButtonHoverForeColor, 主题.CloseButtonForeColor)
-        Dim cx As Single = 关闭按钮区域.X + 关闭按钮区域.Width / 2.0F
-        Dim cy As Single = 关闭按钮区域.Y + 关闭按钮区域.Height / 2.0F
-        Dim half As Single = 5.0F * SC
-        Using pen As New Pen(xColor, Math.Max(1.0F, 1.2F * SC))
-            g.DrawLine(pen, cx - half, cy - half, cx + half, cy + half)
-            g.DrawLine(pen, cx + half, cy - half, cx - half, cy + half)
+    Protected Overrides Sub OnPaint(e As PaintEventArgs)
+        毛玻璃.Draw(e.Graphics)
+
+        Using scope = D2DHelperV2.BeginPaint(e, Me, 1)
+            If scope Is Nothing Then Return
+            Dim rt = scope.GraphicsLayer
+            Dim compositor = scope.Compositor
+            Dim brushCache = compositor.BrushCache
+            Dim glass = 毛玻璃.HasFrame
+
+            If Not glass Then
+                MessageDialogRendering.FillRectangle(rt, brushCache, 标题栏区域, 主题.TitleBarBackColor)
+                MessageDialogRendering.FillRectangle(rt, brushCache, 内容区域, 主题.ContentBackColor)
+                MessageDialogRendering.FillRectangle(rt, brushCache, 按钮区域, 主题.ButtonAreaBackColor)
+            End If
+
+            Dim 标题文字区域 As New RectangleF(标题左边距, 0, 标题栏区域.Width - 关闭按钮宽 - 标题左边距 * 2, 标题栏高度)
+            MessageDialogRendering.DrawText(rt, compositor, Me.Text, 标题字体, 标题文字区域, 主题.TitleForeColor,
+                TextFormatFlags.VerticalCenter Or TextFormatFlags.Left Or TextFormatFlags.EndEllipsis Or TextFormatFlags.NoPadding, SC)
+
+            MessageDialogRendering.DrawCloseButton(rt, brushCache, 关闭按钮区域, 关闭悬停, 关闭按下,
+                                                   主题.CloseButtonForeColor, 主题.CloseButtonHoverForeColor,
+                                                   主题.CloseButtonHoverBackColor, SC)
+
+            MessageDialogRendering.DrawText(rt, compositor, 提示标签.Text, 提示字体, 提示标签.Bounds,
+                主题.MessageForeColor, TextFormatFlags.WordBreak Or TextFormatFlags.Left Or TextFormatFlags.Top Or TextFormatFlags.NoPadding, SC)
+
+            MessageDialogRendering.DrawRectangle(rt, brushCache,
+                New RectangleF(0.5F, 0.5F, Math.Max(0, ClientSize.Width - 1), Math.Max(0, ClientSize.Height - 1)),
+                主题.FormBorderColor, 1.0F)
         End Using
     End Sub
 
@@ -620,7 +627,19 @@ Friend Class ExInputBoxForm
         ElseIf 标题栏区域.Contains(e.Location) AndAlso Not 关闭按钮区域.Contains(e.Location) Then
             ReleaseCapture()
             SendMessage(Me.Handle, WM_NCLBUTTONDOWN, New IntPtr(HT_CAPTION), IntPtr.Zero)
+            刷新毛玻璃背景()
         End If
+    End Sub
+
+    Protected Overrides Sub WndProc(ByRef m As Message)
+        MyBase.WndProc(m)
+        If m.Msg = WM_EXITSIZEMOVE Then 刷新毛玻璃背景()
+    End Sub
+
+    Private Sub 刷新毛玻璃背景()
+        If Not 毛玻璃.Enabled OrElse IsDisposed OrElse Not IsHandleCreated Then Return
+        毛玻璃.Prepare()
+        Invalidate()
     End Sub
 
     Protected Overrides Sub OnMouseUp(e As MouseEventArgs)
@@ -728,6 +747,7 @@ Friend Class ExInputBoxForm
         If disposing Then
             标题字体?.Dispose()
             提示字体?.Dispose()
+            毛玻璃?.Dispose()
         End If
         MyBase.Dispose(disposing)
     End Sub

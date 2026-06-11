@@ -301,6 +301,11 @@ Friend NotInheritable Class BackdropRenderer
         ScheduleWorker()
     End Sub
 
+    Public Function WaitForIdle(timeoutMilliseconds As Integer) As Boolean
+        If Volatile.Read(_disposed) <> 0 Then Return True
+        Return _workerIdle.Wait(Math.Max(0, timeoutMilliseconds))
+    End Function
+
     Private Sub ScheduleWorker()
         If Volatile.Read(_disposed) <> 0 Then Return
         SyncLock _workerLock
@@ -360,114 +365,114 @@ Friend NotInheritable Class BackdropRenderer
         Dim small As Bitmap = AcquireSpareFrame(dw, dh)
         Dim smallCommitted As Boolean = False
         Try
-        Dim useImage As Boolean = (Volatile.Read(_sourceMode) = 1)
-        If useImage Then
-            ReleaseCaptureBitmap()
-            ' 从静态源图按 cover 撑满 → 直接缩到 dw×dh
-            Dim src As Image
-            SyncLock _sourceLock
-                src = _sourceImage
-            End SyncLock
-            If src Is Nothing Then Return
-            Try
-                Using gs As Graphics = Graphics.FromImage(small)
-                    gs.CompositingMode = CompositingMode.SourceCopy
-                    gs.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBilinear
-                    gs.PixelOffsetMode = PixelOffsetMode.HighQuality
-                    Dim sw As Integer, sh As Integer
-                    SyncLock src
-                        sw = src.Width
-                        sh = src.Height
-                    End SyncLock
-                    If sw < 1 OrElse sh < 1 Then Return
-                    ' cover：保持比例放大到刚好覆盖目标，再居中裁切
-                    Dim ratio As Double = Math.Max(dw / CDbl(sw), dh / CDbl(sh))
-                    Dim drawW As Integer = CInt(Math.Ceiling(sw * ratio))
-                    Dim drawH As Integer = CInt(Math.Ceiling(sh * ratio))
-                    Dim dx As Integer = (dw - drawW) \ 2
-                    Dim dy As Integer = (dh - drawH) \ 2
-                    SyncLock src
-                        gs.DrawImage(src, New Rectangle(dx, dy, drawW, drawH))
-                    End SyncLock
-                End Using
-            Catch
-                Return
-            End Try
-        Else
-            ' 从桌面 DC 抓取（_capturedBitmap 按需扩容复用）
-            Dim captured As Bitmap = AcquireCaptureBitmap(w, h)
-            If captured Is Nothing Then Return
-            ' 若宿主长期 WDA_NONE（允许系统截图截到本窗口），必须在 BitBlt 瞬间
-            ' 临时启用 WDA_EXCLUDEFROMCAPTURE，否则桌面 DC 会包含本窗口自身。
-            ' 注意：必须使用构造时缓存的 _hostHandle，绝不能在后台线程访问 _host.Handle。
-            Dim needTransientExclude As Boolean = (Volatile.Read(_transientExcludeOnCapture) <> 0)
-            Dim hostHandle As IntPtr = _hostHandle
-            Dim transientApplied As Boolean = False
-            If needTransientExclude AndAlso hostHandle <> IntPtr.Zero Then
-                transientApplied = SetWindowDisplayAffinity(hostHandle, WDA_EXCLUDEFROMCAPTURE)
-            End If
-            Try
-                Using gCap As Graphics = Graphics.FromImage(captured)
-                    Dim screenDC As IntPtr = GetDC(IntPtr.Zero)
-                    If screenDC = IntPtr.Zero Then Return
-                    Try
-                        Dim hdc As IntPtr = gCap.GetHdc()
-                        Try
-                            BitBlt(hdc, 0, 0, w, h, screenDC, bounds.X, bounds.Y, SRCCOPY)
-                        Finally
-                            gCap.ReleaseHdc(hdc)
-                        End Try
-                    Finally
-                        ReleaseDC(IntPtr.Zero, screenDC)
-                    End Try
-                End Using
-                Using gs As Graphics = Graphics.FromImage(small)
-                    gs.CompositingMode = CompositingMode.SourceCopy
-                    gs.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBilinear
-                    gs.PixelOffsetMode = PixelOffsetMode.HighQuality
-                    gs.DrawImage(captured, New Rectangle(0, 0, dw, dh))
-                End Using
-            Catch
-                Return
-            Finally
-                ' 立即恢复原状（WDA_NONE）。若设置失败也尝试恢复，避免出现意外残留。
-                If transientApplied Then
-                    SetWindowDisplayAffinity(hostHandle, WDA_NONE)
+            Dim useImage As Boolean = (Volatile.Read(_sourceMode) = 1)
+            If useImage Then
+                ReleaseCaptureBitmap()
+                ' 从静态源图按 cover 撑满 → 直接缩到 dw×dh
+                Dim src As Image
+                SyncLock _sourceLock
+                    src = _sourceImage
+                End SyncLock
+                If src Is Nothing Then Return
+                Try
+                    Using gs As Graphics = Graphics.FromImage(small)
+                        gs.CompositingMode = CompositingMode.SourceCopy
+                        gs.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBilinear
+                        gs.PixelOffsetMode = PixelOffsetMode.HighQuality
+                        Dim sw As Integer, sh As Integer
+                        SyncLock src
+                            sw = src.Width
+                            sh = src.Height
+                        End SyncLock
+                        If sw < 1 OrElse sh < 1 Then Return
+                        ' cover：保持比例放大到刚好覆盖目标，再居中裁切
+                        Dim ratio As Double = Math.Max(dw / CDbl(sw), dh / CDbl(sh))
+                        Dim drawW As Integer = CInt(Math.Ceiling(sw * ratio))
+                        Dim drawH As Integer = CInt(Math.Ceiling(sh * ratio))
+                        Dim dx As Integer = (dw - drawW) \ 2
+                        Dim dy As Integer = (dh - drawH) \ 2
+                        SyncLock src
+                            gs.DrawImage(src, New Rectangle(dx, dy, drawW, drawH))
+                        End SyncLock
+                    End Using
+                Catch
+                    Return
+                End Try
+            Else
+                ' 从桌面 DC 抓取（_capturedBitmap 按需扩容复用）
+                Dim captured As Bitmap = AcquireCaptureBitmap(w, h)
+                If captured Is Nothing Then Return
+                ' 若宿主长期 WDA_NONE（允许系统截图截到本窗口），必须在 BitBlt 瞬间
+                ' 临时启用 WDA_EXCLUDEFROMCAPTURE，否则桌面 DC 会包含本窗口自身。
+                ' 注意：必须使用构造时缓存的 _hostHandle，绝不能在后台线程访问 _host.Handle。
+                Dim needTransientExclude As Boolean = (Volatile.Read(_transientExcludeOnCapture) <> 0)
+                Dim hostHandle As IntPtr = _hostHandle
+                Dim transientApplied As Boolean = False
+                If needTransientExclude AndAlso hostHandle <> IntPtr.Zero Then
+                    transientApplied = SetWindowDisplayAffinity(hostHandle, WDA_EXCLUDEFROMCAPTURE)
                 End If
-            End Try
-        End If
-
-        ' 3. 平均色（直接对下采样源帧采样；blur 不改变整体平均色，避免为了自动色回读 GPU。）
-        Dim avg As Integer = ComputeAverage(small)
-        Volatile.Write(_candidateAverage, avg)
-        Dim publishedNow As Boolean = False
-        If commitAvg OrElse Volatile.Read(_publishedAverage) = -1 Then
-            Volatile.Write(_publishedAverage, avg)
-            publishedNow = True
-        End If
-
-        ' 4. 交换前后帧：旧的 _currentFrame 退役为下次的 _spareFrame，避免分配。
-        '    同时递增 _frameVersion，让 UI 侧 D2D 上传缓存知道需要重传。
-        SyncLock _frameLock
-            Dim previousCurrent As Bitmap = _currentFrame
-            _currentFrame = small
-            smallCommitted = True
-            _spareFrame = previousCurrent
-            Interlocked.Increment(_frameVersion)
-        End SyncLock
-
-        ' 5. 触发 UI 重绘
-        Try
-            Dim host = _host
-            If host IsNot Nothing Then
-                host.BeginInvoke(CType(Sub()
-                                           If host.IsDisposed OrElse Not host.IsHandleCreated Then Return
-                                           If publishedNow Then RaiseEvent AverageCommitted(Me, EventArgs.Empty)
-                                           host.Invalidate()
-                                       End Sub, MethodInvoker))
+                Try
+                    Using gCap As Graphics = Graphics.FromImage(captured)
+                        Dim screenDC As IntPtr = GetDC(IntPtr.Zero)
+                        If screenDC = IntPtr.Zero Then Return
+                        Try
+                            Dim hdc As IntPtr = gCap.GetHdc()
+                            Try
+                                BitBlt(hdc, 0, 0, w, h, screenDC, bounds.X, bounds.Y, SRCCOPY)
+                            Finally
+                                gCap.ReleaseHdc(hdc)
+                            End Try
+                        Finally
+                            ReleaseDC(IntPtr.Zero, screenDC)
+                        End Try
+                    End Using
+                    Using gs As Graphics = Graphics.FromImage(small)
+                        gs.CompositingMode = CompositingMode.SourceCopy
+                        gs.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBilinear
+                        gs.PixelOffsetMode = PixelOffsetMode.HighQuality
+                        gs.DrawImage(captured, New Rectangle(0, 0, dw, dh))
+                    End Using
+                Catch
+                    Return
+                Finally
+                    ' 立即恢复原状（WDA_NONE）。若设置失败也尝试恢复，避免出现意外残留。
+                    If transientApplied Then
+                        SetWindowDisplayAffinity(hostHandle, WDA_NONE)
+                    End If
+                End Try
             End If
-        Catch
-        End Try
+
+            ' 3. 平均色（直接对下采样源帧采样；blur 不改变整体平均色，避免为了自动色回读 GPU。）
+            Dim avg As Integer = ComputeAverage(small)
+            Volatile.Write(_candidateAverage, avg)
+            Dim publishedNow As Boolean = False
+            If commitAvg OrElse Volatile.Read(_publishedAverage) = -1 Then
+                Volatile.Write(_publishedAverage, avg)
+                publishedNow = True
+            End If
+
+            ' 4. 交换前后帧：旧的 _currentFrame 退役为下次的 _spareFrame，避免分配。
+            '    同时递增 _frameVersion，让 UI 侧 D2D 上传缓存知道需要重传。
+            SyncLock _frameLock
+                Dim previousCurrent As Bitmap = _currentFrame
+                _currentFrame = small
+                smallCommitted = True
+                _spareFrame = previousCurrent
+                Interlocked.Increment(_frameVersion)
+            End SyncLock
+
+            ' 5. 触发 UI 重绘
+            Try
+                Dim host = _host
+                If host IsNot Nothing Then
+                    host.BeginInvoke(CType(Sub()
+                                               If host.IsDisposed OrElse Not host.IsHandleCreated Then Return
+                                               If publishedNow Then RaiseEvent AverageCommitted(Me, EventArgs.Empty)
+                                               host.Invalidate()
+                                           End Sub, MethodInvoker))
+                End If
+            Catch
+            End Try
         Finally
             If Not smallCommitted Then ReturnSpareFrame(small)
         End Try
@@ -563,8 +568,17 @@ Friend NotInheritable Class BackdropRenderer
     Private Sub TrimBlurBuffers(requiredBytes As Integer)
         Dim retain As Long = Math.Max(0L, GlobalOptions.BackdropCpuBlurBufferRetainBytes)
         Dim keep As Integer = CInt(Math.Min(Integer.MaxValue, Math.Max(CLng(requiredBytes), retain)))
+        If keep <= 0 Then
+            _blurBufferA = Nothing
+            _blurBufferB = Nothing
+            Return
+        End If
         If _blurBufferA IsNot Nothing AndAlso _blurBufferA.Length > keep * 2L Then ReDim _blurBufferA(keep - 1)
         If _blurBufferB IsNot Nothing AndAlso _blurBufferB.Length > keep * 2L Then ReDim _blurBufferB(keep - 1)
+    End Sub
+
+    Private Sub TrimBlurBuffersToRetainBudget()
+        TrimBlurBuffers(0)
     End Sub
 
     ''' <summary>
@@ -767,6 +781,7 @@ Friend NotInheritable Class BackdropRenderer
             Return (&HFF << 24) Or (r << 16) Or (g << 8) Or b
         Finally
             bmp.UnlockBits(data)
+            TrimBlurBuffersToRetainBudget()
         End Try
     End Function
 

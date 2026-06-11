@@ -375,9 +375,10 @@ Public Class RectangleRenderer
     ''' <summary>D2D 圆角背景填充（支持纯色 / 双色线性渐变）。</summary>
     ''' <param name="brushCache">可选的 SolidColorBrush 缓存；仅纯色路径复用。Nothing 时退回原逻辑。</param>
     Public Shared Sub 绘制圆角背景_D2D(rt As ID2D1RenderTarget, 几何 As ID2D1Geometry, 极限矩形区域 As RectangleF,
-                                  背景颜色 As Color, 渐变颜色 As Color, 渐变方向 As System.Windows.Forms.Orientation,
-                                  Optional brushCache As D2DGlobals.SolidColorBrushCache = Nothing)
+                                   背景颜色 As Color, 渐变颜色 As Color, 渐变方向 As System.Windows.Forms.Orientation,
+                                   Optional brushCache As D2DGlobals.SolidColorBrushCache = Nothing)
         If 几何 Is Nothing Then Return
+        If 背景颜色.A = 0 AndAlso (渐变颜色 = Color.Empty OrElse 渐变颜色.A = 0) Then Return
         If brushCache IsNot Nothing AndAlso (渐变颜色 = Color.Empty OrElse 渐变颜色.A = 0) Then
             rt.FillGeometry(几何, brushCache.Get(rt, 背景颜色))
             Return
@@ -387,11 +388,30 @@ Public Class RectangleRenderer
         End Using
     End Sub
 
+    ''' <summary>D2D 统一圆角背景便捷重载；VB 下 FillRoundedRectangle 重载不明确，内部仍走 Geometry 路径。</summary>
+    Public Shared Sub 绘制圆角背景_D2D(rt As ID2D1RenderTarget, 区域 As RectangleF, 半径 As Single,
+                                   背景颜色 As Color, 渐变颜色 As Color, 渐变方向 As System.Windows.Forms.Orientation,
+                                   Optional brushCache As D2DGlobals.SolidColorBrushCache = Nothing)
+        If rt Is Nothing OrElse 区域.Width < 1 OrElse 区域.Height < 1 Then Return
+        If 背景颜色.A = 0 AndAlso (渐变颜色 = Color.Empty OrElse 渐变颜色.A = 0) Then Return
+        半径 = Math.Min(Math.Max(0.0F, 半径), Math.Min(区域.Width / 2.0F, 区域.Height / 2.0F))
+        If 半径 <= 0 Then
+            绘制矩形背景_D2D(rt, 区域, 背景颜色, 渐变颜色, 渐变方向, brushCache)
+            Return
+        End If
+
+        Using geo = 创建圆角矩形几何(区域, 半径)
+            绘制圆角背景_D2D(rt, geo, 区域, 背景颜色, 渐变颜色, 渐变方向, brushCache)
+        End Using
+    End Sub
+
     ''' <summary>D2D 直角矩形背景填充（支持纯色 / 双色线性渐变）。</summary>
     ''' <param name="brushCache">可选的 SolidColorBrush 缓存；仅纯色路径复用。Nothing 时退回原逻辑。</param>
     Public Shared Sub 绘制矩形背景_D2D(rt As ID2D1RenderTarget, 区域 As RectangleF,
                                   背景颜色 As Color, 渐变颜色 As Color, 渐变方向 As System.Windows.Forms.Orientation,
                                   Optional brushCache As D2DGlobals.SolidColorBrushCache = Nothing)
+        If rt Is Nothing OrElse 区域.Width < 1 OrElse 区域.Height < 1 Then Return
+        If 背景颜色.A = 0 AndAlso (渐变颜色 = Color.Empty OrElse 渐变颜色.A = 0) Then Return
         If brushCache IsNot Nothing AndAlso (渐变颜色 = Color.Empty OrElse 渐变颜色.A = 0) Then
             rt.FillRectangle(D2DGlobals.ToD2DRect(区域), brushCache.Get(rt, 背景颜色))
             Return
@@ -404,7 +424,7 @@ Public Class RectangleRenderer
     ''' <summary>D2D 圆角边框描边。</summary>
     ''' <param name="brushCache">可选的 SolidColorBrush 缓存；Nothing 时退回原逻辑。</param>
     Public Shared Sub 绘制圆角边框_D2D(rt As ID2D1RenderTarget, 几何 As ID2D1Geometry, 边框颜色 As Color, 边框宽度 As Single,
-                                  Optional brushCache As D2DGlobals.SolidColorBrushCache = Nothing)
+                                   Optional brushCache As D2DGlobals.SolidColorBrushCache = Nothing)
         If 几何 Is Nothing OrElse 边框宽度 <= 0 OrElse 边框颜色.A = 0 Then Return
         If brushCache IsNot Nothing Then
             rt.DrawGeometry(几何, brushCache.Get(rt, 边框颜色), 边框宽度)
@@ -412,6 +432,27 @@ Public Class RectangleRenderer
         End If
         Using b = rt.CreateSolidColorBrush(D2DGlobals.ToColor4(边框颜色))
             rt.DrawGeometry(几何, b, 边框宽度)
+        End Using
+    End Sub
+
+    ''' <summary>D2D 统一圆角边框直绘，不创建临时 Geometry。</summary>
+    Public Shared Sub 绘制圆角边框_D2D(rt As ID2D1RenderTarget, 区域 As RectangleF, 半径 As Single,
+                                   边框颜色 As Color, 边框宽度 As Single,
+                                   Optional brushCache As D2DGlobals.SolidColorBrushCache = Nothing)
+        If rt Is Nothing OrElse 区域.Width < 1 OrElse 区域.Height < 1 OrElse 边框宽度 <= 0 OrElse 边框颜色.A = 0 Then Return
+        半径 = Math.Min(Math.Max(0.0F, 半径), Math.Min(区域.Width / 2.0F, 区域.Height / 2.0F))
+        If 半径 <= 0 Then
+            绘制矩形边框_D2D(rt, 区域, 边框颜色, 边框宽度, brushCache)
+            Return
+        End If
+
+        Dim rounded As New RoundedRectangle(区域, 半径, 半径)
+        If brushCache IsNot Nothing Then
+            rt.DrawRoundedRectangle(rounded, DirectCast(brushCache.Get(rt, 边框颜色), ID2D1Brush), 边框宽度)
+            Return
+        End If
+        Using b = rt.CreateSolidColorBrush(D2DGlobals.ToColor4(边框颜色))
+            rt.DrawRoundedRectangle(rounded, DirectCast(b, ID2D1Brush), 边框宽度)
         End Using
     End Sub
 
@@ -516,22 +557,14 @@ Public Class RectangleRenderer
                 sink.EndFigure(FigureEnd.Open)
                 sink.Close()
             End Using
-            Dim styleProps As New StrokeStyleProperties() With {
-                .StartCap = CapStyle.Round,
-                .EndCap = CapStyle.Round,
-                .DashCap = CapStyle.Round,
-                .LineJoin = Vortice.Direct2D1.LineJoin.Round,
-                .MiterLimit = 10.0F
-            }
-            Using ss = factory.CreateStrokeStyle(styleProps)
-                If brushCache IsNot Nothing Then
-                    rt.DrawGeometry(path, brushCache.[Get](rt, 颜色), 宽度, ss)
-                Else
-                    Using b = rt.CreateSolidColorBrush(D2DGlobals.ToColor4(颜色))
-                        rt.DrawGeometry(path, b, 宽度, ss)
-                    End Using
-                End If
-            End Using
+            Dim ss = D2DGlobals.GetRoundStrokeStyle(roundDashCap:=True)
+            If brushCache IsNot Nothing Then
+                rt.DrawGeometry(path, brushCache.[Get](rt, 颜色), 宽度, ss)
+            Else
+                Using b = rt.CreateSolidColorBrush(D2DGlobals.ToColor4(颜色))
+                    rt.DrawGeometry(path, b, 宽度, ss)
+                End Using
+            End If
         Finally
             path.Dispose()
         End Try
@@ -539,8 +572,12 @@ Public Class RectangleRenderer
 
     ''' <summary>D2D 圆角矩形便捷重载：内部按 RoundCorners 选择全/部分圆角并填充。</summary>
     Public Shared Sub 绘制圆角矩形_D2D(rt As ID2D1RenderTarget, 区域 As RectangleF, 半径 As Single, 圆角 As RoundCorners, 颜色 As Color,
-                                       Optional brushCache As D2DGlobals.SolidColorBrushCache = Nothing)
+                                        Optional brushCache As D2DGlobals.SolidColorBrushCache = Nothing)
         If 颜色.A = 0 OrElse 区域.Width < 1 OrElse 区域.Height < 1 Then Return
+        If 圆角.IsAll Then
+            绘制圆角背景_D2D(rt, 区域, 半径, 颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal, brushCache)
+            Return
+        End If
         Using geo = 创建圆角矩形几何(区域, 半径, 圆角)
             If brushCache IsNot Nothing Then
                 rt.FillGeometry(geo, brushCache.[Get](rt, 颜色))

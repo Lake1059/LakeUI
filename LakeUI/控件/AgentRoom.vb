@@ -926,8 +926,7 @@ Public Class AgentRoom
         EnsureLayout()
         If Me.Width < 1 OrElse Me.Height < 1 Then Return
 
-        Dim ssaa As Integer = 1
-        If GlobalOptions.GlobalSSAA <> GlobalOptions.SuperSamplingScaleEnum.OFF Then ssaa = CInt(GlobalOptions.GlobalSSAA)
+        Dim ssaa As Integer = D2DHelperV2.GetEffectiveSsaaScale(_superSamplingScale)
 
         Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
             If scope Is Nothing Then Return
@@ -992,7 +991,7 @@ Public Class AgentRoom
                                          Me.Padding.Top, Me.Padding.Bottom,
                                          _scrollBarWidth, totalH, viewH, _滚动偏移)
                 _scrollBar.Draw_D2D(gRT, Width, Height, _borderSize, _borderRadius, _scrollBarWidth,
-                                    _scrollBarTrackColor, _scrollBarThumbColor, _scrollBarThumbHoverColor)
+                                    _scrollBarTrackColor, _scrollBarThumbColor, _scrollBarThumbHoverColor, brushCache)
             End If
 
             ' 边框
@@ -1000,9 +999,7 @@ Public Class AgentRoom
                 Dim half As Single = _borderSize / 2.0F
                 Dim brRect As New RectangleF(half, half, Width - _borderSize, Height - _borderSize)
                 If _borderRadius > 0 Then
-                    Using geo = RectangleRenderer.创建圆角矩形几何(brRect, _borderRadius)
-                        RectangleRenderer.绘制圆角边框_D2D(gRT, geo, _borderColor, _borderSize, brushCache)
-                    End Using
+                    RectangleRenderer.绘制圆角边框_D2D(gRT, brRect, _borderRadius, _borderColor, _borderSize, brushCache)
                 Else
                     RectangleRenderer.绘制矩形边框_D2D(gRT, brRect, _borderColor, _borderSize, brushCache)
                 End If

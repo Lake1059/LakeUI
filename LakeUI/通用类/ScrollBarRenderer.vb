@@ -308,11 +308,14 @@ Public Class ScrollBarRenderer
                          containerW As Integer, containerH As Integer,
                          borderWidth As Integer, borderRadius As Integer,
                          scrollBarWidth As Integer,
-                         trackColor As Color, thumbColor As Color, thumbHoverColor As Color)
+                         trackColor As Color, thumbColor As Color, thumbHoverColor As Color,
+                         Optional brushCache As D2DGlobals.SolidColorBrushCache = Nothing)
         If TrackRect.IsEmpty Then Return
         If TrackRect.Width < 1 OrElse TrackRect.Height < 1 OrElse scrollBarWidth < 1 Then Return
 
-        EnsureBrushes(rt, trackColor, thumbColor, thumbHoverColor)
+        If brushCache Is Nothing Then
+            EnsureBrushes(rt, trackColor, thumbColor, thumbHoverColor)
+        End If
 
         Dim clipPushed As Boolean = False
         Dim clipGeo As ID2D1Geometry = Nothing
@@ -323,13 +326,20 @@ Public Class ScrollBarRenderer
             If trackColor.A > 0 Then
                 Dim trackRadius As Integer = Math.Min(scrollBarWidth \ 2, sbH \ 2)
                 Dim trackArea As New RectangleF(VisualLeft, TrackRect.Y, scrollBarWidth, sbH)
+                Dim trackBrush = If(brushCache Is Nothing, _trackBrush, brushCache.Get(rt, trackColor))
                 Using geo = RectangleRenderer.创建圆角矩形几何(trackArea, trackRadius)
-                    rt.FillGeometry(geo, _trackBrush)
+                    rt.FillGeometry(geo, trackBrush)
                 End Using
             End If
 
             ' 滑块；悬停或拖拽时使用 hover 色
-            Dim thumbBr As ID2D1SolidColorBrush = If(IsDragging OrElse IsHover, _thumbHoverBrush, _thumbBrush)
+            Dim useHoverColor As Boolean = IsDragging OrElse IsHover
+            Dim thumbBr As ID2D1SolidColorBrush
+            If brushCache Is Nothing Then
+                thumbBr = If(useHoverColor, _thumbHoverBrush, _thumbBrush)
+            Else
+                thumbBr = brushCache.Get(rt, If(useHoverColor, thumbHoverColor, thumbColor))
+            End If
             Dim thumbH As Integer = ThumbRect.Height
             Dim thumbRadius As Integer = Math.Min(scrollBarWidth \ 2, thumbH \ 2)
             Dim thumbArea As New RectangleF(VisualLeft, ThumbRect.Y, scrollBarWidth, thumbH)
@@ -349,11 +359,14 @@ Public Class ScrollBarRenderer
                                    containerW As Integer, containerH As Integer,
                                    borderWidth As Integer, borderRadius As Integer,
                                    scrollBarHeight As Integer,
-                                   trackColor As Color, thumbColor As Color, thumbHoverColor As Color)
+                                   trackColor As Color, thumbColor As Color, thumbHoverColor As Color,
+                                   Optional brushCache As D2DGlobals.SolidColorBrushCache = Nothing)
         If TrackRect.IsEmpty Then Return
         If TrackRect.Width < 1 OrElse TrackRect.Height < 1 OrElse scrollBarHeight < 1 Then Return
 
-        EnsureBrushes(rt, trackColor, thumbColor, thumbHoverColor)
+        If brushCache Is Nothing Then
+            EnsureBrushes(rt, trackColor, thumbColor, thumbHoverColor)
+        End If
 
         Dim clipPushed As Boolean = False
         Dim clipGeo As ID2D1Geometry = Nothing
@@ -363,12 +376,19 @@ Public Class ScrollBarRenderer
             If trackColor.A > 0 Then
                 Dim trackRadius As Integer = Math.Min(scrollBarHeight \ 2, sbW \ 2)
                 Dim trackArea As New RectangleF(TrackRect.X, VisualTop, sbW, scrollBarHeight)
+                Dim trackBrush = If(brushCache Is Nothing, _trackBrush, brushCache.Get(rt, trackColor))
                 Using geo = RectangleRenderer.创建圆角矩形几何(trackArea, trackRadius)
-                    rt.FillGeometry(geo, _trackBrush)
+                    rt.FillGeometry(geo, trackBrush)
                 End Using
             End If
 
-            Dim thumbBr As ID2D1SolidColorBrush = If(IsDragging OrElse IsHover, _thumbHoverBrush, _thumbBrush)
+            Dim useHoverColor As Boolean = IsDragging OrElse IsHover
+            Dim thumbBr As ID2D1SolidColorBrush
+            If brushCache Is Nothing Then
+                thumbBr = If(useHoverColor, _thumbHoverBrush, _thumbBrush)
+            Else
+                thumbBr = brushCache.Get(rt, If(useHoverColor, thumbHoverColor, thumbColor))
+            End If
             Dim thumbW As Integer = ThumbRect.Width
             Dim thumbRadius As Integer = Math.Min(scrollBarHeight \ 2, thumbW \ 2)
             Dim thumbArea As New RectangleF(ThumbRect.X, VisualTop, thumbW, scrollBarHeight)

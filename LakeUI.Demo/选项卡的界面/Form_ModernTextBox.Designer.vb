@@ -32,11 +32,11 @@ Partial Class Form_ModernTextBox
         Label7 = New Label()
         Panel1 = New Panel()
         ModernButton4 = New ModernButton()
-        Label4 = New Label()
+        Label4 = New JustEmptyControl()
         ModernButton3 = New ModernButton()
-        Label3 = New Label()
+        Label3 = New JustEmptyControl()
         ModernButton2 = New ModernButton()
-        Label2 = New Label()
+        Label2 = New JustEmptyControl()
         ModernButton1 = New ModernButton()
         Label1 = New Label()
         ModernPanel1.SuspendLayout()
@@ -157,7 +157,7 @@ Partial Class Form_ModernTextBox
         Label7.Padding = New Padding(0, 20, 0, 0)
         Label7.Size = New Size(345, 60)
         Label7.TabIndex = 43
-        Label7.Text = "你知道从头做一个文本框要多少代码吗？超过两千行！" & vbCrLf & "Just try it, you will love it!"
+        Label7.Text = "文本框内部重绘完整接管，覆盖选择、光标、多行、链接和语法高亮等细节。" & vbCrLf & "Just try it, you will love it!"
         ' 
         ' Panel1
         ' 
@@ -211,7 +211,7 @@ Partial Class Form_ModernTextBox
         ModernButton3.Margin = New Padding(2)
         ModernButton3.Name = "ModernButton3"
         ModernButton3.Size = New Size(120, 50)
-        ModernButton3.SubText = "动画支持"
+        ModernButton3.SubText = "交互表现"
         ModernButton3.TabIndex = 4
         ModernButton3.Text = "无"
         ModernButton3.TextAlign = ModernButton.TextAlignEnum.Left
@@ -236,7 +236,7 @@ Partial Class Form_ModernTextBox
         ModernButton2.Margin = New Padding(2)
         ModernButton2.Name = "ModernButton2"
         ModernButton2.Size = New Size(160, 50)
-        ModernButton2.SubText = "技术偏好"
+        ModernButton2.SubText = "技术路线"
         ModernButton2.TabIndex = 2
         ModernButton2.Text = "天顶星科技"
         ModernButton2.TextAlign = ModernButton.TextAlignEnum.Left
@@ -262,7 +262,7 @@ Partial Class Form_ModernTextBox
         ModernButton1.Margin = New Padding(2)
         ModernButton1.Name = "ModernButton1"
         ModernButton1.Size = New Size(120, 50)
-        ModernButton1.SubText = "制作类型"
+        ModernButton1.SubText = "实现方式"
         ModernButton1.TabIndex = 0
         ModernButton1.Text = "全新绘制"
         ModernButton1.TextAlign = ModernButton.TextAlignEnum.Left
@@ -300,11 +300,11 @@ Partial Class Form_ModernTextBox
     Friend WithEvents ModernPanel1 As ModernPanel
     Friend WithEvents Panel1 As Panel
     Friend WithEvents ModernButton4 As ModernButton
-    Friend WithEvents Label4 As Label
+    Friend WithEvents Label4 As JustEmptyControl
     Friend WithEvents ModernButton3 As ModernButton
-    Friend WithEvents Label3 As Label
+    Friend WithEvents Label3 As JustEmptyControl
     Friend WithEvents ModernButton2 As ModernButton
-    Friend WithEvents Label2 As Label
+    Friend WithEvents Label2 As JustEmptyControl
     Friend WithEvents ModernButton1 As ModernButton
     Friend WithEvents Label1 As Label
     Friend WithEvents Label6 As Label

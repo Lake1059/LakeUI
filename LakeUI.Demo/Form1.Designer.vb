@@ -38,6 +38,7 @@ Partial Class Form1
         Dim ModernTabPage13 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
         Dim ModernTabPage14 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
         Dim ModernTabPage15 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
+        Dim ModernTabPage44 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
         Dim ModernTabPage16 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
         Dim ModernTabPage17 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
         Dim ModernTabPage18 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
@@ -126,6 +127,7 @@ Partial Class Form1
         ModernTabPage41.Text = "[定制品] MemberWall"
         ModernTabPage42.Text = "[定制品] EasyStatesPanel"
         ModernTabPage43.Text = "LakeUI.Notifications"
+        ModernTabPage44.Text = "Ultra2DChart"
         ModernTabListControl1.Items.Add(ModernTabPage1)
         ModernTabListControl1.Items.Add(ModernTabPage2)
         ModernTabListControl1.Items.Add(ModernTabPage3)
@@ -169,6 +171,7 @@ Partial Class Form1
         ModernTabListControl1.Items.Add(ModernTabPage41)
         ModernTabListControl1.Items.Add(ModernTabPage42)
         ModernTabListControl1.Items.Add(ModernTabPage43)
+        ModernTabListControl1.Items.Add(ModernTabPage44)
         ModernTabListControl1.Location = New Point(0, 0)
         ModernTabListControl1.MoreIndicatorColor = Color.FromArgb(CByte(120), CByte(220), CByte(220), CByte(220))
         ModernTabListControl1.Name = "ModernTabListControl1"
@@ -242,13 +245,13 @@ Partial Class Form1
         BackColor = Color.FromArgb(CByte(24), CByte(24), CByte(24))
         ClientSize = New Size(984, 661)
         Controls.Add(ModernTabListControl1)
-        Font = New Font("Microsoft YaHei UI", 10.2F, FontStyle.Regular, GraphicsUnit.Point, CByte(134))
+        Font = New Font("Microsoft YaHei UI", 10F)
         ForeColor = SystemColors.Control
         Icon = CType(resources.GetObject("$this.Icon"), Icon)
         MinimumSize = New Size(1000, 700)
         Name = "Form1"
         StartPosition = FormStartPosition.CenterScreen
-        Text = "LakeUI 2.7.0 DEMO"
+        Text = "LakeUI 2.8.0 DEMO"
         ModernTabListControl1.ResumeLayout(False)
         ResumeLayout(False)
     End Sub

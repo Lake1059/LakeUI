@@ -146,7 +146,9 @@ Public Class SingleLineTextBoxRenderer
         If changed AndAlso raiseTextChanged Then RaiseEvent TextChanged(_owner, EventArgs.Empty)
     End Sub
 
-    Public Sub Draw(rt As ID2D1RenderTarget)
+    Public Sub Draw(rt As ID2D1RenderTarget,
+                    Optional textFormatCache As D2DGlobals.TextFormatCache = Nothing,
+                    Optional brushCache As D2DGlobals.SolidColorBrushCache = Nothing)
         If rt Is Nothing Then Return
         Dim area As RectangleF = GetTextArea()
         If area.Width <= 0 OrElse area.Height <= 0 Then Return
@@ -159,18 +161,18 @@ Public Class SingleLineTextBoxRenderer
             If isEmpty AndAlso Not String.IsNullOrEmpty(WaterText) Then
                 Dim waterAlignOff As Integer = GetAlignOffsetX(WaterText, CInt(area.Width))
                 DrawSingleLineText_D2D(rt, WaterText, _owner.Font, WaterTextForeColor,
-                    New RectangleF(area.X + waterAlignOff, area.Y, area.Width, area.Height), DpiScale(), False)
+                    New RectangleF(area.X + waterAlignOff, area.Y, area.Width, area.Height), DpiScale(), False, textFormatCache, brushCache)
             End If
 
             If Not isEmpty Then
-                If _hasSelection Then DrawSelection_D2D(rt, singleLineY, CInt(area.X), CInt(area.Width))
+                If _hasSelection Then DrawSelection_D2D(rt, singleLineY, CInt(area.X), CInt(area.Width), brushCache)
                 Dim alignOff As Integer = GetAlignOffsetX(_text, CInt(area.Width))
                 DrawSingleLineText_D2D(rt, _text, _owner.Font, ForeColor,
-                    New RectangleF(area.X + alignOff - _scrollXOffset, area.Y, Short.MaxValue, area.Height), DpiScale(), False)
+                    New RectangleF(area.X + alignOff - _scrollXOffset, area.Y, Short.MaxValue, area.Height), DpiScale(), False, textFormatCache, brushCache)
             End If
 
             If IsFocused() AndAlso _caretVisible AndAlso Editable Then
-                DrawCaret_D2D(rt, CInt(area.X), CInt(area.Y))
+                DrawCaret_D2D(rt, CInt(area.X), CInt(area.Y), brushCache)
             End If
         Finally
             rt.PopAxisAlignedClip()
@@ -180,7 +182,7 @@ Public Class SingleLineTextBoxRenderer
     Public Function HitTestColumn(x As Integer) As Integer
         Dim area As RectangleF = GetTextArea()
         Dim alignOff As Integer = GetAlignOffsetX(_text, CInt(area.Width))
-        Return TextRenderHelper.FindColFromX_D2D(_text, CInt(x - area.X - alignOff + _scrollXOffset), _owner.Font, DpiScale())
+        Return TextRenderHelper.FindColFromX_D2D(_text, CInt(x - area.X - alignOff + _scrollXOffset), _owner.Font, DpiScale(), GetTextFormatCacheForMeasure())
     End Function
 
     Public Sub BeginMouseSelection(x As Integer)
@@ -516,7 +518,11 @@ Public Class SingleLineTextBoxRenderer
     End Sub
 
     Private Function MeasureWidth(text As String) As Integer
-        Return CInt(Math.Ceiling(TextRenderHelper.MeasureTextWidth_D2D(text, _owner.Font, DpiScale())))
+        Return CInt(Math.Ceiling(TextRenderHelper.MeasureTextWidth_D2D(text, _owner.Font, DpiScale(), GetTextFormatCacheForMeasure())))
+    End Function
+
+    Private Function GetTextFormatCacheForMeasure() As D2DGlobals.TextFormatCache
+        Return D2DHelperV2.GetCompositor(_owner)?.TextFormatCache
     End Function
 
     Private Function MeasurePrefixWidth(length As Integer) As Integer
@@ -561,28 +567,38 @@ Public Class SingleLineTextBoxRenderer
         End Select
     End Function
 
-    Private Sub DrawSelection_D2D(rt As ID2D1RenderTarget, lineY As Integer, textLeft As Integer, textWidth As Integer)
+    Private Sub DrawSelection_D2D(rt As ID2D1RenderTarget, lineY As Integer, textLeft As Integer, textWidth As Integer,
+                                  brushCache As D2DGlobals.SolidColorBrushCache)
         Dim minC As Integer = Math.Min(_selAnchorCol, _caretCol)
         Dim maxC As Integer = Math.Max(_selAnchorCol, _caretCol)
         Dim alignOff As Integer = GetAlignOffsetX(_text, textWidth)
         Dim x1 As Integer = textLeft + alignOff + MeasurePrefixWidth(minC) - _scrollXOffset
         Dim x2 As Integer = textLeft + alignOff + MeasurePrefixWidth(maxC) - _scrollXOffset
         If x2 <= x1 Then Return
-        Using br = rt.CreateSolidColorBrush(D2DGlobals.ToColor4(SelectionColor))
-            rt.FillRectangle(New Vortice.Mathematics.Rect(x1, lineY, x2 - x1, LineHeight), br)
-        End Using
+        If brushCache IsNot Nothing Then
+            rt.FillRectangle(New Vortice.Mathematics.Rect(x1, lineY, x2 - x1, LineHeight), brushCache.Get(rt, SelectionColor))
+        Else
+            Using br = rt.CreateSolidColorBrush(D2DGlobals.ToColor4(SelectionColor))
+                rt.FillRectangle(New Vortice.Mathematics.Rect(x1, lineY, x2 - x1, LineHeight), br)
+            End Using
+        End If
     End Sub
 
-    Private Sub DrawCaret_D2D(rt As ID2D1RenderTarget, textLeft As Integer, textTop As Integer)
+    Private Sub DrawCaret_D2D(rt As ID2D1RenderTarget, textLeft As Integer, textTop As Integer,
+                              brushCache As D2DGlobals.SolidColorBrushCache)
         Dim area As RectangleF = GetTextArea()
         Dim alignOff As Integer = GetAlignOffsetX(_text, CInt(area.Width))
         Dim cx As Integer = textLeft + alignOff + MeasurePrefixWidth(_caretCol) - _scrollXOffset
         Dim lineY As Integer = CInt(textTop + (area.Height - LineHeight) \ 2)
         Dim caretH As Integer = LineHeight - 2
         Dim caretY As Integer = lineY + (LineHeight - caretH) \ 2
-        Using br = rt.CreateSolidColorBrush(D2DGlobals.ToColor4(CaretColor))
-            rt.FillRectangle(New Vortice.Mathematics.Rect(cx, caretY, CInt(CaretWidth * DpiScale()), caretH), br)
-        End Using
+        If brushCache IsNot Nothing Then
+            rt.FillRectangle(New Vortice.Mathematics.Rect(cx, caretY, CInt(CaretWidth * DpiScale()), caretH), brushCache.Get(rt, CaretColor))
+        Else
+            Using br = rt.CreateSolidColorBrush(D2DGlobals.ToColor4(CaretColor))
+                rt.FillRectangle(New Vortice.Mathematics.Rect(cx, caretY, CInt(CaretWidth * DpiScale()), caretH), br)
+            End Using
+        End If
     End Sub
 
     Private Shared Sub PushClip_D2D(rt As ID2D1RenderTarget, rect As RectangleF)
@@ -590,23 +606,49 @@ Public Class SingleLineTextBoxRenderer
     End Sub
 
     Public Shared Sub DrawSingleLineText_D2D(rt As ID2D1RenderTarget, text As String, font As Font, foreColor As Color,
-                                             rect As RectangleF, dpiScale As Single, endEllipsis As Boolean)
+                                             rect As RectangleF, dpiScale As Single, endEllipsis As Boolean,
+                                             Optional textFormatCache As D2DGlobals.TextFormatCache = Nothing,
+                                             Optional brushCache As D2DGlobals.SolidColorBrushCache = Nothing)
         If String.IsNullOrEmpty(text) OrElse foreColor.A = 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
-        Using fmt = TextRenderHelper.CreateDWriteTextFormat(font, dpiScale)
-            fmt.WordWrapping = Vortice.DirectWrite.WordWrapping.NoWrap
-            fmt.ParagraphAlignment = Vortice.DirectWrite.ParagraphAlignment.Center
-            If endEllipsis Then
-                Try
-                    fmt.SetTrimming(New Vortice.DirectWrite.Trimming With {.Granularity = Vortice.DirectWrite.TrimmingGranularity.Character}, Nothing)
-                Catch
-                End Try
+        Dim ownsFormat As Boolean = (textFormatCache Is Nothing)
+        Dim fmt As Vortice.DirectWrite.IDWriteTextFormat = Nothing
+        Dim ownsBrush As Boolean = (brushCache Is Nothing)
+        Dim br As ID2D1Brush = Nothing
+        Try
+            Dim sizePx As Single = font.SizeInPoints * (96.0F / 72.0F) * dpiScale
+            If textFormatCache IsNot Nothing Then
+                fmt = textFormatCache.Get(font, sizePx,
+                                          Vortice.DirectWrite.TextAlignment.Leading,
+                                          Vortice.DirectWrite.ParagraphAlignment.Center,
+                                          endEllipsis,
+                                          False)
+            Else
+                fmt = TextRenderHelper.CreateDWriteTextFormat(font, dpiScale)
+                fmt.WordWrapping = Vortice.DirectWrite.WordWrapping.NoWrap
+                fmt.ParagraphAlignment = Vortice.DirectWrite.ParagraphAlignment.Center
+                If endEllipsis Then
+                    Try
+                        fmt.SetTrimming(New Vortice.DirectWrite.Trimming With {.Granularity = Vortice.DirectWrite.TrimmingGranularity.Character}, Nothing)
+                    Catch
+                    End Try
+                End If
             End If
+            If fmt Is Nothing Then Return
+            br = If(brushCache IsNot Nothing,
+                    DirectCast(brushCache.Get(rt, foreColor), ID2D1Brush),
+                    DirectCast(rt.CreateSolidColorBrush(D2DGlobals.ToColor4(foreColor)), ID2D1Brush))
+            If br Is Nothing Then Return
             Using layout = D2DGlobals.GetDWriteFactory().CreateTextLayout(text, fmt, rect.Width, rect.Height)
-                Using br = rt.CreateSolidColorBrush(D2DGlobals.ToColor4(foreColor))
-                    rt.DrawTextLayout(New Vector2(rect.X, rect.Y), layout, br)
-                End Using
+                rt.DrawTextLayout(New Vector2(rect.X, rect.Y), layout, br)
             End Using
-        End Using
+        Finally
+            If ownsBrush AndAlso br IsNot Nothing Then
+                Try : br.Dispose() : Catch : End Try
+            End If
+            If ownsFormat AndAlso fmt IsNot Nothing Then
+                Try : fmt.Dispose() : Catch : End Try
+            End If
+        End Try
     End Sub
 
     Private Shared Function DefaultFilterText(text As String) As String

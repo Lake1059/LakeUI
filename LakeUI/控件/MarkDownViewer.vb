@@ -1696,8 +1696,8 @@ Public Class MarkDownViewer
         If w <= 0 OrElse h <= 0 Then Return
         Dim s As Single = DpiScale()
 
-        Dim ssaa As Integer = 1
-        If GlobalOptions.GlobalSSAA > 1 Then ssaa = CInt(GlobalOptions.GlobalSSAA)
+        Dim ssaa As Integer = D2DHelperV2.GetEffectiveSsaaScale(1)
+        Dim trimImageCachesAfterPaint As Boolean = False
 
         Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
             If scope Is Nothing Then Return  ' 设计期 / 无 Form
@@ -1735,7 +1735,7 @@ Public Class MarkDownViewer
 
                             Dim block = _document.Blocks(vl.BlockIndex)
                             DrawBlockDecoration_D2D(rt, block, vl, vli, ci.Left, drawY, clipW, s)
-                            DrawFragments_D2D(rt, vl, vli, ci.Left, drawY, block.Kind, s, selStart, selEnd)
+                            trimImageCachesAfterPaint = DrawFragments_D2D(rt, vl, vli, ci.Left, drawY, block.Kind, s, selStart, selEnd) OrElse trimImageCachesAfterPaint
                         Next
                     Finally
                         rt.PopAxisAlignedClip()
@@ -1748,18 +1748,20 @@ Public Class MarkDownViewer
                 _当前合成器 = Nothing
             End Try
         End Using
+        If trimImageCachesAfterPaint Then TrimD2DImageCachesToCurrentBudget()
     End Sub
 
 
     Private Sub DrawBackground_D2D(rt As ID2D1RenderTarget, boundsRect As RectangleF, s As Single)
+        Dim brushCache = _当前合成器?.BrushCache
         If 边框圆角半径 > 0 Then
             Using geo = RectangleRenderer.创建圆角矩形几何(boundsRect, 边框圆角半径 * s)
-                RectangleRenderer.绘制圆角背景_D2D(rt, geo, boundsRect, 背景颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal)
-                RectangleRenderer.绘制圆角边框_D2D(rt, geo, 边框颜色, 边框宽度 * s)
+                RectangleRenderer.绘制圆角背景_D2D(rt, geo, boundsRect, 背景颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal, brushCache)
+                RectangleRenderer.绘制圆角边框_D2D(rt, geo, 边框颜色, 边框宽度 * s, brushCache)
             End Using
         Else
-            RectangleRenderer.绘制矩形背景_D2D(rt, boundsRect, 背景颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal)
-            RectangleRenderer.绘制矩形边框_D2D(rt, boundsRect, 边框颜色, 边框宽度 * s)
+            RectangleRenderer.绘制矩形背景_D2D(rt, boundsRect, 背景颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal, brushCache)
+            RectangleRenderer.绘制矩形边框_D2D(rt, boundsRect, 边框颜色, 边框宽度 * s, brushCache)
         End If
     End Sub
 
@@ -1866,9 +1868,10 @@ Public Class MarkDownViewer
         Right
     End Enum
 
-    Private Sub DrawFragments_D2D(rt As ID2D1RenderTarget, vl As VisualLine, vli As Integer,
-                                  textLeft As Integer, drawY As Integer, blockKind As BlockKind,
-                                  s As Single, selStart As SelectionPos, selEnd As SelectionPos)
+    Private Function DrawFragments_D2D(rt As ID2D1RenderTarget, vl As VisualLine, vli As Integer,
+                                       textLeft As Integer, drawY As Integer, blockKind As BlockKind,
+                                       s As Single, selStart As SelectionPos, selEnd As SelectionPos) As Boolean
+        Dim drewImage As Boolean = False
         For fi As Integer = 0 To vl.Fragments.Count - 1
             Dim frag = vl.Fragments(fi)
             Dim fragX As Integer = textLeft + frag.X
@@ -1884,6 +1887,7 @@ Public Class MarkDownViewer
                     If bmp IsNot Nothing Then
                         rt.DrawBitmap(bmp, D2DGlobals.ToD2DRect(imgRect), 1.0F, BitmapInterpolationMode.Linear,
                             New Vortice.Mathematics.Rect(0, 0, bmp.Size.Width, bmp.Size.Height))
+                        drewImage = True
                     End If
                 Else
                     Dim placeholderColor = Color.FromArgb(80, 80, 80)
@@ -1937,7 +1941,8 @@ Public Class MarkDownViewer
                 End If
             End If
         Next
-    End Sub
+        Return drewImage
+    End Function
 
     Private Sub DrawFragmentSelection_D2D(rt As ID2D1RenderTarget, vli As Integer, fi As Integer, frag As VisualFragment,
                                           fragX As Integer, drawY As Integer, lineH As Integer,
@@ -1991,7 +1996,7 @@ Public Class MarkDownViewer
         _scrollBar.ComputeLayout(w, h, scaledBorder, scaledRadius, 0, 0, scaledScrollW,
             _totalContentHeight, viewH, _scrollY)
         _scrollBar.Draw_D2D(rt, w, h, scaledBorder, scaledRadius, scaledScrollW,
-            滚动条轨道颜色, 滚动条颜色, 滚动条悬停颜色)
+            滚动条轨道颜色, 滚动条颜色, 滚动条悬停颜色, _当前合成器?.BrushCache)
     End Sub
 
 #End Region
@@ -2619,6 +2624,12 @@ Public Class MarkDownViewer
         End If
         Return cache
     End Function
+
+    Private Sub TrimD2DImageCachesToCurrentBudget()
+        For Each cache In _d2dImageCaches.Values
+            Try : cache.TrimToCurrentBudget() : Catch : End Try
+        Next
+    End Sub
 
 #End Region
 

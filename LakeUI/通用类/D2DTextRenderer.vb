@@ -33,6 +33,7 @@ Public Module D2DTextRenderer
                        textFormatCache As D2DGlobals.TextFormatCache,
                        brushCache As D2DGlobals.SolidColorBrushCache)
         If rt Is Nothing OrElse String.IsNullOrEmpty(text) OrElse font Is Nothing Then Return
+        If color.A = 0 Then Return
         If rect.Width <= 0 OrElse rect.Height <= 0 Then Return
 
         Dim ownsFormat As Boolean = False
@@ -67,6 +68,7 @@ Public Module D2DTextRenderer
                           textFormatCache As D2DGlobals.TextFormatCache,
                           brushCache As D2DGlobals.SolidColorBrushCache)
         If rt Is Nothing OrElse String.IsNullOrEmpty(text) OrElse font Is Nothing Then Return
+        If color.A = 0 Then Return
         Dim flags As TextFormatFlags = TextFormatFlags.Left Or TextFormatFlags.Top Or TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine
         Dim ownsFormat As Boolean = False
         Dim fmt = AcquireTextFormat(font, dpiScale, flags, textFormatCache, ownsFormat)
@@ -112,24 +114,27 @@ Public Module D2DTextRenderer
     End Function
 
     ''' <summary>测量文本宽度（像素）。返回 ceil 的整数，与 TextRenderer.MeasureText 语义接近。</summary>
-    Public Function MeasureWidth(text As String, font As Font, dpiScale As Single) As Integer
+    Public Function MeasureWidth(text As String, font As Font, dpiScale As Single,
+                                 Optional textFormatCache As D2DGlobals.TextFormatCache = Nothing) As Integer
         If String.IsNullOrEmpty(text) OrElse font Is Nothing Then Return 0
         Dim flags As TextFormatFlags = TextFormatFlags.Left Or TextFormatFlags.Top Or TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine
-        Return MeasureText(text, font, New Size(Integer.MaxValue, Integer.MaxValue), flags, dpiScale).Width
+        Return MeasureText(text, font, New Size(Integer.MaxValue, Integer.MaxValue), flags, dpiScale, textFormatCache).Width
     End Function
 
     ''' <summary>测量行高（像素，含 ascent/descent）。常用于绘制前确定垂直布局。</summary>
-    Public Function MeasureLineHeight(font As Font, dpiScale As Single) As Integer
+    Public Function MeasureLineHeight(font As Font, dpiScale As Single,
+                                      Optional textFormatCache As D2DGlobals.TextFormatCache = Nothing) As Integer
         If font Is Nothing Then Return 0
         Dim flags As TextFormatFlags = TextFormatFlags.Left Or TextFormatFlags.Top Or TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine
-        Return MeasureText("Ag", font, New Size(Integer.MaxValue, Integer.MaxValue), flags, dpiScale).Height
+        Return MeasureText("Ag", font, New Size(Integer.MaxValue, Integer.MaxValue), flags, dpiScale, textFormatCache).Height
     End Function
 
     ''' <summary>测量 TextLayout 的完整 Metrics（宽 + 高）；调用方可用于精确布局。</summary>
-    Public Function MeasureSize(text As String, font As Font, dpiScale As Single) As SizeF
+    Public Function MeasureSize(text As String, font As Font, dpiScale As Single,
+                                Optional textFormatCache As D2DGlobals.TextFormatCache = Nothing) As SizeF
         If String.IsNullOrEmpty(text) OrElse font Is Nothing Then Return SizeF.Empty
         Dim flags As TextFormatFlags = TextFormatFlags.Left Or TextFormatFlags.Top Or TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine
-        Dim sz = MeasureText(text, font, New Size(Integer.MaxValue, Integer.MaxValue), flags, dpiScale)
+        Dim sz = MeasureText(text, font, New Size(Integer.MaxValue, Integer.MaxValue), flags, dpiScale, textFormatCache)
         Return New SizeF(sz.Width, sz.Height)
     End Function
 
@@ -175,5 +180,146 @@ Public Module D2DTextRenderer
         If (flags And TextFormatFlags.Bottom) = TextFormatFlags.Bottom Then Return ParagraphAlignment.Far
         Return ParagraphAlignment.Near
     End Function
+
+End Module
+
+''' <summary>
+''' 文本渲染相关的共享辅助方法。
+''' </summary>
+Friend Module TextRenderHelper
+
+    ''' <summary>
+    ''' 测量文本渲染宽度。
+    ''' </summary>
+    Friend Function MeasureTextWidth(text As String, font As Font, lineHeight As Integer) As Integer
+        If String.IsNullOrEmpty(text) Then Return 0
+        Return TextRenderer.MeasureText(text, font, New Size(32767, lineHeight),
+            TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine).Width
+    End Function
+
+    ''' <summary>
+    ''' 根据 X 坐标查找最近的字符列索引。
+    ''' </summary>
+    Friend Function FindColFromX(lineStr As String, x As Integer, font As Font, lineHeight As Integer) As Integer
+        If String.IsNullOrEmpty(lineStr) OrElse x <= 0 Then Return 0
+        Dim n As Integer = lineStr.Length
+        Dim totalW As Integer = MeasureTextWidth(lineStr, font, lineHeight)
+        If x >= totalW Then Return n
+        Dim lo As Integer = 0
+        Dim hi As Integer = n
+        While lo < hi
+            Dim mid As Integer = (lo + hi + 1) \ 2
+            If MeasureTextWidth(lineStr.Substring(0, mid), font, lineHeight) <= x Then
+                lo = mid
+            Else
+                hi = mid - 1
+            End If
+        End While
+        If lo < n Then
+            Dim wLo As Integer = MeasureTextWidth(lineStr.Substring(0, lo), font, lineHeight)
+            Dim wNext As Integer = MeasureTextWidth(lineStr.Substring(0, lo + 1), font, lineHeight)
+            If x - wLo > wNext - x Then
+                Return lo + 1
+            End If
+        End If
+        Return lo
+    End Function
+
+#Region "DirectWrite 度量"
+
+    ''' <summary>使用 DirectWrite 创建一个 TextFormat（调用方负责 Dispose）。</summary>
+    Friend Function CreateDWriteTextFormat(font As Font, dpiScale As Single) As Vortice.DirectWrite.IDWriteTextFormat
+        Dim sizePx As Single = font.SizeInPoints * (96.0F / 72.0F) * dpiScale
+        Return D2DGlobals.CreateTextFormat(font, sizePx)
+    End Function
+
+    ''' <summary>使用 DirectWrite 测量单行文本宽度（像素）。</summary>
+    Friend Function MeasureTextWidth_D2D(text As String, font As Font, dpiScale As Single,
+                                         Optional textFormatCache As D2DGlobals.TextFormatCache = Nothing) As Single
+        If String.IsNullOrEmpty(text) Then Return 0
+        Dim ownsFormat As Boolean = False
+        Dim fmt = AcquireDWriteTextFormat(font, dpiScale, textFormatCache, ownsFormat)
+        If fmt Is Nothing Then Return 0
+        Try
+            Using layout = D2DGlobals.GetDWriteFactory().CreateTextLayout(text, fmt, Single.MaxValue, Single.MaxValue)
+                Return layout.Metrics.WidthIncludingTrailingWhitespace
+            End Using
+        Finally
+            If ownsFormat Then Try : fmt.Dispose() : Catch : End Try
+        End Try
+    End Function
+
+    ''' <summary>使用 DirectWrite 命中测试，根据 X 坐标返回最近字符列索引（基于 TextLayout 二分测量）。</summary>
+    Friend Function FindColFromX_D2D(lineStr As String, x As Single, font As Font, dpiScale As Single,
+                                     Optional textFormatCache As D2DGlobals.TextFormatCache = Nothing) As Integer
+        If String.IsNullOrEmpty(lineStr) OrElse x <= 0 Then Return 0
+        Dim n As Integer = lineStr.Length
+        Try
+            Dim ownsFormat As Boolean = False
+            Dim fmt = AcquireDWriteTextFormat(font, dpiScale, textFormatCache, ownsFormat)
+            If fmt Is Nothing Then Return 0
+            Try
+                Using layout = D2DGlobals.GetDWriteFactory().CreateTextLayout(lineStr, fmt, Single.MaxValue, Single.MaxValue)
+                    If x >= layout.Metrics.WidthIncludingTrailingWhitespace Then Return n
+
+                    Dim trailing As SharpGen.Runtime.RawBool = False
+                    Dim inside As SharpGen.Runtime.RawBool = False
+                    Dim hit As Vortice.DirectWrite.HitTestMetrics
+                    layout.HitTestPoint(x, 0.0F, trailing, inside, hit)
+
+                    Dim col As Integer = CInt(hit.TextPosition)
+                    If CBool(trailing) Then col += Math.Max(1, CInt(hit.Length))
+                    Return Math.Max(0, Math.Min(n, col))
+                End Using
+            Finally
+                If ownsFormat Then Try : fmt.Dispose() : Catch : End Try
+            End Try
+        Catch
+            Return FindColFromX_D2DByMeasure(lineStr, x, font, dpiScale, textFormatCache)
+        End Try
+    End Function
+
+    Private Function FindColFromX_D2DByMeasure(lineStr As String, x As Single, font As Font, dpiScale As Single,
+                                               textFormatCache As D2DGlobals.TextFormatCache) As Integer
+        Dim n As Integer = lineStr.Length
+        Dim totalW As Single = MeasureTextWidth_D2D(lineStr, font, dpiScale, textFormatCache)
+        If x >= totalW Then Return n
+        Dim lo As Integer = 0
+        Dim hi As Integer = n
+        While lo < hi
+            Dim mid As Integer = (lo + hi + 1) \ 2
+            If MeasureTextWidth_D2D(lineStr.Substring(0, mid), font, dpiScale, textFormatCache) <= x Then
+                lo = mid
+            Else
+                hi = mid - 1
+            End If
+        End While
+        If lo < n Then
+            Dim wLo As Single = MeasureTextWidth_D2D(lineStr.Substring(0, lo), font, dpiScale, textFormatCache)
+            Dim wNext As Single = MeasureTextWidth_D2D(lineStr.Substring(0, lo + 1), font, dpiScale, textFormatCache)
+            If x - wLo > wNext - x Then Return lo + 1
+        End If
+        Return lo
+    End Function
+
+    Private Function AcquireDWriteTextFormat(font As Font, dpiScale As Single,
+                                             textFormatCache As D2DGlobals.TextFormatCache,
+                                             ByRef ownsFormat As Boolean) As Vortice.DirectWrite.IDWriteTextFormat
+        If font Is Nothing Then Return Nothing
+        ownsFormat = (textFormatCache Is Nothing)
+        Dim sizePx As Single = font.SizeInPoints * (96.0F / 72.0F) * dpiScale
+        If textFormatCache IsNot Nothing Then
+            Return textFormatCache.Get(font, sizePx,
+                                       Vortice.DirectWrite.TextAlignment.Leading,
+                                       Vortice.DirectWrite.ParagraphAlignment.Near,
+                                       False,
+                                       False)
+        End If
+        Dim fmt = D2DGlobals.CreateTextFormat(font, sizePx)
+        fmt.WordWrapping = Vortice.DirectWrite.WordWrapping.NoWrap
+        Return fmt
+    End Function
+
+#End Region
 
 End Module

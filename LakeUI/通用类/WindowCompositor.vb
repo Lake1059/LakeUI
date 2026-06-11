@@ -45,6 +45,12 @@ Public NotInheritable Class WindowCompositor
     Private _deviceLostHandlerAttached As Boolean
     Private _disposed As Boolean
     Private _activePaintScopes As Integer
+    Private Const TransientCacheTrimInterval As Integer = 4096
+    Private _paintScopesSinceTransientTrim As Integer
+    Private _lastBrushCacheLimit As Integer = Integer.MinValue
+    Private _lastTextFormatCacheLimit As Integer = Integer.MinValue
+    Private _lastBitmapCacheImageLimit As Integer = Integer.MinValue
+    Private _lastBitmapCacheBudgetBytes As Long = Long.MinValue
 
     ''' <summary>Image → D2DBitmapCache 映射；为长期存在的图标 / 背景图复用 D2D 上传。</summary>
     Private NotInheritable Class BitmapCacheEntry
@@ -228,6 +234,13 @@ Public NotInheritable Class WindowCompositor
 
     Private Sub TrimBitmapCacheIndex(protectedImage As Image)
         Dim maxImages As Integer = Math.Max(0, GlobalOptions.D2DBitmapCacheMaxImagesPerCompositor)
+        If maxImages = 0 Then
+            For Each kv In _bitmapCaches
+                Try : kv.Value.Cache.Dispose() : Catch : End Try
+            Next
+            _bitmapCaches.Clear()
+            Return
+        End If
         While _bitmapCaches.Count > maxImages AndAlso _bitmapCaches.Count > 0
             Dim oldestImage As Image = Nothing
             Dim oldestEntry As BitmapCacheEntry = Nothing
@@ -391,6 +404,43 @@ Public NotInheritable Class WindowCompositor
     ''' <summary>结束一次活动绘制作用域，允许下一次 BindDC / BeginDraw。</summary>
     Friend Sub EndPaintScope()
         If _activePaintScopes > 0 Then _activePaintScopes -= 1
+        If ShouldTrimTransientCaches() Then TrimTransientCaches()
+    End Sub
+
+    Private Function ShouldTrimTransientCaches() As Boolean
+        If _disposed Then Return False
+
+        Dim brushLimit As Integer = Math.Max(0, GlobalOptions.D2DBrushCacheMaxEntriesPerRenderTarget)
+        Dim textFormatLimit As Integer = Math.Max(0, GlobalOptions.DWriteTextFormatCacheMaxEntriesPerCompositor)
+        Dim bitmapImageLimit As Integer = Math.Max(0, GlobalOptions.D2DBitmapCacheMaxImagesPerCompositor)
+        Dim bitmapBudgetBytes As Long = Math.Max(0L, GlobalOptions.D2DBitmapCacheBudgetBytes)
+
+        If brushLimit <> _lastBrushCacheLimit OrElse
+           textFormatLimit <> _lastTextFormatCacheLimit OrElse
+           bitmapImageLimit <> _lastBitmapCacheImageLimit OrElse
+           bitmapBudgetBytes <> _lastBitmapCacheBudgetBytes Then
+            _lastBrushCacheLimit = brushLimit
+            _lastTextFormatCacheLimit = textFormatLimit
+            _lastBitmapCacheImageLimit = bitmapImageLimit
+            _lastBitmapCacheBudgetBytes = bitmapBudgetBytes
+            _paintScopesSinceTransientTrim = 0
+            Return True
+        End If
+
+        _paintScopesSinceTransientTrim += 1
+        If _paintScopesSinceTransientTrim < TransientCacheTrimInterval Then Return False
+        _paintScopesSinceTransientTrim = 0
+        Return True
+    End Function
+
+    Friend Sub TrimTransientCaches()
+        If _disposed Then Return
+        Try : BrushCache.TrimToCurrentLimit() : Catch : End Try
+        Try : TextFormatCache.TrimToCurrentLimit() : Catch : End Try
+        For Each kv In _bitmapCaches
+            Try : kv.Value.Cache.TrimToCurrentBudget() : Catch : End Try
+        Next
+        Try : TrimBitmapCacheIndex(Nothing) : Catch : End Try
     End Sub
 
     Public Sub Dispose() Implements IDisposable.Dispose

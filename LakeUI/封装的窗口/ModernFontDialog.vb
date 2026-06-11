@@ -442,10 +442,7 @@ Public Class ModernFontDialog
         确保D2D布局()
         MyBase.OnPaint(e)
 
-        Dim ssaa As Integer = 2
-        If GlobalOptions.GlobalSSAA <> GlobalOptions.SuperSamplingScaleEnum.OFF Then
-            ssaa = Math.Max(ssaa, CInt(GlobalOptions.GlobalSSAA))
-        End If
+        Dim ssaa As Integer = D2DHelperV2.GetEffectiveSsaaScale(2)
 
         Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
             If scope Is Nothing Then Return
@@ -515,6 +512,7 @@ Public Class ModernFontDialog
         _d2dLayoutDirty = False
 
         Dim s = 取D2D缩放()
+        Dim textFormatCache = D2DHelperV2.GetCompositor(Me)?.TextFormatCache
         Dim display = DisplayRectangle
         Dim leftW As Single = 300.0F * s
         Dim topH As Single = 300.0F * s
@@ -611,8 +609,8 @@ Public Class ModernFontDialog
 
         Dim previewX As Single = rightX + pad
         Dim previewW As Single = Math.Max(1.0F, rightW - pad * 2.0F)
-        Dim previewTitleH As Single = Math.Max(40.0F * s, CSng(Math.Max(1, D2DTextRenderer.MeasureLineHeight(Font, s))) + 20.0F * s)
-        Dim previewLineH As Single = Math.Max(24.0F * s, CSng(Math.Max(1, D2DTextRenderer.MeasureLineHeight(SelectedFont, s))) + 5.0F * s)
+        Dim previewTitleH As Single = Math.Max(40.0F * s, CSng(Math.Max(1, D2DTextRenderer.MeasureLineHeight(Font, s, textFormatCache))) + 20.0F * s)
+        Dim previewLineH As Single = Math.Max(24.0F * s, CSng(Math.Max(1, D2DTextRenderer.MeasureLineHeight(SelectedFont, s, textFormatCache))) + 5.0F * s)
         layout.PreviewTitle = New RectangleF(previewX, previewTop, previewW, previewTitleH)
         Dim lineY As Single = layout.PreviewTitle.Bottom
         For i = 0 To 3
@@ -1054,7 +1052,7 @@ Public Class ModernFontDialog
         For Each box In _d2dTextBoxOrder
             box.Renderer.ForeColor = ForeColor
             box.Renderer.SelectionColor = D2DElementBackColor
-            box.Renderer.Draw(rt)
+            box.Renderer.Draw(rt, tfc, brushCache)
         Next
 
         For Each list In 所有列表()
@@ -1191,21 +1189,16 @@ Public Class ModernFontDialog
         Dim weight As DW.FontWeight = If(selectedStyle IsNot Nothing, selectedStyle.DWriteWeight, If(f.Bold, DW.FontWeight.Bold, DW.FontWeight.Normal))
         Dim style As DW.FontStyle = If(selectedStyle IsNot Nothing, selectedStyle.DWriteStyle, If(f.Italic, DW.FontStyle.Italic, DW.FontStyle.Normal))
         Dim stretch As DW.FontStretch = If(selectedStyle IsNot Nothing, selectedStyle.DWriteStretch, DW.FontStretch.Normal)
-        Using fmt = D2DGlobals.CreateTextFormat(f.FontFamily.Name, weight, style, stretch, sizePx)
-            fmt.TextAlignment = DW.TextAlignment.Leading
-            fmt.ParagraphAlignment = DW.ParagraphAlignment.Near
-            Try
-                fmt.SetTrimming(New DW.Trimming With {.Granularity = DW.TrimmingGranularity.Character}, Nothing)
-            Catch
-            End Try
-            Dim brush = compositor.BrushCache.Get(rt, Color.White)
-            If brush Is Nothing Then Return
-            Using layout = D2DGlobals.GetDWriteFactory().CreateTextLayout(text, fmt, Math.Max(1.0F, rect.Width), Math.Max(1.0F, rect.Height))
-                Dim range As New DW.TextRange(0, text.Length)
-                If f.Underline Then layout.SetUnderline(True, range)
-                If f.Strikeout Then layout.SetStrikethrough(True, range)
-                rt.DrawTextLayout(New Vector2(rect.X, rect.Y), layout, brush, D2D.DrawTextOptions.Clip)
-            End Using
+        Dim fmt = compositor.TextFormatCache.Get(f.FontFamily.Name, weight, style, stretch, sizePx,
+                                                 DW.TextAlignment.Leading, DW.ParagraphAlignment.Near,
+                                                 True, False)
+        Dim brush = compositor.BrushCache.Get(rt, Color.White)
+        If fmt Is Nothing OrElse brush Is Nothing Then Return
+        Using layout = D2DGlobals.GetDWriteFactory().CreateTextLayout(text, fmt, Math.Max(1.0F, rect.Width), Math.Max(1.0F, rect.Height))
+            Dim range As New DW.TextRange(0, text.Length)
+            If f.Underline Then layout.SetUnderline(True, range)
+            If f.Strikeout Then layout.SetStrikethrough(True, range)
+            rt.DrawTextLayout(New Vector2(rect.X, rect.Y), layout, brush, D2D.DrawTextOptions.Clip)
         End Using
     End Sub
 
@@ -1230,9 +1223,7 @@ Public Class ModernFontDialog
         If color.A = 0 OrElse width <= 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
         Dim half = width / 2.0F
         rect.Inflate(-half, -half)
-        Using geo = RectangleRenderer.创建圆角矩形几何(rect, radius)
-            RectangleRenderer.绘制圆角边框_D2D(rt, geo, color, width, brushCache)
-        End Using
+        RectangleRenderer.绘制圆角边框_D2D(rt, rect, radius, color, width, brushCache)
     End Sub
 
     Private Function 取列表项悬停颜色() As Color
@@ -2198,20 +2189,14 @@ Public Class ModernFontDialog
         Try
             Dim s = 取D2D缩放()
             Dim sizePx As Single = Font.SizeInPoints * (96.0F / 72.0F) * s
-            Using fmt = D2DGlobals.CreateTextFormat(familyName, entry.DWriteWeight, entry.DWriteStyle, entry.DWriteStretch, sizePx)
-                fmt.TextAlignment = DW.TextAlignment.Leading
-                fmt.ParagraphAlignment = DW.ParagraphAlignment.Center
-                fmt.WordWrapping = DW.WordWrapping.NoWrap
-                Try
-                    fmt.SetTrimming(New DW.Trimming With {.Granularity = DW.TrimmingGranularity.Character}, Nothing)
-                Catch
-                End Try
-
-                Dim brush = compositor.BrushCache.Get(rt, ForeColor)
-                If brush Is Nothing Then Return False
-                rt.DrawText(text, fmt, D2DGlobals.ToD2DRect(rect), brush, D2D.DrawTextOptions.Clip)
-                Return True
-            End Using
+            Dim fmt = compositor.TextFormatCache.Get(familyName, entry.DWriteWeight, entry.DWriteStyle,
+                                                     entry.DWriteStretch, sizePx,
+                                                     DW.TextAlignment.Leading, DW.ParagraphAlignment.Center,
+                                                     True, False)
+            Dim brush = compositor.BrushCache.Get(rt, ForeColor)
+            If fmt Is Nothing OrElse brush Is Nothing Then Return False
+            rt.DrawText(text, fmt, D2DGlobals.ToD2DRect(rect), brush, D2D.DrawTextOptions.Clip)
+            Return True
         Catch
             Return False
         End Try

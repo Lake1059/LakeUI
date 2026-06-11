@@ -660,8 +660,7 @@ Public Class ModernNumericUpDown
                 If 鼠标按下时边框颜色 <> Color.Empty Then bc = 鼠标按下时边框颜色
         End Select
 
-        Dim ssaa As Integer = Math.Max(1, CInt(超采样倍率))
-        If GlobalOptions.GlobalSSAA <> GlobalOptions.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(GlobalOptions.GlobalSSAA))
+        Dim ssaa As Integer = D2DHelperV2.GetEffectiveSsaaScale(超采样倍率)
 
         Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
             If scope Is Nothing Then Return
@@ -676,7 +675,7 @@ Public Class ModernNumericUpDown
 
             Dim dcRT As ID2D1DCRenderTarget = scope.DCRenderTarget
             SyncTextRendererLayout()
-            _textRenderer.Draw(dcRT)
+            _textRenderer.Draw(dcRT, scope.Compositor.TextFormatCache, brushCache)
             绘制按钮_D2D(dcRT, brushCache, w, h)
             绘制边框_D2D(dcRT, brushCache, hasRadius, boundsRect, bc)
 
@@ -715,9 +714,7 @@ Public Class ModernNumericUpDown
         If 边框宽度 <= 0 OrElse borderClr.A = 0 Then Return
         Dim s As Single = DpiScale()
         If hasRadius Then
-            Using geo = RectangleRenderer.创建圆角矩形几何(boundsRect, 边框圆角半径 * s)
-                RectangleRenderer.绘制圆角边框_D2D(rt, geo, borderClr, 边框宽度 * s, brushCache)
-            End Using
+            RectangleRenderer.绘制圆角边框_D2D(rt, boundsRect, 边框圆角半径 * s, borderClr, 边框宽度 * s, brushCache)
         Else
             RectangleRenderer.绘制矩形边框_D2D(rt, boundsRect, borderClr, 边框宽度 * s, brushCache)
         End If

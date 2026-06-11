@@ -731,10 +731,11 @@ Partial Public Class EasyStatesPanel
 
     Private Function CalculateCardHeight(s As Single) As Single
         Dim flags As TextFormatFlags = TextFormatFlags.Left Or TextFormatFlags.Top Or TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine
-        Dim mainH As Single = Math.Max(1, D2DTextRenderer.MeasureText("Ag", Font, New Size(Integer.MaxValue, Integer.MaxValue), flags, s).Height)
+        Dim textFormatCache = D2DHelperV2.GetCompositor(Me)?.TextFormatCache
+        Dim mainH As Single = Math.Max(1, D2DTextRenderer.MeasureText("Ag", Font, New Size(Integer.MaxValue, Integer.MaxValue), flags, s, textFormatCache).Height)
         Dim subH As Single
         Dim subFont = GetSubTextFont()
-        subH = Math.Max(1, D2DTextRenderer.MeasureText("Ag", subFont, New Size(Integer.MaxValue, Integer.MaxValue), flags, s).Height)
+        subH = Math.Max(1, D2DTextRenderer.MeasureText("Ag", subFont, New Size(Integer.MaxValue, Integer.MaxValue), flags, s, textFormatCache).Height)
         Dim totalTextH As Single = mainH + subH + _mainSubTextSpacing * s
         Return Math.Max(_cardMinHeight * s, totalTextH + _cardVerticalPadding * s * 2.0F + TextRenderGuard(s))
     End Function
@@ -785,8 +786,7 @@ Partial Public Class EasyStatesPanel
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
         EnsureLayout()
 
-        Dim ssaa As Integer = Math.Max(1, CInt(_superSamplingScale))
-        If GlobalOptions.GlobalSSAA <> GlobalOptions.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(GlobalOptions.GlobalSSAA))
+        Dim ssaa As Integer = D2DHelperV2.GetEffectiveSsaaScale(_superSamplingScale)
 
         Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
             If scope Is Nothing Then Return
@@ -810,7 +810,8 @@ Partial Public Class EasyStatesPanel
                                     CInt(Math.Round(_borderSize * s)),
                                     CInt(Math.Round(_borderRadius * s)),
                                     CInt(Math.Round(_scrollBarWidth * s)),
-                                    _scrollBarTrackColor, _scrollBarThumbColor, _scrollBarThumbHoverColor)
+                                    _scrollBarTrackColor, _scrollBarThumbColor, _scrollBarThumbHoverColor,
+                                    compositor.BrushCache)
             End If
 
             scope.FlushGraphics()

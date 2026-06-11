@@ -39,8 +39,7 @@ Public Class ProgressRing
 #Region "绘制"
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
         If Me.Width < 1 OrElse Me.Height < 1 Then Return
-        Dim ssaa As Integer = Math.Max(1, CInt(超采样倍率))
-        If GlobalOptions.GlobalSSAA <> GlobalOptions.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(GlobalOptions.GlobalSSAA))
+        Dim ssaa As Integer = D2DHelperV2.GetEffectiveSsaaScale(超采样倍率)
 
         Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
             If scope Is Nothing Then
@@ -220,7 +219,6 @@ Public Class ProgressRing
 #Region "通用"
     Private ReadOnly 秒表 As New Stopwatch()
     Private ReadOnly 计时器 As New System.Windows.Forms.Timer()
-    Private _圆头描边样式 As ID2D1StrokeStyle
     Private 动画运行中 As Boolean = False
 
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
@@ -286,23 +284,11 @@ Public Class ProgressRing
     End Sub
 
     Private Function 获取圆头描边样式() As ID2D1StrokeStyle
-        If _圆头描边样式 Is Nothing Then
-            _圆头描边样式 = D2DGlobals.GetD2DFactory().CreateStrokeStyle(
-                New StrokeStyleProperties With {
-                    .StartCap = CapStyle.Round,
-                    .EndCap = CapStyle.Round,
-                    .DashCap = CapStyle.Flat,
-                    .LineJoin = Vortice.Direct2D1.LineJoin.Round,
-                    .DashStyle = Vortice.Direct2D1.DashStyle.Solid,
-                    .MiterLimit = 10.0F})
-        End If
-        Return _圆头描边样式
+        Return D2DGlobals.GetRoundStrokeStyle()
     End Function
 
     Private Sub 释放描边样式()
-        If _圆头描边样式 Is Nothing Then Return
-        Try : _圆头描边样式.Dispose() : Catch : End Try
-        _圆头描边样式 = Nothing
+        ' StrokeStyle 现在由 D2DGlobals 进程级缓存持有；保留此方法以兼容 Designer Dispose 调用。
     End Sub
 
     Protected Overrides Sub OnHandleCreated(e As EventArgs)

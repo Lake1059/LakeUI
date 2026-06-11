@@ -27,6 +27,9 @@ Public Class ThisIsYourWindow
     Private Const WM_NCACTIVATE As Integer = &H86
     Private Const WM_NCPAINT As Integer = &H85
     Private Const WM_MOVE As Integer = &H3
+    Private Const WM_WINDOWPOSCHANGED As Integer = &H47
+    Private Const WM_PAINT As Integer = &HF
+    Private Const WM_ERASEBKGND As Integer = &H14
 
     Private Const SC_MINIMIZE As Integer = &HF020
     Private Const SC_MAXIMIZE As Integer = &HF030
@@ -122,6 +125,14 @@ Public Class ThisIsYourWindow
     Private Shared Function SetWindowDisplayAffinity(hWnd As IntPtr, dwAffinity As Integer) As <MarshalAs(UnmanagedType.Bool)> Boolean
     End Function
 
+    <DllImport("user32.dll")>
+    Private Shared Function ValidateRect(hWnd As IntPtr, lpRect As IntPtr) As <MarshalAs(UnmanagedType.Bool)> Boolean
+    End Function
+
+    <DllImport("user32.dll")>
+    Private Shared Function GetWindowRect(hWnd As IntPtr, ByRef lpRect As RECT) As <MarshalAs(UnmanagedType.Bool)> Boolean
+    End Function
+
     <StructLayout(LayoutKind.Sequential)>
     Private Structure OSVERSIONINFOEX
         Public dwOSVersionInfoSize As Integer
@@ -175,6 +186,8 @@ Public Class ThisIsYourWindow
         Public LastTitleTextDirtyRect As Rectangle = Rectangle.Empty
         Public ShadowForm As ShadowWindow
         Public IsInSizeMove As Boolean = False
+        Public DeferredClientBoundsActive As Boolean = False
+        Public DeferredBeginBounds As Rectangle = Rectangle.Empty
         Public AnimatingShow As Boolean = False
         Public AnimatingClose As Boolean = False
         ' 上一次记录的最小化状态：用于在 WM_SIZE 中检测"从最小化恢复"事件并强制刷新毛玻璃。
@@ -196,6 +209,7 @@ Public Class ThisIsYourWindow
 
     Private ReadOnly _forms As New Dictionary(Of IntPtr, PerFormState)
     Private ReadOnly _pendingAttachHandlers As New Dictionary(Of Form, EventHandler)
+    Private _标题文字私有协议首窗体 As Form
 
     ' ── 绘制热路径共享缓存：避免每帧 New SolidBrush/Pen 造成 GC 压力 ──
     Private ReadOnly _共享画刷 As New SolidBrush(Color.Black)
@@ -249,7 +263,7 @@ Public Class ThisIsYourWindow
     ''' <summary>
     ''' 毛玻璃 / 亚克力背景模式。
     ''' None — 关闭。
-    ''' Auto — 抓取窗口背后的桌面区域并模糊后绘制为窗体背景。默认仅在事件驱动时刷新（移动或调整大小结束 / 显示 / 激活），
+    ''' Auto — 抓取窗口背后的桌面区域并模糊后绘制为窗体背景。默认仅在事件驱动时刷新（移动或调整大小结束 / 显示），
     '''        系统截图工具能截到本窗口；如需常态周期刷新，请同时开启 <see cref="BackdropExcludeFromCapture"/>，
     '''        此时启用 WDA_EXCLUDEFROMCAPTURE 防止抓自身（要求 Win10 build 19041+），副作用：系统截图 / 录屏均无法捕获本窗口。
     ''' Image — 使用 <see cref="BackdropImage"/> 作为虚拟背景源（按 cover 撑满窗口）后再做模糊；
@@ -366,6 +380,62 @@ Public Class ThisIsYourWindow
         RaiseEvent ActiveChanged(Me, New ActiveChangedEventArgs(activated, form))
     End Sub
 
+    Private Function 毛玻璃当前启用(s As PerFormState) As Boolean
+        Return _毛玻璃模式 <> BackdropModeEnum.None AndAlso s IsNot Nothing AndAlso s.Renderer IsNot Nothing
+    End Function
+
+    Private Sub 开始延迟客户区坐标上报(s As PerFormState)
+        If Not 毛玻璃当前启用(s) Then Return
+        s.DeferredClientBoundsActive = True
+        s.DeferredBeginBounds = 获取窗口屏幕矩形(s.HostForm)
+        s.BackdropTimer?.Stop()
+    End Sub
+
+    Private Shared Function 获取窗口屏幕矩形(form As Form) As Rectangle
+        If form Is Nothing OrElse Not form.IsHandleCreated Then Return Rectangle.Empty
+        Dim r As RECT
+        If GetWindowRect(form.Handle, r) Then
+            Return Rectangle.FromLTRB(r.Left, r.Top, r.Right, r.Bottom)
+        End If
+        Return form.Bounds
+    End Function
+
+    Private Sub 提交延迟客户区坐标上报(s As PerFormState)
+        If s Is Nothing OrElse s.HostForm Is Nothing OrElse s.HostForm.IsDisposed Then Return
+        If Not s.DeferredClientBoundsActive Then Return
+        s.DeferredClientBoundsActive = False
+
+        Dim boundsChanged As Boolean = False
+        Dim sizeChanged As Boolean = False
+        If s.HostForm.IsHandleCreated Then
+            Dim currentBounds As Rectangle = 获取窗口屏幕矩形(s.HostForm)
+            boundsChanged = (currentBounds <> s.DeferredBeginBounds)
+            sizeChanged = (currentBounds.Size <> s.DeferredBeginBounds.Size)
+            If boundsChanged Then
+                更新控件边界缓存(s.HostForm)
+            End If
+        End If
+
+        s.DeferredBeginBounds = Rectangle.Empty
+        s.LayoutSignature = -1
+        If _阴影模式 <> ShadowModeEnum.DWM AndAlso s.HostForm.IsHandleCreated Then
+            切换动画样式(s.HostForm.Handle, False)
+        End If
+        RecalculateButtonBounds(s)
+        更新阴影(s)
+        Dim requestBackdropFrame As Boolean = boundsChanged AndAlso (_毛玻璃模式 <> BackdropModeEnum.Image OrElse sizeChanged)
+        If requestBackdropFrame Then
+            s.Renderer?.RequestFrame(获取毛玻璃捕获区域(s.HostForm), True)
+        End If
+        重置毛玻璃Tick(s)
+    End Sub
+
+    Private Shared Sub 更新控件边界缓存(form As Form)
+        If form Is Nothing Then Return
+        Static updateBoundsMethod As MethodInfo = GetType(Control).GetMethod("UpdateBounds", BindingFlags.Instance Or BindingFlags.NonPublic, Nothing, Type.EmptyTypes, Nothing)
+        updateBoundsMethod?.Invoke(form, Nothing)
+    End Sub
+
     Private Sub 宿主窗口_Paint(sender As Object, e As PaintEventArgs)
         Dim frm = TryCast(sender, Form)
         If frm Is Nothing Then Return
@@ -402,7 +472,7 @@ Public Class ThisIsYourWindow
         Dim s = 查找状态(frm)
         If s Is Nothing Then Return
         D2DHelperV2.InvalidateTextFormatCache(frm)
-        InvalidateTitleText(s)
+        InvalidateTitleText(s, True)
     End Sub
 
     Private Sub HostForm_TextChanged(sender As Object, e As EventArgs)
@@ -410,10 +480,10 @@ Public Class ThisIsYourWindow
         If frm Is Nothing Then Return
         Dim s = 查找状态(frm)
         If s Is Nothing Then Return
-        InvalidateTitleText(s)
+        InvalidateTitleText(s, True)
     End Sub
 
-    Private Sub InvalidateTitleText(s As PerFormState)
+    Private Sub InvalidateTitleText(s As PerFormState, Optional immediate As Boolean = False)
         If s Is Nothing OrElse s.HostForm Is Nothing OrElse s.HostForm.IsDisposed OrElse Not s.HostForm.IsHandleCreated Then Return
         RecalculateButtonBounds(s)
         Dim newDirty As Rectangle = 获取标题文字脏区(s)
@@ -421,7 +491,14 @@ Public Class ThisIsYourWindow
         s.LastTitleTextDirtyRect = newDirty
         If dirty.Width > 0 AndAlso dirty.Height > 0 Then
             s.HostForm.Invalidate(dirty)
+            If immediate Then s.HostForm.Update()
         End If
+    End Sub
+
+    Private Sub 通知标题文字重绘(Optional immediate As Boolean = False)
+        For Each s In _forms.Values
+            InvalidateTitleText(s, immediate)
+        Next
     End Sub
 
     Private Shared Function 合并脏区(a As Rectangle, b As Rectangle) As Rectangle
@@ -609,6 +686,22 @@ Public Class ThisIsYourWindow
 
 #Region "属性 - 标题文字"
 
+    Private Const TitleTextPrivateProtocolTitleToken As String = "<Title>"
+    Private _标题文字私有协议 As String = String.Empty
+    ''' <summary>标题栏文本私有协议。仅对第一个调用 <see cref="Attach"/> 接入的窗体生效；为空时直接使用窗体 Text。</summary>
+    <Category("LakeUI"), Description("标题栏文本私有协议。仅对第一个接入的窗体生效；非空时将 <Title> 替换为该窗体真实 Text 后渲染。"), DefaultValue("")>
+    Public Property TitleTextPrivateProtocol As String
+        Get
+            Return _标题文字私有协议
+        End Get
+        Set(value As String)
+            value = If(value, String.Empty)
+            If _标题文字私有协议 = value Then Return
+            _标题文字私有协议 = value
+            通知标题文字重绘(True)
+        End Set
+    End Property
+
     Private _标题文字颜色 As Color = Color.FromArgb(230, 230, 230)
     ''' <summary>窗口激活时的标题文字颜色。</summary>
     <Category("LakeUI"), Description("标题文字颜色。"), DefaultValue(GetType(Color), "230,230,230")>
@@ -617,7 +710,9 @@ Public Class ThisIsYourWindow
             Return _标题文字颜色
         End Get
         Set(value As Color)
-            _标题文字颜色 = value : 通知重绘()
+            If _标题文字颜色 = value Then Return
+            _标题文字颜色 = value
+            通知标题文字重绘(True)
         End Set
     End Property
 
@@ -629,7 +724,9 @@ Public Class ThisIsYourWindow
             Return _标题文字失焦颜色
         End Get
         Set(value As Color)
-            _标题文字失焦颜色 = value : 通知重绘()
+            If _标题文字失焦颜色 = value Then Return
+            _标题文字失焦颜色 = value
+            通知标题文字重绘(True)
         End Set
     End Property
 
@@ -1162,6 +1259,15 @@ Public Class ThisIsYourWindow
     End Property
 
     Private Sub 更新阴影(s As PerFormState)
+        更新阴影(s, Rectangle.Empty, False)
+    End Sub
+
+    Private Sub 更新阴影实时跟随(s As PerFormState)
+        If s Is Nothing OrElse s.HostForm Is Nothing OrElse Not s.HostForm.IsHandleCreated Then Return
+        更新阴影(s, 获取窗口屏幕矩形(s.HostForm), True)
+    End Sub
+
+    Private Sub 更新阴影(s As PerFormState, boundsOverride As Rectangle, forceFullRender As Boolean)
         If s Is Nothing OrElse s.HostForm Is Nothing Then Return
         Dim zoomed As Boolean = (s.HostForm.WindowState = FormWindowState.Maximized)
         Dim minimized As Boolean = (s.HostForm.WindowState = FormWindowState.Minimized)
@@ -1184,7 +1290,7 @@ Public Class ThisIsYourWindow
             s.ShadowForm.Show()
         End If
 
-        Dim bounds = s.HostForm.Bounds
+        Dim bounds = If(boundsOverride.IsEmpty, s.HostForm.Bounds, boundsOverride)
         s.ShadowForm.HostHandle = s.HostForm.Handle
         s.ShadowForm.ShadowDepth = _分层阴影深度
         s.ShadowForm.ResizeWidth = _分层阴影调整宽度
@@ -1194,7 +1300,7 @@ Public Class ThisIsYourWindow
         If _分层阴影自动颜色 AndAlso _毛玻璃模式 <> BackdropModeEnum.None AndAlso s.Renderer IsNot Nothing Then
             shadowColor = s.Renderer.DeriveShadowColor(_分层阴影颜色)
         End If
-        s.ShadowForm.UpdateShadow(bounds, _分层阴影深度, shadowColor, _分层阴影不透明度, s.IsInSizeMove)
+        s.ShadowForm.UpdateShadow(bounds, _分层阴影深度, shadowColor, _分层阴影不透明度, If(forceFullRender, False, s.IsInSizeMove))
         s.ShadowForm.PlaceBehind(s.HostForm.Handle)
         If Not s.ShadowForm.Visible Then s.ShadowForm.Visible = True
 
@@ -1339,7 +1445,7 @@ Public Class ThisIsYourWindow
     End Property
 
     Private _毛玻璃帧率 As Integer = 15
-    <Category("LakeUI - Backdrop"), Description("Auto 模式常态刷新帧率 (0-60)。0 = 仅事件驱动（移动或调整大小结束 / 显示 / 激活）。仅在 BackdropExcludeFromCapture=True 时生效；关闭该开关时强制纯事件驱动。"), DefaultValue(15)>
+    <Category("LakeUI - Backdrop"), Description("Auto 模式常态刷新帧率 (0-60)。0 = 仅事件驱动（移动或调整大小结束 / 显示）。仅在 BackdropExcludeFromCapture=True 时生效；关闭该开关时强制纯事件驱动。"), DefaultValue(15)>
     Public Property BackdropFrameRate As Integer
         Get
             Return _毛玻璃帧率
@@ -1355,7 +1461,7 @@ Public Class ThisIsYourWindow
     ''' Auto 模式下是否启用 <c>WDA_EXCLUDEFROMCAPTURE</c> 把本窗口排除在抓屏之外。
     ''' True — 安全防自照，可启用常态周期刷新；副作用：系统截图、屏幕共享、录屏均无法捕获本窗口。
     ''' False（默认） — 不启用 WDA，截图工具可以正常截到窗口；为防止"自己抓自己"产生递归反馈纹路，
-    ''' 强制使用纯事件驱动刷新（移动或调整大小结束 / 显示 / 激活），<see cref="BackdropFrameRate"/> 被忽略。
+    ''' 强制使用纯事件驱动刷新（移动或调整大小结束 / 显示），<see cref="BackdropFrameRate"/> 被忽略。
     ''' Image 模式与本属性无关：永远不抓屏、永远不启用 WDA。
     ''' </summary>
     <Category("LakeUI - Backdrop"), Description("Auto 模式下启用 WDA_EXCLUDEFROMCAPTURE 防自照（True 才允许周期刷新；副作用：系统截图截不到本窗口）。"), DefaultValue(False)>
@@ -1462,7 +1568,7 @@ Public Class ThisIsYourWindow
 
         ' 周期 Tick 仅在 Auto 模式 + 启用 BackdropExcludeFromCapture + 帧率 > 0 时启用：
         '   - None：未启用毛玻璃。
-        '   - Image：源是静态图片，输出帧只取决于窗口尺寸（事件驱动即可：尺寸变化、显示、激活）。
+        '   - Image：源是静态图片，输出帧只取决于窗口尺寸（事件驱动即可：尺寸变化、显示）。
         '   - Auto 但未启用 BackdropExcludeFromCapture：抓屏依赖瞬时 WDA 切换防自照，
         '     而 SetWindowDisplayAffinity 的状态恢复需要数个 DWM 合成帧才能完成；高频翻转会
         '     让 DWM 长时间处于 EXCLUDE 状态，导致系统截图整体失效，违背开关初衷 ⇒ 强制纯事件驱动。
@@ -2022,8 +2128,15 @@ Public Class ThisIsYourWindow
         Return Rectangle.Intersect(New Rectangle(Point.Empty, s.HostForm.ClientSize), dirty)
     End Function
 
+    Private Function 获取标题栏渲染文本(form As Form) As String
+        Dim realTitle As String = If(form?.Text, String.Empty)
+        If String.IsNullOrEmpty(_标题文字私有协议) OrElse
+           Not ReferenceEquals(form, _标题文字私有协议首窗体) Then Return realTitle
+        Return _标题文字私有协议.Replace(TitleTextPrivateProtocolTitleToken, realTitle)
+    End Function
+
     Private Sub 绘制标题文字_D2D(rt As ID2D1DCRenderTarget, compositor As WindowCompositor, s As PerFormState)
-        Dim text As String = s.HostForm.Text
+        Dim text As String = 获取标题栏渲染文本(s.HostForm)
         If String.IsNullOrEmpty(text) Then Return
         Dim font As Font = If(_标题文字字体, s.HostForm.Font)
         If font Is Nothing Then Return
@@ -2070,6 +2183,7 @@ Public Class ThisIsYourWindow
     ''' </summary>
     Public Sub Attach(targetForm As Form)
         ArgumentNullException.ThrowIfNull(targetForm)
+        If _标题文字私有协议首窗体 Is Nothing Then _标题文字私有协议首窗体 = targetForm
         If Not targetForm.IsHandleCreated Then
             If _pendingAttachHandlers.ContainsKey(targetForm) Then Return
             Dim handler As EventHandler = Nothing
@@ -2385,7 +2499,23 @@ Public Class ThisIsYourWindow
                     Marshal.StructureToPtr(info, m.LParam, True)
                     Return
 
+                Case WM_WINDOWPOSCHANGED
+                    If _state.DeferredClientBoundsActive Then
+                        _owner.更新阴影实时跟随(_state)
+                        m.Result = IntPtr.Zero
+                        Return
+                    End If
+                    MyBase.WndProc(m)
+                    Return
+
                 Case WM_SIZE
+                    If _state.DeferredClientBoundsActive Then
+                        Dim minimizedDuringDeferred As Boolean = (_state.HostForm IsNot Nothing AndAlso
+                                                                  _state.HostForm.WindowState = FormWindowState.Minimized)
+                        _state.WasMinimized = minimizedDuringDeferred
+                        m.Result = IntPtr.Zero
+                        Return
+                    End If
                     MyBase.WndProc(m)
                     If _owner._阴影模式 <> ShadowModeEnum.DWM Then _owner.切换动画样式(_state.HostForm.Handle, False)
                     _owner.RecalculateButtonBounds(_state)
@@ -2406,40 +2536,49 @@ Public Class ThisIsYourWindow
                     Dim activated As Boolean = (CInt(m.WParam.ToInt64() And &HFFFF) <> 0)
                     _state.Activated = activated
                     _owner.触发激活状态改变(activated, _state.HostForm)
-                    _state.HostForm?.Invalidate()
-                    If activated Then _owner.更新阴影(_state)
-                    ' 获得焦点时强制刷新一次毛玻璃帧：
-                    '   - 焦点切换间隔通常远大于 DWM 恢复 WDA_NONE 所需时间，瞬时切换安全；
-                    '   - 用户期望切回窗口时看到最新桌面背景。
-                    If activated AndAlso _state.Renderer IsNot Nothing AndAlso
-                       _state.HostForm IsNot Nothing AndAlso _state.HostForm.Visible AndAlso
-                       _state.HostForm.WindowState <> FormWindowState.Minimized Then
-                        _state.Renderer.RequestFrame(_owner.获取毛玻璃捕获区域(_state.HostForm), True)
+                    If _owner._标题文字颜色 <> _owner._标题文字失焦颜色 Then
+                        _owner.InvalidateTitleText(_state, True)
+                    End If
+                    If _owner._毛玻璃模式 = BackdropModeEnum.None Then
+                        _state.HostForm?.Invalidate()
+                        If activated Then _owner.更新阴影(_state)
                     End If
                     Return
 
                 Case WM_MOVE
+                    If _state.DeferredClientBoundsActive Then
+                        m.Result = IntPtr.Zero
+                        Return
+                    End If
                     MyBase.WndProc(m)
                     _owner.更新阴影(_state)
                     Return
 
+                Case WM_PAINT, WM_ERASEBKGND
+                    If _state.DeferredClientBoundsActive Then
+                        If m.Msg = WM_PAINT Then ValidateRect(_state.HostForm.Handle, IntPtr.Zero)
+                        m.Result = If(m.Msg = WM_ERASEBKGND, New IntPtr(1), IntPtr.Zero)
+                        Return
+                    End If
+                    MyBase.WndProc(m)
+                    Return
+
                 Case WM_ENTERSIZEMOVE
                     _state.IsInSizeMove = True
-                    ' 暂停常态 Tick
-                    _state.BackdropTimer?.Stop()
+                    _owner.开始延迟客户区坐标上报(_state)
                     MyBase.WndProc(m)
                     Return
 
                 Case WM_EXITSIZEMOVE
                     _state.IsInSizeMove = False
-                    _owner.更新阴影(_state)
-                    ' 触发"鼠标抬起"末帧 + commit 平均色：
-                    '   Auto 模式 — 按最终位置重新抓屏 + 模糊。
-                    '   Image 模式 — 按最终窗口尺寸重新执行 cover + 模糊。
-                    _state.Renderer?.RequestFrame(_owner.获取毛玻璃捕获区域(_state.HostForm), True)
-                    ' 恢复常态 Tick（Image 模式下 重置毛玻璃Tick 内部直接判定不启动）
-                    _owner.重置毛玻璃Tick(_state)
                     MyBase.WndProc(m)
+                    If _state.DeferredClientBoundsActive Then
+                        _owner.提交延迟客户区坐标上报(_state)
+                    Else
+                        _owner.更新阴影(_state)
+                        _state.Renderer?.RequestFrame(_owner.获取毛玻璃捕获区域(_state.HostForm), True)
+                        _owner.重置毛玻璃Tick(_state)
+                    End If
                     Return
 
                 Case WM_NCACTIVATE

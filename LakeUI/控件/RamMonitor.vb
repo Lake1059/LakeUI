@@ -543,8 +543,7 @@ Public Class RamMonitor
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
         If Me.Width <= 0 OrElse Me.Height <= 0 Then Return
 
-        Dim ssaa As Integer = Math.Max(1, CInt(超采样倍率))
-        If GlobalOptions.GlobalSSAA <> GlobalOptions.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(GlobalOptions.GlobalSSAA))
+        Dim ssaa As Integer = D2DHelperV2.GetEffectiveSsaaScale(超采样倍率)
 
         Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
             If scope Is Nothing Then Return

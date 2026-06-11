@@ -780,8 +780,7 @@ Public Class ExcellentTrackBar
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
         Dim thumbRect As RectangleF = 计算滑块矩形()
-        Dim ssaa As Integer = Math.Max(1, CInt(超采样倍率))
-        If GlobalOptions.GlobalSSAA <> GlobalOptions.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(GlobalOptions.GlobalSSAA))
+        Dim ssaa As Integer = D2DHelperV2.GetEffectiveSsaaScale(超采样倍率)
 
         Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
             If scope Is Nothing Then Return

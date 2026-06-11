@@ -72,11 +72,11 @@ Partial Class Form_UltraDetailListView
         Label3 = New Label()
         Panel1 = New Panel()
         ModernButton4 = New ModernButton()
-        Label5 = New Label()
+        Label5 = New JustEmptyControl()
         ModernButton3 = New ModernButton()
-        Label8 = New Label()
+        Label8 = New JustEmptyControl()
         ModernButton2 = New ModernButton()
-        Label10 = New Label()
+        Label10 = New JustEmptyControl()
         ModernButton1 = New ModernButton()
         Label11 = New Label()
         ModernPanel1.SuspendLayout()
@@ -280,7 +280,7 @@ Partial Class Form_UltraDetailListView
         ModernButton3.Margin = New Padding(2)
         ModernButton3.Name = "ModernButton3"
         ModernButton3.Size = New Size(120, 50)
-        ModernButton3.SubText = "动画支持"
+        ModernButton3.SubText = "交互表现"
         ModernButton3.TabIndex = 4
         ModernButton3.Text = "半数动画"
         ModernButton3.TextAlign = ModernButton.TextAlignEnum.Left
@@ -305,7 +305,7 @@ Partial Class Form_UltraDetailListView
         ModernButton2.Margin = New Padding(2)
         ModernButton2.Name = "ModernButton2"
         ModernButton2.Size = New Size(160, 50)
-        ModernButton2.SubText = "技术偏好"
+        ModernButton2.SubText = "技术路线"
         ModernButton2.TabIndex = 2
         ModernButton2.Text = "招牌科技"
         ModernButton2.TextAlign = ModernButton.TextAlignEnum.Left
@@ -331,7 +331,7 @@ Partial Class Form_UltraDetailListView
         ModernButton1.Margin = New Padding(2)
         ModernButton1.Name = "ModernButton1"
         ModernButton1.Size = New Size(120, 50)
-        ModernButton1.SubText = "制作类型"
+        ModernButton1.SubText = "实现方式"
         ModernButton1.TabIndex = 0
         ModernButton1.Text = "全新绘制"
         ModernButton1.TextAlign = ModernButton.TextAlignEnum.Left
@@ -369,11 +369,11 @@ Partial Class Form_UltraDetailListView
     Friend WithEvents Label3 As Label
     Friend WithEvents Panel1 As Panel
     Friend WithEvents ModernButton4 As ModernButton
-    Friend WithEvents Label5 As Label
+    Friend WithEvents Label5 As JustEmptyControl
     Friend WithEvents ModernButton3 As ModernButton
-    Friend WithEvents Label8 As Label
+    Friend WithEvents Label8 As JustEmptyControl
     Friend WithEvents ModernButton2 As ModernButton
-    Friend WithEvents Label10 As Label
+    Friend WithEvents Label10 As JustEmptyControl
     Friend WithEvents ModernButton1 As ModernButton
     Friend WithEvents Label11 As Label
     Friend WithEvents UltraDetailListView1 As UltraDetailListView

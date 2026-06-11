@@ -1,4 +1,5 @@
 Imports System.Drawing.Imaging
+Imports System.Buffers
 Imports Vortice.Direct2D1
 
 ''' <summary>
@@ -29,8 +30,9 @@ Imports Vortice.Direct2D1
 ''' • source 自身若也是带 BackgroundSource 的 V2 透明控件，本类仍采样 source 本身，保留其中间
 '''   背景、遮罩、边框、背景图片与子控件等视觉层。采样期间若遇到同窗口 V2 重入，会由
 '''   D2DHelperV2 使用临时离屏 compositor 绘制到当前 GDI Bitmap，避免嵌套共享 BindDC。
-''' • 裁剪缓存数量由 <see cref="GlobalOptions.BackgroundPenetrationCropCacheMaxEntriesPerSource"/> 控制；
-'''   这是显存友好的近似 LRU，而不是长期持有每个透明控件的完整背景贴图。
+''' • 裁剪缓存由 <see cref="GlobalOptions.BackgroundPenetrationCropCacheMaxEntriesPerSource"/> 的每源数量上限
+'''   和 <see cref="GlobalOptions.BackgroundPenetrationCropCacheBudgetBytes"/> 的全局字节预算共同控制；
+'''   source 离开可见控件链后仍会主动释放整份背景采样缓存。
 ''' • <see cref="Invalidate"/> 用于换主题等需要立即重采的极端场景，常规情况下不需要手动调用。
 '''
 ''' === 线程要求 ===
@@ -43,6 +45,7 @@ Public Module BackgroundPenetrationV2
             Public SourceRect As Rectangle
             Public Width As Integer
             Public Height As Integer
+            Public Bytes As Long
             Public D2DBmp As ID2D1Bitmap
             Public D2DOwnerRT As WeakReference
             Public LastUsed As Long
@@ -64,6 +67,7 @@ Public Module BackgroundPenetrationV2
         Public Painting As Boolean
         Public ReadOnly Crops As New List(Of CropEntry)()
         Public ReadOnly Consumers As New List(Of ConsumerEntry)()
+        Public ReadOnly AncestorSubscriptions As New List(Of Control)()
         Public IsSolidColor As Boolean
         Public SolidArgb As Integer
     End Class
@@ -78,8 +82,15 @@ Public Module BackgroundPenetrationV2
         End Sub
     End Structure
 
+    Private Structure BitmapAcquireResult
+        Public Bitmap As ID2D1Bitmap
+        Public DisposeAfterDraw As Boolean
+    End Structure
+
     Private ReadOnly _cache As New Dictionary(Of Control, Entry)
+    Private ReadOnly _ancestorSubscriptionRefs As New Dictionary(Of Control, Integer)
     Private _sourceBitmapBytes As Long
+    Private _cropBitmapBytes As Long
     Private _clock As Long
 
 #Region "公开 API"
@@ -99,6 +110,10 @@ Public Module BackgroundPenetrationV2
         If source Is Nothing OrElse source.IsDisposed Then Return
         Dim sw As Integer = source.Width, sh As Integer = source.Height
         If sw <= 0 OrElse sh <= 0 Then Return
+        If Not IsRenderableControl(source) Then
+            ReleaseSource(source)
+            Return
+        End If
 
         Dim childBounds As New Rectangle(0, 0, child.Width, child.Height)
         Dim destRect As Rectangle = Rectangle.Intersect(childBounds, scope.ClipRectangle)
@@ -111,25 +126,31 @@ Public Module BackgroundPenetrationV2
         Dim rt = scope.BackgroundLayer
         Dim isSolid As Boolean
         Dim solidColor As Color = Color.Empty
-        Dim d2dBmp = AcquireD2DBitmap(source, rt, srcRect, isSolid, solidColor)
-        RegisterConsumer(source, child, mappedSourceRect, childBounds)
-        If isSolid Then
-            Dim brushCache = scope.Compositor?.BrushCache
-            If brushCache IsNot Nothing Then
-                rt.FillRectangle(D2DGlobals.ToD2DRect(destRect), brushCache.Get(rt, solidColor))
-            Else
-                Using b = rt.CreateSolidColorBrush(D2DGlobals.ToColor4(solidColor))
-                    rt.FillRectangle(D2DGlobals.ToD2DRect(destRect), b)
-                End Using
+        Dim acquired = AcquireD2DBitmap(source, rt, srcRect, isSolid, solidColor)
+        Try
+            RegisterConsumer(source, child, mappedSourceRect, childBounds)
+            If isSolid Then
+                Dim brushCache = scope.Compositor?.BrushCache
+                If brushCache IsNot Nothing Then
+                    rt.FillRectangle(D2DGlobals.ToD2DRect(destRect), brushCache.Get(rt, solidColor))
+                Else
+                    Using b = rt.CreateSolidColorBrush(D2DGlobals.ToColor4(solidColor))
+                        rt.FillRectangle(D2DGlobals.ToD2DRect(destRect), b)
+                    End Using
+                End If
+                Return
             End If
-            Return
-        End If
-        If d2dBmp Is Nothing Then Return
-        rt.DrawBitmap(d2dBmp,
-            D2DGlobals.ToD2DRect(destRect),
-            1.0F,
-            BitmapInterpolationMode.Linear,
-            D2DGlobals.ToD2DRect(New Rectangle(0, 0, destRect.Width, destRect.Height)))
+            If acquired.Bitmap Is Nothing Then Return
+            rt.DrawBitmap(acquired.Bitmap,
+                D2DGlobals.ToD2DRect(destRect),
+                1.0F,
+                BitmapInterpolationMode.Linear,
+                D2DGlobals.ToD2DRect(New Rectangle(0, 0, destRect.Width, destRect.Height)))
+        Finally
+            If acquired.DisposeAfterDraw AndAlso acquired.Bitmap IsNot Nothing Then
+                Try : acquired.Bitmap.Dispose() : Catch : End Try
+            End If
+        End Try
     End Sub
 
     ''' <summary>
@@ -153,8 +174,31 @@ Public Module BackgroundPenetrationV2
         FlushConsumerInvalidations(invalidations)
     End Sub
 
+    ''' <summary>
+    ''' 主动移除透明背景消费者。用于控件隐藏、换父级、换 source 或销毁时，
+    ''' 避免已下线页面继续留在 source 的失效传播列表中。
+    ''' </summary>
+    Public Sub UnregisterConsumer(child As Control, Optional source As Control = Nothing)
+        If child Is Nothing Then Return
+
+        SyncLock _cache
+            If source IsNot Nothing Then
+                Dim entry As Entry = Nothing
+                If _cache.TryGetValue(source, entry) Then
+                    RemoveConsumerNoLock(source, entry, child)
+                End If
+                Return
+            End If
+
+            For Each kv In _cache.ToArray()
+                RemoveConsumerNoLock(kv.Key, kv.Value, child)
+            Next
+        End SyncLock
+    End Sub
+
     Private Sub RegisterConsumer(source As Control, child As Control, sourceRect As Rectangle, destRect As Rectangle)
         If source Is Nothing OrElse child Is Nothing Then Return
+        If Not IsRenderableControl(child) Then Return
         SyncLock _cache
             Dim entry As Entry = Nothing
             If Not _cache.TryGetValue(source, entry) Then Return
@@ -179,12 +223,28 @@ Public Module BackgroundPenetrationV2
         End SyncLock
     End Sub
 
+    Private Sub RemoveConsumerNoLock(source As Control, entry As Entry, child As Control)
+        If source Is Nothing OrElse entry Is Nothing OrElse child Is Nothing Then Return
+
+        For i As Integer = entry.Consumers.Count - 1 To 0 Step -1
+            Dim consumer = entry.Consumers(i)
+            Dim existingChild = TryCast(consumer.ChildRef.Target, Control)
+            If existingChild Is Nothing OrElse existingChild.IsDisposed OrElse existingChild Is child Then
+                entry.Consumers.RemoveAt(i)
+            End If
+        Next
+
+        If entry.Consumers.Count = 0 Then
+            RemoveSourceEntryNoLock(source, entry)
+        End If
+    End Sub
+
 #End Region
 
 #Region "缓存内部"
 
     Private Function AcquireD2DBitmap(source As Control, rt As ID2D1RenderTarget, sourceRect As Rectangle,
-                                      ByRef isSolid As Boolean, ByRef solidColor As Color) As ID2D1Bitmap
+                                      ByRef isSolid As Boolean, ByRef solidColor As Color) As BitmapAcquireResult
         isSolid = False
         solidColor = Color.Empty
         Dim sw As Integer = source.Width, sh As Integer = source.Height
@@ -195,8 +255,12 @@ Public Module BackgroundPenetrationV2
                 entry = New Entry()
                 _cache(source) = entry
                 AddHandler source.Disposed, AddressOf OnSourceDisposed
+                AddHandler source.HandleDestroyed, AddressOf OnSourceHandleDestroyed
                 AddHandler source.Invalidated, AddressOf OnSourceInvalidated
+                AddHandler source.ParentChanged, AddressOf OnSourceParentOrVisibleChanged
                 AddHandler source.Resize, AddressOf OnSourceResized
+                AddHandler source.VisibleChanged, AddressOf OnSourceParentOrVisibleChanged
+                RefreshAncestorSubscriptions(source, entry)
             End If
             entry.LastUsed = NextClock()
             If entry.Painting Then Return Nothing
@@ -301,30 +365,49 @@ Public Module BackgroundPenetrationV2
         entry.DirtyRects.Clear()
     End Sub
 
-    Private Function AcquireCropBitmap(entry As Entry, rt As ID2D1RenderTarget, sourceBounds As Rectangle) As ID2D1Bitmap
+    Private Function AcquireCropBitmap(entry As Entry, rt As ID2D1RenderTarget, sourceBounds As Rectangle) As BitmapAcquireResult
         Dim sourceRect As Rectangle = sourceBounds
         Dim cropWidth As Integer = sourceRect.Width
         Dim cropHeight As Integer = sourceRect.Height
-        For Each crop In entry.Crops
-            Dim ownerAlive As Boolean = crop.D2DOwnerRT IsNot Nothing AndAlso ReferenceEquals(crop.D2DOwnerRT.Target, rt)
-            If ownerAlive AndAlso crop.Width = cropWidth AndAlso crop.Height = cropHeight AndAlso crop.SourceRect.Equals(sourceRect) Then
-                crop.LastUsed = NextClock()
-                Return crop.D2DBmp
-            End If
-        Next
+        Dim maxEntries As Integer = Math.Max(0, GlobalOptions.BackgroundPenetrationCropCacheMaxEntriesPerSource)
+        Dim cacheBudget As Long = Math.Max(0L, GlobalOptions.BackgroundPenetrationCropCacheBudgetBytes)
+        Dim cropBytes As Long = EstimateBitmapBytes(cropWidth, cropHeight)
+        Dim cacheEnabled As Boolean = maxEntries > 0 AndAlso cacheBudget > 0
+        Dim canCache As Boolean = cacheEnabled AndAlso cropBytes <= cacheBudget
+
+        If Not cacheEnabled AndAlso entry.Crops.Count > 0 Then
+            InvalidateCropEntries(entry, Nothing)
+        ElseIf cacheEnabled Then
+            TrimCropEntries(entry)
+        End If
+
+        If canCache Then
+            For Each crop In entry.Crops
+                Dim ownerAlive As Boolean = crop.D2DOwnerRT IsNot Nothing AndAlso ReferenceEquals(crop.D2DOwnerRT.Target, rt)
+                If ownerAlive AndAlso crop.Width = cropWidth AndAlso crop.Height = cropHeight AndAlso crop.SourceRect.Equals(sourceRect) Then
+                    crop.LastUsed = NextClock()
+                    Return New BitmapAcquireResult With {.Bitmap = crop.D2DBmp}
+                End If
+            Next
+        End If
 
         Dim newCrop As New Entry.CropEntry With {
             .SourceRect = sourceRect,
             .Width = cropWidth,
             .Height = cropHeight,
+            .Bytes = cropBytes,
             .D2DBmp = CreateCropD2DBitmap(entry.Bmp, sourceRect, cropWidth, cropHeight, rt),
             .D2DOwnerRT = New WeakReference(rt),
             .LastUsed = NextClock()
         }
         If newCrop.D2DBmp Is Nothing Then Return Nothing
+        If Not canCache Then
+            Return New BitmapAcquireResult With {.Bitmap = newCrop.D2DBmp, .DisposeAfterDraw = True}
+        End If
+        _cropBitmapBytes += newCrop.Bytes
         entry.Crops.Add(newCrop)
         TrimCropEntries(entry, newCrop)
-        Return newCrop.D2DBmp
+        Return New BitmapAcquireResult With {.Bitmap = newCrop.D2DBmp}
     End Function
 
     Private Function CreateCropD2DBitmap(src As Bitmap, sourceRect As Rectangle, cropWidth As Integer,
@@ -363,10 +446,45 @@ Public Module BackgroundPenetrationV2
                 End If
             Next
             If removeIndex < 0 Then Exit While
-            Dim removedCrop = entry.Crops(removeIndex)
-            Try : removedCrop.D2DBmp?.Dispose() : Catch : End Try
-            entry.Crops.RemoveAt(removeIndex)
+            ReleaseCropEntry(entry, removeIndex)
         End While
+        TrimCropEntriesGlobal(protectedCrop)
+    End Sub
+
+    Private Sub TrimCropEntriesGlobal(Optional protectedCrop As Entry.CropEntry = Nothing)
+        Dim budget As Long = Math.Max(0L, GlobalOptions.BackgroundPenetrationCropCacheBudgetBytes)
+        While _cropBitmapBytes > budget
+            Dim oldestEntry As Entry = Nothing
+            Dim oldestIndex As Integer = -1
+            Dim oldestUsed As Long = Long.MaxValue
+
+            For Each kv In _cache
+                Dim candidateEntry = kv.Value
+                If candidateEntry Is Nothing OrElse candidateEntry.Crops.Count = 0 Then Continue For
+
+                For i As Integer = 0 To candidateEntry.Crops.Count - 1
+                    Dim candidate = candidateEntry.Crops(i)
+                    If protectedCrop IsNot Nothing AndAlso ReferenceEquals(candidate, protectedCrop) Then Continue For
+                    If candidate.LastUsed < oldestUsed Then
+                        oldestEntry = candidateEntry
+                        oldestIndex = i
+                        oldestUsed = candidate.LastUsed
+                    End If
+                Next
+            Next
+
+            If oldestEntry Is Nothing OrElse oldestIndex < 0 Then Exit While
+            ReleaseCropEntry(oldestEntry, oldestIndex)
+        End While
+    End Sub
+
+    Private Sub ReleaseCropEntry(entry As Entry, index As Integer)
+        If entry Is Nothing OrElse index < 0 OrElse index >= entry.Crops.Count Then Return
+        Dim removedCrop = entry.Crops(index)
+        Try : removedCrop.D2DBmp?.Dispose() : Catch : End Try
+        _cropBitmapBytes -= removedCrop.Bytes
+        If _cropBitmapBytes < 0 Then _cropBitmapBytes = 0
+        entry.Crops.RemoveAt(index)
     End Sub
 
     Private Function NextClock() As Long
@@ -387,8 +505,49 @@ Public Module BackgroundPenetrationV2
         entry.BitmapBytes = 0
     End Sub
 
+    Private Sub ReleaseEntryCache(entry As Entry)
+        If entry Is Nothing Then Return
+        ReleaseSourceBitmap(entry)
+        InvalidateCropEntries(entry, Nothing)
+        entry.FullDirty = True
+        entry.DirtyRects.Clear()
+        entry.IsSolidColor = False
+        entry.SolidArgb = 0
+    End Sub
+
+    Private Sub RemoveSourceEntryNoLock(source As Control, entry As Entry)
+        If source Is Nothing OrElse entry Is Nothing Then Return
+        ClearAncestorSubscriptions(entry)
+        Try : RemoveHandler source.Disposed, AddressOf OnSourceDisposed : Catch : End Try
+        Try : RemoveHandler source.HandleDestroyed, AddressOf OnSourceHandleDestroyed : Catch : End Try
+        Try : RemoveHandler source.Invalidated, AddressOf OnSourceInvalidated : Catch : End Try
+        Try : RemoveHandler source.ParentChanged, AddressOf OnSourceParentOrVisibleChanged : Catch : End Try
+        Try : RemoveHandler source.Resize, AddressOf OnSourceResized : Catch : End Try
+        Try : RemoveHandler source.VisibleChanged, AddressOf OnSourceParentOrVisibleChanged : Catch : End Try
+
+        ReleaseEntryCache(entry)
+        entry.Consumers.Clear()
+        _cache.Remove(source)
+    End Sub
+
+    Private Sub ReleaseSource(source As Control)
+        If source Is Nothing Then Return
+        SyncLock _cache
+            Dim entry As Entry = Nothing
+            If _cache.TryGetValue(source, entry) Then
+                RemoveSourceEntryNoLock(source, entry)
+            End If
+        End SyncLock
+    End Sub
+
+    Private Function NormalizeSourceBitmapBudgetBytes() As Long
+        Dim budget As Long = GlobalOptions.BackgroundPenetrationSourceBitmapBudgetBytes
+        If budget > 0L AndAlso budget <= 1024L Then Return budget * 1024L * 1024L
+        Return Math.Max(0L, budget)
+    End Function
+
     Private Sub TrimSourceBitmaps(protectedEntry As Entry)
-        Dim budget As Long = Math.Max(0L, GlobalOptions.BackgroundPenetrationSourceBitmapBudgetBytes)
+        Dim budget As Long = NormalizeSourceBitmapBudgetBytes()
         While _sourceBitmapBytes > budget
             Dim oldest As Entry = Nothing
             For Each kv In _cache
@@ -458,8 +617,7 @@ Public Module BackgroundPenetrationV2
         For i As Integer = entry.Crops.Count - 1 To 0 Step -1
             Dim crop = entry.Crops(i)
             If Not dirtyRect.HasValue OrElse crop.SourceRect.IntersectsWith(dirtyRect.Value) Then
-                Try : crop.D2DBmp?.Dispose() : Catch : End Try
-                entry.Crops.RemoveAt(i)
+                ReleaseCropEntry(entry, i)
             End If
         Next
     End Sub
@@ -470,7 +628,7 @@ Public Module BackgroundPenetrationV2
         For i As Integer = entry.Consumers.Count - 1 To 0 Step -1
             Dim consumer = entry.Consumers(i)
             Dim child = TryCast(consumer.ChildRef.Target, Control)
-            If child Is Nothing OrElse child.IsDisposed Then
+            If child Is Nothing OrElse child.IsDisposed OrElse Not IsRenderableControl(child) Then
                 entry.Consumers.RemoveAt(i)
                 Continue For
             End If
@@ -512,7 +670,7 @@ Public Module BackgroundPenetrationV2
 
         For Each kv In merged
             Dim child = kv.Key
-            If child Is Nothing OrElse child.IsDisposed OrElse Not child.IsHandleCreated Then Continue For
+            If child Is Nothing OrElse child.IsDisposed OrElse Not child.IsHandleCreated OrElse Not IsRenderableControl(child) Then Continue For
             child.Invalidate(kv.Value)
         Next
     End Sub
@@ -568,23 +726,143 @@ Public Module BackgroundPenetrationV2
     Private Sub OnSourceDisposed(sender As Object, e As EventArgs)
         Dim source = TryCast(sender, Control)
         If source Is Nothing Then Return
-        RemoveHandler source.Disposed, AddressOf OnSourceDisposed
-        RemoveHandler source.Invalidated, AddressOf OnSourceInvalidated
-        RemoveHandler source.Resize, AddressOf OnSourceResized
         SyncLock _cache
             Dim entry As Entry = Nothing
             If _cache.TryGetValue(source, entry) Then
-                ReleaseSourceBitmap(entry)
-                InvalidateCropEntries(entry, Nothing)
-                entry.Consumers.Clear()
-                _cache.Remove(source)
+                RemoveSourceEntryNoLock(source, entry)
             End If
         End SyncLock
+    End Sub
+
+    Private Sub OnSourceHandleDestroyed(sender As Object, e As EventArgs)
+        Dim source = TryCast(sender, Control)
+        If source Is Nothing Then Return
+        Dim invalidations As New List(Of ConsumerInvalidation)()
+        SyncLock _cache
+            Dim entry As Entry = Nothing
+            If _cache.TryGetValue(source, entry) Then
+                CollectConsumerInvalidations(entry, Nothing, invalidations)
+                RemoveSourceEntryNoLock(source, entry)
+            End If
+        End SyncLock
+        FlushConsumerInvalidations(invalidations)
+    End Sub
+
+    Private Sub OnSourceParentOrVisibleChanged(sender As Object, e As EventArgs)
+        Dim changed = TryCast(sender, Control)
+        If changed Is Nothing Then Return
+        Dim invalidations As New List(Of ConsumerInvalidation)()
+
+        SyncLock _cache
+            Dim affectedSources As New List(Of Control)()
+            Dim entry As Entry = Nothing
+
+            If _cache.TryGetValue(changed, entry) Then
+                affectedSources.Add(changed)
+            End If
+
+            For Each kv In _cache
+                If kv.Key Is changed Then Continue For
+                If kv.Value IsNot Nothing AndAlso kv.Value.AncestorSubscriptions.Contains(changed) Then
+                    affectedSources.Add(kv.Key)
+                End If
+            Next
+
+            For Each source In affectedSources
+                If source Is Nothing Then Continue For
+                If Not _cache.TryGetValue(source, entry) Then Continue For
+                If IsRenderableControl(source) Then
+                    RefreshAncestorSubscriptions(source, entry)
+                    Continue For
+                End If
+
+                CollectConsumerInvalidations(entry, Nothing, invalidations)
+                RemoveSourceEntryNoLock(source, entry)
+            Next
+        End SyncLock
+
+        FlushConsumerInvalidations(invalidations)
     End Sub
 
 #End Region
 
 #Region "辅助"
+
+    Private Sub RefreshAncestorSubscriptions(source As Control, entry As Entry)
+        If entry Is Nothing Then Return
+        ClearAncestorSubscriptions(entry)
+        If source Is Nothing OrElse source.IsDisposed Then Return
+
+        Dim current = source.Parent
+        While current IsNot Nothing
+            AddAncestorSubscription(entry, current)
+            current = current.Parent
+        End While
+    End Sub
+
+    Private Sub ClearAncestorSubscriptions(entry As Entry)
+        If entry Is Nothing OrElse entry.AncestorSubscriptions.Count = 0 Then Return
+
+        For Each ancestor In entry.AncestorSubscriptions
+            If ancestor Is Nothing Then Continue For
+            ReleaseAncestorSubscription(ancestor)
+        Next
+        entry.AncestorSubscriptions.Clear()
+    End Sub
+
+    Private Sub AddAncestorSubscription(entry As Entry, ancestor As Control)
+        If entry Is Nothing OrElse ancestor Is Nothing Then Return
+
+        Dim refCount As Integer = 0
+        If _ancestorSubscriptionRefs.TryGetValue(ancestor, refCount) Then
+            _ancestorSubscriptionRefs(ancestor) = refCount + 1
+        Else
+            _ancestorSubscriptionRefs(ancestor) = 1
+            AddHandler ancestor.Disposed, AddressOf OnSourceParentOrVisibleChanged
+            AddHandler ancestor.HandleDestroyed, AddressOf OnSourceParentOrVisibleChanged
+            AddHandler ancestor.ParentChanged, AddressOf OnSourceParentOrVisibleChanged
+            AddHandler ancestor.VisibleChanged, AddressOf OnSourceParentOrVisibleChanged
+        End If
+
+        entry.AncestorSubscriptions.Add(ancestor)
+    End Sub
+
+    Private Sub ReleaseAncestorSubscription(ancestor As Control)
+        If ancestor Is Nothing Then Return
+
+        Dim refCount As Integer = 0
+        If Not _ancestorSubscriptionRefs.TryGetValue(ancestor, refCount) Then Return
+
+        If refCount > 1 Then
+            _ancestorSubscriptionRefs(ancestor) = refCount - 1
+            Return
+        End If
+
+        _ancestorSubscriptionRefs.Remove(ancestor)
+        Try : RemoveHandler ancestor.Disposed, AddressOf OnSourceParentOrVisibleChanged : Catch : End Try
+        Try : RemoveHandler ancestor.HandleDestroyed, AddressOf OnSourceParentOrVisibleChanged : Catch : End Try
+        Try : RemoveHandler ancestor.ParentChanged, AddressOf OnSourceParentOrVisibleChanged : Catch : End Try
+        Try : RemoveHandler ancestor.VisibleChanged, AddressOf OnSourceParentOrVisibleChanged : Catch : End Try
+    End Sub
+
+    Private Function IsRenderableControl(ctrl As Control) As Boolean
+        If ctrl Is Nothing OrElse ctrl.IsDisposed Then Return False
+        If ctrl.Width <= 0 OrElse ctrl.Height <= 0 Then Return False
+        If Not ctrl.IsHandleCreated Then Return False
+
+        Dim current As Control = ctrl
+        While current IsNot Nothing
+            If current.IsDisposed OrElse Not current.Visible Then Return False
+            current = current.Parent
+        End While
+
+        Dim form As Form = ctrl.FindForm()
+        If form IsNot Nothing Then
+            If form.IsDisposed OrElse Not form.Visible OrElse form.WindowState = FormWindowState.Minimized Then Return False
+        End If
+
+        Return True
+    End Function
 
     Private Function ComputeOffset(child As Control, source As Control) As Point
         Dim ox As Integer = 0, oy As Integer = 0
@@ -632,29 +910,33 @@ Public Module BackgroundPenetrationV2
             Dim h As Integer = data.Height
             Dim w As Integer = data.Width
             Dim scan0 As IntPtr = data.Scan0
-            Dim row(rowBytes - 1) As Byte
+            Dim row() As Byte = ArrayPool(Of Byte).Shared.Rent(rowBytes)
             Dim haveFirst As Boolean = False
             Dim firstB As Byte = 0, firstG As Byte = 0, firstR As Byte = 0
             Dim solid As Boolean = True
-            For y As Integer = 0 To h - 1
-                Dim rowPtr As IntPtr = IntPtr.Add(scan0, y * stride)
-                Runtime.InteropServices.Marshal.Copy(rowPtr, row, 0, rowBytes)
-                Dim x As Integer = 3
-                For i As Integer = 0 To w - 1
-                    Dim b As Byte = row(x - 3)
-                    Dim g As Byte = row(x - 2)
-                    Dim r As Byte = row(x - 1)
-                    If Not haveFirst Then
-                        firstB = b : firstG = g : firstR = r
-                        haveFirst = True
-                    ElseIf solid AndAlso (b <> firstB OrElse g <> firstG OrElse r <> firstR) Then
-                        solid = False
-                    End If
-                    row(x) = 255
-                    x += 4
+            Try
+                For y As Integer = 0 To h - 1
+                    Dim rowPtr As IntPtr = IntPtr.Add(scan0, y * stride)
+                    Runtime.InteropServices.Marshal.Copy(rowPtr, row, 0, rowBytes)
+                    Dim x As Integer = 3
+                    For i As Integer = 0 To w - 1
+                        Dim b As Byte = row(x - 3)
+                        Dim g As Byte = row(x - 2)
+                        Dim r As Byte = row(x - 1)
+                        If Not haveFirst Then
+                            firstB = b : firstG = g : firstR = r
+                            haveFirst = True
+                        ElseIf solid AndAlso (b <> firstB OrElse g <> firstG OrElse r <> firstR) Then
+                            solid = False
+                        End If
+                        row(x) = 255
+                        x += 4
+                    Next
+                    Runtime.InteropServices.Marshal.Copy(row, 0, rowPtr, rowBytes)
                 Next
-                Runtime.InteropServices.Marshal.Copy(row, 0, rowPtr, rowBytes)
-            Next
+            Finally
+                ArrayPool(Of Byte).Shared.Return(row)
+            End Try
             If haveFirst Then solidArgb = Color.FromArgb(255, firstR, firstG, firstB).ToArgb()
             Return solid AndAlso haveFirst
         Catch
@@ -677,17 +959,21 @@ Public Module BackgroundPenetrationV2
                 data = bmp.LockBits(rect, ImageLockMode.ReadWrite, PixelFormat.Format32bppPArgb)
                 Dim stride As Integer = data.Stride
                 Dim rowBytes As Integer = Math.Abs(stride)
-                Dim row(rowBytes - 1) As Byte
-                For y As Integer = 0 To data.Height - 1
-                    Dim rowPtr As IntPtr = IntPtr.Add(data.Scan0, y * stride)
-                    Runtime.InteropServices.Marshal.Copy(rowPtr, row, 0, rowBytes)
-                    Dim x As Integer = 3
-                    For i As Integer = 0 To data.Width - 1
-                        row(x) = 255
-                        x += 4
+                Dim row() As Byte = ArrayPool(Of Byte).Shared.Rent(rowBytes)
+                Try
+                    For y As Integer = 0 To data.Height - 1
+                        Dim rowPtr As IntPtr = IntPtr.Add(data.Scan0, y * stride)
+                        Runtime.InteropServices.Marshal.Copy(rowPtr, row, 0, rowBytes)
+                        Dim x As Integer = 3
+                        For i As Integer = 0 To data.Width - 1
+                            row(x) = 255
+                            x += 4
+                        Next
+                        Runtime.InteropServices.Marshal.Copy(row, 0, rowPtr, rowBytes)
                     Next
-                    Runtime.InteropServices.Marshal.Copy(row, 0, rowPtr, rowBytes)
-                Next
+                Finally
+                    ArrayPool(Of Byte).Shared.Return(row)
+                End Try
             Catch
             Finally
                 If data IsNot Nothing Then

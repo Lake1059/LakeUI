@@ -104,6 +104,9 @@ Public Module D2DGlobals
     Private _d2dFactory As ID2D1Factory1
     Private _dwFactory As IDWriteFactory
     Private ReadOnly _factoryLock As New Object()
+    Private _roundStrokeStyle As ID2D1StrokeStyle
+    Private _roundStrokeStyleWithDashCap As ID2D1StrokeStyle
+    Private ReadOnly _strokeStyles As New Dictionary(Of Integer, ID2D1StrokeStyle)()
 
     ''' <summary>进程级 <see cref="ID2D1Factory"/> 单例（SingleThreaded）。不要 Dispose。</summary>
     Public Function GetD2DFactory() As ID2D1Factory
@@ -139,6 +142,58 @@ Public Module D2DGlobals
             End SyncLock
         End If
         Return _dwFactory
+    End Function
+
+    ''' <summary>
+    ''' 进程级圆头实线描边样式。StrokeStyle 由 D2D factory 创建，不绑定 RenderTarget，可跨控件复用。
+    ''' </summary>
+    Public Function GetRoundStrokeStyle(Optional roundDashCap As Boolean = False) As ID2D1StrokeStyle
+        If roundDashCap Then
+            If _roundStrokeStyleWithDashCap Is Nothing Then
+                SyncLock _factoryLock
+                    If _roundStrokeStyleWithDashCap Is Nothing Then
+                        _roundStrokeStyleWithDashCap = GetStrokeStyle(CapStyle.Round, CapStyle.Round, CapStyle.Round)
+                    End If
+                End SyncLock
+            End If
+            Return _roundStrokeStyleWithDashCap
+        End If
+
+        If _roundStrokeStyle Is Nothing Then
+            SyncLock _factoryLock
+                If _roundStrokeStyle Is Nothing Then
+                    _roundStrokeStyle = GetStrokeStyle(CapStyle.Round, CapStyle.Round, CapStyle.Flat)
+                End If
+            End SyncLock
+        End If
+        Return _roundStrokeStyle
+    End Function
+
+    Friend Function GetStrokeStyle(startCap As CapStyle, endCap As CapStyle,
+                                   Optional dashCap As CapStyle = CapStyle.Flat,
+                                   Optional lineJoin As Vortice.Direct2D1.LineJoin = Vortice.Direct2D1.LineJoin.Round) As ID2D1StrokeStyle
+        Dim key As Integer = (CInt(startCap) << 24) Xor (CInt(endCap) << 16) Xor (CInt(dashCap) << 8) Xor CInt(lineJoin)
+        SyncLock _factoryLock
+            Dim style As ID2D1StrokeStyle = Nothing
+            If _strokeStyles.TryGetValue(key, style) Then Return style
+            style = CreateStrokeStyle(startCap, endCap, dashCap, lineJoin)
+            _strokeStyles(key) = style
+            Return style
+        End SyncLock
+    End Function
+
+    Private Function CreateStrokeStyle(startCap As CapStyle, endCap As CapStyle,
+                                       dashCap As CapStyle,
+                                       lineJoin As Vortice.Direct2D1.LineJoin) As ID2D1StrokeStyle
+        Return GetD2DFactory().CreateStrokeStyle(
+            New StrokeStyleProperties With {
+                .StartCap = startCap,
+                .EndCap = endCap,
+                .DashCap = dashCap,
+                .LineJoin = lineJoin,
+                .DashStyle = Vortice.Direct2D1.DashStyle.Solid,
+                .MiterLimit = 10.0F
+            })
     End Function
 
 #End Region
@@ -190,7 +245,22 @@ Public Module D2DGlobals
     ''' <see cref="D2DBitmapCache.GetBitmap"/> 复用。
     ''' </summary>
     Public Function CreateBitmapFromImage(rt As ID2D1RenderTarget, img As Image) As ID2D1Bitmap
-        If img Is Nothing Then Return Nothing
+        If rt Is Nothing OrElse img Is Nothing Then Return Nothing
+
+        Try
+            Dim sourceBitmap = TryCast(img, Bitmap)
+            If sourceBitmap IsNot Nothing AndAlso sourceBitmap.PixelFormat = System.Drawing.Imaging.PixelFormat.Format32bppPArgb Then
+                ' Safe fast path: this only uploads CPU bitmap pixels into the same D2D RenderTarget.
+                ' It does not use the D2D1.1 DeviceContext path, whose resources cannot be shared
+                ' with the current DC RT stage and previously caused invisible image results.
+                Dim directBitmap = CreateBitmapFromGdi(rt, sourceBitmap)
+                If directBitmap IsNot Nothing Then Return directBitmap
+            End If
+        Catch
+            ' Fall back to the normalization path below; some Bitmap instances can still reject
+            ' pixel-format access or LockBits because of their backing store or lifetime.
+        End Try
+
         Dim bmp As New Bitmap(img.Width, img.Height, System.Drawing.Imaging.PixelFormat.Format32bppPArgb)
         bmp.SetResolution(img.HorizontalResolution, img.VerticalResolution)
         Using g = Graphics.FromImage(bmp)
@@ -236,14 +306,14 @@ Public Module D2DGlobals
 
     ''' <summary>
     ''' 缓存一个 GDI <see cref="Image"/> 上传得到的 <see cref="ID2D1Bitmap"/>，避免每帧重新上传。
-    ''' 仅当源 Image 引用或目标 RT 发生变化时重新上传。
+    ''' 仅当源 Image 引用或目标 RT 发生变化时重新上传；缓存项不强持有源 Image。
     ''' </summary>
     Public Class D2DBitmapCache
         Implements IDisposable
 
         Private NotInheritable Class Entry
             Public Bitmap As ID2D1Bitmap
-            Public Source As Image
+            Public SourceRef As WeakReference(Of Image)
             Public RenderTarget As ID2D1RenderTarget
             Public Bytes As Long
             Public LastUsed As Long
@@ -260,7 +330,11 @@ Public Module D2DGlobals
             End If
             Dim entry As Entry = Nothing
             If _entries.TryGetValue(rt, entry) Then
-                If entry.Source Is src AndAlso entry.Bitmap IsNot Nothing Then
+                Dim entrySource As Image = Nothing
+                If entry.SourceRef IsNot Nothing AndAlso
+                   entry.SourceRef.TryGetTarget(entrySource) AndAlso
+                   entrySource Is src AndAlso
+                   entry.Bitmap IsNot Nothing Then
                     entry.LastUsed = NextClock()
                     Return entry.Bitmap
                 End If
@@ -272,7 +346,7 @@ Public Module D2DGlobals
 
             entry = New Entry With {
                 .Bitmap = bmp,
-                .Source = src,
+                .SourceRef = New WeakReference(Of Image)(src),
                 .RenderTarget = rt,
                 .Bytes = EstimateBytes(src),
                 .LastUsed = NextClock()
@@ -329,6 +403,10 @@ Public Module D2DGlobals
                 If oldestRt Is Nothing Then Exit While
                 RemoveEntry(oldestRt)
             End While
+        End Sub
+
+        Friend Sub TrimToCurrentBudget()
+            TrimToBudget()
         End Sub
 
         Public Sub Dispose() Implements IDisposable.Dispose
@@ -398,6 +476,10 @@ Public Module D2DGlobals
         Dim resolved = ResolveTextFontNameUncached(fallback)
 
         SyncLock _fontResolveLock
+            If GlobalOptions.DWriteFontResolveCacheMaxEntries <= 0 Then
+                _fontResolveCache.Clear()
+                Return resolved
+            End If
             _fontResolveCache(key) = New FontResolveEntry With {
                 .Value = resolved,
                 .LastUsed = NextFontResolveClock()
@@ -660,6 +742,25 @@ Public Module D2DGlobals
             End While
         End Sub
 
+        Friend Sub TrimToCurrentLimit()
+            Dim maxEntries As Integer = Math.Max(0, GlobalOptions.D2DBrushCacheMaxEntriesPerRenderTarget)
+            For Each bucket In _buckets.Values
+                While bucket.Count > maxEntries AndAlso bucket.Count > 0
+                    Dim oldestKey As Integer = 0
+                    Dim oldestEntry As BrushEntry = Nothing
+                    For Each kv In bucket
+                        If oldestEntry Is Nothing OrElse kv.Value.LastUsed < oldestEntry.LastUsed Then
+                            oldestKey = kv.Key
+                            oldestEntry = kv.Value
+                        End If
+                    Next
+                    If oldestEntry Is Nothing Then Exit While
+                    bucket.Remove(oldestKey)
+                    Try : oldestEntry.Brush.Dispose() : Catch : End Try
+                End While
+            Next
+        End Sub
+
         Public Sub Invalidate()
             InvalidateInternal()
         End Sub
@@ -734,6 +835,18 @@ Public Module D2DGlobals
                                sizePx, textAlign, paraAlign, trimChar, wordWrap)
         End Function
 
+        Public Function [Get](family As String, weight As Vortice.DirectWrite.FontWeight,
+                              style As Vortice.DirectWrite.FontStyle,
+                              stretch As Vortice.DirectWrite.FontStretch,
+                              sizePx As Single,
+                              textAlign As Vortice.DirectWrite.TextAlignment,
+                              paraAlign As Vortice.DirectWrite.ParagraphAlignment,
+                              trimChar As Boolean,
+                              wordWrap As Boolean) As IDWriteTextFormat
+            Return GetResolved(ResolveTextFont(family, weight, style, stretch),
+                               sizePx, textAlign, paraAlign, trimChar, wordWrap)
+        End Function
+
         Public Function [Get](font As Font, sizePx As Single,
                               textAlign As Vortice.DirectWrite.TextAlignment,
                               paraAlign As Vortice.DirectWrite.ParagraphAlignment,
@@ -800,6 +913,25 @@ Public Module D2DGlobals
                 Dim found As Boolean = False
                 For Each kv In _map
                     If kv.Key.Equals(protectedKey) Then Continue For
+                    If oldestEntry Is Nothing OrElse kv.Value.LastUsed < oldestEntry.LastUsed Then
+                        oldestKey = kv.Key
+                        oldestEntry = kv.Value
+                        found = True
+                    End If
+                Next
+                If Not found Then Exit While
+                _map.Remove(oldestKey)
+                Try : oldestEntry.Format.Dispose() : Catch : End Try
+            End While
+        End Sub
+
+        Friend Sub TrimToCurrentLimit()
+            Dim maxEntries As Integer = Math.Max(0, GlobalOptions.DWriteTextFormatCacheMaxEntriesPerCompositor)
+            While _map.Count > maxEntries AndAlso _map.Count > 0
+                Dim oldestKey As Key = Nothing
+                Dim oldestEntry As TextFormatEntry = Nothing
+                Dim found As Boolean = False
+                For Each kv In _map
                     If oldestEntry Is Nothing OrElse kv.Value.LastUsed < oldestEntry.LastUsed Then
                         oldestKey = kv.Key
                         oldestEntry = kv.Value

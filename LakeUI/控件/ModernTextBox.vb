@@ -1080,14 +1080,12 @@ Public Class ModernTextBox
             Dim dcRT As ID2D1DCRenderTarget = scope.DCRenderTarget
             DrawTextContent_D2D(dcRT, w, h, scope.Compositor)
             绘制边框_D2D(dcRT, hasRadius, boundsRect, bc, brushCache)
-            DrawScrollBar_D2D(dcRT, w, h)
+            DrawScrollBar_D2D(dcRT, brushCache, w, h)
         End Using
     End Sub
 
     Private Function 计算当前绘制超采样倍率() As Integer
-        Dim ssaa As Integer = Math.Max(1, CInt(超采样倍率))
-        If GlobalOptions.GlobalSSAA <> GlobalOptions.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(GlobalOptions.GlobalSSAA))
-        Return ssaa
+        Return D2DHelperV2.GetEffectiveSsaaScale(超采样倍率)
     End Function
 
     Private Sub 绘制背景_D2D(rt As ID2D1RenderTarget, hasRadius As Boolean, fillRect As RectangleF, brushCache As D2DGlobals.SolidColorBrushCache)
@@ -1117,15 +1115,15 @@ Public Class ModernTextBox
         If 边框宽度 <= 0 OrElse borderClr.A = 0 Then Return
         Dim s As Single = DpiScale()
         If hasRadius Then
-            Using geo = RectangleRenderer.创建圆角矩形几何(boundsRect, 边框圆角半径 * s)
-                RectangleRenderer.绘制圆角边框_D2D(rt, geo, borderClr, 边框宽度 * s, brushCache)
-            End Using
+            RectangleRenderer.绘制圆角边框_D2D(rt, boundsRect, 边框圆角半径 * s, borderClr, 边框宽度 * s, brushCache)
         Else
             RectangleRenderer.绘制矩形边框_D2D(rt, boundsRect, borderClr, 边框宽度 * s, brushCache)
         End If
     End Sub
 
-    Private Sub DrawScrollBar_D2D(rt As ID2D1RenderTarget, w As Integer, h As Integer)
+    Private Sub DrawScrollBar_D2D(rt As ID2D1RenderTarget,
+                                  brushCache As D2DGlobals.SolidColorBrushCache,
+                                  w As Integer, h As Integer)
         If Not _scrollBarVisible Then Return
         Dim s As Single = DpiScale()
         Dim scaledBorder As Integer = CInt(Math.Round(边框宽度 * s))
@@ -1137,7 +1135,7 @@ Public Class ModernTextBox
         _scrollBar.ComputeLayout(w, h, scaledBorder, scaledRadius, 0, 0, scaledScrollW,
             totalH, viewH, CInt(Math.Round(_scrollPixelOffset)))
         _scrollBar.Draw_D2D(rt, w, h, scaledBorder, scaledRadius, scaledScrollW,
-            滚动条轨道颜色, 滚动条颜色, 滚动条悬停颜色)
+            滚动条轨道颜色, 滚动条颜色, 滚动条悬停颜色, brushCache)
     End Sub
 
     Private Sub DrawTextContent_D2D(rt As ID2D1DCRenderTarget, w As Integer, h As Integer, compositor As WindowCompositor)
@@ -1218,10 +1216,7 @@ Public Class ModernTextBox
         PushClip(rt, New RectangleF(textLeft, textTop, textWidth, textHeight))
         Dim isEmpty As Boolean = (_lines.Count = 1 AndAlso _lines(0).Length = 0)
         If isEmpty AndAlso Not String.IsNullOrEmpty(水印文本) Then
-            Dim waterLineY As Single = If(isSingleLine, singleLineY, CSng(textTop))
-            Dim waterAlignOff As Integer = If(启用多行 OrElse 文本对齐 = TextAlignMode.Left, 0,
-                ComputeAlignOffset(MeasureWidth(水印文本), textWidth))
-            DrawTextSegment_D2D(rt, 水印文本, Font, 水印颜色, textLeft + waterAlignOff, waterLineY, textWidth, _scaledLineHeight, False, textFormatCache, brushCache)
+            DrawWaterText_D2D(rt, textLeft, textTop, textWidth, textHeight, singleLineY, textFormatCache, brushCache)
         End If
         Dim wrapActive As Boolean = IsWordWrapActive()
         Dim minL As Integer = 0, minC As Integer = 0, maxL As Integer = 0, maxC As Integer = 0
@@ -1246,6 +1241,37 @@ Public Class ModernTextBox
             DrawCaret_D2D(rt, textLeft, textTop, brushCache)
         End If
         rt.PopAxisAlignedClip()
+    End Sub
+
+    Private Sub DrawWaterText_D2D(rt As ID2D1RenderTarget,
+                                  textLeft As Integer,
+                                  textTop As Integer,
+                                  textWidth As Integer,
+                                  textHeight As Integer,
+                                  singleLineY As Single,
+                                  textFormatCache As D2DGlobals.TextFormatCache,
+                                  brushCache As D2DGlobals.SolidColorBrushCache)
+        If rt Is Nothing OrElse String.IsNullOrEmpty(水印文本) OrElse 水印颜色.A = 0 Then Return
+        If textWidth <= 0 OrElse textHeight <= 0 Then Return
+
+        If Not IsWordWrapActive() Then
+            Dim waterLineY As Single = If(启用多行, CSng(textTop), singleLineY)
+            Dim waterAlignOff As Integer = If(启用多行 OrElse 文本对齐 = TextAlignMode.Left, 0,
+                ComputeAlignOffset(MeasureWidth(水印文本), textWidth))
+            DrawTextSegment_D2D(rt, 水印文本, Font, 水印颜色, textLeft + waterAlignOff, waterLineY,
+                textWidth, _scaledLineHeight, False, textFormatCache, brushCache)
+            Return
+        End If
+
+        Dim waterLines = BuildWaterTextVisualLines(水印文本, textWidth)
+        Dim visibleLines As Integer = Math.Min(waterLines.Count, Math.Max(1, CInt(Math.Ceiling(textHeight / CDbl(_scaledLineHeight)))))
+        For i As Integer = 0 To visibleLines - 1
+            Dim lineText As String = waterLines(i)
+            If lineText.Length = 0 Then Continue For
+            DrawTextSegment_D2D(rt, lineText, Font, 水印颜色, textLeft,
+                textTop + i * _scaledLineHeight, textWidth, _scaledLineHeight,
+                False, textFormatCache, brushCache)
+        Next
     End Sub
 
     Private Sub PushClip(rt As ID2D1RenderTarget, rect As RectangleF)
@@ -1713,7 +1739,7 @@ Public Class ModernTextBox
         Return New Point(col, vl.LogicalLine)
     End Function
     Private Function FindColFromX(lineStr As String, x As Integer) As Integer
-        Return TextRenderHelper.FindColFromX_D2D(GetDisplayText(lineStr), x, Font, DpiScale())
+        Return TextRenderHelper.FindColFromX_D2D(GetDisplayText(lineStr), x, Font, DpiScale(), GetTextFormatCacheForMeasure())
     End Function
     Private Sub UpdateCursorForLink(x As Integer, y As Integer)
         Dim hitPos As Point = HitTest(x, y)
@@ -2355,7 +2381,7 @@ Public Class ModernTextBox
         Dim displayText = GetDisplayText(text)
         Dim cached As Integer = 0
         If _textWidthCache.TryGetValue(displayText, cached) Then Return cached
-        cached = CInt(Math.Ceiling(TextRenderHelper.MeasureTextWidth_D2D(displayText, Font, DpiScale())))
+        cached = CInt(Math.Ceiling(TextRenderHelper.MeasureTextWidth_D2D(displayText, Font, DpiScale(), GetTextFormatCacheForMeasure())))
         If _textWidthCache.Count >= MaxTextWidthCacheEntries Then _textWidthCache.Clear()
         _textWidthCache(displayText) = cached
         Return cached
@@ -2391,7 +2417,7 @@ Public Class ModernTextBox
                 If segStart >= segEnd Then Continue For
                 Dim useFont = If(r.RunFont, Font)
                 Dim segText = GetDisplayText(lineStr.Substring(segStart, segEnd - segStart))
-                totalWidth += CInt(Math.Ceiling(TextRenderHelper.MeasureTextWidth_D2D(segText, useFont, DpiScale())))
+                totalWidth += CInt(Math.Ceiling(TextRenderHelper.MeasureTextWidth_D2D(segText, useFont, DpiScale(), GetTextFormatCacheForMeasure())))
             Next
         End If
         If _lineWidthCache.Count >= MaxLineWidthCacheEntries Then _lineWidthCache.Clear()
@@ -2441,7 +2467,7 @@ Public Class ModernTextBox
             Dim segText = GetDisplayText(lineStr.Substring(segStart, segEnd - segStart))
             Dim segWidth = MeasureLineWidth(lineIndex, segStart, segEnd - segStart)
             If accWidth + segWidth > x Then
-                Dim localCol = TextRenderHelper.FindColFromX_D2D(segText, x - accWidth, useFont, DpiScale())
+                Dim localCol = TextRenderHelper.FindColFromX_D2D(segText, x - accWidth, useFont, DpiScale(), GetTextFormatCacheForMeasure())
                 Return segStart + localCol
             End If
             accWidth += segWidth
@@ -2478,8 +2504,12 @@ Public Class ModernTextBox
         If Not _showLineNumbers OrElse Not 启用多行 Then Return 0
         Dim useFont As Font = If(_lineNumFont, Font)
         Dim maxNum As String = _lines.Count.ToString()
-        Dim numW As Integer = CInt(Math.Ceiling(TextRenderHelper.MeasureTextWidth_D2D(maxNum, useFont, DpiScale())))
+        Dim numW As Integer = CInt(Math.Ceiling(TextRenderHelper.MeasureTextWidth_D2D(maxNum, useFont, DpiScale(), GetTextFormatCacheForMeasure())))
         Return _scaledLineNumPadL + numW + _scaledLineNumPadR
+    End Function
+
+    Private Function GetTextFormatCacheForMeasure() As D2DGlobals.TextFormatCache
+        Return D2DHelperV2.GetCompositor(Me)?.TextFormatCache
     End Function
 #End Region
 
@@ -2536,6 +2566,54 @@ Public Class ModernTextBox
             End If
         Next
         Return fitLength
+    End Function
+    Private Function BuildWaterTextVisualLines(text As String, maxWidth As Integer) As List(Of String)
+        Dim result As New List(Of String)
+        If String.IsNullOrEmpty(text) Then
+            result.Add(String.Empty)
+            Return result
+        End If
+
+        Dim logicalLines = text.Replace(vbCr, String.Empty).Split(ControlChars.Lf)
+        For Each line In logicalLines
+            If line.Length = 0 OrElse maxWidth <= 0 Then
+                result.Add(String.Empty)
+                Continue For
+            End If
+
+            Dim startCol As Integer = 0
+            While startCol < line.Length
+                Dim fitLen As Integer = FindWaterTextFitLength(line, startCol, maxWidth)
+                result.Add(line.Substring(startCol, fitLen))
+                startCol += fitLen
+            End While
+        Next
+        If result.Count = 0 Then result.Add(String.Empty)
+        Return result
+    End Function
+    Private Function FindWaterTextFitLength(line As String, startCol As Integer, maxWidth As Integer) As Integer
+        Dim remaining As Integer = line.Length - startCol
+        If remaining <= 0 Then Return 0
+        If MeasureWidth(line.Substring(startCol, remaining)) <= maxWidth Then Return remaining
+
+        Dim lo As Integer = 1
+        Dim hi As Integer = remaining
+        Dim best As Integer = 1
+        While lo <= hi
+            Dim mid As Integer = (lo + hi) \ 2
+            If MeasureWidth(line.Substring(startCol, mid)) <= maxWidth Then
+                best = mid
+                lo = mid + 1
+            Else
+                hi = mid - 1
+            End If
+        End While
+
+        Dim bestLen As Integer = Math.Max(1, best)
+        If bestLen < remaining Then
+            bestLen = PreferWhitespaceWrap(line, startCol, bestLen)
+        End If
+        Return bestLen
     End Function
     Private Function GetVisualLineIndex(logicalLine As Integer, col As Integer) As Integer
         For i As Integer = _visualLines.Count - 1 To 0 Step -1

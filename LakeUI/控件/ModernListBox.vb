@@ -328,7 +328,7 @@ Public Class ModernListBox
     Private _checkDragApplied As Boolean = False
 
     ' 工具提示
-    Private _tipForm As ToolTipForm = Nothing
+    Private _tipForm As FloatingToolTipForm = Nothing
     Private _tipHoverIndex As Integer = -1
     Private _updateCount As Integer = 0
     Private _pendingSelectionChanged As Boolean = False
@@ -1210,8 +1210,7 @@ Public Class ModernListBox
 
         预计算滚动条布局()
 
-        Dim ssaa As Integer = Math.Max(1, CInt(超采样倍率))
-        If GlobalOptions.GlobalSSAA <> GlobalOptions.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(GlobalOptions.GlobalSSAA))
+        Dim ssaa As Integer = D2DHelperV2.GetEffectiveSsaaScale(超采样倍率)
 
         Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
             If scope Is Nothing Then Return
@@ -1333,7 +1332,8 @@ Public Class ModernListBox
         If _scrollBar.TrackRect.IsEmpty Then Return
         Dim s As Single = DpiScale()
         _scrollBar.Draw_D2D(rt, Width, Height, CInt(Math.Round(边框宽度 * s)), CInt(Math.Round(边框圆角半径 * s)),
-            CInt(Math.Round(滚动条宽度 * s)), 滚动条轨道颜色, 滚动条颜色, 滚动条悬停颜色)
+            CInt(Math.Round(滚动条宽度 * s)), 滚动条轨道颜色, 滚动条颜色, 滚动条悬停颜色,
+            _当前合成器?.BrushCache)
     End Sub
 
     Private Sub 绘制全部项背景与图标_D2D(rt As ID2D1RenderTarget)
@@ -2092,109 +2092,6 @@ Public Class ModernListBox
 
 #Region "工具提示"
 
-    Private Class ToolTipForm
-        Inherits PopupForm
-
-        Private ReadOnly _owner As ModernListBox
-        Private _tipText As String = ""
-        Private _lastMeasureKey As String = Nothing
-        Private _lastMeasuredSize As Size = Size.Empty
-
-        Public Sub New(owner As ModernListBox)
-            _owner = owner
-            Me.DoubleBuffered = True
-            Me.AutoScaleMode = AutoScaleMode.Dpi
-            Me.BackColor = owner.提示背景颜色
-        End Sub
-
-        Public Sub ShowTip(text As String, screenLocation As Point)
-            _tipText = text
-            Dim pad As Padding = _owner.提示内边距
-            Dim bw As Integer = _owner.提示边框宽度
-            Dim maxW As Integer = _owner.提示最大宽度
-            Dim contentW As Integer = maxW - pad.Left - pad.Right - bw * 2
-            If contentW < 10 Then contentW = 10
-
-            Dim measureKey As String = String.Concat(_tipText, ChrW(0), contentW, ChrW(0), _owner.Font.GetHashCode(), ChrW(0), _owner.DeviceDpi)
-            Dim measured As Size
-            If String.Equals(_lastMeasureKey, measureKey, StringComparison.Ordinal) Then
-                measured = _lastMeasuredSize
-            Else
-                measured = TextRenderer.MeasureText(_tipText, _owner.Font,
-                    New Size(contentW, Integer.MaxValue),
-                    TextFormatFlags.WordBreak Or TextFormatFlags.NoPadding)
-                _lastMeasureKey = measureKey
-                _lastMeasuredSize = measured
-            End If
-
-            Dim w As Integer = Math.Min(maxW, measured.Width + pad.Left + pad.Right + bw * 2)
-            Dim h As Integer = measured.Height + pad.Top + pad.Bottom + bw * 2
-
-            Me.Size = New Size(w, h)
-
-            Dim scr As Screen = Screen.FromPoint(screenLocation)
-            Dim loc As Point = screenLocation
-            If loc.X + w > scr.WorkingArea.Right Then
-                loc.X = scr.WorkingArea.Right - w
-                If loc.X < scr.WorkingArea.Left Then loc.X = scr.WorkingArea.Left
-            End If
-            If loc.Y + h > scr.WorkingArea.Bottom Then
-                loc.Y = scr.WorkingArea.Bottom - h
-            End If
-            Me.Location = loc
-
-            If Not Visible Then Me.Show()
-            Invalidate()
-        End Sub
-
-        Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
-            ' 顶层 Form：由 OnPaint 用 D2D 全权接管底色。
-        End Sub
-
-        Protected Overrides Sub OnPaint(e As PaintEventArgs)
-            Dim w As Integer = ClientRectangle.Width
-            Dim h As Integer = ClientRectangle.Height
-            If w < 1 OrElse h < 1 Then Return
-            Dim bw As Integer = _owner.提示边框宽度
-            Dim radius As Integer = _owner.提示圆角半径
-            Dim pad As Padding = _owner.提示内边距
-
-            Using scope = D2DHelperV2.BeginPaint(e, Me, 1)
-                If scope Is Nothing Then Return
-                Dim rt = scope.GraphicsLayer
-                Dim brushCache = scope.Compositor.BrushCache
-
-                rt.Clear(D2DGlobals.ToColor4(_owner.提示背景颜色))
-
-                Dim boundsRect As New RectangleF(0, 0, w - 1, h - 1)
-                If bw > 0 Then
-                    Dim half As Single = bw / 2.0F
-                    boundsRect.Inflate(-half, -half)
-                End If
-
-                If radius > 0 Then
-                    Using geo = RectangleRenderer.创建圆角矩形几何(boundsRect, radius)
-                        rt.FillGeometry(geo, brushCache.[Get](rt, _owner.提示背景颜色))
-                        If bw > 0 Then
-                            rt.DrawGeometry(geo, brushCache.[Get](rt, _owner.提示边框颜色), bw)
-                        End If
-                    End Using
-                ElseIf bw > 0 Then
-                    rt.DrawRectangle(D2DGlobals.ToD2DRect(boundsRect), brushCache.[Get](rt, _owner.提示边框颜色), bw)
-                End If
-
-                scope.FlushGraphics()
-
-                Dim textRect As New Rectangle(bw + pad.Left, bw + pad.Top,
-                    w - bw * 2 - pad.Left - pad.Right,
-                    h - bw * 2 - pad.Top - pad.Bottom)
-                D2DTextRenderer.DrawText(scope.TextLayer, _tipText, _owner.Font, textRect, _owner.提示文本颜色,
-                    TextFormatFlags.WordBreak Or TextFormatFlags.NoPadding Or TextFormatFlags.Left Or TextFormatFlags.Top,
-                    _owner.DpiScale(), scope.Compositor.TextFormatCache, brushCache)
-            End Using
-        End Sub
-    End Class
-
     Private Sub 更新工具提示(hitIdx As Integer)
         If hitIdx = _tipHoverIndex Then Return
         _tipHoverIndex = hitIdx
@@ -2204,11 +2101,11 @@ Public Class ModernListBox
             Dim tipText As String = Nothing
             If _itemToolTips.TryGetToolTip(itemText, tipText) AndAlso Not String.IsNullOrEmpty(tipText) Then
                 If _tipForm Is Nothing OrElse _tipForm.IsDisposed Then
-                    _tipForm = New ToolTipForm(Me)
+                    _tipForm = New FloatingToolTipForm(Me)
                 End If
                 Dim screenPt As Point = Cursor.Position
                 screenPt.Offset(16, 16)
-                _tipForm.ShowTip(tipText, screenPt)
+                _tipForm.ShowTip(tipText, screenPt, CreateToolTipStyle())
                 Return
             End If
         End If
@@ -2223,6 +2120,19 @@ Public Class ModernListBox
         End If
         _tipForm = Nothing
     End Sub
+
+    Private Function CreateToolTipStyle() As FloatingToolTipStyle
+        Return New FloatingToolTipStyle With {
+            .Font = Me.Font,
+            .BackColor = 提示背景颜色,
+            .ForeColor = 提示文本颜色,
+            .BorderColor = 提示边框颜色,
+            .BorderSize = Math.Max(0, 提示边框宽度),
+            .BorderRadius = Math.Max(0, 提示圆角半径),
+            .Padding = 提示内边距,
+            .MaxWidth = Math.Max(50, 提示最大宽度)
+        }
+    End Function
 
 #End Region
 

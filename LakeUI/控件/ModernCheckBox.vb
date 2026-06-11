@@ -38,8 +38,7 @@ Public Class ModernCheckBox
     End Sub
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
-        Dim ssaa As Integer = Math.Max(1, CInt(超采样倍率))
-        If GlobalOptions.GlobalSSAA <> GlobalOptions.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(GlobalOptions.GlobalSSAA))
+        Dim ssaa As Integer = D2DHelperV2.GetEffectiveSsaaScale(超采样倍率)
 
         Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
             If scope Is Nothing Then Return  ' 设计期 / 无 Form
@@ -175,15 +174,7 @@ Public Class ModernCheckBox
         Try
             Dim brush = brushCache.Get(rt, 当前勾号色)
             If brush Is Nothing Then Return
-            Using strokeStyle = D2DGlobals.GetD2DFactory().CreateStrokeStyle(
-                New StrokeStyleProperties With {
-                    .StartCap = CapStyle.Round,
-                    .EndCap = CapStyle.Round,
-                    .LineJoin = Vortice.Direct2D1.LineJoin.Round,
-                    .DashStyle = Vortice.Direct2D1.DashStyle.Solid,
-                    .MiterLimit = 10.0F})
-                rt.DrawGeometry(path, brush, 笔宽, strokeStyle)
-            End Using
+            rt.DrawGeometry(path, brush, 笔宽, D2DGlobals.GetRoundStrokeStyle())
         Finally
             path.Dispose()
         End Try

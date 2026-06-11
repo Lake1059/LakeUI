@@ -328,8 +328,7 @@ Public Class CpuMonitor
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
         If Me.Width <= 0 OrElse Me.Height <= 0 Then Return
 
-        Dim ssaa As Integer = Math.Max(1, CInt(超采样倍率))
-        If GlobalOptions.GlobalSSAA <> GlobalOptions.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(GlobalOptions.GlobalSSAA))
+        Dim ssaa As Integer = D2DHelperV2.GetEffectiveSsaaScale(超采样倍率)
 
         Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
             If scope Is Nothing Then Return
@@ -631,13 +630,11 @@ Public Class CpuMonitor
         If hasBorder Then
             Dim half As Single = bw * 0.5F
             Dim bRect As RectangleF = RectangleF.Inflate(rect, -half, -half)
-            Dim b = _当前合成器.BrushCache.Get(rt, 核心边框颜色值)
-            If b IsNot Nothing Then
-                If r > 0 Then
-                    Using geo = RectangleRenderer.创建圆角矩形几何(bRect, Math.Max(0, r - half))
-                        rt.DrawGeometry(geo, b, bw)
-                    End Using
-                Else
+            If r > 0 Then
+                RectangleRenderer.绘制圆角边框_D2D(rt, bRect, Math.Max(0, r - half), 核心边框颜色值, bw, _当前合成器.BrushCache)
+            Else
+                Dim b = _当前合成器.BrushCache.Get(rt, 核心边框颜色值)
+                If b IsNot Nothing Then
                     rt.DrawRectangle(D2DGlobals.ToD2DRect(bRect), b, bw)
                 End If
             End If

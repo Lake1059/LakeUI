@@ -27,16 +27,16 @@ Partial Class Form_GpuMonitor
         ModernTextBox1 = New ModernTextBox()
         Panel7 = New Panel()
         ModernButton6 = New ModernButton()
-        Label11 = New Label()
+        Label11 = New JustEmptyControl()
         ModernButton5 = New ModernButton()
         Label7 = New Label()
         Panel1 = New Panel()
         ModernButton4 = New ModernButton()
-        Label4 = New Label()
+        Label4 = New JustEmptyControl()
         ModernButton3 = New ModernButton()
-        Label3 = New Label()
+        Label3 = New JustEmptyControl()
         ModernButton2 = New ModernButton()
-        Label2 = New Label()
+        Label2 = New JustEmptyControl()
         ModernButton1 = New ModernButton()
         Label1 = New Label()
         ModernPanel1.SuspendLayout()
@@ -153,7 +153,7 @@ Partial Class Form_GpuMonitor
         Label7.Padding = New Padding(0, 20, 0, 10)
         Label7.Size = New Size(524, 90)
         Label7.TabIndex = 43
-        Label7.Text = "无需驱动，无需管理员权限，只需装好驱动即可" & vbCrLf & "这个 GPU 监控器不是控件，而是一个类，通过调用静态方法即可轻松实现数据获取" & vbCrLf & "只有N卡能获取到更多信息，这就是为什么老黄敢加价，只有老黄的生态是完善了的"
+        Label7.Text = "无需管理员权限，安装显卡驱动后即可读取基础状态信息。" & vbCrLf & "GPU 监控器以工具类形式提供，通过静态方法即可获取状态数据。" & vbCrLf & "不同厂商公开的数据能力不同，NVIDIA 设备通常可读取更完整的指标。"
         ' 
         ' Panel1
         ' 
@@ -207,7 +207,7 @@ Partial Class Form_GpuMonitor
         ModernButton3.Margin = New Padding(2)
         ModernButton3.Name = "ModernButton3"
         ModernButton3.Size = New Size(120, 50)
-        ModernButton3.SubText = "动画支持"
+        ModernButton3.SubText = "交互表现"
         ModernButton3.TabIndex = 4
         ModernButton3.Text = "无"
         ModernButton3.TextAlign = ModernButton.TextAlignEnum.Left
@@ -232,7 +232,7 @@ Partial Class Form_GpuMonitor
         ModernButton2.Margin = New Padding(2)
         ModernButton2.Name = "ModernButton2"
         ModernButton2.Size = New Size(160, 50)
-        ModernButton2.SubText = "技术偏好"
+        ModernButton2.SubText = "技术路线"
         ModernButton2.TabIndex = 2
         ModernButton2.Text = "微软科技"
         ModernButton2.TextAlign = ModernButton.TextAlignEnum.Left
@@ -258,7 +258,7 @@ Partial Class Form_GpuMonitor
         ModernButton1.Margin = New Padding(2)
         ModernButton1.Name = "ModernButton1"
         ModernButton1.Size = New Size(120, 50)
-        ModernButton1.SubText = "制作类型"
+        ModernButton1.SubText = "实现方式"
         ModernButton1.TabIndex = 0
         ModernButton1.Text = "全新绘制"
         ModernButton1.TextAlign = ModernButton.TextAlignEnum.Left
@@ -300,15 +300,15 @@ Partial Class Form_GpuMonitor
     Friend WithEvents Label7 As Label
     Friend WithEvents Panel1 As Panel
     Friend WithEvents ModernButton4 As ModernButton
-    Friend WithEvents Label4 As Label
+    Friend WithEvents Label4 As JustEmptyControl
     Friend WithEvents ModernButton3 As ModernButton
-    Friend WithEvents Label3 As Label
+    Friend WithEvents Label3 As JustEmptyControl
     Friend WithEvents ModernButton2 As ModernButton
-    Friend WithEvents Label2 As Label
+    Friend WithEvents Label2 As JustEmptyControl
     Friend WithEvents ModernButton1 As ModernButton
     Friend WithEvents Label1 As Label
     Friend WithEvents Panel7 As Panel
     Friend WithEvents ModernButton6 As ModernButton
-    Friend WithEvents Label11 As Label
+    Friend WithEvents Label11 As JustEmptyControl
     Friend WithEvents ModernButton5 As ModernButton
 End Class

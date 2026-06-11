@@ -273,6 +273,12 @@ Public Class ModernPanel
     Private _animationFrameImageSource As Image = Nothing
     Private _animationFrameImageIndex As Integer = -1
 
+    Private _scaledImageBitmap As ID2D1Bitmap = Nothing
+    Private _scaledImageRenderTarget As ID2D1RenderTarget = Nothing
+    Private _scaledImageSource As Image = Nothing
+    Private _scaledImageSourceRect As Rectangle = Rectangle.Empty
+    Private _scaledImageSize As Size = Size.Empty
+
     Private Sub 启动图片动画()
         If Not 准备图片动画(_image) Then Return
         更新图片动画运行状态()
@@ -555,6 +561,7 @@ Public Class ModernPanel
 
     Private Sub 失效背景图片上传缓存()
         清除动画帧图片缓存()
+        清除缩放图片缓存()
     End Sub
 
     Private Function 获取背景图片刷新区域() As Rectangle
@@ -571,16 +578,7 @@ Public Class ModernPanel
         Dim srcH As Single = _image.Height
         If srcW <= 0 OrElse srcH <= 0 OrElse area.Width <= 0 OrElse area.Height <= 0 Then Return Me.ClientRectangle
 
-        Dim ratioW As Single = area.Width / srcW
-        Dim ratioH As Single = area.Height / srcH
-        Dim ratio As Single = If(_imageFillMode = ImageFillMode.Fill, Math.Max(ratioW, ratioH), Math.Min(ratioW, ratioH))
-        Dim drawW As Single = srcW * ratio
-        Dim drawH As Single = srcH * ratio
-        Dim destRect As New RectangleF(
-            area.X + (area.Width - drawW) / 2.0F,
-            area.Y + (area.Height - drawH) / 2.0F,
-            drawW,
-            drawH)
+        Dim destRect As RectangleF = 计算背景图片目标矩形(area, srcW, srcH, _imageFillMode)
 
         Dim invalidRect As Rectangle = Rectangle.Ceiling(destRect)
         invalidRect.Inflate(2, 2)
@@ -713,6 +711,133 @@ Public Class ModernPanel
         Return _animationFrameImage
     End Function
 
+    Private Shared Function 计算背景图片目标矩形(area As RectangleF, srcW As Single, srcH As Single, mode As ImageFillMode) As RectangleF
+        If srcW <= 0 OrElse srcH <= 0 OrElse area.Width <= 0 OrElse area.Height <= 0 Then Return RectangleF.Empty
+
+        Dim ratioW As Single = area.Width / srcW
+        Dim ratioH As Single = area.Height / srcH
+        Dim ratio As Single = If(mode = ImageFillMode.Fill, Math.Max(ratioW, ratioH), Math.Min(ratioW, ratioH))
+        If ratio <= 0 Then Return RectangleF.Empty
+
+        Dim drawW As Single = srcW * ratio
+        Dim drawH As Single = srcH * ratio
+        Return New RectangleF(
+            area.X + (area.Width - drawW) / 2.0F,
+            area.Y + (area.Height - drawH) / 2.0F,
+            drawW,
+            drawH)
+    End Function
+
+    Private Shared Function 计算可见源矩形(destRect As RectangleF, visibleDest As RectangleF, ratio As Single, srcW As Integer, srcH As Integer) As Rectangle
+        If ratio <= 0 OrElse srcW <= 0 OrElse srcH <= 0 OrElse visibleDest.Width <= 0 OrElse visibleDest.Height <= 0 Then
+            Return Rectangle.Empty
+        End If
+
+        Dim srcLeft As Integer = 限制整数(CInt(Math.Floor((visibleDest.Left - destRect.Left) / ratio)), 0, srcW)
+        Dim srcTop As Integer = 限制整数(CInt(Math.Floor((visibleDest.Top - destRect.Top) / ratio)), 0, srcH)
+        Dim srcRight As Integer = 限制整数(CInt(Math.Ceiling((visibleDest.Right - destRect.Left) / ratio)), 0, srcW)
+        Dim srcBottom As Integer = 限制整数(CInt(Math.Ceiling((visibleDest.Bottom - destRect.Top) / ratio)), 0, srcH)
+
+        If srcRight <= srcLeft OrElse srcBottom <= srcTop Then Return Rectangle.Empty
+        Return New Rectangle(srcLeft, srcTop, srcRight - srcLeft, srcBottom - srcTop)
+    End Function
+
+    Private Shared Function 计算缩放位图尺寸(visibleDest As RectangleF, renderScale As Integer) As Size
+        Dim scale As Integer = Math.Max(1, renderScale)
+        Return New Size(
+            Math.Max(1, CInt(Math.Round(visibleDest.Width * scale))),
+            Math.Max(1, CInt(Math.Round(visibleDest.Height * scale))))
+    End Function
+
+    Private Shared Function 限制整数(value As Integer, minimum As Integer, maximum As Integer) As Integer
+        If value < minimum Then Return minimum
+        If value > maximum Then Return maximum
+        Return value
+    End Function
+
+    Private Function 获取高质量缩放背景位图_D2D(rt As ID2D1RenderTarget, img As Image, sourceRect As Rectangle, scaledSize As Size) As ID2D1Bitmap
+        If rt Is Nothing OrElse img Is Nothing Then Return Nothing
+        If sourceRect.Width <= 0 OrElse sourceRect.Height <= 0 OrElse scaledSize.Width <= 0 OrElse scaledSize.Height <= 0 Then Return Nothing
+
+        If _scaledImageBitmap IsNot Nothing AndAlso
+           _scaledImageRenderTarget Is rt AndAlso
+           _scaledImageSource Is img AndAlso
+           _scaledImageSourceRect.Equals(sourceRect) AndAlso
+           _scaledImageSize.Equals(scaledSize) Then
+            Return _scaledImageBitmap
+        End If
+
+        清除缩放图片缓存()
+
+        Dim scaledBitmap As Bitmap = Nothing
+        Dim uploadedBitmap As ID2D1Bitmap = Nothing
+        Try
+            scaledBitmap = 创建高质量缩放位图(img, sourceRect, scaledSize)
+            uploadedBitmap = D2DGlobals.CreateBitmapFromGdi(rt, scaledBitmap)
+            If uploadedBitmap Is Nothing Then Return Nothing
+
+            _scaledImageBitmap = uploadedBitmap
+            uploadedBitmap = Nothing
+            _scaledImageRenderTarget = rt
+            _scaledImageSource = img
+            _scaledImageSourceRect = sourceRect
+            _scaledImageSize = scaledSize
+            Return _scaledImageBitmap
+        Catch
+            清除缩放图片缓存()
+            Return Nothing
+        Finally
+            If uploadedBitmap IsNot Nothing Then
+                Try : uploadedBitmap.Dispose() : Catch : End Try
+            End If
+            If scaledBitmap IsNot Nothing Then
+                Try : scaledBitmap.Dispose() : Catch : End Try
+            End If
+        End Try
+    End Function
+
+    Private Shared Function 创建高质量缩放位图(img As Image, sourceRect As Rectangle, scaledSize As Size) As Bitmap
+        Dim scaled As New Bitmap(scaledSize.Width, scaledSize.Height, PixelFormat.Format32bppPArgb)
+        Try
+            Try : scaled.SetResolution(img.HorizontalResolution, img.VerticalResolution) : Catch : End Try
+            Using g = Graphics.FromImage(scaled)
+                g.CompositingMode = Drawing2D.CompositingMode.SourceCopy
+                g.CompositingQuality = Drawing2D.CompositingQuality.HighQuality
+                g.InterpolationMode = Drawing2D.InterpolationMode.HighQualityBicubic
+                g.PixelOffsetMode = Drawing2D.PixelOffsetMode.HighQuality
+                g.SmoothingMode = Drawing2D.SmoothingMode.HighQuality
+
+                Using attr As New ImageAttributes()
+                    attr.SetWrapMode(Drawing2D.WrapMode.TileFlipXY)
+                    g.DrawImage(
+                        img,
+                        New Rectangle(0, 0, scaledSize.Width, scaledSize.Height),
+                        sourceRect.X,
+                        sourceRect.Y,
+                        sourceRect.Width,
+                        sourceRect.Height,
+                        GraphicsUnit.Pixel,
+                        attr)
+                End Using
+            End Using
+            Return scaled
+        Catch
+            scaled.Dispose()
+            Throw
+        End Try
+    End Function
+
+    Private Sub 清除缩放图片缓存()
+        If _scaledImageBitmap IsNot Nothing Then
+            Try : _scaledImageBitmap.Dispose() : Catch : End Try
+            _scaledImageBitmap = Nothing
+        End If
+        _scaledImageRenderTarget = Nothing
+        _scaledImageSource = Nothing
+        _scaledImageSourceRect = Rectangle.Empty
+        _scaledImageSize = Size.Empty
+    End Sub
+
     Private _imageFillMode As ImageFillMode = ImageFillMode.Fill
     ''' <summary>背景图片填充模式：Zoom（完整显示）或 Fill（撑满裁切）。</summary>
     <Category("LakeUI"), Description("背景图片填充模式：Zoom = 完整显示可能留白，Fill = 居中撑满裁切多余部分"), DefaultValue(GetType(ImageFillMode), "Fill"), Browsable(True)>
@@ -785,11 +910,17 @@ Public Class ModernPanel
         End Get
         Set(value As Control)
             If _backgroundSource IsNot value Then
+                解除背景穿透消费者()
                 _backgroundSource = value
                 Me.Invalidate()
             End If
         End Set
     End Property
+
+    Private Sub 解除背景穿透消费者()
+        If _backgroundSource Is Nothing Then Return
+        Try : BackgroundPenetrationV2.UnregisterConsumer(Me, _backgroundSource) : Catch : End Try
+    End Sub
 
 #End Region
 
@@ -1190,8 +1321,7 @@ Public Class ModernPanel
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
         If Me.Width < 1 OrElse Me.Height < 1 Then Return
 
-        Dim ssaa As Integer = If(GlobalOptions.GlobalSSAA > 1, CInt(GlobalOptions.GlobalSSAA), 超采样倍率)
-        ssaa = Math.Max(1, ssaa)
+        Dim ssaa As Integer = D2DHelperV2.GetEffectiveSsaaScale(超采样倍率)
 
         Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
             If scope Is Nothing Then Return  ' 设计期或无 Form 上下文，直接跳过自绘
@@ -1212,9 +1342,9 @@ Public Class ModernPanel
 
             ' 2) 图形层（SSAA）：背景颜色 / 图片 / 遮罩 / 边框 / 滚动条
             Dim gRT As ID2D1RenderTarget = scope.GraphicsLayer
-            绘制背景与边框_D2D(gRT, scope.Compositor)
-            绘制垂直滚动条_D2D(gRT)
-            绘制水平滚动条_D2D(gRT)
+            绘制背景与边框_D2D(gRT, scope.Compositor, scope.SsaaScale)
+            绘制垂直滚动条_D2D(gRT, scope.Compositor.BrushCache)
+            绘制水平滚动条_D2D(gRT, scope.Compositor.BrushCache)
 
             scope.FlushGraphics()
         End Using
@@ -1227,8 +1357,9 @@ Public Class ModernPanel
         ' no-op
     End Sub
 
-    Private Sub 绘制背景与边框_D2D(rt As ID2D1RenderTarget, compositor As WindowCompositor)
+    Private Sub 绘制背景与边框_D2D(rt As ID2D1RenderTarget, compositor As WindowCompositor, renderScale As Integer)
         Dim s As Single = DpiScale()
+        Dim brushCache = compositor?.BrushCache
         Dim boundsRect As New RectangleF(0, 0, Me.Width, Me.Height)
         If 边框宽度 > 0 Then
             Dim half As Single = 边框宽度 * s / 2.0F
@@ -1244,85 +1375,100 @@ Public Class ModernPanel
         If 是否有圆角 Then
             Using geo As ID2D1Geometry = RectangleRenderer.创建圆角矩形几何(boundsRect, scaledRadius, 圆角位置)
                 If backColorMask.A > 0 AndAlso backColorMask.A < 255 Then
-                    RectangleRenderer.绘制圆角背景_D2D(rt, geo, boundsRect, backColorMask, Color.Empty, System.Windows.Forms.Orientation.Horizontal)
+                    RectangleRenderer.绘制圆角背景_D2D(rt, geo, boundsRect, backColorMask, Color.Empty, System.Windows.Forms.Orientation.Horizontal, brushCache)
                 End If
                 If 背景颜色.A > 0 Then
-                    RectangleRenderer.绘制圆角背景_D2D(rt, geo, boundsRect, 背景颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal)
+                    RectangleRenderer.绘制圆角背景_D2D(rt, geo, boundsRect, 背景颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal, brushCache)
                 End If
-                绘制背景图片_D2D(rt, compositor, boundsRect, geo)
+                绘制背景图片_D2D(rt, compositor, boundsRect, geo, renderScale)
                 If 遮罩颜色.A > 0 Then
-                    RectangleRenderer.绘制圆角背景_D2D(rt, geo, boundsRect, 遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal)
+                    RectangleRenderer.绘制圆角背景_D2D(rt, geo, boundsRect, 遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal, brushCache)
                 End If
                 If 边框颜色.A > 0 AndAlso 边框宽度 > 0 Then
-                    RectangleRenderer.绘制圆角边框_D2D(rt, geo, 边框颜色, 边框宽度 * s)
+                    RectangleRenderer.绘制圆角边框_D2D(rt, geo, 边框颜色, 边框宽度 * s, brushCache)
                 End If
             End Using
         Else
             If backColorMask.A > 0 AndAlso backColorMask.A < 255 Then
-                RectangleRenderer.绘制矩形背景_D2D(rt, boundsRect, backColorMask, Color.Empty, System.Windows.Forms.Orientation.Horizontal)
+                RectangleRenderer.绘制矩形背景_D2D(rt, boundsRect, backColorMask, Color.Empty, System.Windows.Forms.Orientation.Horizontal, brushCache)
             End If
             If 背景颜色.A > 0 Then
-                RectangleRenderer.绘制矩形背景_D2D(rt, boundsRect, 背景颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal)
+                RectangleRenderer.绘制矩形背景_D2D(rt, boundsRect, 背景颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal, brushCache)
             End If
-            绘制背景图片_D2D(rt, compositor, boundsRect, Nothing)
+            绘制背景图片_D2D(rt, compositor, boundsRect, Nothing, renderScale)
             If 遮罩颜色.A > 0 Then
-                RectangleRenderer.绘制矩形背景_D2D(rt, boundsRect, 遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal)
+                RectangleRenderer.绘制矩形背景_D2D(rt, boundsRect, 遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal, brushCache)
             End If
             If 边框颜色.A > 0 AndAlso 边框宽度 > 0 Then
-                RectangleRenderer.绘制矩形边框_D2D(rt, boundsRect, 边框颜色, 边框宽度 * s)
+                RectangleRenderer.绘制矩形边框_D2D(rt, boundsRect, 边框颜色, 边框宽度 * s, brushCache)
             End If
         End If
     End Sub
 
     ''' <summary>D2D 绘制背景图片：按 ImageMode 计算目标矩形，圆角下用几何裁切。</summary>
-    Private Sub 绘制背景图片_D2D(rt As ID2D1RenderTarget, compositor As WindowCompositor, area As RectangleF, geo As ID2D1Geometry)
+    Private Sub 绘制背景图片_D2D(rt As ID2D1RenderTarget, compositor As WindowCompositor, area As RectangleF, geo As ID2D1Geometry, renderScale As Integer)
         If _image Is Nothing Then Return
-        Dim shouldDisposeBitmap As Boolean
-        Dim bmp = 获取背景图片位图_D2D(rt, compositor, shouldDisposeBitmap)
-        If bmp Is Nothing Then Return
+        Dim srcW As Integer = _image.Width
+        Dim srcH As Integer = _image.Height
+        If srcW <= 0 OrElse srcH <= 0 OrElse area.Width <= 0 OrElse area.Height <= 0 Then Return
+
+        Dim destRect As RectangleF = 计算背景图片目标矩形(area, srcW, srcH, _imageFillMode)
+        If destRect.Width <= 0 OrElse destRect.Height <= 0 Then Return
+
+        Dim visibleDest As RectangleF = RectangleF.Intersect(destRect, area)
+        If visibleDest.Width <= 0 OrElse visibleDest.Height <= 0 Then Return
+
+        Dim ratio As Single = destRect.Width / srcW
+        Dim sourceRect As New Rectangle(0, 0, srcW, srcH)
+        Dim drawBitmap As ID2D1Bitmap = Nothing
+        Dim drawDestRect As RectangleF = destRect
+        Dim drawSourceRect As RectangleF = New RectangleF(0, 0, srcW, srcH)
+        Dim shouldDisposeBitmap As Boolean = False
+
         Try
-            Dim srcW As Single = _image.Width
-            Dim srcH As Single = _image.Height
-            If srcW <= 0 OrElse srcH <= 0 Then Return
-            Dim ratioW As Single = area.Width / srcW
-            Dim ratioH As Single = area.Height / srcH
-            Dim ratio As Single = If(_imageFillMode = ImageFillMode.Fill,
-                                     Math.Max(ratioW, ratioH),
-                                     Math.Min(ratioW, ratioH))
-            Dim drawW As Single = srcW * ratio
-            Dim drawH As Single = srcH * ratio
-            Dim destRect As New RectangleF(
-                area.X + (area.Width - drawW) / 2.0F,
-                area.Y + (area.Height - drawH) / 2.0F,
-                drawW, drawH)
+            If _animatedImage Is Nothing AndAlso ratio < 0.999F Then
+                sourceRect = 计算可见源矩形(destRect, visibleDest, ratio, srcW, srcH)
+                If Not sourceRect.IsEmpty Then
+                    Dim scaledSize As Size = 计算缩放位图尺寸(visibleDest, renderScale)
+                    drawBitmap = 获取高质量缩放背景位图_D2D(rt, _image, sourceRect, scaledSize)
+                    If drawBitmap IsNot Nothing Then
+                        drawDestRect = visibleDest
+                        drawSourceRect = New RectangleF(0, 0, scaledSize.Width, scaledSize.Height)
+                    End If
+                End If
+            End If
+
+            If drawBitmap Is Nothing Then
+                drawBitmap = 获取背景图片位图_D2D(rt, compositor, shouldDisposeBitmap)
+                If drawBitmap Is Nothing Then Return
+            End If
 
             Dim hasMask As Boolean = geo IsNot Nothing
             If hasMask Then D2DGlobals.PushGeometryClip(rt, geo, area)
             Try
-                Dim srcRect As New RectangleF(0, 0, srcW, srcH)
-                rt.DrawBitmap(bmp, D2DGlobals.ToD2DRect(destRect), 1.0F, BitmapInterpolationMode.Linear, D2DGlobals.ToD2DRect(srcRect))
+                rt.DrawBitmap(drawBitmap, D2DGlobals.ToD2DRect(drawDestRect), 1.0F, BitmapInterpolationMode.Linear, D2DGlobals.ToD2DRect(drawSourceRect))
             Finally
                 If hasMask Then rt.PopLayer()
             End Try
         Finally
             If shouldDisposeBitmap Then
-                Try : bmp.Dispose() : Catch : End Try
+                Try : drawBitmap.Dispose() : Catch : End Try
             End If
         End Try
     End Sub
 
-    Private Sub 绘制垂直滚动条_D2D(rt As ID2D1RenderTarget)
+    Private Sub 绘制垂直滚动条_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache)
         If _vScrollBar.TrackRect.IsEmpty Then Return
         Dim s As Single = DpiScale()
         _vScrollBar.Draw_D2D(rt, Me.Width, Me.Height, CInt(Math.Round(边框宽度 * s)), CInt(Math.Round(边框圆角半径 * s)),
-            CInt(Math.Round(滚动条宽度 * s)), 滚动条轨道颜色, 滚动条滑块颜色, 滚动条悬停颜色)
+            CInt(Math.Round(滚动条宽度 * s)), 滚动条轨道颜色, 滚动条滑块颜色, 滚动条悬停颜色, brushCache)
     End Sub
 
-    Private Sub 绘制水平滚动条_D2D(rt As ID2D1RenderTarget)
+    Private Sub 绘制水平滚动条_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache)
         If _hScrollBar.TrackRect.IsEmpty Then Return
         Dim s As Single = DpiScale()
         _hScrollBar.DrawHorizontal_D2D(rt, Me.Width, Me.Height, CInt(Math.Round(边框宽度 * s)), CInt(Math.Round(边框圆角半径 * s)),
-            CInt(Math.Round(滚动条宽度 * s)), 滚动条轨道颜色, 滚动条滑块颜色, 滚动条悬停颜色)
+            CInt(Math.Round(滚动条宽度 * s)), 滚动条轨道颜色, 滚动条滑块颜色, 滚动条悬停颜色, brushCache)
     End Sub
 
 #End Region
@@ -1440,6 +1586,7 @@ Public Class ModernPanel
     End Sub
 
     Protected Overrides Sub OnHandleDestroyed(e As EventArgs)
+        解除背景穿透消费者()
         停止图片动画计时器(False)
         更新图片动画宿主窗体订阅(Nothing)
         清除图片动画可见性订阅()
@@ -1448,11 +1595,13 @@ Public Class ModernPanel
 
     Protected Overrides Sub OnVisibleChanged(e As EventArgs)
         MyBase.OnVisibleChanged(e)
+        If Not Me.Visible Then 解除背景穿透消费者()
         更新图片动画运行状态()
     End Sub
 
     Protected Overrides Sub OnParentChanged(e As EventArgs)
         MyBase.OnParentChanged(e)
+        If Me.Parent Is Nothing Then 解除背景穿透消费者()
         更新图片动画可见性订阅()
         更新图片动画运行状态()
     End Sub

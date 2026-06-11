@@ -33,11 +33,11 @@ Partial Class Form_QuantumSwitch
         Label6 = New Label()
         Panel1 = New Panel()
         ModernButton4 = New ModernButton()
-        Label4 = New Label()
+        Label4 = New JustEmptyControl()
         ModernButton3 = New ModernButton()
-        Label3 = New Label()
+        Label3 = New JustEmptyControl()
         ModernButton2 = New ModernButton()
-        Label2 = New Label()
+        Label2 = New JustEmptyControl()
         ModernButton1 = New ModernButton()
         Label1 = New Label()
         ModernPanel1.SuspendLayout()
@@ -76,7 +76,7 @@ Partial Class Form_QuantumSwitch
         Label9.Name = "Label9"
         Label9.Size = New Size(177, 20)
         Label9.TabIndex = 44
-        Label9.Text = "这玩意应该是赤石科技才对"
+        Label9.Text = "三态切换适合表达不确定、自动、继承等中间状态。"
         ' 
         ' Label8
         ' 
@@ -88,7 +88,7 @@ Partial Class Form_QuantumSwitch
         Label8.Padding = New Padding(0, 20, 0, 10)
         Label8.Size = New Size(457, 50)
         Label8.TabIndex = 43
-        Label8.Text = "左键切换开关，右键切换量子叠加态，再回到开或关时随机坍缩为开或关"
+        Label8.Text = "左键切换开关，右键进入叠加态；再次落回开或关时会随机收束状态。"
         ' 
         ' Panel3
         ' 
@@ -209,7 +209,7 @@ Partial Class Form_QuantumSwitch
         ModernButton3.Margin = New Padding(2)
         ModernButton3.Name = "ModernButton3"
         ModernButton3.Size = New Size(120, 50)
-        ModernButton3.SubText = "动画支持"
+        ModernButton3.SubText = "交互表现"
         ModernButton3.TabIndex = 4
         ModernButton3.Text = "全程动画"
         ModernButton3.TextAlign = ModernButton.TextAlignEnum.Left
@@ -234,7 +234,7 @@ Partial Class Form_QuantumSwitch
         ModernButton2.Margin = New Padding(2)
         ModernButton2.Name = "ModernButton2"
         ModernButton2.Size = New Size(160, 50)
-        ModernButton2.SubText = "技术偏好"
+        ModernButton2.SubText = "技术路线"
         ModernButton2.TabIndex = 2
         ModernButton2.Text = "三体科技"
         ModernButton2.TextAlign = ModernButton.TextAlignEnum.Left
@@ -260,7 +260,7 @@ Partial Class Form_QuantumSwitch
         ModernButton1.Margin = New Padding(2)
         ModernButton1.Name = "ModernButton1"
         ModernButton1.Size = New Size(120, 50)
-        ModernButton1.SubText = "制作类型"
+        ModernButton1.SubText = "实现方式"
         ModernButton1.TabIndex = 0
         ModernButton1.Text = "全新绘制"
         ModernButton1.TextAlign = ModernButton.TextAlignEnum.Left
@@ -303,11 +303,11 @@ Partial Class Form_QuantumSwitch
     Friend WithEvents Label6 As Label
     Friend WithEvents Panel1 As Panel
     Friend WithEvents ModernButton4 As ModernButton
-    Friend WithEvents Label4 As Label
+    Friend WithEvents Label4 As JustEmptyControl
     Friend WithEvents ModernButton3 As ModernButton
-    Friend WithEvents Label3 As Label
+    Friend WithEvents Label3 As JustEmptyControl
     Friend WithEvents ModernButton2 As ModernButton
-    Friend WithEvents Label2 As Label
+    Friend WithEvents Label2 As JustEmptyControl
     Friend WithEvents ModernButton1 As ModernButton
     Friend WithEvents Label1 As Label
     Friend WithEvents Label8 As Label

@@ -46,8 +46,7 @@ Public Class RoundDashBoard
 #Region "绘制"
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
         If Me.Width < 1 OrElse Me.Height < 1 Then Return
-        Dim ssaa As Integer = Math.Max(1, CInt(超采样倍率))
-        If GlobalOptions.GlobalSSAA <> GlobalOptions.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(GlobalOptions.GlobalSSAA))
+        Dim ssaa As Integer = D2DHelperV2.GetEffectiveSsaaScale(超采样倍率)
 
         Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
             If scope Is Nothing Then
@@ -136,15 +135,14 @@ Public Class RoundDashBoard
         If rt Is Nothing OrElse color.A <= 0 OrElse penWidth <= 0 OrElse sweepAngle <= 0 Then Return
         Dim brush = brushCache?.Get(rt, color)
         If brush Is Nothing Then Return
-        Using strokeStyle = 创建线帽样式(CapStyle.Round, CapStyle.Round)
-            If sweepAngle >= 360 Then
-                rt.DrawEllipse(创建椭圆(rect), brush, penWidth, strokeStyle)
-            Else
-                Using geo = 创建圆弧几何(rect, startAngle, sweepAngle)
-                    rt.DrawGeometry(geo, brush, penWidth, strokeStyle)
-                End Using
-            End If
-        End Using
+        Dim strokeStyle = 创建线帽样式(CapStyle.Round, CapStyle.Round)
+        If sweepAngle >= 360 Then
+            rt.DrawEllipse(创建椭圆(rect), brush, penWidth, strokeStyle)
+        Else
+            Using geo = 创建圆弧几何(rect, startAngle, sweepAngle)
+                rt.DrawGeometry(geo, brush, penWidth, strokeStyle)
+            End Using
+        End If
     End Sub
 
     Private Sub 绘制指针_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache, 中心X As Single, 中心Y As Single, 外径 As Single, 画笔宽度 As Single, 角度 As Single, s As Single)
@@ -156,14 +154,13 @@ Public Class RoundDashBoard
 
         Dim brush = brushCache?.Get(rt, 指针颜色值)
         If brush Is Nothing Then Return
-        Using strokeStyle = 创建线帽样式(CapStyle.Round, CapStyle.Round)
-            rt.DrawLine(
-                New Vector2(中心X + cosVal * 指针内半径, 中心Y + sinVal * 指针内半径),
-                New Vector2(中心X + cosVal * 指针外半径, 中心Y + sinVal * 指针外半径),
-                brush,
-                指针宽度值 * s,
-                strokeStyle)
-        End Using
+        Dim strokeStyle = 创建线帽样式(CapStyle.Round, CapStyle.Round)
+        rt.DrawLine(
+            New Vector2(中心X + cosVal * 指针内半径, 中心Y + sinVal * 指针内半径),
+            New Vector2(中心X + cosVal * 指针外半径, 中心Y + sinVal * 指针外半径),
+            brush,
+            指针宽度值 * s,
+            strokeStyle)
     End Sub
 
     Private Sub 绘制中心文字_D2D(rt As ID2D1DCRenderTarget, 中心X As Single, 中心Y As Single, progress As Single, textFormatCache As D2DGlobals.TextFormatCache, brushCache As D2DGlobals.SolidColorBrushCache)
@@ -222,10 +219,9 @@ Public Class RoundDashBoard
             Dim c As Color = 颜色插值(填充基础颜色, 填充渐变颜色, 渐变比例)
             Dim brush = brushCache?.Get(rt, c)
             If brush Is Nothing Then Continue For
-            Using strokeStyle = 创建线帽样式(If(i = 0, CapStyle.Round, CapStyle.Flat), If(i = 段数 - 1, CapStyle.Round, CapStyle.Flat))
-                Using geo = 创建圆弧几何(rect, 段起始角, 段跨度)
-                    rt.DrawGeometry(geo, brush, penWidth, strokeStyle)
-                End Using
+            Dim strokeStyle = 创建线帽样式(If(i = 0, CapStyle.Round, CapStyle.Flat), If(i = 段数 - 1, CapStyle.Round, CapStyle.Flat))
+            Using geo = 创建圆弧几何(rect, 段起始角, 段跨度)
+                rt.DrawGeometry(geo, brush, penWidth, strokeStyle)
             End Using
         Next
     End Sub
@@ -263,14 +259,7 @@ Public Class RoundDashBoard
     End Function
 
     Private Shared Function 创建线帽样式(startCap As CapStyle, endCap As CapStyle) As ID2D1StrokeStyle
-        Return D2DGlobals.GetD2DFactory().CreateStrokeStyle(
-            New StrokeStyleProperties With {
-                .StartCap = startCap,
-                .EndCap = endCap,
-                .DashCap = CapStyle.Flat,
-                .LineJoin = Vortice.Direct2D1.LineJoin.Round,
-                .DashStyle = Vortice.Direct2D1.DashStyle.Solid,
-                .MiterLimit = 10.0F})
+        Return D2DGlobals.GetStrokeStyle(startCap, endCap)
     End Function
 
     Private Shared Function 颜色插值(c1 As Color, c2 As Color, t As Single) As Color

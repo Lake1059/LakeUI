@@ -27,11 +27,11 @@ Partial Class Form_ThisIsYourWindow
         Label6 = New Label()
         Panel1 = New Panel()
         ModernButton4 = New ModernButton()
-        Label4 = New Label()
+        Label4 = New JustEmptyControl()
         ModernButton3 = New ModernButton()
-        Label3 = New Label()
+        Label3 = New JustEmptyControl()
         ModernButton2 = New ModernButton()
-        Label2 = New Label()
+        Label2 = New JustEmptyControl()
         ModernButton1 = New ModernButton()
         Label1 = New Label()
         ModernPanel1.SuspendLayout()
@@ -63,7 +63,7 @@ Partial Class Form_ThisIsYourWindow
         Label5.Padding = New Padding(0, 20, 0, 10)
         Label5.Size = New Size(476, 110)
         Label5.TabIndex = 40
-        Label5.Text = "注意完全体需要 Windows 11 新版本" & vbCrLf & "Windows 10 强制最外层有1像素的固定颜色边框，无法去除" & vbCrLf & "不支持设置圆角，因为 WinForms 自身不擅长窗口级透明，所以就直接砍了" & vbCrLf & "但分层阴影是个例外，那东西刷新一次其实不耗什么性能"
+        Label5.Text = "完整窗口效果依赖较新的 Windows 11 桌面能力。" & vbCrLf & "Windows 10 强制最外层有1像素的固定颜色边框，无法去除" & vbCrLf & "不支持设置圆角，因为 WinForms 自身不擅长窗口级透明，所以就直接砍了" & vbCrLf & "但分层阴影是个例外，那东西刷新一次其实不耗什么性能"
         ' 
         ' Label6
         ' 
@@ -75,7 +75,7 @@ Partial Class Form_ThisIsYourWindow
         Label6.Padding = New Padding(0, 20, 0, 10)
         Label6.Size = New Size(540, 90)
         Label6.TabIndex = 39
-        Label6.Text = "现在窗口的样子就是这个东西设置的，几乎支持定制所有东西" & vbCrLf & "无需对已有项目进行什么改动，只需要这个玩意加进去，在窗体 Load 事件里绑定即可" & vbCrLf & "去看看属性列表吧，你会喜欢的"
+        Label6.Text = "当前窗口外观由该组件驱动，可统一配置标题栏、背景、圆角与系统按钮表现。" & vbCrLf & "无需对已有项目进行什么改动，只需要这个玩意加进去，在窗体 Load 事件里绑定即可" & vbCrLf & "去看看属性列表吧，你会喜欢的"
         ' 
         ' Panel1
         ' 
@@ -129,7 +129,7 @@ Partial Class Form_ThisIsYourWindow
         ModernButton3.Margin = New Padding(2)
         ModernButton3.Name = "ModernButton3"
         ModernButton3.Size = New Size(120, 50)
-        ModernButton3.SubText = "动画支持"
+        ModernButton3.SubText = "交互表现"
         ModernButton3.TabIndex = 4
         ModernButton3.Text = "N/A"
         ModernButton3.TextAlign = ModernButton.TextAlignEnum.Left
@@ -154,7 +154,7 @@ Partial Class Form_ThisIsYourWindow
         ModernButton2.Margin = New Padding(2)
         ModernButton2.Name = "ModernButton2"
         ModernButton2.Size = New Size(160, 50)
-        ModernButton2.SubText = "技术偏好"
+        ModernButton2.SubText = "技术路线"
         ModernButton2.TabIndex = 2
         ModernButton2.Text = "天顶星科技"
         ModernButton2.TextAlign = ModernButton.TextAlignEnum.Left
@@ -180,7 +180,7 @@ Partial Class Form_ThisIsYourWindow
         ModernButton1.Margin = New Padding(2)
         ModernButton1.Name = "ModernButton1"
         ModernButton1.Size = New Size(120, 50)
-        ModernButton1.SubText = "制作类型"
+        ModernButton1.SubText = "实现方式"
         ModernButton1.TabIndex = 0
         ModernButton1.Text = "全新绘制"
         ModernButton1.TextAlign = ModernButton.TextAlignEnum.Left
@@ -217,11 +217,11 @@ Partial Class Form_ThisIsYourWindow
     Friend WithEvents ModernPanel1 As ModernPanel
     Friend WithEvents Panel1 As Panel
     Friend WithEvents ModernButton4 As ModernButton
-    Friend WithEvents Label4 As Label
+    Friend WithEvents Label4 As JustEmptyControl
     Friend WithEvents ModernButton3 As ModernButton
-    Friend WithEvents Label3 As Label
+    Friend WithEvents Label3 As JustEmptyControl
     Friend WithEvents ModernButton2 As ModernButton
-    Friend WithEvents Label2 As Label
+    Friend WithEvents Label2 As JustEmptyControl
     Friend WithEvents ModernButton1 As ModernButton
     Friend WithEvents Label1 As Label
     Friend WithEvents Label6 As Label

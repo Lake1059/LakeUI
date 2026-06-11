@@ -965,10 +965,7 @@ Public Class ModernColorDialog
         确保D2D布局()
         MyBase.OnPaint(e)
 
-        Dim ssaa As Integer = 2
-        If GlobalOptions.GlobalSSAA <> GlobalOptions.SuperSamplingScaleEnum.OFF Then
-            ssaa = Math.Max(ssaa, CInt(GlobalOptions.GlobalSSAA))
-        End If
+        Dim ssaa As Integer = D2DHelperV2.GetEffectiveSsaaScale(2)
 
         Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
             If scope Is Nothing Then Return
@@ -987,6 +984,7 @@ Public Class ModernColorDialog
             scope.FlushGraphics()
             绘制D2D文字层(scope.TextLayer, compositor)
         End Using
+        _chromaticityBitmapCache.TrimToCurrentBudget()
     End Sub
 
     Protected Overrides Sub OnResize(e As EventArgs)
@@ -1063,6 +1061,7 @@ Public Class ModernColorDialog
         _d2dLayoutDirty = False
 
         Dim s = 取D2D缩放()
+        Dim textFormatCache = D2DHelperV2.GetCompositor(Me)?.TextFormatCache
         Dim display = DisplayRectangle
         Dim pad As Single = 20.0F * s
         Dim gap As Single = 14.0F * s
@@ -1094,8 +1093,8 @@ Public Class ModernColorDialog
             .Gap = gap
         }
 
-        Dim valueLabelW As Single = 计算数值标签宽度()
-        Dim valueTextMinW As Single = Math.Max(64.0F * s, 测量界面文本宽度("#AARRGGBB", Font) + 26.0F * s)
+        Dim valueLabelW As Single = 计算数值标签宽度(textFormatCache)
+        Dim valueTextMinW As Single = Math.Max(64.0F * s, 测量界面文本宽度("#AARRGGBB", Font, textFormatCache) + 26.0F * s)
         Dim rightMinW As Single = valueLabelW + smallGap + valueTextMinW
         Dim rightPreferredW As Single = Math.Min(190.0F * s, Math.Max(rightMinW, contentW * 0.24F))
         Dim htmlSideBlank As Single = 10.0F * s
@@ -1154,11 +1153,11 @@ Public Class ModernColorDialog
         Next
 
         Dim favoriteMainText As String = 取界面文本("FavoritesTitle", "收藏夹")
-        Dim favoriteMainW As Single = Math.Max(1.0F, 测量界面文本宽度(favoriteMainText, Font) + 6.0F * s)
-        Dim favoriteMainH As Single = Math.Max(1.0F, CSng(D2DTextRenderer.MeasureLineHeight(Font, s)))
+        Dim favoriteMainW As Single = Math.Max(1.0F, 测量界面文本宽度(favoriteMainText, Font, textFormatCache) + 6.0F * s)
+        Dim favoriteMainH As Single = Math.Max(1.0F, CSng(D2DTextRenderer.MeasureLineHeight(Font, s, textFormatCache)))
         layout.FavoriteTitleMain = New RectangleF(favStartX, layout.Preview.Top, favoriteMainW, favoriteMainH)
         Using hintFont As New Font(Font.Name, Math.Max(1.0F, Font.Size - 1.2F), FontStyle.Regular, GraphicsUnit.Point)
-            Dim favoriteHintH As Single = Math.Max(1.0F, CSng(D2DTextRenderer.MeasureLineHeight(hintFont, s)))
+            Dim favoriteHintH As Single = Math.Max(1.0F, CSng(D2DTextRenderer.MeasureLineHeight(hintFont, s, textFormatCache)))
             layout.FavoriteTitleHint = New RectangleF(layout.FavoriteTitleMain.Right + 2.0F * s,
                                                       layout.FavoriteTitleMain.Bottom - favoriteHintH,
                                                       Math.Max(1.0F, contentRight - layout.FavoriteTitleMain.Right - 2.0F * s),
@@ -1218,13 +1217,13 @@ Public Class ModernColorDialog
         Next
     End Sub
 
-    Private Function 计算数值标签宽度() As Single
+    Private Function 计算数值标签宽度(textFormatCache As D2DGlobals.TextFormatCache) As Single
         Dim s = 取D2D缩放()
         Dim w As Single = 0.0F
         For Each kind In {ColorDialogTextBoxKind.R, ColorDialogTextBoxKind.G, ColorDialogTextBoxKind.B,
                           ColorDialogTextBoxKind.H, ColorDialogTextBoxKind.S, ColorDialogTextBoxKind.L,
                           ColorDialogTextBoxKind.A, ColorDialogTextBoxKind.Hex}
-            w = Math.Max(w, 测量界面文本宽度(取数值标签文本(kind), Font))
+            w = Math.Max(w, 测量界面文本宽度(取数值标签文本(kind), Font, textFormatCache))
         Next
         Return Math.Max(48.0F * s, w + 4.0F * s)
     End Function
@@ -1453,7 +1452,7 @@ Public Class ModernColorDialog
         For Each box In _d2dTextBoxOrder
             box.Renderer.ForeColor = ForeColor
             box.Renderer.SelectionColor = D2DElementBackColor
-            box.Renderer.Draw(rt)
+            box.Renderer.Draw(rt, tfc, brushCache)
         Next
 
         绘制HTML列表文字(rt, compositor)
@@ -1668,9 +1667,7 @@ Public Class ModernColorDialog
         If color.A = 0 OrElse width <= 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
         Dim half = width / 2.0F
         rect.Inflate(-half, -half)
-        Using geo = RectangleRenderer.创建圆角矩形几何(rect, radius)
-            RectangleRenderer.绘制圆角边框_D2D(rt, geo, color, width, brushCache)
-        End Using
+        RectangleRenderer.绘制圆角边框_D2D(rt, rect, radius, color, width, brushCache)
     End Sub
 
 #End Region
@@ -2430,9 +2427,10 @@ Public Class ModernColorDialog
         Return CInt(Math.Round(value * 取D2D缩放()))
     End Function
 
-    Private Function 测量界面文本宽度(text As String, font As Font) As Single
+    Private Function 测量界面文本宽度(text As String, font As Font,
+                               Optional textFormatCache As D2DGlobals.TextFormatCache = Nothing) As Single
         If String.IsNullOrEmpty(text) OrElse font Is Nothing Then Return 0.0F
-        Return CSng(D2DTextRenderer.MeasureWidth(text, font, 取D2D缩放()))
+        Return CSng(D2DTextRenderer.MeasureWidth(text, font, 取D2D缩放(), textFormatCache))
     End Function
 
     Private Shared Function 混合颜色(a As Color, b As Color, t As Single) As Color

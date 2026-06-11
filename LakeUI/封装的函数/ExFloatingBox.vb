@@ -1,4 +1,3 @@
-Imports System.Drawing.Drawing2D
 Imports System.Runtime.InteropServices
 
 ' ═══════════════════════════════════════════════════════════════════════════
@@ -340,6 +339,7 @@ Friend Class ExFloatingBoxForm
 
     Private 主题 As ExFloatingBoxTheme
     Private 锚点控件 As Control
+    Private 毛玻璃 As MessageDialogBackdropController
     Private 返回值 As MsgBoxResult = MsgBoxResult.Ok
     Private 已关闭 As Boolean = False
 
@@ -446,6 +446,7 @@ Friend Class ExFloatingBoxForm
     Private Sub 初始化通用(prompt As String, title As String, theme As ExFloatingBoxTheme, anchor As Control)
         主题 = If(theme, New ExFloatingBoxTheme())
         锚点控件 = anchor
+        毛玻璃 = New MessageDialogBackdropController(Me)
 
         Me.FormBorderStyle = FormBorderStyle.None
         Me.ShowInTaskbar = False
@@ -457,8 +458,9 @@ Friend Class ExFloatingBoxForm
         SC = Me.DeviceDpi / 96.0F
         缩放常量()
 
-        标题字体 = New Font("Microsoft YaHei UI", 11.0F, FontStyle.Bold)
-        消息字体 = New Font("Microsoft YaHei UI", 9.5F, FontStyle.Regular)
+        Dim fontName = MessageDialogRendering.ResolveDialogFontName(anchor, Me)
+        标题字体 = New Font(fontName, 11.0F, FontStyle.Bold)
+        消息字体 = New Font(fontName, 9.5F, FontStyle.Regular)
 
         有标题 = Not String.IsNullOrEmpty(title)
         If 有标题 Then 构建标题标签(title)
@@ -559,14 +561,6 @@ Friend Class ExFloatingBoxForm
         End Try
     End Sub
 
-    Protected Overrides Sub OnShown(e As EventArgs)
-        MyBase.OnShown(e)
-        ' ShowDialog 会禁用 Owner，重新启用以便 IMessageFilter 检测外部点击
-        If Me.Owner IsNot Nothing AndAlso Me.Owner.IsHandleCreated Then
-            EnableWindow(Me.Owner.Handle, True)
-        End If
-    End Sub
-
 #End Region
 
 #Region "界面构建"
@@ -586,19 +580,8 @@ Friend Class ExFloatingBoxForm
     End Sub
 
     Private Sub 设置图标(图标样式 As Integer)
-        Dim 消息图标 As Icon
-        Select Case 图标样式
-            Case MsgBoxStyle.Critical : 消息图标 = SystemIcons.Error
-            Case MsgBoxStyle.Question : 消息图标 = SystemIcons.Question
-            Case MsgBoxStyle.Exclamation : 消息图标 = SystemIcons.Warning
-            Case MsgBoxStyle.Information : 消息图标 = SystemIcons.Information
-            Case Else : 消息图标 = Nothing
-        End Select
-        If 消息图标 IsNot Nothing Then
-            Using sized As New Icon(消息图标, 图标尺寸, 图标尺寸)
-                消息图标位图 = sized.ToBitmap()
-            End Using
-        End If
+        消息图标位图?.Dispose()
+        消息图标位图 = MessageDialogRendering.CreateMessageIconBitmap(图标样式, 图标尺寸)
     End Sub
 
     Private Shared Sub 播放声音(图标样式 As Integer)
@@ -617,7 +600,8 @@ Friend Class ExFloatingBoxForm
             .ForeColor = 主题.TitleForeColor,
             .BackColor = Color.Transparent,
             .Font = 标题字体,
-            .UseMnemonic = False
+            .UseMnemonic = False,
+            .Visible = False
         }
         Me.Controls.Add(标题标签)
     End Sub
@@ -629,7 +613,8 @@ Friend Class ExFloatingBoxForm
             .ForeColor = 主题.MessageForeColor,
             .BackColor = Color.Transparent,
             .Font = 消息字体,
-            .UseMnemonic = False
+            .UseMnemonic = False,
+            .Visible = False
         }
         Me.Controls.Add(消息标签)
     End Sub
@@ -700,7 +685,7 @@ Friend Class ExFloatingBoxForm
         Dim btn As New ModernButton() With {
             .Text = text,
             .Size = New Size(按钮宽度, 按钮高度),
-            .Font = New Font("Microsoft YaHei UI", 9.0F),
+            .Font = New Font(MessageDialogRendering.ResolveDialogFontName(锚点控件, Me), 9.0F),
             .Tag = tag,
             .BorderRadius = 主题.ButtonBorderRadius,
             .BorderSize = 1,
@@ -708,20 +693,12 @@ Friend Class ExFloatingBoxForm
             .TabStop = False,
             .TabIndex = index
         }
-        DirectCast(btn, Control).BackColor = 主题.CardBackColor
-        If isDefault Then
-            btn.BackColor1 = 主题.AccentButtonBackColor
-            btn.ForeColor = 主题.AccentButtonForeColor
-            btn.BorderColor = 主题.AccentButtonBorderColor
-            btn.HoverBackColor1 = 主题.AccentButtonHoverBackColor
-            btn.PressedBackColor1 = 主题.AccentButtonPressedBackColor
-        Else
-            btn.BackColor1 = 主题.ButtonBackColor
-            btn.ForeColor = 主题.ButtonForeColor
-            btn.BorderColor = 主题.ButtonBorderColor
-            btn.HoverBackColor1 = 主题.ButtonHoverBackColor
-            btn.PressedBackColor1 = 主题.ButtonPressedBackColor
-        End If
+        MessageDialogRendering.ApplyButtonStyle(
+            btn, Me, isDefault,
+            主题.ButtonBackColor, 主题.ButtonForeColor, 主题.ButtonBorderColor,
+            主题.ButtonHoverBackColor, 主题.ButtonPressedBackColor,
+            主题.AccentButtonBackColor, 主题.AccentButtonForeColor, 主题.AccentButtonBorderColor,
+            主题.AccentButtonHoverBackColor, 主题.AccentButtonPressedBackColor)
         AddHandler btn.Click, AddressOf 操作按钮点击
         Me.Controls.Add(btn)
         操作按钮.Add(btn)
@@ -852,18 +829,42 @@ Friend Class ExFloatingBoxForm
 
 #Region "绘制"
 
-    Protected Overrides Sub OnPaint(e As PaintEventArgs)
-        Dim g = e.Graphics
-        g.SmoothingMode = SmoothingMode.AntiAlias
-        g.TextRenderingHint = Drawing.Text.TextRenderingHint.ClearTypeGridFit
+    Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
+        If Not 毛玻璃.Enabled Then MyBase.OnPaintBackground(e)
+    End Sub
 
-        If 消息图标位图 IsNot Nothing Then
-            g.InterpolationMode = InterpolationMode.HighQualityBicubic
-            g.DrawImage(消息图标位图, 图标区域)
+    Protected Overrides Sub OnShown(e As EventArgs)
+        MyBase.OnShown(e)
+        ' ShowDialog 会禁用 Owner，重新启用以便 IMessageFilter 检测外部点击
+        If Me.Owner IsNot Nothing AndAlso Me.Owner.IsHandleCreated Then
+            EnableWindow(Me.Owner.Handle, True)
         End If
+        毛玻璃.Prepare()
+        Invalidate()
+    End Sub
 
-        Using pen As New Pen(主题.CardBorderColor, 1)
-            g.DrawRectangle(pen, 0, 0, Me.Width - 1, Me.Height - 1)
+    Protected Overrides Sub OnPaint(e As PaintEventArgs)
+        毛玻璃.Draw(e.Graphics)
+
+        Using scope = D2DHelperV2.BeginPaint(e, Me, 1)
+            If scope Is Nothing Then Return
+            Dim rt = scope.GraphicsLayer
+            Dim compositor = scope.Compositor
+            Dim brushCache = compositor.BrushCache
+            If Not 毛玻璃.HasFrame Then
+                MessageDialogRendering.FillRectangle(rt, brushCache, New RectangleF(0, 0, ClientSize.Width, ClientSize.Height), 主题.CardBackColor)
+            End If
+
+            If 有标题 Then
+                MessageDialogRendering.DrawText(rt, compositor, 标题标签.Text, 标题字体, 标题标签.Bounds,
+                    主题.TitleForeColor, TextFormatFlags.WordBreak Or TextFormatFlags.Left Or TextFormatFlags.Top Or TextFormatFlags.NoPadding, SC)
+            End If
+            MessageDialogRendering.DrawText(rt, compositor, 消息标签.Text, 消息字体, 消息标签.Bounds,
+                主题.MessageForeColor, TextFormatFlags.WordBreak Or TextFormatFlags.Left Or TextFormatFlags.Top Or TextFormatFlags.NoPadding, SC)
+            MessageDialogRendering.DrawImage(rt, compositor, 消息图标位图, 图标区域)
+            MessageDialogRendering.DrawRectangle(rt, brushCache,
+                New RectangleF(0.5F, 0.5F, Math.Max(0, ClientSize.Width - 1), Math.Max(0, ClientSize.Height - 1)),
+                主题.CardBorderColor, 1.0F)
         End Using
     End Sub
 
@@ -920,6 +921,7 @@ Friend Class ExFloatingBoxForm
             标题字体?.Dispose()
             消息字体?.Dispose()
             消息图标位图?.Dispose()
+            毛玻璃?.Dispose()
         End If
         MyBase.Dispose(disposing)
     End Sub

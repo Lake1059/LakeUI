@@ -215,6 +215,25 @@ Public Class ModernTabControl
                 MyBase.OnPaintBackground(e)
             End If
         End Sub
+
+        Private Sub 解除背景穿透消费者()
+            Try : BackgroundPenetrationV2.UnregisterConsumer(Me) : Catch : End Try
+        End Sub
+
+        Protected Overrides Sub OnHandleDestroyed(e As EventArgs)
+            解除背景穿透消费者()
+            MyBase.OnHandleDestroyed(e)
+        End Sub
+
+        Protected Overrides Sub OnVisibleChanged(e As EventArgs)
+            MyBase.OnVisibleChanged(e)
+            If Not Me.Visible Then 解除背景穿透消费者()
+        End Sub
+
+        Protected Overrides Sub OnParentChanged(e As EventArgs)
+            MyBase.OnParentChanged(e)
+            If Me.Parent Is Nothing Then 解除背景穿透消费者()
+        End Sub
     End Class
 #End Region
 
@@ -300,6 +319,8 @@ Public Class ModernTabControl
     End Function
 
     Protected Overrides Sub OnHandleDestroyed(e As EventArgs)
+        解除背景穿透消费者()
+        Try : BackgroundPenetrationV2.UnregisterConsumer(_内容面板) : Catch : End Try
         停止动画驱动()
         停用鼠标过滤器()
         MyBase.OnHandleDestroyed(e)
@@ -459,8 +480,7 @@ Public Class ModernTabControl
         确保Owner()
         If Me.Width <= 0 OrElse Me.Height <= 0 Then Return
 
-        Dim ssaa As Integer = Math.Max(1, CInt(超采样倍率))
-        If GlobalOptions.GlobalSSAA <> GlobalOptions.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(GlobalOptions.GlobalSSAA))
+        Dim ssaa As Integer = D2DHelperV2.GetEffectiveSsaaScale(超采样倍率)
 
         Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
             If scope Is Nothing Then Return  ' 设计期 / 无 Form
@@ -539,7 +559,7 @@ Public Class ModernTabControl
             Dim borderRect As RectangleF = contentRect
             borderRect.Width -= 1
             borderRect.Height -= 1
-            RectangleRenderer.绘制矩形边框_D2D(rt, borderRect, 内容区域边框颜色, 内容区域边框宽度 * s)
+            RectangleRenderer.绘制矩形边框_D2D(rt, borderRect, 内容区域边框颜色, 内容区域边框宽度 * s, _当前合成器.BrushCache)
         End If
     End Sub
 
@@ -615,11 +635,9 @@ Public Class ModernTabControl
             focusBounds.Inflate(-1 * s, -1 * s)
             If focusBounds.Width > 0 AndAlso focusBounds.Height > 0 Then
                 If radius > 0 Then
-                    Using focusGeo = RectangleRenderer.创建圆角矩形几何(focusBounds, Math.Max(1, radius - 1 * s))
-                        RectangleRenderer.绘制圆角边框_D2D(rt, focusGeo, 焦点边框颜色, 1.0F * s)
-                    End Using
+                    RectangleRenderer.绘制圆角边框_D2D(rt, focusBounds, Math.Max(1, radius - 1 * s), 焦点边框颜色, 1.0F * s, _当前合成器.BrushCache)
                 Else
-                    RectangleRenderer.绘制矩形边框_D2D(rt, focusBounds, 焦点边框颜色, 1.0F * s)
+                    RectangleRenderer.绘制矩形边框_D2D(rt, focusBounds, 焦点边框颜色, 1.0F * s, _当前合成器.BrushCache)
                 End If
             End If
         End If
@@ -1085,6 +1103,8 @@ Public Class ModernTabControl
     Private _上一个父级 As Control = Nothing
     Protected Overrides Sub OnParentChanged(e As EventArgs)
         MyBase.OnParentChanged(e)
+        解除背景穿透消费者()
+        Try : BackgroundPenetrationV2.UnregisterConsumer(_内容面板) : Catch : End Try
         If _上一个父级 IsNot Nothing Then
             RemoveHandler _上一个父级.Resize, AddressOf 父级几何变更
             If _内容面板.Parent Is _上一个父级 Then
@@ -1109,6 +1129,10 @@ Public Class ModernTabControl
 
     Protected Overrides Sub OnVisibleChanged(e As EventArgs)
         MyBase.OnVisibleChanged(e)
+        If Not Me.Visible Then
+            解除背景穿透消费者()
+            Try : BackgroundPenetrationV2.UnregisterConsumer(_内容面板) : Catch : End Try
+        End If
         If Ribbon模式值 Then
             If Not Me.Visible Then
                 _内容面板.Visible = False
@@ -1569,6 +1593,8 @@ Public Class ModernTabControl
         End Get
         Set(value As Control)
             If _backgroundSource IsNot value Then
+                解除背景穿透消费者()
+                Try : BackgroundPenetrationV2.UnregisterConsumer(_内容面板) : Catch : End Try
                 _backgroundSource = value
                 ' 内容面板上的透明背景来自同一 source。
                 If _内容面板 IsNot Nothing Then _内容面板.Invalidate(True)
@@ -1576,6 +1602,11 @@ Public Class ModernTabControl
             End If
         End Set
     End Property
+
+    Private Sub 解除背景穿透消费者()
+        If _backgroundSource Is Nothing Then Return
+        Try : BackgroundPenetrationV2.UnregisterConsumer(Me, _backgroundSource) : Catch : End Try
+    End Sub
 
     Private 动画时长值 As Integer = 300
     <Category("LakeUI"), Description(GlobalOptions.动画时长描述词), DefaultValue(300), Browsable(True)>

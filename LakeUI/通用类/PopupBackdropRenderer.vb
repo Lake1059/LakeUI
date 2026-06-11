@@ -60,6 +60,11 @@ Friend NotInheritable Class PopupBackdropRenderer
         _renderer.RequestFrame(formBounds, commitAverage)
     End Sub
 
+    Public Function WaitForFrame(Optional timeoutMilliseconds As Integer = 500) As Boolean
+        If Mode = PopupBackdropMode.None OrElse _renderer Is Nothing Then Return True
+        Return _renderer.WaitForIdle(timeoutMilliseconds) AndAlso _renderer.HasFrame
+    End Function
+
     Public Sub Draw(g As Graphics, target As Rectangle)
         If Not HasFrame OrElse target.Width <= 0 OrElse target.Height <= 0 Then Return
 

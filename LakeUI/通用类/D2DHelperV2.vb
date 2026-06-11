@@ -156,6 +156,31 @@ Public Module D2DHelperV2
 
 #End Region
 
+#Region "SSAA 倍率"
+
+    ''' <summary>
+    ''' 计算控件实际使用的 V2 图形层 SSAA 倍率。
+    ''' </summary>
+    ''' <remarks>
+    ''' OFF 不强制全局倍率；x2/x3/x4 与控件自身设置取较高值。这里不做额外上限裁剪，
+    ''' 避免改变已有控件或用户显式选择的画质行为。明确传入 BeginPaint(..., 1) 的特化路径
+    ''' 仍可保持不参与全局 SSAA。
+    ''' </remarks>
+    Public Function GetEffectiveSsaaScale(controlScale As Integer) As Integer
+        Dim ssaa As Integer = Math.Max(1, controlScale)
+        If GlobalOptions.GlobalSSAA <> GlobalOptions.SuperSamplingScaleEnum.OFF Then
+            ssaa = Math.Max(ssaa, CInt(GlobalOptions.GlobalSSAA))
+        End If
+        Return ssaa
+    End Function
+
+    ''' <summary>计算控件实际使用的 V2 图形层 SSAA 倍率。</summary>
+    Public Function GetEffectiveSsaaScale(controlScale As GlobalOptions.SuperSamplingScaleEnum) As Integer
+        Return GetEffectiveSsaaScale(CInt(controlScale))
+    End Function
+
+#End Region
+
 #Region "BeginPaint 入口"
 
     ''' <summary>

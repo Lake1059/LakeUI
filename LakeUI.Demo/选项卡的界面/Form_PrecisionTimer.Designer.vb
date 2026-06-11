@@ -26,16 +26,16 @@ Partial Class Form_PrecisionTimer
         Label5 = New Label()
         Panel7 = New Panel()
         ModernButton6 = New ModernButton()
-        Label11 = New Label()
+        Label11 = New JustEmptyControl()
         ModernButton5 = New ModernButton()
         Label6 = New Label()
         Panel1 = New Panel()
         ModernButton4 = New ModernButton()
-        Label4 = New Label()
+        Label4 = New JustEmptyControl()
         ModernButton3 = New ModernButton()
-        Label3 = New Label()
+        Label3 = New JustEmptyControl()
         ModernButton2 = New ModernButton()
-        Label2 = New Label()
+        Label2 = New JustEmptyControl()
         ModernButton1 = New ModernButton()
         Label1 = New Label()
         PrecisionTimer1 = New PrecisionTimer()
@@ -191,7 +191,7 @@ Partial Class Form_PrecisionTimer
         ModernButton3.Margin = New Padding(2)
         ModernButton3.Name = "ModernButton3"
         ModernButton3.Size = New Size(120, 50)
-        ModernButton3.SubText = "动画支持"
+        ModernButton3.SubText = "交互表现"
         ModernButton3.TabIndex = 4
         ModernButton3.Text = "N/A"
         ModernButton3.TextAlign = ModernButton.TextAlignEnum.Left
@@ -216,7 +216,7 @@ Partial Class Form_PrecisionTimer
         ModernButton2.Margin = New Padding(2)
         ModernButton2.Name = "ModernButton2"
         ModernButton2.Size = New Size(160, 50)
-        ModernButton2.SubText = "技术偏好"
+        ModernButton2.SubText = "技术路线"
         ModernButton2.TabIndex = 2
         ModernButton2.Text = "微软科技"
         ModernButton2.TextAlign = ModernButton.TextAlignEnum.Left
@@ -242,7 +242,7 @@ Partial Class Form_PrecisionTimer
         ModernButton1.Margin = New Padding(2)
         ModernButton1.Name = "ModernButton1"
         ModernButton1.Size = New Size(120, 50)
-        ModernButton1.SubText = "制作类型"
+        ModernButton1.SubText = "实现方式"
         ModernButton1.TabIndex = 0
         ModernButton1.Text = "N/A"
         ModernButton1.TextAlign = ModernButton.TextAlignEnum.Left
@@ -287,17 +287,17 @@ Partial Class Form_PrecisionTimer
     Friend WithEvents Label6 As Label
     Friend WithEvents Panel1 As Panel
     Friend WithEvents ModernButton4 As ModernButton
-    Friend WithEvents Label4 As Label
+    Friend WithEvents Label4 As JustEmptyControl
     Friend WithEvents ModernButton3 As ModernButton
-    Friend WithEvents Label3 As Label
+    Friend WithEvents Label3 As JustEmptyControl
     Friend WithEvents ModernButton2 As ModernButton
-    Friend WithEvents Label2 As Label
+    Friend WithEvents Label2 As JustEmptyControl
     Friend WithEvents ModernButton1 As ModernButton
     Friend WithEvents Label1 As Label
     Friend WithEvents PrecisionTimer1 As PrecisionTimer
     Friend WithEvents Panel7 As Panel
     Friend WithEvents ModernButton6 As ModernButton
-    Friend WithEvents Label11 As Label
+    Friend WithEvents Label11 As JustEmptyControl
     Friend WithEvents ModernButton5 As ModernButton
     Friend WithEvents Label5 As Label
 End Class

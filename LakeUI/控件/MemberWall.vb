@@ -762,8 +762,19 @@ Partial Public Class MemberWall
         Dim dw = D2DGlobals.GetDWriteFactory()
         Dim sizePx As Single = Font.SizeInPoints * (96.0F / 72.0F) * s
 
-        Using fmt = D2DGlobals.CreateTextFormat(Font, sizePx)
+        Dim compositor = D2DHelperV2.GetCompositor(Me)
+        Dim fmt As IDWriteTextFormat = Nothing
+        Dim ownsFormat As Boolean = False
+        If compositor IsNot Nothing Then
+            fmt = compositor.TextFormatCache.[Get](Font, sizePx, TextAlignment.Leading, ParagraphAlignment.Near, False, False)
+        End If
+        If fmt Is Nothing Then
+            fmt = D2DGlobals.CreateTextFormat(Font, sizePx)
             fmt.WordWrapping = WordWrapping.NoWrap
+            ownsFormat = True
+        End If
+
+        Try
             For i As Integer = 0 To _items.Count - 1
                 Dim it = _items(i)
                 If it Is Nothing OrElse Not 标题匹配搜索(it.Text, searchTokens) Then Continue For
@@ -797,7 +808,11 @@ Partial Public Class MemberWall
                 x += cardW + spacing
                 If cardH > rowH Then rowH = cardH
             Next
-        End Using
+        Finally
+            If ownsFormat Then
+                Try : fmt?.Dispose() : Catch : End Try
+            End If
+        End Try
 
         If Not hasAny Then Return 0
         Return CInt(Math.Ceiling(y + rowH))
@@ -836,8 +851,7 @@ Partial Public Class MemberWall
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
         EnsureLayout()
 
-        Dim ssaa As Integer = Math.Max(1, CInt(_superSamplingScale))
-        If GlobalOptions.GlobalSSAA <> GlobalOptions.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(GlobalOptions.GlobalSSAA))
+        Dim ssaa As Integer = D2DHelperV2.GetEffectiveSsaaScale(_superSamplingScale)
 
         Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
             If scope Is Nothing Then Return
@@ -861,7 +875,8 @@ Partial Public Class MemberWall
                                     CInt(Math.Round(_borderSize * s)),
                                     CInt(Math.Round(_borderRadius * s)),
                                     CInt(Math.Round(_scrollBarWidth * s)),
-                                    _scrollBarTrackColor, _scrollBarThumbColor, _scrollBarThumbHoverColor)
+                                    _scrollBarTrackColor, _scrollBarThumbColor, _scrollBarThumbHoverColor,
+                                    compositor.BrushCache)
             End If
 
             scope.FlushGraphics()

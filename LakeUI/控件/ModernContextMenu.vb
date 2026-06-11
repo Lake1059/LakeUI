@@ -757,8 +757,7 @@ Public Class ModernContextMenu
 #Region "绘制"
 
         Protected Overrides Sub OnPaint(e As PaintEventArgs)
-            Dim ssaa As Integer = Math.Max(1, CInt(菜单.超采样倍率))
-            If GlobalOptions.GlobalSSAA <> GlobalOptions.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(GlobalOptions.GlobalSSAA))
+            Dim ssaa As Integer = D2DHelperV2.GetEffectiveSsaaScale(菜单.超采样倍率)
 
             绘制毛玻璃背景(e.Graphics)
 

@@ -8,9 +8,9 @@ Imports System.Threading
 ''' 默认不启动任何后台线程；调用 <see cref="Enable"/> 后才会在后台采样，所有 Get 方法只返回最近一次采样快照中的值。
 ''' </summary>
 ''' <remarks>
-''' <para>内存数据优先来自 NtQueryInformationProcess(ProcessVmCounters)，并用 GetProcessMemoryInfo 兜底。</para>
-''' <para>CPU 数据来自 GetProcessTimes 与高精度墙钟差分。</para>
-''' <para>GPU 显存与 GPU 3D 占用来自 Windows PDH 的 GPU Process Memory / GPU Engine 计数器。</para>
+''' <para>内存数据对应任务管理器详细信息页的活动专用工作集、专用工作集、共享工作集和提交大小。</para>
+''' <para>CPU 数据来自 GetProcessTimes 与高精度墙钟差分，仅保留当前进程总体占用百分比。</para>
+''' <para>GPU 数据来自 Windows PDH 的 GPU Process Memory / GPU Engine 计数器，仅保留 3D、专用显存和共享显存。</para>
 ''' </remarks>
 Public NotInheritable Class MainAppUsageCounter
 
@@ -29,20 +29,29 @@ Public NotInheritable Class MainAppUsageCounter
         ''' <summary>本次采样完成时的 UTC 时间。</summary>
         Public TimestampUtc As DateTime
 
-        ''' <summary>物理内存工作集大小，单位：字节。</summary>
+        ''' <summary>活动的专用工作集大小，单位：字节。</summary>
+        Public ActivePrivateWorkingSetBytes As ULong
+
+        ''' <summary>专用工作集大小，单位：字节。</summary>
+        Public PrivateWorkingSetBytes As ULong
+
+        ''' <summary>共享工作集大小，单位：字节。</summary>
+        Public SharedWorkingSetBytes As ULong
+
+        ''' <summary>提交大小，单位：字节。</summary>
+        Public CommitSizeBytes As ULong
+
+        ''' <summary>兼容旧 API：物理内存工作集大小，单位：字节。</summary>
         Public PhysicalMemoryBytes As ULong
 
-        ''' <summary>虚拟地址空间占用大小，单位：字节。</summary>
+        ''' <summary>兼容旧 API：虚拟地址空间占用大小，单位：字节。新采样路径无法取得时回退为提交大小。</summary>
         Public VirtualMemoryBytes As ULong
 
-        ''' <summary>进程私有提交内存大小，单位：字节。</summary>
+        ''' <summary>兼容旧 API：进程私有提交内存大小，单位：字节。</summary>
         Public PrivateMemoryBytes As ULong
 
-        ''' <summary>进程提交内存大小，单位：字节。</summary>
+        ''' <summary>兼容旧 API：进程提交内存大小，单位：字节。</summary>
         Public CommitMemoryBytes As ULong
-
-        ''' <summary>对外展示用的最佳单值显存占用，单位：字节。</summary>
-        Public GpuMemoryBytes As ULong
 
         ''' <summary>专用显存占用，单位：字节。</summary>
         Public GpuDedicatedMemoryBytes As ULong
@@ -50,19 +59,28 @@ Public NotInheritable Class MainAppUsageCounter
         ''' <summary>共享显存占用，单位：字节。</summary>
         Public GpuSharedMemoryBytes As ULong
 
-        ''' <summary>本地显存占用，单位：字节。</summary>
+        ''' <summary>兼容旧 API：对外展示用的单值显存占用，单位：字节。</summary>
+        Public GpuMemoryBytes As ULong
+
+        ''' <summary>兼容旧 API：本地显存占用，单位：字节。当前映射为专用显存。</summary>
         Public GpuLocalMemoryBytes As ULong
 
-        ''' <summary>非本地显存占用，单位：字节。</summary>
+        ''' <summary>兼容旧 API：非本地显存占用，单位：字节。当前映射为共享显存。</summary>
         Public GpuNonLocalMemoryBytes As ULong
 
-        ''' <summary>GPU 总提交显存占用，单位：字节。</summary>
+        ''' <summary>兼容旧 API：GPU 总提交显存，单位：字节。当前由专用显存 + 共享显存估算。</summary>
         Public GpuTotalCommittedMemoryBytes As ULong
 
-        ''' <summary>CPU 占用，范围 0.0 到 1.0，已经按全部活动逻辑处理器归一化。</summary>
+        ''' <summary>CPU 总体占用百分比，范围 0 到 100，已经按全部活动逻辑处理器归一化。</summary>
+        Public CpuUsagePercent As Single
+
+        ''' <summary>GPU 3D 引擎占用百分比，范围 0 到 100，来自当前进程所有 3D 引擎计数器聚合。</summary>
+        Public Gpu3DUsagePercent As Single
+
+        ''' <summary>兼容旧 API：CPU 占用，范围 0.0 到 1.0。</summary>
         Public CpuUsage As Single
 
-        ''' <summary>GPU 3D 引擎占用，范围 0.0 到 1.0，来自当前进程所有 3D 引擎计数器聚合。</summary>
+        ''' <summary>兼容旧 API：GPU 3D 引擎占用，范围 0.0 到 1.0。</summary>
         Public Gpu3DUsage As Single
 
         ''' <summary>本次快照是否拿到了内存数据。</summary>
@@ -178,8 +196,30 @@ Public NotInheritable Class MainAppUsageCounter
     ''' </summary>
     Public Shared Function GetSnapshot() As UsageSnapshot
         SyncLock 快照锁
-            Return 最新快照
+            Dim snapshot = 最新快照
+            FillCompatibilitySnapshot(snapshot)
+            Return snapshot
         End SyncLock
+    End Function
+
+    ''' <summary>返回最近一次采样的活动专用工作集，单位：字节。</summary>
+    Public Shared Function GetActivePrivateWorkingSetBytes() As ULong
+        Return GetSnapshot().ActivePrivateWorkingSetBytes
+    End Function
+
+    ''' <summary>返回最近一次采样的专用工作集，单位：字节。</summary>
+    Public Shared Function GetPrivateWorkingSetBytes() As ULong
+        Return GetSnapshot().PrivateWorkingSetBytes
+    End Function
+
+    ''' <summary>返回最近一次采样的共享工作集，单位：字节。</summary>
+    Public Shared Function GetSharedWorkingSetBytes() As ULong
+        Return GetSnapshot().SharedWorkingSetBytes
+    End Function
+
+    ''' <summary>返回最近一次采样的提交大小，单位：字节。</summary>
+    Public Shared Function GetCommitSizeBytes() As ULong
+        Return GetSnapshot().CommitSizeBytes
     End Function
 
     ''' <summary>返回最近一次采样的物理内存工作集，单位：字节。</summary>
@@ -202,14 +242,6 @@ Public NotInheritable Class MainAppUsageCounter
         Return GetSnapshot().CommitMemoryBytes
     End Function
 
-    ''' <summary>
-    ''' 返回最近一次采样的最佳单值显存占用，单位：字节。
-    ''' 优先使用 Total Committed；取不到时使用本地/专用与非本地/共享显存的组合估算。
-    ''' </summary>
-    Public Shared Function GetGpuMemoryBytes() As ULong
-        Return GetSnapshot().GpuMemoryBytes
-    End Function
-
     ''' <summary>返回最近一次采样的专用显存占用，单位：字节。</summary>
     Public Shared Function GetGpuDedicatedMemoryBytes() As ULong
         Return GetSnapshot().GpuDedicatedMemoryBytes
@@ -218,6 +250,11 @@ Public NotInheritable Class MainAppUsageCounter
     ''' <summary>返回最近一次采样的共享显存占用，单位：字节。</summary>
     Public Shared Function GetGpuSharedMemoryBytes() As ULong
         Return GetSnapshot().GpuSharedMemoryBytes
+    End Function
+
+    ''' <summary>返回最近一次采样的兼容单值显存占用，单位：字节。</summary>
+    Public Shared Function GetGpuMemoryBytes() As ULong
+        Return GetSnapshot().GpuMemoryBytes
     End Function
 
     ''' <summary>返回最近一次采样的本地显存占用，单位：字节。</summary>
@@ -242,7 +279,7 @@ Public NotInheritable Class MainAppUsageCounter
 
     ''' <summary>返回最近一次采样的 CPU 占用百分比，范围 0 到 100。</summary>
     Public Shared Function GetCpuUsagePercent() As Single
-        Return GetSnapshot().CpuUsage * 100.0F
+        Return GetSnapshot().CpuUsagePercent
     End Function
 
     ''' <summary>返回最近一次采样的 GPU 3D 引擎占用，范围 0.0 到 1.0。</summary>
@@ -252,7 +289,7 @@ Public NotInheritable Class MainAppUsageCounter
 
     ''' <summary>返回最近一次采样的 GPU 3D 引擎占用百分比，范围 0 到 100。</summary>
     Public Shared Function GetGpu3DUsagePercent() As Single
-        Return GetSnapshot().Gpu3DUsage * 100.0F
+        Return GetSnapshot().Gpu3DUsagePercent
     End Function
 
     ''' <summary>最近一次快照是否包含内存数据。</summary>
@@ -327,7 +364,7 @@ Public NotInheritable Class MainAppUsageCounter
                 填充内存数据(本次快照)
                 填充CPU数据(本次快照, 活动逻辑处理器数, 使用高精度计时, 高精度频率, 上次进程时间100纳秒, 上次墙钟计数, 已有上次CPU样本)
                 填充GPU数据(本次快照, 当前进程编号)
-                本次快照.GpuMemoryBytes = 计算总显存(本次快照)
+                FillCompatibilitySnapshot(本次快照)
 
                 SyncLock 快照锁
                     最新快照 = 本次快照
@@ -353,7 +390,7 @@ Public NotInheritable Class MainAppUsageCounter
 #End Region
 
 #Region "本地内存采样"
-    ''' <summary>NtQueryInformationProcess 返回的进程虚拟内存计数器扩展结构。</summary>
+    ''' <summary>NtQueryInformationProcess 返回的进程虚拟内存计数器扩展结构，用于兼容旧版内存字段。</summary>
     <StructLayout(LayoutKind.Sequential)>
     Private Structure 虚拟内存计数器扩展
         Public 峰值虚拟大小 As UIntPtr
@@ -370,7 +407,25 @@ Public NotInheritable Class MainAppUsageCounter
         Public 私有用量 As UIntPtr
     End Structure
 
-    ''' <summary>GetProcessMemoryInfo 返回的进程内存计数器扩展结构。</summary>
+    ''' <summary>GetProcessMemoryInfo 返回的进程内存计数器 EX2 结构。</summary>
+    <StructLayout(LayoutKind.Sequential)>
+    Private Structure 进程内存计数器扩展2
+        Public 结构大小 As UInteger
+        Public 缺页次数 As UInteger
+        Public 峰值工作集大小 As UIntPtr
+        Public 工作集大小 As UIntPtr
+        Public 峰值分页池配额 As UIntPtr
+        Public 分页池配额 As UIntPtr
+        Public 峰值非分页池配额 As UIntPtr
+        Public 非分页池配额 As UIntPtr
+        Public 页面文件用量 As UIntPtr
+        Public 峰值页面文件用量 As UIntPtr
+        Public 私有用量 As UIntPtr
+        Public 专用工作集大小 As UIntPtr
+        Public 共享提交用量 As ULong
+    End Structure
+
+    ''' <summary>GetProcessMemoryInfo 返回的进程内存计数器 EX 结构。</summary>
     <StructLayout(LayoutKind.Sequential)>
     Private Structure 进程内存计数器扩展
         Public 结构大小 As UInteger
@@ -392,7 +447,7 @@ Public NotInheritable Class MainAppUsageCounter
     ''' <summary>ProcessInformationClass.ProcessVmCounters。</summary>
     Private Const 进程虚拟内存计数器信息类 As Integer = 3
 
-    ''' <summary>查询进程底层信息。</summary>
+    ''' <summary>查询进程底层虚拟内存信息。</summary>
     <DllImport("ntdll.dll", EntryPoint:="NtQueryInformationProcess")>
     Private Shared Function 查询进程信息(进程句柄 As IntPtr,
                                           信息类别 As Integer,
@@ -401,7 +456,14 @@ Public NotInheritable Class MainAppUsageCounter
                                           ByRef 返回长度 As UInteger) As Integer
     End Function
 
-    ''' <summary>查询进程内存计数器。</summary>
+    ''' <summary>查询进程内存计数器 EX2。</summary>
+    <DllImport("psapi.dll", EntryPoint:="GetProcessMemoryInfo", SetLastError:=True)>
+    Private Shared Function 获取进程内存信息2(进程句柄 As IntPtr,
+                                             ByRef 内存计数器 As 进程内存计数器扩展2,
+                                             结构大小 As UInteger) As <MarshalAs(UnmanagedType.Bool)> Boolean
+    End Function
+
+    ''' <summary>查询进程内存计数器 EX。</summary>
     <DllImport("psapi.dll", EntryPoint:="GetProcessMemoryInfo", SetLastError:=True)>
     Private Shared Function 获取进程内存信息(进程句柄 As IntPtr,
                                             ByRef 内存计数器 As 进程内存计数器扩展,
@@ -409,20 +471,27 @@ Public NotInheritable Class MainAppUsageCounter
     End Function
 
     ''' <summary>
-    ''' 填充当前进程内存数据。优先使用 NtQueryInformationProcess，失败时用 GetProcessMemoryInfo 兜底。
+    ''' 填充当前进程内存数据，对齐任务管理器详细信息页的四个内存列。
     ''' </summary>
     Private Shared Sub 填充内存数据(ByRef 快照 As UsageSnapshot)
         Try
-            Dim 虚拟计数器 As New 虚拟内存计数器扩展()
-            Dim 返回长度 As UInteger = 0UI
-            Dim 结构大小 As UInteger = CUInt(Marshal.SizeOf(Of 虚拟内存计数器扩展)())
+            Dim 内存计数器2 As New 进程内存计数器扩展2 With {
+                .结构大小 = CUInt(Marshal.SizeOf(Of 进程内存计数器扩展2)())
+            }
 
-            If 查询进程信息(获取当前进程伪句柄(), 进程虚拟内存计数器信息类, 虚拟计数器, 结构大小, 返回长度) = 本地状态成功 Then
-                快照.VirtualMemoryBytes = 指针大小转无符号64位(虚拟计数器.虚拟大小)
-                快照.PhysicalMemoryBytes = 指针大小转无符号64位(虚拟计数器.工作集大小)
-                快照.CommitMemoryBytes = 指针大小转无符号64位(虚拟计数器.页面文件用量)
-                快照.PrivateMemoryBytes = 指针大小转无符号64位(虚拟计数器.私有用量)
-                快照.HasMemoryData = True
+            If 获取进程内存信息2(获取当前进程伪句柄(), 内存计数器2, 内存计数器2.结构大小) Then
+                Dim 工作集大小 = 指针大小转无符号64位(内存计数器2.工作集大小)
+                Dim 专用工作集大小 = 指针大小转无符号64位(内存计数器2.专用工作集大小)
+
+                If 专用工作集大小 > 0UL OrElse 工作集大小 = 0UL Then
+                    快照.ActivePrivateWorkingSetBytes = 专用工作集大小
+                    快照.PrivateWorkingSetBytes = 专用工作集大小
+                    快照.SharedWorkingSetBytes = 饱和相减(工作集大小, 专用工作集大小)
+                    快照.CommitSizeBytes = 指针大小转无符号64位(内存计数器2.私有用量)
+                    填充虚拟内存兼容数据(快照)
+                    快照.HasMemoryData = True
+                    Return
+                End If
             End If
         Catch
         End Try
@@ -433,10 +502,31 @@ Public NotInheritable Class MainAppUsageCounter
             }
 
             If 获取进程内存信息(获取当前进程伪句柄(), 内存计数器, 内存计数器.结构大小) Then
-                If 快照.PhysicalMemoryBytes = 0UL Then 快照.PhysicalMemoryBytes = 指针大小转无符号64位(内存计数器.工作集大小)
-                If 快照.CommitMemoryBytes = 0UL Then 快照.CommitMemoryBytes = 指针大小转无符号64位(内存计数器.页面文件用量)
-                If 快照.PrivateMemoryBytes = 0UL Then 快照.PrivateMemoryBytes = 指针大小转无符号64位(内存计数器.私有用量)
+                Dim 工作集大小 = 指针大小转无符号64位(内存计数器.工作集大小)
+                Dim 提交大小 = 指针大小转无符号64位(内存计数器.私有用量)
+
+                快照.PrivateWorkingSetBytes = Math.Min(工作集大小, 提交大小)
+                快照.ActivePrivateWorkingSetBytes = 快照.PrivateWorkingSetBytes
+                快照.SharedWorkingSetBytes = 饱和相减(工作集大小, 快照.PrivateWorkingSetBytes)
+                快照.CommitSizeBytes = 提交大小
+                填充虚拟内存兼容数据(快照)
                 快照.HasMemoryData = True
+            End If
+        Catch
+        End Try
+    End Sub
+
+    Private Shared Sub 填充虚拟内存兼容数据(ByRef 快照 As UsageSnapshot)
+        Try
+            Dim 虚拟计数器 As New 虚拟内存计数器扩展()
+            Dim 返回长度 As UInteger = 0UI
+            Dim 结构大小 As UInteger = CUInt(Marshal.SizeOf(Of 虚拟内存计数器扩展)())
+
+            If 查询进程信息(获取当前进程伪句柄(), 进程虚拟内存计数器信息类, 虚拟计数器, 结构大小, 返回长度) = 本地状态成功 Then
+                快照.VirtualMemoryBytes = 指针大小转无符号64位(虚拟计数器.虚拟大小)
+                快照.PhysicalMemoryBytes = 指针大小转无符号64位(虚拟计数器.工作集大小)
+                快照.CommitMemoryBytes = 指针大小转无符号64位(虚拟计数器.页面文件用量)
+                快照.PrivateMemoryBytes = 指针大小转无符号64位(虚拟计数器.私有用量)
             End If
         Catch
         End Try
@@ -504,7 +594,7 @@ Public NotInheritable Class MainAppUsageCounter
             If 经过秒数 > 0 Then
                 Dim 进程CPU秒数 As Double = CDbl(当前进程时间100纳秒 - 上次进程时间100纳秒) / 10000000.0R
                 Dim CPU占用 As Double = 进程CPU秒数 / 经过秒数 / Math.Max(1.0R, CDbl(活动逻辑处理器数))
-                快照.CpuUsage = 限制到0到1(CPU占用)
+                快照.CpuUsagePercent = 限制到0到100(CPU占用 * 100.0R)
                 快照.HasCpuUsageData = True
             End If
         End If
@@ -551,9 +641,6 @@ Public NotInheritable Class MainAppUsageCounter
     Private Enum 性能计数器类型
         专用显存
         共享显存
-        本地显存
-        非本地显存
-        显存总提交
         三维占用
     End Enum
 
@@ -666,9 +753,6 @@ Public NotInheritable Class MainAppUsageCounter
 
         Dim 专用显存字节 As ULong = 0UL
         Dim 共享显存字节 As ULong = 0UL
-        Dim 本地显存字节 As ULong = 0UL
-        Dim 非本地显存字节 As ULong = 0UL
-        Dim 显存总提交字节 As ULong = 0UL
         Dim 三维占用百分比 As Double = 0.0R
         Dim 有显存数据 As Boolean = False
         Dim 有三维数据 As Boolean = False
@@ -691,25 +775,16 @@ Public NotInheritable Class MainAppUsageCounter
                             专用显存字节 = 饱和相加(专用显存字节, 字节数)
                         Case 性能计数器类型.共享显存
                             共享显存字节 = 饱和相加(共享显存字节, 字节数)
-                        Case 性能计数器类型.本地显存
-                            本地显存字节 = 饱和相加(本地显存字节, 字节数)
-                        Case 性能计数器类型.非本地显存
-                            非本地显存字节 = 饱和相加(非本地显存字节, 字节数)
-                        Case 性能计数器类型.显存总提交
-                            显存总提交字节 = 饱和相加(显存总提交字节, 字节数)
                     End Select
             End Select
         Next
 
         快照.GpuDedicatedMemoryBytes = 专用显存字节
         快照.GpuSharedMemoryBytes = 共享显存字节
-        快照.GpuLocalMemoryBytes = 本地显存字节
-        快照.GpuNonLocalMemoryBytes = 非本地显存字节
-        快照.GpuTotalCommittedMemoryBytes = 显存总提交字节
-        快照.HasGpuMemoryData = 有显存数据 OrElse 专用显存字节 > 0UL OrElse 共享显存字节 > 0UL OrElse 本地显存字节 > 0UL OrElse 非本地显存字节 > 0UL OrElse 显存总提交字节 > 0UL
+        快照.HasGpuMemoryData = 有显存数据 OrElse 专用显存字节 > 0UL OrElse 共享显存字节 > 0UL
 
         If 有三维数据 Then
-            快照.Gpu3DUsage = 限制到0到1(三维占用百分比 / 100.0R)
+            快照.Gpu3DUsagePercent = 限制到0到100(三维占用百分比)
             快照.HasGpu3DData = True
         End If
     End Sub
@@ -727,9 +802,6 @@ Public NotInheritable Class MainAppUsageCounter
             If Not 是当前进程实例(实例名, 当前进程编号) Then Continue For
             路径列表.Add(New 性能计数器路径 With {.路径 = "\GPU Process Memory(" & 实例名 & ")\Dedicated Usage", .类型 = 性能计数器类型.专用显存})
             路径列表.Add(New 性能计数器路径 With {.路径 = "\GPU Process Memory(" & 实例名 & ")\Shared Usage", .类型 = 性能计数器类型.共享显存})
-            路径列表.Add(New 性能计数器路径 With {.路径 = "\GPU Process Memory(" & 实例名 & ")\Local Usage", .类型 = 性能计数器类型.本地显存})
-            路径列表.Add(New 性能计数器路径 With {.路径 = "\GPU Process Memory(" & 实例名 & ")\Non Local Usage", .类型 = 性能计数器类型.非本地显存})
-            路径列表.Add(New 性能计数器路径 With {.路径 = "\GPU Process Memory(" & 实例名 & ")\Total Committed", .类型 = 性能计数器类型.显存总提交})
         Next
 
         For Each 实例名 In 枚举性能实例("GPU Engine")
@@ -879,6 +951,26 @@ Public NotInheritable Class MainAppUsageCounter
 #End Region
 
 #Region "通用本地辅助"
+    ''' <summary>填充旧版字段，保证优化后的精简采样不会破坏既有二进制/源码调用预期。</summary>
+    Private Shared Sub FillCompatibilitySnapshot(ByRef 快照 As UsageSnapshot)
+        If 快照.PhysicalMemoryBytes = 0UL Then
+            快照.PhysicalMemoryBytes = 饱和相加(快照.PrivateWorkingSetBytes, 快照.SharedWorkingSetBytes)
+        End If
+        If 快照.PrivateMemoryBytes = 0UL Then 快照.PrivateMemoryBytes = 快照.CommitSizeBytes
+        If 快照.CommitMemoryBytes = 0UL Then 快照.CommitMemoryBytes = 快照.CommitSizeBytes
+        If 快照.VirtualMemoryBytes = 0UL Then 快照.VirtualMemoryBytes = 快照.CommitSizeBytes
+
+        If 快照.GpuLocalMemoryBytes = 0UL Then 快照.GpuLocalMemoryBytes = 快照.GpuDedicatedMemoryBytes
+        If 快照.GpuNonLocalMemoryBytes = 0UL Then 快照.GpuNonLocalMemoryBytes = 快照.GpuSharedMemoryBytes
+        If 快照.GpuTotalCommittedMemoryBytes = 0UL Then
+            快照.GpuTotalCommittedMemoryBytes = 饱和相加(快照.GpuDedicatedMemoryBytes, 快照.GpuSharedMemoryBytes)
+        End If
+        If 快照.GpuMemoryBytes = 0UL Then 快照.GpuMemoryBytes = 快照.GpuTotalCommittedMemoryBytes
+
+        快照.CpuUsage = 限制到0到1(快照.CpuUsagePercent / 100.0R)
+        快照.Gpu3DUsage = 限制到0到1(快照.Gpu3DUsagePercent / 100.0R)
+    End Sub
+
     ''' <summary>获取当前进程伪句柄。</summary>
     <DllImport("kernel32.dll", EntryPoint:="GetCurrentProcess")>
     Private Shared Function 获取当前进程伪句柄() As IntPtr
@@ -907,19 +999,24 @@ Public NotInheritable Class MainAppUsageCounter
         Return CSng(值)
     End Function
 
+    ''' <summary>将浮点值限制到 0 到 100 范围内。</summary>
+    Private Shared Function 限制到0到100(值 As Double) As Single
+        If Double.IsNaN(值) OrElse Double.IsInfinity(值) Then Return 0.0F
+        If 值 < 0.0R Then Return 0.0F
+        If 值 > 100.0R Then Return 100.0F
+        Return CSng(值)
+    End Function
+
     ''' <summary>执行 ULong 饱和加法，避免计数器聚合时溢出。</summary>
     Private Shared Function 饱和相加(左值 As ULong, 右值 As ULong) As ULong
         If ULong.MaxValue - 左值 < 右值 Then Return ULong.MaxValue
         Return 左值 + 右值
     End Function
 
-    ''' <summary>计算对外展示用的最佳单值显存占用。</summary>
-    Private Shared Function 计算总显存(快照 As UsageSnapshot) As ULong
-        If 快照.GpuTotalCommittedMemoryBytes > 0UL Then Return 快照.GpuTotalCommittedMemoryBytes
-
-        Dim 本地类显存 = Math.Max(快照.GpuDedicatedMemoryBytes, 快照.GpuLocalMemoryBytes)
-        Dim 共享类显存 = Math.Max(快照.GpuSharedMemoryBytes, 快照.GpuNonLocalMemoryBytes)
-        Return 饱和相加(本地类显存, 共享类显存)
+    ''' <summary>执行 ULong 饱和减法，避免计数器短暂不一致时下溢。</summary>
+    Private Shared Function 饱和相减(左值 As ULong, 右值 As ULong) As ULong
+        If 左值 < 右值 Then Return 0UL
+        Return 左值 - 右值
     End Function
 #End Region
 

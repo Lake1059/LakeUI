@@ -33,11 +33,11 @@ Partial Class Form_ModernListBox
         Label6 = New Label()
         Panel1 = New Panel()
         ModernButton4 = New ModernButton()
-        Label4 = New Label()
+        Label4 = New JustEmptyControl()
         ModernButton3 = New ModernButton()
-        Label3 = New Label()
+        Label3 = New JustEmptyControl()
         ModernButton2 = New ModernButton()
-        Label2 = New Label()
+        Label2 = New JustEmptyControl()
         ModernButton1 = New ModernButton()
         Label1 = New Label()
         ModernPanel1.SuspendLayout()
@@ -74,7 +74,7 @@ Partial Class Form_ModernListBox
         Label7.Padding = New Padding(0, 20, 0, 10)
         Label7.Size = New Size(205, 50)
         Label7.TabIndex = 46
-        Label7.Text = "还支持图标等功能，全部可配置"
+        Label7.Text = "列表项支持图标、复选状态、拖拽排序与提示文本等组合配置。"
         ' 
         ' Panel3
         ' 
@@ -209,7 +209,7 @@ Partial Class Form_ModernListBox
         ModernButton3.Margin = New Padding(2)
         ModernButton3.Name = "ModernButton3"
         ModernButton3.Size = New Size(120, 50)
-        ModernButton3.SubText = "动画支持"
+        ModernButton3.SubText = "交互表现"
         ModernButton3.TabIndex = 4
         ModernButton3.Text = "半数动画"
         ModernButton3.TextAlign = ModernButton.TextAlignEnum.Left
@@ -234,7 +234,7 @@ Partial Class Form_ModernListBox
         ModernButton2.Margin = New Padding(2)
         ModernButton2.Name = "ModernButton2"
         ModernButton2.Size = New Size(160, 50)
-        ModernButton2.SubText = "技术偏好"
+        ModernButton2.SubText = "技术路线"
         ModernButton2.TabIndex = 2
         ModernButton2.Text = "人体工学科技"
         ModernButton2.TextAlign = ModernButton.TextAlignEnum.Left
@@ -260,7 +260,7 @@ Partial Class Form_ModernListBox
         ModernButton1.Margin = New Padding(2)
         ModernButton1.Name = "ModernButton1"
         ModernButton1.Size = New Size(120, 50)
-        ModernButton1.SubText = "制作类型"
+        ModernButton1.SubText = "实现方式"
         ModernButton1.TabIndex = 0
         ModernButton1.Text = "全新绘制"
         ModernButton1.TextAlign = ModernButton.TextAlignEnum.Left
@@ -301,11 +301,11 @@ Partial Class Form_ModernListBox
     Friend WithEvents Label6 As Label
     Friend WithEvents Panel1 As Panel
     Friend WithEvents ModernButton4 As ModernButton
-    Friend WithEvents Label4 As Label
+    Friend WithEvents Label4 As JustEmptyControl
     Friend WithEvents ModernButton3 As ModernButton
-    Friend WithEvents Label3 As Label
+    Friend WithEvents Label3 As JustEmptyControl
     Friend WithEvents ModernButton2 As ModernButton
-    Friend WithEvents Label2 As Label
+    Friend WithEvents Label2 As JustEmptyControl
     Friend WithEvents ModernButton1 As ModernButton
     Friend WithEvents Label1 As Label
     Friend WithEvents ModernListBox1 As ModernListBox

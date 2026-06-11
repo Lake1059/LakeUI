@@ -42,8 +42,7 @@ Public Class ModernButton
             极限矩形区域.Height - Me.Padding.Vertical)
         Dim 图标宽度 As Single = 计算图标占用的水平宽度(内容矩形区域, s)
 
-        Dim ssaa As Integer = Math.Max(1, CInt(超采样倍率))
-        If GlobalOptions.GlobalSSAA <> GlobalOptions.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(GlobalOptions.GlobalSSAA))
+        Dim ssaa As Integer = D2DHelperV2.GetEffectiveSsaaScale(超采样倍率)
 
         Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
             If scope Is Nothing Then Return  ' 设计期或无 Form 上下文

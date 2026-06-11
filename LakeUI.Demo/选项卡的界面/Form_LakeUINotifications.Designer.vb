@@ -22,35 +22,35 @@ Partial Class Form_LakeUINotifications
         Label9 = New Label()
         Panel4 = New Panel()
         ModernButton14 = New ModernButton()
-        Label16 = New Label()
+        Label16 = New JustEmptyControl()
         ModernButton13 = New ModernButton()
-        Label15 = New Label()
+        Label15 = New JustEmptyControl()
         ModernButton12 = New ModernButton()
-        Label14 = New Label()
+        Label14 = New JustEmptyControl()
         ModernButton11 = New ModernButton()
         Label8 = New Label()
         Panel3 = New Panel()
         ModernButton10 = New ModernButton()
-        Label13 = New Label()
+        Label13 = New JustEmptyControl()
         ModernButton9 = New ModernButton()
-        Label12 = New Label()
+        Label12 = New JustEmptyControl()
         ModernButton8 = New ModernButton()
-        Label11 = New Label()
+        Label11 = New JustEmptyControl()
         ModernButton7 = New ModernButton()
         Panel2 = New Panel()
         ModernButton6 = New ModernButton()
-        Label10 = New Label()
+        Label10 = New JustEmptyControl()
         ModernButton5 = New ModernButton()
         Label7 = New Label()
         ModernTextBoxStatus = New ModernTextBox()
         Label6 = New Label()
         Panel1 = New Panel()
         ModernButton4 = New ModernButton()
-        Label4 = New Label()
+        Label4 = New JustEmptyControl()
         ModernButton3 = New ModernButton()
-        Label3 = New Label()
+        Label3 = New JustEmptyControl()
         ModernButton2 = New ModernButton()
-        Label2 = New Label()
+        Label2 = New JustEmptyControl()
         ModernButton1 = New ModernButton()
         Label1 = New Label()
         ModernPanel1.SuspendLayout()
@@ -130,7 +130,7 @@ Partial Class Form_LakeUINotifications
         Panel4.Location = New Point(20, 400)
         Panel4.Name = "Panel4"
         Panel4.Padding = New Padding(0, 10, 0, 0)
-        Panel4.Size = New Size(744, 40)
+        Panel4.Size = New Size(744, 45)
         Panel4.TabIndex = 66
         ' 
         ' ModernButton14
@@ -146,7 +146,7 @@ Partial Class Form_LakeUINotifications
         ModernButton14.Name = "ModernButton14"
         ModernButton14.PressedBackColor1 = Color.FromArgb(CByte(80), CByte(220), CByte(220), CByte(220))
         ModernButton14.PressedBorderColor = Color.CornflowerBlue
-        ModernButton14.Size = New Size(150, 30)
+        ModernButton14.Size = New Size(150, 35)
         ModernButton14.TabIndex = 22
         ModernButton14.Text = "刷新状态"
         ' 
@@ -155,7 +155,7 @@ Partial Class Form_LakeUINotifications
         Label16.Dock = DockStyle.Left
         Label16.Location = New Point(466, 10)
         Label16.Name = "Label16"
-        Label16.Size = New Size(8, 30)
+        Label16.Size = New Size(8, 35)
         Label16.TabIndex = 21
         ' 
         ' ModernButton13
@@ -171,7 +171,7 @@ Partial Class Form_LakeUINotifications
         ModernButton13.Name = "ModernButton13"
         ModernButton13.PressedBackColor1 = Color.FromArgb(CByte(80), CByte(220), CByte(220), CByte(220))
         ModernButton13.PressedBorderColor = Color.CornflowerBlue
-        ModernButton13.Size = New Size(150, 30)
+        ModernButton13.Size = New Size(150, 35)
         ModernButton13.TabIndex = 20
         ModernButton13.Text = "注销注册"
         ' 
@@ -180,7 +180,7 @@ Partial Class Form_LakeUINotifications
         Label15.Dock = DockStyle.Left
         Label15.Location = New Point(308, 10)
         Label15.Name = "Label15"
-        Label15.Size = New Size(8, 30)
+        Label15.Size = New Size(8, 35)
         Label15.TabIndex = 19
         ' 
         ' ModernButton12
@@ -196,7 +196,7 @@ Partial Class Form_LakeUINotifications
         ModernButton12.Name = "ModernButton12"
         ModernButton12.PressedBackColor1 = Color.FromArgb(CByte(80), CByte(220), CByte(220), CByte(220))
         ModernButton12.PressedBorderColor = Color.CornflowerBlue
-        ModernButton12.Size = New Size(150, 30)
+        ModernButton12.Size = New Size(150, 35)
         ModernButton12.TabIndex = 18
         ModernButton12.Text = "清除最后"
         ' 
@@ -205,7 +205,7 @@ Partial Class Form_LakeUINotifications
         Label14.Dock = DockStyle.Left
         Label14.Location = New Point(150, 10)
         Label14.Name = "Label14"
-        Label14.Size = New Size(8, 30)
+        Label14.Size = New Size(8, 35)
         Label14.TabIndex = 17
         ' 
         ' ModernButton11
@@ -221,7 +221,7 @@ Partial Class Form_LakeUINotifications
         ModernButton11.Name = "ModernButton11"
         ModernButton11.PressedBackColor1 = Color.FromArgb(CByte(80), CByte(220), CByte(220), CByte(220))
         ModernButton11.PressedBorderColor = Color.CornflowerBlue
-        ModernButton11.Size = New Size(150, 30)
+        ModernButton11.Size = New Size(150, 35)
         ModernButton11.TabIndex = 16
         ModernButton11.Text = "生成 XML"
         ' 
@@ -250,7 +250,7 @@ Partial Class Form_LakeUINotifications
         Panel3.Location = New Point(20, 320)
         Panel3.Name = "Panel3"
         Panel3.Padding = New Padding(0, 10, 0, 0)
-        Panel3.Size = New Size(744, 40)
+        Panel3.Size = New Size(744, 45)
         Panel3.TabIndex = 64
         ' 
         ' ModernButton10
@@ -266,7 +266,7 @@ Partial Class Form_LakeUINotifications
         ModernButton10.Name = "ModernButton10"
         ModernButton10.PressedBackColor1 = Color.FromArgb(CByte(80), CByte(220), CByte(220), CByte(220))
         ModernButton10.PressedBorderColor = Color.CornflowerBlue
-        ModernButton10.Size = New Size(150, 30)
+        ModernButton10.Size = New Size(150, 35)
         ModernButton10.TabIndex = 22
         ModernButton10.Text = "清除全部"
         ' 
@@ -275,7 +275,7 @@ Partial Class Form_LakeUINotifications
         Label13.Dock = DockStyle.Left
         Label13.Location = New Point(466, 10)
         Label13.Name = "Label13"
-        Label13.Size = New Size(8, 30)
+        Label13.Size = New Size(8, 35)
         Label13.TabIndex = 21
         ' 
         ' ModernButton9
@@ -291,7 +291,7 @@ Partial Class Form_LakeUINotifications
         ModernButton9.Name = "ModernButton9"
         ModernButton9.PressedBackColor1 = Color.FromArgb(CByte(80), CByte(220), CByte(220), CByte(220))
         ModernButton9.PressedBorderColor = Color.CornflowerBlue
-        ModernButton9.Size = New Size(150, 30)
+        ModernButton9.Size = New Size(150, 35)
         ModernButton9.TabIndex = 20
         ModernButton9.Text = "清除本组"
         ' 
@@ -300,7 +300,7 @@ Partial Class Form_LakeUINotifications
         Label12.Dock = DockStyle.Left
         Label12.Location = New Point(308, 10)
         Label12.Name = "Label12"
-        Label12.Size = New Size(8, 30)
+        Label12.Size = New Size(8, 35)
         Label12.TabIndex = 19
         ' 
         ' ModernButton8
@@ -316,7 +316,7 @@ Partial Class Form_LakeUINotifications
         ModernButton8.Name = "ModernButton8"
         ModernButton8.PressedBackColor1 = Color.FromArgb(CByte(80), CByte(220), CByte(220), CByte(220))
         ModernButton8.PressedBorderColor = Color.CornflowerBlue
-        ModernButton8.Size = New Size(150, 30)
+        ModernButton8.Size = New Size(150, 35)
         ModernButton8.TabIndex = 18
         ModernButton8.Text = "查询通知中心"
         ' 
@@ -325,7 +325,7 @@ Partial Class Form_LakeUINotifications
         Label11.Dock = DockStyle.Left
         Label11.Location = New Point(150, 10)
         Label11.Name = "Label11"
-        Label11.Size = New Size(8, 30)
+        Label11.Size = New Size(8, 35)
         Label11.TabIndex = 17
         ' 
         ' ModernButton7
@@ -341,7 +341,7 @@ Partial Class Form_LakeUINotifications
         ModernButton7.Name = "ModernButton7"
         ModernButton7.PressedBackColor1 = Color.FromArgb(CByte(80), CByte(220), CByte(220), CByte(220))
         ModernButton7.PressedBorderColor = Color.CornflowerBlue
-        ModernButton7.Size = New Size(150, 30)
+        ModernButton7.Size = New Size(150, 35)
         ModernButton7.TabIndex = 16
         ModernButton7.Text = "更新进度"
         ' 
@@ -354,7 +354,7 @@ Partial Class Form_LakeUINotifications
         Panel2.Location = New Point(20, 280)
         Panel2.Name = "Panel2"
         Panel2.Padding = New Padding(0, 10, 0, 0)
-        Panel2.Size = New Size(744, 40)
+        Panel2.Size = New Size(744, 45)
         Panel2.TabIndex = 63
         ' 
         ' ModernButton6
@@ -370,7 +370,7 @@ Partial Class Form_LakeUINotifications
         ModernButton6.Name = "ModernButton6"
         ModernButton6.PressedBackColor1 = Color.FromArgb(CByte(80), CByte(220), CByte(220), CByte(220))
         ModernButton6.PressedBorderColor = Color.CornflowerBlue
-        ModernButton6.Size = New Size(150, 30)
+        ModernButton6.Size = New Size(150, 35)
         ModernButton6.TabIndex = 18
         ModernButton6.Text = "完整交互通知"
         ' 
@@ -379,7 +379,7 @@ Partial Class Form_LakeUINotifications
         Label10.Dock = DockStyle.Left
         Label10.Location = New Point(150, 10)
         Label10.Name = "Label10"
-        Label10.Size = New Size(8, 30)
+        Label10.Size = New Size(8, 35)
         Label10.TabIndex = 17
         ' 
         ' ModernButton5
@@ -395,7 +395,7 @@ Partial Class Form_LakeUINotifications
         ModernButton5.Name = "ModernButton5"
         ModernButton5.PressedBackColor1 = Color.FromArgb(CByte(80), CByte(220), CByte(220), CByte(220))
         ModernButton5.PressedBorderColor = Color.CornflowerBlue
-        ModernButton5.Size = New Size(150, 30)
+        ModernButton5.Size = New Size(150, 35)
         ModernButton5.TabIndex = 16
         ModernButton5.Text = "基础通知"
         ' 
@@ -497,7 +497,7 @@ Partial Class Form_LakeUINotifications
         ModernButton3.Margin = New Padding(2)
         ModernButton3.Name = "ModernButton3"
         ModernButton3.Size = New Size(120, 50)
-        ModernButton3.SubText = "系统支持"
+        ModernButton3.SubText = "交互表现"
         ModernButton3.TabIndex = 4
         ModernButton3.Text = "Win10/11"
         ModernButton3.TextAlign = ModernButton.TextAlignEnum.Left
@@ -547,7 +547,7 @@ Partial Class Form_LakeUINotifications
         ModernButton1.Margin = New Padding(2)
         ModernButton1.Name = "ModernButton1"
         ModernButton1.Size = New Size(120, 50)
-        ModernButton1.SubText = "制作类型"
+        ModernButton1.SubText = "实现方式"
         ModernButton1.TabIndex = 0
         ModernButton1.Text = "独立 DLL"
         ModernButton1.TextAlign = ModernButton.TextAlignEnum.Left
@@ -589,35 +589,35 @@ Partial Class Form_LakeUINotifications
     Friend WithEvents Label9 As Label
     Friend WithEvents Panel4 As Panel
     Friend WithEvents ModernButton14 As ModernButton
-    Friend WithEvents Label16 As Label
+    Friend WithEvents Label16 As JustEmptyControl
     Friend WithEvents ModernButton13 As ModernButton
-    Friend WithEvents Label15 As Label
+    Friend WithEvents Label15 As JustEmptyControl
     Friend WithEvents ModernButton12 As ModernButton
-    Friend WithEvents Label14 As Label
+    Friend WithEvents Label14 As JustEmptyControl
     Friend WithEvents ModernButton11 As ModernButton
     Friend WithEvents Label8 As Label
     Friend WithEvents Panel3 As Panel
     Friend WithEvents ModernButton10 As ModernButton
-    Friend WithEvents Label13 As Label
+    Friend WithEvents Label13 As JustEmptyControl
     Friend WithEvents ModernButton9 As ModernButton
-    Friend WithEvents Label12 As Label
+    Friend WithEvents Label12 As JustEmptyControl
     Friend WithEvents ModernButton8 As ModernButton
-    Friend WithEvents Label11 As Label
+    Friend WithEvents Label11 As JustEmptyControl
     Friend WithEvents ModernButton7 As ModernButton
     Friend WithEvents Panel2 As Panel
     Friend WithEvents ModernButton6 As ModernButton
-    Friend WithEvents Label10 As Label
+    Friend WithEvents Label10 As JustEmptyControl
     Friend WithEvents ModernButton5 As ModernButton
     Friend WithEvents Label7 As Label
     Friend WithEvents ModernTextBoxStatus As ModernTextBox
     Friend WithEvents Label6 As Label
     Friend WithEvents Panel1 As Panel
     Friend WithEvents ModernButton4 As ModernButton
-    Friend WithEvents Label4 As Label
+    Friend WithEvents Label4 As JustEmptyControl
     Friend WithEvents ModernButton3 As ModernButton
-    Friend WithEvents Label3 As Label
+    Friend WithEvents Label3 As JustEmptyControl
     Friend WithEvents ModernButton2 As ModernButton
-    Friend WithEvents Label2 As Label
+    Friend WithEvents Label2 As JustEmptyControl
     Friend WithEvents ModernButton1 As ModernButton
     Friend WithEvents Label1 As Label
 End Class

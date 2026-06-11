@@ -359,9 +359,7 @@ Public Class UltraDetailListView
         End Sub
 
         Public Overloads Sub AddRange(collection As IEnumerable(Of ListColumn))
-            For Each entry In collection
-                Add(entry)
-            Next
+            UltraDetailListView.添加范围时挂起更新(_owner, collection, AddressOf Add)
         End Sub
 
         Protected Overrides Sub InsertItem(index As Integer, item As ListColumn)
@@ -405,9 +403,7 @@ Public Class UltraDetailListView
         End Sub
 
         Public Overloads Sub AddRange(collection As IEnumerable(Of ListGroup))
-            For Each entry In collection
-                Add(entry)
-            Next
+            UltraDetailListView.添加范围时挂起更新(_owner, collection, AddressOf Add)
         End Sub
 
         Protected Overrides Sub InsertItem(index As Integer, item As ListGroup)
@@ -438,9 +434,7 @@ Public Class UltraDetailListView
         End Sub
 
         Public Overloads Sub AddRange(collection As IEnumerable(Of ListItem))
-            For Each entry In collection
-                Add(entry)
-            Next
+            UltraDetailListView.添加范围时挂起更新(_owner, collection, AddressOf Add)
         End Sub
 
         Protected Overrides Sub InsertItem(index As Integer, item As ListItem)
@@ -711,6 +705,18 @@ Public Class UltraDetailListView
 
 #Region "辅助方法"
 
+    Private Shared Sub 添加范围时挂起更新(Of T)(owner As UltraDetailListView, collection As IEnumerable(Of T), addAction As Action(Of T))
+        If owner Is Nothing OrElse collection Is Nothing OrElse addAction Is Nothing Then Return
+        owner.BeginUpdate()
+        Try
+            For Each entry In collection
+                addAction(entry)
+            Next
+        Finally
+            owner.EndUpdate()
+        End Try
+    End Sub
+
     Private Structure TextMeasureKey
         Implements IEquatable(Of TextMeasureKey)
 
@@ -964,6 +970,36 @@ Public Class UltraDetailListView
         rt.DrawRectangle(D2DGlobals.ToD2DRect(rect), 获取D2D画刷(rt, color), strokeWidth)
     End Sub
 
+    Private Function 获取项焦点圆角半径(rect As RectangleF) As Single
+        If 项焦点圆角半径 <= 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return 0.0F
+        Dim radius As Single = 项焦点圆角半径 * DpiScale()
+        Return Math.Min(radius, Math.Min(rect.Width, rect.Height) / 2.0F)
+    End Function
+
+    Private Sub 绘制项焦点区域_D2D(rt As Vortice.Direct2D1.ID2D1RenderTarget, rect As RectangleF,
+                              fillColor As Color, borderColor As Color, borderWidth As Single)
+        If rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+
+        Dim hasFill As Boolean = fillColor.A > 0
+        Dim hasBorder As Boolean = borderColor.A > 0 AndAlso borderWidth > 0
+        If Not hasFill AndAlso Not hasBorder Then Return
+
+        Dim radius As Single = 获取项焦点圆角半径(rect)
+        If radius > 0 Then
+            Using geo = RectangleRenderer.创建圆角矩形几何(rect, radius)
+                If hasFill Then
+                    RectangleRenderer.绘制圆角背景_D2D(rt, geo, rect, fillColor, Color.Empty, 0, _当前合成器.BrushCache)
+                End If
+                If hasBorder Then
+                    RectangleRenderer.绘制圆角边框_D2D(rt, geo, borderColor, borderWidth, _当前合成器.BrushCache)
+                End If
+            End Using
+        Else
+            If hasFill Then 填充矩形_D2D(rt, rect, fillColor)
+            If hasBorder Then 描边矩形_D2D(rt, rect, borderColor, borderWidth)
+        End If
+    End Sub
+
     Private Sub 绘制水平线_D2D(rt As Vortice.Direct2D1.ID2D1RenderTarget, x1 As Single, x2 As Single, y As Single, color As Color, strokeWidth As Single)
         If color.A = 0 OrElse strokeWidth <= 0 Then Return
         Dim br = 获取D2D画刷(rt, color)
@@ -1002,14 +1038,16 @@ Public Class UltraDetailListView
         If _scrollBar.TrackRect.IsEmpty Then Return
         Dim s As Single = DpiScale()
         _scrollBar.Draw_D2D(rt, Me.Width, Me.Height, CInt(边框宽度 * s), CInt(边框圆角半径 * s),
-            Dpi(滚动条宽度), 滚动条轨道颜色, 滚动条滑块颜色, 滚动条悬停颜色)
+            Dpi(滚动条宽度), 滚动条轨道颜色, 滚动条滑块颜色, 滚动条悬停颜色,
+            _当前合成器?.BrushCache)
     End Sub
 
     Private Sub 绘制横向滚动条_D2D(rt As Vortice.Direct2D1.ID2D1RenderTarget)
         If _hScrollBar.TrackRect.IsEmpty Then Return
         Dim s As Single = DpiScale()
         _hScrollBar.DrawHorizontal_D2D(rt, Me.Width, Me.Height, CInt(边框宽度 * s), CInt(边框圆角半径 * s),
-            Dpi(滚动条宽度), 滚动条轨道颜色, 滚动条滑块颜色, 滚动条悬停颜色)
+            Dpi(滚动条宽度), 滚动条轨道颜色, 滚动条滑块颜色, 滚动条悬停颜色,
+            _当前合成器?.BrushCache)
     End Sub
 
     ''' <summary>D2D 绘制列标题背景与分隔线（不绘文字）。</summary>
@@ -1176,7 +1214,8 @@ Public Class UltraDetailListView
             Dim t As Single = _hoverAnim.Progress
             Dim animY As Single = _hoverAnimFromY + (_hoverAnimToY - _hoverAnimFromY) * t
             Dim animH As Single = _hoverAnimFromH + (_hoverAnimToH - _hoverAnimFromH) * t
-            填充矩形_D2D(rt, New RectangleF(contentRect.X, animY, itemFocusW, animH), 项悬停背景颜色)
+            绘制项焦点区域_D2D(rt, New RectangleF(contentRect.X, animY, itemFocusW, animH),
+                              项悬停背景颜色, Color.Empty, 0)
         End If
 
         For i As Integer = _scrollOffset To _displayRows.Count - 1
@@ -1192,16 +1231,22 @@ Public Class UltraDetailListView
                 绘制分组标题行形状_D2D(rt, row.Group, rowRect)
             Else
                 If _selectedIndices.Contains(i) Then
-                    填充矩形_D2D(rt, itemFocusRect, 项选中背景颜色)
+                    绘制项焦点区域_D2D(rt, New RectangleF(itemFocusRect.X, itemFocusRect.Y,
+                                                          itemFocusRect.Width, itemFocusRect.Height),
+                                      项选中背景颜色, Color.Empty, 0)
                 ElseIf i = _hoverRowIndex AndAlso Not _hoverAnimActive Then
-                    填充矩形_D2D(rt, itemFocusRect, 项悬停背景颜色)
+                    绘制项焦点区域_D2D(rt, New RectangleF(itemFocusRect.X, itemFocusRect.Y,
+                                                          itemFocusRect.Width, itemFocusRect.Height),
+                                      项悬停背景颜色, Color.Empty, 0)
                 End If
 
                 If row.Item.Checked AndAlso 项高亮边框宽度 > 0 AndAlso
                    itemFocusRect.Width > 项高亮边框宽度 AndAlso itemFocusRect.Height > 项高亮边框宽度 Then
                     Dim sb As Single = 项高亮边框宽度 * dpiS
                     Dim half As Single = sb / 2.0F
-                    描边矩形_D2D(rt, New RectangleF(itemFocusRect.X + half, itemFocusRect.Y + half, itemFocusRect.Width - sb, itemFocusRect.Height - sb), 项高亮边框颜色, sb)
+                    绘制项焦点区域_D2D(rt, New RectangleF(itemFocusRect.X + half, itemFocusRect.Y + half,
+                                                          itemFocusRect.Width - sb, itemFocusRect.Height - sb),
+                                      Color.Empty, 项高亮边框颜色, sb)
                 End If
             End If
 
@@ -1444,6 +1489,17 @@ Public Class UltraDetailListView
         End Get
         Set(value As Color)
             SetValue(项选中背景颜色, value)
+        End Set
+    End Property
+
+    Private 项焦点圆角半径 As Integer = 0
+    <Category("LakeUI"), Description("项焦点背景圆角半径"), DefaultValue(GetType(Integer), "0"), Browsable(True)>
+    Public Property ItemCornerRadius As Integer
+        Get
+            Return 项焦点圆角半径
+        End Get
+        Set(value As Integer)
+            SetValue(项焦点圆角半径, Math.Max(0, value))
         End Set
     End Property
 
@@ -1867,7 +1923,7 @@ Public Class UltraDetailListView
             Return 拖选区域宽度
         End Get
         Set(value As Integer)
-            拖选区域宽度 = Math.Max(0, value)
+            SetValue(拖选区域宽度, Math.Max(0, value))
         End Set
     End Property
 
@@ -1944,11 +2000,12 @@ Public Class UltraDetailListView
         Set(value As Integer)
             _selectedIndices.Clear()
             _selectedMin = -1
-            If value >= 0 AndAlso value < _displayRows.Count Then
+            _selectionAnchor = -1
+            If value >= 0 AndAlso value < _displayRows.Count AndAlso _displayRows(value).Type = DisplayRowType.Item Then
                 _selectedIndices.Add(value)
                 _selectedMin = value
+                _selectionAnchor = value
             End If
-            _selectionAnchor = value
             Me.Invalidate()
             RaiseEvent SelectedIndexChanged(Me, EventArgs.Empty)
         End Set
@@ -2019,7 +2076,14 @@ Public Class UltraDetailListView
 
     Private Sub 设置选中集合(indices As IEnumerable(Of Integer))
         Dim changed = False
-        Dim newSet As New HashSet(Of Integer)(indices)
+        Dim newSet As New HashSet(Of Integer)
+        If indices IsNot Nothing Then
+            For Each idx In indices
+                If idx >= 0 AndAlso idx < _displayRows.Count AndAlso _displayRows(idx).Type = DisplayRowType.Item Then
+                    newSet.Add(idx)
+                End If
+            Next
+        End If
         If newSet.Count <> _selectedIndices.Count OrElse Not newSet.SetEquals(_selectedIndices) Then
             _selectedIndices.Clear()
             _selectedMin = -1
@@ -2232,8 +2296,7 @@ Public Class UltraDetailListView
         预计算滚动条布局()
         预计算横向滚动条布局()
 
-        Dim ssaa As Integer = Math.Max(1, CInt(超采样倍率))
-        If GlobalOptions.GlobalSSAA <> GlobalOptions.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(GlobalOptions.GlobalSSAA))
+        Dim ssaa As Integer = D2DHelperV2.GetEffectiveSsaaScale(超采样倍率)
 
         ' --- 第一遍：D2D 画形状（背景/边框/选中/悬停/箭头/拖选/指示线/滚动条/更多指示器）---
         Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
@@ -2657,11 +2720,18 @@ Public Class UltraDetailListView
                         _isDragReordering = True
                         Dim srcGroup = _displayRows(_dragReorderSourceIndex).Item.GroupName
                         If _selectedIndices.Contains(_dragReorderSourceIndex) AndAlso _selectedIndices.Count > 1 Then
-                            Dim allSameGroup = _selectedIndices.All(Function(idx) idx >= 0 AndAlso idx < _displayRows.Count AndAlso
-                                _displayRows(idx).Type = DisplayRowType.Item AndAlso
-                                String.Equals(_displayRows(idx).Item.GroupName, srcGroup, StringComparison.Ordinal))
+                            Dim allSameGroup As Boolean = True
+                            For Each idx In _selectedIndices
+                                If idx < 0 OrElse idx >= _displayRows.Count OrElse
+                                   _displayRows(idx).Type <> DisplayRowType.Item OrElse
+                                   Not String.Equals(_displayRows(idx).Item.GroupName, srcGroup, StringComparison.Ordinal) Then
+                                    allSameGroup = False
+                                    Exit For
+                                End If
+                            Next
                             If allSameGroup Then
-                                _dragReorderSourceIndices = _selectedIndices.OrderBy(Function(x) x).ToList()
+                                _dragReorderSourceIndices = New List(Of Integer)(_selectedIndices)
+                                _dragReorderSourceIndices.Sort()
                             Else
                                 _dragReorderSourceIndices = New List(Of Integer) From {_dragReorderSourceIndex}
                             End If
@@ -2860,7 +2930,7 @@ Public Class UltraDetailListView
 
         If hitRow < 0 OrElse hitRow >= _displayRows.Count Then
             If Not ctrlHeld AndAlso Not shiftHeld Then
-                设置选中集合(Enumerable.Empty(Of Integer))
+                设置选中集合(Array.Empty(Of Integer)())
             End If
             Return
         End If
@@ -2950,7 +3020,7 @@ Public Class UltraDetailListView
                 If _selectedIndices.Count = 1 Then
                     Dim firstEditableCol = 查找首个可编辑列()
                     If firstEditableCol >= 0 Then
-                        开始标签编辑(_selectedIndices.Min(), firstEditableCol)
+                        开始标签编辑(_selectedMin, firstEditableCol)
                     End If
                 End If
                 e.Handled = True
@@ -3142,7 +3212,8 @@ Public Class UltraDetailListView
     Private Sub 执行拖动排序()
         If _dragReorderSourceIndices.Count = 0 OrElse _dragReorderInsertIndex < 0 Then Return
         Dim movedItems As New List(Of ListItem)
-        For Each dispIdx In _dragReorderSourceIndices.OrderBy(Function(x) x)
+        _dragReorderSourceIndices.Sort()
+        For Each dispIdx In _dragReorderSourceIndices
             If dispIdx >= 0 AndAlso dispIdx < _displayRows.Count AndAlso _displayRows(dispIdx).Type = DisplayRowType.Item Then
                 movedItems.Add(_displayRows(dispIdx).Item)
             End If
@@ -3165,27 +3236,36 @@ Public Class UltraDetailListView
 
         Dim sourceItemsIndices As New List(Of Integer)
         For Each item In movedItems
-            sourceItemsIndices.Add(查找项索引(item))
+            Dim itemIndex As Integer = 查找项索引(item)
+            If itemIndex < 0 Then Return
+            sourceItemsIndices.Add(itemIndex)
         Next
         sourceItemsIndices.Sort()
 
-        Dim countBefore = sourceItemsIndices.Where(Function(i) i < targetItemsIndex).Count()
+        Dim countBefore As Integer = 0
+        For Each sourceIndex In sourceItemsIndices
+            If sourceIndex < targetItemsIndex Then countBefore += 1
+        Next
         Dim adjustedTarget = targetItemsIndex - countBefore
 
         BeginUpdate()
-        For i = sourceItemsIndices.Count - 1 To 0 Step -1
-            _items.RemoveAt(sourceItemsIndices(i))
-        Next
-        adjustedTarget = Math.Max(0, Math.Min(adjustedTarget, _items.Count))
-        For i = 0 To movedItems.Count - 1
-            _items.Insert(adjustedTarget + i, movedItems(i))
-        Next
-        EndUpdate()
+        Try
+            For i = sourceItemsIndices.Count - 1 To 0 Step -1
+                _items.RemoveAt(sourceItemsIndices(i))
+            Next
+            adjustedTarget = Math.Max(0, Math.Min(adjustedTarget, _items.Count))
+            For i = 0 To movedItems.Count - 1
+                _items.Insert(adjustedTarget + i, movedItems(i))
+            Next
+        Finally
+            EndUpdate()
+        End Try
 
         _selectedIndices.Clear()
         _selectedMin = -1
+        Dim movedSet As New HashSet(Of ListItem)(movedItems)
         For i = 0 To _displayRows.Count - 1
-            If _displayRows(i).Type = DisplayRowType.Item AndAlso movedItems.Contains(_displayRows(i).Item) Then
+            If _displayRows(i).Type = DisplayRowType.Item AndAlso movedSet.Contains(_displayRows(i).Item) Then
                 If _selectedIndices.Add(i) Then
                     If _selectedMin = -1 OrElse i < _selectedMin Then _selectedMin = i
                 End If
@@ -3493,7 +3573,7 @@ Public Class UltraDetailListView
 
     ''' <summary>清除所有选中。</summary>
     Public Sub ClearSelection()
-        设置选中集合(Enumerable.Empty(Of Integer))
+        设置选中集合(Array.Empty(Of Integer)())
     End Sub
 
     ''' <summary>挂起 UI 更新，在 EndUpdate 之前对集合的修改不会触发重绘。</summary>
@@ -3646,6 +3726,9 @@ Public Class UltraDetailListView
 #Region "悬停动画"
 
     Private Sub 更新悬停(newIndex As Integer)
+        If newIndex < 0 OrElse newIndex >= _displayRows.Count OrElse _displayRows(newIndex).Type <> DisplayRowType.Item Then
+            newIndex = -1
+        End If
         If newIndex = _hoverRowIndex Then Return
         Dim oldIndex As Integer = _hoverRowIndex
         _hoverRowIndex = newIndex

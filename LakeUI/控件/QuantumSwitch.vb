@@ -58,8 +58,7 @@ Public Class QuantumSwitch
             极限矩形区域.Inflate(-half, -half)
         End If
 
-        Dim ssaa As Integer = Math.Max(1, CInt(超采样倍率))
-        If GlobalOptions.GlobalSSAA <> GlobalOptions.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(GlobalOptions.GlobalSSAA))
+        Dim ssaa As Integer = D2DHelperV2.GetEffectiveSsaaScale(超采样倍率)
 
         Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
             If scope Is Nothing Then Return
@@ -78,7 +77,7 @@ Public Class QuantumSwitch
 
             If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
                 Using geo = RectangleRenderer.创建圆角矩形几何(极限矩形区域, CSng(Math.Floor(极限矩形区域.Height / 2.0F)))
-                    RectangleRenderer.绘制圆角背景_D2D(scope.DCRenderTarget, geo, 极限矩形区域, 禁用时遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Vertical)
+                    RectangleRenderer.绘制圆角背景_D2D(scope.DCRenderTarget, geo, 极限矩形区域, 禁用时遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Vertical, scope.Compositor.BrushCache)
                 End Using
             End If
         End Using
@@ -117,10 +116,7 @@ Public Class QuantumSwitch
         Dim 滑块X As Single = 滑块最小X + (滑块最大X - 滑块最小X) * 动画助手.Progress
         Dim 滑块Y As Single = 极限矩形区域.Y + _滑块边距
         Dim 滑块区域 As New RectangleF(滑块X, 滑块Y, 滑块直径, 滑块直径)
-        Using geo = RectangleRenderer.创建圆角矩形几何(滑块区域, 滑块直径 / 2.0F)
-            Dim brush = brushCache.Get(rt, 滑块颜色)
-            If brush IsNot Nothing Then rt.FillGeometry(geo, brush)
-        End Using
+        RectangleRenderer.填充椭圆_D2D(rt, 滑块区域, 滑块颜色, brushCache)
     End Sub
 
     Private Sub 绘制不确定态_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache, 极限矩形区域 As RectangleF)
@@ -138,10 +134,7 @@ Public Class QuantumSwitch
         Dim 滑块直径 As Single = 极限矩形区域.Height - _滑块边距 * 2
         If 滑块直径 <= 0 Then Return
         Dim 滑块区域 As RectangleF = 计算不确定态滑块区域(极限矩形区域)
-        Using geo = RectangleRenderer.创建圆角矩形几何(滑块区域, 滑块直径 / 2.0F)
-            Dim brush = brushCache.Get(rt, 不确定态滑块颜色值)
-            If brush IsNot Nothing Then rt.FillGeometry(geo, brush)
-        End Using
+        RectangleRenderer.填充椭圆_D2D(rt, 滑块区域, 不确定态滑块颜色值, brushCache)
     End Sub
 
     Private Function 计算不确定态滑块区域(极限矩形区域 As RectangleF) As RectangleF

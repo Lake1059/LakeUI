@@ -38,11 +38,11 @@ Partial Class Form_ModernButton
         Label6 = New Label()
         Panel1 = New Panel()
         ModernButton4 = New ModernButton()
-        Label4 = New Label()
+        Label4 = New JustEmptyControl()
         ModernButton3 = New ModernButton()
-        Label3 = New Label()
+        Label3 = New JustEmptyControl()
         ModernButton2 = New ModernButton()
-        Label2 = New Label()
+        Label2 = New JustEmptyControl()
         ModernButton1 = New ModernButton()
         Label1 = New Label()
         ModernPanel1.SuspendLayout()
@@ -87,7 +87,7 @@ Partial Class Form_ModernButton
         Label5.Padding = New Padding(0, 10, 0, 10)
         Label5.Size = New Size(345, 40)
         Label5.TabIndex = 36
-        Label5.Text = "其实最上面的四个小卡片也是这个按钮，多用途这一块"
+        Label5.Text = "顶部四个属性标签同样由 ModernButton 承载，可复用到指标卡、筛选项与状态概览。"
         ' 
         ' Panel6
         ' 
@@ -95,7 +95,8 @@ Partial Class Form_ModernButton
         Panel6.Dock = DockStyle.Top
         Panel6.Location = New Point(20, 440)
         Panel6.Name = "Panel6"
-        Panel6.Size = New Size(643, 40)
+        Panel6.Padding = New Padding(0, 10, 0, 0)
+        Panel6.Size = New Size(643, 45)
         Panel6.TabIndex = 46
         ' 
         ' ModernButton8
@@ -108,11 +109,11 @@ Partial Class Form_ModernButton
         ModernButton8.HoldClickEnabled = True
         ModernButton8.HoldClickFPS = 0
         ModernButton8.HoverBackColor1 = Color.FromArgb(CByte(60), CByte(220), CByte(220), CByte(220))
-        ModernButton8.Location = New Point(0, 0)
+        ModernButton8.Location = New Point(0, 10)
         ModernButton8.Margin = New Padding(2)
         ModernButton8.Name = "ModernButton8"
         ModernButton8.PressedBackColor1 = Color.FromArgb(CByte(80), CByte(220), CByte(220), CByte(220))
-        ModernButton8.Size = New Size(150, 40)
+        ModernButton8.Size = New Size(150, 35)
         ModernButton8.TabIndex = 0
         ModernButton8.Text = "按住并保持进度完成"
         ' 
@@ -126,7 +127,7 @@ Partial Class Form_ModernButton
         Label10.Padding = New Padding(0, 20, 0, 10)
         Label10.Size = New Size(93, 50)
         Label10.TabIndex = 45
-        Label10.Text = "长按触发模式"
+        Label10.Text = "长按触发：适合需要二次确认的高风险动作。"
         ' 
         ' Panel5
         ' 
@@ -134,7 +135,8 @@ Partial Class Form_ModernButton
         Panel5.Dock = DockStyle.Top
         Panel5.Location = New Point(20, 350)
         Panel5.Name = "Panel5"
-        Panel5.Size = New Size(643, 40)
+        Panel5.Padding = New Padding(0, 10, 0, 0)
+        Panel5.Size = New Size(643, 45)
         Panel5.TabIndex = 44
         ' 
         ' ModernButton7
@@ -144,11 +146,11 @@ Partial Class Form_ModernButton
         ModernButton7.BorderSize = 0
         ModernButton7.Dock = DockStyle.Left
         ModernButton7.HoverBackColor1 = Color.FromArgb(CByte(60), CByte(220), CByte(220), CByte(220))
-        ModernButton7.Location = New Point(0, 0)
+        ModernButton7.Location = New Point(0, 10)
         ModernButton7.Margin = New Padding(2)
         ModernButton7.Name = "ModernButton7"
         ModernButton7.PressedBackColor1 = Color.FromArgb(CByte(80), CByte(220), CByte(220), CByte(220))
-        ModernButton7.Size = New Size(150, 40)
+        ModernButton7.Size = New Size(150, 35)
         ModernButton7.TabIndex = 0
         ModernButton7.Text = "ModernButton7"
         ' 
@@ -162,7 +164,7 @@ Partial Class Form_ModernButton
         Label9.Padding = New Padding(0, 20, 0, 10)
         Label9.Size = New Size(247, 50)
         Label9.TabIndex = 43
-        Label9.Text = "圆角拉大可以变成胶囊，注意微调半径"
+        Label9.Text = "胶囊按钮：提高圆角半径后适合短命令与筛选动作。"
         ' 
         ' Panel3
         ' 
@@ -170,7 +172,8 @@ Partial Class Form_ModernButton
         Panel3.Dock = DockStyle.Top
         Panel3.Location = New Point(20, 260)
         Panel3.Name = "Panel3"
-        Panel3.Size = New Size(643, 40)
+        Panel3.Padding = New Padding(0, 10, 0, 0)
+        Panel3.Size = New Size(643, 45)
         Panel3.TabIndex = 40
         ' 
         ' ModernButton6
@@ -181,12 +184,12 @@ Partial Class Form_ModernButton
         ModernButton6.BorderSize = 0
         ModernButton6.Dock = DockStyle.Left
         ModernButton6.HoverBackColor1 = Color.FromArgb(CByte(60), CByte(220), CByte(220), CByte(220))
-        ModernButton6.Location = New Point(0, 0)
+        ModernButton6.Location = New Point(0, 10)
         ModernButton6.Margin = New Padding(2)
         ModernButton6.Name = "ModernButton6"
         ModernButton6.PressedBackColor1 = Color.FromArgb(CByte(80), CByte(220), CByte(220), CByte(220))
         ModernButton6.PressedBorderColor = Color.CornflowerBlue
-        ModernButton6.Size = New Size(150, 40)
+        ModernButton6.Size = New Size(150, 35)
         ModernButton6.TabIndex = 0
         ModernButton6.Text = "ModernButton6 (&A)"
         ' 
@@ -200,7 +203,7 @@ Partial Class Form_ModernButton
         Label7.Padding = New Padding(0, 20, 0, 10)
         Label7.Size = New Size(121, 50)
         Label7.TabIndex = 39
-        Label7.Text = "我比较喜欢的样式"
+        Label7.Text = "推荐样式：轻边界、低透明背景与清晰按压反馈。"
         ' 
         ' Panel2
         ' 
@@ -208,16 +211,17 @@ Partial Class Form_ModernButton
         Panel2.Dock = DockStyle.Top
         Panel2.Location = New Point(20, 170)
         Panel2.Name = "Panel2"
-        Panel2.Size = New Size(643, 40)
+        Panel2.Padding = New Padding(0, 10, 0, 0)
+        Panel2.Size = New Size(643, 45)
         Panel2.TabIndex = 38
         ' 
         ' ModernButton5
         ' 
         ModernButton5.Dock = DockStyle.Left
-        ModernButton5.Location = New Point(0, 0)
+        ModernButton5.Location = New Point(0, 10)
         ModernButton5.Margin = New Padding(2)
         ModernButton5.Name = "ModernButton5"
-        ModernButton5.Size = New Size(150, 40)
+        ModernButton5.Size = New Size(150, 35)
         ModernButton5.TabIndex = 0
         ModernButton5.Text = "ModernButton5"
         ' 
@@ -286,7 +290,7 @@ Partial Class Form_ModernButton
         ModernButton3.Margin = New Padding(2)
         ModernButton3.Name = "ModernButton3"
         ModernButton3.Size = New Size(120, 50)
-        ModernButton3.SubText = "动画支持"
+        ModernButton3.SubText = "交互表现"
         ModernButton3.TabIndex = 4
         ModernButton3.Text = "渐变动画"
         ModernButton3.TextAlign = ModernButton.TextAlignEnum.Left
@@ -311,7 +315,7 @@ Partial Class Form_ModernButton
         ModernButton2.Margin = New Padding(2)
         ModernButton2.Name = "ModernButton2"
         ModernButton2.Size = New Size(160, 50)
-        ModernButton2.SubText = "技术偏好"
+        ModernButton2.SubText = "技术路线"
         ModernButton2.TabIndex = 2
         ModernButton2.Text = "人体工学科技"
         ModernButton2.TextAlign = ModernButton.TextAlignEnum.Left
@@ -337,7 +341,7 @@ Partial Class Form_ModernButton
         ModernButton1.Margin = New Padding(2)
         ModernButton1.Name = "ModernButton1"
         ModernButton1.Size = New Size(120, 50)
-        ModernButton1.SubText = "制作类型"
+        ModernButton1.SubText = "实现方式"
         ModernButton1.TabIndex = 0
         ModernButton1.Text = "全新绘制"
         ModernButton1.TextAlign = ModernButton.TextAlignEnum.Left
@@ -388,11 +392,11 @@ Partial Class Form_ModernButton
     Friend WithEvents Label5 As Label
     Friend WithEvents Panel1 As Panel
     Friend WithEvents ModernButton4 As ModernButton
-    Friend WithEvents Label4 As Label
+    Friend WithEvents Label4 As JustEmptyControl
     Friend WithEvents ModernButton3 As ModernButton
-    Friend WithEvents Label3 As Label
+    Friend WithEvents Label3 As JustEmptyControl
     Friend WithEvents ModernButton2 As ModernButton
-    Friend WithEvents Label2 As Label
+    Friend WithEvents Label2 As JustEmptyControl
     Friend WithEvents ModernButton1 As ModernButton
     Friend WithEvents Label1 As Label
     Friend WithEvents Panel6 As Panel

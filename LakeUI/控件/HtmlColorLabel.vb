@@ -401,7 +401,7 @@ Public Class HtmlColorLabel
             极限矩形区域.Y + Me.Padding.Top,
             极限矩形区域.Width - Me.Padding.Horizontal,
             极限矩形区域.Height - Me.Padding.Vertical)
-        Dim _ssaa As Integer = If(GlobalOptions.GlobalSSAA > 1, CInt(GlobalOptions.GlobalSSAA), 超采样倍率)
+        Dim _ssaa As Integer = D2DHelperV2.GetEffectiveSsaaScale(超采样倍率)
 
         Using scope = D2DHelperV2.BeginPaint(e, Me, _ssaa)
             If scope Is Nothing Then Return
@@ -426,10 +426,10 @@ Public Class HtmlColorLabel
                 If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
                     If 是否有圆角 Then
                         Using geo = RectangleRenderer.创建圆角矩形几何(极限矩形区域, 边框圆角半径 * DpiScale())
-                            RectangleRenderer.绘制圆角背景_D2D(dcRT, geo, 极限矩形区域, 禁用时遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Vertical)
+                            RectangleRenderer.绘制圆角背景_D2D(dcRT, geo, 极限矩形区域, 禁用时遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Vertical, _当前合成器.BrushCache)
                         End Using
                     Else
-                        RectangleRenderer.绘制矩形背景_D2D(dcRT, 极限矩形区域, 禁用时遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Vertical)
+                        RectangleRenderer.绘制矩形背景_D2D(dcRT, 极限矩形区域, 禁用时遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Vertical, _当前合成器.BrushCache)
                     End If
                 End If
             Finally
@@ -448,34 +448,33 @@ Public Class HtmlColorLabel
         Dim r As Single = 边框圆角半径 * s
         If MyBase.BackColor.A = 0 Then
             If 是否有圆角 Then
-                Using geo = RectangleRenderer.创建圆角矩形几何(极限矩形区域, r)
-                    RectangleRenderer.绘制圆角边框_D2D(rt, geo, 边框颜色, 边框宽度 * s)
-                End Using
+                RectangleRenderer.绘制圆角边框_D2D(rt, 极限矩形区域, r, 边框颜色, 边框宽度 * s, _当前合成器.BrushCache)
             Else
-                RectangleRenderer.绘制矩形边框_D2D(rt, 极限矩形区域, 边框颜色, 边框宽度 * s)
+                RectangleRenderer.绘制矩形边框_D2D(rt, 极限矩形区域, 边框颜色, 边框宽度 * s, _当前合成器.BrushCache)
             End If
             Return
         End If
         If 是否有圆角 Then
             Using geo = RectangleRenderer.创建圆角矩形几何(极限矩形区域, r)
                 If MyBase.BackColor.A > 0 Then
-                    RectangleRenderer.绘制圆角背景_D2D(rt, geo, 极限矩形区域, MyBase.BackColor, Color.Empty, System.Windows.Forms.Orientation.Vertical)
+                    RectangleRenderer.绘制圆角背景_D2D(rt, geo, 极限矩形区域, MyBase.BackColor, Color.Empty, System.Windows.Forms.Orientation.Vertical, _当前合成器.BrushCache)
                 End If
                 If 边框颜色.A > 0 AndAlso 边框宽度 > 0 Then
-                    RectangleRenderer.绘制圆角边框_D2D(rt, geo, 边框颜色, 边框宽度 * s)
+                    RectangleRenderer.绘制圆角边框_D2D(rt, geo, 边框颜色, 边框宽度 * s, _当前合成器.BrushCache)
                 End If
             End Using
         Else
             If MyBase.BackColor.A > 0 Then
-                RectangleRenderer.绘制矩形背景_D2D(rt, 极限矩形区域, MyBase.BackColor, Color.Empty, System.Windows.Forms.Orientation.Vertical)
+                RectangleRenderer.绘制矩形背景_D2D(rt, 极限矩形区域, MyBase.BackColor, Color.Empty, System.Windows.Forms.Orientation.Vertical, _当前合成器.BrushCache)
             End If
             If 边框颜色.A > 0 AndAlso 边框宽度 > 0 Then
-                RectangleRenderer.绘制矩形边框_D2D(rt, 极限矩形区域, 边框颜色, 边框宽度 * s)
+                RectangleRenderer.绘制矩形边框_D2D(rt, 极限矩形区域, 边框颜色, 边框宽度 * s, _当前合成器.BrushCache)
             End If
         End If
     End Sub
 
     Private Structure 渲染单元
+        Public 类型 As 渲染单元类型
         Public 文本 As String
         Public 颜色 As Color
         Public 字号 As Single
@@ -485,6 +484,12 @@ Public Class HtmlColorLabel
         Public 宽度 As Integer
         Public 高度 As Integer
     End Structure
+
+    Private Enum 渲染单元类型
+        文本
+        信息图标
+        水平间距
+    End Enum
 
     Private Structure 渲染行
         Public 单元列表 As List(Of 渲染单元)
@@ -545,7 +550,7 @@ Public Class HtmlColorLabel
         End If
         Dim 片段列表 = 解析为片段列表(MyBase.Text)
         Dim 行列表 As New List(Of 渲染行)
-        If 片段列表.Count = 0 Then
+        If 片段列表.Count = 0 AndAlso Not ShouldShowInfoIcon() Then
             缓存布局行表 = 行列表
             缓存布局宽度 = 最大宽度
             缓存布局文本 = MyBase.Text
@@ -554,13 +559,18 @@ Public Class HtmlColorLabel
         End If
         Dim 默认行高 As Integer = 测量文本尺寸("A", Me.Font).Height
         Dim 当前行 As New 渲染行 With {.单元列表 = New List(Of 渲染单元), .行宽 = 0, .行高 = 0}
+
+        If ShouldShowInfoIcon() AndAlso 信息图标位置 = InfoIconPositionEnum.Start Then
+            添加信息图标单元(当前行, 行列表, 最大宽度, 默认行高)
+        End If
+
         For Each 片段 In 片段列表
             Dim 片段字体 = 获取缓存字体(片段.字号, 片段.字体名称, 片段.字体样式)
             Dim 行数组 = 片段.文本.Split({vbCrLf, vbLf, vbCr}, StringSplitOptions.None)
             For 行索引 As Integer = 0 To 行数组.Length - 1
                 If 行索引 > 0 Then
                     If 当前行.行高 = 0 Then 当前行.行高 = 默认行高
-                    行列表.Add(当前行)
+                    提交渲染行(当前行, 行列表)
                     当前行 = New 渲染行 With {.单元列表 = New List(Of 渲染单元), .行宽 = 0, .行高 = 0}
                 End If
                 Dim 行文本 = 行数组(行索引)
@@ -570,9 +580,9 @@ Public Class HtmlColorLabel
                     Dim 单元尺寸 = 测量文本尺寸(单元, 片段字体)
                     Dim 单元宽度 = 单元尺寸.Width
                     Dim 单元高度 = 单元尺寸.Height
-                    If 当前行.行宽 > 0 AndAlso 当前行.行宽 + 单元宽度 > 最大宽度 Then
+                    If 当前行.行宽 > 0 AndAlso 估算追加单元后的行宽(当前行, 单元宽度, 单元高度) > 最大宽度 Then
                         If 当前行.行高 = 0 Then 当前行.行高 = 单元高度
-                        行列表.Add(当前行)
+                        提交渲染行(当前行, 行列表)
                         当前行 = New 渲染行 With {.单元列表 = New List(Of 渲染单元), .行宽 = 0, .行高 = 0}
                     End If
                     If 单元宽度 > 最大宽度 AndAlso 单元.Length > 1 Then
@@ -581,12 +591,13 @@ Public Class HtmlColorLabel
                             Dim 字符尺寸 = 测量文本尺寸(字符文本, 片段字体)
                             Dim 字符宽度 = 字符尺寸.Width
                             Dim 字符高度 = 字符尺寸.Height
-                            If 当前行.行宽 > 0 AndAlso 当前行.行宽 + 字符宽度 > 最大宽度 Then
+                            If 当前行.行宽 > 0 AndAlso 估算追加单元后的行宽(当前行, 字符宽度, 字符高度) > 最大宽度 Then
                                 If 当前行.行高 = 0 Then 当前行.行高 = 字符高度
-                                行列表.Add(当前行)
+                                提交渲染行(当前行, 行列表)
                                 当前行 = New 渲染行 With {.单元列表 = New List(Of 渲染单元), .行宽 = 0, .行高 = 0}
                             End If
                             当前行.单元列表.Add(New 渲染单元 With {
+                                .类型 = 渲染单元类型.文本,
                                 .文本 = 字符文本, .颜色 = 片段.颜色, .字号 = 片段.字号, .字体名称 = 片段.字体名称, .字体样式 = 片段.字体样式,
                                 .X偏移 = 当前行.行宽, .宽度 = 字符宽度, .高度 = 字符高度})
                             当前行.行宽 += 字符宽度
@@ -594,6 +605,7 @@ Public Class HtmlColorLabel
                         Next
                     Else
                         当前行.单元列表.Add(New 渲染单元 With {
+                            .类型 = 渲染单元类型.文本,
                             .文本 = 单元, .颜色 = 片段.颜色, .字号 = 片段.字号, .字体名称 = 片段.字体名称, .字体样式 = 片段.字体样式,
                             .X偏移 = 当前行.行宽, .宽度 = 单元宽度, .高度 = 单元高度})
                         当前行.行宽 += 单元宽度
@@ -602,8 +614,11 @@ Public Class HtmlColorLabel
                 Next
             Next
         Next
+        If ShouldShowInfoIcon() AndAlso 信息图标位置 = InfoIconPositionEnum.End Then
+            添加信息图标单元(当前行, 行列表, 最大宽度, 默认行高)
+        End If
         If 当前行.行高 = 0 Then 当前行.行高 = 默认行高
-        行列表.Add(当前行)
+        提交渲染行(当前行, 行列表)
         缓存布局行表 = 行列表
         缓存布局宽度 = 最大宽度
         缓存布局文本 = MyBase.Text
@@ -611,11 +626,104 @@ Public Class HtmlColorLabel
         Return 行列表
     End Function
 
+    Private Sub 添加信息图标单元(ByRef 当前行 As 渲染行, 行列表 As List(Of 渲染行), 最大宽度 As Integer, 默认行高 As Integer)
+        If 当前行.行高 = 0 Then 当前行.行高 = 默认行高
+        Dim iconSize As Integer = 计算信息图标尺寸(当前行.行高)
+        Dim gap As Integer = CInt(Math.Round(Math.Max(0, 信息图标文本间距) * DpiScale()))
+
+        If 当前行.行宽 > 0 Then
+            Dim needWidth As Integer = gap + iconSize
+            If 当前行.行宽 + needWidth > 最大宽度 Then
+                提交渲染行(当前行, 行列表)
+                当前行 = New 渲染行 With {.单元列表 = New List(Of 渲染单元), .行宽 = 0, .行高 = 默认行高}
+                gap = 0
+            ElseIf gap > 0 Then
+                当前行.单元列表.Add(New 渲染单元 With {
+                    .类型 = 渲染单元类型.水平间距,
+                    .X偏移 = 当前行.行宽,
+                    .宽度 = gap,
+                    .高度 = 0})
+                当前行.行宽 += gap
+            End If
+        End If
+
+        当前行.单元列表.Add(New 渲染单元 With {
+            .类型 = 渲染单元类型.信息图标,
+            .X偏移 = 当前行.行宽,
+            .宽度 = iconSize,
+            .高度 = iconSize})
+        当前行.行宽 += iconSize
+        当前行.行高 = Math.Max(当前行.行高, iconSize)
+
+        If 信息图标位置 = InfoIconPositionEnum.Start AndAlso gap > 0 Then
+            当前行.单元列表.Add(New 渲染单元 With {
+                .类型 = 渲染单元类型.水平间距,
+                .X偏移 = 当前行.行宽,
+                .宽度 = gap,
+                .高度 = 0})
+            当前行.行宽 += gap
+        End If
+    End Sub
+
+    Private Sub 提交渲染行(ByRef 行 As 渲染行, 行列表 As List(Of 渲染行))
+        修正行内信息图标尺寸(行)
+        行列表.Add(行)
+    End Sub
+
+    Private Function 估算追加单元后的行宽(行 As 渲染行, 追加宽度 As Integer, 追加高度 As Integer) As Integer
+        Dim result As Integer = 行.行宽 + 追加宽度
+        If 行.单元列表 Is Nothing OrElse 行.单元列表.Count = 0 Then Return result
+
+        Dim iconWidth As Integer = -1
+        For Each unit In 行.单元列表
+            If unit.类型 = 渲染单元类型.信息图标 Then
+                iconWidth = unit.宽度
+                Exit For
+            End If
+        Next
+        If iconWidth < 0 Then Return result
+
+        Dim newLineHeight As Integer = Math.Max(行.行高, 追加高度)
+        Dim newIconWidth As Integer = 计算信息图标尺寸(newLineHeight)
+        Return result + newIconWidth - iconWidth
+    End Function
+
+    Private Sub 修正行内信息图标尺寸(ByRef 行 As 渲染行)
+        If 行.单元列表 Is Nothing OrElse 行.单元列表.Count = 0 Then Return
+
+        Dim oldIconWidth As Integer = 0
+        Dim iconIndex As Integer = -1
+        For i As Integer = 0 To 行.单元列表.Count - 1
+            If 行.单元列表(i).类型 = 渲染单元类型.信息图标 Then
+                oldIconWidth = 行.单元列表(i).宽度
+                iconIndex = i
+                Exit For
+            End If
+        Next
+        If iconIndex < 0 Then Return
+
+        Dim newIconWidth As Integer = 计算信息图标尺寸(行.行高)
+        If newIconWidth = oldIconWidth Then Return
+
+        Dim delta As Integer = newIconWidth - oldIconWidth
+        Dim unit = 行.单元列表(iconIndex)
+        unit.宽度 = newIconWidth
+        unit.高度 = newIconWidth
+        行.单元列表(iconIndex) = unit
+        For i As Integer = iconIndex + 1 To 行.单元列表.Count - 1
+            unit = 行.单元列表(i)
+            unit.X偏移 += delta
+            行.单元列表(i) = unit
+        Next
+        行.行宽 += delta
+    End Sub
+
     Private Sub 绘制文本内容_D2D(rt As ID2D1DCRenderTarget, 内容矩形区域 As RectangleF)
+        _infoIconBounds = Rectangle.Empty
         Dim 内容区域 As Rectangle = Rectangle.Round(内容矩形区域)
         Dim 原始文本 = MyBase.Text
         ' 纯文本快速路径：无 HTML 标记时直接 DirectWrite 绘制。
-        If Not String.IsNullOrEmpty(原始文本) AndAlso 是否纯文本(原始文本) Then
+        If Not ShouldShowInfoIcon() AndAlso Not String.IsNullOrEmpty(原始文本) AndAlso 是否纯文本(原始文本) Then
             绘制纯文本_D2D(rt, 原始文本, 内容区域)
             Return
         End If
@@ -647,16 +755,28 @@ Public Class HtmlColorLabel
                     对齐偏移 = 0
             End Select
             For Each 单元 In 行.单元列表
-                Dim 单元字体 = 获取缓存字体(单元.字号, 单元.字体名称, 单元.字体样式)
+                If 单元.类型 = 渲染单元类型.水平间距 Then Continue For
                 Dim Y偏移 As Integer
-                Select Case 行内垂直对齐方式
-                    Case InlineAlignEnum.Center
-                        Y偏移 = (行.行高 - 单元.高度) \ 2
-                    Case Else
-                        Y偏移 = 行.行高 - 单元.高度
-                End Select
+                If 单元.类型 = 渲染单元类型.信息图标 Then
+                    Y偏移 = (行.行高 - 单元.高度) \ 2
+                Else
+                    Select Case 行内垂直对齐方式
+                        Case InlineAlignEnum.Center
+                            Y偏移 = (行.行高 - 单元.高度) \ 2
+                        Case Else
+                            Y偏移 = 行.行高 - 单元.高度
+                    End Select
+                End If
                 Dim 绘制位置 As New PointF(内容区域.X + 对齐偏移 + 单元.X偏移, 当前Y + Y偏移)
-                绘制单元_D2D(rt, 单元.文本, 单元字体, 单元.颜色, 绘制位置, 单元.宽度, 单元.高度)
+                Select Case 单元.类型
+                    Case 渲染单元类型.信息图标
+                        Dim iconRect As New RectangleF(绘制位置.X, 绘制位置.Y, 单元.宽度, 单元.高度)
+                        绘制信息图标_D2D(rt, iconRect)
+                        _infoIconBounds = Rectangle.Ceiling(iconRect)
+                    Case Else
+                        Dim 单元字体 = 获取缓存字体(单元.字号, 单元.字体名称, 单元.字体样式)
+                        绘制单元_D2D(rt, 单元.文本, 单元字体, 单元.颜色, 绘制位置, 单元.宽度, 单元.高度)
+                End Select
             Next
             当前Y += 行.行高 + 行距
         Next
@@ -713,6 +833,47 @@ Public Class HtmlColorLabel
             rt.DrawText(text, fmt, layoutRect, brush, DrawTextOptions.None, Vortice.DCommon.MeasuringMode.GdiClassic)
         End If
     End Sub
+
+    Private Sub 绘制信息图标_D2D(rt As ID2D1DCRenderTarget, rect As RectangleF)
+        If rect.Width <= 0 OrElse rect.Height <= 0 OrElse 信息图标颜色.A = 0 Then Return
+
+        Dim lineWidth As Single = Math.Max(0.5F, 信息图标线条粗细 * DpiScale())
+        Dim inset As Single = lineWidth / 2.0F
+        Dim circleRect As New RectangleF(rect.X + inset, rect.Y + inset,
+                                         Math.Max(1.0F, rect.Width - lineWidth),
+                                         Math.Max(1.0F, rect.Height - lineWidth))
+        RectangleRenderer.描边椭圆_D2D(rt, circleRect, 信息图标颜色, lineWidth, _当前合成器.BrushCache)
+
+        Dim cx As Single = rect.X + rect.Width / 2.0F
+        Dim glyphWidth As Single = Math.Max(lineWidth, rect.Width * 0.15F)
+        Dim topDotR As Single = glyphWidth / 2.0F
+        Dim glyphTop As Single = rect.Y + rect.Height * 0.27F
+        Dim glyphBottom As Single = rect.Y + rect.Height * 0.74F
+        Dim gap As Single = Math.Max(glyphWidth * 0.65F, rect.Height * 0.055F)
+        Dim dotCenterY As Single = glyphTop + topDotR
+        RectangleRenderer.填充椭圆_D2D(rt,
+                                      New RectangleF(cx - topDotR, dotCenterY - topDotR, topDotR * 2.0F, topDotR * 2.0F),
+                                      信息图标颜色, _当前合成器.BrushCache)
+
+        Dim stemTop As Single = dotCenterY + topDotR + gap
+        Dim stemHeight As Single = Math.Max(glyphWidth, glyphBottom - stemTop)
+        RectangleRenderer.绘制矩形背景_D2D(
+            rt,
+            New RectangleF(cx - glyphWidth / 2.0F, stemTop, glyphWidth, stemHeight),
+            信息图标颜色,
+            Color.Empty,
+            System.Windows.Forms.Orientation.Vertical,
+            _当前合成器.BrushCache)
+    End Sub
+
+    Private Function 计算信息图标尺寸(lineHeight As Integer) As Integer
+        Dim ratio As Single = Math.Max(0.05F, 信息图标尺寸比例)
+        Return Math.Max(1, CInt(Math.Round(Math.Max(1, lineHeight) * ratio)))
+    End Function
+
+    Private Function ShouldShowInfoIcon() As Boolean
+        Return Not String.IsNullOrEmpty(_toolTipText)
+    End Function
 
     ''' <summary>根据当前文字与行内对齐设置生成纯文本路径所需的 <see cref="TextFormatFlags"/>。</summary>
     Private Function 计算纯文本绘制标志() As TextFormatFlags
@@ -915,6 +1076,11 @@ Public Class HtmlColorLabel
         更新自动尺寸()
     End Sub
 
+    Protected Overrides Sub OnHandleDestroyed(e As EventArgs)
+        关闭信息图标提示()
+        MyBase.OnHandleDestroyed(e)
+    End Sub
+
     Protected Overrides Sub OnFontChanged(e As EventArgs)
         MyBase.OnFontChanged(e)
         响应字体变化()
@@ -928,7 +1094,35 @@ Public Class HtmlColorLabel
 
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
+        使缓存失效(False)
+        更新自动尺寸()
+        关闭信息图标提示()
         Me.Invalidate()
+    End Sub
+
+    Protected Overrides Sub OnMouseMove(e As MouseEventArgs)
+        MyBase.OnMouseMove(e)
+        Dim overIcon As Boolean = ShouldShowInfoIcon() AndAlso Not _infoIconBounds.IsEmpty AndAlso _infoIconBounds.Contains(e.Location)
+        If overIcon Then
+            If Not _mouseOverInfoIcon OrElse 提示窗体 Is Nothing OrElse 提示窗体.IsDisposed OrElse Not 提示窗体.Visible Then
+                显示信息图标提示()
+            End If
+            _mouseOverInfoIcon = True
+        ElseIf _mouseOverInfoIcon Then
+            _mouseOverInfoIcon = False
+            关闭信息图标提示()
+        End If
+    End Sub
+
+    Protected Overrides Sub OnMouseLeave(e As EventArgs)
+        MyBase.OnMouseLeave(e)
+        _mouseOverInfoIcon = False
+        关闭信息图标提示()
+    End Sub
+
+    Protected Overrides Sub OnVisibleChanged(e As EventArgs)
+        MyBase.OnVisibleChanged(e)
+        If Not Visible Then 关闭信息图标提示()
     End Sub
 
     Private 正在更新尺寸 As Boolean = False
@@ -1108,6 +1302,334 @@ Public Class HtmlColorLabel
             SetValue(行距, Math.Max(value, 0))
         End Set
     End Property
+
+#End Region
+
+#Region "信息提示图标"
+
+    Public Enum InfoIconPositionEnum
+        Start
+        [End]
+    End Enum
+
+    Private _toolTipText As String = ""
+    <Category("LakeUI - Info Icon"), Description("信息图标悬停时显示的提示文本；为空时不显示信息图标。"), DefaultValue(GetType(String), ""), Browsable(True)>
+    Public Property ToolTipText As String
+        Get
+            Return _toolTipText
+        End Get
+        Set(value As String)
+            Dim newValue = If(value, "")
+            If _toolTipText = newValue Then Return
+            Dim oldVisible As Boolean = ShouldShowInfoIcon()
+            _toolTipText = newValue
+            If oldVisible <> ShouldShowInfoIcon() Then
+                使缓存失效(False)
+                更新自动尺寸()
+            End If
+            If Not ShouldShowInfoIcon() Then 关闭信息图标提示()
+            Invalidate()
+        End Set
+    End Property
+
+    Private 信息图标尺寸比例 As Single = 0.72F
+    <Category("LakeUI - Info Icon"), Description("信息图标直径相对于所在行行高的比例。"), DefaultValue(0.72F), Browsable(True)>
+    Public Property InfoIconSizeRatio As Single
+        Get
+            Return 信息图标尺寸比例
+        End Get
+        Set(value As Single)
+            SetValue(信息图标尺寸比例, Math.Max(0.05F, Math.Min(1.5F, value)))
+        End Set
+    End Property
+
+    Private 信息图标线条粗细 As Single = 1.2F
+    <Category("LakeUI - Info Icon"), Description("信息图标圆圈与字母 i 的线条粗细（逻辑像素）。"), DefaultValue(1.2F), Browsable(True)>
+    Public Property InfoIconStrokeWidth As Single
+        Get
+            Return 信息图标线条粗细
+        End Get
+        Set(value As Single)
+            信息图标线条粗细 = Math.Max(0.1F, value)
+            Invalidate()
+        End Set
+    End Property
+
+    Private 信息图标颜色 As Color = Color.Silver
+    <Category("LakeUI - Info Icon"), Description("信息图标圆圈与字母 i 的颜色。"), DefaultValue(GetType(Color), "Silver"), Browsable(True)>
+    Public Property InfoIconColor As Color
+        Get
+            Return 信息图标颜色
+        End Get
+        Set(value As Color)
+            If 信息图标颜色 = value Then Return
+            信息图标颜色 = value
+            Invalidate()
+        End Set
+    End Property
+
+    Private 信息图标位置 As InfoIconPositionEnum = InfoIconPositionEnum.End
+    <Category("LakeUI - Info Icon"), Description("信息图标位于文本开头或结尾。"), DefaultValue(GetType(InfoIconPositionEnum), "End"), Browsable(True)>
+    Public Property InfoIconPosition As InfoIconPositionEnum
+        Get
+            Return 信息图标位置
+        End Get
+        Set(value As InfoIconPositionEnum)
+            SetValue(信息图标位置, value)
+        End Set
+    End Property
+
+    Private 信息图标文本间距 As Integer = 4
+    <Category("LakeUI - Info Icon"), Description("信息图标与文本之间的横向间距（逻辑像素）。"), DefaultValue(4), Browsable(True)>
+    Public Property InfoIconTextGap As Integer
+        Get
+            Return 信息图标文本间距
+        End Get
+        Set(value As Integer)
+            SetValue(信息图标文本间距, Math.Max(0, value))
+        End Set
+    End Property
+
+#End Region
+
+#Region "工具提示"
+
+    Private 提示窗体 As FloatingToolTipForm = Nothing
+    Private _infoIconBounds As Rectangle = Rectangle.Empty
+    Private _mouseOverInfoIcon As Boolean = False
+
+    Private 提示背景颜色 As Color = Color.FromArgb(50, 50, 50)
+    <Category("LakeUI - ToolTip"), Description("工具提示背景颜色。"), DefaultValue(GetType(Color), "50, 50, 50"), Browsable(True)>
+    Public Property ToolTipBackColor As Color
+        Get
+            Return 提示背景颜色
+        End Get
+        Set(value As Color)
+            提示背景颜色 = value
+            If 提示窗体 IsNot Nothing AndAlso Not 提示窗体.IsDisposed AndAlso 提示窗体.Visible Then 显示信息图标提示()
+        End Set
+    End Property
+
+    Private 提示文本颜色 As Color = Color.Silver
+    <Category("LakeUI - ToolTip"), Description("工具提示文本颜色。"), DefaultValue(GetType(Color), "Silver"), Browsable(True)>
+    Public Property ToolTipForeColor As Color
+        Get
+            Return 提示文本颜色
+        End Get
+        Set(value As Color)
+            提示文本颜色 = value
+            If 提示窗体 IsNot Nothing AndAlso Not 提示窗体.IsDisposed AndAlso 提示窗体.Visible Then 显示信息图标提示()
+        End Set
+    End Property
+
+    Private 提示边框颜色 As Color = Color.Gray
+    <Category("LakeUI - ToolTip"), Description("工具提示边框颜色。"), DefaultValue(GetType(Color), "Gray"), Browsable(True)>
+    Public Property ToolTipBorderColor As Color
+        Get
+            Return 提示边框颜色
+        End Get
+        Set(value As Color)
+            提示边框颜色 = value
+            If 提示窗体 IsNot Nothing AndAlso Not 提示窗体.IsDisposed AndAlso 提示窗体.Visible Then 显示信息图标提示()
+        End Set
+    End Property
+
+    Private 提示边框宽度 As Integer = 1
+    <Category("LakeUI - ToolTip"), Description("工具提示边框宽度（逻辑像素）。"), DefaultValue(1), Browsable(True)>
+    Public Property ToolTipBorderSize As Integer
+        Get
+            Return 提示边框宽度
+        End Get
+        Set(value As Integer)
+            提示边框宽度 = Math.Max(0, value)
+            If 提示窗体 IsNot Nothing AndAlso Not 提示窗体.IsDisposed AndAlso 提示窗体.Visible Then 显示信息图标提示()
+        End Set
+    End Property
+
+    Private 提示圆角半径 As Integer = 0
+    <Category("LakeUI - ToolTip"), Description("工具提示圆角半径（逻辑像素）。"), DefaultValue(0), Browsable(True)>
+    Public Property ToolTipBorderRadius As Integer
+        Get
+            Return 提示圆角半径
+        End Get
+        Set(value As Integer)
+            提示圆角半径 = Math.Max(0, value)
+            If 提示窗体 IsNot Nothing AndAlso Not 提示窗体.IsDisposed AndAlso 提示窗体.Visible Then 显示信息图标提示()
+        End Set
+    End Property
+
+    Private 提示内边距 As New Padding(10, 10, 10, 10)
+    <Category("LakeUI - ToolTip"), Description("工具提示内边距。"), DefaultValue(GetType(Padding), "10, 10, 10, 10"), Browsable(True)>
+    Public Property ToolTipPadding As Padding
+        Get
+            Return 提示内边距
+        End Get
+        Set(value As Padding)
+            提示内边距 = value
+            If 提示窗体 IsNot Nothing AndAlso Not 提示窗体.IsDisposed AndAlso 提示窗体.Visible Then 显示信息图标提示()
+        End Set
+    End Property
+
+    Private 提示最大宽度 As Integer = 300
+    <Category("LakeUI - ToolTip"), Description("工具提示最大宽度。"), DefaultValue(300), Browsable(True)>
+    Public Property ToolTipMaxWidth As Integer
+        Get
+            Return 提示最大宽度
+        End Get
+        Set(value As Integer)
+            提示最大宽度 = Math.Max(50, value)
+            If 提示窗体 IsNot Nothing AndAlso Not 提示窗体.IsDisposed AndAlso 提示窗体.Visible Then 显示信息图标提示()
+        End Set
+    End Property
+
+    Private 提示间距 As Integer = 8
+    <Category("LakeUI - ToolTip"), Description("工具提示与信息图标之间的水平间距（逻辑像素）。"), DefaultValue(8), Browsable(True)>
+    Public Property ToolTipGap As Integer
+        Get
+            Return 提示间距
+        End Get
+        Set(value As Integer)
+            提示间距 = Math.Max(0, value)
+            If 提示窗体 IsNot Nothing AndAlso Not 提示窗体.IsDisposed AndAlso 提示窗体.Visible Then 显示信息图标提示()
+        End Set
+    End Property
+
+    Private 提示毛玻璃模式 As PopupBackdropMode = PopupBackdropMode.None
+    <Category("LakeUI - ToolTip Backdrop"), Description("工具提示毛玻璃背景模式。Auto = 显示前截取提示窗所在屏幕区域；Image = 使用 ToolTipBackdropImage。"), DefaultValue(GetType(PopupBackdropMode), "None"), Browsable(True)>
+    Public Property ToolTipBackdropMode As PopupBackdropMode
+        Get
+            Return 提示毛玻璃模式
+        End Get
+        Set(value As PopupBackdropMode)
+            提示毛玻璃模式 = value
+            If 提示窗体 IsNot Nothing AndAlso Not 提示窗体.IsDisposed AndAlso 提示窗体.Visible Then 显示信息图标提示()
+        End Set
+    End Property
+
+    Private 提示毛玻璃图片 As Image = Nothing
+    <Category("LakeUI - ToolTip Backdrop"), Description("Image 模式下作为工具提示毛玻璃源的图片。"), DefaultValue(GetType(Image), Nothing), Browsable(True)>
+    Public Property ToolTipBackdropImage As Image
+        Get
+            Return 提示毛玻璃图片
+        End Get
+        Set(value As Image)
+            提示毛玻璃图片 = value
+            If 提示窗体 IsNot Nothing AndAlso Not 提示窗体.IsDisposed AndAlso 提示窗体.Visible Then 显示信息图标提示()
+        End Set
+    End Property
+
+    Private 提示毛玻璃Tint颜色 As Color = Color.FromArgb(20, 220, 220, 220)
+    <Category("LakeUI - ToolTip Backdrop"), Description("工具提示毛玻璃 tint 叠加颜色（含 Alpha）。"), DefaultValue(GetType(Color), "20, 220, 220, 220"), Browsable(True)>
+    Public Property ToolTipBackdropTintColor As Color
+        Get
+            Return 提示毛玻璃Tint颜色
+        End Get
+        Set(value As Color)
+            提示毛玻璃Tint颜色 = value
+            If 提示窗体 IsNot Nothing AndAlso Not 提示窗体.IsDisposed AndAlso 提示窗体.Visible Then 显示信息图标提示()
+        End Set
+    End Property
+
+    Private 提示毛玻璃模糊半径 As Integer = 10
+    <Category("LakeUI - ToolTip Backdrop"), Description("工具提示毛玻璃模糊半径（逻辑像素）。1 - 96。"), DefaultValue(10), Browsable(True)>
+    Public Property ToolTipBackdropBlurRadius As Integer
+        Get
+            Return 提示毛玻璃模糊半径
+        End Get
+        Set(value As Integer)
+            提示毛玻璃模糊半径 = Math.Max(1, Math.Min(96, value))
+            If 提示窗体 IsNot Nothing AndAlso Not 提示窗体.IsDisposed AndAlso 提示窗体.Visible Then 显示信息图标提示()
+        End Set
+    End Property
+
+    Private 提示毛玻璃模糊次数 As Integer = 1
+    <Category("LakeUI - ToolTip Backdrop"), Description("工具提示毛玻璃 box blur 通过次数（0=不模糊，3≈高斯）。"), DefaultValue(1), Browsable(True)>
+    Public Property ToolTipBackdropBlurPasses As Integer
+        Get
+            Return 提示毛玻璃模糊次数
+        End Get
+        Set(value As Integer)
+            提示毛玻璃模糊次数 = Math.Max(0, Math.Min(5, value))
+            If 提示窗体 IsNot Nothing AndAlso Not 提示窗体.IsDisposed AndAlso 提示窗体.Visible Then 显示信息图标提示()
+        End Set
+    End Property
+
+    Private 提示毛玻璃下采样 As Integer = 4
+    <Category("LakeUI - ToolTip Backdrop"), Description("工具提示毛玻璃下采样倍率（建议 1/2/4/6/8）。"), DefaultValue(4), Browsable(True)>
+    Public Property ToolTipBackdropDownsampleFactor As Integer
+        Get
+            Return 提示毛玻璃下采样
+        End Get
+        Set(value As Integer)
+            提示毛玻璃下采样 = Math.Max(1, value)
+            If 提示窗体 IsNot Nothing AndAlso Not 提示窗体.IsDisposed AndAlso 提示窗体.Visible Then 显示信息图标提示()
+        End Set
+    End Property
+
+    Private 提示毛玻璃噪点不透明度 As Byte = 0
+    <Category("LakeUI - ToolTip Backdrop"), Description("工具提示毛玻璃噪点叠加层不透明度 (0-255)。0 = 关闭噪点。"), DefaultValue(CByte(0)), Browsable(True)>
+    Public Property ToolTipBackdropNoiseOpacity As Byte
+        Get
+            Return 提示毛玻璃噪点不透明度
+        End Get
+        Set(value As Byte)
+            提示毛玻璃噪点不透明度 = value
+            If 提示窗体 IsNot Nothing AndAlso Not 提示窗体.IsDisposed AndAlso 提示窗体.Visible Then 显示信息图标提示()
+        End Set
+    End Property
+
+    Private 提示毛玻璃噪点缩放 As Single = 1.0F
+    <Category("LakeUI - ToolTip Backdrop"), Description("工具提示毛玻璃噪点 tile 缩放（>1 颗粒变粗）。"), DefaultValue(1.0F), Browsable(True)>
+    Public Property ToolTipBackdropNoiseScale As Single
+        Get
+            Return 提示毛玻璃噪点缩放
+        End Get
+        Set(value As Single)
+            提示毛玻璃噪点缩放 = Math.Max(0.1F, value)
+            If 提示窗体 IsNot Nothing AndAlso Not 提示窗体.IsDisposed AndAlso 提示窗体.Visible Then 显示信息图标提示()
+        End Set
+    End Property
+
+    Private Function CreateToolTipStyle() As FloatingToolTipStyle
+        Return New FloatingToolTipStyle With {
+            .Font = Me.Font,
+            .BackColor = 提示背景颜色,
+            .ForeColor = 提示文本颜色,
+            .BorderColor = 提示边框颜色,
+            .BorderSize = 提示边框宽度,
+            .BorderRadius = 提示圆角半径,
+            .Padding = 提示内边距,
+            .MaxWidth = 提示最大宽度,
+            .BackdropMode = 提示毛玻璃模式,
+            .BackdropImage = 提示毛玻璃图片,
+            .BackdropTintColor = 提示毛玻璃Tint颜色,
+            .BackdropBlurRadius = 提示毛玻璃模糊半径,
+            .BackdropBlurPasses = 提示毛玻璃模糊次数,
+            .BackdropDownsampleFactor = 提示毛玻璃下采样,
+            .BackdropNoiseOpacity = 提示毛玻璃噪点不透明度,
+            .BackdropNoiseScale = 提示毛玻璃噪点缩放
+        }
+    End Function
+
+    Private Sub 显示信息图标提示()
+        If Not ShouldShowInfoIcon() OrElse _infoIconBounds.IsEmpty OrElse Not IsHandleCreated OrElse Not Visible Then Return
+        If 提示窗体 Is Nothing OrElse 提示窗体.IsDisposed Then
+            提示窗体 = New FloatingToolTipForm(Me)
+        End If
+
+        Dim gap As Integer = CInt(Math.Round(提示间距 * DpiScale()))
+        Dim screenPt As Point = PointToScreen(New Point(_infoIconBounds.Right + gap, _infoIconBounds.Top))
+        Dim flipDistance As Integer = Math.Max(0, _infoIconBounds.Width + gap * 2)
+        提示窗体.ShowTip(_toolTipText, screenPt, CreateToolTipStyle(), flipDistance)
+    End Sub
+
+    Private Sub 关闭信息图标提示()
+        If 提示窗体 IsNot Nothing AndAlso Not 提示窗体.IsDisposed Then
+            提示窗体.Close()
+            提示窗体.Dispose()
+        End If
+        提示窗体 = Nothing
+    End Sub
 
 #End Region
 

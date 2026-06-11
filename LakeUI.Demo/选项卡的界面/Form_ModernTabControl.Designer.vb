@@ -33,11 +33,11 @@ Partial Class Form_ModernTabControl
         Label6 = New Label()
         Panel1 = New Panel()
         ModernButton4 = New ModernButton()
-        Label4 = New Label()
+        Label4 = New JustEmptyControl()
         ModernButton3 = New ModernButton()
-        Label3 = New Label()
+        Label3 = New JustEmptyControl()
         ModernButton2 = New ModernButton()
-        Label2 = New Label()
+        Label2 = New JustEmptyControl()
         ModernButton1 = New ModernButton()
         Label1 = New Label()
         ModernPanel1.SuspendLayout()
@@ -71,7 +71,7 @@ Partial Class Form_ModernTabControl
         Label5.Padding = New Padding(0, 20, 0, 20)
         Label5.Size = New Size(478, 60)
         Label5.TabIndex = 40
-        Label5.Text = "新增 Ribbon 模式，开启后显示三角按钮，逻辑与主流软件例如 Office 同步"
+        Label5.Text = "Ribbon 模式会显示三角按钮，适合承载工具区或二级菜单入口。"
         ' 
         ' ModernTabControl1
         ' 
@@ -106,7 +106,7 @@ Partial Class Form_ModernTabControl
         Label6.Padding = New Padding(0, 20, 0, 20)
         Label6.Size = New Size(443, 100)
         Label6.TabIndex = 38
-        Label6.Text = "与竖向的版本差不多，但没有小字说明功能" & vbCrLf & "相比原版选项卡，这个支持各种对齐和自动调整功能，人机功效更强大" & vbCrLf & "当然与竖向选项卡一样，不是容器，无法在设计器中添加选项卡内容"
+        Label6.Text = "横向标签更适合顶部导航、内容分组和紧凑页面切换。" & vbCrLf & "相比原版选项卡，这个支持各种对齐和自动调整功能，人机功效更强大" & vbCrLf & "当然与竖向选项卡一样，不是容器，无法在设计器中添加选项卡内容"
         ' 
         ' Panel1
         ' 
@@ -161,7 +161,7 @@ Partial Class Form_ModernTabControl
         ModernButton3.Margin = New Padding(2)
         ModernButton3.Name = "ModernButton3"
         ModernButton3.Size = New Size(120, 50)
-        ModernButton3.SubText = "动画支持"
+        ModernButton3.SubText = "交互表现"
         ModernButton3.TabIndex = 4
         ModernButton3.Text = "半数动画"
         ModernButton3.TextAlign = ModernButton.TextAlignEnum.Left
@@ -186,7 +186,7 @@ Partial Class Form_ModernTabControl
         ModernButton2.Margin = New Padding(2)
         ModernButton2.Name = "ModernButton2"
         ModernButton2.Size = New Size(160, 50)
-        ModernButton2.SubText = "技术偏好"
+        ModernButton2.SubText = "技术路线"
         ModernButton2.TabIndex = 2
         ModernButton2.Text = "人体工学科技"
         ModernButton2.TextAlign = ModernButton.TextAlignEnum.Left
@@ -212,7 +212,7 @@ Partial Class Form_ModernTabControl
         ModernButton1.Margin = New Padding(2)
         ModernButton1.Name = "ModernButton1"
         ModernButton1.Size = New Size(120, 50)
-        ModernButton1.SubText = "制作类型"
+        ModernButton1.SubText = "实现方式"
         ModernButton1.TabIndex = 0
         ModernButton1.Text = "全新绘制"
         ModernButton1.TextAlign = ModernButton.TextAlignEnum.Left
@@ -250,11 +250,11 @@ Partial Class Form_ModernTabControl
     Friend WithEvents Label6 As Label
     Friend WithEvents Panel1 As Panel
     Friend WithEvents ModernButton4 As ModernButton
-    Friend WithEvents Label4 As Label
+    Friend WithEvents Label4 As JustEmptyControl
     Friend WithEvents ModernButton3 As ModernButton
-    Friend WithEvents Label3 As Label
+    Friend WithEvents Label3 As JustEmptyControl
     Friend WithEvents ModernButton2 As ModernButton
-    Friend WithEvents Label2 As Label
+    Friend WithEvents Label2 As JustEmptyControl
     Friend WithEvents ModernButton1 As ModernButton
     Friend WithEvents Label1 As Label
     Friend WithEvents ModernTabControl1 As ModernTabControl

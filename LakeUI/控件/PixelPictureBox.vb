@@ -904,14 +904,16 @@ Public Class PixelPictureBox
         If _vScrollBar.TrackRect.IsEmpty Then Return
         Dim s As Single = DpiScale()
         _vScrollBar.Draw_D2D(rt, Me.Width, Me.Height, CInt(Math.Round(边框宽度 * s)), 0,
-            CInt(Math.Round(滚动条宽度 * s)), 滚动条轨道颜色, 滚动条滑块颜色, 滚动条悬停颜色)
+            CInt(Math.Round(滚动条宽度 * s)), 滚动条轨道颜色, 滚动条滑块颜色, 滚动条悬停颜色,
+            _当前合成器?.BrushCache)
     End Sub
 
     Private Sub 绘制水平滚动条_D2D(rt As D2D.ID2D1RenderTarget)
         If _hScrollBar.TrackRect.IsEmpty Then Return
         Dim s As Single = DpiScale()
         _hScrollBar.DrawHorizontal_D2D(rt, Me.Width, Me.Height, CInt(Math.Round(边框宽度 * s)), 0,
-            CInt(Math.Round(滚动条宽度 * s)), 滚动条轨道颜色, 滚动条滑块颜色, 滚动条悬停颜色)
+            CInt(Math.Round(滚动条宽度 * s)), 滚动条轨道颜色, 滚动条滑块颜色, 滚动条悬停颜色,
+            _当前合成器?.BrushCache)
     End Sub
 
 #End Region

@@ -1185,8 +1185,7 @@ Public Class ModernComboBox
             ' 避免 dcRT.EndDraw 把圆角外像素覆盖为黑。
         End If
 
-        Dim ssaa As Integer = Math.Max(1, CInt(超采样倍率))
-        If GlobalOptions.GlobalSSAA <> GlobalOptions.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(GlobalOptions.GlobalSSAA))
+        Dim ssaa As Integer = D2DHelperV2.GetEffectiveSsaaScale(超采样倍率)
 
         Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
             If scope Is Nothing Then Return
@@ -1200,7 +1199,7 @@ Public Class ModernComboBox
             scope.FlushGraphics()
 
             Dim dcRT As ID2D1DCRenderTarget = scope.DCRenderTarget
-            DrawTextContent_D2D(dcRT, w, h)
+            DrawTextContent_D2D(dcRT, w, h, scope.Compositor)
             绘制分隔线与箭头_D2D(dcRT, brushCache, w, h, bc)
             绘制边框_D2D(dcRT, brushCache, hasRadius, GetBorderRenderRect(boundsRect), bc)
             If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
@@ -1208,10 +1207,10 @@ Public Class ModernComboBox
                 Dim overlayRect As New RectangleF(boundsRect.X, boundsRect.Y, boundsRect.Width + 1, boundsRect.Height + 1)
                 If hasRadius Then
                     Using geo = RectangleRenderer.创建圆角矩形几何(overlayRect, 边框圆角半径 * DpiScale())
-                        RectangleRenderer.绘制圆角背景_D2D(dcRT, geo, overlayRect, 禁用时遮罩颜色, Color.Empty, 渐变方向)
+                        RectangleRenderer.绘制圆角背景_D2D(dcRT, geo, overlayRect, 禁用时遮罩颜色, Color.Empty, 渐变方向, brushCache)
                     End Using
                 Else
-                    RectangleRenderer.绘制矩形背景_D2D(dcRT, overlayRect, 禁用时遮罩颜色, Color.Empty, 渐变方向)
+                    RectangleRenderer.绘制矩形背景_D2D(dcRT, overlayRect, 禁用时遮罩颜色, Color.Empty, 渐变方向, brushCache)
                 End If
             End If
         End Using
@@ -1327,9 +1326,7 @@ Public Class ModernComboBox
         If 边框宽度 <= 0 OrElse borderClr.A = 0 Then Return
         Dim s As Single = DpiScale()
         If hasRadius Then
-            Using geo = RectangleRenderer.创建圆角矩形几何(boundsRect, 边框圆角半径 * s)
-                RectangleRenderer.绘制圆角边框_D2D(rt, geo, borderClr, 边框宽度 * s, brushCache)
-            End Using
+            RectangleRenderer.绘制圆角边框_D2D(rt, boundsRect, 边框圆角半径 * s, borderClr, 边框宽度 * s, brushCache)
         Else
             RectangleRenderer.绘制矩形边框_D2D(rt, boundsRect, borderClr, 边框宽度 * s, brushCache)
         End If
@@ -1340,9 +1337,9 @@ Public Class ModernComboBox
         Return New RectangleF(boundsRect.X, boundsRect.Y, boundsRect.Width + 1.0F, boundsRect.Height)
     End Function
 
-    Private Sub DrawTextContent_D2D(rt As ID2D1DCRenderTarget, w As Integer, h As Integer)
+    Private Sub DrawTextContent_D2D(rt As ID2D1DCRenderTarget, w As Integer, h As Integer, compositor As WindowCompositor)
         SyncTextRenderer()
-        _textRenderer.Draw(rt)
+        _textRenderer.Draw(rt, compositor?.TextFormatCache, compositor?.BrushCache)
     End Sub
 
     Private Sub 绘制分隔线与箭头_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache, w As Integer, h As Integer, borderClr As Color)
@@ -2284,8 +2281,8 @@ Public Class ModernComboBox
                 D2DGlobals.ApplyGlobalQuality(rt)
                 rt.Transform = Matrix3x2.Identity
                 DrawDropDownBackground_D2D(rt, brushCache, DropDownFillColor(), bw, w, h, Not HasBackdropFrame())
-                DrawDropDownItems_D2D(rt, brushCache, w, h, New DropDownLayout(Me, w))
-                DrawDropDownScrollBar_D2D(rt, w, h, bw)
+                DrawDropDownItems_D2D(rt, brushCache, scope.Compositor.TextFormatCache, w, h, New DropDownLayout(Me, w))
+                DrawDropDownScrollBar_D2D(rt, brushCache, w, h, bw)
             End Using
         End Sub
 
@@ -2315,7 +2312,9 @@ Public Class ModernComboBox
             End If
         End Sub
 
-        Private Sub DrawDropDownItems_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache, w As Integer, h As Integer, layout As DropDownLayout)
+        Private Sub DrawDropDownItems_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache,
+                                          textFormatCache As D2DGlobals.TextFormatCache,
+                                          w As Integer, h As Integer, layout As DropDownLayout)
             Dim s As Single = _owner.DpiScale()
             Dim clipRect As RectangleF = layout.ClipRect(w, h)
             If clipRect.Width <= 0 OrElse clipRect.Height <= 0 Then Return
@@ -2344,19 +2343,22 @@ Public Class ModernComboBox
                         _owner.下拉选中文字颜色,
                         _owner.ForeColor)
                     DrawSingleLineText_D2D(rt, _owner._items(idx), _owner.Font, textColor,
-                        layout.TextRect(itemRect), s, True)
+                        layout.TextRect(itemRect), s, True, textFormatCache, brushCache)
                 Next
             Finally
                 rt.PopAxisAlignedClip()
             End Try
         End Sub
 
-        Private Sub DrawDropDownScrollBar_D2D(rt As ID2D1RenderTarget, w As Integer, h As Integer, bw As Integer)
+        Private Sub DrawDropDownScrollBar_D2D(rt As ID2D1RenderTarget,
+                                              brushCache As D2DGlobals.SolidColorBrushCache,
+                                              w As Integer, h As Integer, bw As Integer)
             If Not _scrollBarVisible OrElse _scrollBar.TrackRect.IsEmpty Then Return
             _scrollBar.Draw_D2D(rt, w, h, bw, 0, _owner.下拉滚动条宽度,
                 _owner.下拉滚动条轨道颜色,
                 _owner.下拉滚动条颜色,
-                _owner.下拉滚动条悬停颜色)
+                _owner.下拉滚动条悬停颜色,
+                brushCache)
         End Sub
 
         Private Function GetItemIndexAtY(y As Integer) As Integer
@@ -2506,7 +2508,7 @@ Public Class ModernComboBox
             请求重绘()
         End Sub
 
-        Private _tipForm As ToolTipForm = Nothing
+        Private _tipForm As FloatingToolTipForm = Nothing
 
         Private Sub 更新工具提示()
             If _hoverIndex >= 0 AndAlso _hoverIndex < _owner._items.Count Then
@@ -2514,11 +2516,11 @@ Public Class ModernComboBox
                 Dim tipText As String = Nothing
                 If _owner._itemToolTips.TryGetToolTip(itemText, tipText) AndAlso Not String.IsNullOrEmpty(tipText) Then
                     If _tipForm Is Nothing OrElse _tipForm.IsDisposed Then
-                        _tipForm = New ToolTipForm(_owner)
+                        _tipForm = New FloatingToolTipForm(_owner)
                     End If
                     Dim itemRect = GetItemRect(_hoverIndex)
                     Dim screenPt As Point = Me.PointToScreen(New Point(Me.Width + _owner.提示间距, CInt(itemRect.Y)))
-                    _tipForm.ShowTip(tipText, screenPt)
+                    _tipForm.ShowTip(tipText, screenPt, _owner.CreateToolTipStyle(), Math.Max(0, _owner.Width + _owner.提示间距 * 2))
                     Return
                 End If
             End If
@@ -2534,195 +2536,6 @@ Public Class ModernComboBox
         End Sub
     End Class
 
-    Private Class ToolTipForm
-        Inherits PopupForm
-
-        Private ReadOnly _owner As ModernComboBox
-        Private _tipText As String = ""
-        Private _backdrop As PopupBackdropRenderer
-        Private _lastMeasureKey As String = Nothing
-        Private _lastMeasuredSize As Size = Size.Empty
-
-        ' V2：D2D 资源由 WindowCompositor 按顶层 Form 共享管理。
-
-        Public Sub New(owner As ModernComboBox)
-            _owner = owner
-            Me.DoubleBuffered = True
-            Me.AutoScaleMode = AutoScaleMode.Dpi
-            SetStyle(ControlStyles.AllPaintingInWmPaint Or ControlStyles.UserPaint Or ControlStyles.OptimizedDoubleBuffer, True)
-            ApplyPopupWindowState()
-        End Sub
-
-        Public Sub ShowTip(text As String, screenLocation As Point)
-            _tipText = text
-            Dim pad As Padding = _owner.提示内边距
-            Dim bw As Integer = DropDownBorderWidth()
-            Dim maxW As Integer = _owner.提示最大宽度
-            Dim contentW As Integer = maxW - pad.Left - pad.Right - bw * 2
-            If contentW < 10 Then contentW = 10
-
-            Dim measureKey As String = String.Concat(_tipText, ChrW(0), contentW, ChrW(0), _owner.Font.GetHashCode(), ChrW(0), _owner.DeviceDpi)
-            Dim measured As Size
-            If String.Equals(_lastMeasureKey, measureKey, StringComparison.Ordinal) Then
-                measured = _lastMeasuredSize
-            Else
-                measured = MeasureWrappedText_D2D(_tipText, _owner.Font, contentW, _owner.DpiScale())
-                _lastMeasureKey = measureKey
-                _lastMeasuredSize = measured
-            End If
-
-            Dim w As Integer = Math.Min(maxW, measured.Width + pad.Left + pad.Right + bw * 2)
-            Dim h As Integer = measured.Height + pad.Top + pad.Bottom + bw * 2
-
-            Me.Size = New Size(w, h)
-
-            Dim scr As Screen = Screen.FromPoint(screenLocation)
-            Dim loc As Point = screenLocation
-            If loc.X + w > scr.WorkingArea.Right Then
-                loc.X = screenLocation.X - Me.Width - _owner.Width - _owner.提示间距 * 2
-                If loc.X < scr.WorkingArea.Left Then loc.X = scr.WorkingArea.Left
-            End If
-            If loc.Y + h > scr.WorkingArea.Bottom Then
-                loc.Y = scr.WorkingArea.Bottom - h
-            End If
-            Me.Location = loc
-
-            ApplyPopupWindowState()
-            准备毛玻璃背景()
-            If Not Visible Then Me.Show()
-            Invalidate()
-        End Sub
-
-        Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
-            ' 顶层提示窗体由 OnPaint 里的毛玻璃和 D2D 绘制全权接管底色。
-        End Sub
-
-        Private Shared Function ToOpaqueColor(color As Color) As Color
-            Return Color.FromArgb(255, color.R, color.G, color.B)
-        End Function
-
-        Private Function DropDownBorderWidth() As Integer
-            Return CInt(_owner.下拉边框宽度 * _owner.DpiScale())
-        End Function
-
-        Private Function ShouldCaptureTransparentBackground() As Boolean
-            Return _owner.下拉毛玻璃模式 = PopupBackdropMode.None AndAlso _owner.下拉背景颜色.A < 255
-        End Function
-
-        Private Function HasBackdropFrame() As Boolean
-            Return _backdrop IsNot Nothing AndAlso _backdrop.HasFrame
-        End Function
-
-        Private Function ToolTipFillColor() As Color
-            Return ToOpaqueColor(_owner.下拉背景颜色)
-        End Function
-
-        Private Sub ApplyPopupWindowState()
-            TransparencyKey = Color.Empty
-            Opacity = 1.0R
-            BackColor = ToolTipFillColor()
-        End Sub
-
-        Private Sub 准备毛玻璃背景()
-            If _backdrop Is Nothing Then _backdrop = New PopupBackdropRenderer(Me)
-            _backdrop.TransientExcludeOnCapture = True
-
-            If _owner.下拉毛玻璃模式 <> PopupBackdropMode.None Then
-                _backdrop.Configure(_owner.下拉毛玻璃模式,
-                                    _owner.下拉毛玻璃图片,
-                                    _owner.下拉毛玻璃Tint颜色,
-                                    _owner.下拉毛玻璃模糊半径,
-                                    _owner.下拉毛玻璃模糊次数,
-                                    _owner.下拉毛玻璃下采样,
-                                    _owner.下拉毛玻璃噪点不透明度,
-                                    _owner.下拉毛玻璃噪点缩放)
-            ElseIf ShouldCaptureTransparentBackground() Then
-                _backdrop.Configure(PopupBackdropMode.Auto,
-                                    Nothing,
-                                    _owner.下拉背景颜色,
-                                    1,
-                                    0,
-                                    1,
-                                    0,
-                                    1.0F)
-            Else
-                _backdrop.Configure(PopupBackdropMode.None,
-                                    Nothing,
-                                    Color.Transparent,
-                                    1,
-                                    0,
-                                    1,
-                                    0,
-                                    1.0F)
-            End If
-            _backdrop.Prepare(Me.Bounds, True)
-        End Sub
-
-        Private Sub 绘制毛玻璃背景(g As Graphics)
-            If Not HasBackdropFrame() Then Return
-            _backdrop.Draw(g, New Rectangle(0, 0, ClientSize.Width, ClientSize.Height))
-        End Sub
-
-        Protected Overrides Sub OnPaint(e As PaintEventArgs)
-            绘制毛玻璃背景(e.Graphics)
-
-            Dim w As Integer = ClientRectangle.Width
-            Dim h As Integer = ClientRectangle.Height
-            If w <= 0 OrElse h <= 0 Then Return
-            Dim bw As Integer = DropDownBorderWidth()
-            Dim pad As Padding = _owner.提示内边距
-
-            Dim ssaa As Integer = 1
-            If GlobalOptions.GlobalSSAA <> GlobalOptions.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(GlobalOptions.GlobalSSAA))
-
-            Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
-                If scope Is Nothing Then Return
-                Dim brushCache = scope.Compositor.BrushCache
-                Dim gRT As ID2D1RenderTarget = scope.GraphicsLayer
-                DrawToolTipBackground_D2D(gRT, brushCache, bw, w, h, Not HasBackdropFrame())
-                scope.FlushGraphics()
-
-                Dim textRect As New RectangleF(bw + pad.Left, bw + pad.Top,
-                w - bw * 2 - pad.Left - pad.Right,
-                h - bw * 2 - pad.Top - pad.Bottom)
-                DrawWrappedText_D2D(scope.DCRenderTarget, brushCache, _tipText, _owner.Font, _owner.提示文本颜色, textRect, _owner.DpiScale())
-            End Using
-        End Sub
-
-        Private Sub DrawToolTipBackground_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache, bw As Integer, w As Integer, h As Integer, fillBackground As Boolean)
-            If fillBackground Then
-                Dim br = brushCache.Get(rt, ToolTipFillColor())
-                rt.FillRectangle(New Vortice.Mathematics.Rect(0, 0, w, h), br)
-            End If
-
-            If bw > 0 AndAlso _owner.下拉边框颜色.A > 0 Then
-                DrawToolTipBorder_D2D(rt, brushCache, w, h, bw)
-            End If
-        End Sub
-
-        Private Sub DrawToolTipBorder_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache, w As Integer, h As Integer, bw As Integer)
-            Dim border As Integer = Math.Min(bw, Math.Min(w, h))
-            If border <= 0 Then Return
-
-            Dim br = brushCache.Get(rt, _owner.下拉边框颜色)
-            rt.FillRectangle(New Vortice.Mathematics.Rect(0, 0, w, border), br)
-            If h > border Then rt.FillRectangle(New Vortice.Mathematics.Rect(0, h - border, w, border), br)
-
-            Dim middleHeight As Integer = h - border * 2
-            If middleHeight > 0 Then
-                rt.FillRectangle(New Vortice.Mathematics.Rect(0, border, border, middleHeight), br)
-                If w > border Then rt.FillRectangle(New Vortice.Mathematics.Rect(w - border, border, border, middleHeight), br)
-            End If
-        End Sub
-
-        Protected Overrides Sub Dispose(disposing As Boolean)
-            If disposing AndAlso _backdrop IsNot Nothing Then
-                _backdrop.Dispose()
-                _backdrop = Nothing
-            End If
-            MyBase.Dispose(disposing)
-        End Sub
-    End Class
 #End Region
 
 #Region "输入法 IME"
@@ -2771,34 +2584,32 @@ Public Class ModernComboBox
     End Sub
 
     Private Shared Sub DrawSingleLineText_D2D(rt As ID2D1RenderTarget, text As String, font As Font, foreColor As Color,
-                                             rect As RectangleF, dpiScale As Single, endEllipsis As Boolean)
-        SingleLineTextBoxRenderer.DrawSingleLineText_D2D(rt, text, font, foreColor, rect, dpiScale, endEllipsis)
+                                              rect As RectangleF, dpiScale As Single, endEllipsis As Boolean,
+                                              Optional textFormatCache As D2DGlobals.TextFormatCache = Nothing,
+                                              Optional brushCache As D2DGlobals.SolidColorBrushCache = Nothing)
+        SingleLineTextBoxRenderer.DrawSingleLineText_D2D(rt, text, font, foreColor, rect, dpiScale, endEllipsis, textFormatCache, brushCache)
     End Sub
 
-    Private Shared Function MeasureWrappedText_D2D(text As String, font As Font, maxWidth As Integer, dpiScale As Single) As Size
-        If String.IsNullOrEmpty(text) Then Return Size.Empty
-        Using fmt = TextRenderHelper.CreateDWriteTextFormat(font, dpiScale)
-            fmt.WordWrapping = Vortice.DirectWrite.WordWrapping.Wrap
-            fmt.ParagraphAlignment = Vortice.DirectWrite.ParagraphAlignment.Near
-            Using layout = D2DGlobals.GetDWriteFactory().CreateTextLayout(text, fmt, maxWidth, Single.MaxValue)
-                Dim m = layout.Metrics
-                Return New Size(CInt(Math.Ceiling(m.Width)), CInt(Math.Ceiling(m.Height)))
-            End Using
-        End Using
+    Private Function CreateToolTipStyle() As FloatingToolTipStyle
+        Return New FloatingToolTipStyle With {
+            .Font = Me.Font,
+            .BackColor = 提示背景颜色,
+            .ForeColor = 提示文本颜色,
+            .BorderColor = 提示边框颜色,
+            .BorderSize = Math.Max(0, 提示边框宽度),
+            .BorderRadius = Math.Max(0, 提示圆角半径),
+            .Padding = 提示内边距,
+            .MaxWidth = Math.Max(50, 提示最大宽度),
+            .BackdropMode = 下拉毛玻璃模式,
+            .BackdropImage = 下拉毛玻璃图片,
+            .BackdropTintColor = 下拉毛玻璃Tint颜色,
+            .BackdropBlurRadius = 下拉毛玻璃模糊半径,
+            .BackdropBlurPasses = 下拉毛玻璃模糊次数,
+            .BackdropDownsampleFactor = 下拉毛玻璃下采样,
+            .BackdropNoiseOpacity = 下拉毛玻璃噪点不透明度,
+            .BackdropNoiseScale = 下拉毛玻璃噪点缩放
+        }
     End Function
-
-    Private Shared Sub DrawWrappedText_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache, text As String, font As Font, foreColor As Color,
-                                           rect As RectangleF, dpiScale As Single)
-        If String.IsNullOrEmpty(text) OrElse foreColor.A = 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
-        Using fmt = TextRenderHelper.CreateDWriteTextFormat(font, dpiScale)
-            fmt.WordWrapping = Vortice.DirectWrite.WordWrapping.Wrap
-            fmt.ParagraphAlignment = Vortice.DirectWrite.ParagraphAlignment.Near
-            Using layout = D2DGlobals.GetDWriteFactory().CreateTextLayout(text, fmt, rect.Width, rect.Height)
-                Dim br = brushCache.Get(rt, foreColor)
-                rt.DrawTextLayout(New Vector2(rect.X, rect.Y), layout, br)
-            End Using
-        End Using
-    End Sub
 
     Private Sub NotifyTextChanged()
         Dim matchIndex As Integer = FindItemIndexExact(_text)

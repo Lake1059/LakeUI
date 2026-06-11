@@ -27,8 +27,7 @@ Public Class ModernTabListControl
 
         Private Sub 通知父级布局变更()
             If Owner Is Nothing Then Return
-            Owner.失效布局缓存()
-            Owner.Invalidate()
+            Owner.项目布局属性已改变(Me)
         End Sub
 
         Private _text As String = "ModernTabPage"
@@ -124,8 +123,19 @@ Public Class ModernTabListControl
             End Set
         End Property
 
+        Private _boundControl As Control = Nothing
         <Category("LakeUI"), Description("绑定的内容控件，切换到此选项卡时将显示该控件"), DefaultValue(GetType(Control), Nothing), Browsable(True)>
-        Public Property BoundControl As Control = Nothing
+        Public Property BoundControl As Control
+            Get
+                Return _boundControl
+            End Get
+            Set(value As Control)
+                If Object.ReferenceEquals(_boundControl, value) Then Return
+                Dim oldControl = _boundControl
+                _boundControl = value
+                If Owner IsNot Nothing Then Owner.项目绑定控件已改变(Me, oldControl)
+            End Set
+        End Property
 
         Public Sub New()
         End Sub
@@ -194,6 +204,25 @@ Public Class ModernTabListControl
                 MyBase.OnPaintBackground(e)
             End If
         End Sub
+
+        Private Sub 解除背景穿透消费者()
+            Try : BackgroundPenetrationV2.UnregisterConsumer(Me) : Catch : End Try
+        End Sub
+
+        Protected Overrides Sub OnHandleDestroyed(e As EventArgs)
+            解除背景穿透消费者()
+            MyBase.OnHandleDestroyed(e)
+        End Sub
+
+        Protected Overrides Sub OnVisibleChanged(e As EventArgs)
+            MyBase.OnVisibleChanged(e)
+            If Not Me.Visible Then 解除背景穿透消费者()
+        End Sub
+
+        Protected Overrides Sub OnParentChanged(e As EventArgs)
+            MyBase.OnParentChanged(e)
+            If Me.Parent Is Nothing Then 解除背景穿透消费者()
+        End Sub
     End Class
 #End Region
 
@@ -240,6 +269,7 @@ Public Class ModernTabListControl
         Public Format As IDWriteTextFormat
         Public Ellipsis As IDWriteInlineObject
         Public LastUseMs As Long
+        Public OwnsFormat As Boolean
     End Class
     Private ReadOnly _textFormatCache As New Dictionary(Of String, TextFormatEntry)
     Private _textFormatLastSweepMs As Long = 0
@@ -251,10 +281,28 @@ Public Class ModernTabListControl
     End Function
 
     Protected Overrides Sub OnHandleDestroyed(e As EventArgs)
+        解除背景穿透消费者()
+        Try : BackgroundPenetrationV2.UnregisterConsumer(_内容面板) : Catch : End Try
         Try : 停止帧驱动() : Catch : End Try
         ReleaseLocalTextFormatCache()
         ReleaseMoreIndicatorFont()
         MyBase.OnHandleDestroyed(e)
+    End Sub
+
+    Protected Overrides Sub OnVisibleChanged(e As EventArgs)
+        MyBase.OnVisibleChanged(e)
+        If Not Me.Visible Then
+            解除背景穿透消费者()
+            Try : BackgroundPenetrationV2.UnregisterConsumer(_内容面板) : Catch : End Try
+        End If
+    End Sub
+
+    Protected Overrides Sub OnParentChanged(e As EventArgs)
+        MyBase.OnParentChanged(e)
+        If Me.Parent Is Nothing Then
+            解除背景穿透消费者()
+            Try : BackgroundPenetrationV2.UnregisterConsumer(_内容面板) : Catch : End Try
+        End If
     End Sub
 
     Private Sub ReleaseMoreIndicatorFont()
@@ -269,7 +317,9 @@ Public Class ModernTabListControl
         Try
             For Each kv In _textFormatCache
                 Try : kv.Value.Ellipsis?.Dispose() : Catch : End Try
-                Try : kv.Value.Format?.Dispose() : Catch : End Try
+                If kv.Value.OwnsFormat Then
+                    Try : kv.Value.Format?.Dispose() : Catch : End Try
+                End If
             Next
             _textFormatCache.Clear()
         Catch
@@ -315,21 +365,60 @@ Public Class ModernTabListControl
     ''' </summary>
     Public Sub RefreshItems()
         确保Owner()
-        If _selectedIndex >= 项目列表.Count Then
-            _selectedIndex = 项目列表.Count - 1
-        End If
+        失效布局缓存()
+        标准化选中索引()
         _标签页动画.Clear()
         _悬停索引 = -1
-        失效布局缓存()
         限制滚动范围()
         切换绑定控件()
         Invalidate()
     End Sub
 
+    Private Sub 项目布局属性已改变(item As ModernTabPage)
+        失效布局缓存()
+        If item IsNot Nothing AndAlso 项目列表.IndexOf(item) = _selectedIndex AndAlso (item.IsSeparator OrElse item.IsDescription) Then
+            _selectedIndex = 第一个可选索引()
+            切换绑定控件()
+            RaiseEvent SelectedIndexChanged(Me, EventArgs.Empty)
+        End If
+        限制滚动范围()
+        Invalidate()
+    End Sub
+
+    Private Sub 项目绑定控件已改变(item As ModernTabPage, oldControl As Control)
+        If oldControl IsNot Nothing Then
+            oldControl.Visible = False
+            If oldControl.Parent Is _内容面板 Then
+                _内容面板.Controls.Remove(oldControl)
+            End If
+        End If
+        If item IsNot Nothing AndAlso 项目列表.IndexOf(item) = _selectedIndex Then
+            切换绑定控件()
+        End If
+        Invalidate()
+    End Sub
+
     Private Sub 确保Owner()
         For Each item In 项目列表
-            If item.Owner IsNot Me Then item.Owner = Me
+            If item IsNot Nothing AndAlso item.Owner IsNot Me Then item.Owner = Me
         Next
+    End Sub
+
+    Private Sub 标准化选中索引()
+        If 项目列表.Count = 0 Then
+            _selectedIndex = -1
+            Return
+        End If
+
+        If _selectedIndex >= 项目列表.Count Then _selectedIndex = 项目列表.Count - 1
+        If _selectedIndex < -1 Then _selectedIndex = -1
+
+        If _selectedIndex >= 0 Then
+            Dim item = 项目列表(_selectedIndex)
+            If item Is Nothing OrElse item.IsSeparator OrElse item.IsDescription Then
+                _selectedIndex = 第一个可选索引()
+            End If
+        End If
     End Sub
 
     Private Sub 同步搜索框布局()
@@ -338,7 +427,7 @@ Public Class ModernTabListControl
         Dim tabStripRect = 获取标签栏矩形()
         Dim x As Integer = CInt(tabStripRect.X + 标签栏内边距.Left * s)
         Dim y As Integer = CInt(标签栏内边距.Top * s)
-        Dim w As Integer = CInt(tabStripRect.Width - (标签栏内边距.Left + 标签栏内边距.Right) * s)
+        Dim w As Integer = Math.Max(0, CInt(tabStripRect.Width - (标签栏内边距.Left + 标签栏内边距.Right) * s))
         _搜索框控件.SetBounds(x, y, w, CInt(_搜索框高度 * s))
     End Sub
 
@@ -517,8 +606,7 @@ Public Class ModernTabListControl
         确保Owner()
         If Me.Width <= 0 OrElse Me.Height <= 0 Then Return
 
-        Dim ssaa As Integer = Math.Max(1, CInt(超采样倍率))
-        If GlobalOptions.GlobalSSAA <> GlobalOptions.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(GlobalOptions.GlobalSSAA))
+        Dim ssaa As Integer = D2DHelperV2.GetEffectiveSsaaScale(超采样倍率)
 
         Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
             If scope Is Nothing Then Return  ' 设计期或无 Form 上下文
@@ -552,7 +640,8 @@ Public Class ModernTabListControl
                 ' 4) 滚动条直接画在 DC RT 上（无需 SSAA）
                 If Not _标签栏滚动条.TrackRect.IsEmpty Then
                     Dim sbContainerW As Integer = If(标签页位置 = TabSideEnum.Left, CInt(标签栏宽度 * DpiScale()), Me.Width)
-                    _标签栏滚动条.Draw_D2D(dcRT, sbContainerW, Me.Height, 0, 0, CInt(滚动条宽度 * DpiScale()), 滚动条轨道颜色, 滚动条滑块颜色, 滚动条悬停颜色)
+                    _标签栏滚动条.Draw_D2D(dcRT, sbContainerW, Me.Height, 0, 0, CInt(滚动条宽度 * DpiScale()),
+                                           滚动条轨道颜色, 滚动条滑块颜色, 滚动条悬停颜色, compositor.BrushCache)
                 End If
             Finally
                 _当前合成器 = Nothing
@@ -668,6 +757,7 @@ Public Class ModernTabListControl
 
     Private Sub 绘制分割线_D2D(rt As ID2D1RenderTarget, index As Integer)
         Dim bounds = 获取标签页项矩形(index)
+        If bounds.Width <= 0 OrElse bounds.Height <= 0 Then Return
         Dim lineH As Single = Math.Max(1, DpiScale())
         Dim lineY As Single = bounds.Y + (bounds.Height - lineH) / 2.0F
         Dim br = _当前合成器.BrushCache.Get(rt, 分割线颜色值)
@@ -677,6 +767,7 @@ Public Class ModernTabListControl
     Private Sub 绘制标签页项图形_D2D(rt As ID2D1RenderTarget, index As Integer)
         Dim s As Single = DpiScale()
         Dim bounds As RectangleF = 获取标签页项矩形(index)
+        If bounds.Width <= 0 OrElse bounds.Height <= 0 Then Return
         Dim isSelected As Boolean = (_selectedIndex = index)
         Dim hoverProgress As Single = 获取动画进度(index)
 
@@ -706,12 +797,12 @@ Public Class ModernTabListControl
             Else
                 indicatorRect = New RectangleF(bounds.Right - 选中指示条宽度 * s, bounds.Y + 选中指示条边距 * s, 选中指示条宽度 * s, bounds.Height - 选中指示条边距 * s * 2)
             End If
-            If 选中指示条圆角半径 > 0 Then
+            If indicatorRect.Width > 0 AndAlso indicatorRect.Height > 0 AndAlso 选中指示条圆角半径 > 0 Then
                 Using geo = RectangleRenderer.创建圆角矩形几何(indicatorRect, 选中指示条圆角半径 * s)
                     Dim br = _当前合成器.BrushCache.Get(rt, 选中指示条颜色)
                     If br IsNot Nothing Then rt.FillGeometry(geo, br)
                 End Using
-            Else
+            ElseIf indicatorRect.Width > 0 AndAlso indicatorRect.Height > 0 Then
                 Dim br = _当前合成器.BrushCache.Get(rt, 选中指示条颜色)
                 If br IsNot Nothing Then rt.FillRectangle(D2DGlobals.ToD2DRect(indicatorRect), br)
             End If
@@ -721,9 +812,7 @@ Public Class ModernTabListControl
             Dim focusBounds = bounds
             focusBounds.Inflate(-s, -s)
             If 标签页圆角半径 > 0 Then
-                Using geo = RectangleRenderer.创建圆角矩形几何(focusBounds, Math.Max(1, 标签页圆角半径 * s - s))
-                    RectangleRenderer.绘制圆角边框_D2D(rt, geo, 焦点边框颜色, s, _当前合成器.BrushCache)
-                End Using
+                RectangleRenderer.绘制圆角边框_D2D(rt, focusBounds, Math.Max(1, 标签页圆角半径 * s - s), 焦点边框颜色, s, _当前合成器.BrushCache)
             Else
                 RectangleRenderer.绘制矩形边框_D2D(rt, focusBounds, 焦点边框颜色, s, _当前合成器.BrushCache)
             End If
@@ -739,6 +828,7 @@ Public Class ModernTabListControl
 
         Dim s As Single = DpiScale()
         Dim scaledIconSize As Single = 图标尺寸 * s
+        If scaledIconSize <= 0 OrElse bounds.Width <= 0 OrElse bounds.Height <= 0 Then Return
         Dim iconX As Single = bounds.X + 标签页文本左边距 * s
         Dim iconY As Single = bounds.Y + (bounds.Height - scaledIconSize) / 2.0F
         Dim cache = 获取项图标缓存(item)
@@ -858,13 +948,14 @@ Public Class ModernTabListControl
     Private Sub 画文本_D2D(rt As ID2D1RenderTarget, dw As IDWriteFactory,
                           text As String, font As Font, rect As RectangleF, color As Color,
                           hAlign As Vortice.DirectWrite.TextAlignment)
-        If String.IsNullOrEmpty(text) OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        If String.IsNullOrEmpty(text) OrElse rect.Width <= 0 OrElse rect.Height <= 0 OrElse color.A = 0 Then Return
         Dim s As Single = DpiScale()
         Dim sizePx As Single = font.SizeInPoints * (96.0F / 72.0F) * s
         Dim weight As Vortice.DirectWrite.FontWeight = If(font.Bold, Vortice.DirectWrite.FontWeight.Bold, Vortice.DirectWrite.FontWeight.Normal)
         Dim style As Vortice.DirectWrite.FontStyle = If(font.Italic, Vortice.DirectWrite.FontStyle.Italic, Vortice.DirectWrite.FontStyle.Normal)
         Dim familyName As String = font.FontFamily.Name
         Dim entry = 获取或创建TextFormat(dw, familyName, sizePx, weight, style, hAlign)
+        If entry Is Nothing OrElse entry.Format Is Nothing Then Return
         Dim fmt = entry.Format
         Using layout = dw.CreateTextLayout(text, fmt, rect.Width, rect.Height)
             If entry.Ellipsis IsNot Nothing Then
@@ -892,20 +983,57 @@ Public Class ModernTabListControl
         Dim key As String = $"{family}|{sizePx:F2}|{CInt(weight)}|{CInt(style)}|{CInt(hAlign)}"
         Dim entry As TextFormatEntry = Nothing
         If _textFormatCache.TryGetValue(key, entry) Then
+            If Not entry.OwnsFormat Then
+                Dim sharedFormat = 获取共享TextFormat(family, sizePx, weight, style, hAlign)
+                If sharedFormat Is Nothing Then Return Nothing
+                If Not Object.ReferenceEquals(entry.Format, sharedFormat) Then
+                    Try : entry.Ellipsis?.Dispose() : Catch : End Try
+                    entry.Format = sharedFormat
+                    entry.Ellipsis = Nothing
+                    Try : entry.Ellipsis = dw.CreateEllipsisTrimmingSign(entry.Format) : Catch : End Try
+                End If
+            End If
             entry.LastUseMs = now
             清扫TextFormat缓存(now)
             Return entry
         End If
+        Dim ownsFormat As Boolean = False
+        Dim fmt = 获取TextFormat(family, sizePx, weight, style, hAlign, ownsFormat)
+        If fmt Is Nothing Then Return Nothing
+        Dim ellipsis As IDWriteInlineObject = Nothing
+        Try : ellipsis = dw.CreateEllipsisTrimmingSign(fmt) : Catch : End Try
+        entry = New TextFormatEntry With {.Format = fmt, .Ellipsis = ellipsis, .LastUseMs = now, .OwnsFormat = ownsFormat}
+        _textFormatCache(key) = entry
+        清扫TextFormat缓存(now)
+        Return entry
+    End Function
+
+    Private Function 获取TextFormat(family As String, sizePx As Single,
+                                    weight As Vortice.DirectWrite.FontWeight,
+                                    style As Vortice.DirectWrite.FontStyle,
+                                    hAlign As Vortice.DirectWrite.TextAlignment,
+                                    ByRef ownsFormat As Boolean) As IDWriteTextFormat
+        Dim sharedFormat = 获取共享TextFormat(family, sizePx, weight, style, hAlign)
+        If sharedFormat IsNot Nothing Then
+            ownsFormat = False
+            Return sharedFormat
+        End If
+
+        ownsFormat = True
         Dim fmt = D2DGlobals.CreateTextFormat(family, weight, style, Vortice.DirectWrite.FontStretch.Normal, sizePx)
         fmt.TextAlignment = hAlign
         fmt.WordWrapping = WordWrapping.NoWrap
         fmt.ParagraphAlignment = ParagraphAlignment.Center
-        Dim ellipsis As IDWriteInlineObject = Nothing
-        Try : ellipsis = dw.CreateEllipsisTrimmingSign(fmt) : Catch : End Try
-        entry = New TextFormatEntry With {.Format = fmt, .Ellipsis = ellipsis, .LastUseMs = now}
-        _textFormatCache(key) = entry
-        清扫TextFormat缓存(now)
-        Return entry
+        Return fmt
+    End Function
+
+    Private Function 获取共享TextFormat(family As String, sizePx As Single,
+                                      weight As Vortice.DirectWrite.FontWeight,
+                                      style As Vortice.DirectWrite.FontStyle,
+                                      hAlign As Vortice.DirectWrite.TextAlignment) As IDWriteTextFormat
+        Return _当前合成器?.TextFormatCache.[Get](family, weight, style, sizePx,
+                                                 hAlign, ParagraphAlignment.Center,
+                                                 False, False)
     End Function
 
     Private Sub 清扫TextFormat缓存(now As Long)
@@ -922,7 +1050,9 @@ Public Class ModernTabListControl
             For Each k In toRemove
                 Dim e = _textFormatCache(k)
                 Try : e.Ellipsis?.Dispose() : Catch : End Try
-                Try : e.Format?.Dispose() : Catch : End Try
+                If e.OwnsFormat Then
+                    Try : e.Format?.Dispose() : Catch : End Try
+                End If
                 _textFormatCache.Remove(k)
             Next
         End If
@@ -1002,7 +1132,7 @@ Public Class ModernTabListControl
         Dim itemW As Single = _布局标签栏矩形.Width - (标签栏内边距.Left + 标签栏内边距.Right) * s
         If _布局有滚动条 Then itemW -= 滚动条宽度 * s
         _布局项X = x
-        _布局项W = itemW
+        _布局项W = Math.Max(0, itemW)
 
         _布局已生成 = True
     End Sub
@@ -1551,6 +1681,8 @@ Public Class ModernTabListControl
         End Get
         Set(value As Control)
             If _backgroundSource IsNot value Then
+                解除背景穿透消费者()
+                Try : BackgroundPenetrationV2.UnregisterConsumer(_内容面板) : Catch : End Try
                 _backgroundSource = value
                 ' 内容面板上的透明背景来自同一 source。
                 If _内容面板 IsNot Nothing Then _内容面板.Invalidate(True)
@@ -1558,6 +1690,11 @@ Public Class ModernTabListControl
             End If
         End Set
     End Property
+
+    Private Sub 解除背景穿透消费者()
+        If _backgroundSource Is Nothing Then Return
+        Try : BackgroundPenetrationV2.UnregisterConsumer(Me, _backgroundSource) : Catch : End Try
+    End Sub
 
     Private 动画时长值 As Integer = 300
     <Category("LakeUI"), Description(GlobalOptions.动画时长描述词), DefaultValue(300), Browsable(True)>
@@ -1750,7 +1887,7 @@ Public Class ModernTabListControl
             Return 标签页项间距
         End Get
         Set(value As Integer)
-            SetLayoutValue(标签页项间距, value)
+            SetLayoutValue(标签页项间距, Math.Max(0, value))
         End Set
     End Property
 
@@ -1821,7 +1958,7 @@ Public Class ModernTabListControl
             Return 标签页圆角半径
         End Get
         Set(value As Integer)
-            SetValue(标签页圆角半径, value)
+            SetValue(标签页圆角半径, Math.Max(0, value))
         End Set
     End Property
 
@@ -1843,7 +1980,7 @@ Public Class ModernTabListControl
             Return 标签页文本左边距
         End Get
         Set(value As Integer)
-            SetValue(标签页文本左边距, value)
+            SetValue(标签页文本左边距, Math.Max(0, value))
         End Set
     End Property
 #End Region
@@ -1856,7 +1993,7 @@ Public Class ModernTabListControl
             Return 图标尺寸
         End Get
         Set(value As Integer)
-            SetValue(图标尺寸, value)
+            SetValue(图标尺寸, Math.Max(0, value))
         End Set
     End Property
 
@@ -1867,7 +2004,7 @@ Public Class ModernTabListControl
             Return 图标与文本间距
         End Get
         Set(value As Integer)
-            SetValue(图标与文本间距, value)
+            SetValue(图标与文本间距, Math.Max(0, value))
         End Set
     End Property
 #End Region
@@ -1891,7 +2028,7 @@ Public Class ModernTabListControl
             Return 选中指示条宽度
         End Get
         Set(value As Integer)
-            SetValue(选中指示条宽度, value)
+            SetValue(选中指示条宽度, Math.Max(0, value))
         End Set
     End Property
 
@@ -1902,7 +2039,7 @@ Public Class ModernTabListControl
             Return 选中指示条边距
         End Get
         Set(value As Integer)
-            SetValue(选中指示条边距, value)
+            SetValue(选中指示条边距, Math.Max(0, value))
         End Set
     End Property
 
@@ -1913,7 +2050,7 @@ Public Class ModernTabListControl
             Return 选中指示条圆角半径
         End Get
         Set(value As Integer)
-            SetValue(选中指示条圆角半径, value)
+            SetValue(选中指示条圆角半径, Math.Max(0, value))
         End Set
     End Property
 #End Region
@@ -1949,7 +2086,7 @@ Public Class ModernTabListControl
             Return 内容区域边框宽度
         End Get
         Set(value As Integer)
-            SetValue(内容区域边框宽度, value)
+            SetValue(内容区域边框宽度, Math.Max(0, value))
         End Set
     End Property
 #End Region
@@ -1962,7 +2099,7 @@ Public Class ModernTabListControl
             Return 滚动条宽度
         End Get
         Set(value As Integer)
-            SetLayoutValue(滚动条宽度, value)
+            SetLayoutValue(滚动条宽度, Math.Max(0, value))
         End Set
     End Property
 

@@ -53,8 +53,7 @@ Public Class ExcellentProgressBar
             极限矩形区域.Width - p.Horizontal,
             极限矩形区域.Height - p.Vertical)
 
-        Dim ssaa As Integer = Math.Max(1, CInt(超采样倍率))
-        If GlobalOptions.GlobalSSAA <> GlobalOptions.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(GlobalOptions.GlobalSSAA))
+        Dim ssaa As Integer = D2DHelperV2.GetEffectiveSsaaScale(超采样倍率)
 
         ' --- 第一遍：D2D 画形状（背景/填充/边框/禁用遮罩）---
         Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)

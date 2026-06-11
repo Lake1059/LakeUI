@@ -1,4 +1,3 @@
-Imports System.Drawing.Drawing2D
 Imports System.Runtime.InteropServices
 
 ' ═══════════════════════════════════════════════════════════════════════════
@@ -191,6 +190,7 @@ Friend Class ExFloatingTipForm
 
     Private 主题 As ExFloatingTipTheme
     Private 锚点控件 As Control
+    Private ReadOnly 毛玻璃 As MessageDialogBackdropController
     Private 已关闭 As Boolean = False
 
     ' DPI 缩放系数
@@ -225,6 +225,7 @@ Friend Class ExFloatingTipForm
     Public Sub New(prompt As String, theme As ExFloatingTipTheme, anchor As Control, duration As Integer)
         主题 = If(theme, New ExFloatingTipTheme())
         锚点控件 = anchor
+        毛玻璃 = New MessageDialogBackdropController(Me)
         显示时长 = duration
 
         Me.DoubleBuffered = True
@@ -234,7 +235,7 @@ Friend Class ExFloatingTipForm
         卡片内边距 = CInt(主题.Padding * SC)
         卡片最大宽度 = CInt(主题.MaxWidth * SC)
 
-        消息字体 = New Font("Microsoft YaHei UI", 9.5F, FontStyle.Regular)
+        消息字体 = New Font(MessageDialogRendering.ResolveDialogFontName(anchor, Me), 9.5F, FontStyle.Regular)
         消息文本 = prompt
 
         滑动像素 = CInt(主题.SlideDistance * SC)
@@ -407,20 +408,39 @@ Friend Class ExFloatingTipForm
 
 #Region "绘制"
 
+    Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
+        If Not 毛玻璃.Enabled Then MyBase.OnPaintBackground(e)
+    End Sub
+
+    Protected Overrides Sub OnShown(e As EventArgs)
+        MyBase.OnShown(e)
+        毛玻璃.Prepare()
+        Invalidate()
+    End Sub
+
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
-        Dim g = e.Graphics
-        g.SmoothingMode = SmoothingMode.AntiAlias
-        g.TextRenderingHint = Drawing.Text.TextRenderingHint.ClearTypeGridFit
+        毛玻璃.Draw(e.Graphics)
 
-        Dim textRect As New Rectangle(
-            卡片内边距, 卡片内边距,
-            Me.ClientSize.Width - 卡片内边距 * 2,
-            Me.ClientSize.Height - 卡片内边距 * 2)
-        TextRenderer.DrawText(g, 消息文本, 消息字体, textRect,
-            主题.MessageForeColor, 文本标志)
+        Using scope = D2DHelperV2.BeginPaint(e, Me, 1)
+            If scope Is Nothing Then Return
+            Dim rt = scope.GraphicsLayer
+            Dim compositor = scope.Compositor
+            Dim brushCache = compositor.BrushCache
 
-        Using pen As New Pen(主题.CardBorderColor, 1)
-            g.DrawRectangle(pen, 0, 0, Me.Width - 1, Me.Height - 1)
+            If Not 毛玻璃.HasFrame Then
+                MessageDialogRendering.FillRectangle(rt, brushCache, New RectangleF(0, 0, ClientSize.Width, ClientSize.Height), 主题.CardBackColor)
+            End If
+
+            Dim textRect As New RectangleF(
+                卡片内边距, 卡片内边距,
+                Me.ClientSize.Width - 卡片内边距 * 2,
+                Me.ClientSize.Height - 卡片内边距 * 2)
+            MessageDialogRendering.DrawText(rt, compositor, 消息文本, 消息字体, textRect,
+                主题.MessageForeColor, 文本标志, SC)
+
+            MessageDialogRendering.DrawRectangle(rt, brushCache,
+                New RectangleF(0.5F, 0.5F, Math.Max(0, ClientSize.Width - 1), Math.Max(0, ClientSize.Height - 1)),
+                主题.CardBorderColor, 1.0F)
         End Using
     End Sub
 
@@ -460,6 +480,7 @@ Friend Class ExFloatingTipForm
             自动关闭计时器?.Stop()
             自动关闭计时器?.Dispose()
             消息字体?.Dispose()
+            毛玻璃?.Dispose()
         End If
         MyBase.Dispose(disposing)
     End Sub

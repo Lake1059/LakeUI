@@ -200,6 +200,7 @@ Public Class GlobalOptions
     ''' <para>默认值：64 MiB，单位为字节。该预算只作用于背景穿透为复现父级背景而采样得到的 CPU backing bitmap，不影响 D2D 裁剪上传缓存数量。</para>
     ''' <para>这里的 backing bitmap 是背景采样中间结果：它可能来自父控件绘制、窗口背景、纯色或图片背景的组合，但不是业务直接传入的 Image 图片缓存，也不是控件的圆角/路径等绘制图形缓存。</para>
     ''' <para>纯色源会在识别后立即丢弃 backing bitmap；非纯色源超过预算时按 LRU 丢弃，下一次绘制会完整重采，视觉结果不变。</para>
+    ''' <para>兼容说明：BackgroundPenetrationV2 会把 1 到 1024 的正数视为 MiB 档位，以兼容旧设置界面把 16/32/64 这类档位直接写入 bytes 属性的情况。</para>
     ''' </remarks>
     Public Shared Property BackgroundPenetrationSourceBitmapBudgetBytes As Long = 64L * 1024L * 1024L
 
@@ -234,17 +235,29 @@ Public Class GlobalOptions
     Public Shared Property BackdropCpuBlurBufferRetainBytes As Long = 32L * 1024L * 1024L
 
     ''' <summary>
+    ''' BackgroundPenetrationV2 可保留的 D2D 裁剪上传缓存全局预算。
+    ''' </summary>
+    ''' <remarks>
+    ''' <para>默认值：64 MiB，单位为字节。该预算按所有 BackgroundSource 的 D2D source crop 上传副本总量计算，而不是按单个背景源分别计算。</para>
+    ''' <para>生命周期释放仍优先于预算回收：隐藏、离开可见控件链、句柄销毁或 Dispose 的 source 会主动释放缓存；仍处于可渲染状态的 source 超过预算时按 LRU 丢弃旧裁剪。</para>
+    ''' <para>该设置只影响背景穿透从 CPU backing bitmap 上传到 RenderTarget 的局部裁剪 D2D 位图，不影响业务 Image 图片缓存，也不影响 CPU backing bitmap 预算。</para>
+    ''' <para>调大：多个已初始化页面或同一背景源下大量透明子控件来回切换时更容易命中缓存，代价是更高的显存常驻量。</para>
+    ''' <para>调小：显存释放更积极，但局部背景会更频繁重新上传。</para>
+    ''' </remarks>
+    Public Shared Property BackgroundPenetrationCropCacheBudgetBytes As Long = 64L * 1024L * 1024L
+
+    ''' <summary>
     ''' 每个 BackgroundSource 可保留的 D2D 裁剪上传缓存数量。
     ''' </summary>
     ''' <remarks>
-    ''' <para>默认值：24，单位为条目数。每个条目对应一个背景源局部裁剪 source crop 到当前 RenderTarget 的 D2D 上传位图。</para>
+    ''' <para>默认值：32，单位为条目数。每个条目对应一个背景源局部裁剪 source crop 到当前 RenderTarget 的 D2D 上传位图。</para>
     ''' <para>有效范围：0 到 Integer.MaxValue。使用处会按至少 0 处理；0 表示不保留裁剪上传缓存，每次透明背景穿透都重新上传当前裁剪区域。</para>
     ''' <para>估算公式：单个条目的显存约为 裁剪宽 x 裁剪高 x 4 字节。例如 300x80 的透明控件背景裁剪约 94 KiB，800x300 约 938 KiB。</para>
     ''' <para>影响对象：背景穿透已经采样出的局部背景位图上传副本。它不是业务 Image 图片缓存，也不是圆角、边框、路径等控件绘制图形缓存。</para>
     ''' <para>调大：同一背景源下多个透明子控件、悬停动画脏区、小区域反复重绘时更容易命中缓存，减少裁剪 Bitmap 到 D2D Bitmap 的重复上传。</para>
     ''' <para>调小：降低每个背景源的裁剪缓存常驻量；透明控件很多且区域变化大时更省显存，但重复重绘的上传成本会增加。</para>
     ''' </remarks>
-    Public Shared Property BackgroundPenetrationCropCacheMaxEntriesPerSource As Integer = 24
+    Public Shared Property BackgroundPenetrationCropCacheMaxEntriesPerSource As Integer = 32
 
     Public Const 动画时长描述词 As String = "指定动画时长，单位为毫秒。0 表示禁用动画并立即跳到目标状态；100-180ms 适合按钮、开关、悬停等轻交互；200-300ms 适合列表滚动、展开收起和较明显的位置变化；超过 500ms 会显得拖沓，除非用于刻意的演示效果。"
     Public Const 动画帧率描述词 As String = "指定动画目标帧率，单位为 FPS。0 表示不限制，会尽可能快地请求重绘，容易明显增加 UI 线程和 D2D 绘制压力；30 适合低功耗或后台效果；60 适合大多数颜色、透明度和短距离位移动画；120 适合高刷新率屏幕上的精细滑动。超过显示器刷新率通常不会更顺滑，只会增加无效计算。"

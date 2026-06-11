@@ -28,8 +28,7 @@ Public Class BooleanSwitch
             极限矩形区域.Inflate(-half, -half)
         End If
 
-        Dim ssaa As Integer = Math.Max(1, CInt(超采样倍率))
-        If GlobalOptions.GlobalSSAA <> GlobalOptions.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(GlobalOptions.GlobalSSAA))
+        Dim ssaa As Integer = D2DHelperV2.GetEffectiveSsaaScale(超采样倍率)
 
         Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
             If scope Is Nothing Then Return  ' 设计期 / 无 Form
@@ -70,10 +69,7 @@ Public Class BooleanSwitch
         Dim 滑块X As Single = 滑块最小X + (滑块最大X - 滑块最小X) * 动画助手.Progress
         Dim 滑块Y As Single = 极限矩形区域.Y + _滑块边距
         Dim 滑块区域 As New RectangleF(滑块X, 滑块Y, 滑块直径, 滑块直径)
-        Using geo = RectangleRenderer.创建圆角矩形几何(滑块区域, 滑块直径 / 2.0F)
-            Dim brush = brushCache.Get(rt, 滑块颜色)
-            If brush IsNot Nothing Then rt.FillGeometry(geo, brush)
-        End Using
+        RectangleRenderer.填充椭圆_D2D(rt, 滑块区域, 滑块颜色, brushCache)
     End Sub
 
     Private Function 获取当前轨道颜色() As Color
@@ -313,11 +309,17 @@ Public Class BooleanSwitch
         End Get
         Set(value As Control)
             If _backgroundSource IsNot value Then
+                解除背景穿透消费者()
                 _backgroundSource = value
                 Me.Invalidate()
             End If
         End Set
     End Property
+
+    Private Sub 解除背景穿透消费者()
+        If _backgroundSource Is Nothing Then Return
+        Try : BackgroundPenetrationV2.UnregisterConsumer(Me, _backgroundSource) : Catch : End Try
+    End Sub
 
     Private 禁用时遮罩颜色 As Color = Color.FromArgb(120, 0, 0, 0)
     <Category("LakeUI"), Description("禁用（Enabled = False）时覆盖在主体区域上的遮罩颜色（受圆角裁剪，不影响圆角外的透明区域）。"), DefaultValue(GetType(Color), "120, 0, 0, 0"), Browsable(True)>
@@ -437,6 +439,25 @@ Public Class BooleanSwitch
             SetValue(鼠标按下时边框颜色值, value)
         End Set
     End Property
+#End Region
+
+#Region "生命周期"
+
+    Protected Overrides Sub OnHandleDestroyed(e As EventArgs)
+        解除背景穿透消费者()
+        MyBase.OnHandleDestroyed(e)
+    End Sub
+
+    Protected Overrides Sub OnVisibleChanged(e As EventArgs)
+        MyBase.OnVisibleChanged(e)
+        If Not Me.Visible Then 解除背景穿透消费者()
+    End Sub
+
+    Protected Overrides Sub OnParentChanged(e As EventArgs)
+        MyBase.OnParentChanged(e)
+        If Me.Parent Is Nothing Then 解除背景穿透消费者()
+    End Sub
+
 #End Region
 
 #Region "禁用属性"

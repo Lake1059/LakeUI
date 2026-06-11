@@ -800,8 +800,7 @@ Public Class BreadcrumbNavigationBar
         Dim h As Integer = ClientRectangle.Height
         If w < 1 OrElse h < 1 Then Return
 
-        Dim ssaa As Integer = Math.Max(1, CInt(超采样倍率))
-        If GlobalOptions.GlobalSSAA <> GlobalOptions.SuperSamplingScaleEnum.OFF Then ssaa = Math.Max(ssaa, CInt(GlobalOptions.GlobalSSAA))
+        Dim ssaa As Integer = D2DHelperV2.GetEffectiveSsaaScale(超采样倍率)
 
         Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
             If scope Is Nothing Then
@@ -989,16 +988,7 @@ Public Class BreadcrumbNavigationBar
                 sink.EndFigure(FigureEnd.Open)
                 sink.Close()
             End Using
-            Dim style As StrokeStyleProperties = New StrokeStyleProperties() With {
-                .StartCap = CapStyle.Round,
-                .EndCap = CapStyle.Round,
-                .LineJoin = Vortice.Direct2D1.LineJoin.Round,
-                .DashCap = CapStyle.Round,
-                .MiterLimit = 10.0F
-            }
-            Using ss = factory.CreateStrokeStyle(style)
-                rt.DrawGeometry(path, brush, 箭头线宽 * s, ss)
-            End Using
+            rt.DrawGeometry(path, brush, 箭头线宽 * s, D2DGlobals.GetRoundStrokeStyle(roundDashCap:=True))
         Finally
             path.Dispose()
         End Try

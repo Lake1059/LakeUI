@@ -78,8 +78,14 @@
         绑定选项卡窗体背景透明(Form_AgentRoom.ModernPanel1)
         Me.ModernTabListControl1.Items(39).BoundControl = Form_ModernNumericUpDown
         绑定选项卡窗体背景透明(Form_ModernNumericUpDown.ModernPanel1)
+        Me.ModernTabListControl1.Items(40).BoundControl = Form_MemberWall
+        绑定选项卡窗体背景透明(Form_MemberWall.ModernPanel1)
+        Me.ModernTabListControl1.Items(41).BoundControl = Form_EasyStatesPanel
+        绑定选项卡窗体背景透明(Form_EasyStatesPanel.ModernPanel1)
         Me.ModernTabListControl1.Items(42).BoundControl = Form_LakeUINotifications
         绑定选项卡窗体背景透明(Form_LakeUINotifications.ModernPanel1)
+        Me.ModernTabListControl1.Items(43).BoundControl = Form_Ultra2DChart
+        绑定选项卡窗体背景透明(Form_Ultra2DChart.ModernPanel1)
     End Sub
 
     Private Sub Form1_Shown(sender As Object, e As EventArgs) Handles Me.Shown
