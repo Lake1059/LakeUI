@@ -50,6 +50,7 @@ Public NotInheritable Class PaintScopeV2
     Private _graphicsLayer As ID2D1RenderTarget
     Private _disposed As Boolean
     Private ReadOnly _disposeCompositorWithScope As Boolean
+    Private ReadOnly _returnCompositorToBackgroundSamplingPool As Boolean
     Private _dcClipPushed As Boolean
 
     ''' <summary>所属窗口 compositor，可用来访问共享 brush / textformat / bitmap 缓存。</summary>
@@ -150,7 +151,8 @@ Public NotInheritable Class PaintScopeV2
     Friend Sub New(compositor As WindowCompositor, g As Graphics, hdc As IntPtr,
                    dcRT As ID2D1DCRenderTarget, w As Integer, h As Integer, ssaa As Integer,
                    clipRect As Rectangle,
-                   Optional disposeCompositorWithScope As Boolean = False)
+                   Optional disposeCompositorWithScope As Boolean = False,
+                   Optional returnCompositorToBackgroundSamplingPool As Boolean = False)
         _compositor = compositor
         _g = g
         _hdc = hdc
@@ -163,6 +165,7 @@ Public NotInheritable Class PaintScopeV2
         _ssaaPixelW = Math.Max(1, _ssaaLogicalW * _ssaa)
         _ssaaPixelH = Math.Max(1, _ssaaLogicalH * _ssaa)
         _disposeCompositorWithScope = disposeCompositorWithScope
+        _returnCompositorToBackgroundSamplingPool = returnCompositorToBackgroundSamplingPool
         DCRenderTarget = dcRT
 
         dcRT.BindDC(hdc, New Vortice.RawRect(0, 0, w, h))
@@ -294,7 +297,9 @@ Public NotInheritable Class PaintScopeV2
             End Try
         Finally
             _compositor.EndPaintScope()
-            If _disposeCompositorWithScope Then
+            If _returnCompositorToBackgroundSamplingPool Then
+                Try : D2DHelperV2.ReturnBackgroundSamplingCompositor(_compositor) : Catch : End Try
+            ElseIf _disposeCompositorWithScope Then
                 Try : _compositor.Dispose() : Catch : End Try
             End If
         End Try

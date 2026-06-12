@@ -42,6 +42,9 @@ Imports Vortice.Direct2D1
 Friend NotInheritable Class BackdropRenderer
     Implements IDisposable
 
+    Private Shared ReadOnly _instancesLock As New Object()
+    Private Shared ReadOnly _instances As New List(Of WeakReference(Of BackdropRenderer))()
+
 #Region "Win32"
 
     <DllImport("user32.dll")>
@@ -182,6 +185,38 @@ Friend NotInheritable Class BackdropRenderer
                 _hostHandle = IntPtr.Zero
             End Try
         End If
+        RegisterInstance(Me)
+    End Sub
+
+    Private Shared Sub RegisterInstance(instance As BackdropRenderer)
+        If instance Is Nothing Then Return
+        SyncLock _instancesLock
+            CompactInstancesNoLock()
+            _instances.Add(New WeakReference(Of BackdropRenderer)(instance))
+        End SyncLock
+    End Sub
+
+    Friend Shared Sub CleanupAllD2DResources(level As D2DCacheCleanupLevel, Optional owner As Form = Nothing)
+        SyncLock _instancesLock
+            For i As Integer = _instances.Count - 1 To 0 Step -1
+                Dim renderer As BackdropRenderer = Nothing
+                If Not _instances(i).TryGetTarget(renderer) OrElse renderer Is Nothing Then
+                    _instances.RemoveAt(i)
+                    Continue For
+                End If
+                If owner IsNot Nothing AndAlso Not ReferenceEquals(renderer._host, owner) Then Continue For
+                renderer.CleanupD2DResources(level)
+            Next
+        End SyncLock
+    End Sub
+
+    Private Shared Sub CompactInstancesNoLock()
+        For i As Integer = _instances.Count - 1 To 0 Step -1
+            Dim renderer As BackdropRenderer = Nothing
+            If Not _instances(i).TryGetTarget(renderer) OrElse renderer Is Nothing Then
+                _instances.RemoveAt(i)
+            End If
+        Next
     End Sub
 
     Public Sub ApplyParameters(radius As Integer, passes As Integer, downsample As Integer,
@@ -220,17 +255,59 @@ Friend NotInheritable Class BackdropRenderer
         _cpuBlurredSourceVersion = -1
         _cpuBlurredSettingsVersion = -1
 
+        DisposeFrameD2DBitmapNoLock()
+
+        If _gpuBlurEffect IsNot Nothing Then
+            Try : _gpuBlurEffect.Dispose() : Catch : End Try
+            _gpuBlurEffect = Nothing
+        End If
+    End Sub
+
+    Friend Sub CleanupD2DResources(level As D2DCacheCleanupLevel)
+        If Volatile.Read(_disposed) <> 0 Then Return
+        If level = D2DCacheCleanupLevel.TrimToBudget Then Return
+        Dim releaseCpuCaches As Boolean = level >= D2DCacheCleanupLevel.ReleaseAllCaches
+        If releaseCpuCaches Then
+            Try
+                releaseCpuCaches = WaitForIdle(500)
+            Catch
+                releaseCpuCaches = False
+            End Try
+        End If
+
+        SyncLock _frameLock
+            DisposeFrameD2DBitmapNoLock()
+            If releaseCpuCaches Then
+                _currentFrame?.Dispose()
+                _currentFrame = Nothing
+                _spareFrame?.Dispose()
+                _spareFrame = Nothing
+                If _cpuBlurredFrame IsNot Nothing Then
+                    Try : _cpuBlurredFrame.Dispose() : Catch : End Try
+                    _cpuBlurredFrame = Nothing
+                End If
+                _cpuBlurredSourceVersion = -1
+                _cpuBlurredSettingsVersion = -1
+                Interlocked.Increment(_frameVersion)
+            End If
+        End SyncLock
+        DisposeGpuResources()
+        If releaseCpuCaches Then
+            ReleaseCaptureBitmap()
+            Volatile.Write(_publishedAverage, -1)
+            _blurBufferA = Nothing
+            _blurBufferB = Nothing
+        End If
+        DisposeNoiseD2DResources()
+    End Sub
+
+    Private Sub DisposeFrameD2DBitmapNoLock()
         If _frameD2DBitmap IsNot Nothing Then
             Try : _frameD2DBitmap.Dispose() : Catch : End Try
             _frameD2DBitmap = Nothing
         End If
         _frameD2DOwnerRT = Nothing
         _frameD2DUploadedVersion = -1
-
-        If _gpuBlurEffect IsNot Nothing Then
-            Try : _gpuBlurEffect.Dispose() : Catch : End Try
-            _gpuBlurEffect = Nothing
-        End If
     End Sub
 
     Private Sub ReleaseCpuBlurredFrame()
@@ -272,6 +349,19 @@ Friend NotInheritable Class BackdropRenderer
         _gpuSourceVersion = -1
         _gpuTargetSize = Size.Empty
         _gpuGeneration = -1
+    End Sub
+
+    Private Sub DisposeNoiseD2DResources()
+        If _noiseD2DBrush IsNot Nothing Then
+            Try : _noiseD2DBrush.Dispose() : Catch : End Try
+            _noiseD2DBrush = Nothing
+        End If
+        If _noiseD2DBitmap IsNot Nothing Then
+            Try : _noiseD2DBitmap.Dispose() : Catch : End Try
+            _noiseD2DBitmap = Nothing
+        End If
+        _noiseD2DOwnerRT = Nothing
+        _noiseD2DBrushTile = 0
     End Sub
 
     Public ReadOnly Property HasFrame As Boolean
@@ -1307,12 +1397,7 @@ Friend NotInheritable Class BackdropRenderer
             _spareFrame?.Dispose()
             _spareFrame = Nothing
             ' D2D 缓存与 _currentFrame 共享 _frameLock，统一在这里释放。
-            If _frameD2DBitmap IsNot Nothing Then
-                Try : _frameD2DBitmap.Dispose() : Catch : End Try
-                _frameD2DBitmap = Nothing
-            End If
-            _frameD2DOwnerRT = Nothing
-            _frameD2DUploadedVersion = -1
+            DisposeFrameD2DBitmapNoLock()
             If _cpuBlurredFrame IsNot Nothing Then
                 Try : _cpuBlurredFrame.Dispose() : Catch : End Try
                 _cpuBlurredFrame = Nothing
@@ -1325,15 +1410,7 @@ Friend NotInheritable Class BackdropRenderer
         _noiseBitmap = Nothing
         _noiseBrush?.Dispose()
         _noiseBrush = Nothing
-        If _noiseD2DBrush IsNot Nothing Then
-            Try : _noiseD2DBrush.Dispose() : Catch : End Try
-            _noiseD2DBrush = Nothing
-        End If
-        If _noiseD2DBitmap IsNot Nothing Then
-            Try : _noiseD2DBitmap.Dispose() : Catch : End Try
-            _noiseD2DBitmap = Nothing
-        End If
-        _noiseD2DOwnerRT = Nothing
+        DisposeNoiseD2DResources()
         _blurBufferA = Nothing
         _blurBufferB = Nothing
         _workerIdle.Dispose()

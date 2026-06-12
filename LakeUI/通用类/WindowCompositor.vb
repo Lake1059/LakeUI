@@ -51,6 +51,7 @@ Public NotInheritable Class WindowCompositor
     Private _lastTextFormatCacheLimit As Integer = Integer.MinValue
     Private _lastBitmapCacheImageLimit As Integer = Integer.MinValue
     Private _lastBitmapCacheBudgetBytes As Long = Long.MinValue
+    Private _lastSsaaPoolBudgetBytes As Long = Long.MinValue
 
     ''' <summary>Image → D2DBitmapCache 映射；为长期存在的图标 / 背景图复用 D2D 上传。</summary>
     Private NotInheritable Class BitmapCacheEntry
@@ -78,6 +79,12 @@ Public NotInheritable Class WindowCompositor
     Public ReadOnly Property IsDisposed As Boolean
         Get
             Return _disposed
+        End Get
+    End Property
+
+    Friend ReadOnly Property IsPainting As Boolean
+        Get
+            Return _activePaintScopes > 0
         End Get
     End Property
 
@@ -187,20 +194,47 @@ Public NotInheritable Class WindowCompositor
 
     Private Sub ReleaseDCRenderTargetNoLock()
         Try : BrushCache.Invalidate() : Catch : End Try
-        For Each kv In _bitmapCaches
-            Try : kv.Value.Cache.Invalidate() : Catch : End Try
-        Next
-        For Each kv In _ssaaPool
-            ReleaseRenderTargetCaches(kv.Value.RenderTarget)
-            Try : kv.Value.RenderTarget.Dispose() : Catch : End Try
-        Next
-        _ssaaPool.Clear()
-        _ssaaPoolBytes = 0
+        ReleaseBitmapCacheIndexNoLock()
+        ReleaseSsaaPoolNoLock()
         If _dcRT IsNot Nothing Then
             Try : _dcRT.Dispose() : Catch : End Try
             _dcRT = Nothing
         End If
     End Sub
+
+    Friend Function CleanupD2DResources(level As D2DCacheCleanupLevel) As Boolean
+        If _disposed Then Return False
+        If _activePaintScopes > 0 Then Return False
+
+        Select Case level
+            Case D2DCacheCleanupLevel.TrimToBudget
+                TrimTransientCaches()
+
+            Case D2DCacheCleanupLevel.ReleaseVolatileCaches
+                Try : BrushCache.Invalidate() : Catch : End Try
+                ReleaseSsaaPoolNoLock()
+                ResetTransientTrimState()
+
+            Case D2DCacheCleanupLevel.ReleaseAllCaches
+                Try : BrushCache.Invalidate() : Catch : End Try
+                Try : TextFormatCache.Invalidate() : Catch : End Try
+                ReleaseBitmapCacheIndexNoLock()
+                ReleaseSsaaPoolNoLock()
+                ResetTransientTrimState()
+
+            Case D2DCacheCleanupLevel.ReleaseRenderTargets,
+                 D2DCacheCleanupLevel.RecreateDevice
+                Try : TextFormatCache.Invalidate() : Catch : End Try
+                ReleaseDCRenderTargetNoLock()
+                ReleaseDeviceContextNoLock()
+                ResetTransientTrimState()
+
+            Case Else
+                Dispose()
+        End Select
+
+        Return True
+    End Function
 
     ''' <summary>
     ''' 取（按需创建）一份 <see cref="Image"/> 对应的 <see cref="D2DGlobals.D2DBitmapCache"/>。
@@ -235,10 +269,7 @@ Public NotInheritable Class WindowCompositor
     Private Sub TrimBitmapCacheIndex(protectedImage As Image)
         Dim maxImages As Integer = Math.Max(0, GlobalOptions.D2DBitmapCacheMaxImagesPerCompositor)
         If maxImages = 0 Then
-            For Each kv In _bitmapCaches
-                Try : kv.Value.Cache.Dispose() : Catch : End Try
-            Next
-            _bitmapCaches.Clear()
+            ReleaseBitmapCacheIndexNoLock()
             Return
         End If
         While _bitmapCaches.Count > maxImages AndAlso _bitmapCaches.Count > 0
@@ -255,6 +286,13 @@ Public NotInheritable Class WindowCompositor
             _bitmapCaches.Remove(oldestImage)
             Try : oldestEntry.Cache.Dispose() : Catch : End Try
         End While
+    End Sub
+
+    Private Sub ReleaseBitmapCacheIndexNoLock()
+        For Each kv In _bitmapCaches
+            Try : kv.Value.Cache.Dispose() : Catch : End Try
+        Next
+        _bitmapCaches.Clear()
     End Sub
 
     ''' <summary>
@@ -351,6 +389,15 @@ Public NotInheritable Class WindowCompositor
         Return _ssaaPoolClock
     End Function
 
+    Private Sub ReleaseSsaaPoolNoLock()
+        For Each kv In _ssaaPool
+            ReleaseRenderTargetCaches(kv.Value.RenderTarget)
+            Try : kv.Value.RenderTarget.Dispose() : Catch : End Try
+        Next
+        _ssaaPool.Clear()
+        _ssaaPoolBytes = 0
+    End Sub
+
     Private Sub TrimSsaaPool()
         Dim budget As Long = Math.Max(0L, GlobalOptions.SsaaRenderTargetPoolBudgetBytes)
         While _ssaaPoolBytes > budget AndAlso _ssaaPool.Count > 0
@@ -384,7 +431,8 @@ Public NotInheritable Class WindowCompositor
     ''' 若当前 Form 的共享 DC RT 正在绘制，返回 Nothing，避免嵌套 BindDC 触发 D2DERR_WRONG_STATE。
     ''' </summary>
     Friend Function BeginPaint(e As PaintEventArgs, control As Control, ssaaScale As Integer,
-                               Optional disposeCompositorWithScope As Boolean = False) As PaintScopeV2
+                               Optional disposeCompositorWithScope As Boolean = False,
+                               Optional returnCompositorToBackgroundSamplingPool As Boolean = False) As PaintScopeV2
         If _disposed Then Return Nothing
         If _activePaintScopes > 0 Then Return Nothing
         Dim dcRT = GetOrCreateDCRenderTarget()
@@ -392,7 +440,8 @@ Public NotInheritable Class WindowCompositor
         Dim hdc As IntPtr = e.Graphics.GetHdc()
         _activePaintScopes += 1
         Try
-            Return New PaintScopeV2(Me, e.Graphics, hdc, dcRT, control.Width, control.Height, ssaaScale, e.ClipRectangle, disposeCompositorWithScope)
+            Return New PaintScopeV2(Me, e.Graphics, hdc, dcRT, control.Width, control.Height, ssaaScale, e.ClipRectangle,
+                                    disposeCompositorWithScope, returnCompositorToBackgroundSamplingPool)
         Catch ex As Exception
             Try : NotifyDCRenderTargetException(ex) : Catch : End Try
             EndPaintScope()
@@ -414,15 +463,18 @@ Public NotInheritable Class WindowCompositor
         Dim textFormatLimit As Integer = Math.Max(0, GlobalOptions.DWriteTextFormatCacheMaxEntriesPerCompositor)
         Dim bitmapImageLimit As Integer = Math.Max(0, GlobalOptions.D2DBitmapCacheMaxImagesPerCompositor)
         Dim bitmapBudgetBytes As Long = Math.Max(0L, GlobalOptions.D2DBitmapCacheBudgetBytes)
+        Dim ssaaPoolBudgetBytes As Long = Math.Max(0L, GlobalOptions.SsaaRenderTargetPoolBudgetBytes)
 
         If brushLimit <> _lastBrushCacheLimit OrElse
            textFormatLimit <> _lastTextFormatCacheLimit OrElse
            bitmapImageLimit <> _lastBitmapCacheImageLimit OrElse
-           bitmapBudgetBytes <> _lastBitmapCacheBudgetBytes Then
+           bitmapBudgetBytes <> _lastBitmapCacheBudgetBytes OrElse
+           ssaaPoolBudgetBytes <> _lastSsaaPoolBudgetBytes Then
             _lastBrushCacheLimit = brushLimit
             _lastTextFormatCacheLimit = textFormatLimit
             _lastBitmapCacheImageLimit = bitmapImageLimit
             _lastBitmapCacheBudgetBytes = bitmapBudgetBytes
+            _lastSsaaPoolBudgetBytes = ssaaPoolBudgetBytes
             _paintScopesSinceTransientTrim = 0
             Return True
         End If
@@ -441,6 +493,16 @@ Public NotInheritable Class WindowCompositor
             Try : kv.Value.Cache.TrimToCurrentBudget() : Catch : End Try
         Next
         Try : TrimBitmapCacheIndex(Nothing) : Catch : End Try
+        Try : TrimSsaaPool() : Catch : End Try
+    End Sub
+
+    Private Sub ResetTransientTrimState()
+        _paintScopesSinceTransientTrim = 0
+        _lastBrushCacheLimit = Integer.MinValue
+        _lastTextFormatCacheLimit = Integer.MinValue
+        _lastBitmapCacheImageLimit = Integer.MinValue
+        _lastBitmapCacheBudgetBytes = Long.MinValue
+        _lastSsaaPoolBudgetBytes = Long.MinValue
     End Sub
 
     Public Sub Dispose() Implements IDisposable.Dispose

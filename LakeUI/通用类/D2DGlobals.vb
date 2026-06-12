@@ -107,6 +107,97 @@ Public Module D2DGlobals
     Private _roundStrokeStyle As ID2D1StrokeStyle
     Private _roundStrokeStyleWithDashCap As ID2D1StrokeStyle
     Private ReadOnly _strokeStyles As New Dictionary(Of Integer, ID2D1StrokeStyle)()
+    Private ReadOnly _bitmapCacheRegistry As New List(Of WeakReference(Of D2DBitmapCache))()
+    Private ReadOnly _bitmapCacheRegistryLock As New Object()
+
+    Friend Sub CleanupD2DResources(level As D2DCacheCleanupLevel)
+        Select Case level
+            Case D2DCacheCleanupLevel.TrimToBudget
+                TrimRegisteredBitmapCaches()
+                TrimFontResolveCacheToCurrentLimit()
+
+            Case D2DCacheCleanupLevel.ReleaseVolatileCaches
+                InvalidateOutlineRenderingParams()
+                TrimRegisteredBitmapCaches()
+                TrimFontResolveCacheToCurrentLimit()
+
+            Case D2DCacheCleanupLevel.ReleaseAllCaches,
+                 D2DCacheCleanupLevel.ReleaseRenderTargets,
+                 D2DCacheCleanupLevel.RecreateDevice
+                InvalidateOutlineRenderingParams()
+                InvalidateRegisteredBitmapCaches()
+                ClearFontResolveCache()
+
+            Case Else
+                InvalidateRegisteredBitmapCaches()
+                ClearFontResolveCache()
+                ReleaseFactoryResources()
+        End Select
+    End Sub
+
+    Private Sub ReleaseFactoryResources()
+        SyncLock _factoryLock
+            If _outlineRenderingParams IsNot Nothing Then
+                Try : _outlineRenderingParams.Dispose() : Catch : End Try
+                _outlineRenderingParams = Nothing
+            End If
+            For Each style In _strokeStyles.Values
+                Try : style.Dispose() : Catch : End Try
+            Next
+            _strokeStyles.Clear()
+            _roundStrokeStyle = Nothing
+            _roundStrokeStyleWithDashCap = Nothing
+            If _d2dFactory IsNot Nothing Then
+                Try : _d2dFactory.Dispose() : Catch : End Try
+                _d2dFactory = Nothing
+            End If
+            If _dwFactory IsNot Nothing Then
+                Try : _dwFactory.Dispose() : Catch : End Try
+                _dwFactory = Nothing
+            End If
+        End SyncLock
+    End Sub
+
+    Private Sub RegisterBitmapCache(cache As D2DBitmapCache)
+        If cache Is Nothing Then Return
+        SyncLock _bitmapCacheRegistryLock
+            CompactBitmapCacheRegistryNoLock()
+            _bitmapCacheRegistry.Add(New WeakReference(Of D2DBitmapCache)(cache))
+        End SyncLock
+    End Sub
+
+    Private Sub TrimRegisteredBitmapCaches()
+        SyncLock _bitmapCacheRegistryLock
+            For Each wr In _bitmapCacheRegistry
+                Dim cache As D2DBitmapCache = Nothing
+                If wr.TryGetTarget(cache) AndAlso cache IsNot Nothing Then
+                    Try : cache.TrimToCurrentBudget() : Catch : End Try
+                End If
+            Next
+            CompactBitmapCacheRegistryNoLock()
+        End SyncLock
+    End Sub
+
+    Private Sub InvalidateRegisteredBitmapCaches()
+        SyncLock _bitmapCacheRegistryLock
+            For Each wr In _bitmapCacheRegistry
+                Dim cache As D2DBitmapCache = Nothing
+                If wr.TryGetTarget(cache) AndAlso cache IsNot Nothing Then
+                    Try : cache.Invalidate() : Catch : End Try
+                End If
+            Next
+            CompactBitmapCacheRegistryNoLock()
+        End SyncLock
+    End Sub
+
+    Private Sub CompactBitmapCacheRegistryNoLock()
+        For i As Integer = _bitmapCacheRegistry.Count - 1 To 0 Step -1
+            Dim cache As D2DBitmapCache = Nothing
+            If Not _bitmapCacheRegistry(i).TryGetTarget(cache) OrElse cache Is Nothing Then
+                _bitmapCacheRegistry.RemoveAt(i)
+            End If
+        Next
+    End Sub
 
     ''' <summary>进程级 <see cref="ID2D1Factory"/> 单例（SingleThreaded）。不要 Dispose。</summary>
     Public Function GetD2DFactory() As ID2D1Factory
@@ -323,6 +414,10 @@ Public Module D2DGlobals
         Private _bytes As Long
         Private _clock As Long
 
+        Public Sub New()
+            RegisterBitmapCache(Me)
+        End Sub
+
         Public Function GetBitmap(rt As ID2D1RenderTarget, src As Image) As ID2D1Bitmap
             If src Is Nothing OrElse rt Is Nothing Then
                 Invalidate()
@@ -495,14 +590,31 @@ Public Module D2DGlobals
         Return _fontResolveClock
     End Function
 
+    Private Sub TrimFontResolveCacheToCurrentLimit()
+        SyncLock _fontResolveLock
+            TrimFontResolveCache(Nothing, False)
+        End SyncLock
+    End Sub
+
+    Private Sub ClearFontResolveCache()
+        SyncLock _fontResolveLock
+            _fontResolveCache.Clear()
+            _fontResolveClock = 0
+        End SyncLock
+    End Sub
+
     Private Sub TrimFontResolveCache(protectedKey As FontResolveKey)
+        TrimFontResolveCache(protectedKey, True)
+    End Sub
+
+    Private Sub TrimFontResolveCache(protectedKey As FontResolveKey, hasProtectedKey As Boolean)
         Dim maxEntries As Integer = Math.Max(0, GlobalOptions.DWriteFontResolveCacheMaxEntries)
         While _fontResolveCache.Count > maxEntries AndAlso _fontResolveCache.Count > 0
             Dim oldestKey As FontResolveKey = Nothing
             Dim oldestEntry As FontResolveEntry = Nothing
             Dim found As Boolean
             For Each kv In _fontResolveCache
-                If kv.Key.Equals(protectedKey) Then Continue For
+                If hasProtectedKey AndAlso kv.Key.Equals(protectedKey) Then Continue For
                 If oldestEntry Is Nothing OrElse kv.Value.LastUsed < oldestEntry.LastUsed Then
                     oldestKey = kv.Key
                     oldestEntry = kv.Value

@@ -1,4 +1,22 @@
 ''' <summary>
+''' D2D 显存 / 缓存清理力度。级别越高，释放越彻底，下一帧需要重建的资源也越多。
+''' </summary>
+Public Enum D2DCacheCleanupLevel
+    ''' <summary>只按当前预算修剪 LRU 缓存。适合周期性内存压力检查，视觉影响最小。</summary>
+    TrimToBudget = 0
+    ''' <summary>释放容易重建的临时缓存，例如 SSAA 离屏 RT、纯色画刷、背景裁剪上传。</summary>
+    ReleaseVolatileCaches = 1
+    ''' <summary>释放所有缓存条目，包括 D2D 位图上传、TextFormat、Backdrop GPU 缓存等。</summary>
+    ReleaseAllCaches = 2
+    ''' <summary>释放窗口级 RenderTarget / DeviceContext。下一帧会完整重建渲染目标。</summary>
+    ReleaseRenderTargets = 3
+    ''' <summary>释放窗口级资源并让进程级 D3D11 / D2D 1.1 device 失效重建。</summary>
+    RecreateDevice = 4
+    ''' <summary>释放当前全部渲染核心资源，包括 compositor 注册表与全局工厂缓存。</summary>
+    ReleaseEverything = 5
+End Enum
+
+''' <summary>
 ''' D2D 渲染管线 V2 入口（路线 E：窗口级共享 + 控件级临时 SSAA）。
 '''
 ''' === 设计目标 ===
@@ -55,6 +73,10 @@ Public Module D2DHelperV2
 
     <ThreadStatic>
     Private _backgroundSamplingPaintDepth As Integer
+    <ThreadStatic>
+    Private _backgroundSamplingScratch As Stack(Of WindowCompositor)
+    <ThreadStatic>
+    Private _backgroundSamplingRetained As List(Of WindowCompositor)
 
     Friend ReadOnly Property IsBackgroundSamplingPaint As Boolean
         Get
@@ -67,6 +89,31 @@ Public Module D2DHelperV2
         Return New BackgroundSamplingPaintScope()
     End Function
 
+    Private Function RentBackgroundSamplingCompositor(form As Form) As WindowCompositor
+        If form Is Nothing OrElse form.IsDisposed Then Return Nothing
+        If _backgroundSamplingScratch IsNot Nothing Then
+            While _backgroundSamplingScratch.Count > 0
+                Dim comp = _backgroundSamplingScratch.Pop()
+                If comp Is Nothing OrElse comp.IsDisposed Then Continue While
+                If comp.Form Is form Then Return comp
+                Try : comp.Dispose() : Catch : End Try
+            End While
+        End If
+        Return New WindowCompositor(form, unregisterOnDispose:=False)
+    End Function
+
+    Friend Sub ReturnBackgroundSamplingCompositor(comp As WindowCompositor)
+        If comp Is Nothing Then Return
+        If _backgroundSamplingPaintDepth <= 0 OrElse comp.IsDisposed Then
+            Try : comp.Dispose() : Catch : End Try
+            Return
+        End If
+        If _backgroundSamplingScratch Is Nothing Then _backgroundSamplingScratch = New Stack(Of WindowCompositor)()
+        If _backgroundSamplingRetained Is Nothing Then _backgroundSamplingRetained = New List(Of WindowCompositor)()
+        _backgroundSamplingScratch.Push(comp)
+        If Not _backgroundSamplingRetained.Contains(comp) Then _backgroundSamplingRetained.Add(comp)
+    End Sub
+
     Private NotInheritable Class BackgroundSamplingPaintScope
         Implements IDisposable
 
@@ -76,6 +123,15 @@ Public Module D2DHelperV2
             If _disposed Then Return
             _disposed = True
             If _backgroundSamplingPaintDepth > 0 Then _backgroundSamplingPaintDepth -= 1
+            If _backgroundSamplingPaintDepth = 0 Then
+                If _backgroundSamplingRetained IsNot Nothing Then
+                    For Each comp In _backgroundSamplingRetained
+                        Try : comp?.Dispose() : Catch : End Try
+                    Next
+                    _backgroundSamplingRetained.Clear()
+                End If
+                If _backgroundSamplingScratch IsNot Nothing Then _backgroundSamplingScratch.Clear()
+            End If
         End Sub
     End Class
 
@@ -154,6 +210,92 @@ Public Module D2DHelperV2
         End Try
     End Sub
 
+    ''' <summary>
+    ''' 按指定力度清理 D2D / DirectWrite 缓存与显存资源。
+    ''' </summary>
+    ''' <param name="level">清理力度。级别越高释放越彻底，之后的首帧重建成本也越高。</param>
+    ''' <param name="owner">
+    ''' 指定控件或窗体时，仅清理其所属顶层 Form 的 compositor、背景穿透和 Backdrop D2D 缓存；
+    ''' 传 <c>Nothing</c> 时清理当前进程内渲染核心能追踪到的全部 D2D 缓存。
+    ''' </param>
+    ''' <param name="invalidateAfterCleanup">清理后是否让受影响窗口重绘，以便下一帧按需重建资源。</param>
+    ''' <returns>成功执行清理的窗口 compositor 数量。若在窗口绘制过程中调用，该窗口会被跳过。</returns>
+    Public Function CleanupD2DResources(level As D2DCacheCleanupLevel,
+                                        Optional owner As Control = Nothing,
+                                        Optional invalidateAfterCleanup As Boolean = True) As Integer
+        Dim targetForm As Form = ResolveCleanupForm(owner)
+        Dim comps As New List(Of WindowCompositor)()
+        Dim hasActivePaint As Boolean = False
+
+        SyncLock _compositorsLock
+            If targetForm IsNot Nothing Then
+                Dim comp As WindowCompositor = Nothing
+                If _compositors.TryGetValue(targetForm, comp) AndAlso comp IsNot Nothing AndAlso Not comp.IsDisposed Then
+                    comps.Add(comp)
+                    hasActivePaint = hasActivePaint OrElse comp.IsPainting
+                End If
+            Else
+                For Each comp In _compositors.Values
+                    If comp IsNot Nothing AndAlso Not comp.IsDisposed Then
+                        comps.Add(comp)
+                        hasActivePaint = hasActivePaint OrElse comp.IsPainting
+                    End If
+                Next
+            End If
+        End SyncLock
+
+        Dim cleaned As Integer = 0
+        Dim invalidateForms As New List(Of Form)()
+        For Each comp In comps
+            If comp.CleanupD2DResources(level) Then
+                cleaned += 1
+                If comp.Form IsNot Nothing AndAlso Not comp.Form.IsDisposed Then invalidateForms.Add(comp.Form)
+            End If
+        Next
+        If targetForm IsNot Nothing Then invalidateForms.Add(targetForm)
+
+        If Not hasActivePaint Then
+            If targetForm IsNot Nothing Then
+                BackgroundPenetrationV2.CleanupD2DResources(level, targetForm)
+                BackdropRenderer.CleanupAllD2DResources(level, targetForm)
+            Else
+                BackgroundPenetrationV2.CleanupD2DResources(level)
+                BackdropRenderer.CleanupAllD2DResources(level)
+            End If
+
+            If level >= D2DCacheCleanupLevel.RecreateDevice Then
+                D3D11Globals.InvalidateDevice()
+            End If
+
+            If targetForm Is Nothing Then
+                D2DGlobals.CleanupD2DResources(level)
+            End If
+        End If
+
+        If invalidateAfterCleanup Then
+            For Each form In invalidateForms
+                Try
+                    If form IsNot Nothing AndAlso Not form.IsDisposed AndAlso form.IsHandleCreated Then
+                        form.Invalidate(True)
+                    End If
+                Catch
+                End Try
+            Next
+        End If
+
+        Return cleaned
+    End Function
+
+    Private Function ResolveCleanupForm(owner As Control) As Form
+        If owner Is Nothing OrElse owner.IsDisposed Then Return Nothing
+        If TypeOf owner Is Form Then Return DirectCast(owner, Form)
+        Try
+            Return owner.FindForm()
+        Catch
+            Return Nothing
+        End Try
+    End Function
+
 #End Region
 
 #Region "SSAA 倍率"
@@ -207,8 +349,18 @@ Public Module D2DHelperV2
 
         Dim form As Form = control.FindForm()
         If form Is Nothing OrElse form.IsDisposed Then Return Nothing
-        Dim tempComp As New WindowCompositor(form, unregisterOnDispose:=False)
-        Return tempComp.BeginPaint(e, control, ssaaScale, disposeCompositorWithScope:=True)
+        Dim tempComp = RentBackgroundSamplingCompositor(form)
+        If tempComp Is Nothing Then Return Nothing
+        Try
+            Dim tempScope = tempComp.BeginPaint(e, control, ssaaScale, returnCompositorToBackgroundSamplingPool:=True)
+            If tempScope IsNot Nothing Then Return tempScope
+        Catch
+            Try : tempComp.Dispose() : Catch : End Try
+            Throw
+        End Try
+
+        ReturnBackgroundSamplingCompositor(tempComp)
+        Return Nothing
     End Function
 
 #End Region

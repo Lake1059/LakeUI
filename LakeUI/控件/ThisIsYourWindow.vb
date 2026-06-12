@@ -209,7 +209,7 @@ Public Class ThisIsYourWindow
 
     Private ReadOnly _forms As New Dictionary(Of IntPtr, PerFormState)
     Private ReadOnly _pendingAttachHandlers As New Dictionary(Of Form, EventHandler)
-    Private _标题文字私有协议首窗体 As Form
+    Private _首个附加窗体 As Form
 
     ' ── 绘制热路径共享缓存：避免每帧 New SolidBrush/Pen 造成 GC 压力 ──
     Private ReadOnly _共享画刷 As New SolidBrush(Color.Black)
@@ -219,6 +219,10 @@ Public Class ThisIsYourWindow
         Dim s As PerFormState = Nothing
         If form IsNot Nothing AndAlso form.IsHandleCreated Then _forms.TryGetValue(form.Handle, s)
         Return s
+    End Function
+
+    Private Function 是首个附加窗体(form As Form) As Boolean
+        Return form IsNot Nothing AndAlso ReferenceEquals(form, _首个附加窗体)
     End Function
 
 #End Region
@@ -381,11 +385,21 @@ Public Class ThisIsYourWindow
     End Sub
 
     Private Function 毛玻璃当前启用(s As PerFormState) As Boolean
-        Return _毛玻璃模式 <> BackdropModeEnum.None AndAlso s IsNot Nothing AndAlso s.Renderer IsNot Nothing
+        Return 毛玻璃允许用于窗体(s) AndAlso s.Renderer IsNot Nothing
+    End Function
+
+    Private Function 尺寸移动刷新优化当前启用(s As PerFormState) As Boolean
+        Return _尺寸移动刷新优化启用 AndAlso s IsNot Nothing
+    End Function
+
+    Private Function 毛玻璃允许用于窗体(s As PerFormState) As Boolean
+        Return _毛玻璃模式 <> BackdropModeEnum.None AndAlso
+               s IsNot Nothing AndAlso
+               (Not _毛玻璃仅首个窗口 OrElse 是首个附加窗体(s.HostForm))
     End Function
 
     Private Sub 开始延迟客户区坐标上报(s As PerFormState)
-        If Not 毛玻璃当前启用(s) Then Return
+        If Not 尺寸移动刷新优化当前启用(s) Then Return
         s.DeferredClientBoundsActive = True
         s.DeferredBeginBounds = 获取窗口屏幕矩形(s.HostForm)
         s.BackdropTimer?.Stop()
@@ -423,11 +437,27 @@ Public Class ThisIsYourWindow
         End If
         RecalculateButtonBounds(s)
         更新阴影(s)
-        Dim requestBackdropFrame As Boolean = boundsChanged AndAlso (_毛玻璃模式 <> BackdropModeEnum.Image OrElse sizeChanged)
+        Dim requestBackdropFrame As Boolean = boundsChanged AndAlso
+                                             毛玻璃当前启用(s) AndAlso
+                                             (_毛玻璃模式 <> BackdropModeEnum.Image OrElse sizeChanged)
         If requestBackdropFrame Then
             s.Renderer?.RequestFrame(获取毛玻璃捕获区域(s.HostForm), True)
+        ElseIf sizeChanged Then
+            s.HostForm.Invalidate()
         End If
         重置毛玻璃Tick(s)
+    End Sub
+
+    Private Sub 同步尺寸移动刷新优化状态()
+        For Each s In _forms.Values.ToList()
+            If 尺寸移动刷新优化当前启用(s) Then
+                If s.IsInSizeMove AndAlso Not s.DeferredClientBoundsActive Then
+                    开始延迟客户区坐标上报(s)
+                End If
+            ElseIf s.DeferredClientBoundsActive Then
+                提交延迟客户区坐标上报(s)
+            End If
+        Next
     End Sub
 
     Private Shared Sub 更新控件边界缓存(form As Form)
@@ -1297,7 +1327,7 @@ Public Class ThisIsYourWindow
         s.ShadowForm.ResizeFullArea = _分层阴影整区可调
         s.ShadowForm.UpdateHitTestTransparency()
         Dim shadowColor As Color = _分层阴影颜色
-        If _分层阴影自动颜色 AndAlso _毛玻璃模式 <> BackdropModeEnum.None AndAlso s.Renderer IsNot Nothing Then
+        If _分层阴影自动颜色 AndAlso 毛玻璃当前启用(s) Then
             shadowColor = s.Renderer.DeriveShadowColor(_分层阴影颜色)
         End If
         s.ShadowForm.UpdateShadow(bounds, _分层阴影深度, shadowColor, _分层阴影不透明度, If(forceFullRender, False, s.IsInSizeMove))
@@ -1338,6 +1368,46 @@ Public Class ThisIsYourWindow
                 应用毛玻璃状态(s)
             Next
             通知重绘()
+        End Set
+    End Property
+
+    Private _毛玻璃仅首个窗口 As Boolean = False
+    ''' <summary>
+    ''' 多个窗体共享同一个 ThisIsYourWindow 实例时，是否仅允许第一个成功 <see cref="Attach"/> 的窗体启用毛玻璃背景。
+    ''' 该开关只限制 BackdropMode 非 None 时的 Renderer / WDA / 定时刷新，不影响标题栏、按钮、边框和阴影等窗口样式。
+    ''' </summary>
+    <Category("LakeUI - Backdrop"), Description("是否仅允许第一个接入的窗体启用毛玻璃背景。"), DefaultValue(False)>
+    Public Property BackdropFirstWindowOnly As Boolean
+        Get
+            Return _毛玻璃仅首个窗口
+        End Get
+        Set(value As Boolean)
+            If _毛玻璃仅首个窗口 = value Then Return
+            _毛玻璃仅首个窗口 = value
+            For Each s In _forms.Values
+                应用毛玻璃状态(s)
+                If s.ShadowForm IsNot Nothing Then s.ShadowForm.ForceReset()
+                更新阴影(s)
+            Next
+            通知重绘()
+        End Set
+    End Property
+
+    Private _尺寸移动刷新优化启用 As Boolean = True
+    ''' <summary>
+    ''' 是否启用尺寸移动期间的客户区刷新优化。
+    ''' 启用后窗口移动 / 调整大小期间会延迟客户区坐标上报并抑制大多数客户区刷新，
+    ''' 仅在尺寸移动结束或鼠标抬起后提交一次重绘。关闭后恢复常规 WinForms 刷新节奏。
+    ''' </summary>
+    <Category("LakeUI"), Description("启用尺寸移动期间的客户区刷新优化：移动/调整大小期间延迟客户区坐标上报并抑制大多数客户区刷新，结束或鼠标抬起后再重绘。"), DefaultValue(True)>
+    Public Property SizeMoveRefreshOptimization As Boolean
+        Get
+            Return _尺寸移动刷新优化启用
+        End Get
+        Set(value As Boolean)
+            If _尺寸移动刷新优化启用 = value Then Return
+            _尺寸移动刷新优化启用 = value
+            同步尺寸移动刷新优化状态()
         End Set
     End Property
 
@@ -1516,8 +1586,10 @@ Public Class ThisIsYourWindow
         If s Is Nothing OrElse s.HostForm Is Nothing OrElse Not s.HostForm.IsHandleCreated Then Return
         Dim mode As BackdropModeEnum = _毛玻璃模式
         ' Auto / CaptionOnly 模式需要 OS 支持 WDA_EXCLUDEFROMCAPTURE，否则降级为 None
-        Dim shouldEnable As Boolean = (mode = BackdropModeEnum.Image) OrElse
-                                      ((mode = BackdropModeEnum.Auto OrElse mode = BackdropModeEnum.CaptionOnly) AndAlso IsBackdropSupported)
+        Dim shouldEnable As Boolean = 毛玻璃允许用于窗体(s) AndAlso
+                                      ((mode = BackdropModeEnum.Image) OrElse
+                                       ((mode = BackdropModeEnum.Auto OrElse mode = BackdropModeEnum.CaptionOnly) AndAlso IsBackdropSupported)
+                                      )
 
         If shouldEnable Then
             ' WDA_EXCLUDEFROMCAPTURE 仅在 Auto / CaptionOnly 模式且用户显式开启 BackdropExcludeFromCapture 时启用：
@@ -1816,8 +1888,7 @@ Public Class ThisIsYourWindow
         If w <= 0 OrElse h <= 0 Then Return
         Dim active As Boolean = s.Activated
 
-        Dim useBackdrop As Boolean = (_毛玻璃模式 <> BackdropModeEnum.None) AndAlso
-                                      s.Renderer IsNot Nothing AndAlso
+        Dim useBackdrop As Boolean = 毛玻璃当前启用(s) AndAlso
                                       s.Renderer.HasFrame
         Dim captionOnly As Boolean = (_毛玻璃模式 = BackdropModeEnum.CaptionOnly)
         Dim fullRect As New Rectangle(0, 0, w, h)
@@ -2131,7 +2202,7 @@ Public Class ThisIsYourWindow
     Private Function 获取标题栏渲染文本(form As Form) As String
         Dim realTitle As String = If(form?.Text, String.Empty)
         If String.IsNullOrEmpty(_标题文字私有协议) OrElse
-           Not ReferenceEquals(form, _标题文字私有协议首窗体) Then Return realTitle
+           Not 是首个附加窗体(form) Then Return realTitle
         Return _标题文字私有协议.Replace(TitleTextPrivateProtocolTitleToken, realTitle)
     End Function
 
@@ -2183,7 +2254,7 @@ Public Class ThisIsYourWindow
     ''' </summary>
     Public Sub Attach(targetForm As Form)
         ArgumentNullException.ThrowIfNull(targetForm)
-        If _标题文字私有协议首窗体 Is Nothing Then _标题文字私有协议首窗体 = targetForm
+        If _首个附加窗体 Is Nothing Then _首个附加窗体 = targetForm
         If Not targetForm.IsHandleCreated Then
             If _pendingAttachHandlers.ContainsKey(targetForm) Then Return
             Dim handler As EventHandler = Nothing
@@ -2539,7 +2610,7 @@ Public Class ThisIsYourWindow
                     If _owner._标题文字颜色 <> _owner._标题文字失焦颜色 Then
                         _owner.InvalidateTitleText(_state, True)
                     End If
-                    If _owner._毛玻璃模式 = BackdropModeEnum.None Then
+                    If Not _owner.毛玻璃当前启用(_state) Then
                         _state.HostForm?.Invalidate()
                         If activated Then _owner.更新阴影(_state)
                     End If

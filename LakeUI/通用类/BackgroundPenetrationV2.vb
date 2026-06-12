@@ -3,7 +3,7 @@ Imports System.Buffers
 Imports Vortice.Direct2D1
 
 ''' <summary>
-''' V2 透明背景穿透实现。<see cref="TransparentBackgroundCache"/> 的精简继任者。
+''' V2 透明背景穿透实现。第一代的精简继任者。
 '''
 ''' === 与 V1 (<see cref="TransparentBackgroundCache"/>) 的差异 ===
 ''' • V2 必须显式指定背景源（child 控件的 <c>BackgroundSource</c> 属性）。未指定 → 不采样、不绘制，
@@ -168,7 +168,7 @@ Public Module BackgroundPenetrationV2
             If _cache.TryGetValue(source, entry) Then
                 entry.FullDirty = True
                 InvalidateCropEntries(entry, Nothing)
-                CollectConsumerInvalidations(entry, Nothing, invalidations)
+                CollectConsumerInvalidations(source, entry, Nothing, invalidations)
             End If
         End SyncLock
         FlushConsumerInvalidations(invalidations)
@@ -195,6 +195,60 @@ Public Module BackgroundPenetrationV2
             Next
         End SyncLock
     End Sub
+
+    Friend Sub CleanupD2DResources(level As D2DCacheCleanupLevel, Optional owner As Control = Nothing)
+        Dim targetForm As Form = ResolveCleanupForm(owner)
+        SyncLock _cache
+            Select Case level
+                Case D2DCacheCleanupLevel.TrimToBudget
+                    TrimSourceBitmaps(Nothing)
+                    TrimCropEntriesGlobal(Nothing)
+
+                Case D2DCacheCleanupLevel.ReleaseVolatileCaches
+                    For Each kv In _cache.ToArray()
+                        If ShouldCleanupSource(kv.Key, targetForm) Then
+                            InvalidateCropEntries(kv.Value, Nothing)
+                        End If
+                    Next
+
+                Case D2DCacheCleanupLevel.ReleaseAllCaches,
+                     D2DCacheCleanupLevel.ReleaseRenderTargets,
+                     D2DCacheCleanupLevel.RecreateDevice
+                    For Each kv In _cache.ToArray()
+                        If ShouldCleanupSource(kv.Key, targetForm) Then
+                            ReleaseEntryCache(kv.Value)
+                        End If
+                    Next
+
+                Case Else
+                    For Each kv In _cache.ToArray()
+                        If ShouldCleanupSource(kv.Key, targetForm) Then
+                            RemoveSourceEntryNoLock(kv.Key, kv.Value)
+                        End If
+                    Next
+            End Select
+        End SyncLock
+    End Sub
+
+    Private Function ResolveCleanupForm(owner As Control) As Form
+        If owner Is Nothing OrElse owner.IsDisposed Then Return Nothing
+        If TypeOf owner Is Form Then Return DirectCast(owner, Form)
+        Try
+            Return owner.FindForm()
+        Catch
+            Return Nothing
+        End Try
+    End Function
+
+    Private Function ShouldCleanupSource(source As Control, targetForm As Form) As Boolean
+        If targetForm Is Nothing Then Return True
+        If source Is Nothing OrElse source.IsDisposed Then Return False
+        Try
+            Return source.FindForm() Is targetForm
+        Catch
+            Return False
+        End Try
+    End Function
 
     Private Sub RegisterConsumer(source As Control, child As Control, sourceRect As Rectangle, destRect As Rectangle)
         If source Is Nothing OrElse child Is Nothing Then Return
@@ -321,30 +375,30 @@ Public Module BackgroundPenetrationV2
             repaintRects = New List(Of Rectangle)(entry.DirtyRects)
         End If
 
-        Using bg As Graphics = Graphics.FromImage(entry.Bmp)
-            For Each repaintRect In repaintRects
-                repaintRect = Rectangle.Intersect(New Rectangle(0, 0, sw, sh), repaintRect)
-                If repaintRect.Width <= 0 OrElse repaintRect.Height <= 0 Then Continue For
-                Dim oldMode = bg.CompositingMode
-                bg.CompositingMode = Drawing2D.CompositingMode.SourceCopy
-                Using transparentBrush As New SolidBrush(Color.Transparent)
-                    bg.FillRectangle(transparentBrush, repaintRect)
-                End Using
-                bg.CompositingMode = oldMode
+        Using D2DHelperV2.EnterBackgroundSamplingPaint()
+            Using bg As Graphics = Graphics.FromImage(entry.Bmp)
+                For Each repaintRect In repaintRects
+                    repaintRect = Rectangle.Intersect(New Rectangle(0, 0, sw, sh), repaintRect)
+                    If repaintRect.Width <= 0 OrElse repaintRect.Height <= 0 Then Continue For
+                    Dim oldMode = bg.CompositingMode
+                    bg.CompositingMode = Drawing2D.CompositingMode.SourceCopy
+                    Using transparentBrush As New SolidBrush(Color.Transparent)
+                        bg.FillRectangle(transparentBrush, repaintRect)
+                    End Using
+                    bg.CompositingMode = oldMode
 
-                Dim state = bg.Save()
-                Try
-                    bg.SetClip(repaintRect)
-                    Using pea As New PaintEventArgs(bg, repaintRect)
-                        Using D2DHelperV2.EnterBackgroundSamplingPaint()
+                    Dim state = bg.Save()
+                    Try
+                        bg.SetClip(repaintRect)
+                        Using pea As New PaintEventArgs(bg, repaintRect)
                             InvokePaintBackgroundProxy(source, pea)
                             InvokePaintProxy(source, pea)
                         End Using
-                    End Using
-                Finally
-                    bg.Restore(state)
-                End Try
-            Next
+                    Finally
+                        bg.Restore(state)
+                    End Try
+                Next
+            End Using
         End Using
         If fullRebuild Then
             ' 同 V1：修复 D2D + GDI BitBlt 引发的 alpha=0 写穿问题，并顺手识别纯色采样结果。
@@ -622,7 +676,9 @@ Public Module BackgroundPenetrationV2
         Next
     End Sub
 
-    Private Sub CollectConsumerInvalidations(entry As Entry, dirtyRect As Rectangle?, invalidations As List(Of ConsumerInvalidation))
+    Private Sub CollectConsumerInvalidations(source As Control, entry As Entry, dirtyRect As Rectangle?,
+                                             invalidations As List(Of ConsumerInvalidation),
+                                             Optional removeWhenEmpty As Boolean = True)
         If entry Is Nothing OrElse invalidations Is Nothing Then Return
 
         For i As Integer = entry.Consumers.Count - 1 To 0 Step -1
@@ -648,6 +704,10 @@ Public Module BackgroundPenetrationV2
                 sourceIntersection.Height)
             invalidations.Add(New ConsumerInvalidation(child, destRect))
         Next
+
+        If removeWhenEmpty AndAlso source IsNot Nothing AndAlso entry.Consumers.Count = 0 Then
+            RemoveSourceEntryNoLock(source, entry)
+        End If
     End Sub
 
     Private Sub FlushConsumerInvalidations(invalidations As List(Of ConsumerInvalidation))
@@ -691,15 +751,15 @@ Public Module BackgroundPenetrationV2
                     entry.FullDirty = True
                     entry.DirtyRects.Clear()
                     InvalidateCropEntries(entry, Nothing)
-                    CollectConsumerInvalidations(entry, Nothing, invalidations)
+                    CollectConsumerInvalidations(source, entry, Nothing, invalidations)
                 Else
                     AddDirtyRect(entry, dirtyRect, New Rectangle(0, 0, source.Width, source.Height))
                     InvalidateCropEntries(entry, dirtyRect)
                     If entry.FullDirty Then
                         InvalidateCropEntries(entry, Nothing)
-                        CollectConsumerInvalidations(entry, Nothing, invalidations)
+                        CollectConsumerInvalidations(source, entry, Nothing, invalidations)
                     Else
-                        CollectConsumerInvalidations(entry, dirtyRect, invalidations)
+                        CollectConsumerInvalidations(source, entry, dirtyRect, invalidations)
                     End If
                 End If
             End If
@@ -717,7 +777,7 @@ Public Module BackgroundPenetrationV2
                 entry.FullDirty = True
                 entry.DirtyRects.Clear()
                 InvalidateCropEntries(entry, Nothing)
-                CollectConsumerInvalidations(entry, Nothing, invalidations)
+                CollectConsumerInvalidations(source, entry, Nothing, invalidations)
             End If
         End SyncLock
         FlushConsumerInvalidations(invalidations)
@@ -741,7 +801,7 @@ Public Module BackgroundPenetrationV2
         SyncLock _cache
             Dim entry As Entry = Nothing
             If _cache.TryGetValue(source, entry) Then
-                CollectConsumerInvalidations(entry, Nothing, invalidations)
+                CollectConsumerInvalidations(source, entry, Nothing, invalidations, removeWhenEmpty:=False)
                 RemoveSourceEntryNoLock(source, entry)
             End If
         End SyncLock
@@ -776,7 +836,7 @@ Public Module BackgroundPenetrationV2
                     Continue For
                 End If
 
-                CollectConsumerInvalidations(entry, Nothing, invalidations)
+                CollectConsumerInvalidations(source, entry, Nothing, invalidations, removeWhenEmpty:=False)
                 RemoveSourceEntryNoLock(source, entry)
             Next
         End SyncLock

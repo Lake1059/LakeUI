@@ -1,5 +1,4 @@
 Imports System.ComponentModel
-Imports System.Drawing.Drawing2D
 Imports System.Numerics
 Imports Vortice.Direct2D1
 Imports Vortice.DirectWrite
@@ -165,6 +164,12 @@ Public Class ModernTabListControl
         Public 起始时刻 As Long = 0
     End Class
 
+    Private Class BoundPageState
+        Public HasBeenShown As Boolean
+        Public LastShownSize As Size = Size.Empty
+        Public LastShownBackgroundVersion As Integer = -1
+    End Class
+
     ''' <summary>
     ''' 支持透明背景的内容承载面板。当 BackColor 的 Alpha 为 0 或为透明色时，
     ''' 通过调用父级的 Paint 流程取真实像素作为背景。
@@ -280,10 +285,18 @@ Public Class ModernTabListControl
         Return _当前合成器.GetBitmapCache(item.TabIcon)
     End Function
 
+    Protected Overrides Sub OnHandleCreated(e As EventArgs)
+        MyBase.OnHandleCreated(e)
+        同步切页背景源订阅()
+        同步宿主窗体关闭订阅()
+    End Sub
+
     Protected Overrides Sub OnHandleDestroyed(e As EventArgs)
+        解除宿主窗体关闭订阅()
         解除背景穿透消费者()
         Try : BackgroundPenetrationV2.UnregisterConsumer(_内容面板) : Catch : End Try
         Try : 停止帧驱动() : Catch : End Try
+        释放所有切页刷新抑制状态()
         ReleaseLocalTextFormatCache()
         ReleaseMoreIndicatorFont()
         MyBase.OnHandleDestroyed(e)
@@ -292,16 +305,23 @@ Public Class ModernTabListControl
     Protected Overrides Sub OnVisibleChanged(e As EventArgs)
         MyBase.OnVisibleChanged(e)
         If Not Me.Visible Then
+            _内容面板.Visible = False
             解除背景穿透消费者()
             Try : BackgroundPenetrationV2.UnregisterConsumer(_内容面板) : Catch : End Try
+            清除所有切页刷新抑制()
+        ElseIf _宿主窗体已订阅 Is Nothing OrElse Not _宿主窗体已订阅.Disposing Then
+            切换绑定控件()
         End If
     End Sub
 
     Protected Overrides Sub OnParentChanged(e As EventArgs)
         MyBase.OnParentChanged(e)
+        同步切页背景源订阅()
+        同步宿主窗体关闭订阅()
         If Me.Parent Is Nothing Then
             解除背景穿透消费者()
             Try : BackgroundPenetrationV2.UnregisterConsumer(_内容面板) : Catch : End Try
+            清除所有切页刷新抑制()
         End If
     End Sub
 
@@ -331,6 +351,13 @@ Public Class ModernTabListControl
     Private _搜索框高度 As Integer = 30
     Private _搜索框原始父级 As Control = Nothing
     Private _搜索框原始边界 As Rectangle
+    Private ReadOnly _绑定页状态 As New Dictionary(Of Control, BoundPageState)()
+    Private _背景刷新版本 As Integer = 0
+    Private _背景源已订阅 As Control = Nothing
+    Private _切换页抑制刷新 As Boolean = True
+    Private _当前绑定控件 As Control = Nothing
+    Private _宿主窗体已订阅 As Form = Nothing
+    Private _宿主关闭序号 As Integer = 0
 
     Public Sub New()
         InitializeComponent()
@@ -367,6 +394,7 @@ Public Class ModernTabListControl
         确保Owner()
         失效布局缓存()
         标准化选中索引()
+        清理已移除绑定控件状态()
         _标签页动画.Clear()
         _悬停索引 = -1
         限制滚动范围()
@@ -385,11 +413,35 @@ Public Class ModernTabListControl
         Invalidate()
     End Sub
 
+    Private Function 绑定控件是否仍在项目中(ctrl As Control, Optional ignoreItem As ModernTabPage = Nothing) As Boolean
+        If ctrl Is Nothing Then Return False
+        For Each page In 项目列表
+            If page Is Nothing OrElse page Is ignoreItem Then Continue For
+            If page.BoundControl Is ctrl Then Return True
+        Next
+        Return False
+    End Function
+
+    Private Sub 清理已移除绑定控件状态()
+        For Each ctrl In _绑定页状态.Keys.ToArray()
+            If Not 绑定控件是否仍在项目中(ctrl) Then
+                If ctrl Is _当前绑定控件 OrElse ctrl.Parent Is _内容面板 Then
+                    隐藏绑定控件(ctrl)
+                End If
+                释放绑定控件状态(ctrl)
+            End If
+        Next
+    End Sub
+
     Private Sub 项目绑定控件已改变(item As ModernTabPage, oldControl As Control)
         If oldControl IsNot Nothing Then
-            oldControl.Visible = False
-            If oldControl.Parent Is _内容面板 Then
-                _内容面板.Controls.Remove(oldControl)
+            Dim stillBound = 绑定控件是否仍在项目中(oldControl, item)
+            If Not stillBound AndAlso (oldControl Is _当前绑定控件 OrElse oldControl.Parent Is _内容面板) Then
+                隐藏绑定控件(oldControl)
+                If oldControl Is _当前绑定控件 Then _当前绑定控件 = Nothing
+            End If
+            If Not stillBound Then
+                释放绑定控件状态(oldControl)
             End If
         End If
         If item IsNot Nothing AndAlso 项目列表.IndexOf(item) = _selectedIndex Then
@@ -477,6 +529,188 @@ Public Class ModernTabListControl
         限制滚动范围()
         Invalidate()
     End Sub
+
+    Private Function 获取索引绑定控件(index As Integer) As Control
+        If index < 0 OrElse index >= 项目列表.Count Then Return Nothing
+        Dim item = 项目列表(index)
+        If item Is Nothing Then Return Nothing
+        Return item.BoundControl
+    End Function
+
+    Private Function 获取绑定页状态(ctrl As Control) As BoundPageState
+        If ctrl Is Nothing Then Return Nothing
+        Dim state As BoundPageState = Nothing
+        If Not _绑定页状态.TryGetValue(ctrl, state) Then
+            state = New BoundPageState()
+            _绑定页状态(ctrl) = state
+        End If
+        Return state
+    End Function
+
+    Private Sub 释放绑定控件状态(ctrl As Control)
+        If ctrl Is Nothing Then Return
+        _绑定页状态.Remove(ctrl)
+        If _当前绑定控件 Is ctrl Then _当前绑定控件 = Nothing
+    End Sub
+
+    Private Sub 释放所有切页刷新抑制状态()
+        _绑定页状态.Clear()
+        解除切页背景源订阅()
+    End Sub
+
+    Private Sub 同步宿主窗体关闭订阅()
+        Dim newHost As Form = Nothing
+        If Me.IsHandleCreated AndAlso Me.Parent IsNot Nothing Then
+            newHost = Me.FindForm()
+        End If
+        If _宿主窗体已订阅 Is newHost Then Return
+
+        解除宿主窗体关闭订阅()
+        _宿主窗体已订阅 = newHost
+        If _宿主窗体已订阅 IsNot Nothing Then
+            AddHandler _宿主窗体已订阅.FormClosing, AddressOf 宿主窗体开始关闭
+            AddHandler _宿主窗体已订阅.FormClosed, AddressOf 宿主窗体已经关闭
+        End If
+    End Sub
+
+    Private Sub 解除宿主窗体关闭订阅()
+        If _宿主窗体已订阅 Is Nothing Then Return
+        Try : RemoveHandler _宿主窗体已订阅.FormClosing, AddressOf 宿主窗体开始关闭 : Catch : End Try
+        Try : RemoveHandler _宿主窗体已订阅.FormClosed, AddressOf 宿主窗体已经关闭 : Catch : End Try
+        _宿主窗体已订阅 = Nothing
+        _宿主关闭序号 += 1
+    End Sub
+
+    Private Sub 宿主窗体开始关闭(sender As Object, e As FormClosingEventArgs)
+        If e IsNot Nothing AndAlso e.Cancel Then Return
+
+        _宿主关闭序号 += 1
+        Dim closeSequence = _宿主关闭序号
+
+        ' 一次隐藏承载层即可让所有驻留页面立即退出可见树，避免逐页关闭造成视觉拖尾。
+        _内容面板.Visible = False
+        Try : 停止帧驱动() : Catch : End Try
+        解除背景穿透消费者()
+        Try : BackgroundPenetrationV2.UnregisterConsumer(_内容面板) : Catch : End Try
+
+        ' 后续 FormClosing 处理器仍可能取消关闭，届时恢复当前页。
+        If Me.IsHandleCreated Then
+            Try
+                Me.BeginInvoke(
+                    New MethodInvoker(
+                        Sub()
+                            If closeSequence <> _宿主关闭序号 Then Return
+                            If e Is Nothing OrElse Not e.Cancel Then Return
+                            If Me.IsDisposed OrElse Me.Disposing OrElse Not Me.Visible Then Return
+                            切换绑定控件()
+                        End Sub))
+            Catch
+            End Try
+        End If
+    End Sub
+
+    Private Sub 宿主窗体已经关闭(sender As Object, e As FormClosedEventArgs)
+        _内容面板.Visible = False
+        _当前绑定控件 = Nothing
+        _宿主关闭序号 += 1
+    End Sub
+
+    Private Sub 清除所有切页刷新抑制()
+        For Each state In _绑定页状态.Values
+            If state Is Nothing Then Continue For
+            state.LastShownBackgroundVersion = -1
+        Next
+    End Sub
+
+    Private Function 获取切页背景源() As Control
+        Return If(_backgroundSource, Me.Parent)
+    End Function
+
+    Private Sub 解除切页背景源订阅()
+        If _背景源已订阅 Is Nothing Then Return
+        Try : RemoveHandler _背景源已订阅.Invalidated, AddressOf 切页背景源已失效 : Catch : End Try
+        Try : RemoveHandler _背景源已订阅.Resize, AddressOf 切页背景源已改变 : Catch : End Try
+        Try : RemoveHandler _背景源已订阅.Disposed, AddressOf 切页背景源已释放 : Catch : End Try
+        _背景源已订阅 = Nothing
+        推进切页背景版本()
+    End Sub
+
+    Private Sub 同步切页背景源订阅(Optional source As Control = Nothing)
+        Dim newSource As Control = If(source, 获取切页背景源())
+        If _背景源已订阅 Is newSource Then Return
+        解除切页背景源订阅()
+        _背景源已订阅 = newSource
+        If _背景源已订阅 IsNot Nothing Then
+            Try : AddHandler _背景源已订阅.Invalidated, AddressOf 切页背景源已失效 : Catch : End Try
+            Try : AddHandler _背景源已订阅.Resize, AddressOf 切页背景源已改变 : Catch : End Try
+            Try : AddHandler _背景源已订阅.Disposed, AddressOf 切页背景源已释放 : Catch : End Try
+        End If
+        推进切页背景版本()
+    End Sub
+
+    Private Sub 推进切页背景版本()
+        _背景刷新版本 += 1
+    End Sub
+
+    Private Sub 切页背景源已失效(sender As Object, e As InvalidateEventArgs)
+        推进切页背景版本()
+    End Sub
+
+    Private Sub 切页背景源已改变(sender As Object, e As EventArgs)
+        推进切页背景版本()
+    End Sub
+
+    Private Sub 切页背景源已释放(sender As Object, e As EventArgs)
+        同步切页背景源订阅()
+    End Sub
+
+    Private Sub 隐藏绑定控件(ctrl As Control)
+        If ctrl Is Nothing Then Return
+        Try
+            ctrl.Visible = False
+            If ctrl.Parent Is _内容面板 Then
+                _内容面板.Controls.Remove(ctrl)
+            End If
+        Catch
+        End Try
+    End Sub
+
+    Private Sub 准备窗体绑定(frm As Form)
+        If frm Is Nothing Then Return
+        If frm.TopLevel Then
+            frm.TopLevel = False
+            frm.FormBorderStyle = FormBorderStyle.None
+        End If
+    End Sub
+
+    Private Sub 显示绑定控件(ctrl As Control)
+        If ctrl Is Nothing Then Return
+        Dim frm = TryCast(ctrl, Form)
+        If frm IsNot Nothing Then 准备窗体绑定(frm)
+
+        If ctrl.Parent IsNot _内容面板 Then
+            _内容面板.Controls.Add(ctrl)
+        End If
+        ctrl.Dock = DockStyle.Fill
+        Dim state = 获取绑定页状态(ctrl)
+        ctrl.Visible = True
+        ctrl.BringToFront()
+        _内容面板.Visible = True
+
+        Dim backgroundChanged As Boolean = state Is Nothing OrElse
+                                           Not state.HasBeenShown OrElse
+                                           state.LastShownBackgroundVersion <> _背景刷新版本
+        Dim sizeChanged As Boolean = state Is Nothing OrElse state.LastShownSize <> ctrl.ClientSize
+        If Not _切换页抑制刷新 OrElse backgroundChanged OrElse sizeChanged Then
+            ctrl.Invalidate(ctrl.ClientRectangle, True)
+        End If
+        If state IsNot Nothing Then
+            state.HasBeenShown = True
+            state.LastShownSize = ctrl.ClientSize
+            state.LastShownBackgroundVersion = _背景刷新版本
+        End If
+        _当前绑定控件 = ctrl
+    End Sub
 #End Region
 
 #Region "选中管理"
@@ -559,31 +793,29 @@ Public Class ModernTabListControl
     End Function
 
     Private Sub 切换绑定控件()
-        For Each item In 项目列表
-            If item.BoundControl IsNot Nothing Then
-                item.BoundControl.Visible = False
-                If item.BoundControl.Parent Is _内容面板 Then
-                    _内容面板.Controls.Remove(item.BoundControl)
+        Dim nextControl = 获取索引绑定控件(_selectedIndex)
+        If _当前绑定控件 Is nextControl Then
+            If nextControl IsNot Nothing Then
+                _内容面板.Visible = True
+                If nextControl.Parent IsNot _内容面板 OrElse Not nextControl.Visible Then
+                    显示绑定控件(nextControl)
+                Else
+                    nextControl.BringToFront()
                 End If
+            Else
+                _内容面板.Visible = False
             End If
-        Next
-        If _selectedIndex >= 0 AndAlso _selectedIndex < 项目列表.Count Then
-            Dim sel = 项目列表(_selectedIndex)
-            If sel.BoundControl IsNot Nothing Then
-                Dim frm = TryCast(sel.BoundControl, Form)
-                If frm IsNot Nothing Then
-                    If frm.TopLevel Then
-                        frm.TopLevel = False
-                        frm.FormBorderStyle = FormBorderStyle.None
-                    End If
-                End If
-                If sel.BoundControl.Parent IsNot _内容面板 Then
-                    _内容面板.Controls.Add(sel.BoundControl)
-                End If
-                sel.BoundControl.Dock = DockStyle.Fill
-                sel.BoundControl.Visible = True
-            End If
+            Return
         End If
+
+        If nextControl Is Nothing Then
+            _内容面板.Visible = False
+            _当前绑定控件 = Nothing
+            Return
+        End If
+
+        ' 已访问页面保持可见并驻留在内容面板中；复访只调整 Z 顺序。
+        显示绑定控件(nextControl)
     End Sub
 #End Region
 
@@ -1660,6 +1892,11 @@ Public Class ModernTabListControl
         Me.Invalidate()
     End Sub
 
+    Protected Overrides Sub OnBackColorChanged(e As EventArgs)
+        MyBase.OnBackColorChanged(e)
+        推进切页背景版本()
+    End Sub
+
     Private 超采样倍率 As Integer = 1
     <Category("LakeUI"), Description(GlobalOptions.超采样抗锯齿描述词), DefaultValue(GetType(GlobalOptions.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
     Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum
@@ -1684,6 +1921,7 @@ Public Class ModernTabListControl
                 解除背景穿透消费者()
                 Try : BackgroundPenetrationV2.UnregisterConsumer(_内容面板) : Catch : End Try
                 _backgroundSource = value
+                同步切页背景源订阅()
                 ' 内容面板上的透明背景来自同一 source。
                 If _内容面板 IsNot Nothing Then _内容面板.Invalidate(True)
                 Me.Invalidate()
@@ -1695,6 +1933,18 @@ Public Class ModernTabListControl
         If _backgroundSource Is Nothing Then Return
         Try : BackgroundPenetrationV2.UnregisterConsumer(Me, _backgroundSource) : Catch : End Try
     End Sub
+
+    <Category("LakeUI"), Description("切换绑定页面时保留已访问页面；仅在首次显示、尺寸或背景穿透源变化时主动递归刷新。控件自身的正常刷新不受影响。"), DefaultValue(True), Browsable(True)>
+    Public Property SuppressBoundPageRefreshOnSwitch As Boolean
+        Get
+            Return _切换页抑制刷新
+        End Get
+        Set(value As Boolean)
+            If _切换页抑制刷新 = value Then Return
+            _切换页抑制刷新 = value
+            If Not value Then 清除所有切页刷新抑制()
+        End Set
+    End Property
 
     Private 动画时长值 As Integer = 300
     <Category("LakeUI"), Description(GlobalOptions.动画时长描述词), DefaultValue(300), Browsable(True)>
@@ -2065,6 +2315,7 @@ Public Class ModernTabListControl
         Set(value As Color)
             SetValue(内容区域背景颜色, value)
             _内容面板.BackColor = 获取内容面板有效背景色()
+            推进切页背景版本()
         End Set
     End Property
 

@@ -1016,8 +1016,8 @@ Public Class ModernPanel
 
 #Region "行为属性"
 
-    Private 滚动模式 As ScrollMode = ScrollMode.Both
-    <Category("LakeUI"), Description("滚动条策略：None/Vertical/Horizontal/Both"), DefaultValue(GetType(ScrollMode), "Both"), Browsable(True)>
+    Private 滚动模式 As ScrollMode = ScrollMode.None
+    <Category("LakeUI"), Description("滚动条策略：None/Vertical/Horizontal/Both"), DefaultValue(GetType(ScrollMode), "None"), Browsable(True)>
     Public Property ScrollBarMode As ScrollMode
         Get
             Return 滚动模式
@@ -1309,6 +1309,18 @@ Public Class ModernPanel
                _backgroundSource IsNot Nothing OrElse MyBase.BackColor.A < 255
     End Function
 
+    Private Function 需要D2D绘制() As Boolean
+        If _backgroundSource IsNot Nothing Then Return True
+        If _image IsNot Nothing Then Return True
+        If 背景颜色.A > 0 Then Return True
+        If 遮罩颜色.A > 0 Then Return True
+        If 边框圆角半径 > 0 Then Return True
+        If 边框宽度 > 0 AndAlso 边框颜色.A > 0 Then Return True
+        If MyBase.BackColor.A > 0 AndAlso MyBase.BackColor.A < 255 Then Return True
+        If _showVScroll OrElse _showHScroll Then Return True
+        Return False
+    End Function
+
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
         ' V2 契约：
         '   • BackgroundSource 已设置 → 跳过 BackColor 整个逻辑，背景由 OnPaint 内 BackgroundPenetrationV2 绘制；
@@ -1320,6 +1332,11 @@ Public Class ModernPanel
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
         If Me.Width < 1 OrElse Me.Height < 1 Then Return
+
+        If Not 需要D2D绘制() Then
+            MyBase.OnPaint(e)
+            Return
+        End If
 
         Dim ssaa As Integer = D2DHelperV2.GetEffectiveSsaaScale(超采样倍率)
 
