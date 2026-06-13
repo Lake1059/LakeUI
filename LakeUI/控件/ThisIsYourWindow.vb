@@ -492,6 +492,19 @@ Public Class ThisIsYourWindow
         If frm IsNot Nothing Then Detach(frm)
     End Sub
 
+    Private Sub 宿主窗口_VisibleChanged(sender As Object, e As EventArgs)
+        Dim frm = TryCast(sender, Form)
+        If frm Is Nothing Then Return
+        Dim s = 查找状态(frm)
+        If s Is Nothing Then Return
+
+        If frm.Visible Then
+            If Not s.AnimatingClose Then 更新阴影(s)
+        Else
+            销毁阴影(s)
+        End If
+    End Sub
+
     ''' <summary>
     ''' 宿主窗体 Font 改变时：当 <see cref="TitleFont"/> 未单独设置时，标题文字使用窗体 Font，
     ''' 此处需要立即让缓存的 IDWriteTextFormat 失效（不同字号 / 字族对应不同实例）并重绘标题栏。
@@ -1304,7 +1317,11 @@ Public Class ThisIsYourWindow
 
         If _阴影模式 <> ShadowModeEnum.Layer OrElse zoomed OrElse minimized OrElse Not s.HostForm.Visible Then
             If s.ShadowForm IsNot Nothing Then
-                s.ShadowForm.Visible = False
+                If Not s.HostForm.Visible Then
+                    销毁阴影(s)
+                Else
+                    s.ShadowForm.Visible = False
+                End If
             End If
             Return
         End If
@@ -1341,9 +1358,16 @@ Public Class ThisIsYourWindow
 
     Private Sub 销毁阴影(s As PerFormState)
         If s.ShadowForm IsNot Nothing Then
-            s.ShadowForm.Close()
-            s.ShadowForm.Dispose()
+            Dim shadow = s.ShadowForm
             s.ShadowForm = Nothing
+            Try
+                If Not shadow.IsDisposed Then
+                    shadow.Hide()
+                    shadow.Close()
+                End If
+            Finally
+                shadow.Dispose()
+            End Try
         End If
     End Sub
 
@@ -2320,6 +2344,7 @@ Public Class ThisIsYourWindow
         AddHandler targetForm.Paint, AddressOf 宿主窗口_Paint
         AddHandler targetForm.FormClosed, AddressOf 宿主窗口_FormClosed
         AddHandler targetForm.HandleDestroyed, AddressOf 宿主窗口_HandleDestroyed
+        AddHandler targetForm.VisibleChanged, AddressOf 宿主窗口_VisibleChanged
         AddHandler targetForm.FontChanged, AddressOf 宿主窗口_FontChanged
         AddHandler targetForm.TextChanged, AddressOf HostForm_TextChanged
         RecalculateButtonBounds(s)
@@ -2378,6 +2403,7 @@ Public Class ThisIsYourWindow
         RemoveHandler targetForm.Paint, AddressOf 宿主窗口_Paint
         RemoveHandler targetForm.FormClosed, AddressOf 宿主窗口_FormClosed
         RemoveHandler targetForm.HandleDestroyed, AddressOf 宿主窗口_HandleDestroyed
+        RemoveHandler targetForm.VisibleChanged, AddressOf 宿主窗口_VisibleChanged
         RemoveHandler targetForm.FontChanged, AddressOf 宿主窗口_FontChanged
         RemoveHandler targetForm.TextChanged, AddressOf HostForm_TextChanged
         targetForm.Padding = s.OriginalPadding
@@ -2577,6 +2603,7 @@ Public Class ThisIsYourWindow
                         Return
                     End If
                     MyBase.WndProc(m)
+                    If Not _state.AnimatingClose Then _owner.更新阴影(_state)
                     Return
 
                 Case WM_SIZE
@@ -2612,8 +2639,8 @@ Public Class ThisIsYourWindow
                     End If
                     If Not _owner.毛玻璃当前启用(_state) Then
                         _state.HostForm?.Invalidate()
-                        If activated Then _owner.更新阴影(_state)
                     End If
+                    If activated AndAlso Not _state.AnimatingClose Then _owner.更新阴影(_state)
                     Return
 
                 Case WM_MOVE
@@ -2738,6 +2765,12 @@ Public Class ThisIsYourWindow
                     Return
 
                 Case WM_SHOWWINDOW
+                    If m.WParam = IntPtr.Zero Then
+                        _owner.销毁阴影(_state)
+                        MyBase.WndProc(m)
+                        Return
+                    End If
+
                     If m.WParam <> IntPtr.Zero AndAlso _state.PendingFirstPaintRestore Then
                         ' 最终安全网：显示前确保窗口仍然处于完全透明状态且样式正确
                         Dim hWnd = _state.HostForm.Handle
@@ -2763,6 +2796,9 @@ Public Class ThisIsYourWindow
                     End If
                     If m.WParam <> IntPtr.Zero AndAlso _state.Renderer IsNot Nothing AndAlso Not _state.Renderer.HasFrame Then
                         _state.Renderer.RequestFrame(_owner.获取毛玻璃捕获区域(_state.HostForm), True)
+                    End If
+                    If m.WParam <> IntPtr.Zero AndAlso Not _state.AnimatingClose Then
+                        _owner.更新阴影(_state)
                     End If
                     Return
 
@@ -2798,14 +2834,20 @@ Public Class ThisIsYourWindow
                                                        End If
                                                    End If
                                                    t.Stop() : t.Dispose()
-                                                   frm.Close()
-                                                   If Not frm.IsDisposed Then
+                                                   If Not frm.IsDisposed Then frm.Close()
+                                                   Dim closeCancelled As Boolean = Not frm.IsDisposed AndAlso frm.Visible
+                                                   If closeCancelled Then
                                                        SetLayeredWindowAttributes(hWnd, 0, CByte(Math.Min(255, Math.Max(0, targetAlpha))), LWA_ALPHA)
                                                        If syncShadow AndAlso _state.ShadowForm IsNot Nothing Then
                                                            _state.ShadowForm.SetGlobalAlpha(255)
                                                        End If
-                                                       _state.AnimatingClose = False
+                                                   Else
+                                                       If Not frm.IsDisposed Then
+                                                           SetLayeredWindowAttributes(hWnd, 0, CByte(Math.Min(255, Math.Max(0, targetAlpha))), LWA_ALPHA)
+                                                       End If
+                                                       _owner.销毁阴影(_state)
                                                    End If
+                                                   _state.AnimatingClose = False
                                                Else
                                                    Dim ratio As Double = Math.Max(0.0, 1.0 - elapsed / CDbl(duration))
                                                    Dim alpha As Byte = CByte(Math.Min(255, Math.Max(0, CInt(Math.Round(targetAlpha * ratio)))))
@@ -2819,6 +2861,9 @@ Public Class ThisIsYourWindow
                         Return
                     End If
                     MyBase.WndProc(m)
+                    If Not _state.HostForm.IsDisposed AndAlso Not _state.HostForm.Visible Then
+                        _owner.销毁阴影(_state)
+                    End If
                     Return
 
                 Case WM_SYSCOMMAND
