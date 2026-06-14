@@ -1,3 +1,3 @@
-﻿Public Class Form_ModernListBox
+Public Class Form_ModernListBox
 
 End Class

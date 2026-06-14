@@ -1,3 +1,3 @@
-﻿Public Class Form_JustEmptyControl
+Public Class Form_JustEmptyControl
 
 End Class

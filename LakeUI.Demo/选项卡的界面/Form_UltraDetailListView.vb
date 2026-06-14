@@ -1,3 +1,3 @@
-﻿Public Class Form_UltraDetailListView
+Public Class Form_UltraDetailListView
 
 End Class

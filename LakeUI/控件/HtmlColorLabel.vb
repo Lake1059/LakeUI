@@ -964,7 +964,7 @@ Public Class HtmlColorLabel
             field = value
             使缓存失效(False)
             更新自动尺寸()
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End If
     End Sub
 
@@ -999,8 +999,8 @@ Public Class HtmlColorLabel
         End Get
         Set(value As Control)
             If _backgroundSource IsNot value Then
-                _backgroundSource = value
-                Me.Invalidate()
+                _backgroundSource = BackgroundPenetrationV2.SetConsumerSource(Me, _backgroundSource, value)
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Set
     End Property
@@ -1024,7 +1024,7 @@ Public Class HtmlColorLabel
                         Me.Size = 自动尺寸前的大小
                     End If
                 End If
-                Me.Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Set
     End Property
@@ -1089,7 +1089,7 @@ Public Class HtmlColorLabel
     Protected Overrides Sub OnPaddingChanged(e As EventArgs)
         MyBase.OnPaddingChanged(e)
         更新自动尺寸()
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
@@ -1097,7 +1097,7 @@ Public Class HtmlColorLabel
         使缓存失效(False)
         更新自动尺寸()
         关闭信息图标提示()
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnMouseMove(e As MouseEventArgs)
@@ -1213,7 +1213,7 @@ Public Class HtmlColorLabel
                 MyBase.Text = value
                 使缓存失效(False)
                 更新自动尺寸()
-                Me.Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Set
     End Property
@@ -1328,7 +1328,7 @@ Public Class HtmlColorLabel
                 更新自动尺寸()
             End If
             If Not ShouldShowInfoIcon() Then 关闭信息图标提示()
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -1351,7 +1351,7 @@ Public Class HtmlColorLabel
         End Get
         Set(value As Single)
             信息图标线条粗细 = Math.Max(0.1F, value)
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -1364,7 +1364,7 @@ Public Class HtmlColorLabel
         Set(value As Color)
             If 信息图标颜色 = value Then Return
             信息图标颜色 = value
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 

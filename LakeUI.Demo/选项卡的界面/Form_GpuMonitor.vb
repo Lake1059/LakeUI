@@ -1,4 +1,4 @@
-﻿Public Class Form_GpuMonitor
+Public Class Form_GpuMonitor
 
     Private WithEvents 刷新定时器 As New Timer With {.Interval = 1000}
 

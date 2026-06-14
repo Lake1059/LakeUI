@@ -83,6 +83,16 @@ Public Class GlobalOptions
     Public Shared Property GlobalTextQuality As TextQualityMode = TextQualityMode.ClearType
 
     ''' <summary>
+    ''' 是否启用外到内刷新调度器。
+    ''' </summary>
+    ''' <remarks>
+    ''' <para>默认值：True。</para>
+    ''' <para>启用后，部分 resize / layout / 背景穿透产生的刷新请求会被合并到下一次 UI 消息循环，并按控件树深度从外层容器到内层子控件派发。</para>
+    ''' <para>该选项不改变控件绘制内容，只减少同一轮尺寸变化中重复、乱序的 Invalidate 风暴。若外部项目依赖立即 Invalidate 的边缘行为，可临时关闭。</para>
+    ''' </remarks>
+    Public Shared Property OuterToInnerRefreshSchedulerEnabled As Boolean = True
+
+    ''' <summary>
     ''' Outline 文本质量模式的 DirectWrite 参数。
     ''' </summary>
     ''' <remarks>

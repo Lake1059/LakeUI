@@ -1,4 +1,4 @@
-﻿Public Class Form_TaskbarThumbnailToolbar
+Public Class Form_TaskbarThumbnailToolbar
     Private Sub Form_TaskbarThumbnailToolbar_Load(sender As Object, e As EventArgs) Handles MyBase.Load
         TaskbarThumbnailToolbar1.Buttons.Add(New ThumbnailToolbarButton(ThumbnailToolbarIcon.Previous, "上一曲"))
         TaskbarThumbnailToolbar1.Buttons.Add(New ThumbnailToolbarButton(ThumbnailToolbarIcon.Rewind, "快退"))

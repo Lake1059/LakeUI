@@ -1,4 +1,4 @@
-﻿Imports Vortice.Direct2D1
+Imports Vortice.Direct2D1
 
 ''' <summary>
 ''' 可复用的自定义滚动条渲染器，统一管理布局计算、D2D 绘制以及鼠标交互状态。
@@ -7,6 +7,17 @@
 ''' <remarks>
 ''' 渲染路径已全面切换到 Direct2D；不再保留 GDI+ 版本。
 ''' D2D 画刷会按颜色 + RenderTarget 缓存复用，避免每帧重建。
+'''
+''' 调用契约：
+''' • 每次绘制前先调用 ComputeLayout / ComputeHorizontalLayout；不要把旧布局拿到 resize 后继续用。
+''' • 鼠标命中和拖拽都基于最近一次布局产生的 ThumbRect / TrackRect，外层控件负责在滚动偏移变化后重绘。
+''' • Draw_D2D 的 rt 应来自当前 PaintScopeV2.GraphicsLayer；如果开启 SSAA，滚动条也会和其他图形一起回采。
+'''
+''' 缓存与坑点：
+''' • 内置画刷缓存只在 brushCache 参数为 Nothing 时使用，且与当前 RenderTarget 绑定。
+'''   若调用方已经有 scope.Compositor.BrushCache，应优先传入它，让窗口级缓存统一管理。
+''' • 当控件释放或 RenderTarget 被外部重建时，调用 <see cref="DisposeBrushes"/> 可主动释放本地画刷。
+''' • 本类只管理滚动条交互状态，不持有内容滚动偏移；真实 offset 必须由宿主控件保存。
 ''' </remarks>
 Public Class ScrollBarRenderer
     ''' <summary>当前帧滑块（thumb）在容器坐标系下的矩形。</summary>

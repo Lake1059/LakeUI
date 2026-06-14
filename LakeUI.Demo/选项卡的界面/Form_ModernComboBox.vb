@@ -1,3 +1,3 @@
-﻿Public Class Form_ModernComboBox
+Public Class Form_ModernComboBox
 
 End Class

@@ -1,4 +1,4 @@
-﻿Public Class Form_PrecisionTimer
+Public Class Form_PrecisionTimer
     Dim a As TimeSpan
     Private Sub PrecisionTimer1_Tick(sender As Object, e As EventArgs) Handles PrecisionTimer1.Tick
         a += TimeSpan.FromMilliseconds(1)

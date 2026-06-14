@@ -1,3 +1,3 @@
-﻿Public Class Form_HtmlColorLabel
+Public Class Form_HtmlColorLabel
 
 End Class

@@ -1,9 +1,24 @@
-﻿Imports System.ComponentModel
+Imports System.ComponentModel
 Imports System.ComponentModel.Design.Serialization
 Imports System.Drawing.Drawing2D
 Imports System.Globalization
 Imports System.Numerics
 Imports Vortice.Direct2D1
+
+' 几何图形与圆角矩形的共用绘制工具。
+'
+' 本文件同时服务两条路径：
+' • GDI+ 路径：创建 GraphicsPath，供 Region、裁剪、分层窗口阴影或旧控件使用。
+' • D2D 路径：创建几何、渐变与圆角矩形绘制逻辑，供 V2 控件在 PaintScopeV2.GraphicsLayer 上复用。
+'
+' 调用原则：
+' • 创建出来的 GDI+ Path / D2D Geometry 归调用方所有，必须 Using/Dispose。
+' • 文字不要画在本工具产生的 SSAA 图形层里；文字仍应走 D2DTextRenderer 和 PaintScopeV2.TextLayer。
+' • 半径会被夹到矩形短边一半以内，避免路径自交；调用方不需要提前裁剪。
+'
+' 坑点：
+' • RoundCorners 是设计器友好的值类型。不要把它改成类，否则属性面板序列化和 DefaultValue 语义都会变化。
+' • D2D 的 stroke 居中绘制；如果需要边框完全落在矩形内部，调用方应先把绘制区域按线宽内缩。
 
 ''' <summary>指定哪些角启用圆角，可在设计器属性面板中像 Padding 一样展开编辑。</summary>
 <TypeConverter(GetType(RoundCornersConverter))>
@@ -156,6 +171,13 @@ Friend Class RoundCornersConverter
     End Function
 End Class
 
+''' <summary>
+''' 供控件共享的矩形、圆角、边框、渐变和 D2D 几何绘制工具。
+''' </summary>
+''' <remarks>
+''' 此类不保存状态；所有 Shared 方法要么返回调用方负责释放的对象，要么直接画到调用方传入的
+''' Graphics / RenderTarget。
+''' </remarks>
 Public Class RectangleRenderer
 
     Public Shared Function 创建圆角矩形路径(区域 As RectangleF, 半径 As Single) As GraphicsPath

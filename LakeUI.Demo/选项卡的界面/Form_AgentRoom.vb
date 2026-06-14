@@ -1,4 +1,4 @@
-﻿Public Class Form_AgentRoom
+Public Class Form_AgentRoom
     Private Sub Form_AgentRoom_Load(sender As Object, e As EventArgs) Handles MyBase.Load
         AgentRoom1.AddUserMessage("这是一段示例文本")
         AgentRoom1.AddAssistantMessage("这是一段示例回复")

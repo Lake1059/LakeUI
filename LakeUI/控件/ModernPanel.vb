@@ -81,7 +81,7 @@ Public Class ModernPanel
             _contentSizeDirty = True
             更新滚动区域()
             Me.PerformLayout()
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End If
     End Sub
 
@@ -247,7 +247,7 @@ Public Class ModernPanel
             _image = value
             清除图片缓存()
             启动图片动画()
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -470,7 +470,7 @@ Public Class ModernPanel
         Catch
             停止图片动画计时器(True)
         End Try
-        Me.Invalidate(获取背景图片刷新区域(), False)
+        OuterToInnerRefreshScheduler.Request(Me, 获取背景图片刷新区域())
     End Sub
 
     Private Sub 停止图片动画计时器(disposeTimer As Boolean)
@@ -525,7 +525,7 @@ Public Class ModernPanel
 
         If frameChanged Then
             失效背景图片上传缓存()
-            Me.Invalidate(获取背景图片刷新区域(), False)
+            OuterToInnerRefreshScheduler.Request(Me, 获取背景图片刷新区域())
         End If
     End Sub
 
@@ -849,7 +849,7 @@ Public Class ModernPanel
             If _imageFillMode <> value Then
                 _imageFillMode = value
                 清除图片缓存()
-                Me.Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Set
     End Property
@@ -911,8 +911,8 @@ Public Class ModernPanel
         Set(value As Control)
             If _backgroundSource IsNot value Then
                 解除背景穿透消费者()
-                _backgroundSource = value
-                Me.Invalidate()
+                _backgroundSource = BackgroundPenetrationV2.SetConsumerSource(Me, _backgroundSource, value)
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Set
     End Property
@@ -921,6 +921,18 @@ Public Class ModernPanel
         If _backgroundSource Is Nothing Then Return
         Try : BackgroundPenetrationV2.UnregisterConsumer(Me, _backgroundSource) : Catch : End Try
     End Sub
+
+    Friend Function TryGetTransparentBackgroundForward(ByRef source As Control) As Boolean
+        source = Nothing
+        If _backgroundSource Is Nothing Then Return False
+        If _image IsNot Nothing Then Return False
+        If MyBase.BackColor.A <> 0 OrElse 背景颜色.A <> 0 Then Return False
+        If 遮罩颜色.A <> 0 Then Return False
+        If 边框宽度 <> 0 OrElse 边框圆角半径 <> 0 Then Return False
+        If _showVScroll OrElse _showHScroll Then Return False
+        source = _backgroundSource
+        Return True
+    End Function
 
 #End Region
 
@@ -1061,7 +1073,7 @@ Public Class ModernPanel
                 _childLayouts.Clear()
                 _contentSizeDirty = True
                 Me.PerformLayout()
-                Me.Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Set
     End Property
@@ -1077,7 +1089,7 @@ Public Class ModernPanel
                 _flowDirection = value
                 _contentSizeDirty = True
                 Me.PerformLayout()
-                Me.Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Set
     End Property
@@ -1093,7 +1105,7 @@ Public Class ModernPanel
                 _wrapContents = value
                 _contentSizeDirty = True
                 Me.PerformLayout()
-                Me.Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Set
     End Property
@@ -1501,7 +1513,7 @@ Public Class ModernPanel
             If newOff <> _vScrollOffset Then
                 _vScrollOffset = newOff
                 快速滚动更新()
-                Me.Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
             Return
         End If
@@ -1512,7 +1524,7 @@ Public Class ModernPanel
             If newOff <> _hScrollOffset Then
                 _hScrollOffset = newOff
                 快速滚动更新()
-                Me.Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
             Return
         End If
@@ -1520,7 +1532,7 @@ Public Class ModernPanel
         Dim needInvalidate As Boolean = False
         If _vScrollBar.UpdateHover(e.Location) Then needInvalidate = True
         If _hScrollBar.UpdateHover(e.Location) Then needInvalidate = True
-        If needInvalidate Then Me.Invalidate()
+        If needInvalidate Then OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
@@ -1534,7 +1546,7 @@ Public Class ModernPanel
             If newOff <> _vScrollOffset Then
                 _vScrollOffset = newOff
                 快速滚动更新()
-                Me.Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
                 Return
             End If
         End If
@@ -1545,7 +1557,7 @@ Public Class ModernPanel
             If newHOff <> _hScrollOffset Then
                 _hScrollOffset = newHOff
                 快速滚动更新()
-                Me.Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
                 Return
             End If
         End If
@@ -1562,7 +1574,7 @@ Public Class ModernPanel
         Dim needInvalidate As Boolean = False
         If _vScrollBar.ResetHover() Then needInvalidate = True
         If _hScrollBar.ResetHover() Then needInvalidate = True
-        If needInvalidate Then Me.Invalidate()
+        If needInvalidate Then OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnMouseWheel(e As MouseEventArgs)
@@ -1576,7 +1588,7 @@ Public Class ModernPanel
                 If newHOff <> _hScrollOffset Then
                     _hScrollOffset = newHOff
                     快速滚动更新()
-                    Me.Invalidate()
+                    OuterToInnerRefreshScheduler.RequestFull(Me)
                 End If
             End If
             Return
@@ -1587,7 +1599,7 @@ Public Class ModernPanel
             If newOff <> _vScrollOffset Then
                 _vScrollOffset = newOff
                 快速滚动更新()
-                Me.Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End If
     End Sub
@@ -1634,7 +1646,7 @@ Public Class ModernPanel
         清除图片缓存()
         _contentSizeDirty = True
         更新滚动区域()
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnDpiChangedBeforeParent(e As EventArgs)
@@ -1665,7 +1677,7 @@ Public Class ModernPanel
         _inDpiChange = False
         更新滚动区域()
         Me.PerformLayout()
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
@@ -1690,7 +1702,7 @@ Public Class ModernPanel
         AddHandler e.Control.LocationChanged, AddressOf 子控件位置变更
         _contentSizeDirty = True
         更新滚动区域()
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnControlRemoved(e As ControlEventArgs)
@@ -1700,7 +1712,7 @@ Public Class ModernPanel
         RemoveHandler e.Control.LocationChanged, AddressOf 子控件位置变更
         _contentSizeDirty = True
         更新滚动区域()
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Private _suppressLocationSync As Boolean = False
@@ -1712,7 +1724,7 @@ Public Class ModernPanel
         _contentSizeDirty = True
         If _inScrollUpdate Then Return
         更新滚动区域()
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Private Sub 子控件位置变更(sender As Object, e As EventArgs)
@@ -1875,7 +1887,7 @@ Public Class ModernPanel
         _hScrollOffset = Math.Max(0, horizontalOffset)
         _vScrollOffset = Math.Max(0, verticalOffset)
         更新滚动区域()
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     ''' <summary>获取当前垂直滚动偏移。</summary>

@@ -1,4 +1,4 @@
-﻿Public Class Form_SysTaskBarProgress
+Public Class Form_SysTaskBarProgress
     Private Sub ModernButton5_Click(sender As Object, e As EventArgs) Handles ModernButton5.Click
         SysTaskBarProgress.SetProgress(Me.ParentForm.Handle, SysTaskBarProgress.TaskBarProgressState.Normal, 50, 100)
     End Sub

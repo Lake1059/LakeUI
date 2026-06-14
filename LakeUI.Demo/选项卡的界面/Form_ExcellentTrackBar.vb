@@ -1,3 +1,3 @@
-﻿Public Class Form_ExcellentTrackBar
+Public Class Form_ExcellentTrackBar
 
 End Class

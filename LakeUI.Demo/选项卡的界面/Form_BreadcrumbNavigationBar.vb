@@ -1,3 +1,3 @@
-﻿Public Class Form_BreadcrumbNavigationBar
+Public Class Form_BreadcrumbNavigationBar
 
 End Class

@@ -1,4 +1,4 @@
-﻿
+
 Public Class Form_ModernTextBox
     Private Sub Form_ModernTextBox_Load(sender As Object, e As EventArgs) Handles MyBase.Load
         Me.ModernTextBox2.SyntaxHighlighter = New VbKeywordHighlighter()

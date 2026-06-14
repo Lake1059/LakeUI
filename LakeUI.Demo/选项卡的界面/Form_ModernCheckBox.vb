@@ -1,3 +1,3 @@
-﻿Public Class Form_ModernCheckBox
+Public Class Form_ModernCheckBox
 
 End Class

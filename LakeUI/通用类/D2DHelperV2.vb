@@ -78,6 +78,10 @@ Public Module D2DHelperV2
     <ThreadStatic>
     Private _backgroundSamplingRetained As List(Of WindowCompositor)
 
+    ' 背景穿透在重采 source 时可能会调用 D2DHelperV2.BeginPaint 去把 source 自身画进一张 GDI Bitmap。
+    ' 如果此时同一 Form 已经处在正常 V2 PaintScope 内，共享 DC RT 不能再次 BindDC。
+    ' 这组 ThreadStatic 状态只在 UI 线程当前调用栈内生效：进入背景采样后允许租一份临时 compositor，
+    ' 离开采样作用域时统一 Dispose，避免把临时 RT/Brush/Bitmap 缓存带到常规窗口生命周期里。
     Friend ReadOnly Property IsBackgroundSamplingPaint As Boolean
         Get
             Return _backgroundSamplingPaintDepth > 0
@@ -204,8 +208,7 @@ Public Module D2DHelperV2
         If ctrl Is Nothing OrElse ctrl.IsDisposed Then Return
 
         Try
-            ctrl.Invalidate(ctrl.ClientRectangle, invalidateChildren)
-            If immediate AndAlso ctrl.IsHandleCreated Then ctrl.Update()
+            OuterToInnerRefreshScheduler.RequestFull(ctrl, invalidateChildren, immediate)
         Catch
         End Try
     End Sub
@@ -220,6 +223,15 @@ Public Module D2DHelperV2
     ''' </param>
     ''' <param name="invalidateAfterCleanup">清理后是否让受影响窗口重绘，以便下一帧按需重建资源。</param>
     ''' <returns>成功执行清理的窗口 compositor 数量。若在窗口绘制过程中调用，该窗口会被跳过。</returns>
+    ''' <remarks>
+    ''' 清理顺序很重要：
+    ''' 1. 先清窗口 compositor，因为它拥有 DC RT、SSAA 池、Image 上传索引与 TextFormat cache。
+    ''' 2. 再清背景穿透与 BackdropRenderer，这两者维护的是跨控件的采样/模糊中间缓存。
+    ''' 3. RecreateDevice 及以上才失效 D3D11Globals；否则只是释放当前 RT/缓存，不动进程级设备。
+    '''
+    ''' 如果任一目标 compositor 正在 Paint，跨模块清理会被跳过，避免在 BindDC/BeginDraw 中释放 RT。
+    ''' invalidateAfterCleanup 只排队重绘，不同步重建资源；下一帧按需创建。
+    ''' </remarks>
     Public Function CleanupD2DResources(level As D2DCacheCleanupLevel,
                                         Optional owner As Control = Nothing,
                                         Optional invalidateAfterCleanup As Boolean = True) As Integer
@@ -276,7 +288,7 @@ Public Module D2DHelperV2
             For Each form In invalidateForms
                 Try
                     If form IsNot Nothing AndAlso Not form.IsDisposed AndAlso form.IsHandleCreated Then
-                        form.Invalidate(True)
+                        OuterToInnerRefreshScheduler.RequestFull(form, invalidateChildren:=True)
                     End If
                 Catch
                 End Try

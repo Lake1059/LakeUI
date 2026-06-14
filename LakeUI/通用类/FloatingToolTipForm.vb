@@ -3,6 +3,21 @@ Imports Vortice.Direct2D1
 ''' <summary>
 ''' 控件共用的自绘浮动提示窗，支持 D2D 文本、边框、圆角以及弹出层毛玻璃背景。
 ''' </summary>
+''' <remarks>
+''' 这是一个 no-activate 顶层 popup，继承 <see cref="PopupForm"/>，用于控件 hover 提示。
+''' 它不参与宿主控件的 PaintScope，也不应作为子控件添加到容器中。
+'''
+''' 调用契约：
+''' • 每次显示前调用 <see cref="ShowTip"/>，该方法会重新测量文本、调整屏幕位置、准备毛玻璃帧并触发重绘。
+''' • 毛玻璃背景通过 <see cref="PopupBackdropRenderer"/> 独立抓屏，不复用主窗口 ThisIsYourWindow 的帧，
+'''   因为 tooltip 是独立顶层窗口，捕获区域和排除截屏策略不同。
+''' • <see cref="OnPaintBackground"/> 故意留空，底色由 OnPaint 内的 backdrop / D2D 背景接管。
+'''
+''' 坑点：
+''' • 文本测量缓存只按文本、宽度、字体 hash 和 DPI 命中；样式中 padding、border 改变会在 ShowTip
+'''   外层重新算窗口尺寸，不需要进测量 key。
+''' • ShowWithoutActivation + WM_MOUSEACTIVATE 是必要组合，避免提示窗抢走原控件焦点。
+''' </remarks>
 Friend NotInheritable Class FloatingToolTipForm
     Inherits PopupForm
 
@@ -252,6 +267,13 @@ Friend NotInheritable Class FloatingToolTipForm
 
 End Class
 
+''' <summary>
+''' 浮动提示窗的视觉配置快照。
+''' </summary>
+''' <remarks>
+''' ShowTip 会 clone 一份样式，之后外部继续修改原对象不会影响已经显示的提示窗。
+''' Font / BackdropImage 由调用方持有，本类不负责 Dispose。
+''' </remarks>
 Friend Class FloatingToolTipStyle
     Public Property Font As Font = Nothing
     Public Property BackColor As Color = Color.FromArgb(50, 50, 50)

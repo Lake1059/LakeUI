@@ -37,9 +37,9 @@ Partial Class ModernColorDialog
         Dim ModernMenuItem13 As LakeUI.ModernContextMenu.ModernMenuItem = New ModernContextMenu.ModernMenuItem()
         ModernContextMenu1 = New ModernContextMenu()
         SuspendLayout()
-        '
+        ' 
         ' ModernContextMenu1
-        '
+        ' 
         ModernContextMenu1.BackdropBlurPasses = 1
         ModernContextMenu1.BackdropBlurRadius = 10
         ModernContextMenu1.BackdropMode = ModernContextMenu.BackdropModeEnum.Auto
@@ -96,18 +96,18 @@ Partial Class ModernColorDialog
         ModernContextMenu1.PopupAnimationDuration = 300
         ModernContextMenu1.PopupAnimationFPS = 0
         ModernContextMenu1.SeparatorHeight = 20
-        '
+        ' 
         ' ModernColorDialog
-        '
+        ' 
         AutoScaleDimensions = New SizeF(96F, 96F)
         AutoScaleMode = AutoScaleMode.Dpi
         BackColor = Color.FromArgb(CByte(24), CByte(24), CByte(24))
-        ClientSize = New Size(884, 566)
+        ClientSize = New Size(834, 561)
         Font = New Font("Microsoft YaHei UI", 10.2F, FontStyle.Regular, GraphicsUnit.Point, CByte(134))
         ForeColor = Color.Silver
         MaximizeBox = False
         MinimizeBox = False
-        MinimumSize = New Size(850, 605)
+        MinimumSize = New Size(850, 600)
         Name = "ModernColorDialog"
         ShowIcon = False
         ShowInTaskbar = False

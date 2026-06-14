@@ -1,4 +1,4 @@
-﻿Public Class Form_MsgBox_InputBox_Tip
+Public Class Form_MsgBox_InputBox_Tip
     Private Sub ModernButton5_Click(sender As Object, e As EventArgs) Handles ModernButton5.Click
         ExMsgBox(Form1, "这里是内容", MsgBoxStyle.Information + MsgBoxStyle.YesNoCancel)
     End Sub

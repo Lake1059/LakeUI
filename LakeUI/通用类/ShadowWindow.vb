@@ -6,6 +6,21 @@ Imports System.Runtime.InteropServices
 ''' 分层窗口，用于在宿主窗口后方渲染自定义深度的阴影。
 ''' 使用 UpdateLayeredWindow + 预乘 Alpha 位图绘制柔和阴影。
 ''' </summary>
+''' <remarks>
+''' ShadowWindow 是 <see cref="ThisIsYourWindow"/> 的辅助顶层窗口，不参与 D2D V2 compositor。
+''' 它通过一张 32bppPArgb 位图生成阴影，再用 UpdateLayeredWindow 一次性提交给 DWM。
+'''
+''' 调用契约：
+''' • 宿主窗口移动、大小变化、激活状态变化或自动阴影颜色变化时，由 ThisIsYourWindow 调用
+'''   UpdateShadow / PlaceBehind 更新。
+''' • 最大化、最小化、DWM 原生阴影模式或宿主不可见时应隐藏/销毁本窗口。
+''' • ResizeWidth / ResizeFullArea 只决定阴影区域是否转发 hit-test 到宿主窗口，不改变绘制位图大小。
+'''
+''' 坑点：
+''' • 分层窗口透明像素默认不会接收鼠标；需要可调整大小时必须在 WndProc 中显式返回对应 HT*。
+''' • UpdateLayeredWindow 使用预乘 alpha。写入像素时若按非预乘 alpha 计算，边缘会发灰或出现黑边。
+''' • 该窗口必须放在宿主后方，但又不能抢焦点；PlaceBehind 和 WS_EX_NOACTIVATE 都不能随意删。
+''' </remarks>
 Friend Class ShadowWindow
     Inherits Form
 

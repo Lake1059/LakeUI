@@ -18,6 +18,10 @@ Public Class ModernComboBox
             _owner = owner
         End Sub
 
+        Private Sub InvalidateOwner()
+            If _owner._updateCount <= 0 Then OuterToInnerRefreshScheduler.RequestFull(_owner)
+        End Sub
+
         Public Overloads Sub AddRange(collection As IEnumerable(Of String))
             _owner.BeginInternalUpdate()
             Try
@@ -34,7 +38,7 @@ Public Class ModernComboBox
             If _owner._selectedIndex >= 0 AndAlso index <= _owner._selectedIndex Then
                 _owner._selectedIndex += 1
             End If
-            If _owner._updateCount <= 0 Then _owner.Invalidate()
+            InvalidateOwner()
         End Sub
 
         Protected Overrides Sub RemoveItem(index As Integer)
@@ -46,7 +50,7 @@ Public Class ModernComboBox
             ElseIf _owner._selectedIndex > index Then
                 _owner._selectedIndex -= 1
             End If
-            If _owner._updateCount <= 0 Then _owner.Invalidate()
+            InvalidateOwner()
         End Sub
 
         Protected Overrides Sub ClearItems()
@@ -61,7 +65,7 @@ Public Class ModernComboBox
             If hadItems Then
                 _owner.OnSelectedIndexChangedExternal()
             End If
-            If _owner._updateCount <= 0 Then _owner.Invalidate()
+            InvalidateOwner()
         End Sub
 
         Protected Overrides Sub SetItem(index As Integer, item As String)
@@ -69,7 +73,7 @@ Public Class ModernComboBox
             If _owner._selectedIndex = index Then
                 _owner._textRenderer.SetText(item, item.Length, True, False)
             End If
-            If _owner._updateCount <= 0 Then _owner.Invalidate()
+            InvalidateOwner()
         End Sub
     End Class
 
@@ -236,7 +240,7 @@ Public Class ModernComboBox
                 _textRenderer.SetText(v, 0, True, False)
             End If
             _selectedIndex = matchIndex
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
             If textChanged Then RaiseEvent textChanged(Me, EventArgs.Empty)
             If selectedIndexChanged Then RaiseEvent selectedIndexChanged(Me, EventArgs.Empty)
         End Set
@@ -343,7 +347,7 @@ Public Class ModernComboBox
         End Get
         Set(value As Integer)
             行高 = Math.Max(10, value)
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -355,7 +359,7 @@ Public Class ModernComboBox
         End Get
         Set(value As Integer)
             光标线宽 = Math.Max(1, value)
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -445,7 +449,7 @@ Public Class ModernComboBox
             If 启用编辑 = value Then Return
             启用编辑 = value
             _textRenderer.Editable = value
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -517,7 +521,7 @@ Public Class ModernComboBox
         End Get
         Set(value As Integer)
             箭头大小 = Math.Max(4, value)
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -1103,8 +1107,8 @@ Public Class ModernComboBox
         End Get
         Set(value As Control)
             If _backgroundSource IsNot value Then
-                _backgroundSource = value
-                Me.Invalidate()
+                _backgroundSource = BackgroundPenetrationV2.SetConsumerSource(Me, _backgroundSource, value)
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Set
     End Property
@@ -1585,14 +1589,14 @@ Public Class ModernComboBox
     Protected Overrides Sub OnMouseEnter(e As EventArgs)
         MyBase.OnMouseEnter(e)
         鼠标状态 = MouseStateEnum.Hover
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnMouseLeave(e As EventArgs)
         MyBase.OnMouseLeave(e)
         鼠标状态 = MouseStateEnum.Normal
         _mouseOverArrow = False
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
@@ -1609,14 +1613,14 @@ Public Class ModernComboBox
                 Else
                     OpenDropDown()
                 End If
-                Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
                 Return
             End If
             _mouseDownSelecting = True
             SyncTextRenderer()
             _textRenderer.BeginMouseSelection(e.X)
             ResetCaretBlink()
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End If
     End Sub
 
@@ -1635,7 +1639,7 @@ Public Class ModernComboBox
             SyncTextRenderer()
             _textRenderer.UpdateMouseSelection(e.X)
         ElseIf _mouseOverArrow <> prevOverArrow Then
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End If
     End Sub
 
@@ -1643,7 +1647,7 @@ Public Class ModernComboBox
         MyBase.OnMouseUp(e)
         _mouseDownSelecting = False
         鼠标状态 = If(ClientRectangle.Contains(e.Location), MouseStateEnum.Hover, MouseStateEnum.Normal)
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Private Function HitTestCol(x As Integer) As Integer
@@ -1797,14 +1801,14 @@ Public Class ModernComboBox
         Else
             _droppedDown = False
         End If
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
         RaisePendingSelectedIndexChanged()
     End Sub
 
     Friend Sub OnDropDownClosed()
         _droppedDown = False
         _dropDownForm = Nothing
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
         RaiseEvent DropDownClosed(Me, EventArgs.Empty)
         RaisePendingSelectedIndexChanged()
     End Sub
@@ -2255,7 +2259,7 @@ Public Class ModernComboBox
 
         Private Sub 请求重绘(Optional immediate As Boolean = False)
             If IsDisposed OrElse Disposing Then Return
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
             If immediate AndAlso IsHandleCreated Then Update()
         End Sub
 
@@ -2580,7 +2584,7 @@ Public Class ModernComboBox
         _updateCount -= 1
         If _updateCount > 0 Then Return
         _updateCount = 0
-        If invalidateAfter Then Invalidate()
+        If invalidateAfter Then OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Private Shared Sub DrawSingleLineText_D2D(rt As ID2D1RenderTarget, text As String, font As Font, foreColor As Color,
@@ -2616,7 +2620,7 @@ Public Class ModernComboBox
         Dim selectedIndexChanged As Boolean = _selectedIndex <> matchIndex
         If selectedIndexChanged Then _selectedIndex = matchIndex
         EnsureCaretVisible()
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
         RaiseEvent TextChanged(Me, EventArgs.Empty)
         If selectedIndexChanged Then RaiseEvent selectedIndexChanged(Me, EventArgs.Empty)
     End Sub
@@ -2634,7 +2638,7 @@ Public Class ModernComboBox
 
         _selectedIndex = value
         _textRenderer.SetText(newText, newText.Length, True, False)
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
         If textChanged Then RaiseEvent textChanged(Me, EventArgs.Empty)
         If selectedIndexChanged Then RaiseSelectedIndexChanged(deferSelectedIndexChanged)
     End Sub
@@ -2655,7 +2659,7 @@ Public Class ModernComboBox
     End Sub
 
     Friend Sub OnItemsTextChanged()
-        If _updateCount <= 0 Then Invalidate()
+        If _updateCount <= 0 Then OuterToInnerRefreshScheduler.RequestFull(Me)
         RaiseEvent TextChanged(Me, EventArgs.Empty)
     End Sub
 
@@ -2670,7 +2674,7 @@ Public Class ModernComboBox
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
-            If _updateCount <= 0 Then Invalidate()
+            If _updateCount <= 0 Then OuterToInnerRefreshScheduler.RequestFull(Me)
         End If
     End Sub
 #End Region
@@ -2693,7 +2697,7 @@ Public Class ModernComboBox
     Protected Overrides Sub OnSizeChanged(e As EventArgs)
         MyBase.OnSizeChanged(e)
         EnsureCaretVisible()
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
@@ -2723,12 +2727,12 @@ Public Class ModernComboBox
             _textRenderer.StopCaretBlink()
             鼠标状态 = MouseStateEnum.Normal
         End If
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 #End Region
 

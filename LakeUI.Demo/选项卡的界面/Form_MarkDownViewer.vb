@@ -1,4 +1,4 @@
-﻿Public Class Form_MarkDownViewer
+Public Class Form_MarkDownViewer
     Private Sub Form_MarkDownViewer_Load(sender As Object, e As EventArgs) Handles MyBase.Load
 
     End Sub

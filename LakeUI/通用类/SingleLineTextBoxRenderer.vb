@@ -4,6 +4,23 @@ Imports Vortice.Direct2D1
 ''' <summary>
 ''' 供组合控件复用的单行轻量文本框内核：负责文本绘制、光标、选区、滚动、命中测试与基础编辑。
 ''' </summary>
+''' <remarks>
+''' 这是“无窗口文本框”内核，不继承 TextBox，也不创建子 HWND。外层控件需要把键盘、鼠标、
+''' IME 消息和焦点状态转交给本类，然后在自己的 V2 OnPaint 中调用绘制方法。
+'''
+''' 调用契约：
+''' • 所有成员都假定在 UI 线程使用；内部的光标闪烁 Timer 也是 WinForms UI Timer。
+''' • 外层控件必须在 Dispose 时调用本类 Dispose，否则 Timer 与 owner 事件订阅会继续持有控件。
+''' • <see cref="TextAreaProvider"/> 应返回文本可绘制区域，坐标为 owner 客户区逻辑像素。
+''' • 文本测量走 DirectWrite，并使用 owner 所属 Form 的 <see cref="D2DGlobals.TextFormatCache"/>；
+'''   字体、DPI 或文本变化时会清理前缀宽度缓存。
+'''
+''' 坑点：
+''' • 光标/选区列索引按 .NET 字符索引处理，不做 grapheme cluster 分割；组合 emoji、复杂脚本
+'''   的光标移动可能不是专业文本编辑器语义。
+''' • IME 合成窗口位置由外层控件配合 <see cref="ImeHelper"/> 设置，本类只处理已经提交的文本。
+''' • 文字层应画在 <see cref="PaintScopeV2.TextLayer"/> 上，避免在 SSAA 图形层里画 ClearType 文字。
+''' </remarks>
 Public Class SingleLineTextBoxRenderer
     Implements IDisposable
 
@@ -513,7 +530,7 @@ Public Class SingleLineTextBoxRenderer
         If InvalidateAction IsNot Nothing Then
             InvalidateAction.Invoke()
         Else
-            _owner.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(_owner)
         End If
     End Sub
 

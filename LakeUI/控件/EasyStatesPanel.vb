@@ -219,19 +219,19 @@ Partial Public Class EasyStatesPanel
         If EqualityComparer(Of T).Default.Equals(field, value) Then Return
         field = value
         If affectsLayout Then _layoutDirty = True
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Friend Sub NotifyItemContentChanged()
         _layoutDirty = True
         ClampScrollOffsets()
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Public Sub Redraw()
         _layoutDirty = True
         ClampScrollOffsets()
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Private Shared Function TextRenderGuard(dpiScale As Single) As Single
@@ -286,8 +286,8 @@ Partial Public Class EasyStatesPanel
         End Get
         Set(value As Control)
             If _backgroundSource Is value Then Return
-            _backgroundSource = value
-            Invalidate()
+            _backgroundSource = BackgroundPenetrationV2.SetConsumerSource(Me, _backgroundSource, value)
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -354,7 +354,7 @@ Partial Public Class EasyStatesPanel
         Set(value As Color)
             If MyBase.ForeColor = value Then Return
             MyBase.ForeColor = value
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -381,7 +381,7 @@ Partial Public Class EasyStatesPanel
             _subTextSize = value
             ReleaseSubTextFont()
             _layoutDirty = True
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -998,7 +998,7 @@ Partial Public Class EasyStatesPanel
             _scrollTargetOffset = target
         End If
         UpdateScrollBarForCurrentOffset()
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Private Sub StopScrollAnimation()
@@ -1030,7 +1030,7 @@ Partial Public Class EasyStatesPanel
         End If
         ClampScrollOffsets()
         UpdateScrollBarForCurrentOffset()
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Private Sub 滚动动画脏区(helper As AnimationHelperV2, owner As Control, sink As AnimationHelperV2.InvalidateRegionSink)
@@ -1047,7 +1047,7 @@ Partial Public Class EasyStatesPanel
             Return
         End If
 
-        If _showVScroll AndAlso _scrollBar.UpdateHover(e.Location) Then Invalidate()
+        If _showVScroll AndAlso _scrollBar.UpdateHover(e.Location) Then OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
@@ -1058,7 +1058,7 @@ Partial Public Class EasyStatesPanel
 
         If _showVScroll AndAlso _scrollBar.BeginDrag(e.Location, CInt(Math.Round(_scrollOffset))) Then
             StopScrollAnimation()
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
             Return
         End If
 
@@ -1075,13 +1075,13 @@ Partial Public Class EasyStatesPanel
         MyBase.OnMouseUp(e)
         If _scrollBar.IsDragging Then
             _scrollBar.EndDrag()
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End If
     End Sub
 
     Protected Overrides Sub OnMouseLeave(e As EventArgs)
         MyBase.OnMouseLeave(e)
-        If _scrollBar.ResetHover() Then Invalidate()
+        If _scrollBar.ResetHover() Then OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnMouseWheel(e As MouseEventArgs)
@@ -1101,14 +1101,14 @@ Partial Public Class EasyStatesPanel
         MyBase.OnSizeChanged(e)
         _layoutDirty = True
         ClampScrollOffsets()
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnPaddingChanged(e As EventArgs)
         MyBase.OnPaddingChanged(e)
         _layoutDirty = True
         ClampScrollOffsets()
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
@@ -1122,13 +1122,13 @@ Partial Public Class EasyStatesPanel
         MyBase.OnDpiChangedAfterParent(e)
         ReleaseSubTextFont()
         _layoutDirty = True
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnEnabledChanged(e As EventArgs)
         MyBase.OnEnabledChanged(e)
         If Not Enabled Then StopScrollAnimation()
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
 #End Region

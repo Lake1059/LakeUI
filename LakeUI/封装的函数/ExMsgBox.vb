@@ -1,4 +1,4 @@
-﻿Imports System.Runtime.InteropServices
+Imports System.Runtime.InteropServices
 
 ' ═══════════════════════════════════════════════════════════════════════════
 '  ExMsgBox — LakeUI 自定义消息框

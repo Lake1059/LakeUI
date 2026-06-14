@@ -30,8 +30,8 @@ Public Class RoundDashBoard
         End Get
         Set(value As Control)
             If _backgroundSource IsNot value Then
-                _backgroundSource = value
-                Me.Invalidate()
+                _backgroundSource = BackgroundPenetrationV2.SetConsumerSource(Me, _backgroundSource, value)
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Set
     End Property
@@ -278,7 +278,7 @@ Public Class RoundDashBoard
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End If
     End Sub
 
@@ -297,12 +297,12 @@ Public Class RoundDashBoard
     Protected Overrides Sub OnEnabledChanged(e As EventArgs)
         MyBase.OnEnabledChanged(e)
         If Not Enabled Then 动画助手.StopAnimation()
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Private Function DpiScale() As Single
@@ -334,7 +334,7 @@ Public Class RoundDashBoard
             最小值 = value
             If 当前值 < 最小值 Then 当前值 = 最小值
             动画助手.SetImmediate(计算值比例(当前值))
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -350,7 +350,7 @@ Public Class RoundDashBoard
             最大值 = value
             If 当前值 > 最大值 Then 当前值 = 最大值
             动画助手.SetImmediate(计算值比例(当前值))
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 

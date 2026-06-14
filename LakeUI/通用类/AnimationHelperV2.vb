@@ -613,12 +613,12 @@ Friend Class AnimationHelperV2
                 End If
                 Try
                     If bucket.Full Then
-                        owner.Invalidate(owner.ClientRectangle, bucket.Children)
+                        OuterToInnerRefreshScheduler.RequestFull(owner, bucket.Children)
                         _flushedInvalidates += 1
                     Else
                         For Each rect In bucket.Rectangles
                             If rect.Width <= 0 OrElse rect.Height <= 0 Then Continue For
-                            owner.Invalidate(rect, bucket.Children)
+                            OuterToInnerRefreshScheduler.Request(owner, rect, bucket.Children)
                             _flushedInvalidates += 1
                         Next
                     End If

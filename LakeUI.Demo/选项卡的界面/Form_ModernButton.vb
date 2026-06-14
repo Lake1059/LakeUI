@@ -1,3 +1,3 @@
-﻿Public Class Form_ModernButton
+Public Class Form_ModernButton
 
 End Class

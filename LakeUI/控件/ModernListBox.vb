@@ -204,6 +204,10 @@ Public Class ModernListBox
             _owner = owner
         End Sub
 
+        Private Sub InvalidateOwner()
+            If _owner._updateCount <= 0 Then OuterToInnerRefreshScheduler.RequestFull(_owner)
+        End Sub
+
         Public Overloads Sub AddRange(collection As IEnumerable(Of String))
             _owner.BeginInternalUpdate()
             Try
@@ -227,7 +231,7 @@ Public Class ModernListBox
             _owner._selectedIndices = adjusted
             _owner.调整复选状态索引_插入(index)
             _owner.校正滚动偏移()
-            If _owner._updateCount <= 0 Then _owner.Invalidate()
+            InvalidateOwner()
         End Sub
 
         Protected Overrides Sub RemoveItem(index As Integer)
@@ -246,7 +250,7 @@ Public Class ModernListBox
             _owner._selectedIndices = adjusted
             _owner.调整复选状态索引_移除(index)
             _owner.校正滚动偏移()
-            If _owner._updateCount <= 0 Then _owner.Invalidate()
+            InvalidateOwner()
         End Sub
 
         Protected Overrides Sub ClearItems()
@@ -255,13 +259,13 @@ Public Class ModernListBox
             _owner._selectedIndices.Clear()
             _owner._checkStates.Clear()
             _owner._scrollOffset = 0
-            If _owner._updateCount <= 0 Then _owner.Invalidate()
+            InvalidateOwner()
             _owner.OnSelectionChanged()
         End Sub
 
         Protected Overrides Sub SetItem(index As Integer, item As String)
             MyBase.SetItem(index, item)
-            If _owner._updateCount <= 0 Then _owner.Invalidate()
+            InvalidateOwner()
         End Sub
     End Class
 
@@ -280,8 +284,8 @@ Public Class ModernListBox
         End Get
         Set(value As Control)
             If _backgroundSource IsNot value Then
-                _backgroundSource = value
-                Me.Invalidate()
+                _backgroundSource = BackgroundPenetrationV2.SetConsumerSource(Me, _backgroundSource, value)
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Set
     End Property
@@ -379,7 +383,7 @@ Public Class ModernListBox
             _selectedIndices.Clear()
             If _selectedIndex >= 0 Then _selectedIndices.Add(_selectedIndex)
             _selectionAnchor = _selectedIndex
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
             RaiseEvent SelectedIndexChanged(Me, EventArgs.Empty)
         End Set
     End Property
@@ -450,7 +454,7 @@ Public Class ModernListBox
     Public Sub SetCheckState(index As Integer, state As CheckStateEnum)
         If index < 0 OrElse index >= _items.Count Then Return
         设置复选状态(index, state)
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
         RaiseEvent ItemCheckStateChanged(Me, New ItemEventArgs(index))
     End Sub
 
@@ -607,7 +611,7 @@ Public Class ModernListBox
         Set(value As Integer)
             行高 = Math.Max(10, value)
             校正滚动偏移()
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -667,7 +671,7 @@ Public Class ModernListBox
         End Get
         Set(value As Integer)
             复选框大小 = Math.Max(8, value)
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -767,7 +771,7 @@ Public Class ModernListBox
         End Get
         Set(value As Integer)
             复选框标记线宽 = Math.Max(1, value)
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -809,7 +813,7 @@ Public Class ModernListBox
         End Get
         Set(value As Integer)
             滚动条宽度 = Math.Max(2, value)
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -972,7 +976,7 @@ Public Class ModernListBox
                 _selectedIndices.Clear()
                 _selectedIndices.Add(first)
                 _selectedIndex = first
-                Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
                 RaiseEvent SelectedIndexChanged(Me, EventArgs.Empty)
             End If
         End Set
@@ -1526,7 +1530,7 @@ Public Class ModernListBox
 
     Protected Overrides Sub OnMouseEnter(e As EventArgs)
         MyBase.OnMouseEnter(e)
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnMouseLeave(e As EventArgs)
@@ -1534,7 +1538,7 @@ Public Class ModernListBox
         更新悬停(-1)
         关闭工具提示()
         _scrollBar.ResetHover()
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
@@ -1550,7 +1554,7 @@ Public Class ModernListBox
                 Dim newOff = _scrollBar.TrackClick(e.Location, _scrollOffset, _items.Count, visCount)
                 If newOff <> _scrollOffset Then
                     _scrollOffset = newOff
-                    Invalidate()
+                    OuterToInnerRefreshScheduler.RequestFull(Me)
                     Return
                 End If
             End If
@@ -1599,7 +1603,7 @@ Public Class ModernListBox
                         RaiseEvent ItemCheckStateChanged(Me, New ItemEventArgs(hitIdx))
                     End If
                     _checkDragLastIndex = hitIdx
-                    Invalidate()
+                    OuterToInnerRefreshScheduler.RequestFull(Me)
                 End If
             End If
             Return
@@ -1611,7 +1615,7 @@ Public Class ModernListBox
             _scrollOffset = _scrollBar.DragMove(e.Y, _items.Count, visCount)
             Dim hitIdx = 命中测试(e.Y)
             更新悬停(hitIdx)
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
             Return
         End If
 
@@ -1620,7 +1624,7 @@ Public Class ModernListBox
             关闭工具提示()
             Dim insertIdx = 计算拖动排序插入位置(e.Y)
             _dragReorderInsertIndex = insertIdx
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
             Return
         End If
 
@@ -1639,7 +1643,7 @@ Public Class ModernListBox
                             _dragReorderSourceIndices = New List(Of Integer) From {_dragReorderSourceIndex}
                         End If
                         _dragReorderInsertIndex = _dragReorderSourceIndex
-                        Invalidate()
+                        OuterToInnerRefreshScheduler.RequestFull(Me)
                         Return
                     ElseIf 允许多选 Then
                         _isDragSelecting = True
@@ -1651,12 +1655,12 @@ Public Class ModernListBox
                 关闭工具提示()
                 _dragCurrent = e.Location
                 更新拖选(e)
-                Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
                 Return
             End If
         End If
 
-        If _scrollBar.UpdateHover(e.Location) Then Invalidate()
+        If _scrollBar.UpdateHover(e.Location) Then OuterToInnerRefreshScheduler.RequestFull(Me)
 
         Dim hitRow As Integer = 命中测试(e.Y)
         更新悬停(hitRow)
@@ -1670,7 +1674,7 @@ Public Class ModernListBox
         If _isCheckDragging Then
             If Not _checkDragApplied AndAlso _checkDragSourceIndex >= 0 AndAlso _checkDragSourceIndex < _items.Count Then
                 设置复选状态(_checkDragSourceIndex, 下一个复选状态(_checkDragState))
-                Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
                 RaiseEvent ItemCheckStateChanged(Me, New ItemEventArgs(_checkDragSourceIndex))
             End If
             _isCheckDragging = False
@@ -1688,7 +1692,7 @@ Public Class ModernListBox
             _dragReorderSourceIndices.Clear()
             _dragReorderInsertIndex = -1
             _mouseDownInContent = False
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
             Return
         End If
 
@@ -1696,7 +1700,7 @@ Public Class ModernListBox
             _isDragSelecting = False
             _mouseDownInContent = False
             _scrollBar.EndDrag()
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
             Return
         End If
 
@@ -1707,7 +1711,7 @@ Public Class ModernListBox
         End If
 
         _scrollBar.EndDrag()
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnMouseDoubleClick(e As MouseEventArgs)
@@ -1716,7 +1720,7 @@ Public Class ModernListBox
         If hitIdx >= 0 Then
             If 显示复选框 Then
                 设置复选状态(hitIdx, 下一个复选状态(获取复选状态(hitIdx)))
-                Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
                 RaiseEvent ItemCheckStateChanged(Me, New ItemEventArgs(hitIdx))
             End If
             RaiseEvent ItemDoubleClick(Me, New ItemEventArgs(hitIdx))
@@ -1733,7 +1737,7 @@ Public Class ModernListBox
             _scrollOffset = newOff
             Dim hitIdx = 命中测试(e.Y)
             更新悬停(hitIdx)
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End If
     End Sub
 
@@ -1858,7 +1862,7 @@ Public Class ModernListBox
         If newSet.Count = _selectedIndices.Count AndAlso newSet.SetEquals(_selectedIndices) Then Return
         _selectedIndices = newSet
         _selectedIndex = If(_selectedIndices.Count > 0, _selectedIndices.Min(), -1)
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
         RaiseEvent SelectedIndexChanged(Me, EventArgs.Empty)
     End Sub
 
@@ -1919,20 +1923,20 @@ Public Class ModernListBox
 
         If 动画时长 <= 0 OrElse Not IsHandleCreated Then
             _hoverAnimActive = False
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
             Return
         End If
 
         If newIndex < 0 Then
             _hoverAnimActive = False
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
             Return
         End If
 
         Dim newY = 获取项Y坐标(newIndex)
         If newY < 0 Then
             _hoverAnimActive = False
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
             Return
         End If
 
@@ -2014,7 +2018,7 @@ Public Class ModernListBox
             Case Keys.Space
                 If 显示复选框 AndAlso _selectedIndex >= 0 AndAlso _selectedIndex < _items.Count Then
                     设置复选状态(_selectedIndex, 下一个复选状态(获取复选状态(_selectedIndex)))
-                    Invalidate()
+                    OuterToInnerRefreshScheduler.RequestFull(Me)
                     RaiseEvent ItemCheckStateChanged(Me, New ItemEventArgs(_selectedIndex))
                     e.Handled = True
                 End If
@@ -2143,11 +2147,11 @@ Public Class ModernListBox
         Dim visCount = 估算可见行数()
         If index < _scrollOffset Then
             _scrollOffset = index
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         ElseIf index >= _scrollOffset + visCount Then
             _scrollOffset = index - visCount + 1
             校正滚动偏移()
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End If
     End Sub
 
@@ -2167,7 +2171,7 @@ Public Class ModernListBox
                 _checkStates(i) = state
             Next
         End If
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Public Function FindString(s As String) As Integer
@@ -2214,18 +2218,18 @@ Public Class ModernListBox
 
     Protected Overrides Sub OnGotFocus(e As EventArgs)
         MyBase.OnGotFocus(e)
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnLostFocus(e As EventArgs)
         MyBase.OnLostFocus(e)
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnSizeChanged(e As EventArgs)
         MyBase.OnSizeChanged(e)
         校正滚动偏移()
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
@@ -2240,19 +2244,19 @@ Public Class ModernListBox
         If Not Enabled Then
             关闭工具提示()
         End If
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnPaddingChanged(e As EventArgs)
         MyBase.OnPaddingChanged(e)
         校正滚动偏移()
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
         校正滚动偏移()
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
 #End Region
@@ -2276,13 +2280,13 @@ Public Class ModernListBox
             _pendingSelectionChanged = False
             RaiseEvent SelectedIndexChanged(Me, EventArgs.Empty)
         End If
-        If invalidateAfter Then Invalidate()
+        If invalidateAfter Then OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
-            If _updateCount <= 0 Then Invalidate()
+            If _updateCount <= 0 Then OuterToInnerRefreshScheduler.RequestFull(Me)
         End If
     End Sub
 
@@ -2291,7 +2295,7 @@ Public Class ModernListBox
             _pendingSelectionChanged = True
             Return
         End If
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
         RaiseEvent SelectedIndexChanged(Me, EventArgs.Empty)
     End Sub
 

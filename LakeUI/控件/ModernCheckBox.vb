@@ -321,19 +321,19 @@ Public Class ModernCheckBox
         MyBase.OnMouseEnter(e)
         If Not Enabled Then Return
         鼠标状态 = MouseStateEnum.Hover
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
     Protected Overrides Sub OnMouseLeave(e As EventArgs)
         MyBase.OnMouseLeave(e)
         If Not Enabled Then Return
         鼠标状态 = MouseStateEnum.Normal
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
     Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
         MyBase.OnMouseDown(e)
         If Not Enabled Then Return
         鼠标状态 = MouseStateEnum.Pressed
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
     Protected Overrides Sub OnMouseUp(e As MouseEventArgs)
         MyBase.OnMouseUp(e)
@@ -349,7 +349,7 @@ Public Class ModernCheckBox
                 Checked = Not Checked
             End If
         End If
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
     Private Function 点击命中操作框(位置 As Point) As Boolean
         If 允许任意区域点击 Then Return True
@@ -365,13 +365,13 @@ Public Class ModernCheckBox
             鼠标状态 = MouseStateEnum.Normal
             动画助手.StopAnimation()
         End If
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
         重置文本行高缓存()
         更新自动尺寸()
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 #End Region
 
@@ -393,7 +393,7 @@ Public Class ModernCheckBox
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
             更新自动尺寸()
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End If
     End Sub
 
@@ -472,8 +472,8 @@ Public Class ModernCheckBox
         End Get
         Set(value As Control)
             If _backgroundSource IsNot value Then
-                _backgroundSource = value
-                Me.Invalidate()
+                _backgroundSource = BackgroundPenetrationV2.SetConsumerSource(Me, _backgroundSource, value)
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Set
     End Property
@@ -649,7 +649,7 @@ Public Class ModernCheckBox
             If MyBase.Text <> value Then
                 MyBase.Text = value
                 更新自动尺寸()
-                Me.Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Set
     End Property
@@ -837,7 +837,7 @@ Public Class ModernCheckBox
                         Me.Size = 自动尺寸前的大小
                     End If
                 End If
-                Me.Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Set
     End Property
@@ -894,7 +894,7 @@ Public Class ModernCheckBox
     Protected Overrides Sub OnPaddingChanged(e As EventArgs)
         MyBase.OnPaddingChanged(e)
         更新自动尺寸()
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Private 正在更新尺寸 As Boolean = False

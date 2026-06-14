@@ -24,7 +24,7 @@ Public Class ModernTabControl
         Friend Property Owner As ModernTabControl
 
         Private Sub 通知父级重绘()
-            If Owner IsNot Nothing Then Owner.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Owner)
         End Sub
 
         Private _text As String = "ModernTab"
@@ -347,7 +347,7 @@ Public Class ModernTabControl
         _悬停索引 = -1
         限制滚动范围()
         切换绑定控件()
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Private Sub 确保Owner()
@@ -378,7 +378,7 @@ Public Class ModernTabControl
                 _selectedIndex = value
                 确保选中项可见()
                 切换绑定控件()
-                Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
                 RaiseEvent SelectedIndexChanged(Me, EventArgs.Empty)
             End If
         End Set
@@ -1011,7 +1011,7 @@ Public Class ModernTabControl
         If Not _浮层显示 Then Return
         _浮层显示 = False
         同步内容面板布局()
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Private Sub 限制滚动范围()
@@ -1086,13 +1086,13 @@ Public Class ModernTabControl
         MyBase.OnResize(e)
         同步内容面板布局()
         限制滚动范围()
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnLayout(e As LayoutEventArgs)
         MyBase.OnLayout(e)
         同步内容面板布局()
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Friend Sub InvalidateLayoutCache()
@@ -1268,7 +1268,7 @@ Public Class ModernTabControl
         If Not 有活跃动画 Then
             停止动画驱动()
         End If
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Private Sub 启动动画驱动()
@@ -1311,7 +1311,7 @@ Public Class ModernTabControl
             Dim totalW = CInt(获取标签页总宽度())
             _滚动偏移 = 滚动条DragMove(e.X, totalW, Me.Width)
             限制滚动范围()
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
             Return
         End If
 
@@ -1347,7 +1347,7 @@ Public Class ModernTabControl
             End If
             needInvalidate = True
         End If
-        If needInvalidate Then Me.Invalidate()
+        If needInvalidate Then OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnMouseLeave(e As EventArgs)
@@ -1368,7 +1368,7 @@ Public Class ModernTabControl
             _滚动条IsHover = False
             needInvalidate = True
         End If
-        If needInvalidate Then Me.Invalidate()
+        If needInvalidate Then OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
@@ -1398,7 +1398,7 @@ Public Class ModernTabControl
                     _滚动偏移 = Math.Min(maxOff, _滚动偏移 + Me.Width)
                 End If
                 限制滚动范围()
-                Me.Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
                 Return
             End If
             Dim hit = HitTestTab(e.Location)
@@ -1431,7 +1431,7 @@ Public Class ModernTabControl
         MyBase.OnMouseUp(e)
         If _滚动条IsDragging Then
             _滚动条IsDragging = False
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End If
     End Sub
 
@@ -1445,7 +1445,7 @@ Public Class ModernTabControl
         Dim scrollAmount As Integer = Math.Max(1, SystemInformation.MouseWheelScrollLines * 30)
         _滚动偏移 -= Math.Sign(e.Delta) * scrollAmount
         限制滚动范围()
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Private Function 滚动条UpdateHover(mouseLocation As Point) As Boolean
@@ -1530,12 +1530,12 @@ Public Class ModernTabControl
 
     Protected Overrides Sub OnGotFocus(e As EventArgs)
         MyBase.OnGotFocus(e)
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnLostFocus(e As EventArgs)
         MyBase.OnLostFocus(e)
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 #End Region
 
@@ -1543,7 +1543,7 @@ Public Class ModernTabControl
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End If
     End Sub
 
@@ -1569,7 +1569,7 @@ Public Class ModernTabControl
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
         InvalidateLayoutCache()
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Private 超采样倍率 As Integer = 1
@@ -1595,10 +1595,10 @@ Public Class ModernTabControl
             If _backgroundSource IsNot value Then
                 解除背景穿透消费者()
                 Try : BackgroundPenetrationV2.UnregisterConsumer(_内容面板) : Catch : End Try
-                _backgroundSource = value
+                _backgroundSource = BackgroundPenetrationV2.SetConsumerSource(Me, _backgroundSource, value)
                 ' 内容面板上的透明背景来自同一 source。
-                If _内容面板 IsNot Nothing Then _内容面板.Invalidate(True)
-                Me.Invalidate()
+                If _内容面板 IsNot Nothing Then OuterToInnerRefreshScheduler.RequestFull(_内容面板, invalidateChildren:=True)
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Set
     End Property
@@ -1657,7 +1657,7 @@ Public Class ModernTabControl
             If 标签页位置 <> value Then
                 标签页位置 = value
                 同步内容面板布局()
-                Me.Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Set
     End Property
@@ -1674,7 +1674,7 @@ Public Class ModernTabControl
                 InvalidateLayoutCache()
                 _滚动偏移 = 0
                 限制滚动范围()
-                Me.Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Set
     End Property
@@ -1688,7 +1688,7 @@ Public Class ModernTabControl
         Set(value As TabAlignmentEnum)
             If 标签页对齐方式 <> value Then
                 标签页对齐方式 = value
-                Me.Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Set
     End Property
@@ -1703,7 +1703,7 @@ Public Class ModernTabControl
             If 标签栏高度 <> value Then
                 标签栏高度 = Math.Max(16, value)
                 同步内容面板布局()
-                Me.Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Set
     End Property
@@ -1732,7 +1732,7 @@ Public Class ModernTabControl
         End Get
         Set(value As Image)
             标签栏背景图片 = value
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -1762,7 +1762,7 @@ Public Class ModernTabControl
             If 标签栏内边距.Equals(value) Then Return
             标签栏内边距 = value
             InvalidateLayoutCache()
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 #End Region
@@ -1778,7 +1778,7 @@ Public Class ModernTabControl
             If 标签页最小宽度 <> value Then
                 标签页最小宽度 = Math.Max(16, value)
                 InvalidateLayoutCache()
-                Me.Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Set
     End Property
@@ -1793,7 +1793,7 @@ Public Class ModernTabControl
             If 标签页项间距 = value Then Return
             标签页项间距 = value
             InvalidateLayoutCache()
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -1873,7 +1873,7 @@ Public Class ModernTabControl
             If 标签页文本内边距 = value Then Return
             标签页文本内边距 = value
             InvalidateLayoutCache()
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 #End Region
@@ -1889,7 +1889,7 @@ Public Class ModernTabControl
             If 图标尺寸 = value Then Return
             图标尺寸 = value
             InvalidateLayoutCache()
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -1903,7 +1903,7 @@ Public Class ModernTabControl
             If 图标与文本间距 = value Then Return
             图标与文本间距 = value
             InvalidateLayoutCache()
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 #End Region
@@ -2086,7 +2086,7 @@ Public Class ModernTabControl
             If 分割线宽度值 = value Then Return
             分割线宽度值 = value
             InvalidateLayoutCache()
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 #End Region
@@ -2105,7 +2105,7 @@ Public Class ModernTabControl
                 _浮层显示 = False
                 同步内容面板布局()
                 限制滚动范围()
-                Me.Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Set
     End Property
@@ -2121,7 +2121,7 @@ Public Class ModernTabControl
             If Ribbon内容高度值 <> value Then
                 Ribbon内容高度值 = value
                 If Ribbon模式值 Then 同步内容面板布局()
-                Me.Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Set
     End Property
@@ -2138,7 +2138,7 @@ Public Class ModernTabControl
                 ' 状态切换时清空浮层显示标记
                 _浮层显示 = False
                 If Ribbon模式值 Then 同步内容面板布局()
-                Me.Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
                 RaiseEvent CollapsedChanged(Me, EventArgs.Empty)
             End If
         End Set
@@ -2155,7 +2155,7 @@ Public Class ModernTabControl
         Set(value As CollapseButtonAlignmentEnum)
             If 折叠按钮对齐值 <> value Then
                 折叠按钮对齐值 = value
-                Me.Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Set
     End Property
@@ -2171,7 +2171,7 @@ Public Class ModernTabControl
             If String.Equals(折叠按钮折叠文本值, value, StringComparison.Ordinal) Then Return
             折叠按钮折叠文本值 = value
             InvalidateLayoutCache()
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -2186,7 +2186,7 @@ Public Class ModernTabControl
             If String.Equals(折叠按钮展开文本值, value, StringComparison.Ordinal) Then Return
             折叠按钮展开文本值 = value
             InvalidateLayoutCache()
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -2200,7 +2200,7 @@ Public Class ModernTabControl
             If Object.ReferenceEquals(折叠按钮字体值, value) Then Return
             折叠按钮字体值 = value
             InvalidateFontResources()
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
             D2DHelperV2.RefreshFontDependentRendering(Me)
         End Set
     End Property
@@ -2240,7 +2240,7 @@ Public Class ModernTabControl
             If Object.ReferenceEquals(折叠按钮图标值, value) Then Return
             折叠按钮图标值 = value
             InvalidateLayoutCache()
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 #End Region

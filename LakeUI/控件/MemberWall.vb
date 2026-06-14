@@ -288,14 +288,14 @@ Partial Public Class MemberWall
         If EqualityComparer(Of T).Default.Equals(field, value) Then Return
         field = value
         If affectsLayout Then _layoutDirty = True
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Friend Sub NotifyItemContentChanged()
         _layoutDirty = True
         _hoverIndex = -1
         _pressedIndex = -1
-        If IsInDesignMode() Then Invalidate()
+        If IsInDesignMode() Then OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     ''' <summary>
@@ -303,7 +303,7 @@ Partial Public Class MemberWall
     ''' </summary>
     Public Sub Redraw()
         _layoutDirty = True
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     ''' <summary>
@@ -317,7 +317,7 @@ Partial Public Class MemberWall
         _layoutDirty = True
         _hoverIndex = -1
         _pressedIndex = -1
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Private Shared Function 搜索词元(text As String) As String()
@@ -387,8 +387,8 @@ Partial Public Class MemberWall
         End Get
         Set(value As Control)
             If _backgroundSource Is value Then Return
-            _backgroundSource = value
-            Invalidate()
+            _backgroundSource = BackgroundPenetrationV2.SetConsumerSource(Me, _backgroundSource, value)
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -455,7 +455,7 @@ Partial Public Class MemberWall
         Set(value As Color)
             If MyBase.ForeColor = value Then Return
             MyBase.ForeColor = value
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -1044,7 +1044,7 @@ Partial Public Class MemberWall
             If newOff <> _scrollOffset Then
                 _scrollOffset = newOff
                 UpdateScrollBarForCurrentOffset()
-                Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
             Return
         End If
@@ -1060,7 +1060,7 @@ Partial Public Class MemberWall
             Cursor = Cursors.Default
         End If
 
-        If needInvalidate Then Invalidate()
+        If needInvalidate Then OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
@@ -1070,7 +1070,7 @@ Partial Public Class MemberWall
         EnsureLayout()
 
         If _showVScroll AndAlso _scrollBar.BeginDrag(e.Location, _scrollOffset) Then
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
             Return
         End If
 
@@ -1079,20 +1079,20 @@ Partial Public Class MemberWall
             If newOff <> _scrollOffset Then
                 _scrollOffset = newOff
                 UpdateScrollBarForCurrentOffset()
-                Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
                 Return
             End If
         End If
 
         _pressedIndex = HitTestCard(e.Location)
-        If _pressedIndex >= 0 Then Invalidate()
+        If _pressedIndex >= 0 Then OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnMouseUp(e As MouseEventArgs)
         MyBase.OnMouseUp(e)
         If _scrollBar.IsDragging Then
             _scrollBar.EndDrag()
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
             Return
         End If
 
@@ -1100,7 +1100,7 @@ Partial Public Class MemberWall
         Dim pressed As Integer = _pressedIndex
         _pressedIndex = -1
         Dim hit As Integer = HitTestCard(e.Location)
-        If pressed >= 0 Then Invalidate()
+        If pressed >= 0 Then OuterToInnerRefreshScheduler.RequestFull(Me)
         If pressed >= 0 AndAlso pressed = hit AndAlso pressed < _items.Count Then
             Dim it = _items(pressed)
             RaiseEvent ItemClick(Me, New MemberItemEventArgs(it, pressed))
@@ -1114,7 +1114,7 @@ Partial Public Class MemberWall
         _hoverIndex = -1
         If _scrollBar.ResetHover() Then needInvalidate = True
         Cursor = Cursors.Default
-        If needInvalidate Then Invalidate()
+        If needInvalidate Then OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnMouseWheel(e As MouseEventArgs)
@@ -1125,7 +1125,7 @@ Partial Public Class MemberWall
         If newOff <> _scrollOffset Then
             _scrollOffset = newOff
             UpdateScrollBarForCurrentOffset()
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End If
     End Sub
 
@@ -1136,13 +1136,13 @@ Partial Public Class MemberWall
     Protected Overrides Sub OnSizeChanged(e As EventArgs)
         MyBase.OnSizeChanged(e)
         _layoutDirty = True
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnPaddingChanged(e As EventArgs)
         MyBase.OnPaddingChanged(e)
         _layoutDirty = True
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
@@ -1154,14 +1154,14 @@ Partial Public Class MemberWall
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
         _layoutDirty = True
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnEnabledChanged(e As EventArgs)
         MyBase.OnEnabledChanged(e)
         _pressedIndex = -1
         _hoverIndex = -1
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
 #End Region

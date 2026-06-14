@@ -775,12 +775,12 @@ Public Class Ultra2DChart
         _pendingChartChanged = False
         _pendingInvalidate = False
         If raiseChanged Then RaiseEvent ChartChanged(Me, EventArgs.Empty)
-        If invalidateNow AndAlso AutoRefresh Then Me.Invalidate()
+        If invalidateNow AndAlso AutoRefresh Then OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Public Sub RefreshChart(Optional rebuildLayout As Boolean = True)
         If rebuildLayout Then _layoutCache = Nothing
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
         If Me.IsHandleCreated Then Me.Update()
     End Sub
 
@@ -1637,7 +1637,7 @@ Public Class Ultra2DChart
             Return
         End If
         RaiseEvent ChartChanged(Me, EventArgs.Empty)
-        If AutoRefresh Then Me.Invalidate()
+        If AutoRefresh Then OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
@@ -1657,7 +1657,7 @@ Public Class Ultra2DChart
         Set(value As Boolean)
             If _autoRefresh = value Then Return
             _autoRefresh = value
-            If value Then Me.Invalidate()
+            If value Then OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -1681,7 +1681,9 @@ Public Class Ultra2DChart
             Return _backgroundSource
         End Get
         Set(value As Control)
-            SetValue(_backgroundSource, value)
+            If _backgroundSource Is value Then Return
+            _backgroundSource = BackgroundPenetrationV2.SetConsumerSource(Me, _backgroundSource, value)
+            NotifyStyleChanged()
         End Set
     End Property
 
@@ -2365,7 +2367,7 @@ Public Class Ultra2DChart
 
     Protected Overrides Sub OnEnabledChanged(e As EventArgs)
         MyBase.OnEnabledChanged(e)
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnForeColorChanged(e As EventArgs)
@@ -2375,7 +2377,7 @@ Public Class Ultra2DChart
 
     Protected Overrides Sub OnBackColorChanged(e As EventArgs)
         MyBase.OnBackColorChanged(e)
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 #End Region
 

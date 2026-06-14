@@ -1,4 +1,4 @@
-﻿Imports System.Runtime.InteropServices
+Imports System.Runtime.InteropServices
 
 ''' <summary>
 ''' 设置 Windows 任务栏按钮上的进度显示，支持绿色 (Normal)、红色 (Error)、黄色 (Paused) 三种颜色模式。

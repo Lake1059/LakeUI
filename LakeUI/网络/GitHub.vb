@@ -1,4 +1,4 @@
-﻿Imports System.IO
+Imports System.IO
 Imports System.Net.Http
 Imports System.Net.Http.Headers
 Imports System.Text.Json

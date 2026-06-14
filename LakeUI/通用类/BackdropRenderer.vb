@@ -35,9 +35,19 @@ Imports Vortice.Direct2D1
 ''' • <see cref="ComputeAverage"/>：直接对下采样源帧取平均，避免为了边框/阴影自动色额外回读 GPU。
 '''
 ''' === D2D 资源缓存 ===
-''' • <c>_frameD2DBitmap</c>：按 (RT, frameVersion) 失效；帧变 / RT 变才重传。
+''' • <c>_frameD2DBitmaps</c>：按 (RT, frameVersion) 失效；帧变 / RT 变才重传。
+'''   默认只保留最新一个 RT 的上传副本。静态 Image backdrop 会被多个页面/子窗体的 RT 采样，
+'''   如果按 RT 全量保留，会让显存随已访问选项卡数量增长；保留一个副本更符合“背景帧不变”的场景。
 ''' • <c>_noiseD2DBitmap</c> + <c>_noiseD2DBrush</c>：源噪点 128×128 终身不变，brush 按 RT 缓存；
 '''   opacity 与 tile scale 每帧便宜地通过 brush.Opacity / brush.Transform 设置，不会引起重建。
+'''
+''' === Image 模式坑点 ===
+''' • Image 模式的源图不随桌面变化而变化，RequestFrame 只应在首次启用、图片引用变化或窗口尺寸变化时触发。
+'''   最小化/恢复、标题栏 hover、激活状态切换不应反复重建背景帧。
+''' • <see cref="FrameVersion"/> 是背景穿透判断“图片帧是否真的变化”的唯一轻量信号。修改当前帧或清掉
+'''   CPU frame 时必须递增它，否则消费者会误判为未变化。
+''' • <see cref="DrawImageBackdropSlice"/> 只负责把当前 frame 的客户区切片画到给定 RT；tint / noise 由
+'''   ThisIsYourWindow 叠加，以便主窗口和 popup 可以用不同视觉参数。
 ''' </summary>
 Friend NotInheritable Class BackdropRenderer
     Implements IDisposable
@@ -88,6 +98,7 @@ Friend NotInheritable Class BackdropRenderer
     Private _sourceMode As Integer = 0
     Private ReadOnly _sourceLock As New Object()
     Private _sourceImage As Image
+    Private _sourceImageVersion As Integer
 
     ' 抓屏期间是否临时启用 WDA_EXCLUDEFROMCAPTURE 防止抓到自身。
     ' 当宿主长期保持 WDA_NONE（允许系统截图截到本窗口）时，
@@ -124,9 +135,18 @@ Friend NotInheritable Class BackdropRenderer
     ' ── 当前帧的 D2D 上传缓存（UI 线程独占；按 (RT, frameVersion) 失效）──
     ' 路径：CPU 生成的 _currentFrame (Format32bppPArgb) → ID2D1Bitmap，
     ' 在 DrawTo(rt, target) 命中时仅当 frameVersion 变化或 RT 变化才重传。
-    Private _frameD2DBitmap As ID2D1Bitmap
-    Private _frameD2DOwnerRT As WeakReference
-    Private _frameD2DUploadedVersion As Integer = -1
+    Private NotInheritable Class FrameD2DBitmapEntry
+        Public Bitmap As ID2D1Bitmap
+        Public OwnerRT As WeakReference
+        Public Version As Integer
+        Public LastUsed As Long
+    End Class
+
+    Private ReadOnly _frameD2DBitmaps As New Dictionary(Of ID2D1RenderTarget, FrameD2DBitmapEntry)()
+    Private _frameD2DBitmapClock As Long
+    ' Keep one uploaded copy by default. Image backdrop is static and may be sampled by many page
+    ' compositors; retaining one copy per RT makes VRAM scale with visited tab pages.
+    Private Const MaxFrameD2DBitmapRenderTargets As Integer = 1
 
     ' ── D2D 1.1 GPU blur 缓存（UI 线程独占；设备丢失或目标尺寸变化时重建）──
     Private _gpuContext As ID2D1DeviceContext
@@ -231,12 +251,19 @@ Friend NotInheritable Class BackdropRenderer
 
     ''' <summary>设置渲染来源：Desktop 抓屏 或 Image 静态源图（按 cover 撑满窗口）。</summary>
     Public Sub SetSource(useImage As Boolean, image As Image)
+        Dim sourceMode As Integer = If(useImage, 1, 0)
+        Dim changed As Boolean = (Volatile.Read(_sourceMode) <> sourceMode)
         Volatile.Write(_sourceMode, If(useImage, 1, 0))
         SyncLock _sourceLock
+            changed = changed OrElse Not Object.ReferenceEquals(_sourceImage, image)
             _sourceImage = image
         End SyncLock
-        ' 切换源后已发布的平均色不再可信
-        Volatile.Write(_publishedAverage, -1)
+        If changed Then
+            Interlocked.Increment(_sourceImageVersion)
+            ' 切换源后已发布的平均色不再可信
+            Volatile.Write(_publishedAverage, -1)
+            InvalidateDerivedFrameCaches()
+        End If
     End Sub
 
     ''' <summary>
@@ -302,12 +329,67 @@ Friend NotInheritable Class BackdropRenderer
     End Sub
 
     Private Sub DisposeFrameD2DBitmapNoLock()
-        If _frameD2DBitmap IsNot Nothing Then
-            Try : _frameD2DBitmap.Dispose() : Catch : End Try
-            _frameD2DBitmap = Nothing
+        For Each entry In _frameD2DBitmaps.Values
+            Try : entry.Bitmap?.Dispose() : Catch : End Try
+        Next
+        _frameD2DBitmaps.Clear()
+    End Sub
+
+    Private Function AcquireFrameD2DBitmapNoLock(rt As ID2D1RenderTarget,
+                                                 frame As Bitmap,
+                                                 version As Integer) As ID2D1Bitmap
+        If rt Is Nothing OrElse frame Is Nothing Then Return Nothing
+
+        Dim entry As FrameD2DBitmapEntry = Nothing
+        If _frameD2DBitmaps.TryGetValue(rt, entry) Then
+            Dim ownerAlive As Boolean = entry.OwnerRT IsNot Nothing AndAlso
+                                        ReferenceEquals(entry.OwnerRT.Target, rt)
+            If ownerAlive AndAlso entry.Version = version AndAlso entry.Bitmap IsNot Nothing Then
+                entry.LastUsed = NextFrameD2DBitmapClock()
+                Return entry.Bitmap
+            End If
+            RemoveFrameD2DBitmapEntryNoLock(rt)
         End If
-        _frameD2DOwnerRT = Nothing
-        _frameD2DUploadedVersion = -1
+
+        Dim bmp = D2DGlobals.CreateBitmapFromGdi(rt, frame)
+        If bmp Is Nothing Then Return Nothing
+        _frameD2DBitmaps(rt) = New FrameD2DBitmapEntry With {
+            .Bitmap = bmp,
+            .OwnerRT = New WeakReference(rt),
+            .Version = version,
+            .LastUsed = NextFrameD2DBitmapClock()
+        }
+        TrimFrameD2DBitmapEntriesNoLock(rt)
+        Return bmp
+    End Function
+
+    Private Function NextFrameD2DBitmapClock() As Long
+        _frameD2DBitmapClock += 1
+        Return _frameD2DBitmapClock
+    End Function
+
+    Private Sub RemoveFrameD2DBitmapEntryNoLock(rt As ID2D1RenderTarget)
+        If rt Is Nothing Then Return
+        Dim entry As FrameD2DBitmapEntry = Nothing
+        If Not _frameD2DBitmaps.TryGetValue(rt, entry) Then Return
+        _frameD2DBitmaps.Remove(rt)
+        Try : entry.Bitmap?.Dispose() : Catch : End Try
+    End Sub
+
+    Private Sub TrimFrameD2DBitmapEntriesNoLock(protectedRt As ID2D1RenderTarget)
+        While _frameD2DBitmaps.Count > MaxFrameD2DBitmapRenderTargets AndAlso _frameD2DBitmaps.Count > 0
+            Dim oldestRt As ID2D1RenderTarget = Nothing
+            Dim oldestEntry As FrameD2DBitmapEntry = Nothing
+            For Each kv In _frameD2DBitmaps
+                If protectedRt IsNot Nothing AndAlso ReferenceEquals(kv.Key, protectedRt) Then Continue For
+                If oldestEntry Is Nothing OrElse kv.Value.LastUsed < oldestEntry.LastUsed Then
+                    oldestRt = kv.Key
+                    oldestEntry = kv.Value
+                End If
+            Next
+            If oldestRt Is Nothing Then Exit While
+            RemoveFrameD2DBitmapEntryNoLock(oldestRt)
+        End While
     End Sub
 
     Private Sub ReleaseCpuBlurredFrame()
@@ -369,6 +451,24 @@ Friend NotInheritable Class BackdropRenderer
             SyncLock _frameLock
                 Return _currentFrame IsNot Nothing
             End SyncLock
+        End Get
+    End Property
+
+    Friend ReadOnly Property IsImageSource As Boolean
+        Get
+            Return Volatile.Read(_sourceMode) = 1
+        End Get
+    End Property
+
+    Friend ReadOnly Property SourceImageVersion As Integer
+        Get
+            Return Volatile.Read(_sourceImageVersion)
+        End Get
+    End Property
+
+    Friend ReadOnly Property FrameVersion As Integer
+        Get
+            Return Volatile.Read(_frameVersion)
         End Get
     End Property
 
@@ -558,7 +658,7 @@ Friend NotInheritable Class BackdropRenderer
                     host.BeginInvoke(CType(Sub()
                                                If host.IsDisposed OrElse Not host.IsHandleCreated Then Return
                                                If publishedNow Then RaiseEvent AverageCommitted(Me, EventArgs.Empty)
-                                               host.Invalidate()
+                                               OuterToInnerRefreshScheduler.RequestFull(host)
                                            End Sub, MethodInvoker))
                 End If
             Catch
@@ -878,6 +978,10 @@ Friend NotInheritable Class BackdropRenderer
     ''' <summary>把当前缓存帧拉伸绘制到目标矩形（覆盖整个客户区，含标题栏）。</summary>
     Public Sub DrawTo(g As Graphics, target As Rectangle)
         If g Is Nothing OrElse target.Width <= 0 OrElse target.Height <= 0 Then Return
+        If Math.Max(0, Volatile.Read(_passes)) <= 0 Then
+            DrawCpuFrame(g, target)
+            Return
+        End If
         If TryDrawGpuBlur(g, target) Then Return
         DrawCpuFrame(g, target)
     End Sub
@@ -1171,21 +1275,49 @@ Friend NotInheritable Class BackdropRenderer
             Dim curVer As Integer = If(frame Is _currentFrame,
                                        Volatile.Read(_frameVersion),
                                        _cpuBlurredSourceVersion Xor _cpuBlurredSettingsVersion)
-            Dim ownerAlive As Boolean = _frameD2DOwnerRT IsNot Nothing AndAlso ReferenceEquals(_frameD2DOwnerRT.Target, rt)
-            If _frameD2DBitmap Is Nothing OrElse Not ownerAlive OrElse _frameD2DUploadedVersion <> curVer Then
-                If _frameD2DBitmap IsNot Nothing Then
-                    Try : _frameD2DBitmap.Dispose() : Catch : End Try
-                    _frameD2DBitmap = Nothing
-                End If
-                _frameD2DBitmap = D2DGlobals.CreateBitmapFromGdi(rt, frame)
-                _frameD2DOwnerRT = New WeakReference(rt)
-                _frameD2DUploadedVersion = curVer
-            End If
-            d2dBmp = _frameD2DBitmap
+            d2dBmp = AcquireFrameD2DBitmapNoLock(rt, frame, curVer)
         End SyncLock
         If d2dBmp Is Nothing Then Return
         rt.DrawBitmap(d2dBmp, D2DGlobals.ToD2DRect(target), 1.0F, BitmapInterpolationMode.Linear, Nothing)
     End Sub
+
+    Friend Function DrawImageBackdropSlice(rt As ID2D1RenderTarget,
+                                           sourceClientRect As Rectangle,
+                                           destRect As Rectangle,
+                                           Optional opacity As Single = 1.0F) As Boolean
+        If rt Is Nothing OrElse sourceClientRect.Width <= 0 OrElse sourceClientRect.Height <= 0 OrElse
+           destRect.Width <= 0 OrElse destRect.Height <= 0 Then Return False
+        If _host Is Nothing OrElse _host.ClientSize.Width <= 0 OrElse _host.ClientSize.Height <= 0 Then Return False
+
+        Dim d2dBmp As ID2D1Bitmap = Nothing
+        Dim src As RectangleF
+        Dim frame As Bitmap = If(Math.Max(0, Volatile.Read(_passes)) > 0, GetCpuRenderableFrame(), Nothing)
+        SyncLock _frameLock
+            If frame Is Nothing Then frame = _currentFrame
+            If frame Is Nothing Then Return False
+
+            Dim curVer As Integer = If(frame Is _currentFrame,
+                                       Volatile.Read(_frameVersion),
+                                       _cpuBlurredSourceVersion Xor _cpuBlurredSettingsVersion)
+            d2dBmp = AcquireFrameD2DBitmapNoLock(rt, frame, curVer)
+            If d2dBmp Is Nothing Then Return False
+
+            Dim sx As Single = frame.Width / CSng(Math.Max(1, _host.ClientSize.Width))
+            Dim sy As Single = frame.Height / CSng(Math.Max(1, _host.ClientSize.Height))
+            src = New RectangleF(sourceClientRect.X * sx,
+                                 sourceClientRect.Y * sy,
+                                 sourceClientRect.Width * sx,
+                                 sourceClientRect.Height * sy)
+        End SyncLock
+
+        If d2dBmp Is Nothing Then Return False
+        rt.DrawBitmap(d2dBmp,
+                      D2DGlobals.ToD2DRect(destRect),
+                      Math.Max(0.0F, Math.Min(1.0F, opacity)),
+                      BitmapInterpolationMode.Linear,
+                      D2DGlobals.ToD2DRect(src))
+        Return True
+    End Function
 
     ''' <summary>
     ''' 在目标矩形上叠加噪点纹理（模拟 WinUI 亚克力颗粒）。

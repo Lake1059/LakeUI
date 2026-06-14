@@ -1,3 +1,3 @@
-﻿Public Class Form_ModernTabControl
+Public Class Form_ModernTabControl
 
 End Class

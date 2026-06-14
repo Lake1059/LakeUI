@@ -1,3 +1,3 @@
-﻿Public Class JustEmptyControl
+Public Class JustEmptyControl
 
 End Class

@@ -497,7 +497,7 @@ Public Class RamMonitor
             End SyncLock
         End If
 
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
         RaiseEvent SampleUpdated(Me, EventArgs.Empty)
     End Sub
 
@@ -512,7 +512,7 @@ Public Class RamMonitor
         If 采样器实例 Is Nothing Then Return
         Try
             最近样本 = RamSampler.Sample()
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         Catch
         End Try
     End Sub
@@ -522,7 +522,7 @@ Public Class RamMonitor
         SyncLock 历史锁
             历史数据.Clear()
         End SyncLock
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     ''' <summary>当前采样的只读快照。</summary>
@@ -991,7 +991,7 @@ Public Class RamMonitor
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End If
     End Sub
 
@@ -1033,7 +1033,7 @@ Public Class RamMonitor
         Dim newIdx As Integer = If(_悬停有效, 样本索引从X坐标(_悬停X, _图表矩形), -1)
         _悬停样本索引 = newIdx
         ' 只在命中的样本索引变化或悬停有效性切换时才重绘，避免每像素移动都触发重绘
-        If _悬停有效 <> wasValid OrElse newIdx <> prevIdx Then Me.Invalidate()
+        If _悬停有效 <> wasValid OrElse newIdx <> prevIdx Then OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnMouseLeave(e As EventArgs)
@@ -1041,7 +1041,7 @@ Public Class RamMonitor
         If _悬停有效 Then
             _悬停有效 = False
             _悬停样本索引 = -1
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End If
     End Sub
 
@@ -1071,17 +1071,17 @@ Public Class RamMonitor
 
     Protected Overrides Sub OnEnabledChanged(e As EventArgs)
         MyBase.OnEnabledChanged(e)
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnPaddingChanged(e As EventArgs)
         MyBase.OnPaddingChanged(e)
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
@@ -1091,7 +1091,7 @@ Public Class RamMonitor
 
     Protected Overrides Sub OnForeColorChanged(e As EventArgs)
         MyBase.OnForeColorChanged(e)
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 #End Region
 
@@ -1112,7 +1112,7 @@ Public Class RamMonitor
             Else
                 采样定时器.Stop()
             End If
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -1142,7 +1142,7 @@ Public Class RamMonitor
                 Case RamMonitorLanguage.Chinese : RamMonitorStrings.ApplyChinese()
                 Case RamMonitorLanguage.English : RamMonitorStrings.ApplyEnglish()
             End Select
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -1198,14 +1198,14 @@ Public Class RamMonitor
         If cur.Position = value Then Return
         cur.Position = value
         字段配置(f) = cur
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
     Private Sub 设置字段顺序(f As RamTextField, value As Integer)
         Dim cur = 字段配置(f)
         If cur.Order = value Then Return
         cur.Order = value
         字段配置(f) = cur
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
     Private Function 取字段位置(f As RamTextField) As TextSlotPosition
         Return 字段配置(f).Position
@@ -1456,7 +1456,7 @@ Public Class RamMonitor
         End Get
         Set(value As Boolean)
             启用历史记录 = value
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -1474,7 +1474,7 @@ Public Class RamMonitor
                 Dim overflow As Integer = 历史数据.Count - value
                 If overflow > 0 Then 历史数据.RemoveRange(0, overflow)
             End SyncLock
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -1554,7 +1554,7 @@ Public Class RamMonitor
         Set(value As Boolean)
             启用悬停读数值 = value
             If Not value Then _悬停有效 = False
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -1638,8 +1638,8 @@ Public Class RamMonitor
         End Get
         Set(value As Control)
             If _backgroundSource IsNot value Then
-                _backgroundSource = value
-                Me.Invalidate()
+                _backgroundSource = BackgroundPenetrationV2.SetConsumerSource(Me, _backgroundSource, value)
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Set
     End Property

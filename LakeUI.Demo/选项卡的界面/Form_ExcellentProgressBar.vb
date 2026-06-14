@@ -1,4 +1,4 @@
-﻿Public Class Form_ExcellentProgressBar
+Public Class Form_ExcellentProgressBar
     Private Sub ModernButton5_Click(sender As Object, e As EventArgs) Handles ModernButton5.Click
         ExcellentProgressBar5.Value = 0
     End Sub

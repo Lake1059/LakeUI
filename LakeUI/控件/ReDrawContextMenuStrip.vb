@@ -1,4 +1,4 @@
-﻿Imports System.ComponentModel
+Imports System.ComponentModel
 Imports System.ComponentModel.Design
 Imports System.Drawing.Drawing2D
 
@@ -12,7 +12,7 @@ Public Class ReDrawContextMenuStrip
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End If
     End Sub
 
@@ -218,7 +218,7 @@ Public Class ReDrawContextMenuStrip
     Protected Overrides Sub OnFontChanged(e As EventArgs)
         MyBase.OnFontChanged(e)
         _renderer.SyncItems(Me)
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
         If IsHandleCreated Then Update()
     End Sub
 

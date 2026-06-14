@@ -140,25 +140,25 @@ Public Class BooleanSwitch
         MyBase.OnMouseEnter(e)
         If Not Enabled Then Return
         鼠标状态 = MouseStateEnum.Hover
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
     Protected Overrides Sub OnMouseLeave(e As EventArgs)
         MyBase.OnMouseLeave(e)
         If Not Enabled Then Return
         鼠标状态 = MouseStateEnum.Normal
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
     Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
         MyBase.OnMouseDown(e)
         If Not Enabled Then Return
         鼠标状态 = MouseStateEnum.Pressed
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
     Protected Overrides Sub OnMouseUp(e As MouseEventArgs)
         MyBase.OnMouseUp(e)
         If Not Enabled Then Return
         鼠标状态 = If(ClientRectangle.Contains(e.Location), MouseStateEnum.Hover, MouseStateEnum.Normal)
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
     Protected Overrides Sub OnClick(e As EventArgs)
         MyBase.OnClick(e)
@@ -174,11 +174,11 @@ Public Class BooleanSwitch
             鼠标状态 = MouseStateEnum.Normal
             动画助手.StopAnimation()
         End If
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
@@ -191,7 +191,7 @@ Public Class BooleanSwitch
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End If
     End Sub
 
@@ -310,8 +310,8 @@ Public Class BooleanSwitch
         Set(value As Control)
             If _backgroundSource IsNot value Then
                 解除背景穿透消费者()
-                _backgroundSource = value
-                Me.Invalidate()
+                _backgroundSource = BackgroundPenetrationV2.SetConsumerSource(Me, _backgroundSource, value)
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Set
     End Property

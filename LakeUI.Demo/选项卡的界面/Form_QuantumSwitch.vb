@@ -1,3 +1,3 @@
-﻿Public Class Form_QuantumSwitch
+Public Class Form_QuantumSwitch
 
 End Class

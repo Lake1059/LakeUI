@@ -1,4 +1,4 @@
-﻿Public Class Form1
+Public Class Form1
     Private Sub Form1_Load(sender As Object, e As EventArgs) Handles MyBase.Load
         LakeUI.GlobalOptions.GlobalTextQuality = LakeUI.GlobalOptions.TextQualityMode.ClearType
         Me.ThisIsYourWindow1.Attach(Me)

@@ -1,4 +1,4 @@
-﻿Public Class Form_PixelPictureBox
+Public Class Form_PixelPictureBox
     Private Sub Form_PixelPictureBox_Load(sender As Object, e As EventArgs) Handles MyBase.Load
         PixelPictureBox1.AllowDrop = True
     End Sub

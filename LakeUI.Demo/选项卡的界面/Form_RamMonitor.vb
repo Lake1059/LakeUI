@@ -1,3 +1,3 @@
-﻿Public Class Form_RamMonitor
+Public Class Form_RamMonitor
 
 End Class

@@ -79,6 +79,12 @@ Public Class UltraDetailListView
         <DefaultValue(GetType(Color), ""), Description("前景色，留空时使用控件默认项文本颜色")>
         Public Property ForeColor As Color = Color.Empty
 
+        Friend CachedHeight As Integer = -1
+        Friend CachedMeasureVersion As Integer = -1
+        Friend CachedMeasureWidth As Integer = -1
+        Friend CachedMeasureFlags As TextFormatFlags
+        Friend CachedMeasureFontHash As Integer = 0
+
         Public Sub New()
         End Sub
         Public Sub New(text As String)
@@ -147,6 +153,17 @@ Public Class UltraDetailListView
 
         <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
         Public Property Tag As Object = Nothing
+
+        Friend CachedContentHeight As Integer = -1
+        Friend CachedContentVersion As Integer = -1
+        Friend CachedContentWidth As Integer = -1
+        Friend CachedContentFlags As TextFormatFlags
+        Friend CachedContentFontHash As Integer = 0
+        Friend CachedMainHeight As Integer = -1
+        Friend CachedMainVersion As Integer = -1
+        Friend CachedMainWidth As Integer = -1
+        Friend CachedMainFlags As TextFormatFlags
+        Friend CachedMainFontHash As Integer = 0
 
         Public Sub New()
         End Sub
@@ -220,6 +237,12 @@ Public Class UltraDetailListView
             CachedUpperPartHeight = 0
             CachedBottomLinesHeight = 0
             CachedSignature = 0
+            For Each subItem In SubItems
+                InvalidateSubItemMeasureCache(subItem)
+            Next
+            For Each line In BottomLines
+                InvalidateTextLineMeasureCache(line)
+            Next
         End Sub
 
         Private Function ShouldSerializeIcon() As Boolean
@@ -698,7 +721,7 @@ Public Class UltraDetailListView
         InvalidateMeasureCache()
         AttachAllItems()
         重建显示列表()
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
 #End Region
@@ -756,7 +779,7 @@ Public Class UltraDetailListView
         全部项高度缓存失效()
         If _updateCount <= 0 Then
             重建显示列表()
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End If
     End Sub
 
@@ -766,13 +789,13 @@ Public Class UltraDetailListView
         _columnXDirty = True
         If _updateCount <= 0 Then
             重建显示列表()
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End If
     End Sub
 
     Friend Sub InvalidateColumnVisual()
         D2DHelperV2.InvalidateTextFormatCache(Me)
-        If _updateCount <= 0 Then Me.Invalidate()
+        If _updateCount <= 0 Then OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Private Function AttachItem(item As ListItem) As Boolean
@@ -844,10 +867,36 @@ Public Class UltraDetailListView
         Return System.HashCode.Combine(font.FontFamily.Name, font.Style, font.SizeInPoints, font.Unit)
     End Function
 
+    Private Shared Sub InvalidateTextLineMeasureCache(line As TextLine)
+        If line Is Nothing Then Return
+        line.CachedHeight = -1
+        line.CachedMeasureVersion = -1
+        line.CachedMeasureWidth = -1
+        line.CachedMeasureFlags = 0
+        line.CachedMeasureFontHash = 0
+    End Sub
+
+    Private Shared Sub InvalidateSubItemMeasureCache(subItem As ListSubItem)
+        If subItem Is Nothing Then Return
+        subItem.CachedContentHeight = -1
+        subItem.CachedContentVersion = -1
+        subItem.CachedContentWidth = -1
+        subItem.CachedContentFlags = 0
+        subItem.CachedContentFontHash = 0
+        subItem.CachedMainHeight = -1
+        subItem.CachedMainVersion = -1
+        subItem.CachedMainWidth = -1
+        subItem.CachedMainFlags = 0
+        subItem.CachedMainFontHash = 0
+        For Each line In subItem.ExtraLines
+            InvalidateTextLineMeasureCache(line)
+        Next
+    End Sub
+
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End If
     End Sub
 
@@ -855,7 +904,7 @@ Public Class UltraDetailListView
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
             重建显示列表()
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End If
     End Sub
 
@@ -864,7 +913,7 @@ Public Class UltraDetailListView
             field = value
             全部项高度缓存失效()
             重建显示列表()
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End If
     End Sub
 
@@ -940,8 +989,33 @@ Public Class UltraDetailListView
         Dim h As Integer = Dpi(底部文本行间距)
         For Each bl In item.BottomLines
             h += Dpi(文本行间距)
-            h += 测量文本高度_D2D(bl.Text, If(bl.Font, Me.Font), proposed, flags)
+            h += 测量文本行高度缓存(bl, proposed.Width, flags)
         Next
+        Return h
+    End Function
+
+    Private Function 测量文本行高度缓存(line As TextLine, width As Integer, flags As TextFormatFlags) As Integer
+        If line Is Nothing Then
+            Return 测量文本高度_D2D("", Me.Font, New Size(Math.Max(1, width), Integer.MaxValue), flags)
+        End If
+
+        Dim f As Font = If(line.Font, Me.Font)
+        Dim fontHash = GetMeasureFontHash(f)
+        width = Math.Max(1, width)
+        If line.CachedHeight >= 0 AndAlso
+           line.CachedMeasureVersion = _measureVersion AndAlso
+           line.CachedMeasureWidth = width AndAlso
+           line.CachedMeasureFlags = flags AndAlso
+           line.CachedMeasureFontHash = fontHash Then
+            Return line.CachedHeight
+        End If
+
+        Dim h = 测量文本高度_D2D(line.Text, f, New Size(width, Integer.MaxValue), flags)
+        line.CachedHeight = h
+        line.CachedMeasureVersion = _measureVersion
+        line.CachedMeasureWidth = width
+        line.CachedMeasureFlags = flags
+        line.CachedMeasureFontHash = fontHash
         Return h
     End Function
 
@@ -1368,8 +1442,8 @@ Public Class UltraDetailListView
         End Get
         Set(value As Control)
             If _backgroundSource IsNot value Then
-                _backgroundSource = value
-                Me.Invalidate()
+                _backgroundSource = BackgroundPenetrationV2.SetConsumerSource(Me, _backgroundSource, value)
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Set
     End Property
@@ -1571,7 +1645,7 @@ Public Class UltraDetailListView
         Set(value As Padding)
             If 内容边距 <> value Then
                 内容边距 = value
-                Me.Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Set
     End Property
@@ -1899,7 +1973,7 @@ Public Class UltraDetailListView
                 _selectedIndices.Clear()
                 _selectedIndices.Add(first)
                 _selectedMin = first
-                Me.Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
                 RaiseEvent SelectedIndexChanged(Me, EventArgs.Empty)
             End If
         End Set
@@ -2006,7 +2080,7 @@ Public Class UltraDetailListView
                 _selectedMin = value
                 _selectionAnchor = value
             End If
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
             RaiseEvent SelectedIndexChanged(Me, EventArgs.Empty)
         End Set
     End Property
@@ -2095,7 +2169,7 @@ Public Class UltraDetailListView
             changed = True
         End If
         If changed Then
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
             RaiseEvent SelectedIndexChanged(Me, EventArgs.Empty)
         End If
     End Sub
@@ -2142,14 +2216,61 @@ Public Class UltraDetailListView
     End Function
 
     Private Function 计算子项内容高度(sub_ As ListSubItem, availWidth As Integer, flags As TextFormatFlags) As Integer
-        Dim f As Font = If(sub_.Font, Me.Font)
-        Dim proposed As New Size(Math.Max(1, availWidth), Integer.MaxValue)
-        Dim totalH As Integer = 测量文本高度_D2D(sub_.Text, f, proposed, flags)
+        If sub_ Is Nothing Then Return 0
+        Dim width = Math.Max(1, availWidth)
+        Dim fontHash = GetSubItemMeasureFontHash(sub_)
+        If sub_.CachedContentHeight >= 0 AndAlso
+           sub_.CachedContentVersion = _measureVersion AndAlso
+           sub_.CachedContentWidth = width AndAlso
+           sub_.CachedContentFlags = flags AndAlso
+           sub_.CachedContentFontHash = fontHash Then
+            Return sub_.CachedContentHeight
+        End If
+
+        Dim totalH As Integer = 测量子项主文本高度缓存(sub_, width, flags)
         For Each line_ In sub_.ExtraLines
             totalH += Dpi(文本行间距)
-            totalH += 测量文本高度_D2D(line_.Text, If(line_.Font, Me.Font), proposed, flags)
+            totalH += 测量文本行高度缓存(line_, width, flags)
         Next
+
+        sub_.CachedContentHeight = totalH
+        sub_.CachedContentVersion = _measureVersion
+        sub_.CachedContentWidth = width
+        sub_.CachedContentFlags = flags
+        sub_.CachedContentFontHash = fontHash
         Return totalH
+    End Function
+
+    Private Function 测量子项主文本高度缓存(sub_ As ListSubItem, availWidth As Integer, flags As TextFormatFlags) As Integer
+        If sub_ Is Nothing Then Return 0
+        Dim width = Math.Max(1, availWidth)
+        Dim f As Font = If(sub_.Font, Me.Font)
+        Dim fontHash = GetMeasureFontHash(f)
+        If sub_.CachedMainHeight >= 0 AndAlso
+           sub_.CachedMainVersion = _measureVersion AndAlso
+           sub_.CachedMainWidth = width AndAlso
+           sub_.CachedMainFlags = flags AndAlso
+           sub_.CachedMainFontHash = fontHash Then
+            Return sub_.CachedMainHeight
+        End If
+
+        Dim h = 测量文本高度_D2D(sub_.Text, f, New Size(width, Integer.MaxValue), flags)
+        sub_.CachedMainHeight = h
+        sub_.CachedMainVersion = _measureVersion
+        sub_.CachedMainWidth = width
+        sub_.CachedMainFlags = flags
+        sub_.CachedMainFontHash = fontHash
+        Return h
+    End Function
+
+    Private Function GetSubItemMeasureFontHash(sub_ As ListSubItem) As Integer
+        If sub_ Is Nothing Then Return 0
+        Dim hash As New System.HashCode()
+        hash.Add(GetMeasureFontHash(If(sub_.Font, Me.Font)))
+        For Each line In sub_.ExtraLines
+            hash.Add(GetMeasureFontHash(If(line.Font, Me.Font)))
+        Next
+        Return hash.ToHashCode()
     End Function
 
     Private Sub 全部项高度缓存失效()
@@ -2165,7 +2286,7 @@ Public Class UltraDetailListView
         _columnXDirty = True
         If _updateCount <= 0 Then
             重建显示列表()
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End If
         D2DHelperV2.RefreshFontDependentRendering(Me)
     End Sub
@@ -2604,11 +2725,10 @@ Public Class UltraDetailListView
             If colFixed Then contentH = Math.Min(contentH, cellRect.Height)
             Dim startY As Integer = cellRect.Y + Math.Max(0, (cellRect.Height - contentH) \ 2)
             Dim lineY As Integer = startY
-            Dim proposed As New Size(cellRect.Width, Integer.MaxValue)
 
             Dim mf As Font = If(sub_.Font, Me.Font)
             Dim mc As Color = If(sub_.ForeColor <> Color.Empty, sub_.ForeColor, 项文本颜色)
-            Dim mh As Integer = 测量文本高度_D2D(sub_.Text, mf, proposed, cellFlags)
+            Dim mh As Integer = 测量子项主文本高度缓存(sub_, cellRect.Width, cellFlags)
             If Not String.IsNullOrEmpty(sub_.Text) Then
                 Dim remainH As Integer = cellRect.Bottom - lineY
                 If remainH > 0 Then
@@ -2621,7 +2741,7 @@ Public Class UltraDetailListView
                 lineY += Dpi(文本行间距)
                 Dim lf As Font = If(line_.Font, Me.Font)
                 Dim lc As Color = If(line_.ForeColor <> Color.Empty, line_.ForeColor, 项文本颜色)
-                Dim lh As Integer = 测量文本高度_D2D(line_.Text, lf, proposed, cellFlags)
+                Dim lh As Integer = 测量文本行高度缓存(line_, cellRect.Width, cellFlags)
                 If Not String.IsNullOrEmpty(line_.Text) Then
                     Dim remainH As Integer = cellRect.Bottom - lineY
                     If remainH > 0 Then
@@ -2636,12 +2756,11 @@ Public Class UltraDetailListView
             Dim blX As Integer = rowRect.X + scaledPadding.Left
             Dim blW As Integer = rowRect.Width - scaledPadding.Horizontal
             Dim blY As Integer = rowRect.Y + scaledPadding.Top + upperPartH + Dpi(底部文本行间距)
-            Dim blProposed As New Size(Math.Max(1, blW), Integer.MaxValue)
             For Each bl In item.BottomLines
                 blY += Dpi(文本行间距)
                 Dim lf As Font = If(bl.Font, Me.Font)
                 Dim lc As Color = If(bl.ForeColor <> Color.Empty, bl.ForeColor, 项文本颜色)
-                Dim lh As Integer = 测量文本高度_D2D(bl.Text, lf, blProposed, flags)
+                Dim lh As Integer = 测量文本行高度缓存(bl, blW, flags)
                 If Not String.IsNullOrEmpty(bl.Text) Then
                     D2DTextRenderer.DrawText(rt, bl.Text, lf, New Rectangle(blX, blY, blW, lh), lc, flags, dpiS, tfc, brushCache)
                 End If
@@ -2678,7 +2797,7 @@ Public Class UltraDetailListView
             _scrollOffset = _scrollBar.DragMove(e.Y, _displayRows.Count, visCount)
             Dim hitRow = 命中测试行(e.Location)
             更新悬停(hitRow)
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
             Return
         End If
 
@@ -2687,7 +2806,7 @@ Public Class UltraDetailListView
             Dim totalW = 获取总列宽()
             Dim visibleW = 获取可见列宽()
             _hScrollOffset = _hScrollBar.DragMoveHorizontal(e.X, totalW, visibleW)
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
             Return
         End If
 
@@ -2704,7 +2823,7 @@ Public Class UltraDetailListView
             If _isDragReordering Then
                 隐藏截断提示()
                 _dragReorderInsertIndex = 计算拖动排序插入位置(e.Y)
-                Me.Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
                 Return
             End If
 
@@ -2739,7 +2858,7 @@ Public Class UltraDetailListView
                             _dragReorderSourceIndices = New List(Of Integer) From {_dragReorderSourceIndex}
                         End If
                         _dragReorderInsertIndex = _dragReorderSourceIndex
-                        Me.Invalidate()
+                        OuterToInnerRefreshScheduler.RequestFull(Me)
                         Return
                     ElseIf 允许多选 Then
                         _isDragSelecting = True
@@ -2751,7 +2870,7 @@ Public Class UltraDetailListView
                 隐藏截断提示()
                 _dragCurrent = e.Location
                 更新拖选(e)
-                Me.Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
                 Return
             End If
         End If
@@ -2759,7 +2878,7 @@ Public Class UltraDetailListView
         Dim needInvalidate As Boolean = False
         If _scrollBar.UpdateHover(e.Location) Then needInvalidate = True
         If _hScrollBar.UpdateHover(e.Location) Then needInvalidate = True
-        If needInvalidate Then Me.Invalidate()
+        If needInvalidate Then OuterToInnerRefreshScheduler.RequestFull(Me)
 
         If 列标题可见 AndAlso _columns.Count > 0 AndAlso 允许调整列宽 Then
             Dim headerRect = 获取列标题区域()
@@ -2792,7 +2911,7 @@ Public Class UltraDetailListView
             Dim newOff = _scrollBar.TrackClick(e.Location, _scrollOffset, _displayRows.Count, visCount)
             If newOff <> _scrollOffset Then
                 _scrollOffset = newOff
-                Me.Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
                 Return
             End If
         End If
@@ -2804,7 +2923,7 @@ Public Class UltraDetailListView
             Dim newHOff = _hScrollBar.TrackClickHorizontal(e.Location, _hScrollOffset, totalW, visibleW)
             If newHOff <> _hScrollOffset Then
                 _hScrollOffset = newHOff
-                Me.Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
                 Return
             End If
         End If
@@ -2829,7 +2948,7 @@ Public Class UltraDetailListView
             If row.Type = DisplayRowType.GroupHeader Then
                 row.Group.IsCollapsed = Not row.Group.IsCollapsed
                 重建显示列表()
-                Me.Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
                 Return
             End If
         End If
@@ -2854,7 +2973,7 @@ Public Class UltraDetailListView
             _dragReorderSourceIndices.Clear()
             _dragReorderInsertIndex = -1
             _mouseDownInContent = False
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
             Return
         End If
 
@@ -2864,7 +2983,7 @@ Public Class UltraDetailListView
             _scrollBar.EndDrag()
             _hScrollBar.EndDrag()
             _columnResizeIndex = -1
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
             Return
         End If
 
@@ -2886,7 +3005,7 @@ Public Class UltraDetailListView
         Dim needInvalidate2 As Boolean = False
         If _scrollBar.ResetHover() Then needInvalidate2 = True
         If _hScrollBar.ResetHover() Then needInvalidate2 = True
-        If needInvalidate2 Then Me.Invalidate()
+        If needInvalidate2 Then OuterToInnerRefreshScheduler.RequestFull(Me)
         Me.Cursor = Cursors.Default
     End Sub
 
@@ -2902,7 +3021,7 @@ Public Class UltraDetailListView
                 Dim newHOff = ScrollBarRenderer.HandleHorizontalWheel(e.Delta, _hScrollOffset, totalW, visibleW)
                 If newHOff <> _hScrollOffset Then
                     _hScrollOffset = newHOff
-                    Me.Invalidate()
+                    OuterToInnerRefreshScheduler.RequestFull(Me)
                 End If
             End If
             Return
@@ -2914,7 +3033,7 @@ Public Class UltraDetailListView
             _scrollOffset = newOff
             Dim hitRow = 命中测试行(e.Location)
             更新悬停(hitRow)
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End If
     End Sub
 
@@ -2987,7 +3106,7 @@ Public Class UltraDetailListView
             ElseIf row.Type = DisplayRowType.GroupHeader Then
                 row.Group.IsCollapsed = Not row.Group.IsCollapsed
                 重建显示列表()
-                Me.Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End If
     End Sub
@@ -3033,7 +3152,7 @@ Public Class UltraDetailListView
                     _dragReorderSourceIndex = -1
                     _dragReorderSourceIndices.Clear()
                     _dragReorderInsertIndex = -1
-                    Me.Invalidate()
+                    OuterToInnerRefreshScheduler.RequestFull(Me)
                     e.Handled = True
                 End If
             Case Keys.Up
@@ -3359,8 +3478,9 @@ Public Class UltraDetailListView
 
         ' 让 list view 立刻重画一次，使穿透缓存中不再包含正在编辑的 cell 文字，
         ' 避免编辑框采样时拍到旧文字 → 与 DirectWrite 文字层叠加成重影。
-        BackgroundPenetrationV2.Invalidate(Me)
-        Me.Refresh()
+        Dim editDirtyRect As New Rectangle(cellX, rowY, cellW, row.Height)
+        BackgroundPenetrationV2.Invalidate(Me, editDirtyRect)
+        OuterToInnerRefreshScheduler.Request(Me, editDirtyRect, immediate:=True)
 
         Me.Controls.Add(_editTextBox)
         _editTextBox.BringToFront()
@@ -3418,7 +3538,7 @@ Public Class UltraDetailListView
         _editColumnIndex = -1
         Me.Controls.Remove(editBox)
         editBox.Dispose()
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
         If shouldRefocus Then Me.Focus()
     End Sub
 
@@ -3523,7 +3643,7 @@ Public Class UltraDetailListView
         If displayRowIndex < 0 OrElse displayRowIndex >= _displayRows.Count Then Return
         If displayRowIndex < _scrollOffset Then
             _scrollOffset = displayRowIndex
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
             Return
         End If
         Dim changed = False
@@ -3534,7 +3654,7 @@ Public Class UltraDetailListView
         End While
         If changed Then
             校正滚动偏移()
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End If
     End Sub
 
@@ -3587,7 +3707,7 @@ Public Class UltraDetailListView
         If _updateCount <= 0 Then
             _updateCount = 0
             重建显示列表()
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End If
     End Sub
 
@@ -3671,11 +3791,10 @@ Public Class UltraDetailListView
             Dim cellTop = rowRect.Y + scaledPadding.Top
             Dim startY = cellTop + Math.Max(0, (upperPartH - contentH) \ 2)
             Dim lineY = startY
-            Dim proposed As New Size(Math.Max(1, cellW), Integer.MaxValue)
 
             ' 主文本
             Dim mf = If(sub_.Font, Me.Font)
-            Dim mh = 测量文本高度_D2D(sub_.Text, mf, proposed, measureFlags)
+            Dim mh = 测量子项主文本高度缓存(sub_, cellW, measureFlags)
             If pt.Y >= lineY AndAlso pt.Y < lineY + mh Then
                 Return 检测文本截断(sub_.Text, mf, cellW, measureFlags)
             End If
@@ -3685,7 +3804,7 @@ Public Class UltraDetailListView
             For Each line_ In sub_.ExtraLines
                 lineY += Dpi(文本行间距)
                 Dim lf = If(line_.Font, Me.Font)
-                Dim lh = 测量文本高度_D2D(line_.Text, lf, proposed, measureFlags)
+                Dim lh = 测量文本行高度缓存(line_, cellW, measureFlags)
                 If pt.Y >= lineY AndAlso pt.Y < lineY + lh Then
                     Return 检测文本截断(line_.Text, lf, cellW, measureFlags)
                 End If
@@ -3699,11 +3818,10 @@ Public Class UltraDetailListView
         If item.BottomLines.Count > 0 Then
             Dim blW = rowRect.Width - scaledPadding.Horizontal
             Dim blY = rowRect.Y + scaledPadding.Top + upperPartH + Dpi(底部文本行间距)
-            Dim blProp As New Size(Math.Max(1, blW), Integer.MaxValue)
             For Each bl In item.BottomLines
                 blY += Dpi(文本行间距)
                 Dim lf = If(bl.Font, Me.Font)
-                Dim lh = 测量文本高度_D2D(bl.Text, lf, blProp, measureFlags)
+                Dim lh = 测量文本行高度缓存(bl, blW, measureFlags)
                 If pt.Y >= blY AndAlso pt.Y < blY + lh Then
                     Return 检测文本截断(bl.Text, lf, blW, measureFlags)
                 End If
@@ -3735,13 +3853,13 @@ Public Class UltraDetailListView
 
         If 动画时长 <= 0 OrElse Not Me.IsHandleCreated Then
             _hoverAnimActive = False
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
             Return
         End If
 
         If newIndex < 0 Then
             _hoverAnimActive = False
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
             Return
         End If
 
@@ -3749,7 +3867,7 @@ Public Class UltraDetailListView
         Dim newH = _displayRows(newIndex).Height
         If newY < 0 Then
             _hoverAnimActive = False
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
             Return
         End If
 
@@ -3811,7 +3929,7 @@ Public Class UltraDetailListView
             重建显示列表()
         End If
         校正横向滚动偏移()
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
@@ -3834,7 +3952,7 @@ Public Class UltraDetailListView
         _moreSymbolFontKey = 0F
         _columnXDirty = True
         重建显示列表()
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Friend Sub 释放资源()

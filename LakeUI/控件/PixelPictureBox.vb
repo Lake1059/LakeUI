@@ -1,4 +1,4 @@
-﻿Imports System.ComponentModel
+Imports System.ComponentModel
 Imports System.Drawing.Drawing2D
 Imports D2D = Vortice.Direct2D1
 
@@ -32,7 +32,7 @@ Public Class PixelPictureBox
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
             更新滚动区域()
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End If
     End Sub
 
@@ -271,7 +271,7 @@ Public Class PixelPictureBox
             _zoomFactor = 0
             更新缩放范围()
             更新滚动区域()
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -285,7 +285,7 @@ Public Class PixelPictureBox
             最大像素边长 = Math.Max(1, value)
             更新缩放范围()
             更新滚动区域()
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -325,7 +325,7 @@ Public Class PixelPictureBox
                 If value AndAlso HasSelection Then
                     _selectionRect = 应用强制居中(_selectionRect)
                 End If
-                Me.Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Set
     End Property
@@ -338,7 +338,7 @@ Public Class PixelPictureBox
         End Get
         Set(value As Rectangle)
             _selectionRect = 应用强制居中(value)
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
             RaiseEvent SelectionChanged(Me, EventArgs.Empty)
         End Set
     End Property
@@ -352,7 +352,7 @@ Public Class PixelPictureBox
         Set(value As Size)
             Dim r As New Rectangle(_selectionRect.Location, value)
             _selectionRect = 应用强制居中(约束矩形到图片(r))
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
             RaiseEvent SelectionChanged(Me, EventArgs.Empty)
         End Set
     End Property
@@ -368,7 +368,7 @@ Public Class PixelPictureBox
     ''' <summary>清除当前框选区域。</summary>
     Public Sub ClearSelection()
         _selectionRect = New Rectangle(0, 0, 0, 0)
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
         RaiseEvent SelectionChanged(Me, EventArgs.Empty)
     End Sub
 
@@ -473,8 +473,8 @@ Public Class PixelPictureBox
         End Get
         Set(value As Control)
             If _backgroundSource IsNot value Then
-                _backgroundSource = value
-                Me.Invalidate()
+                _backgroundSource = BackgroundPenetrationV2.SetConsumerSource(Me, _backgroundSource, value)
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Set
     End Property
@@ -940,7 +940,7 @@ Public Class PixelPictureBox
                 If newOff <> _scrollY Then
                     _scrollY = newOff
                     更新滚动区域()
-                    Me.Invalidate()
+                    OuterToInnerRefreshScheduler.RequestFull(Me)
                     Return
                 End If
             End If
@@ -949,7 +949,7 @@ Public Class PixelPictureBox
                 If newHOff <> _scrollX Then
                     _scrollX = newHOff
                     更新滚动区域()
-                    Me.Invalidate()
+                    OuterToInnerRefreshScheduler.RequestFull(Me)
                     Return
                 End If
             End If
@@ -990,7 +990,7 @@ Public Class PixelPictureBox
             Dim py As Integer = Math.Max(0, Math.Min(CInt(Math.Floor(imgPt.Y)), _image.Height - 1))
             _selectionRect = New Rectangle(px, py, 0, 0)
             _dragSelectionStart = _selectionRect
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
             Return
         End If
     End Sub
@@ -1003,14 +1003,14 @@ Public Class PixelPictureBox
             Dim viewport As Size = 获取有效视口大小()
             _scrollY = _vScrollBar.DragMove(e.Y, 获取缩放图片尺寸().Height, viewport.Height)
             更新滚动区域()
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
             Return
         End If
         If _hScrollBar.IsDragging Then
             Dim viewport As Size = 获取有效视口大小()
             _scrollX = _hScrollBar.DragMoveHorizontal(e.X, 获取缩放图片尺寸().Width, viewport.Width)
             更新滚动区域()
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
             Return
         End If
 
@@ -1021,7 +1021,7 @@ Public Class PixelPictureBox
                 _scrollX = _dragScrollStart.X - dx
                 _scrollY = _dragScrollStart.Y - dy
                 更新滚动区域()
-                Me.Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
 
             Case DragMode.MoveSelection
                 If _image IsNot Nothing AndAlso Not _selectionForceCenter Then
@@ -1032,7 +1032,7 @@ Public Class PixelPictureBox
                     newX = Math.Max(0, Math.Min(newX, _image.Width - _dragSelectionStart.Width))
                     newY = Math.Max(0, Math.Min(newY, _image.Height - _dragSelectionStart.Height))
                     _selectionRect = New Rectangle(newX, newY, _dragSelectionStart.Width, _dragSelectionStart.Height)
-                    Me.Invalidate()
+                    OuterToInnerRefreshScheduler.RequestFull(Me)
                 End If
 
             Case DragMode.ResizeSelection
@@ -1060,7 +1060,7 @@ Public Class PixelPictureBox
                         If y2 < y1 Then ry = y1 - rh
                     End If
                     _selectionRect = 应用强制居中(约束矩形到图片(New Rectangle(rx, ry, rw, rh)))
-                    Me.Invalidate()
+                    OuterToInnerRefreshScheduler.RequestFull(Me)
                 End If
 
             Case DragMode.None
@@ -1070,7 +1070,7 @@ Public Class PixelPictureBox
                 Dim needInvalidate As Boolean = False
                 If _vScrollBar.UpdateHover(e.Location) Then needInvalidate = True
                 If _hScrollBar.UpdateHover(e.Location) Then needInvalidate = True
-                If needInvalidate Then Me.Invalidate()
+                If needInvalidate Then OuterToInnerRefreshScheduler.RequestFull(Me)
         End Select
     End Sub
 
@@ -1094,7 +1094,7 @@ Public Class PixelPictureBox
         Dim needInvalidate As Boolean = False
         If _vScrollBar.ResetHover() Then needInvalidate = True
         If _hScrollBar.ResetHover() Then needInvalidate = True
-        If needInvalidate Then Me.Invalidate()
+        If needInvalidate Then OuterToInnerRefreshScheduler.RequestFull(Me)
         Me.Cursor = Cursors.Default
     End Sub
 
@@ -1121,7 +1121,7 @@ Public Class PixelPictureBox
         _scrollY = CInt(Math.Round(imgPt.Y * _zoomFactor - (e.Location.Y - bw)))
 
         更新滚动区域()
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Private Sub 更新光标(clientPt As Point)
@@ -1217,7 +1217,7 @@ Public Class PixelPictureBox
         End If
 
         _selectionRect = 应用强制居中(约束矩形到图片(New Rectangle(newX, newY, newW, newH)))
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Private Function 约束矩形到图片(r As Rectangle) As Rectangle
@@ -1249,7 +1249,7 @@ Public Class PixelPictureBox
         MyBase.OnSizeChanged(e)
         更新缩放范围()
         更新滚动区域()
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)

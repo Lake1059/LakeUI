@@ -5,6 +5,10 @@ Imports Vortice.Direct2D1
 ''' <summary>
 ''' LakeUI 内置消息窗口的全局毛玻璃配置。默认关闭。
 ''' </summary>
+''' <remarks>
+''' 这些选项只影响 LakeUI 自带消息窗口，不会改变 <see cref="ThisIsYourWindow"/> 或普通 popup 的玻璃设置。
+''' Image 模式下的 BackdropImage 由调用方持有；消息窗口只引用它，不负责 Dispose。
+''' </remarks>
 Public NotInheritable Class MessageDialogOptions
     Private Sub New()
     End Sub
@@ -20,6 +24,13 @@ Public NotInheritable Class MessageDialogOptions
     Public Shared Property BackdropNoiseScale As Single = 1.0F
 End Class
 
+''' <summary>
+''' 消息窗口毛玻璃背景控制器。
+''' </summary>
+''' <remarks>
+''' 每个消息窗 Form 一份实例；Prepare 负责抓取/生成当前背景帧，Draw 只消费已生成的帧。
+''' Dispose 会释放内部 PopupBackdropRenderer 与 BackdropRenderer。
+''' </remarks>
 Friend NotInheritable Class MessageDialogBackdropController
     Implements IDisposable
 
@@ -28,6 +39,7 @@ Friend NotInheritable Class MessageDialogBackdropController
 
     Public Sub New(host As Form)
         _host = host
+        ' 消息窗本身就是顶层浮窗。Auto 抓屏时临时排除自身，避免抓到自己的白底/阴影形成反馈。
         _backdrop = New PopupBackdropRenderer(host) With {
             .TransientExcludeOnCapture = True
         }
@@ -107,6 +119,18 @@ Friend NotInheritable Class MessageDialogBackdropController
     End Sub
 End Class
 
+''' <summary>
+''' 消息窗口渲染与 Win32 小工具集合：系统图标、owner 居中、玻璃背景和按钮样式。
+''' </summary>
+''' <remarks>
+''' 这里不保存 D2D 资源；真正的毛玻璃帧由 <see cref="MessageDialogBackdropController"/> /
+''' <see cref="PopupBackdropRenderer"/> 管理。
+'''
+''' 坑点：
+''' • SHGetStockIconInfo 返回的 hIcon 必须 DestroyIcon；TryGetStockIcon 会 clone 一份托管 Icon 后释放原句柄。
+''' • CreateMessageIconBitmap 返回的 Bitmap 由调用方 Dispose，通常作为 PictureBox / D2D 上传源使用。
+''' • CenterOnOwner 使用 Win32 GetWindowRect，适合 owner 不是 Control 的场景。
+''' </remarks>
 Friend Module MessageDialogRendering
     <DllImport("user32.dll")>
     Private Function GetWindowRect(hWnd As IntPtr, ByRef rect As NativeRect) As Boolean

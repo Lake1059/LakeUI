@@ -250,8 +250,8 @@ Public Class AgentRoom
         End Get
         Set(value As Control)
             If _backgroundSource IsNot value Then
-                _backgroundSource = value
-                Me.Invalidate()
+                _backgroundSource = BackgroundPenetrationV2.SetConsumerSource(Me, _backgroundSource, value)
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Set
     End Property
@@ -319,7 +319,7 @@ Public Class AgentRoom
             If _itemSpacing <> value Then
                 _itemSpacing = value
                 _contentHeightDirty = True
-                Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Set
     End Property
@@ -333,7 +333,7 @@ Public Class AgentRoom
         Set(value As Padding)
             If _bubblePadding <> value Then
                 _bubblePadding = value
-                InvalidateAllItemsLayout() : Invalidate()
+                InvalidateAllItemsLayout() : OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Set
     End Property
@@ -358,7 +358,7 @@ Public Class AgentRoom
         Set(value As BubbleWidthMode)
             If _bubbleWidthMode <> value Then
                 _bubbleWidthMode = value
-                InvalidateAllItemsLayout() : Invalidate()
+                InvalidateAllItemsLayout() : OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Set
     End Property
@@ -373,7 +373,7 @@ Public Class AgentRoom
             value = Math.Max(0.1F, Math.Min(1.0F, value))
             If _bubbleMaxWidthRatio <> value Then
                 _bubbleMaxWidthRatio = value
-                InvalidateAllItemsLayout() : Invalidate()
+                InvalidateAllItemsLayout() : OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Set
     End Property
@@ -388,7 +388,7 @@ Public Class AgentRoom
             value = Math.Max(40, value)
             If _bubbleFixedWidth <> value Then
                 _bubbleFixedWidth = value
-                InvalidateAllItemsLayout() : Invalidate()
+                InvalidateAllItemsLayout() : OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Set
     End Property
@@ -534,7 +534,7 @@ Public Class AgentRoom
         Set(value As Padding)
             If _cardPadding <> value Then
                 _cardPadding = value
-                InvalidateAllItemsLayout() : Invalidate()
+                InvalidateAllItemsLayout() : OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Set
     End Property
@@ -549,7 +549,7 @@ Public Class AgentRoom
             value = Math.Max(0.2F, Math.Min(1.0F, value))
             If _cardMaxWidthRatio <> value Then
                 _cardMaxWidthRatio = value
-                InvalidateAllItemsLayout() : Invalidate()
+                InvalidateAllItemsLayout() : OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Set
     End Property
@@ -691,7 +691,7 @@ Public Class AgentRoom
         _滚动偏移 = 0
         _pinnedToBottom = True
         _contentHeightDirty = True
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     ''' <summary>添加一条用户消息。</summary>
@@ -734,7 +734,7 @@ Public Class AgentRoom
         EnsureLayout()
         Dim viewH As Integer = ContentViewportHeight()
         _滚动偏移 = Math.Max(0, _contentHeight - viewH)
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 #End Region
 
@@ -743,7 +743,7 @@ Public Class AgentRoom
         If item Is Nothing Then Return
         item.NeedsRelayout = True
         _contentHeightDirty = True
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Friend Sub OnItemsChanged(index As Integer, isInsert As Boolean)
@@ -751,7 +751,7 @@ Public Class AgentRoom
         If isInsert AndAlso _autoScrollToBottom AndAlso _pinnedToBottom Then
             ' 在贴底状态下插入，应保持贴底
         End If
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Private Sub InvalidateAllItemsLayout()
@@ -791,7 +791,7 @@ Public Class AgentRoom
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End If
     End Sub
 #End Region
@@ -1197,7 +1197,7 @@ Public Class AgentRoom
             _hasSelection = False
             _selAnchor = New TextPos(-1, 0)
             _selCaret = New TextPos(-1, 0)
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End If
     End Sub
 
@@ -1207,7 +1207,7 @@ Public Class AgentRoom
         Dim last = _items(_items.Count - 1)
         _selCaret = New TextPos(_items.Count - 1, last.Text.Length)
         _hasSelection = True
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Public Function GetSelectedText() As String
@@ -1312,7 +1312,7 @@ Public Class AgentRoom
             ' 滚动条优先
             If _scrollBar.BeginDrag(e.Location, _滚动偏移) Then
                 Capture = True
-                Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
                 Return
             End If
             If _scrollBar.TrackRect.Contains(e.Location) Then
@@ -1320,7 +1320,7 @@ Public Class AgentRoom
                 Dim totalH = Math.Max(viewH, _contentHeight)
                 _滚动偏移 = _scrollBar.TrackClick(e.Location, _滚动偏移, totalH, viewH)
                 _pinnedToBottom = (_滚动偏移 >= totalH - viewH)
-                Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
                 Return
             End If
 
@@ -1342,7 +1342,7 @@ Public Class AgentRoom
                     _hasSelection = False
                     _mouseSelecting = True
                     Capture = True
-                    Invalidate()
+                    OuterToInnerRefreshScheduler.RequestFull(Me)
                 End If
             End If
         End If
@@ -1355,7 +1355,7 @@ Public Class AgentRoom
             Dim totalH = Math.Max(viewH, _contentHeight)
             _滚动偏移 = _scrollBar.DragMove(e.Y, totalH, viewH)
             _pinnedToBottom = (_滚动偏移 >= totalH - viewH)
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
             Return
         End If
 
@@ -1364,16 +1364,16 @@ Public Class AgentRoom
             If HitTestText(e.Location, pos, snap:=True) Then
                 _selCaret = pos
                 _hasSelection = (_selAnchor <> _selCaret)
-                Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
             ' 边缘自动滚动
             Dim area = GetContentArea()
             If e.Y < area.Top Then
-                _滚动偏移 = Math.Max(0, _滚动偏移 - 8) : Invalidate()
+                _滚动偏移 = Math.Max(0, _滚动偏移 - 8) : OuterToInnerRefreshScheduler.RequestFull(Me)
             ElseIf e.Y > area.Bottom Then
                 Dim viewH = ContentViewportHeight()
                 Dim maxOff = Math.Max(0, _contentHeight - viewH)
-                _滚动偏移 = Math.Min(maxOff, _滚动偏移 + 8) : Invalidate()
+                _滚动偏移 = Math.Min(maxOff, _滚动偏移 + 8) : OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
             Return
         End If
@@ -1382,7 +1382,7 @@ Public Class AgentRoom
         Dim url = HitTestLink(e.Location)
         If url IsNot _hoverLinkUrl Then
             _hoverLinkUrl = url
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End If
         If url IsNot Nothing Then
             Cursor = Cursors.Hand
@@ -1392,7 +1392,7 @@ Public Class AgentRoom
             Cursor = Cursors.Default
         End If
 
-        If _scrollBar.UpdateHover(e.Location) Then Invalidate()
+        If _scrollBar.UpdateHover(e.Location) Then OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnMouseUp(e As MouseEventArgs)
@@ -1400,7 +1400,7 @@ Public Class AgentRoom
         If _scrollBar.IsDragging Then
             _scrollBar.EndDrag()
             Capture = False
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End If
         If _mouseSelecting Then
             _mouseSelecting = False
@@ -1416,9 +1416,9 @@ Public Class AgentRoom
         MyBase.OnMouseLeave(e)
         If _hoverLinkUrl IsNot Nothing Then
             _hoverLinkUrl = Nothing
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End If
-        If _scrollBar.ResetHover() Then Invalidate()
+        If _scrollBar.ResetHover() Then OuterToInnerRefreshScheduler.RequestFull(Me)
         Cursor = Cursors.Default
     End Sub
 
@@ -1429,13 +1429,13 @@ Public Class AgentRoom
         Dim delta As Integer = -Math.Sign(e.Delta) * _wheelStep
         _滚动偏移 = Math.Max(0, Math.Min(maxOff, _滚动偏移 + delta))
         _pinnedToBottom = (_滚动偏移 >= maxOff)
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnSizeChanged(e As EventArgs)
         MyBase.OnSizeChanged(e)
         InvalidateAllItemsLayout()
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
@@ -1464,17 +1464,17 @@ Public Class AgentRoom
         Dim maxOff = Math.Max(0, _contentHeight - viewH)
         Select Case e.KeyCode
             Case Keys.Up
-                _滚动偏移 = Math.Max(0, _滚动偏移 - _wheelStep) : Invalidate()
+                _滚动偏移 = Math.Max(0, _滚动偏移 - _wheelStep) : OuterToInnerRefreshScheduler.RequestFull(Me)
             Case Keys.Down
-                _滚动偏移 = Math.Min(maxOff, _滚动偏移 + _wheelStep) : Invalidate()
+                _滚动偏移 = Math.Min(maxOff, _滚动偏移 + _wheelStep) : OuterToInnerRefreshScheduler.RequestFull(Me)
             Case Keys.PageUp
-                _滚动偏移 = Math.Max(0, _滚动偏移 - viewH) : Invalidate()
+                _滚动偏移 = Math.Max(0, _滚动偏移 - viewH) : OuterToInnerRefreshScheduler.RequestFull(Me)
             Case Keys.PageDown
-                _滚动偏移 = Math.Min(maxOff, _滚动偏移 + viewH) : Invalidate()
+                _滚动偏移 = Math.Min(maxOff, _滚动偏移 + viewH) : OuterToInnerRefreshScheduler.RequestFull(Me)
             Case Keys.Home
-                _滚动偏移 = 0 : _pinnedToBottom = (maxOff = 0) : Invalidate()
+                _滚动偏移 = 0 : _pinnedToBottom = (maxOff = 0) : OuterToInnerRefreshScheduler.RequestFull(Me)
             Case Keys.End
-                _滚动偏移 = maxOff : _pinnedToBottom = True : Invalidate()
+                _滚动偏移 = maxOff : _pinnedToBottom = True : OuterToInnerRefreshScheduler.RequestFull(Me)
         End Select
     End Sub
 #End Region

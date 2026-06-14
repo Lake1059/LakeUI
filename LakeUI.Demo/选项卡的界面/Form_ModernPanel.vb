@@ -1,3 +1,3 @@
-﻿Public Class Form_ModernPanel
+Public Class Form_ModernPanel
 
 End Class

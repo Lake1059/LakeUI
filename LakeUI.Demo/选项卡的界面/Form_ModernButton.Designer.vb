@@ -1,4 +1,4 @@
-﻿<Global.Microsoft.VisualBasic.CompilerServices.DesignerGenerated()> _
+<Global.Microsoft.VisualBasic.CompilerServices.DesignerGenerated()> _
 Partial Class Form_ModernButton
     Inherits System.Windows.Forms.Form
 
@@ -72,7 +72,6 @@ Partial Class Form_ModernButton
         ModernPanel1.Margin = New Padding(2)
         ModernPanel1.Name = "ModernPanel1"
         ModernPanel1.Padding = New Padding(20)
-        ModernPanel1.ScrollBarMode = ModernPanel.ScrollMode.None
         ModernPanel1.Size = New Size(683, 629)
         ModernPanel1.TabIndex = 34
         ' 
@@ -82,10 +81,10 @@ Partial Class Form_ModernButton
         Label5.Dock = DockStyle.Top
         Label5.Font = New Font("Microsoft YaHei UI", 10F)
         Label5.ForeColor = Color.Gray
-        Label5.Location = New Point(20, 480)
+        Label5.Location = New Point(20, 500)
         Label5.Name = "Label5"
         Label5.Padding = New Padding(0, 10, 0, 10)
-        Label5.Size = New Size(345, 40)
+        Label5.Size = New Size(551, 40)
         Label5.TabIndex = 36
         Label5.Text = "顶部四个属性标签同样由 ModernButton 承载，可复用到指标卡、筛选项与状态概览。"
         ' 
@@ -93,7 +92,7 @@ Partial Class Form_ModernButton
         ' 
         Panel6.Controls.Add(ModernButton8)
         Panel6.Dock = DockStyle.Top
-        Panel6.Location = New Point(20, 440)
+        Panel6.Location = New Point(20, 455)
         Panel6.Name = "Panel6"
         Panel6.Padding = New Padding(0, 10, 0, 0)
         Panel6.Size = New Size(643, 45)
@@ -107,7 +106,6 @@ Partial Class Form_ModernButton
         ModernButton8.Dock = DockStyle.Left
         ModernButton8.HoldClickDuration = 1500
         ModernButton8.HoldClickEnabled = True
-        ModernButton8.HoldClickFPS = 0
         ModernButton8.HoverBackColor1 = Color.FromArgb(CByte(60), CByte(220), CByte(220), CByte(220))
         ModernButton8.Location = New Point(0, 10)
         ModernButton8.Margin = New Padding(2)
@@ -122,10 +120,10 @@ Partial Class Form_ModernButton
         Label10.AutoSize = True
         Label10.Dock = DockStyle.Top
         Label10.Font = New Font("Microsoft YaHei UI", 10F)
-        Label10.Location = New Point(20, 390)
+        Label10.Location = New Point(20, 405)
         Label10.Name = "Label10"
         Label10.Padding = New Padding(0, 20, 0, 10)
-        Label10.Size = New Size(93, 50)
+        Label10.Size = New Size(289, 50)
         Label10.TabIndex = 45
         Label10.Text = "长按触发：适合需要二次确认的高风险动作。"
         ' 
@@ -133,7 +131,7 @@ Partial Class Form_ModernButton
         ' 
         Panel5.Controls.Add(ModernButton7)
         Panel5.Dock = DockStyle.Top
-        Panel5.Location = New Point(20, 350)
+        Panel5.Location = New Point(20, 360)
         Panel5.Name = "Panel5"
         Panel5.Padding = New Padding(0, 10, 0, 0)
         Panel5.Size = New Size(643, 45)
@@ -159,10 +157,10 @@ Partial Class Form_ModernButton
         Label9.AutoSize = True
         Label9.Dock = DockStyle.Top
         Label9.Font = New Font("Microsoft YaHei UI", 10F)
-        Label9.Location = New Point(20, 300)
+        Label9.Location = New Point(20, 310)
         Label9.Name = "Label9"
         Label9.Padding = New Padding(0, 20, 0, 10)
-        Label9.Size = New Size(247, 50)
+        Label9.Size = New Size(331, 50)
         Label9.TabIndex = 43
         Label9.Text = "胶囊按钮：提高圆角半径后适合短命令与筛选动作。"
         ' 
@@ -170,7 +168,7 @@ Partial Class Form_ModernButton
         ' 
         Panel3.Controls.Add(ModernButton6)
         Panel3.Dock = DockStyle.Top
-        Panel3.Location = New Point(20, 260)
+        Panel3.Location = New Point(20, 265)
         Panel3.Name = "Panel3"
         Panel3.Padding = New Padding(0, 10, 0, 0)
         Panel3.Size = New Size(643, 45)
@@ -198,10 +196,10 @@ Partial Class Form_ModernButton
         Label7.AutoSize = True
         Label7.Dock = DockStyle.Top
         Label7.Font = New Font("Microsoft YaHei UI", 10F)
-        Label7.Location = New Point(20, 210)
+        Label7.Location = New Point(20, 215)
         Label7.Name = "Label7"
         Label7.Padding = New Padding(0, 20, 0, 10)
-        Label7.Size = New Size(121, 50)
+        Label7.Size = New Size(317, 50)
         Label7.TabIndex = 39
         Label7.Text = "推荐样式：轻边界、低透明背景与清晰按压反馈。"
         ' 

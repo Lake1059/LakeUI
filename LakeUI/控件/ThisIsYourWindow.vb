@@ -190,6 +190,7 @@ Public Class ThisIsYourWindow
         Public DeferredBeginBounds As Rectangle = Rectangle.Empty
         Public AnimatingShow As Boolean = False
         Public AnimatingClose As Boolean = False
+        Public LastClientSize As Size = Size.Empty
         ' 上一次记录的最小化状态：用于在 WM_SIZE 中检测"从最小化恢复"事件并强制刷新毛玻璃。
         Public WasMinimized As Boolean = False
         Public OriginalOpacity As Double = 1.0
@@ -204,12 +205,15 @@ Public Class ThisIsYourWindow
         ' 这里不再持有任何 D2D 字段；通过 D2DHelperV2.BeginPaint(...) → PaintScopeV2 拿到。
         Public Sub New(form As Form)
             HostForm = form
+            If form IsNot Nothing Then LastClientSize = form.ClientSize
         End Sub
     End Class
 
     Private ReadOnly _forms As New Dictionary(Of IntPtr, PerFormState)
     Private ReadOnly _pendingAttachHandlers As New Dictionary(Of Form, EventHandler)
     Private _首个附加窗体 As Form
+    Private Shared ReadOnly _attachedFormsLock As New Object()
+    Private Shared ReadOnly _attachedForms As New Dictionary(Of Form, ThisIsYourWindow)
 
     ' ── 绘制热路径共享缓存：避免每帧 New SolidBrush/Pen 造成 GC 压力 ──
     Private ReadOnly _共享画刷 As New SolidBrush(Color.Black)
@@ -223,6 +227,40 @@ Public Class ThisIsYourWindow
 
     Private Function 是首个附加窗体(form As Form) As Boolean
         Return form IsNot Nothing AndAlso ReferenceEquals(form, _首个附加窗体)
+    End Function
+
+    Friend Shared Function TryPaintImageBackdropForBackgroundMapping(source As Control,
+                                                                    rt As ID2D1RenderTarget,
+                                                                    sourceClientRect As Rectangle,
+                                                                    destRect As Rectangle) As Boolean
+        Dim form = TryCast(source, Form)
+        If form Is Nothing OrElse rt Is Nothing Then Return False
+
+        Dim owner As ThisIsYourWindow = Nothing
+        SyncLock _attachedFormsLock
+            _attachedForms.TryGetValue(form, owner)
+        End SyncLock
+        If owner Is Nothing Then Return False
+        Return owner.TryPaintImageBackdropSlice(form, rt, sourceClientRect, destRect)
+    End Function
+
+    Friend Shared Function TryGetImageBackdropFrameVersion(source As Control,
+                                                          ByRef frameVersion As Integer) As Boolean
+        frameVersion = -1
+        Dim form = TryCast(source, Form)
+        If form Is Nothing Then Return False
+
+        Dim owner As ThisIsYourWindow = Nothing
+        SyncLock _attachedFormsLock
+            _attachedForms.TryGetValue(form, owner)
+        End SyncLock
+        If owner Is Nothing Then Return False
+
+        Dim state = owner.查找状态(form)
+        If state Is Nothing OrElse state.Renderer Is Nothing Then Return False
+        If owner._毛玻璃模式 <> BackdropModeEnum.Image OrElse Not state.Renderer.IsImageSource Then Return False
+        frameVersion = state.Renderer.FrameVersion
+        Return frameVersion >= 0
     End Function
 
 #End Region
@@ -321,8 +359,7 @@ Public Class ThisIsYourWindow
         For Each s In _forms.Values
             Dim frm = s.HostForm
             If frm IsNot Nothing AndAlso Not frm.IsDisposed AndAlso frm.IsHandleCreated Then
-                frm.Invalidate(New Rectangle(Point.Empty, frm.ClientSize), True)
-                If immediate Then frm.Update()
+                OuterToInnerRefreshScheduler.RequestFull(frm, invalidateChildren:=True, immediate:=immediate)
             End If
         Next
     End Sub
@@ -388,6 +425,22 @@ Public Class ThisIsYourWindow
         Return 毛玻璃允许用于窗体(s) AndAlso s.Renderer IsNot Nothing
     End Function
 
+    Private Sub 请求毛玻璃帧(s As PerFormState,
+                         Optional commitAverage As Boolean = True,
+                         Optional forceImageMode As Boolean = False)
+        If s Is Nothing OrElse s.HostForm Is Nothing OrElse s.HostForm.IsDisposed Then Return
+        If s.Renderer Is Nothing Then Return
+        If _毛玻璃模式 = BackdropModeEnum.Image AndAlso s.Renderer.HasFrame AndAlso Not forceImageMode Then Return
+        s.Renderer.RequestFrame(获取毛玻璃捕获区域(s.HostForm), commitAverage)
+    End Sub
+
+    Private Function 可跳过WMSize客户区刷新(s As PerFormState, clientSizeChanged As Boolean) As Boolean
+        If clientSizeChanged Then Return False
+        If Not 毛玻璃当前启用(s) Then Return False
+        If _毛玻璃模式 <> BackdropModeEnum.Image Then Return False
+        Return s.Renderer IsNot Nothing AndAlso s.Renderer.IsImageSource AndAlso s.Renderer.HasFrame
+    End Function
+
     Private Function 尺寸移动刷新优化当前启用(s As PerFormState) As Boolean
         Return _尺寸移动刷新优化启用 AndAlso s IsNot Nothing
     End Function
@@ -396,6 +449,42 @@ Public Class ThisIsYourWindow
         Return _毛玻璃模式 <> BackdropModeEnum.None AndAlso
                s IsNot Nothing AndAlso
                (Not _毛玻璃仅首个窗口 OrElse 是首个附加窗体(s.HostForm))
+    End Function
+
+    Private Function TryPaintImageBackdropSlice(form As Form,
+                                                rt As ID2D1RenderTarget,
+                                                sourceClientRect As Rectangle,
+                                                destRect As Rectangle) As Boolean
+        Dim s = 查找状态(form)
+        If s Is Nothing OrElse s.Renderer Is Nothing Then Return False
+        If _毛玻璃模式 <> BackdropModeEnum.Image Then Return False
+        If Not 毛玻璃当前启用(s) OrElse Not s.Renderer.HasFrame OrElse Not s.Renderer.IsImageSource Then Return False
+        If sourceClientRect.Width <= 0 OrElse sourceClientRect.Height <= 0 OrElse
+           destRect.Width <= 0 OrElse destRect.Height <= 0 Then Return False
+
+        Dim clientBounds As New Rectangle(Point.Empty, form.ClientSize)
+        Dim visibleSource = Rectangle.Intersect(clientBounds, sourceClientRect)
+        If visibleSource.Width <= 0 OrElse visibleSource.Height <= 0 Then Return False
+
+        Dim visibleDest As New Rectangle(
+            destRect.X + visibleSource.X - sourceClientRect.X,
+            destRect.Y + visibleSource.Y - sourceClientRect.Y,
+            visibleSource.Width,
+            visibleSource.Height)
+
+        If Not s.Renderer.DrawImageBackdropSlice(rt, visibleSource, visibleDest) Then Return False
+
+        Dim tint As Color = If(s.Activated, _毛玻璃Tint颜色, _毛玻璃Tint失焦颜色)
+        If tint.A > 0 Then
+            Using b = rt.CreateSolidColorBrush(D2DGlobals.ToColor4(tint))
+                rt.FillRectangle(D2DGlobals.ToD2DRect(visibleDest), b)
+            End Using
+        End If
+
+        If _毛玻璃模糊次数 > 0 AndAlso _毛玻璃噪点不透明度 > 0 Then
+            s.Renderer.DrawNoise(rt, visibleDest, _毛玻璃噪点不透明度)
+        End If
+        Return True
     End Function
 
     Private Sub 开始延迟客户区坐标上报(s As PerFormState)
@@ -441,9 +530,9 @@ Public Class ThisIsYourWindow
                                              毛玻璃当前启用(s) AndAlso
                                              (_毛玻璃模式 <> BackdropModeEnum.Image OrElse sizeChanged)
         If requestBackdropFrame Then
-            s.Renderer?.RequestFrame(获取毛玻璃捕获区域(s.HostForm), True)
+            请求毛玻璃帧(s, True, forceImageMode:=sizeChanged)
         ElseIf sizeChanged Then
-            s.HostForm.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(s.HostForm)
         End If
         重置毛玻璃Tick(s)
     End Sub
@@ -533,7 +622,7 @@ Public Class ThisIsYourWindow
         Dim dirty As Rectangle = 合并脏区(s.LastTitleTextDirtyRect, newDirty)
         s.LastTitleTextDirtyRect = newDirty
         If dirty.Width > 0 AndAlso dirty.Height > 0 Then
-            s.HostForm.Invalidate(dirty)
+            s.HostForm.Invalidate(dirty, False)
             If immediate Then s.HostForm.Update()
         End If
     End Sub
@@ -1205,8 +1294,7 @@ Public Class ThisIsYourWindow
                 SetWindowPos(hWnd, IntPtr.Zero, 0, 0, 0, 0,
                              SWP_FRAMECHANGED Or SWP_NOMOVE Or SWP_NOSIZE Or SWP_NOZORDER)
                 更新阴影(s)
-                s.HostForm.Invalidate(New Rectangle(Point.Empty, s.HostForm.ClientSize), True)
-                s.HostForm.Update()
+                OuterToInnerRefreshScheduler.RequestFull(s.HostForm, invalidateChildren:=True, immediate:=True)
             Next
         End Set
     End Property
@@ -2050,7 +2138,7 @@ Public Class ThisIsYourWindow
                 RaiseEvent CaptionPaint(Me, New CaptionPaintEventArgs(g, captionRect, active, s.HostForm))
             Catch
             End Try
-            Try : s.HostForm?.Invalidate() : Catch : End Try
+            Try : OuterToInnerRefreshScheduler.RequestFull(s.HostForm) : Catch : End Try
             Return
         End If
 
@@ -2263,7 +2351,7 @@ Public Class ThisIsYourWindow
     ''' <summary>请求指定窗体重绘标题栏区域。</summary>
     Public Sub InvalidateCaption(form As Form, Optional immediate As Boolean = False)
         If form IsNot Nothing AndAlso form.IsHandleCreated Then
-            form.Invalidate(New Rectangle(0, 0, form.ClientSize.Width, _边框厚度 + _标题栏高度))
+            form.Invalidate(New Rectangle(0, 0, form.ClientSize.Width, _边框厚度 + _标题栏高度), False)
             If immediate Then form.Update()
         End If
     End Sub
@@ -2332,6 +2420,9 @@ Public Class ThisIsYourWindow
         ' ── 第四步：注册拦截器 ──
         s.Interceptor = New WindowMessageInterceptor(Me, s)
         _forms(hWnd) = s
+        SyncLock _attachedFormsLock
+            _attachedForms(targetForm) = Me
+        End SyncLock
 
         ' ── 第五步：使样式变更生效 ──
         SetWindowPos(hWnd, IntPtr.Zero, 0, 0, 0, 0,
@@ -2349,7 +2440,7 @@ Public Class ThisIsYourWindow
         AddHandler targetForm.TextChanged, AddressOf HostForm_TextChanged
         RecalculateButtonBounds(s)
         更新窗口内边距(s)
-        targetForm.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(targetForm)
         更新阴影(s)
         应用毛玻璃状态(s)
     End Sub
@@ -2381,6 +2472,12 @@ Public Class ThisIsYourWindow
         End If
         If s Is Nothing Then Return
         _forms.Remove(key)
+        SyncLock _attachedFormsLock
+            Dim owner As ThisIsYourWindow = Nothing
+            If _attachedForms.TryGetValue(targetForm, owner) AndAlso owner Is Me Then
+                _attachedForms.Remove(targetForm)
+            End If
+        End SyncLock
 
         s.CachedIconBitmap?.Dispose()
         ' V2：D2D 资源（DC RT / SSAA / 笔刷 / TextFormat / 位图缓存）全部由 WindowCompositor 管理，
@@ -2463,7 +2560,7 @@ Public Class ThisIsYourWindow
         更新阴影(s)
 
         ' ── 强制重绘 ──
-        targetForm.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(targetForm)
     End Sub
 
     ''' <summary>
@@ -2616,16 +2713,25 @@ Public Class ThisIsYourWindow
                     End If
                     MyBase.WndProc(m)
                     If _owner._阴影模式 <> ShadowModeEnum.DWM Then _owner.切换动画样式(_state.HostForm.Handle, False)
+                    Dim currentClientSize As Size = _state.HostForm.ClientSize
+                    Dim clientSizeChanged As Boolean = (currentClientSize <> _state.LastClientSize)
+                    Dim minimizedNow As Boolean = (_state.HostForm IsNot Nothing AndAlso
+                                                   _state.HostForm.WindowState = FormWindowState.Minimized)
                     _owner.RecalculateButtonBounds(_state)
-                    _state.HostForm?.Invalidate()
+                    If minimizedNow Then
+                        ' 最小化阶段没有可见客户区，避免把一次隐藏态 WM_SIZE 扩散成全量重绘。
+                    ElseIf Not _owner.可跳过WMSize客户区刷新(_state, clientSizeChanged) Then
+                        OuterToInnerRefreshScheduler.RequestFull(_state.HostForm)
+                    Else
+                        _owner.InvalidateCaption(_state.HostForm)
+                    End If
                     _owner.更新阴影(_state)
                     ' 检测"从最小化恢复"：此时桌面 DC 与上一次抓屏所在的位置可能已完全不同，
                     ' 必须强制刷新一次毛玻璃帧（同时 commit 平均色，刷新阴影自动颜色）。
-                    Dim minimizedNow As Boolean = (_state.HostForm IsNot Nothing AndAlso
-                                                   _state.HostForm.WindowState = FormWindowState.Minimized)
                     If _state.WasMinimized AndAlso Not minimizedNow Then
-                        _state.Renderer?.RequestFrame(_owner.获取毛玻璃捕获区域(_state.HostForm), True)
+                        _owner.请求毛玻璃帧(_state, True)
                     End If
+                    If Not minimizedNow Then _state.LastClientSize = currentClientSize
                     _state.WasMinimized = minimizedNow
                     Return
 
@@ -2638,7 +2744,7 @@ Public Class ThisIsYourWindow
                         _owner.InvalidateTitleText(_state, True)
                     End If
                     If Not _owner.毛玻璃当前启用(_state) Then
-                        _state.HostForm?.Invalidate()
+                        OuterToInnerRefreshScheduler.RequestFull(_state.HostForm)
                     End If
                     If activated AndAlso Not _state.AnimatingClose Then _owner.更新阴影(_state)
                     Return
@@ -2674,7 +2780,7 @@ Public Class ThisIsYourWindow
                         _owner.提交延迟客户区坐标上报(_state)
                     Else
                         _owner.更新阴影(_state)
-                        _state.Renderer?.RequestFrame(_owner.获取毛玻璃捕获区域(_state.HostForm), True)
+                        _owner.请求毛玻璃帧(_state, True)
                         _owner.重置毛玻璃Tick(_state)
                     End If
                     Return
@@ -2795,7 +2901,7 @@ Public Class ThisIsYourWindow
                         End Try
                     End If
                     If m.WParam <> IntPtr.Zero AndAlso _state.Renderer IsNot Nothing AndAlso Not _state.Renderer.HasFrame Then
-                        _state.Renderer.RequestFrame(_owner.获取毛玻璃捕获区域(_state.HostForm), True)
+                        _owner.请求毛玻璃帧(_state, True, forceImageMode:=True)
                     End If
                     If m.WParam <> IntPtr.Zero AndAlso Not _state.AnimatingClose Then
                         _owner.更新阴影(_state)

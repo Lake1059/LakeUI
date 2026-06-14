@@ -1,4 +1,4 @@
-﻿Public Class Form_RoundDashBoard
+Public Class Form_RoundDashBoard
     Private Sub ModernButton5_Click(sender As Object, e As EventArgs) Handles ModernButton5.Click
         RoundDashBoard3.Value = 0
     End Sub

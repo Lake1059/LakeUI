@@ -177,7 +177,7 @@ Public Class ModernTextBox
                 SetScrollPixelOffset(savedScrollY)
                 _scrollXOffset = savedScrollX
                 UpdateScrollBar()
-                Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Set
     End Property
@@ -220,7 +220,7 @@ Public Class ModernTextBox
             行高 = Math.Max(10, value)
             UpdateDpiCache()
             RefreshVisualLayout(True)
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -233,7 +233,7 @@ Public Class ModernTextBox
         Set(value As Integer)
             光标线宽 = Math.Max(1, value)
             UpdateDpiCache()
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -292,7 +292,7 @@ Public Class ModernTextBox
                 边框宽度 = value
                 UpdateDpiCache()
                 RefreshVisualLayout(True)
-                Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Set
     End Property
@@ -318,7 +318,7 @@ Public Class ModernTextBox
             If 启用多行 <> value Then
                 启用多行 = value
                 RefreshVisualLayout(True)
-                Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Set
     End Property
@@ -387,7 +387,7 @@ Public Class ModernTextBox
         End Get
         Set(value As Integer)
             滚动条宽度 = Math.Max(2, value)
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -461,7 +461,7 @@ Public Class ModernTextBox
             If 启用链接识别 <> value Then
                 启用链接识别 = value
                 RebuildAllLinks()
-                Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Set
     End Property
@@ -498,7 +498,7 @@ Public Class ModernTextBox
             If _enableSyntaxHighlight Then
                 ApplySyntaxHighlighting()
             End If
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -515,7 +515,7 @@ Public Class ModernTextBox
                 Else
                     ClearAllFormats()
                 End If
-                Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Set
     End Property
@@ -529,7 +529,7 @@ Public Class ModernTextBox
             If _showLineNumbers <> value Then
                 _showLineNumbers = value
                 RefreshVisualLayout(True)
-                Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Set
     End Property
@@ -585,7 +585,7 @@ Public Class ModernTextBox
             UpdateDpiCache()
             If _showLineNumbers Then
                 RefreshVisualLayout(True)
-                Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Set
     End Property
@@ -600,7 +600,7 @@ Public Class ModernTextBox
             UpdateDpiCache()
             If _showLineNumbers Then
                 RefreshVisualLayout(True)
-                Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Set
     End Property
@@ -703,7 +703,7 @@ Public Class ModernTextBox
             If _wordWrap <> value Then
                 _wordWrap = value
                 RefreshVisualLayout(True)
-                Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Set
     End Property
@@ -730,7 +730,7 @@ Public Class ModernTextBox
             _passwordChar = value
             InvalidateMeasureCache()
             RefreshVisualLayout(True)
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -745,7 +745,7 @@ Public Class ModernTextBox
             _caretCol = pos.X
             ClearSelection()
             EnsureCaretVisible()
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -765,7 +765,7 @@ Public Class ModernTextBox
             _caretLine = pos.Y
             _caretCol = pos.X
             _hasSelection = value <> 0
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -800,8 +800,8 @@ Public Class ModernTextBox
         End Get
         Set(value As Control)
             If _backgroundSource IsNot value Then
-                _backgroundSource = value
-                Me.Invalidate()
+                _backgroundSource = BackgroundPenetrationV2.SetConsumerSource(Me, _backgroundSource, value)
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Set
     End Property
@@ -891,7 +891,7 @@ Public Class ModernTextBox
             SetScrollPixelOffset(MaxScrollPixelOffset())
         End If
 
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
         RaiseEvent TextChanged(Me, EventArgs.Empty)
     End Sub
     Public Shadows Sub [Select](start As Integer, length As Integer)
@@ -903,27 +903,27 @@ Public Class ModernTextBox
         _caretCol = endPos.X
         _hasSelection = length <> 0
         EnsureCaretVisible()
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
     Public Sub DeselectAll()
         ClearSelection()
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
     Public Sub ScrollToCaret()
         EnsureCaretVisible()
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
     Public Sub ScrollToBottom()
         If Not 启用多行 Then Return
         SetScrollPixelOffset(MaxScrollPixelOffset())
         UpdateScrollBar()
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
     Public Sub ScrollToTop()
         SetScrollPixelOffset(0)
         _scrollXOffset = 0
         UpdateScrollBar()
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
     Public Sub ScrollToLine(lineIndex As Integer)
         If Not 启用多行 Then Return
@@ -937,7 +937,7 @@ Public Class ModernTextBox
         Next
         SetScrollPixelOffset(targetVi * _scaledLineHeight)
         UpdateScrollBar()
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
     Public Sub SetFormat(startPos As Integer, length As Integer,
                          Optional foreColor As Color = Nothing, Optional runFont As Font = Nothing)
@@ -959,7 +959,7 @@ Public Class ModernTextBox
         End While
         InvalidateMeasureCache()
         RefreshVisualLayout(True)
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
     Public Sub SetLineFormat(lineIndex As Integer, startCol As Integer, length As Integer,
                               Optional foreColor As Color = Nothing, Optional runFont As Font = Nothing)
@@ -971,7 +971,7 @@ Public Class ModernTextBox
         ApplyFormatToLine(lineIndex, startCol, length, foreColor, runFont)
         InvalidateMeasureCache()
         RefreshVisualLayout(True)
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
     Public Sub ClearFormat(startPos As Integer, length As Integer)
         SetFormat(startPos, length, Color.Empty, Nothing)
@@ -982,7 +982,7 @@ Public Class ModernTextBox
         Next
         InvalidateMeasureCache()
         RefreshVisualLayout(True)
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 #End Region
 
@@ -1002,12 +1002,12 @@ Public Class ModernTextBox
                                                   _caretBlinkTimer.Stop()
                                                   If _caretVisible Then
                                                       _caretVisible = False
-                                                      Invalidate()
+                                                      OuterToInnerRefreshScheduler.RequestFull(Me)
                                                   End If
                                                   Return
                                               End If
                                               _caretVisible = Not _caretVisible
-                                              Invalidate()
+                                              OuterToInnerRefreshScheduler.RequestFull(Me)
                                           End Sub
         AddHandler _autoScrollTimer.Tick, AddressOf AutoScrollTick
         _scrollAnimationHelper.DirtyProvider = AddressOf 滚动动画脏区
@@ -1626,7 +1626,7 @@ Public Class ModernTextBox
                 If newOff <> CInt(Math.Round(_scrollPixelOffset)) Then
                     SetScrollPixelOffset(newOff)
                     UpdateScrollBar()
-                    Invalidate()
+                    OuterToInnerRefreshScheduler.RequestFull(Me)
                     Return
                 End If
             End If
@@ -1639,18 +1639,18 @@ Public Class ModernTextBox
             _selAnchorCol = _caretCol
             _hasSelection = False
             ResetCaretBlink()
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End If
     End Sub
     Protected Overrides Sub OnMouseMove(e As MouseEventArgs)
         MyBase.OnMouseMove(e)
         If _scrollBar.IsDragging Then
             SetScrollPixelOffset(_scrollBar.DragMove(e.Y, TotalContentPixelHeight(), TextViewportHeight()))
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
             Return
         End If
         If _scrollBarVisible Then
-            If _scrollBar.UpdateHover(e.Location) Then Invalidate()
+            If _scrollBar.UpdateHover(e.Location) Then OuterToInnerRefreshScheduler.RequestFull(Me)
             If _scrollBar.TrackRect.Contains(e.Location) Then
                 Cursor = Cursors.Default
             Else
@@ -1671,7 +1671,7 @@ Public Class ModernTextBox
             Else
                 _autoScrollTimer.Stop()
             End If
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End If
     End Sub
     Protected Overrides Sub OnMouseUp(e As MouseEventArgs)
@@ -1717,7 +1717,7 @@ Public Class ModernTextBox
         _caretCol = right
         _hasSelection = left <> right
         ResetCaretBlink()
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
     Private Function HitTest(x As Integer, y As Integer) As Point
         Dim bi As Integer = ScaledBorderWidth()
@@ -1759,7 +1759,7 @@ Public Class ModernTextBox
             End If
             ClearSelection()
             EnsureCaretVisible()
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
             Return
         End If
         If Not extend Then
@@ -1801,7 +1801,7 @@ Public Class ModernTextBox
         End If
         UpdateSelectionFromAnchor(extend)
         EnsureCaretVisible()
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
     Private Sub MoveCaretHome(extend As Boolean, ctrl As Boolean)
         If Not extend Then
@@ -1812,7 +1812,7 @@ Public Class ModernTextBox
         _caretCol = 0
         UpdateSelectionFromAnchor(extend)
         EnsureCaretVisible()
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
     Private Sub MoveCaretEnd(extend As Boolean, ctrl As Boolean)
         If Not extend Then
@@ -1823,7 +1823,7 @@ Public Class ModernTextBox
         _caretCol = _lines(_caretLine).Length
         UpdateSelectionFromAnchor(extend)
         EnsureCaretVisible()
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
     Private Sub MoveCaretWordLeft(extend As Boolean)
         If Not extend Then
@@ -1848,7 +1848,7 @@ Public Class ModernTextBox
         End If
         UpdateSelectionFromAnchor(extend)
         EnsureCaretVisible()
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
     Private Sub MoveCaretWordRight(extend As Boolean)
         If Not extend Then
@@ -1873,7 +1873,7 @@ Public Class ModernTextBox
         End If
         UpdateSelectionFromAnchor(extend)
         EnsureCaretVisible()
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
     Private Sub UpdateSelectionFromAnchor(extend As Boolean)
         If extend Then
@@ -2094,7 +2094,7 @@ Public Class ModernTextBox
         _caretLine = _lines.Count - 1
         _caretCol = _lines(_caretLine).Length
         _hasSelection = True
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
     Private Sub ClearSelection()
         _hasSelection = False
@@ -2257,7 +2257,7 @@ Public Class ModernTextBox
 
         SyncScrollLineOffset()
         UpdateScrollBar()
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
     Private Sub ClampScrollPixelOffsets()
         Dim maxOffset As Single = MaxScrollPixelOffset()
@@ -2929,7 +2929,7 @@ Public Class ModernTextBox
     Private Sub FinalizeTextChanged()
         InvalidateMeasureCache()
         RefreshVisualLayout(True)
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
         OnTextChanged(EventArgs.Empty)
         RaiseEvent TextChanged(Me, EventArgs.Empty)
     End Sub
@@ -2940,12 +2940,12 @@ Public Class ModernTextBox
         If Me.Focused Then
             _caretBlinkTimer.Start()
         End If
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End If
     End Sub
     Private Function DpiScale() As Single
@@ -2988,7 +2988,7 @@ Public Class ModernTextBox
         _caretLine = pos.Y
         _caretCol = pos.X
         _hasSelection = (_caretLine <> _selAnchorLine OrElse _caretCol <> _selAnchorCol)
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
     Private Function GetDisplayText(text As String) As String
         If _passwordChar = vbNullChar OrElse 启用多行 Then Return text
@@ -3022,23 +3022,23 @@ Public Class ModernTextBox
         End If
         _caretVisible = True
         _caretBlinkTimer.Start()
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
     Protected Overrides Sub OnLostFocus(e As EventArgs)
         MyBase.OnLostFocus(e)
         _caretBlinkTimer.Stop()
         _caretVisible = False
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
     Protected Overrides Sub OnSizeChanged(e As EventArgs)
         MyBase.OnSizeChanged(e)
         RefreshVisualLayout(True)
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
     Protected Overrides Sub OnPaddingChanged(e As EventArgs)
         MyBase.OnPaddingChanged(e)
         RefreshVisualLayout(True)
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
     Protected Overrides Sub OnFontChanged(e As EventArgs)
         _underlineFontCache?.Dispose()
@@ -3051,17 +3051,17 @@ Public Class ModernTextBox
     End Sub
     Protected Overrides Sub OnBackColorChanged(e As EventArgs)
         MyBase.OnBackColorChanged(e)
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
     Protected Overrides Sub OnForeColorChanged(e As EventArgs)
         MyBase.OnForeColorChanged(e)
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
         UpdateDpiCache()
         RefreshVisualLayout(True)
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 #End Region
 

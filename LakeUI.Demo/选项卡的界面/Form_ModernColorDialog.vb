@@ -1,4 +1,4 @@
-﻿Public Class Form_ModernColorDialog
+Public Class Form_ModernColorDialog
     Private Sub ModernButton5_Click(sender As Object, e As EventArgs) Handles ModernButton5.Click
         Dim a As New ModernColorDialog
         Form1.ThisIsYourWindow1.Attach(a)

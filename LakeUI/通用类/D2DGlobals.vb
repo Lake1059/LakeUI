@@ -399,6 +399,18 @@ Public Module D2DGlobals
     ''' 缓存一个 GDI <see cref="Image"/> 上传得到的 <see cref="ID2D1Bitmap"/>，避免每帧重新上传。
     ''' 仅当源 Image 引用或目标 RT 发生变化时重新上传；缓存项不强持有源 Image。
     ''' </summary>
+    ''' <remarks>
+    ''' 资源所有权：
+    ''' • 调用方拥有 D2DBitmapCache 实例，通常挂在 <see cref="WindowCompositor"/> 的 Image 索引里。
+    ''' • cache 内部按 RenderTarget 持有 ID2D1Bitmap；RenderTarget 被释放时，compositor 必须调用
+    '''   <see cref="InvalidateFor"/> 清掉对应条目。
+    ''' • cache 不强持有源 Image，但 WindowCompositor 的索引字典会强持有 Image key；临时 Bitmap
+    '''   不要进入该索引，否则会活到 LRU 清理或 Form Dispose。
+    '''
+    ''' 坑点：
+    ''' • D2D bitmap 与创建它的 RenderTarget 绑定，不能跨 DC RT / SSAA RT / D2D 1.1 DeviceContext 复用。
+    ''' • 预算按“同一个 Image 在不同 RT 上的上传副本”估算，不包含源 Image 自身的 RAM。
+    ''' </remarks>
     Public Class D2DBitmapCache
         Implements IDisposable
 

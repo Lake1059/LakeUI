@@ -944,7 +944,7 @@ Public Class ModernContextMenu
             If newIndex <> 悬停索引 Then
                 悬停索引 = newIndex
                 更新悬停动画()
-                Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
                 处理子菜单悬停()
             End If
         End Sub
@@ -953,14 +953,14 @@ Public Class ModernContextMenu
             MyBase.OnMouseDown(e)
             If e.Button = MouseButtons.Left OrElse e.Button = MouseButtons.Right Then
                 鼠标按下 = True
-                Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Sub
 
         Protected Overrides Sub OnMouseUp(e As MouseEventArgs)
             MyBase.OnMouseUp(e)
             鼠标按下 = False
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Sub
 
         Protected Overrides Sub OnMouseClick(e As MouseEventArgs)
@@ -975,7 +975,7 @@ Public Class ModernContextMenu
             If item.CloseOnClick Then
                 关闭全部()
             Else
-                Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Sub
 
@@ -984,7 +984,7 @@ Public Class ModernContextMenu
             If 子菜单弹窗 Is Nothing OrElse 子菜单弹窗.IsDisposed Then
                 悬停索引 = -1
                 更新悬停动画()
-                Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Sub
 
@@ -1063,7 +1063,7 @@ Public Class ModernContextMenu
                 动画当前Y = 动画目标Y
                 动画当前高度 = 动画目标高度
                 停止动画()
-                Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
                 Return
             End If
 
@@ -1079,7 +1079,7 @@ Public Class ModernContextMenu
                 动画当前高度 = 动画目标高度
                 停止动画()
             End If
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Sub
 
         Private Sub 停止动画()
@@ -1118,7 +1118,7 @@ Public Class ModernContextMenu
                 Dim newH As Integer = Math.Max(1, CInt(最终高度 * eased))
                 Me.Size = New Size(Me.Width, newH)
             End If
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
 
             If t >= 1.0F Then
                 停止展开关闭驱动()
@@ -1127,7 +1127,7 @@ Public Class ModernContextMenu
                     完成关闭()
                 Else
                     Me.Size = New Size(Me.Width, 最终高度)
-                    Invalidate()
+                    OuterToInnerRefreshScheduler.RequestFull(Me)
                 End If
             End If
         End Sub

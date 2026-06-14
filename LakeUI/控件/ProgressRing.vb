@@ -24,8 +24,8 @@ Public Class ProgressRing
         End Get
         Set(value As Control)
             If _backgroundSource IsNot value Then
-                _backgroundSource = value
-                Me.Invalidate()
+                _backgroundSource = BackgroundPenetrationV2.SetConsumerSource(Me, _backgroundSource, value)
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Set
     End Property
@@ -224,7 +224,7 @@ Public Class ProgressRing
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End If
     End Sub
 
@@ -248,7 +248,7 @@ Public Class ProgressRing
         动画运行中 = False
         计时器.Stop()
         秒表.Stop()
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     ''' <summary>当前动画是否正在播放</summary>
@@ -264,7 +264,7 @@ Public Class ProgressRing
             更新动画计时器状态()
             Return
         End If
-        Me.Invalidate(Me.ClientRectangle, False)
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Private Function 应运行动画计时器() As Boolean
@@ -322,12 +322,12 @@ Public Class ProgressRing
         Else
             更新动画计时器状态()
         End If
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)

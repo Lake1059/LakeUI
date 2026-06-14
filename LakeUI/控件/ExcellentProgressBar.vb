@@ -24,8 +24,8 @@ Public Class ExcellentProgressBar
         End Get
         Set(value As Control)
             If _backgroundSource IsNot value Then
-                _backgroundSource = value
-                Me.Invalidate()
+                _backgroundSource = BackgroundPenetrationV2.SetConsumerSource(Me, _backgroundSource, value)
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Set
     End Property
@@ -210,7 +210,7 @@ Public Class ExcellentProgressBar
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End If
     End Sub
 
@@ -237,12 +237,12 @@ Public Class ExcellentProgressBar
             动画助手.StopAnimation()
             动画助手2.StopAnimation()
         End If
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 #End Region
 
@@ -284,7 +284,7 @@ Public Class ExcellentProgressBar
             If 当前值2 < 最小值 Then 当前值2 = 最小值
             动画助手.SetImmediate(计算值比例(当前值))
             动画助手2.SetImmediate(计算值比例(当前值2))
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -302,7 +302,7 @@ Public Class ExcellentProgressBar
             If 当前值2 > 最大值 Then 当前值2 = 最大值
             动画助手.SetImmediate(计算值比例(当前值))
             动画助手2.SetImmediate(计算值比例(当前值2))
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -555,7 +555,7 @@ Public Class ExcellentProgressBar
         Set(value As String)
             If MyBase.Text = value Then Return
             MyBase.Text = value
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 #End Region

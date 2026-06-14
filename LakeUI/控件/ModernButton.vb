@@ -456,7 +456,7 @@ Public Class ModernButton
             点击后等待鼠标移动 = False
         End If
 
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
         If Visible AndAlso IsHandleCreated Then Update()
     End Sub
 
@@ -542,11 +542,11 @@ Public Class ModernButton
             助记键触发计时器 = Nothing
             停止长按确认()
         End If
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
     Protected Overrides Sub OnChangeUICues(e As UICuesEventArgs)
         MyBase.OnChangeUICues(e)
-        If (e.Changed And UICues.ChangeKeyboard) <> 0 Then Me.Invalidate()
+        If (e.Changed And UICues.ChangeKeyboard) <> 0 Then OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
     Protected Overrides Function ProcessMnemonic(charCode As Char) As Boolean
         If CanSelect AndAlso IsMnemonic(charCode, MyBase.Text) Then
@@ -579,7 +579,7 @@ Public Class ModernButton
     End Sub
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 #End Region
 
@@ -587,7 +587,7 @@ Public Class ModernButton
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End If
     End Sub
 
@@ -641,8 +641,8 @@ Public Class ModernButton
         End Get
         Set(value As Control)
             If _backgroundSource IsNot value Then
-                _backgroundSource = value
-                Me.Invalidate()
+                _backgroundSource = BackgroundPenetrationV2.SetConsumerSource(Me, _backgroundSource, value)
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Set
     End Property

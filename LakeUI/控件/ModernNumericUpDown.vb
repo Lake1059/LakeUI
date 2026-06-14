@@ -82,7 +82,7 @@ Public Class ModernNumericUpDown
             最小值 = value
             If 最大值 < 最小值 Then 最大值 = 最小值
             SetValueCore(当前值, True, True)
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -97,7 +97,7 @@ Public Class ModernNumericUpDown
             最大值 = value
             If 最小值 > 最大值 Then 最小值 = 最大值
             SetValueCore(当前值, True, True)
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -155,7 +155,7 @@ Public Class ModernNumericUpDown
             If 小数位数 = value Then Return
             小数位数 = value
             SetValueCore(当前值, True, True)
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -168,7 +168,7 @@ Public Class ModernNumericUpDown
             If _textRenderer.Editable = value Then Return
             _textRenderer.Editable = value
             Cursor = Cursors.Default
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -234,7 +234,7 @@ Public Class ModernNumericUpDown
         Set(value As Color)
             If _textRenderer.ForeColor = value Then Return
             _textRenderer.ForeColor = value
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -245,7 +245,7 @@ Public Class ModernNumericUpDown
         End Get
         Set(value As Integer)
             _textRenderer.LineHeight = Math.Max(10, value)
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -256,7 +256,7 @@ Public Class ModernNumericUpDown
         End Get
         Set(value As Integer)
             _textRenderer.CaretWidth = Math.Max(1, value)
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -268,7 +268,7 @@ Public Class ModernNumericUpDown
         Set(value As Color)
             If _textRenderer.CaretColor = value Then Return
             _textRenderer.CaretColor = value
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -280,7 +280,7 @@ Public Class ModernNumericUpDown
         Set(value As Color)
             If _textRenderer.SelectionColor = value Then Return
             _textRenderer.SelectionColor = value
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -315,7 +315,7 @@ Public Class ModernNumericUpDown
         Set(value As Integer)
             边框宽度 = Math.Max(0, value)
             SyncTextRendererLayout()
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -327,7 +327,7 @@ Public Class ModernNumericUpDown
         End Get
         Set(value As Integer)
             边框圆角半径 = Math.Max(0, value)
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -345,7 +345,7 @@ Public Class ModernNumericUpDown
         Set(value As TextAlignMode)
             If CType(_textRenderer.TextAlign, TextAlignMode) = value Then Return
             _textRenderer.TextAlign = CType(value, SingleLineTextBoxRenderer.TextAlignMode)
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -356,7 +356,7 @@ Public Class ModernNumericUpDown
         End Get
         Set(value As String)
             _textRenderer.WaterText = If(value, "")
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -368,7 +368,7 @@ Public Class ModernNumericUpDown
         Set(value As Color)
             If _textRenderer.WaterTextForeColor = value Then Return
             _textRenderer.WaterTextForeColor = value
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -471,7 +471,7 @@ Public Class ModernNumericUpDown
         Set(value As Integer)
             按钮区域宽度 = Math.Max(1, value)
             SyncTextRendererLayout()
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -582,7 +582,7 @@ Public Class ModernNumericUpDown
         End Get
         Set(value As Integer)
             箭头大小 = Math.Max(4, value)
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -605,7 +605,7 @@ Public Class ModernNumericUpDown
         End Get
         Set(value As Integer)
             分隔线宽度 = Math.Max(0, value)
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 #End Region
@@ -621,8 +621,8 @@ Public Class ModernNumericUpDown
         End Get
         Set(value As Control)
             If _backgroundSource IsNot value Then
-                _backgroundSource = value
-                Invalidate()
+                _backgroundSource = BackgroundPenetrationV2.SetConsumerSource(Me, _backgroundSource, value)
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Set
     End Property
@@ -950,7 +950,7 @@ Public Class ModernNumericUpDown
     Protected Overrides Sub OnMouseEnter(e As EventArgs)
         MyBase.OnMouseEnter(e)
         鼠标状态 = MouseStateEnum.Hover
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnMouseLeave(e As EventArgs)
@@ -958,7 +958,7 @@ Public Class ModernNumericUpDown
         鼠标状态 = MouseStateEnum.Normal
         _hoverButton = SpinButtonPart.None
         If _pressedButton = SpinButtonPart.None Then Cursor = Cursors.Default
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
@@ -973,14 +973,14 @@ Public Class ModernNumericUpDown
                 _pressedButton = part
                 StepByButton(part)
                 StartRepeatTimer()
-                Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
                 Return
             End If
             If Editable Then
                 _mouseDownSelecting = True
                 _textRenderer.BeginMouseSelection(e.X)
             End If
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End If
     End Sub
 
@@ -993,7 +993,7 @@ Public Class ModernNumericUpDown
         If _mouseDownSelecting AndAlso e.Button = MouseButtons.Left AndAlso Editable Then
             _textRenderer.UpdateMouseSelection(e.X)
         ElseIf prevHover <> _hoverButton Then
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End If
     End Sub
 
@@ -1004,7 +1004,7 @@ Public Class ModernNumericUpDown
         StopRepeatTimer()
         鼠标状态 = If(ClientRectangle.Contains(e.Location), MouseStateEnum.Hover, MouseStateEnum.Normal)
         _hoverButton = HitTestButton(e.Location)
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnMouseWheel(e As MouseEventArgs)
@@ -1056,7 +1056,7 @@ Public Class ModernNumericUpDown
             nextValue = 当前值 + delta
         End Try
         SetValueCore(nextValue, True, False)
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Private Sub SetValueCore(value As Double, updateText As Boolean, forceTextUpdate As Boolean)
@@ -1222,7 +1222,7 @@ Public Class ModernNumericUpDown
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End If
     End Sub
 #End Region
@@ -1240,14 +1240,14 @@ Public Class ModernNumericUpDown
         _mouseDownSelecting = False
         _pressedButton = SpinButtonPart.None
         StopRepeatTimer()
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnSizeChanged(e As EventArgs)
         MyBase.OnSizeChanged(e)
         SyncTextRendererLayout()
         _textRenderer.EnsureCaretVisible()
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
@@ -1266,12 +1266,12 @@ Public Class ModernNumericUpDown
             _pressedButton = SpinButtonPart.None
             StopRepeatTimer()
         End If
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 #End Region
 

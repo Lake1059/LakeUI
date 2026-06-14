@@ -4,6 +4,23 @@ Imports System.Text
 ''' <summary>
 ''' 输入法 IME 相关的 Win32 P/Invoke 声明与辅助方法。
 ''' </summary>
+''' <remarks>
+''' 主要服务无窗口/自绘文本输入控件，例如 <see cref="SingleLineTextBoxRenderer"/> 的外层宿主。
+''' 本模块只封装 IMM32 API，不保存任何状态。
+'''
+''' 调用契约：
+''' • 在宿主控件 WndProc 收到 WM_IME_COMPOSITION 且包含 GCS_RESULTSTR 时，调用
+'''   <see cref="GetResultString"/> 取已经提交的文本。
+''' • 光标位置变化、滚动或 DPI 变化后，调用 <see cref="SetCompositionPosition"/> 把候选窗移动到
+'''   当前插入点附近。
+''' • 控件获得输入焦点或句柄重建后，可调用 <see cref="AssociateDefault"/> 让系统默认 IME 重新关联。
+'''
+''' 坑点：
+''' • IMM32 坐标使用窗口客户区坐标，不是屏幕坐标。
+''' • GetResultString 只返回已确认字符串，不处理正在编辑中的 preedit 文本；需要显示 preedit 时要扩展
+'''   GCS_COMPSTR 路径。
+''' • 所有 hIMC 都必须配对 ImmReleaseContext，本模块内部已处理。
+''' </remarks>
 Friend Module ImeHelper
 
 #Region "Win32 常量"

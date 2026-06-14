@@ -11,6 +11,10 @@ Imports System.Threading
 ''' <para>内存数据对应任务管理器详细信息页的活动专用工作集、专用工作集、共享工作集和提交大小。</para>
 ''' <para>CPU 数据来自 GetProcessTimes 与高精度墙钟差分，仅保留当前进程总体占用百分比。</para>
 ''' <para>GPU 数据来自 Windows PDH 的 GPU Process Memory / GPU Engine 计数器，仅保留 3D、专用显存和共享显存。</para>
+''' <para>本类是观察工具，不参与任何 D2D / D3D / GDI 资源释放。不要在采样线程里调用渲染清理 API。</para>
+''' <para>GPU 显存来自系统性能计数器，采样粒度和任务管理器类似，会有延迟和驱动侧保留；它适合看趋势，
+''' 不适合用来断言某一次 Dispose 后显存必须立即下降。</para>
+''' <para>Enable/Disable 可以多次调用。Disable 会停止后台线程并释放 PDH 查询句柄，但保留最后一份快照供 UI 显示。</para>
 ''' </remarks>
 Public NotInheritable Class MainAppUsageCounter
 

@@ -1,3 +1,3 @@
-﻿Public Class Form_BooleanSwitch
+Public Class Form_BooleanSwitch
 
 End Class

@@ -1,4 +1,4 @@
-﻿Public Class Form_ProgressRing
+Public Class Form_ProgressRing
     Private Sub ModernButton5_Click(sender As Object, e As EventArgs) Handles ModernButton5.Click
         Me.ProgressRing1.StartAnimation()
         Me.ProgressRing2.StartAnimation()

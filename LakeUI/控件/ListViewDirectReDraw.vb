@@ -1,4 +1,4 @@
-﻿Public Class ListViewDirectReDraw
+Public Class ListViewDirectReDraw
 
     Private Shared ReadOnly _options As New Dictionary(Of ListView, ListViewOption)
     Private Shared ReadOnly _handlers As New Dictionary(Of ListView, HandlerSet)
@@ -30,8 +30,8 @@
             .DrawItem = Sub(sender, e) 绘制项(DirectCast(sender, ListView), e),
             .DrawSubItem = Sub(sender, e) 绘制子项(DirectCast(sender, ListView), e),
             .DrawColumnHeader = Sub(sender, e) 绘制列标题(DirectCast(sender, ListView), e),
-            .SelectedIndexChanged = Sub(sender, e) DirectCast(sender, ListView).Invalidate(),
-            .ItemMouseHover = Sub(sender, e) DirectCast(sender, ListView).Invalidate()
+            .SelectedIndexChanged = Sub(sender, e) OuterToInnerRefreshScheduler.RequestFull(DirectCast(sender, ListView)),
+            .ItemMouseHover = Sub(sender, e) OuterToInnerRefreshScheduler.RequestFull(DirectCast(sender, ListView))
         }
         _handlers(WhichListView) = h
 

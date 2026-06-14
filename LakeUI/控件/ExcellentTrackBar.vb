@@ -19,8 +19,8 @@ Public Class ExcellentTrackBar
         End Get
         Set(value As Control)
             If _backgroundSource IsNot value Then
-                _backgroundSource = value
-                Me.Invalidate()
+                _backgroundSource = BackgroundPenetrationV2.SetConsumerSource(Me, _backgroundSource, value)
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Set
     End Property
@@ -83,6 +83,10 @@ Public Class ExcellentTrackBar
             _owner = owner
         End Sub
 
+        Private Sub InvalidateOwner()
+            OuterToInnerRefreshScheduler.RequestFull(_owner)
+        End Sub
+
         Protected Overrides Sub InsertItem(index As Integer, item As TrackLabel)
             ' 在末尾追加时自动递增 Position（设计器和运行时均生效）
             ' 仅当 Position 0 已被其他标签占用时才递增，避免无法在零位添加标签
@@ -91,22 +95,22 @@ Public Class ExcellentTrackBar
                 item.Position = Me.Max(Function(l) l.Position) + 1
             End If
             MyBase.InsertItem(index, item)
-            _owner.Invalidate()
+            InvalidateOwner()
         End Sub
 
         Protected Overrides Sub RemoveItem(index As Integer)
             MyBase.RemoveItem(index)
-            _owner.Invalidate()
+            InvalidateOwner()
         End Sub
 
         Protected Overrides Sub SetItem(index As Integer, item As TrackLabel)
             MyBase.SetItem(index, item)
-            _owner.Invalidate()
+            InvalidateOwner()
         End Sub
 
         Protected Overrides Sub ClearItems()
             MyBase.ClearItems()
-            _owner.Invalidate()
+            InvalidateOwner()
         End Sub
     End Class
 
@@ -119,27 +123,31 @@ Public Class ExcellentTrackBar
             _owner = owner
         End Sub
 
+        Private Sub InvalidateOwner()
+            OuterToInnerRefreshScheduler.RequestFull(_owner)
+        End Sub
+
         Protected Overrides Sub InsertItem(index As Integer, item As String)
             MyBase.InsertItem(index, item)
             _owner.SyncStringRange()
-            _owner.Invalidate()
+            InvalidateOwner()
         End Sub
 
         Protected Overrides Sub RemoveItem(index As Integer)
             MyBase.RemoveItem(index)
             _owner.SyncStringRange()
-            _owner.Invalidate()
+            InvalidateOwner()
         End Sub
 
         Protected Overrides Sub SetItem(index As Integer, item As String)
             MyBase.SetItem(index, item)
-            _owner.Invalidate()
+            InvalidateOwner()
         End Sub
 
         Protected Overrides Sub ClearItems()
             MyBase.ClearItems()
             _owner.SyncStringRange()
-            _owner.Invalidate()
+            InvalidateOwner()
         End Sub
     End Class
 #End Region
@@ -148,7 +156,7 @@ Public Class ExcellentTrackBar
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End If
     End Sub
 
@@ -222,7 +230,7 @@ Public Class ExcellentTrackBar
             If 最大值 < 最小值 Then 最大值 = 最小值
             If 当前值 < 最小值 Then 当前值 = 最小值
             动画助手.SetImmediate(计算值比例(当前值))
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -238,7 +246,7 @@ Public Class ExcellentTrackBar
             If 最小值 > 最大值 Then 最小值 = 最大值
             If 当前值 > 最大值 Then 当前值 = 最大值
             动画助手.SetImmediate(计算值比例(当前值))
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -1029,13 +1037,13 @@ Public Class ExcellentTrackBar
     Protected Overrides Sub OnMouseEnter(e As EventArgs)
         MyBase.OnMouseEnter(e)
         鼠标状态 = MouseStateEnum.Hover
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnMouseLeave(e As EventArgs)
         MyBase.OnMouseLeave(e)
         鼠标状态 = MouseStateEnum.Normal
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
@@ -1043,7 +1051,7 @@ Public Class ExcellentTrackBar
         If Not Enabled OrElse e.Button <> MouseButtons.Left Then Return
         鼠标状态 = MouseStateEnum.Pressed
         Me.Focus()
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
         Dim thumbRect As RectangleF = 计算滑块矩形()
         If thumbRect.Contains(e.Location) Then
             正在拖动 = True
@@ -1070,7 +1078,7 @@ Public Class ExcellentTrackBar
         MyBase.OnMouseUp(e)
         正在拖动 = False
         鼠标状态 = If(ClientRectangle.Contains(e.Location), MouseStateEnum.Hover, MouseStateEnum.Normal)
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnMouseWheel(e As MouseEventArgs)
@@ -1194,22 +1202,22 @@ Public Class ExcellentTrackBar
 
     Protected Overrides Sub OnResize(e As EventArgs)
         MyBase.OnResize(e)
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnEnabledChanged(e As EventArgs)
         MyBase.OnEnabledChanged(e)
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnPaddingChanged(e As EventArgs)
         MyBase.OnPaddingChanged(e)
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
 End Class

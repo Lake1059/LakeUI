@@ -1,3 +1,3 @@
-﻿Public Class Form_ModernNumericUpDown
+Public Class Form_ModernNumericUpDown
 
 End Class

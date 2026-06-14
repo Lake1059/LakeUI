@@ -43,6 +43,10 @@ Public Class BreadcrumbNavigationBar
             End Set
         End Property
 
+        Private Sub InvalidateOwner()
+            OuterToInnerRefreshScheduler.RequestFull(_owner)
+        End Sub
+
         <Category("LakeUI"), Description("节点文本"), DefaultValue(GetType(String), "")>
         Public Property Text As String
             Get
@@ -52,7 +56,7 @@ Public Class BreadcrumbNavigationBar
                 Dim v As String = If(value, "")
                 If _text = v Then Return
                 _text = v
-                _owner?.Invalidate()
+                InvalidateOwner()
             End Set
         End Property
 
@@ -75,7 +79,7 @@ Public Class BreadcrumbNavigationBar
             Set(value As Boolean)
                 If _hasDropDownExplicit.HasValue AndAlso _hasDropDownExplicit.Value = value Then Return
                 _hasDropDownExplicit = value
-                _owner?.Invalidate()
+                InvalidateOwner()
             End Set
         End Property
         Private Function ShouldSerializeHasDropDown() As Boolean
@@ -83,7 +87,7 @@ Public Class BreadcrumbNavigationBar
         End Function
         Private Sub ResetHasDropDown()
             _hasDropDownExplicit = Nothing
-            _owner?.Invalidate()
+            InvalidateOwner()
         End Sub
 
         <Category("LakeUI"), Description("节点显示在文本前的图标（可选）。"), DefaultValue(GetType(Image), Nothing)>
@@ -94,7 +98,7 @@ Public Class BreadcrumbNavigationBar
             Set(value As Image)
                 If _image Is value Then Return
                 _image = value
-                _owner?.Invalidate()
+                InvalidateOwner()
             End Set
         End Property
 
@@ -106,7 +110,7 @@ Public Class BreadcrumbNavigationBar
             Set(value As ModernContextMenu)
                 If _dropDownMenu Is value Then Return
                 _dropDownMenu = value
-                _owner?.Invalidate()
+                InvalidateOwner()
             End Set
         End Property
 
@@ -341,7 +345,7 @@ Public Class BreadcrumbNavigationBar
             Dim oldIdx As Integer = _selectedIndex
             _selectedIndex = v
             Dim newItem As BreadcrumbItem = If(v >= 0 AndAlso v < _items.Count, _items(v), Nothing)
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
             RaiseEvent SelectedIndexChanged(Me, New BreadcrumbSelectionChangedEventArgs(oldIdx, v, newItem))
         End Set
     End Property
@@ -398,7 +402,7 @@ Public Class BreadcrumbNavigationBar
             If 溢出根文本 = v Then Return
             溢出根文本 = v
             _overflowItem.Text = v
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -593,8 +597,8 @@ Public Class BreadcrumbNavigationBar
         End Get
         Set(value As Control)
             If _backgroundSource IsNot value Then
-                _backgroundSource = value
-                Me.Invalidate()
+                _backgroundSource = BackgroundPenetrationV2.SetConsumerSource(Me, _backgroundSource, value)
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Set
     End Property
@@ -634,7 +638,7 @@ Public Class BreadcrumbNavigationBar
         _pressedNodeIndex = -2
         If _selectedIndex >= _items.Count Then _selectedIndex = -1
         If _activeDropDownMenu IsNot Nothing Then CloseDropDown()
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 #End Region
 
@@ -1007,7 +1011,7 @@ Public Class BreadcrumbNavigationBar
             _hoverNodeIndex = newHoverIdx
             _hoverIsArrow = isArrow
             Cursor = If(hit, Cursors.Hand, Cursors.Default)
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End If
 
         ' 更新 ToolTip
@@ -1037,7 +1041,7 @@ Public Class BreadcrumbNavigationBar
             _hoverNodeIndex = -2
             _hoverIsArrow = False
             Cursor = Cursors.Default
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End If
         If _toolTip IsNot Nothing Then
             _toolTip.SetToolTip(Me, String.Empty)
@@ -1054,7 +1058,7 @@ Public Class BreadcrumbNavigationBar
         If HitTest(e.Location, idx, isArrow, isOverflow) Then
             _pressedNodeIndex = idx
             _pressedIsArrow = isArrow
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End If
     End Sub
 
@@ -1069,7 +1073,7 @@ Public Class BreadcrumbNavigationBar
         Dim wasPressedArrow As Boolean = _pressedIsArrow
         _pressedNodeIndex = -2
         _pressedIsArrow = False
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
         If hit AndAlso idx = wasPressedIdx AndAlso isArrow = wasPressedArrow Then
             If isOverflow Then
                 ' 溢出根：无论点的是文本还是箭头，都展开折叠列表
@@ -1128,7 +1132,7 @@ Public Class BreadcrumbNavigationBar
         Dim anchorRect As Rectangle = GetDropDownAnchorRect(arrowIndex)
         Dim pt As Point = PointToScreen(New Point(anchorRect.Left, Height))
         _activeDropDownMenu.Show(pt.X, pt.Y)
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Private Function GetDropDownMenu(arrowIndex As Integer) As ModernContextMenu
@@ -1165,7 +1169,7 @@ Public Class BreadcrumbNavigationBar
             menu.Close()
         Catch
         End Try
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Private Sub DropDownMenu_MenuClosed(sender As Object, e As EventArgs)
@@ -1173,7 +1177,7 @@ Public Class BreadcrumbNavigationBar
         If menu IsNot Nothing Then RemoveHandler menu.MenuClosed, AddressOf DropDownMenu_MenuClosed
         _activeDropDownMenu = Nothing
         _dropDownArrowIndex = -2
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 #End Region
 
@@ -1181,7 +1185,7 @@ Public Class BreadcrumbNavigationBar
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End If
     End Sub
 
@@ -1193,18 +1197,18 @@ Public Class BreadcrumbNavigationBar
     Protected Overrides Sub OnSizeChanged(e As EventArgs)
         MyBase.OnSizeChanged(e)
         If _activeDropDownMenu IsNot Nothing Then CloseDropDown()
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnEnabledChanged(e As EventArgs)
         MyBase.OnEnabledChanged(e)
         If Not Enabled AndAlso _activeDropDownMenu IsNot Nothing Then CloseDropDown()
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 #End Region
 

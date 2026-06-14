@@ -4,6 +4,7 @@ Imports System.Net.Http
 Imports System.Runtime.InteropServices
 Imports System.Text
 Imports System.Text.RegularExpressions
+Imports System.Threading.Tasks
 Imports Vortice.Direct2D1
 
 ''' <summary>
@@ -598,6 +599,16 @@ Public Class MarkDownViewer
     Private _streamBuffer As New StringBuilder()
     Private _streamDirty As Boolean = False
     Private _streamTimer As New Timer() With {.Interval = 30}
+    Private _parseVersion As Integer
+    Private _lastAppliedParseVersion As Integer
+    Private _parseRunning As Boolean
+    Private _runningParseVersion As Integer
+    Private _pendingParseVersion As Integer
+    Private _pendingParseParser As MarkdownParser
+    Private _pendingParseText As String = ""
+    Private _pendingParseResetScroll As Boolean
+    Private _pendingParseKeepAtBottom As Boolean
+    Private _pendingParseClearSelection As Boolean
 
     ' 字体缓存
     Private _fontCache As Dictionary(Of String, Font) = Nothing
@@ -614,6 +625,7 @@ Public Class MarkDownViewer
     Private ReadOnly _imageLastUsed As New Dictionary(Of String, Long)
     Private ReadOnly _imageLoadingUrls As New HashSet(Of String)
     Private _imageCacheClock As Long
+    Private _imageLoadVersion As Integer
     Private Shared ReadOnly _httpClient As New HttpClient() With {.Timeout = TimeSpan.FromSeconds(30)}
 
     ' V2 渲染资源（共享 DC RT / brush / textformat / SSAA 来自 WindowCompositor，仅图片缓存按 URL 本地持有）
@@ -630,8 +642,8 @@ Public Class MarkDownViewer
         End Get
         Set(value As Control)
             If _backgroundSource IsNot value Then
-                _backgroundSource = value
-                Me.Invalidate()
+                _backgroundSource = BackgroundPenetrationV2.SetConsumerSource(Me, _backgroundSource, value)
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Set
     End Property
@@ -1013,7 +1025,7 @@ Public Class MarkDownViewer
         End Get
         Set(value As Integer)
             滚动条宽度 = Math.Max(2, value)
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -1090,7 +1102,7 @@ Public Class MarkDownViewer
         Set(value As Integer)
             段落行距 = Math.Max(0, value)
             RebuildLayout()
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -1103,7 +1115,7 @@ Public Class MarkDownViewer
         Set(value As Integer)
             行内行距 = Math.Max(0, value)
             RebuildLayout()
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -1121,10 +1133,7 @@ Public Class MarkDownViewer
         Set(value As String)
             _streamBuffer.Clear()
             _streamBuffer.Append(If(value, ""))
-            ParseAndLayout()
-            _scrollY = 0
-            ClearSelection()
-            Invalidate()
+            ParseAndLayout(resetScroll:=True, clearSelectionOnApply:=True)
         End Set
     End Property
 
@@ -1137,7 +1146,6 @@ Public Class MarkDownViewer
         Set(value As MarkdownParser)
             _parser = If(value, New MarkdownParser())
             ParseAndLayout()
-            Invalidate()
         End Set
     End Property
 
@@ -1166,7 +1174,7 @@ Public Class MarkDownViewer
                 基础路径 = value
                 DisposeImageCache()
                 RebuildLayout()
-                Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Set
     End Property
@@ -1196,6 +1204,12 @@ Public Class MarkDownViewer
     Protected Overrides Sub OnHandleDestroyed(e As EventArgs)
         _autoScrollTimer.Stop()
         _streamTimer.Stop()
+        _parseVersion += 1
+        _pendingParseVersion = 0
+        _pendingParseParser = Nothing
+        _pendingParseText = ""
+        _parseRunning = False
+        _runningParseVersion = 0
         DisposeFontCache()
         DisposeImageCache()
         DisposeD2DResources()
@@ -1206,7 +1220,7 @@ Public Class MarkDownViewer
         MyBase.OnSizeChanged(e)
         RebuildLayout()
         ClampScroll()
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
 #End Region
@@ -1232,13 +1246,13 @@ Public Class MarkDownViewer
     ''' <summary>滚动到顶部。</summary>
     Public Sub ScrollToTop()
         _scrollY = 0
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     ''' <summary>滚动到底部。</summary>
     Public Sub ScrollToBottom()
         _scrollY = MaxScrollY()
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     ''' <summary>获取选中的纯文本。</summary>
@@ -1271,9 +1285,99 @@ Public Class MarkDownViewer
 
 #Region "解析与布局"
 
-    Private Sub ParseAndLayout()
-        _document = _parser.Parse(_streamBuffer.ToString())
+    Private Sub ParseAndLayout(Optional resetScroll As Boolean = False,
+                               Optional keepAtBottom As Boolean = False,
+                               Optional clearSelectionOnApply As Boolean = False)
+        Dim parser = If(_parser, New MarkdownParser())
+        Dim markdown = _streamBuffer.ToString()
+        Dim version = System.Threading.Interlocked.Increment(_parseVersion)
+
+        If parser.GetType() IsNot GetType(MarkdownParser) OrElse Not IsHandleCreated Then
+            Dim doc As MarkdownDocument = Nothing
+            Try
+                doc = parser.Parse(markdown)
+            Catch
+                doc = New MarkdownDocument()
+            End Try
+            ApplyParsedDocument(version, doc, resetScroll, keepAtBottom, clearSelectionOnApply)
+            Return
+        End If
+
+        _pendingParseVersion = version
+        _pendingParseParser = parser
+        _pendingParseText = markdown
+        _pendingParseResetScroll = resetScroll
+        _pendingParseKeepAtBottom = keepAtBottom
+        _pendingParseClearSelection = clearSelectionOnApply
+        StartPendingParseIfIdle()
+    End Sub
+
+    Private Sub StartPendingParseIfIdle()
+        If _parseRunning OrElse _pendingParseVersion <= 0 Then Return
+
+        Dim version = _pendingParseVersion
+        Dim parser = _pendingParseParser
+        Dim markdown = _pendingParseText
+        Dim resetScroll = _pendingParseResetScroll
+        Dim keepAtBottom = _pendingParseKeepAtBottom
+        Dim clearSelectionOnApply = _pendingParseClearSelection
+
+        _pendingParseVersion = 0
+        _pendingParseParser = Nothing
+        _pendingParseText = ""
+        _pendingParseResetScroll = False
+        _pendingParseKeepAtBottom = False
+        _pendingParseClearSelection = False
+
+        _parseRunning = True
+        _runningParseVersion = version
+
+        Task.Run(Sub()
+                     Dim doc As MarkdownDocument = Nothing
+                     Try
+                         doc = parser.Parse(markdown)
+                     Catch
+                         doc = New MarkdownDocument()
+                     End Try
+
+                     If IsHandleCreated AndAlso Not IsDisposed Then
+                         Try
+                             BeginInvoke(Sub()
+                                             CompleteAsyncParse(version, doc, resetScroll, keepAtBottom, clearSelectionOnApply)
+                                         End Sub)
+                         Catch
+                         End Try
+                     End If
+                 End Sub)
+    End Sub
+
+    Private Sub CompleteAsyncParse(version As Integer, doc As MarkdownDocument,
+                                   resetScroll As Boolean, keepAtBottom As Boolean,
+                                   clearSelectionOnApply As Boolean)
+        If version = _runningParseVersion Then
+            _parseRunning = False
+            _runningParseVersion = 0
+        End If
+
+        If version = _parseVersion Then
+            ApplyParsedDocument(version, doc, resetScroll, keepAtBottom, clearSelectionOnApply)
+        End If
+
+        StartPendingParseIfIdle()
+    End Sub
+
+    Private Sub ApplyParsedDocument(version As Integer, doc As MarkdownDocument,
+                                    resetScroll As Boolean, keepAtBottom As Boolean,
+                                    clearSelectionOnApply As Boolean)
+        If version < _lastAppliedParseVersion Then Return
+        _lastAppliedParseVersion = version
+        _document = If(doc, New MarkdownDocument())
         RebuildLayout()
+        If resetScroll Then _scrollY = 0
+        If keepAtBottom Then _scrollY = MaxScrollY()
+        If clearSelectionOnApply Then ClearSelection()
+        ClampScroll()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Private Sub RebuildLayout()
@@ -2014,7 +2118,7 @@ Public Class MarkDownViewer
             If newOff <> _scrollY Then
                 _scrollY = newOff
                 ClampScroll()
-                Invalidate()
+                OuterToInnerRefreshScheduler.RequestFull(Me)
                 Return
             End If
         End If
@@ -2025,7 +2129,7 @@ Public Class MarkDownViewer
         _selCurrent = pos
         _hasSelection = False
         _mouseDownLinkUrl = HitTestLink(e.X, e.Y)
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnMouseMove(e As MouseEventArgs)
@@ -2033,12 +2137,12 @@ Public Class MarkDownViewer
         If _scrollBar.IsDragging Then
             _scrollY = _scrollBar.DragMove(e.Y, _totalContentHeight, ViewportHeight())
             ClampScroll()
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
             Return
         End If
 
         If _scrollBarVisible AndAlso _scrollBar.TrackRect.Contains(e.Location) Then
-            If _scrollBar.UpdateHover(e.Location) Then Invalidate()
+            If _scrollBar.UpdateHover(e.Location) Then OuterToInnerRefreshScheduler.RequestFull(Me)
             Cursor = Cursors.Default
         Else
             Cursor = If(HitTestLink(e.X, e.Y) IsNot Nothing, Cursors.Hand, Cursors.IBeam)
@@ -2054,7 +2158,7 @@ Public Class MarkDownViewer
             Else
                 _autoScrollTimer.Stop()
             End If
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End If
     End Sub
 
@@ -2094,7 +2198,7 @@ Public Class MarkDownViewer
         ScrollBy(scrollDelta)
         _selCurrent = HitTestPos(_lastMousePos.X, _lastMousePos.Y)
         _hasSelection = CompareSelectionPos(_selAnchor, _selCurrent) <> 0
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
 #End Region
@@ -2139,7 +2243,7 @@ Public Class MarkDownViewer
         _selCurrent = New SelectionPos(_visualLines.Count - 1, lastFi,
             If(lastVl.Fragments.Count > 0, lastVl.Fragments(lastFi).CharLength, 0))
         _hasSelection = True
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Private Sub ClearSelection()
@@ -2228,7 +2332,7 @@ Public Class MarkDownViewer
     Private Sub ScrollBy(delta As Integer)
         _scrollY += delta
         ClampScroll()
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Private Function ViewportHeight() As Integer
@@ -2266,10 +2370,7 @@ Public Class MarkDownViewer
         End If
         _streamDirty = False
         Dim wasAtBottom As Boolean = (_scrollY >= MaxScrollY() - 2)
-        ParseAndLayout()
-        If 自动滚动 AndAlso wasAtBottom Then _scrollY = MaxScrollY()
-        ClampScroll()
-        Invalidate()
+        ParseAndLayout(keepAtBottom:=自动滚动 AndAlso wasAtBottom)
     End Sub
 
 #End Region
@@ -2417,9 +2518,8 @@ Public Class MarkDownViewer
             LoadImageFromUrlAsync(resolvedUrl)
             Return Nothing
         End If
-        Dim img = LoadImageFromFile(resolvedUrl)
-        StoreImageCacheEntry(resolvedUrl, img)
-        Return img
+        LoadImageFromFileAsync(resolvedUrl)
+        Return Nothing
     End Function
 
     Private Function LoadImageFromFile(path As String) As Image
@@ -2436,8 +2536,22 @@ Public Class MarkDownViewer
         End Try
     End Function
 
+    Private Sub LoadImageFromFileAsync(path As String)
+        _imageLoadingUrls.Add(path)
+        Dim loadVersion = _imageLoadVersion
+        Task.Run(Sub()
+                     Dim img = LoadImageFromFile(path)
+                     If img Is Nothing Then
+                         CacheNothing(path, loadVersion)
+                     Else
+                         PostImageLoadResult(path, img, loadVersion)
+                     End If
+                 End Sub)
+    End Sub
+
     Private Sub LoadImageFromUrlAsync(url As String)
         _imageLoadingUrls.Add(url)
+        Dim loadVersion = _imageLoadVersion
         Task.Run(Async Function()
                      Try
                          Using response = Await _httpClient.GetAsync(url)
@@ -2445,35 +2559,46 @@ Public Class MarkDownViewer
                              ' GDI+ 仅支持光栅格式；SVG / XML 等矢量格式直接跳过
                              Dim contentType = response.Content.Headers.ContentType?.MediaType
                              If contentType IsNot Nothing AndAlso Not IsRasterContentType(contentType) Then
-                                 CacheNothing(url)
+                                 CacheNothing(url, loadVersion)
                                  Return
                              End If
                              Dim data = Await response.Content.ReadAsByteArrayAsync()
                              ' 二次检查：文件头以 '<' 开头大概率是 SVG/XML
                              If data.Length > 0 AndAlso data(0) = CByte(AscW("<"c)) Then
-                                 CacheNothing(url)
+                                 CacheNothing(url, loadVersion)
                                  Return
                              End If
                              Using ms As New IO.MemoryStream(data)
                                  Using original = Image.FromStream(ms)
                                      Dim bmp As New Bitmap(original)
-                                     If IsHandleCreated Then
-                                         BeginInvoke(Sub()
-                                                         StoreImageCacheEntry(url, bmp)
-                                                         _imageLoadingUrls.Remove(url)
-                                                         RebuildLayout()
-                                                         Invalidate()
-                                                     End Sub)
-                                     Else
-                                         bmp.Dispose()
-                                     End If
+                                     PostImageLoadResult(url, bmp, loadVersion)
                                  End Using
                              End Using
                          End Using
                      Catch
-                         CacheNothing(url)
+                         CacheNothing(url, loadVersion)
                      End Try
                  End Function)
+    End Sub
+
+    Private Sub PostImageLoadResult(url As String, img As Image, loadVersion As Integer)
+        If IsHandleCreated AndAlso Not IsDisposed Then
+            Try
+                BeginInvoke(Sub()
+                                If loadVersion = _imageLoadVersion Then
+                                    StoreImageCacheEntry(url, img)
+                                    _imageLoadingUrls.Remove(url)
+                                    RebuildLayout()
+                                    OuterToInnerRefreshScheduler.RequestFull(Me)
+                                Else
+                                    img?.Dispose()
+                                End If
+                            End Sub)
+                Return
+            Catch
+            End Try
+        End If
+        img?.Dispose()
     End Sub
 
     ''' <summary>判断 Content-Type 是否为 GDI+ 可解码的光栅图片格式。</summary>
@@ -2495,13 +2620,18 @@ Public Class MarkDownViewer
     End Function
 
     ''' <summary>将 url 标记为不可用并从加载队列移除。</summary>
-    Private Sub CacheNothing(url As String)
-        If IsHandleCreated Then
-            BeginInvoke(Sub()
-                            _imageCache(url) = Nothing
-                            _imageLastUsed.Remove(url)
-                            _imageLoadingUrls.Remove(url)
-                        End Sub)
+    Private Sub CacheNothing(url As String, Optional loadVersion As Integer = -1)
+        If IsHandleCreated AndAlso Not IsDisposed Then
+            Try
+                BeginInvoke(Sub()
+                                If loadVersion < 0 OrElse loadVersion = _imageLoadVersion Then
+                                    _imageCache(url) = Nothing
+                                    _imageLastUsed.Remove(url)
+                                    _imageLoadingUrls.Remove(url)
+                                End If
+                            End Sub)
+            Catch
+            End Try
         End If
     End Sub
 
@@ -2584,6 +2714,7 @@ Public Class MarkDownViewer
     End Sub
 
     Private Sub DisposeImageCache()
+        _imageLoadVersion += 1
         DisposeD2DImageCache()
         For Each img In _imageCache.Values
             img?.Dispose()
@@ -2597,7 +2728,7 @@ Public Class MarkDownViewer
     Public Sub ClearImageCache()
         DisposeImageCache()
         RebuildLayout()
-        Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
 #End Region
@@ -2677,7 +2808,7 @@ Public Class MarkDownViewer
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
             RebuildLayout()
-            Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End If
     End Sub
 

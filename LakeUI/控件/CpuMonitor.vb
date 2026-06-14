@@ -861,7 +861,7 @@ Public Class CpuMonitor
             End SyncLock
         End If
 
-        If invalidateControl Then Me.Invalidate()
+        If invalidateControl Then OuterToInnerRefreshScheduler.RequestFull(Me)
         If raiseUpdated Then RaiseEvent SampleUpdated(Me, EventArgs.Empty)
     End Sub
 
@@ -888,7 +888,7 @@ Public Class CpuMonitor
             Next
             历史写入位置 = 0
         End SyncLock
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     ''' <summary>获取当前每核心占用（0.0~1.0）的只读快照。</summary>
@@ -1019,7 +1019,7 @@ Public Class CpuMonitor
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
             清除布局缓存()
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End If
     End Sub
 
@@ -1082,19 +1082,19 @@ Public Class CpuMonitor
 
     Protected Overrides Sub OnEnabledChanged(e As EventArgs)
         MyBase.OnEnabledChanged(e)
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
         清除布局缓存()
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnPaddingChanged(e As EventArgs)
         MyBase.OnPaddingChanged(e)
         清除布局缓存()
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
@@ -1105,12 +1105,12 @@ Public Class CpuMonitor
 
     Protected Overrides Sub OnForeColorChanged(e As EventArgs)
         MyBase.OnForeColorChanged(e)
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Sub OnBackColorChanged(e As EventArgs)
         MyBase.OnBackColorChanged(e)
-        Me.Invalidate()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 #End Region
 
@@ -1142,7 +1142,7 @@ Public Class CpuMonitor
                 _挂起期间需要采样 = False
             End If
             更新采样定时器状态()
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -1157,7 +1157,7 @@ Public Class CpuMonitor
             If value = 简化模式值 Then Return
             简化模式值 = value
             If value Then Reset()
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -1172,7 +1172,7 @@ Public Class CpuMonitor
             If value < -1 Then value = -1
             If value = 显示处理器组值 Then Return
             显示处理器组值 = value
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -1411,7 +1411,7 @@ Public Class CpuMonitor
         End Get
         Set(value As Boolean)
             启用历史记录 = value
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -1450,7 +1450,7 @@ Public Class CpuMonitor
                 Next
                 历史写入位置 = 0
             End SyncLock
-            Me.Invalidate()
+            OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
     End Property
 
@@ -1523,8 +1523,8 @@ Public Class CpuMonitor
         End Get
         Set(value As Control)
             If _backgroundSource IsNot value Then
-                _backgroundSource = value
-                Me.Invalidate()
+                _backgroundSource = BackgroundPenetrationV2.SetConsumerSource(Me, _backgroundSource, value)
+                OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Set
     End Property

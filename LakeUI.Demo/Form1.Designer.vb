@@ -1,4 +1,4 @@
-﻿<Global.Microsoft.VisualBasic.CompilerServices.DesignerGenerated()>
+<Global.Microsoft.VisualBasic.CompilerServices.DesignerGenerated()>
 Partial Class Form1
     Inherits System.Windows.Forms.Form
 
@@ -38,7 +38,6 @@ Partial Class Form1
         Dim ModernTabPage13 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
         Dim ModernTabPage14 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
         Dim ModernTabPage15 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
-        Dim ModernTabPage44 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
         Dim ModernTabPage16 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
         Dim ModernTabPage17 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
         Dim ModernTabPage18 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
@@ -67,6 +66,7 @@ Partial Class Form1
         Dim ModernTabPage41 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
         Dim ModernTabPage42 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
         Dim ModernTabPage43 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
+        Dim ModernTabPage44 As LakeUI.ModernTabListControl.ModernTabPage = New ModernTabListControl.ModernTabPage()
         Dim resources As System.ComponentModel.ComponentResourceManager = New System.ComponentModel.ComponentResourceManager(GetType(Form1))
         ModernTabListControl1 = New ModernTabListControl()
         ModernTextBox1 = New ModernTextBox()
@@ -78,8 +78,6 @@ Partial Class Form1
         ' 
         ModernTabListControl1.AnimationFPS = 120
         ModernTabListControl1.BackColor = Color.Transparent
-        ModernTabListControl1.ContentBackColor = Color.Transparent
-        ModernTabListControl1.ContentBorderColor = Color.Transparent
         ModernTabListControl1.Controls.Add(ModernTextBox1)
         ModernTabListControl1.Dock = DockStyle.Fill
         ModernTabPage1.IsDescription = True
@@ -251,7 +249,7 @@ Partial Class Form1
         MinimumSize = New Size(1000, 700)
         Name = "Form1"
         StartPosition = FormStartPosition.CenterScreen
-        Text = "LakeUI 2.8.0 DEMO"
+        Text = "LakeUI 2.9.0 DEMO"
         ModernTabListControl1.ResumeLayout(False)
         ResumeLayout(False)
     End Sub

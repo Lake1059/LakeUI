@@ -1,3 +1,3 @@
-﻿Public Class Form_CpuMonitor
+Public Class Form_CpuMonitor
 
 End Class
