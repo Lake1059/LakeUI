@@ -138,23 +138,13 @@ Public Module BackgroundPenetrationV2
         Dim destRect As Rectangle = Rectangle.Intersect(childBounds, scope.ClipRectangle)
         If destRect.Width <= 0 OrElse destRect.Height <= 0 Then Return
 
-        Dim offset As Point = ComputeOffset(child, source)
-        Dim forwardedSource As Control = Nothing
         Dim sourceForSampling As Control = source
-        If TryForwardTransparentSource(source, forwardedSource) Then
-            Dim sourceOffset = ComputeOffset(source, forwardedSource)
-            offset = New Point(offset.X + sourceOffset.X, offset.Y + sourceOffset.Y)
-            sourceForSampling = forwardedSource
-            sw = sourceForSampling.Width
-            sh = sourceForSampling.Height
-            If sw <= 0 OrElse sh <= 0 Then Return
-            If Not IsRenderableControl(sourceForSampling) Then
-                ReleaseSource(sourceForSampling)
-                Return
-            End If
-        End If
+        Dim offset As Point = ComputeOffset(child, sourceForSampling)
+        Dim sourceMappings As New List(Of KeyValuePair(Of Control, Rectangle))()
+        If Not ResolveTransparentSourceChain(childBounds, sourceForSampling, offset, sourceMappings) Then Return
+        sw = sourceForSampling.Width
+        sh = sourceForSampling.Height
         Dim srcRect As New Rectangle(offset.X + destRect.X, offset.Y + destRect.Y, destRect.Width, destRect.Height)
-        Dim mappedSourceRect As New Rectangle(offset, childBounds.Size)
 
         Dim rt = scope.BackgroundLayer
         ' 静态图片玻璃背景的关键路径：直接从 BackdropRenderer 当前帧裁切绘制，避免把整个 Form
@@ -164,15 +154,18 @@ Public Module BackgroundPenetrationV2
             ThisIsYourWindow.TryGetImageBackdropFrameVersion(sourceForSampling, imageBackdropVersion)
             EnsureEntry(sourceForSampling)
             ReleaseLegacySampleCache(sourceForSampling, imageBackdropVersion)
-            RegisterConsumer(sourceForSampling, child, mappedSourceRect, childBounds)
+            RegisterConsumerMappings(child, sourceMappings, childBounds)
             Return
         End If
 
         Dim isSolid As Boolean
         Dim solidColor As Color = Color.Empty
-        Dim acquired = AcquireD2DBitmap(sourceForSampling, rt, srcRect, isSolid, solidColor)
+        Dim acquired As New BitmapAcquireResult()
+        If Not TryAcquireContainedStockPanelBackgroundBitmap(sourceForSampling, child, rt, srcRect, acquired) Then
+            acquired = AcquireD2DBitmap(sourceForSampling, rt, srcRect, isSolid, solidColor)
+        End If
         Try
-            RegisterConsumer(sourceForSampling, child, mappedSourceRect, childBounds)
+            RegisterConsumerMappings(child, sourceMappings, childBounds)
             If isSolid Then
                 Dim brushCache = scope.Compositor?.BrushCache
                 If brushCache IsNot Nothing Then
@@ -267,14 +260,6 @@ Public Module BackgroundPenetrationV2
         If child Is Nothing Then Return
 
         SyncLock _cache
-            If source IsNot Nothing Then
-                Dim entry As Entry = Nothing
-                If _cache.TryGetValue(source, entry) Then
-                    RemoveConsumerNoLock(source, entry, child)
-                End If
-                Return
-            End If
-
             For Each kv In _cache.ToArray()
                 RemoveConsumerNoLock(kv.Key, kv.Value, child)
             Next
@@ -337,36 +322,67 @@ Public Module BackgroundPenetrationV2
 
     Private Sub RegisterConsumer(source As Control, child As Control, sourceRect As Rectangle, destRect As Rectangle)
         If source Is Nothing OrElse child Is Nothing Then Return
+        Dim mappings As New List(Of KeyValuePair(Of Control, Rectangle)) From {
+            New KeyValuePair(Of Control, Rectangle)(source, sourceRect)
+        }
+        RegisterConsumers(child, mappings, destRect)
+    End Sub
+
+    Private Sub RegisterConsumerMappings(child As Control, mappings As List(Of KeyValuePair(Of Control, Rectangle)),
+                                         destRect As Rectangle)
+        RegisterConsumers(child, mappings, destRect)
+    End Sub
+
+    Private Sub RegisterConsumers(child As Control, mappings As List(Of KeyValuePair(Of Control, Rectangle)), destRect As Rectangle)
+        If child Is Nothing OrElse mappings Is Nothing OrElse mappings.Count = 0 Then Return
         If Not IsRenderableControl(child) Then Return
+
         SyncLock _cache
-            ' 一个 child 同一时刻只能跟随一个 BackgroundSource。换源时如果旧 source 仍持有它，
-            ' 后续旧 source 的 Invalidated/Resize 会把已经离线的页面重新唤醒。
+            ' 一个 child 同一时刻只能跟随一条 BackgroundSource 链。透明 ModernPanel 可能转发到外层 source，
+            ' 因此同一条链上允许同时注册原始 source 与转发后的真实 source；其它旧 source 一律移除。
             For Each kv In _cache.ToArray()
-                If kv.Key Is source Then Continue For
+                If MappingContainsSource(mappings, kv.Key) Then Continue For
                 RemoveConsumerNoLock(kv.Key, kv.Value, child)
             Next
 
-            Dim entry As Entry = Nothing
-            If Not _cache.TryGetValue(source, entry) Then Return
-
-            For i As Integer = entry.Consumers.Count - 1 To 0 Step -1
-                Dim consumer = entry.Consumers(i)
-                Dim existingChild = TryCast(consumer.ChildRef.Target, Control)
-                If existingChild Is Nothing OrElse existingChild.IsDisposed Then
-                    entry.Consumers.RemoveAt(i)
-                ElseIf existingChild Is child Then
-                    consumer.SourceRect = sourceRect
-                    consumer.DestRect = destRect
-                    Return
-                End If
+            For Each mapping In mappings
+                Dim source = mapping.Key
+                If source Is Nothing OrElse source.IsDisposed Then Continue For
+                Dim entry = EnsureEntryNoLock(source)
+                If entry Is Nothing Then Continue For
+                AddOrUpdateConsumerNoLock(entry, child, mapping.Value, destRect)
             Next
-
-            entry.Consumers.Add(New Entry.ConsumerEntry With {
-                .ChildRef = New WeakReference(child),
-                .SourceRect = sourceRect,
-                .DestRect = destRect
-            })
         End SyncLock
+    End Sub
+
+    Private Function MappingContainsSource(mappings As List(Of KeyValuePair(Of Control, Rectangle)), source As Control) As Boolean
+        If mappings Is Nothing OrElse source Is Nothing Then Return False
+        For Each mapping In mappings
+            If mapping.Key Is source Then Return True
+        Next
+        Return False
+    End Function
+
+    Private Sub AddOrUpdateConsumerNoLock(entry As Entry, child As Control, sourceRect As Rectangle, destRect As Rectangle)
+        If entry Is Nothing OrElse child Is Nothing Then Return
+
+        For i As Integer = entry.Consumers.Count - 1 To 0 Step -1
+            Dim consumer = entry.Consumers(i)
+            Dim existingChild = TryCast(consumer.ChildRef.Target, Control)
+            If existingChild Is Nothing OrElse existingChild.IsDisposed Then
+                entry.Consumers.RemoveAt(i)
+            ElseIf existingChild Is child Then
+                consumer.SourceRect = sourceRect
+                consumer.DestRect = destRect
+                Return
+            End If
+        Next
+
+        entry.Consumers.Add(New Entry.ConsumerEntry With {
+            .ChildRef = New WeakReference(child),
+            .SourceRect = sourceRect,
+            .DestRect = destRect
+        })
     End Sub
 
     Private Sub RemoveConsumerNoLock(source As Control, entry As Entry, child As Control)
@@ -396,11 +412,11 @@ Public Module BackgroundPenetrationV2
         Dim sw As Integer = source.Width, sh As Integer = source.Height
         Dim entry As Entry = Nothing
         Dim needRebuild As Boolean
+        Dim reuseExistingBitmapWhilePainting As Boolean
         SyncLock _cache
             entry = EnsureEntryNoLock(source)
             entry.UsesImageBackdropFastPath = False
             entry.LastUsed = NextClock()
-            If entry.Painting Then Return Nothing
             ' Pure-color entries intentionally drop Bmp to save RAM; the cached SolidArgb is still valid
             ' while the source size matches and no invalidation has marked it dirty.
             Dim sizeOk As Boolean = ((entry.Bmp IsNot Nothing OrElse entry.IsSolidColor) AndAlso entry.Width = sw AndAlso entry.Height = sh)
@@ -408,9 +424,24 @@ Public Module BackgroundPenetrationV2
                 entry.FullDirty = True
                 InvalidateCropEntries(entry, Nothing)
             End If
-            needRebuild = entry.FullDirty OrElse DirtyRectsIntersect(entry, sourceRect)
-            If needRebuild Then entry.Painting = True
+            If entry.Painting Then
+                If entry.IsSolidColor AndAlso sizeOk Then
+                    isSolid = True
+                    solidColor = Color.FromArgb(entry.SolidArgb)
+                    Return Nothing
+                End If
+                If entry.Bmp IsNot Nothing AndAlso sizeOk Then
+                    reuseExistingBitmapWhilePainting = True
+                Else
+                    Return Nothing
+                End If
+            Else
+                needRebuild = entry.FullDirty OrElse DirtyRectsIntersect(entry, sourceRect)
+                If needRebuild Then entry.Painting = True
+            End If
         End SyncLock
+
+        If reuseExistingBitmapWhilePainting Then Return AcquireCropBitmap(entry, rt, sourceRect)
 
         If needRebuild Then
             Try
@@ -456,6 +487,7 @@ Public Module BackgroundPenetrationV2
         AddHandler source.Disposed, AddressOf OnSourceDisposed
         AddHandler source.HandleDestroyed, AddressOf OnSourceHandleDestroyed
         AddHandler source.Invalidated, AddressOf OnSourceInvalidated
+        AddHandler source.LocationChanged, AddressOf OnSourceParentOrVisibleChanged
         AddHandler source.ParentChanged, AddressOf OnSourceParentOrVisibleChanged
         AddHandler source.Resize, AddressOf OnSourceResized
         AddHandler source.VisibleChanged, AddressOf OnSourceParentOrVisibleChanged
@@ -475,17 +507,35 @@ Public Module BackgroundPenetrationV2
         Return True
     End Function
 
+    Private Function ResolveTransparentSourceChain(childBounds As Rectangle,
+                                                   ByRef sourceForSampling As Control,
+                                                   ByRef offset As Point,
+                                                   mappings As List(Of KeyValuePair(Of Control, Rectangle))) As Boolean
+        If sourceForSampling Is Nothing OrElse mappings Is Nothing Then Return False
+
+        Dim visited As New HashSet(Of Control)()
+        Do
+            If sourceForSampling Is Nothing OrElse sourceForSampling.IsDisposed Then Return False
+            If sourceForSampling.Width <= 0 OrElse sourceForSampling.Height <= 0 Then Return False
+            If Not IsRenderableControl(sourceForSampling) Then
+                ReleaseSource(sourceForSampling)
+                Return False
+            End If
+            If visited.Contains(sourceForSampling) Then Return False
+            visited.Add(sourceForSampling)
+
+            mappings.Add(New KeyValuePair(Of Control, Rectangle)(sourceForSampling, New Rectangle(offset, childBounds.Size)))
+
+            Dim forwardedSource As Control = Nothing
+            If Not TryForwardTransparentSource(sourceForSampling, forwardedSource) Then Return True
+            Dim sourceOffset = ComputeOffset(sourceForSampling, forwardedSource)
+            offset = New Point(offset.X + sourceOffset.X, offset.Y + sourceOffset.Y)
+            sourceForSampling = forwardedSource
+        Loop
+    End Function
+
     Private Sub RebuildGdiBitmap(source As Control, entry As Entry, sw As Integer, sh As Integer)
         Dim fullRebuild As Boolean = entry.FullDirty OrElse entry.Bmp Is Nothing OrElse entry.Width <> sw OrElse entry.Height <> sh
-        If entry.Bmp Is Nothing OrElse entry.Width <> sw OrElse entry.Height <> sh Then
-            ReleaseSourceBitmap(entry)
-            entry.Bmp = New Bitmap(sw, sh, PixelFormat.Format32bppPArgb)
-            entry.Width = sw
-            entry.Height = sh
-            entry.BitmapBytes = EstimateBitmapBytes(sw, sh)
-            _sourceBitmapBytes += entry.BitmapBytes
-            fullRebuild = True
-        End If
 
         Dim repaintRects As List(Of Rectangle)
         If fullRebuild OrElse entry.DirtyRects.Count = 0 Then
@@ -494,48 +544,87 @@ Public Module BackgroundPenetrationV2
             repaintRects = New List(Of Rectangle)(entry.DirtyRects)
         End If
 
-        Using D2DHelperV2.EnterBackgroundSamplingPaint()
-            Using bg As Graphics = Graphics.FromImage(entry.Bmp)
-                For Each repaintRect In repaintRects
-                    repaintRect = Rectangle.Intersect(New Rectangle(0, 0, sw, sh), repaintRect)
-                    If repaintRect.Width <= 0 OrElse repaintRect.Height <= 0 Then Continue For
-                    Dim oldMode = bg.CompositingMode
-                    bg.CompositingMode = Drawing2D.CompositingMode.SourceCopy
-                    Using transparentBrush As New SolidBrush(Color.Transparent)
-                        bg.FillRectangle(transparentBrush, repaintRect)
+        Dim workingBmp As Bitmap = Nothing
+        Dim oldBmp As Bitmap = Nothing
+        Dim replacedEntryBitmap As Boolean
+        Try
+            Using D2DHelperV2.EnterBackgroundSamplingPaint()
+                workingBmp = New Bitmap(sw, sh, PixelFormat.Format32bppPArgb)
+                If Not fullRebuild AndAlso entry.Bmp IsNot Nothing Then
+                    Using copyG = Graphics.FromImage(workingBmp)
+                        copyG.CompositingMode = Drawing2D.CompositingMode.SourceCopy
+                        copyG.DrawImageUnscaled(entry.Bmp, 0, 0)
                     End Using
-                    bg.CompositingMode = oldMode
+                End If
 
-                    Dim state = bg.Save()
-                    Try
-                        bg.SetClip(repaintRect)
-                        Using pea As New PaintEventArgs(bg, repaintRect)
-                            InvokePaintBackgroundProxy(source, pea)
-                            InvokePaintProxy(source, pea)
+                Using bg As Graphics = Graphics.FromImage(workingBmp)
+                    For Each repaintRect In repaintRects
+                        repaintRect = Rectangle.Intersect(New Rectangle(0, 0, sw, sh), repaintRect)
+                        If repaintRect.Width <= 0 OrElse repaintRect.Height <= 0 Then Continue For
+                        Dim oldMode = bg.CompositingMode
+                        bg.CompositingMode = Drawing2D.CompositingMode.SourceCopy
+                        Using transparentBrush As New SolidBrush(Color.Transparent)
+                            bg.FillRectangle(transparentBrush, repaintRect)
                         End Using
-                    Finally
-                        bg.Restore(state)
-                    End Try
-                Next
-            End Using
-        End Using
-        If fullRebuild Then
-            ' 同 V1：修复 D2D + GDI BitBlt 引发的 alpha=0 写穿问题，并顺手识别纯色采样结果。
-            Dim solidArgb As Integer
-            entry.IsSolidColor = ForceOpaqueAlphaAndDetectSolid(entry.Bmp, solidArgb)
-            entry.SolidArgb = solidArgb
-            If entry.IsSolidColor Then
-                ' Pure color sources can be redrawn from SolidArgb; keeping the full CPU bitmap only wastes RAM.
-                InvalidateCropEntries(entry, Nothing)
-                ReleaseSourceBitmap(entry)
-            End If
-        Else
-            ForceOpaqueAlpha(entry.Bmp, repaintRects)
-            entry.IsSolidColor = False
-        End If
+                        bg.CompositingMode = oldMode
 
-        entry.FullDirty = False
-        entry.DirtyRects.Clear()
+                        Dim state = bg.Save()
+                        Try
+                            bg.SetClip(repaintRect)
+                            Using pea As New PaintEventArgs(bg, repaintRect)
+                                InvokePaintBackgroundProxy(source, pea)
+                                InvokePaintProxy(source, pea)
+                            End Using
+                        Finally
+                            bg.Restore(state)
+                        End Try
+                    Next
+                End Using
+            End Using
+
+            SyncLock _cache
+                oldBmp = entry.Bmp
+                entry.Bmp = workingBmp
+                workingBmp = Nothing
+                replacedEntryBitmap = True
+                InvalidateCropEntries(entry, Nothing)
+                _sourceBitmapBytes -= entry.BitmapBytes
+                If _sourceBitmapBytes < 0 Then _sourceBitmapBytes = 0
+                entry.Width = sw
+                entry.Height = sh
+                entry.BitmapBytes = EstimateBitmapBytes(sw, sh)
+                _sourceBitmapBytes += entry.BitmapBytes
+            End SyncLock
+            If oldBmp IsNot Nothing Then
+                Try : oldBmp.Dispose() : Catch : End Try
+                oldBmp = Nothing
+            End If
+
+            If fullRebuild Then
+                ' 同 V1：修复 D2D + GDI BitBlt 引发的 alpha=0 写穿问题，并顺手识别纯色采样结果。
+                Dim solidArgb As Integer
+                entry.IsSolidColor = ForceOpaqueAlphaAndDetectSolid(entry.Bmp, solidArgb)
+                entry.SolidArgb = solidArgb
+                If entry.IsSolidColor Then
+                    ' Pure color sources can be redrawn from SolidArgb; keeping the full CPU bitmap only wastes RAM.
+                    InvalidateCropEntries(entry, Nothing)
+                    ReleaseSourceBitmap(entry)
+                End If
+            Else
+                ForceOpaqueAlpha(entry.Bmp, repaintRects)
+                entry.IsSolidColor = False
+            End If
+
+            entry.FullDirty = False
+            entry.DirtyRects.Clear()
+        Finally
+            If workingBmp IsNot Nothing Then
+                Try : workingBmp.Dispose() : Catch : End Try
+            End If
+            If replacedEntryBitmap AndAlso oldBmp IsNot Nothing Then
+                Try : oldBmp.Dispose() : Catch : End Try
+            End If
+        End Try
     End Sub
 
     Private Function AcquireCropBitmap(entry As Entry, rt As ID2D1RenderTarget, sourceBounds As Rectangle) As BitmapAcquireResult
@@ -603,6 +692,42 @@ Public Module BackgroundPenetrationV2
             End Using
             Return D2DGlobals.CreateBitmapFromGdi(rt, cropBmp)
         End Using
+    End Function
+
+    Private Function TryAcquireContainedStockPanelBackgroundBitmap(source As Control, consumer As Control,
+                                                                   rt As ID2D1RenderTarget, sourceRect As Rectangle,
+                                                                   ByRef acquired As BitmapAcquireResult) As Boolean
+        acquired = Nothing
+        If source Is Nothing OrElse consumer Is Nothing OrElse rt Is Nothing Then Return False
+        If Not IsPlainWinFormsPanel(source) Then Return False
+        If Not ContainsControl(source, consumer) Then Return False
+        If sourceRect.Width <= 0 OrElse sourceRect.Height <= 0 Then Return False
+
+        Dim sourceBounds As New Rectangle(0, 0, source.Width, source.Height)
+        Dim srcIntersection = Rectangle.Intersect(sourceBounds, sourceRect)
+        If srcIntersection.Width <= 0 OrElse srcIntersection.Height <= 0 Then Return False
+
+        Using bmp As New Bitmap(sourceRect.Width, sourceRect.Height, PixelFormat.Format32bppPArgb)
+            Using bg = Graphics.FromImage(bmp)
+                bg.CompositingMode = Drawing2D.CompositingMode.SourceCopy
+                bg.Clear(Color.Transparent)
+                bg.CompositingMode = Drawing2D.CompositingMode.SourceOver
+                bg.TranslateTransform(-sourceRect.X, -sourceRect.Y)
+                bg.SetClip(srcIntersection)
+                Using pea As New PaintEventArgs(bg, srcIntersection)
+                    InvokePaintBackgroundProxy(source, pea)
+                End Using
+            End Using
+            Dim validRect As New Rectangle(srcIntersection.X - sourceRect.X, srcIntersection.Y - sourceRect.Y,
+                                           srcIntersection.Width, srcIntersection.Height)
+            ForceOpaqueAlpha(bmp, {validRect})
+            acquired = New BitmapAcquireResult With {
+                .Bitmap = D2DGlobals.CreateBitmapFromGdi(rt, bmp),
+                .DisposeAfterDraw = True
+            }
+        End Using
+
+        Return acquired.Bitmap IsNot Nothing
     End Function
 
     Private Sub TrimCropEntries(entry As Entry, Optional protectedCrop As Entry.CropEntry = Nothing)
@@ -716,6 +841,7 @@ Public Module BackgroundPenetrationV2
         Try : RemoveHandler source.Disposed, AddressOf OnSourceDisposed : Catch : End Try
         Try : RemoveHandler source.HandleDestroyed, AddressOf OnSourceHandleDestroyed : Catch : End Try
         Try : RemoveHandler source.Invalidated, AddressOf OnSourceInvalidated : Catch : End Try
+        Try : RemoveHandler source.LocationChanged, AddressOf OnSourceParentOrVisibleChanged : Catch : End Try
         Try : RemoveHandler source.ParentChanged, AddressOf OnSourceParentOrVisibleChanged : Catch : End Try
         Try : RemoveHandler source.Resize, AddressOf OnSourceResized : Catch : End Try
         Try : RemoveHandler source.VisibleChanged, AddressOf OnSourceParentOrVisibleChanged : Catch : End Try
@@ -1013,11 +1139,71 @@ Public Module BackgroundPenetrationV2
                 If Not _cache.TryGetValue(source, entry) Then Continue For
                 If IsRenderableControl(source) Then
                     RefreshAncestorSubscriptions(source, entry)
+                    entry.FullDirty = True
+                    entry.DirtyRects.Clear()
+                    InvalidateCropEntries(entry, Nothing)
+                    CollectConsumerInvalidations(source, entry, Nothing, invalidations, removeWhenEmpty:=False)
+                    If entry.Consumers.Count = 0 Then RemoveSourceEntryNoLock(source, entry)
                     Continue For
                 End If
 
                 CollectConsumerInvalidations(source, entry, Nothing, invalidations, removeWhenEmpty:=False)
                 RemoveSourceEntryNoLock(source, entry)
+            Next
+        End SyncLock
+
+        FlushConsumerInvalidations(invalidations)
+    End Sub
+
+    Private Sub OnSourceAncestorInvalidated(sender As Object, e As InvalidateEventArgs)
+        Dim ancestor = TryCast(sender, Control)
+        If ancestor Is Nothing Then Return
+        Dim dirtyRect As Rectangle = If(e IsNot Nothing, e.InvalidRect, Rectangle.Empty)
+        InvalidateSourcesForAncestorChange(ancestor, dirtyRect)
+    End Sub
+
+    Private Sub OnSourceAncestorResized(sender As Object, e As EventArgs)
+        Dim ancestor = TryCast(sender, Control)
+        If ancestor Is Nothing Then Return
+        InvalidateSourcesForAncestorChange(ancestor, Rectangle.Empty)
+    End Sub
+
+    Private Sub InvalidateSourcesForAncestorChange(ancestor As Control, ancestorDirtyRect As Rectangle)
+        If ancestor Is Nothing Then Return
+        Dim invalidations As New List(Of ConsumerInvalidation)()
+
+        SyncLock _cache
+            For Each kv In _cache.ToArray()
+                Dim source = kv.Key
+                Dim entry = kv.Value
+                If source Is Nothing OrElse entry Is Nothing Then Continue For
+                If source Is ancestor Then Continue For
+                If Not entry.AncestorSubscriptions.Contains(ancestor) Then Continue For
+
+                Dim dirtyRect As Rectangle = Rectangle.Empty
+                If ancestorDirtyRect.Width > 0 AndAlso ancestorDirtyRect.Height > 0 Then
+                    dirtyRect = MapRectangleBetweenControls(ancestor, source, ancestorDirtyRect)
+                    dirtyRect = Rectangle.Intersect(New Rectangle(0, 0, source.Width, source.Height), dirtyRect)
+                    If dirtyRect.Width <= 0 OrElse dirtyRect.Height <= 0 Then Continue For
+                End If
+
+                If dirtyRect.Width <= 0 OrElse dirtyRect.Height <= 0 Then
+                    entry.FullDirty = True
+                    entry.DirtyRects.Clear()
+                    InvalidateCropEntries(entry, Nothing)
+                    CollectConsumerInvalidations(source, entry, Nothing, invalidations, removeWhenEmpty:=False)
+                    If entry.Consumers.Count = 0 Then RemoveSourceEntryNoLock(source, entry)
+                Else
+                    AddDirtyRect(entry, dirtyRect, New Rectangle(0, 0, source.Width, source.Height))
+                    InvalidateCropEntries(entry, dirtyRect)
+                    If entry.FullDirty Then
+                        InvalidateCropEntries(entry, Nothing)
+                        CollectConsumerInvalidations(source, entry, Nothing, invalidations, removeWhenEmpty:=False)
+                    Else
+                        CollectConsumerInvalidations(source, entry, dirtyRect, invalidations, removeWhenEmpty:=False)
+                    End If
+                    If entry.Consumers.Count = 0 Then RemoveSourceEntryNoLock(source, entry)
+                End If
             Next
         End SyncLock
 
@@ -1060,7 +1246,9 @@ Public Module BackgroundPenetrationV2
             _ancestorSubscriptionRefs(ancestor) = 1
             AddHandler ancestor.Disposed, AddressOf OnSourceParentOrVisibleChanged
             AddHandler ancestor.HandleDestroyed, AddressOf OnSourceParentOrVisibleChanged
+            AddHandler ancestor.Invalidated, AddressOf OnSourceAncestorInvalidated
             AddHandler ancestor.ParentChanged, AddressOf OnSourceParentOrVisibleChanged
+            AddHandler ancestor.Resize, AddressOf OnSourceAncestorResized
             AddHandler ancestor.VisibleChanged, AddressOf OnSourceParentOrVisibleChanged
         End If
 
@@ -1081,7 +1269,9 @@ Public Module BackgroundPenetrationV2
         _ancestorSubscriptionRefs.Remove(ancestor)
         Try : RemoveHandler ancestor.Disposed, AddressOf OnSourceParentOrVisibleChanged : Catch : End Try
         Try : RemoveHandler ancestor.HandleDestroyed, AddressOf OnSourceParentOrVisibleChanged : Catch : End Try
+        Try : RemoveHandler ancestor.Invalidated, AddressOf OnSourceAncestorInvalidated : Catch : End Try
         Try : RemoveHandler ancestor.ParentChanged, AddressOf OnSourceParentOrVisibleChanged : Catch : End Try
+        Try : RemoveHandler ancestor.Resize, AddressOf OnSourceAncestorResized : Catch : End Try
         Try : RemoveHandler ancestor.VisibleChanged, AddressOf OnSourceParentOrVisibleChanged : Catch : End Try
     End Sub
 
@@ -1114,6 +1304,34 @@ Public Module BackgroundPenetrationV2
         End While
         If ctrl Is source Then Return New Point(ox, oy)
         Return source.PointToClient(child.PointToScreen(Point.Empty))
+    End Function
+
+    Private Function MapRectangleBetweenControls(fromControl As Control, toControl As Control, rect As Rectangle) As Rectangle
+        If fromControl Is Nothing OrElse toControl Is Nothing Then Return Rectangle.Empty
+        If rect.Width <= 0 OrElse rect.Height <= 0 Then Return Rectangle.Empty
+        Try
+            Dim screenTopLeft = fromControl.PointToScreen(rect.Location)
+            Dim screenBottomRight = fromControl.PointToScreen(New Point(rect.Right, rect.Bottom))
+            Dim targetTopLeft = toControl.PointToClient(screenTopLeft)
+            Dim targetBottomRight = toControl.PointToClient(screenBottomRight)
+            Return Rectangle.FromLTRB(targetTopLeft.X, targetTopLeft.Y, targetBottomRight.X, targetBottomRight.Y)
+        Catch
+            Return Rectangle.Empty
+        End Try
+    End Function
+
+    Private Function ContainsControl(ancestor As Control, descendant As Control) As Boolean
+        If ancestor Is Nothing OrElse descendant Is Nothing Then Return False
+        Dim current As Control = descendant
+        While current IsNot Nothing
+            If current Is ancestor Then Return True
+            current = current.Parent
+        End While
+        Return False
+    End Function
+
+    Private Function IsPlainWinFormsPanel(ctrl As Control) As Boolean
+        Return ctrl IsNot Nothing AndAlso Object.ReferenceEquals(ctrl.GetType(), GetType(Panel))
     End Function
 
     Private ReadOnly _invokePaintBackground As Action(Of Control, Control, PaintEventArgs) =

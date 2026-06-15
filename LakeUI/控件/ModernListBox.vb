@@ -1122,6 +1122,18 @@ Public Class ModernListBox
         UpdateStyles()
     End Sub
 
+    Protected Overrides ReadOnly Property DefaultPadding As Padding
+        Get
+            Return New Padding(0)
+        End Get
+    End Property
+
+    Protected Overrides ReadOnly Property DefaultMargin As Padding
+        Get
+            Return New Padding(0)
+        End Get
+    End Property
+
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
         If _backgroundSource IsNot Nothing Then Return
         MyBase.OnPaintBackground(e)

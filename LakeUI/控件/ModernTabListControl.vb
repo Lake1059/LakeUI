@@ -10,6 +10,7 @@ Imports Vortice.DirectWrite
 ''' </summary>
 <DefaultEvent("SelectedIndexChanged")>
 Public Class ModernTabListControl
+    Implements IOuterToInnerRefreshFilter
 
     ''' <summary>
     ''' 表示 <see cref="ModernTabListControl"/> 中的一个选项卡项。
@@ -168,6 +169,34 @@ Public Class ModernTabListControl
         Public HasBeenShown As Boolean
         Public LastShownSize As Size = Size.Empty
         Public LastShownBackgroundVersion As Integer = -1
+        Public LastShownPanelBounds As Rectangle = Rectangle.Empty
+        Public LastShownBackgroundSource As Control = Nothing
+        Public ForceRefreshDuringSwitch As Boolean
+    End Class
+
+    Private Class SwitchRefreshScope
+        Implements IDisposable
+
+        Private ReadOnly _owner As ModernTabListControl
+        Private _disposed As Boolean
+
+        Public Sub New(owner As ModernTabListControl)
+            _owner = owner
+            If _owner Is Nothing Then Return
+            _owner._切页刷新过滤深度 += 1
+            _owner._切页刷新过滤序号 += 1
+            _owner._切页刷新过滤启用 = True
+        End Sub
+
+        Public Sub Dispose() Implements IDisposable.Dispose
+            If _disposed Then Return
+            _disposed = True
+            If _owner Is Nothing Then Return
+            _owner._切页刷新过滤深度 = Math.Max(0, _owner._切页刷新过滤深度 - 1)
+            If _owner._切页刷新过滤深度 = 0 Then
+                _owner.延迟结束切页刷新过滤(_owner._切页刷新过滤序号)
+            End If
+        End Sub
     End Class
 
     ''' <summary>
@@ -308,9 +337,10 @@ Public Class ModernTabListControl
             _内容面板.Visible = False
             解除背景穿透消费者()
             Try : BackgroundPenetrationV2.UnregisterConsumer(_内容面板) : Catch : End Try
-            清除所有切页刷新抑制()
         ElseIf _宿主窗体已订阅 Is Nothing OrElse Not _宿主窗体已订阅.Disposing Then
-            切换绑定控件()
+            Using 进入切页刷新过滤()
+                切换绑定控件()
+            End Using
         End If
     End Sub
 
@@ -358,6 +388,9 @@ Public Class ModernTabListControl
     Private _当前绑定控件 As Control = Nothing
     Private _宿主窗体已订阅 As Form = Nothing
     Private _宿主关闭序号 As Integer = 0
+    Private _切页刷新过滤深度 As Integer = 0
+    Private _切页刷新过滤序号 As Integer = 0
+    Private _切页刷新过滤启用 As Boolean = False
 
     Public Sub New()
         InitializeComponent()
@@ -426,7 +459,7 @@ Public Class ModernTabListControl
         For Each ctrl In _绑定页状态.Keys.ToArray()
             If Not 绑定控件是否仍在项目中(ctrl) Then
                 If ctrl Is _当前绑定控件 OrElse ctrl.Parent Is _内容面板 Then
-                    隐藏绑定控件(ctrl)
+                    移除绑定控件(ctrl)
                 End If
                 释放绑定控件状态(ctrl)
             End If
@@ -437,7 +470,7 @@ Public Class ModernTabListControl
         If oldControl IsNot Nothing Then
             Dim stillBound = 绑定控件是否仍在项目中(oldControl, item)
             If Not stillBound AndAlso (oldControl Is _当前绑定控件 OrElse oldControl.Parent Is _内容面板) Then
-                隐藏绑定控件(oldControl)
+                移除绑定控件(oldControl)
                 If oldControl Is _当前绑定控件 Then _当前绑定控件 = Nothing
             End If
             If Not stillBound Then
@@ -626,6 +659,86 @@ Public Class ModernTabListControl
         Return If(_backgroundSource, Me.Parent)
     End Function
 
+    Private Function 当前切页签名已匹配(ctrl As Control, state As BoundPageState) As Boolean
+        If ctrl Is Nothing OrElse state Is Nothing Then Return False
+        If Not state.HasBeenShown Then Return False
+        If state.LastShownSize <> ctrl.ClientSize Then Return False
+        If state.LastShownPanelBounds <> _内容面板.Bounds Then Return False
+        If state.LastShownBackgroundVersion <> _背景刷新版本 Then Return False
+        If state.LastShownBackgroundSource IsNot 获取切页背景源() Then Return False
+        Return True
+    End Function
+
+    Private Function 查找绑定页控件(target As Control) As Control
+        If target Is Nothing Then Return Nothing
+        If target Is _内容面板 Then Return _当前绑定控件
+
+        Dim current As Control = target
+        While current IsNot Nothing AndAlso current IsNot _内容面板
+            If current.Parent Is _内容面板 Then Return current
+            current = current.Parent
+        End While
+        Return Nothing
+    End Function
+
+    Private Function 正在切页刷新过滤期() As Boolean
+        Return _切页刷新过滤启用
+    End Function
+
+    Private Function 进入切页刷新过滤() As IDisposable
+        Return New SwitchRefreshScope(Me)
+    End Function
+
+    Private Sub 延迟结束切页刷新过滤(sequence As Integer)
+        If Not Me.IsHandleCreated Then
+            _切页刷新过滤深度 = 0
+            _切页刷新过滤启用 = False
+            Return
+        End If
+        Try
+            Me.BeginInvoke(
+                New MethodInvoker(
+                    Sub()
+                        If sequence <> _切页刷新过滤序号 Then Return
+                        If _切页刷新过滤深度 > 0 Then Return
+                        _切页刷新过滤启用 = False
+                        _切页刷新过滤深度 = 0
+                        清除切页强制刷新标记()
+                    End Sub))
+        Catch
+            _切页刷新过滤深度 = 0
+            _切页刷新过滤启用 = False
+            清除切页强制刷新标记()
+        End Try
+    End Sub
+
+    Private Sub 清除切页强制刷新标记()
+        For Each state In _绑定页状态.Values
+            If state IsNot Nothing Then state.ForceRefreshDuringSwitch = False
+        Next
+    End Sub
+
+    Public Function ShouldSuppressOuterToInnerRefresh(target As Control,
+                                                      rect As Rectangle,
+                                                      hasFull As Boolean,
+                                                      invalidateChildren As Boolean,
+                                                      fromChildrenExpansion As Boolean) As Boolean Implements IOuterToInnerRefreshFilter.ShouldSuppressOuterToInnerRefresh
+        If Not 正在切页刷新过滤期() Then Return False
+        If target Is Nothing OrElse target Is Me Then Return False
+
+        Dim bound = 查找绑定页控件(target)
+        If bound Is Nothing Then Return False
+
+        If bound IsNot _当前绑定控件 Then Return True
+        If _切页刷新过滤深度 = 0 AndAlso Not fromChildrenExpansion Then Return False
+        If Not hasFull AndAlso Not fromChildrenExpansion AndAlso Not invalidateChildren Then Return False
+
+        Dim state As BoundPageState = Nothing
+        If Not _绑定页状态.TryGetValue(bound, state) Then Return False
+        If state.ForceRefreshDuringSwitch Then Return False
+        Return 当前切页签名已匹配(bound, state)
+    End Function
+
     Private Sub 解除切页背景源订阅()
         If _背景源已订阅 Is Nothing Then Return
         Try : RemoveHandler _背景源已订阅.Invalidated, AddressOf 切页背景源已失效 : Catch : End Try
@@ -684,6 +797,16 @@ Public Class ModernTabListControl
 
     Private Sub 隐藏绑定控件(ctrl As Control)
         If ctrl Is Nothing Then Return
+        解除绑定页背景穿透消费者(ctrl)
+        Try
+            ctrl.Visible = False
+        Catch
+        End Try
+    End Sub
+
+    Private Sub 移除绑定控件(ctrl As Control)
+        If ctrl Is Nothing Then Return
+        解除绑定页背景穿透消费者(ctrl)
         Try
             ctrl.Visible = False
             If ctrl.Parent Is _内容面板 Then
@@ -701,33 +824,60 @@ Public Class ModernTabListControl
         End If
     End Sub
 
+    Private Sub 解除绑定页背景穿透消费者(root As Control)
+        If root Is Nothing Then Return
+        Try : BackgroundPenetrationV2.UnregisterConsumer(root) : Catch : End Try
+        Try
+            For Each child As Control In root.Controls
+                解除绑定页背景穿透消费者(child)
+            Next
+        Catch
+        End Try
+    End Sub
+
     Private Sub 显示绑定控件(ctrl As Control)
         If ctrl Is Nothing Then Return
         Dim frm = TryCast(ctrl, Form)
         If frm IsNot Nothing Then 准备窗体绑定(frm)
+        _当前绑定控件 = ctrl
 
-        If ctrl.Parent IsNot _内容面板 Then
+        Dim parentChanged As Boolean = ctrl.Parent IsNot _内容面板
+        If parentChanged Then
             _内容面板.Controls.Add(ctrl)
         End If
-        ctrl.Dock = DockStyle.Fill
+        Dim dockChanged As Boolean = ctrl.Dock <> DockStyle.Fill
+        If dockChanged Then ctrl.Dock = DockStyle.Fill
         Dim state = 获取绑定页状态(ctrl)
         ctrl.Visible = True
-        ctrl.BringToFront()
-        _内容面板.Visible = True
+        Dim panelWasVisible As Boolean = _内容面板.Visible
+        If Not panelWasVisible Then _内容面板.Visible = True
+        If _内容面板.Controls.GetChildIndex(ctrl) <> 0 Then ctrl.BringToFront()
 
         Dim backgroundChanged As Boolean = state Is Nothing OrElse
                                            Not state.HasBeenShown OrElse
-                                           state.LastShownBackgroundVersion <> _背景刷新版本
+                                           state.LastShownBackgroundVersion <> _背景刷新版本 OrElse
+                                           state.LastShownBackgroundSource IsNot 获取切页背景源()
+        Dim panelChanged As Boolean = state Is Nothing OrElse
+                                      state.LastShownPanelBounds <> _内容面板.Bounds
         Dim sizeChanged As Boolean = state Is Nothing OrElse state.LastShownSize <> ctrl.ClientSize
-        If Not _切换页抑制刷新 OrElse backgroundChanged OrElse sizeChanged Then
+        Dim needsRefresh As Boolean = Not _切换页抑制刷新 OrElse
+                                      parentChanged OrElse
+                                      dockChanged OrElse
+                                      Not panelWasVisible OrElse
+                                      backgroundChanged OrElse
+                                      panelChanged OrElse
+                                      sizeChanged
+        If state IsNot Nothing Then state.ForceRefreshDuringSwitch = needsRefresh AndAlso 正在切页刷新过滤期()
+        If needsRefresh Then
             OuterToInnerRefreshScheduler.RequestFull(ctrl, invalidateChildren:=True)
         End If
         If state IsNot Nothing Then
             state.HasBeenShown = True
             state.LastShownSize = ctrl.ClientSize
             state.LastShownBackgroundVersion = _背景刷新版本
+            state.LastShownPanelBounds = _内容面板.Bounds
+            state.LastShownBackgroundSource = 获取切页背景源()
         End If
-        _当前绑定控件 = ctrl
     End Sub
 #End Region
 
@@ -749,10 +899,18 @@ Public Class ModernTabListControl
                 If item.IsSeparator OrElse item.IsDescription Then Return
             End If
             If _selectedIndex <> value Then
+                Dim oldIndex As Integer = _selectedIndex
+                Dim oldScroll As Single = _滚动偏移
                 _selectedIndex = value
-                确保选中项可见()
-                切换绑定控件()
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                Using 进入切页刷新过滤()
+                    确保选中项可见()
+                    切换绑定控件()
+                End Using
+                If Math.Abs(_滚动偏移 - oldScroll) > 0.001F Then
+                    OuterToInnerRefreshScheduler.Request(Me, 获取标签栏矩形())
+                Else
+                    请求选中项切换重绘(oldIndex, _selectedIndex)
+                End If
                 RaiseEvent SelectedIndexChanged(Me, EventArgs.Empty)
             End If
         End Set
@@ -814,11 +972,15 @@ Public Class ModernTabListControl
         Dim nextControl = 获取索引绑定控件(_selectedIndex)
         If _当前绑定控件 Is nextControl Then
             If nextControl IsNot Nothing Then
-                _内容面板.Visible = True
-                If nextControl.Parent IsNot _内容面板 OrElse Not nextControl.Visible Then
+                Dim state As BoundPageState = Nothing
+                _绑定页状态.TryGetValue(nextControl, state)
+                If nextControl.Parent IsNot _内容面板 OrElse
+                   Not nextControl.Visible OrElse
+                   Not _内容面板.Visible OrElse
+                   Not 当前切页签名已匹配(nextControl, state) Then
                     显示绑定控件(nextControl)
                 Else
-                    nextControl.BringToFront()
+                    If _内容面板.Controls.GetChildIndex(nextControl) <> 0 Then nextControl.BringToFront()
                 End If
             Else
                 _内容面板.Visible = False
@@ -832,7 +994,14 @@ Public Class ModernTabListControl
             Return
         End If
 
-        ' 已访问页面保持可见并驻留在内容面板中；复访只调整 Z 顺序。
+        If _当前绑定控件 IsNot Nothing Then 隐藏绑定控件(_当前绑定控件)
+        For Each item In 项目列表
+            Dim bound = If(item IsNot Nothing, item.BoundControl, Nothing)
+            If bound IsNot Nothing AndAlso bound IsNot nextControl AndAlso bound.Parent Is _内容面板 AndAlso bound.Visible Then
+                隐藏绑定控件(bound)
+            End If
+        Next
+        ' 已访问页面驻留在内容面板中；非当前页隐藏，避免递归刷新和背景穿透失效唤醒历史页。
         显示绑定控件(nextControl)
     End Sub
 #End Region
@@ -1423,6 +1592,47 @@ Public Class ModernTabListControl
         Return New RectangleF(_布局项X, y, _布局项W, _布局项高度数组(index))
     End Function
 
+    Private Function 获取标签页项脏区(index As Integer) As Rectangle
+        If index < 0 OrElse index >= 项目列表.Count OrElse Not 项目是否可见(index) Then Return Rectangle.Empty
+        Dim itemRect = 获取标签页项矩形(index)
+        If itemRect.Width <= 0 OrElse itemRect.Height <= 0 Then Return Rectangle.Empty
+
+        Dim stripRect = 获取标签栏矩形()
+        Dim searchAreaH As Integer = CInt(获取搜索框区域高度())
+        Dim clipRect = stripRect
+        If searchAreaH > 0 Then
+            clipRect = New Rectangle(clipRect.X, clipRect.Y + searchAreaH, clipRect.Width, Math.Max(0, clipRect.Height - searchAreaH))
+        End If
+
+        Dim s As Single = DpiScale()
+        Dim dirty = Rectangle.Ceiling(itemRect)
+        dirty.Inflate(CInt(Math.Ceiling(2.0F * s)), CInt(Math.Ceiling(2.0F * s)))
+        Return Rectangle.Intersect(clipRect, dirty)
+    End Function
+
+    Private Sub 请求选中项切换重绘(oldIndex As Integer, newIndex As Integer)
+        Dim stripRect = 获取标签栏矩形()
+        If stripRect.Width <= 0 OrElse stripRect.Height <= 0 Then Return
+
+        Dim dirty As Rectangle = Rectangle.Empty
+        Dim oldDirty = 获取标签页项脏区(oldIndex)
+        If oldDirty.Width > 0 AndAlso oldDirty.Height > 0 Then dirty = oldDirty
+        Dim newDirty = 获取标签页项脏区(newIndex)
+        If newDirty.Width > 0 AndAlso newDirty.Height > 0 Then
+            dirty = If(dirty.IsEmpty, newDirty, Rectangle.Union(dirty, newDirty))
+        End If
+
+        If Not _标签栏滚动条.TrackRect.IsEmpty Then
+            dirty = If(dirty.IsEmpty, _标签栏滚动条.TrackRect, Rectangle.Union(dirty, _标签栏滚动条.TrackRect))
+        End If
+
+        If dirty.IsEmpty Then dirty = stripRect
+        dirty = Rectangle.Intersect(stripRect, dirty)
+        If dirty.Width > 0 AndAlso dirty.Height > 0 Then
+            OuterToInnerRefreshScheduler.Request(Me, dirty)
+        End If
+    End Sub
+
     Private Function 获取标签页总高度() As Single
         确保布局缓存()
         Return _布局总高度
@@ -1441,10 +1651,20 @@ Public Class ModernTabListControl
 
 
     Private Sub 同步内容面板布局()
+        Dim oldBounds As Rectangle = _内容面板.Bounds
+        Dim oldBackColor As Color = _内容面板.BackColor
+
         Dim contentRect = 获取内容区域矩形()
         _内容面板.Bounds = contentRect
         _内容面板.BackColor = 获取内容面板有效背景色()
         同步搜索框布局()
+
+        If oldBounds <> _内容面板.Bounds OrElse oldBackColor.ToArgb() <> _内容面板.BackColor.ToArgb() Then
+            推进切页背景版本()
+            If _当前绑定控件 IsNot Nothing AndAlso _当前绑定控件.Parent Is _内容面板 Then
+                显示绑定控件(_当前绑定控件)
+            End If
+        End If
     End Sub
 
     Private Sub 限制滚动范围()

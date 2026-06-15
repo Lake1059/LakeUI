@@ -1630,7 +1630,7 @@ Public Class ModernPanel
 
     Protected Overrides Sub OnParentChanged(e As EventArgs)
         MyBase.OnParentChanged(e)
-        If Me.Parent Is Nothing Then 解除背景穿透消费者()
+        解除背景穿透消费者()
         更新图片动画可见性订阅()
         更新图片动画运行状态()
     End Sub

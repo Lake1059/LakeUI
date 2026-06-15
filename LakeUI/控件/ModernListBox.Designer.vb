@@ -29,11 +29,12 @@ Partial Class ModernListBox
         ' 
         ' ModernListBox
         ' 
-        AutoScaleDimensions = New SizeF(120F, 120F)
+        AutoScaleDimensions = New SizeF(96F, 96F)
         AutoScaleMode = AutoScaleMode.Dpi
         DoubleBuffered = True
+        Margin = New Padding(0)
         Name = "ModernListBox"
-        Padding = New Padding(10)
+        Padding = New Padding(0)
         ResumeLayout(False)
     End Sub
 

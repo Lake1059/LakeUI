@@ -106,6 +106,11 @@ Public Module D2DHelperV2
         Return New WindowCompositor(form, unregisterOnDispose:=False)
     End Function
 
+    Private Function RentTransientReentrantCompositor(form As Form) As WindowCompositor
+        If form Is Nothing OrElse form.IsDisposed Then Return Nothing
+        Return New WindowCompositor(form, unregisterOnDispose:=False)
+    End Function
+
     Friend Sub ReturnBackgroundSamplingCompositor(comp As WindowCompositor)
         If comp Is Nothing Then Return
         If _backgroundSamplingPaintDepth <= 0 OrElse comp.IsDisposed Then
@@ -212,6 +217,27 @@ Public Module D2DHelperV2
         Catch
         End Try
     End Sub
+
+    Friend Function IsPainting(ctrl As Control) As Boolean
+        If ctrl Is Nothing OrElse ctrl.IsDisposed Then Return False
+        Dim form As Form = Nothing
+        Try
+            form = If(TypeOf ctrl Is Form, DirectCast(ctrl, Form), ctrl.FindForm())
+        Catch
+            Return False
+        End Try
+        If form Is Nothing OrElse form.IsDisposed Then Return False
+
+        SyncLock _compositorsLock
+            Dim comp As WindowCompositor = Nothing
+            If Not _compositors.TryGetValue(form, comp) Then Return False
+            If comp Is Nothing OrElse comp.IsDisposed Then
+                _compositors.Remove(form)
+                Return False
+            End If
+            Return comp.IsPainting
+        End SyncLock
+    End Function
 
     ''' <summary>
     ''' 按指定力度清理 D2D / DirectWrite 缓存与显存资源。
@@ -348,7 +374,8 @@ Public Module D2DHelperV2
     ''' SSAA 仅作用于 <see cref="PaintScopeV2.GraphicsLayer"/>，背景层与文字层始终为 1×。
     ''' </param>
     ''' <returns>
-    ''' 设计期、无 Form、compositor 创建失败、或同一 Form 内正在进行 V2 绘制重入时返回 <c>Nothing</c>；
+    ''' 设计期、无 Form 或 compositor 创建失败时返回 <c>Nothing</c>；
+    ''' 同一 Form 内正在进行 V2 绘制重入时，会临时租用一份隔离 compositor，避免共享 DC RT 二次 BindDC。
     ''' 调用方应在 <c>Nothing</c> 时回退到 V1、base.OnPaint，或跳过本次 V2 自绘。
     ''' </returns>
     Public Function BeginPaint(e As PaintEventArgs, control As Control, ssaaScale As Integer) As PaintScopeV2
@@ -357,10 +384,23 @@ Public Module D2DHelperV2
         If comp Is Nothing Then Return Nothing
         Dim scope = comp.BeginPaint(e, control, ssaaScale)
         If scope IsNot Nothing Then Return scope
-        If _backgroundSamplingPaintDepth <= 0 Then Return Nothing
 
         Dim form As Form = control.FindForm()
         If form Is Nothing OrElse form.IsDisposed Then Return Nothing
+        If _backgroundSamplingPaintDepth <= 0 Then
+            Dim transientComp = RentTransientReentrantCompositor(form)
+            If transientComp Is Nothing Then Return Nothing
+            Try
+                Dim transientScope = transientComp.BeginPaint(e, control, ssaaScale, disposeCompositorWithScope:=True)
+                If transientScope IsNot Nothing Then Return transientScope
+            Catch
+                Try : transientComp.Dispose() : Catch : End Try
+                Throw
+            End Try
+            Try : transientComp.Dispose() : Catch : End Try
+            Return Nothing
+        End If
+
         Dim tempComp = RentBackgroundSamplingCompositor(form)
         If tempComp Is Nothing Then Return Nothing
         Try

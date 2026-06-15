@@ -22,6 +22,14 @@
 '''   展开成独立请求并按树深排序，而不是直接把 True 传给父控件 Invalidate。
 ''' • 如果在 flush 过程中又排入请求，会进入下一轮 flush，避免递归重入 Paint。
 ''' </remarks>
+Public Interface IOuterToInnerRefreshFilter
+    Function ShouldSuppressOuterToInnerRefresh(target As Control,
+                                               rect As Rectangle,
+                                               hasFull As Boolean,
+                                               invalidateChildren As Boolean,
+                                               fromChildrenExpansion As Boolean) As Boolean
+End Interface
+
 Public Module OuterToInnerRefreshScheduler
 
     Private Structure PendingEntry
@@ -54,6 +62,7 @@ Public Module OuterToInnerRefreshScheduler
 
     Private Sub Queue(control As Control, rect As Rectangle?, invalidateChildren As Boolean, immediate As Boolean)
         If control Is Nothing OrElse control.IsDisposed Then Return
+        If ShouldSuppressRefresh(control, If(rect, Rectangle.Empty), Not rect.HasValue, invalidateChildren, False) Then Return
         If Not GlobalOptions.OuterToInnerRefreshSchedulerEnabled Then
             DirectInvalidate(control, rect, invalidateChildren, immediate)
             Return
@@ -81,7 +90,7 @@ Public Module OuterToInnerRefreshScheduler
                 _sequence += 1
                 entry = New PendingEntry With {
                     .HasFull = Not rect.HasValue,
-                    .Rect = If(rect.HasValue, rect.Value, Rectangle.Empty),
+                    .Rect = If(rect, Rectangle.Empty),
                     .InvalidateChildren = invalidateChildren,
                     .FromChildrenExpansion = False,
                     .Immediate = immediate,
@@ -96,7 +105,7 @@ Public Module OuterToInnerRefreshScheduler
             End If
         End SyncLock
 
-        If immediate Then
+        If immediate AndAlso CanFlushImmediately(control) Then
             FlushNow(control)
         ElseIf shouldSchedule Then
             ScheduleFlush(control)
@@ -113,7 +122,7 @@ Public Module OuterToInnerRefreshScheduler
             Else
                 control.Invalidate(control.ClientRectangle, invalidateChildren)
             End If
-            If immediate Then control.Update()
+            If immediate AndAlso CanUpdateImmediately(control) Then control.Update()
         Catch
         End Try
     End Sub
@@ -210,13 +219,14 @@ Public Module OuterToInnerRefreshScheduler
                         rect = Rectangle.Intersect(ctrl.ClientRectangle, entry.Rect)
                     End If
                     If rect.Width <= 0 OrElse rect.Height <= 0 Then Continue For
+                    If ShouldSuppressRefresh(ctrl, rect, entry.HasFull, entry.InvalidateChildren, entry.FromChildrenExpansion) Then Continue For
 
                     Try
                         ctrl.Invalidate(rect, False)
                         If entry.InvalidateChildren AndAlso Not entry.FromChildrenExpansion Then
                             QueueVisibleChildren(ctrl, entry.Immediate)
                         End If
-                        If entry.Immediate Then ctrl.Update()
+                        If entry.Immediate AndAlso CanUpdateImmediately(ctrl) Then ctrl.Update()
                     Catch
                     End Try
                 Next
@@ -248,6 +258,7 @@ Public Module OuterToInnerRefreshScheduler
         If child Is Nothing OrElse child.IsDisposed OrElse Not child.Visible Then Return
         Dim shouldQueue As Boolean = child.Width > 0 AndAlso child.Height > 0
         If shouldQueue Then
+            If ShouldSuppressRefresh(child, child.ClientRectangle, True, False, True) Then Return
             SyncLock _lock
                 Dim entry As PendingEntry = Nothing
                 If _pending.TryGetValue(child, entry) Then
@@ -285,6 +296,39 @@ Public Module OuterToInnerRefreshScheduler
             current = current.Parent
         End While
         Return depth
+    End Function
+
+    Private Function ShouldSuppressRefresh(control As Control,
+                                           rect As Rectangle,
+                                           hasFull As Boolean,
+                                           invalidateChildren As Boolean,
+                                           fromChildrenExpansion As Boolean) As Boolean
+        Dim current As Control = control
+        While current IsNot Nothing
+            Dim filter = TryCast(current, IOuterToInnerRefreshFilter)
+            If filter IsNot Nothing Then
+                Try
+                    If filter.ShouldSuppressOuterToInnerRefresh(control, rect, hasFull, invalidateChildren, fromChildrenExpansion) Then Return True
+                Catch
+                End Try
+            End If
+            current = current.Parent
+        End While
+        Return False
+    End Function
+
+    Private Function CanUpdateImmediately(control As Control) As Boolean
+        If control Is Nothing OrElse control.IsDisposed Then Return False
+        If D2DHelperV2.IsBackgroundSamplingPaint Then Return False
+        If D2DHelperV2.IsPainting(control) Then Return False
+        Return True
+    End Function
+
+    Private Function CanFlushImmediately(control As Control) As Boolean
+        SyncLock _lock
+            If _isFlushing Then Return False
+        End SyncLock
+        Return CanUpdateImmediately(control)
     End Function
 
 End Module
