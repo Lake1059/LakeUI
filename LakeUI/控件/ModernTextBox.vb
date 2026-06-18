@@ -91,6 +91,7 @@ Public Class ModernTextBox
 
 #Region "字段"
     Private _lines As New List(Of String) From {String.Empty}
+    Private _textLength As Integer = 0
     Private _lineRuns As New List(Of List(Of TextRun)) From {Nothing}
     Private _caretLine As Integer = 0
     Private _caretCol As Integer = 0
@@ -116,6 +117,7 @@ Public Class ModernTextBox
     Private _mouseDownSelecting As Boolean = False
     Private _imeComposing As Boolean = False
     Private _visualLines As New List(Of VisualLineInfo)
+    Private _visualLineStarts As New List(Of Integer) From {0}
     Private _autoScrollTimer As New Timer() With {.Interval = 50}
     Private _lastMousePos As Point = Point.Empty
     Private _preserveScrollPosition As Boolean = False
@@ -141,6 +143,8 @@ Public Class ModernTextBox
     Private _scaledCaretWidth As Integer = 2
     Private _scaledLineNumPadL As Integer = 6
     Private _scaledLineNumPadR As Integer = 8
+    Private _lineNumberGutterWidthCache As Integer = -1
+    Private _lineNumberGutterDigitCount As Integer = -1
     Private _measureVersion As Integer
     Private ReadOnly _lineWidthCache As New Dictionary(Of MeasureKey, Integer)(128)
     Private ReadOnly _textWidthCache As New Dictionary(Of String, Integer)(32)
@@ -158,7 +162,7 @@ Public Class ModernTextBox
         End Get
         Set(value As String)
             Dim normalized As String = If(value, "").Replace(vbCr, "")
-            If String.Join(vbLf, _lines) = normalized Then Return
+            If _textLength = normalized.Length AndAlso String.Join(vbLf, _lines) = normalized Then Return
             PushUndo()
             Dim savedScrollY As Single = _scrollPixelOffset
             Dim savedScrollX As Integer = _scrollXOffset
@@ -496,7 +500,12 @@ Public Class ModernTextBox
         Set(value As ISyntaxHighlighter)
             _syntaxHighlighter = value
             If _enableSyntaxHighlight Then
-                ApplySyntaxHighlighting()
+                If _syntaxHighlighter Is Nothing Then
+                    ClearAllFormats()
+                Else
+                    ApplySyntaxHighlighting()
+                    RefreshVisualLayout(True)
+                End If
             End If
             OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
@@ -512,6 +521,7 @@ Public Class ModernTextBox
                 _enableSyntaxHighlight = value
                 If value Then
                     ApplySyntaxHighlighting()
+                    RefreshVisualLayout(True)
                 Else
                     ClearAllFormats()
                 End If
@@ -562,6 +572,7 @@ Public Class ModernTextBox
         End Get
         Set(value As Font)
             _lineNumFont = value
+            InvalidateLineNumberGutterCache()
             If _showLineNumbers Then
                 RefreshVisualLayout(True)
             End If
@@ -828,7 +839,7 @@ Public Class ModernTextBox
         Dim oldGutterW As Integer = If(IsHandleCreated, LineNumberGutterWidth(), 0)
 
         If _maxLength > 0 Then
-            Dim currentLen As Integer = _lines.Sum(Function(l) l.Length) + _lines.Count - 1
+            Dim currentLen As Integer = _textLength
             Dim overhead As Integer = If(_lines.Count = 1 AndAlso _lines(0).Length = 0, 0, 1)
             Dim remaining As Integer = _maxLength - currentLen - overhead
             If remaining <= 0 Then Return
@@ -840,30 +851,38 @@ Public Class ModernTextBox
 
         If isEmpty Then
             _lines(0) = lineText
+            _textLength = lineText.Length
             newLineIndex = 0
             _visualLines.Clear()
+            _visualLineStarts.Clear()
+            _visualLineStarts.Add(0)
+            InvalidateLineMeasureCache(0)
         Else
             newLineIndex = _lines.Count
             _lines.Add(lineText)
+            _textLength += 1 + lineText.Length
             _lineRuns.Add(Nothing)
             _lineLinks.Add(Nothing)
             _lineStates.Add(0)
+            _visualLineStarts.Add(_visualLines.Count)
+        End If
+
+        Dim hasExplicitFormat As Boolean = foreColor <> Color.Empty OrElse lineFont IsNot Nothing
+        If _enableSyntaxHighlight AndAlso _syntaxHighlighter IsNot Nothing Then
+            ApplySyntaxHighlightingToLine(newLineIndex, Not hasExplicitFormat)
         End If
 
         ' 直接设置格式 Run，避免二次遍历
-        If foreColor <> Color.Empty OrElse lineFont IsNot Nothing Then
+        If hasExplicitFormat Then
             If lineText.Length > 0 Then
                 _lineRuns(newLineIndex) = New List(Of TextRun) From {
                     New TextRun(0, lineText.Length, foreColor, lineFont)
                 }
             End If
-        ElseIf _syntaxHighlighter IsNot Nothing Then
-            ApplySyntaxHighlightingToLine(newLineIndex)
         End If
 
         ' 检测链接
         DetectLinksInLine(newLineIndex)
-        InvalidateMeasureCache()
 
         ' 增量追加视觉行，不做全量 RebuildVisualLines
         Dim areaW As Integer = If(IsHandleCreated, TextAreaWidth(), 0)
@@ -928,13 +947,9 @@ Public Class ModernTextBox
     Public Sub ScrollToLine(lineIndex As Integer)
         If Not 启用多行 Then Return
         lineIndex = Math.Max(0, Math.Min(_lines.Count - 1, lineIndex))
-        Dim targetVi As Integer = _visualLines.Count - 1
-        For i As Integer = 0 To _visualLines.Count - 1
-            If _visualLines(i).LogicalLine >= lineIndex Then
-                targetVi = i
-                Exit For
-            End If
-        Next
+        Dim targetVi As Integer = If(lineIndex < _visualLineStarts.Count,
+            _visualLineStarts(lineIndex),
+            Math.Max(0, _visualLines.Count - 1))
         SetScrollPixelOffset(targetVi * _scaledLineHeight)
         UpdateScrollBar()
         OuterToInnerRefreshScheduler.RequestFull(Me)
@@ -1357,8 +1372,7 @@ Public Class ModernTextBox
             Dim useFont = If(r.RunFont, Font)
             If Not hasLinks Then
                 Dim segText = GetDisplayText(lineStr.Substring(segStart, segEnd - segStart))
-                DrawTextSegment_D2D(rt, segText, useFont, useFore, drawX, lineY, Short.MaxValue, _scaledLineHeight, False, textFormatCache, brushCache)
-                drawX += CInt(Math.Ceiling(MeasureTextWidth_D2D(segText, useFont, textFormatCache)))
+                drawX += DrawTextSegment_D2D(rt, segText, useFont, useFore, drawX, lineY, Short.MaxValue, _scaledLineHeight, False, textFormatCache, brushCache)
             Else
                 drawX = DrawSegmentsWithLinks_D2D(rt, lineStr, segStart, segEnd, drawX, lineY, useFore, useFont, links, textFormatCache, brushCache)
             End If
@@ -1378,39 +1392,37 @@ Public Class ModernTextBox
             If pos < link.StartCol AndAlso pos < endCol Then
                 Dim nonLinkEnd = Math.Min(link.StartCol, endCol)
                 Dim segText = GetDisplayText(lineStr.Substring(pos, nonLinkEnd - pos))
-                DrawTextSegment_D2D(rt, segText, baseFont, baseFore, drawX, lineY, Short.MaxValue, _scaledLineHeight, False, textFormatCache, brushCache)
-                drawX += CInt(Math.Ceiling(MeasureTextWidth_D2D(segText, baseFont, textFormatCache)))
+                drawX += DrawTextSegment_D2D(rt, segText, baseFont, baseFore, drawX, lineY, Short.MaxValue, _scaledLineHeight, False, textFormatCache, brushCache)
                 pos = nonLinkEnd
             End If
             Dim overlapStart = Math.Max(pos, link.StartCol)
             Dim overlapEnd = Math.Min(endCol, linkEnd)
             If overlapStart < overlapEnd Then
                 Dim linkText = GetDisplayText(lineStr.Substring(overlapStart, overlapEnd - overlapStart))
-                DrawTextSegment_D2D(rt, linkText, baseFont, 链接颜色, drawX, lineY, Short.MaxValue, _scaledLineHeight, 链接下划线, textFormatCache, brushCache)
-                drawX += CInt(Math.Ceiling(MeasureTextWidth_D2D(linkText, baseFont, textFormatCache)))
+                drawX += DrawTextSegment_D2D(rt, linkText, baseFont, 链接颜色, drawX, lineY, Short.MaxValue, _scaledLineHeight, 链接下划线, textFormatCache, brushCache)
                 pos = overlapEnd
             End If
         Next
         If pos < endCol Then
             Dim segText = GetDisplayText(lineStr.Substring(pos, endCol - pos))
-            DrawTextSegment_D2D(rt, segText, baseFont, baseFore, drawX, lineY, Short.MaxValue, _scaledLineHeight, False, textFormatCache, brushCache)
-            drawX += CInt(Math.Ceiling(MeasureTextWidth_D2D(segText, baseFont, textFormatCache)))
+            drawX += DrawTextSegment_D2D(rt, segText, baseFont, baseFore, drawX, lineY, Short.MaxValue, _scaledLineHeight, False, textFormatCache, brushCache)
         End If
         Return drawX
     End Function
 
-    Private Sub DrawTextSegment_D2D(rt As ID2D1RenderTarget, text As String, font As Font, foreColor As Color,
-                                    x As Single, y As Single, width As Single, height As Single, underline As Boolean,
-                                    textFormatCache As D2DGlobals.TextFormatCache,
-                                    brushCache As D2DGlobals.SolidColorBrushCache)
-        If rt Is Nothing OrElse String.IsNullOrEmpty(text) OrElse foreColor.A = 0 Then Return
+    Private Function DrawTextSegment_D2D(rt As ID2D1RenderTarget, text As String, font As Font, foreColor As Color,
+                                         x As Single, y As Single, width As Single, height As Single, underline As Boolean,
+                                         textFormatCache As D2DGlobals.TextFormatCache,
+                                         brushCache As D2DGlobals.SolidColorBrushCache) As Single
+        If rt Is Nothing OrElse String.IsNullOrEmpty(text) OrElse foreColor.A = 0 Then Return 0.0F
         Dim ownsFormat As Boolean = False
         Dim fmt = AcquireTextFormat_D2D(font, textFormatCache, ownsFormat)
-        If fmt Is Nothing Then Return
+        If fmt Is Nothing Then Return 0.0F
         Try
             Dim layoutWidth As Single = Math.Max(1.0F, width)
             Dim layoutHeight As Single = Math.Max(1.0F, height)
             Using layout = D2DGlobals.GetDWriteFactory().CreateTextLayout(text, fmt, layoutWidth, layoutHeight)
+                Dim measuredWidth As Single = CSng(Math.Ceiling(layout.Metrics.WidthIncludingTrailingWhitespace))
                 If underline Then
                     layout.SetUnderline(True, New Vortice.DirectWrite.TextRange(0, CUInt(text.Length)))
                 End If
@@ -1424,13 +1436,14 @@ Public Class ModernTextBox
                         Try : brush.Dispose() : Catch : End Try
                     End If
                 End Try
+                Return measuredWidth
             End Using
         Finally
             If ownsFormat AndAlso fmt IsNot Nothing Then
                 Try : fmt.Dispose() : Catch : End Try
             End If
         End Try
-    End Sub
+    End Function
 
     Private Function AcquireTextFormat_D2D(font As Font, textFormatCache As D2DGlobals.TextFormatCache,
                                            ByRef ownsFormat As Boolean) As Vortice.DirectWrite.IDWriteTextFormat
@@ -1928,7 +1941,7 @@ Public Class ModernTextBox
         Dim fromLine As Integer = _caretLine
         Dim normalized As String = text.Replace(vbCr, "")
         If _maxLength > 0 Then
-            Dim currentLen As Integer = _lines.Sum(Function(l) l.Length) + _lines.Count - 1
+            Dim currentLen As Integer = _textLength
             Dim remaining As Integer = _maxLength - currentLen
             If remaining <= 0 Then Return
             If normalized.Length > remaining Then
@@ -1972,6 +1985,7 @@ Public Class ModernTextBox
             Next
             _caretCol = parts(parts.Length - 1).Length
         End If
+        _textLength += normalized.Length
         NotifyTextChanged(fromLine, _caretLine)
     End Sub
     Private Sub InsertNewLine()
@@ -1985,6 +1999,7 @@ Public Class ModernTextBox
         _lineLinks.Insert(_caretLine, Nothing)
         _lineStates.Insert(_caretLine, 0)
         _caretCol = 0
+        _textLength += 1
         NotifyTextChanged(fromLine, _caretLine)
     End Sub
     Private Sub HandleBackspace()
@@ -1998,6 +2013,7 @@ Public Class ModernTextBox
             _lines(_caretLine) = String.Concat(line.AsSpan(0, _caretCol - 1), line.AsSpan(_caretCol))
             RemoveFromRuns(_caretLine, _caretCol - 1, 1)
             _caretCol -= 1
+            _textLength = Math.Max(0, _textLength - 1)
             NotifyTextChanged(_caretLine, _caretLine)
         ElseIf _caretLine > 0 Then
             PushUndo()
@@ -2010,6 +2026,7 @@ Public Class ModernTextBox
             _lineLinks.RemoveAt(_caretLine)
             _lineStates.RemoveAt(_caretLine)
             _caretLine -= 1
+            _textLength = Math.Max(0, _textLength - 1)
             NotifyTextChanged(_caretLine, _caretLine)
         End If
     End Sub
@@ -2023,6 +2040,7 @@ Public Class ModernTextBox
             Dim line As String = _lines(_caretLine)
             _lines(_caretLine) = String.Concat(line.AsSpan(0, _caretCol), line.AsSpan(_caretCol + 1))
             RemoveFromRuns(_caretLine, _caretCol, 1)
+            _textLength = Math.Max(0, _textLength - 1)
             NotifyTextChanged(_caretLine, _caretLine)
         ElseIf _caretLine < _lines.Count - 1 Then
             PushUndo()
@@ -2032,6 +2050,7 @@ Public Class ModernTextBox
             _lineRuns.RemoveAt(_caretLine + 1)
             _lineLinks.RemoveAt(_caretLine + 1)
             _lineStates.RemoveAt(_caretLine + 1)
+            _textLength = Math.Max(0, _textLength - 1)
             NotifyTextChanged(_caretLine, _caretLine)
         End If
     End Sub
@@ -2039,6 +2058,7 @@ Public Class ModernTextBox
         If Not _hasSelection Then Return
         Dim minL, minC, maxL, maxC As Integer
         GetOrderedSelection(minL, minC, maxL, maxC)
+        _textLength = Math.Max(0, _textLength - GetSelectionNormalizedLength(minL, minC, maxL, maxC))
 
         If minL = maxL Then
             RemoveFromRuns(minL, minC, maxC - minC)
@@ -2115,6 +2135,16 @@ Public Class ModernTextBox
             maxL = _selAnchorLine : maxC = _selAnchorCol
         End If
     End Sub
+    Private Function GetSelectionNormalizedLength(minL As Integer, minC As Integer,
+                                                  maxL As Integer, maxC As Integer) As Integer
+        If minL = maxL Then Return Math.Max(0, maxC - minC)
+        Dim total As Integer = Math.Max(0, _lines(minL).Length - minC) + Math.Max(0, maxC)
+        total += Math.Max(0, maxL - minL)
+        For i As Integer = minL + 1 To maxL - 1
+            total += _lines(i).Length
+        Next
+        Return total
+    End Function
     Private Function GetSelectedText() As String
         If Not _hasSelection Then Return ""
         Dim minL, minC, maxL, maxC As Integer
@@ -2169,6 +2199,7 @@ Public Class ModernTextBox
         Dim snap As TextSnapshot = _undoStack(_undoStack.Count - 1)
         _undoStack.RemoveAt(_undoStack.Count - 1)
         _lines = New List(Of String)(snap.Lines)
+        _textLength = ComputeNormalizedTextLength()
         _lineRuns = If(snap.LineRuns, New List(Of List(Of TextRun)))
         While _lineRuns.Count < _lines.Count
             _lineRuns.Add(Nothing)
@@ -2449,6 +2480,16 @@ Public Class ModernTextBox
         _lineWidthCache.Clear()
         _textWidthCache.Clear()
     End Sub
+    Private Sub InvalidateLineMeasureCache(lineIndex As Integer)
+        If _lineWidthCache.Count = 0 Then Return
+        Dim removeKeys As New List(Of MeasureKey)
+        For Each key In _lineWidthCache.Keys
+            If key.LineIndex = lineIndex Then removeKeys.Add(key)
+        Next
+        For Each key In removeKeys
+            _lineWidthCache.Remove(key)
+        Next
+    End Sub
     Private Function FindColFromXForLine(lineIndex As Integer, vlStartCol As Integer, vlLength As Integer, x As Integer) As Integer
         If x <= 0 Then Return vlStartCol
         Dim runs = _lineRuns(lineIndex)
@@ -2502,22 +2543,38 @@ Public Class ModernTextBox
     End Function
     Private Function LineNumberGutterWidth() As Integer
         If Not _showLineNumbers OrElse Not 启用多行 Then Return 0
+        Dim digitCount As Integer = Math.Max(1, _lines.Count).ToString().Length
+        If _lineNumberGutterWidthCache >= 0 AndAlso _lineNumberGutterDigitCount = digitCount Then
+            Return _lineNumberGutterWidthCache
+        End If
         Dim useFont As Font = If(_lineNumFont, Font)
-        Dim maxNum As String = _lines.Count.ToString()
-        Dim numW As Integer = CInt(Math.Ceiling(TextRenderHelper.MeasureTextWidth_D2D(maxNum, useFont, DpiScale(), GetTextFormatCacheForMeasure())))
-        Return _scaledLineNumPadL + numW + _scaledLineNumPadR
+        Dim numW As Integer = 0
+        For Each digit As Char In "089"
+            Dim probe As String = New String(digit, digitCount)
+            Dim probeW As Integer = CInt(Math.Ceiling(TextRenderHelper.MeasureTextWidth_D2D(probe, useFont, DpiScale(), GetTextFormatCacheForMeasure())))
+            If probeW > numW Then numW = probeW
+        Next
+        _lineNumberGutterDigitCount = digitCount
+        _lineNumberGutterWidthCache = _scaledLineNumPadL + numW + _scaledLineNumPadR
+        Return _lineNumberGutterWidthCache
     End Function
 
     Private Function GetTextFormatCacheForMeasure() As D2DGlobals.TextFormatCache
         Return D2DHelperV2.GetCompositor(Me)?.TextFormatCache
     End Function
+    Private Sub InvalidateLineNumberGutterCache()
+        _lineNumberGutterWidthCache = -1
+        _lineNumberGutterDigitCount = -1
+    End Sub
 #End Region
 
 #Region "视觉行"
     Private Sub RebuildVisualLines()
         _visualLines.Clear()
+        _visualLineStarts.Clear()
         Dim areaW As Integer = If(IsHandleCreated, TextAreaWidth(), 0)
         For li As Integer = 0 To _lines.Count - 1
+            _visualLineStarts.Add(_visualLines.Count)
             Dim line As String = _lines(li)
             If Not IsWordWrapActive() OrElse areaW <= 0 OrElse line.Length = 0 Then
                 _visualLines.Add(New VisualLineInfo(li, 0, line.Length))
@@ -2532,6 +2589,9 @@ Public Class ModernTextBox
         Next
         If _visualLines.Count = 0 Then
             _visualLines.Add(New VisualLineInfo(0, 0, 0))
+        End If
+        If _visualLineStarts.Count = 0 Then
+            _visualLineStarts.Add(0)
         End If
     End Sub
     Private Function FindFitLength(lineIndex As Integer, startCol As Integer, maxWidth As Integer) As Integer
@@ -2616,13 +2676,20 @@ Public Class ModernTextBox
         Return bestLen
     End Function
     Private Function GetVisualLineIndex(logicalLine As Integer, col As Integer) As Integer
-        For i As Integer = _visualLines.Count - 1 To 0 Step -1
+        If _visualLines.Count = 0 Then Return 0
+        logicalLine = Math.Max(0, Math.Min(logicalLine, _lines.Count - 1))
+        If logicalLine >= _visualLineStarts.Count Then Return Math.Max(0, _visualLines.Count - 1)
+        Dim startIndex As Integer = Math.Max(0, Math.Min(_visualLineStarts(logicalLine), _visualLines.Count - 1))
+        Dim endIndex As Integer = If(logicalLine + 1 < _visualLineStarts.Count,
+            Math.Min(_visualLineStarts(logicalLine + 1) - 1, _visualLines.Count - 1),
+            _visualLines.Count - 1)
+        For i As Integer = endIndex To startIndex Step -1
             Dim vl = _visualLines(i)
             If vl.LogicalLine = logicalLine AndAlso col >= vl.StartCol Then
                 Return i
             End If
         Next
-        Return 0
+        Return startIndex
     End Function
 #End Region
 
@@ -2863,16 +2930,18 @@ Public Class ModernTextBox
             prevState = result.EndState
         Next
     End Sub
-    Private Sub ApplySyntaxHighlightingToLine(lineIndex As Integer)
+    Private Sub ApplySyntaxHighlightingToLine(lineIndex As Integer, Optional applyRuns As Boolean = True)
         If Not _enableSyntaxHighlight OrElse _syntaxHighlighter Is Nothing Then Return
-        InvalidateMeasureCache()
+        InvalidateLineMeasureCache(lineIndex)
         Dim prevState As Integer = If(lineIndex > 0 AndAlso lineIndex - 1 < _lineStates.Count, _lineStates(lineIndex - 1), 0)
         Dim result = _syntaxHighlighter.HighlightLine(lineIndex, _lines(lineIndex), prevState)
         While _lineStates.Count <= lineIndex
             _lineStates.Add(0)
         End While
         _lineStates(lineIndex) = result.EndState
-        _lineRuns(lineIndex) = TokensToRuns(result.Tokens, _lines(lineIndex).Length)
+        If applyRuns Then
+            _lineRuns(lineIndex) = TokensToRuns(result.Tokens, _lines(lineIndex).Length)
+        End If
     End Sub
     Private Sub UpdateSyntaxHighlightingFrom(fromLine As Integer, toLine As Integer)
         If Not _enableSyntaxHighlight OrElse _syntaxHighlighter Is Nothing Then Return
@@ -2888,13 +2957,22 @@ Public Class ModernTextBox
         Next
     End Sub
     Private Function TokensToRuns(tokens As List(Of SyntaxToken), lineLength As Integer) As List(Of TextRun)
-        If tokens Is Nothing OrElse tokens.Count = 0 Then Return Nothing
+        If tokens Is Nothing OrElse tokens.Count = 0 OrElse lineLength <= 0 Then Return Nothing
+        Dim ordered = tokens.
+            Where(Function(t) t.Length > 0 AndAlso t.StartCol < lineLength).
+            OrderBy(Function(t) t.StartCol).
+            ToList()
+        If ordered.Count = 0 Then Return Nothing
         Dim runs As New List(Of TextRun)
         Dim pos As Integer = 0
-        For Each tk In tokens
-            If tk.StartCol > pos Then runs.Add(New TextRun(pos, tk.StartCol - pos))
-            runs.Add(New TextRun(tk.StartCol, tk.Length, tk.ForeColor, Nothing))
-            pos = tk.StartCol + tk.Length
+        For Each tk In ordered
+            Dim startCol As Integer = Math.Max(0, tk.StartCol)
+            Dim endCol As Integer = Math.Min(lineLength, tk.StartCol + tk.Length)
+            If endCol <= pos Then Continue For
+            If startCol > pos Then runs.Add(New TextRun(pos, startCol - pos))
+            Dim runStart As Integer = Math.Max(startCol, pos)
+            runs.Add(New TextRun(runStart, endCol - runStart, tk.ForeColor, Nothing))
+            pos = endCol
         Next
         If pos < lineLength Then runs.Add(New TextRun(pos, lineLength - pos))
         Return MergeAdjacentRuns(runs)
@@ -2907,6 +2985,7 @@ Public Class ModernTextBox
         InvalidateMeasureCache()
         _lines = New List(Of String)(normalized.Split(vbLf))
         If _lines.Count = 0 Then _lines.Add("")
+        _textLength = ComputeNormalizedTextLength()
         _lineRuns = New List(Of List(Of TextRun))(_lines.Count)
         _lineLinks = New List(Of List(Of LinkRange))(_lines.Count)
         _lineStates = New List(Of Integer)(_lines.Count)
@@ -2954,6 +3033,13 @@ Public Class ModernTextBox
     Private Function ScaledBorderWidth() As Integer
         Return _cachedBorderInset
     End Function
+    Private Function ComputeNormalizedTextLength() As Integer
+        Dim total As Integer = Math.Max(0, _lines.Count - 1)
+        For Each line In _lines
+            total += If(line, String.Empty).Length
+        Next
+        Return total
+    End Function
     Private Sub UpdateDpiCache()
         _cachedDpiScale = Me.DeviceDpi / 96.0F
         _cachedBorderInset = CInt(Math.Round(边框宽度 * _cachedDpiScale))
@@ -2961,6 +3047,7 @@ Public Class ModernTextBox
         _scaledCaretWidth = CInt(Math.Round(光标线宽 * _cachedDpiScale))
         _scaledLineNumPadL = CInt(Math.Round(_lineNumPadLeft * _cachedDpiScale))
         _scaledLineNumPadR = CInt(Math.Round(_lineNumPadRight * _cachedDpiScale))
+        InvalidateLineNumberGutterCache()
         InvalidateMeasureCache()
     End Sub
     Private Function IsWordWrapActive() As Boolean
@@ -3044,6 +3131,7 @@ Public Class ModernTextBox
         _underlineFontCache?.Dispose()
         _underlineFontCache = Nothing
         _underlineFontBase = Nothing
+        InvalidateLineNumberGutterCache()
         InvalidateMeasureCache()
         MyBase.OnFontChanged(e)
         RefreshVisualLayout(True)

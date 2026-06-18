@@ -16,7 +16,7 @@ Imports System.ComponentModel
 ''' • WM_MOUSEACTIVATE 返回 MA_NOACTIVATE 是为了保持宿主控件焦点，别在派生类里轻易改掉。
 ''' </remarks>
 <ToolboxItem(False)>
-Friend Class PopupForm
+Public Class PopupForm
     Inherits Form
 
     Private Const WM_MOUSEACTIVATE As Integer = &H21

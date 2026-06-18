@@ -1110,14 +1110,14 @@ Public Class HtmlColorLabel
             _mouseOverInfoIcon = True
         ElseIf _mouseOverInfoIcon Then
             _mouseOverInfoIcon = False
-            关闭信息图标提示()
+            延迟关闭信息图标提示()
         End If
     End Sub
 
     Protected Overrides Sub OnMouseLeave(e As EventArgs)
         MyBase.OnMouseLeave(e)
         _mouseOverInfoIcon = False
-        关闭信息图标提示()
+        延迟关闭信息图标提示()
     End Sub
 
     Protected Overrides Sub OnVisibleChanged(e As EventArgs)
@@ -1494,102 +1494,6 @@ Public Class HtmlColorLabel
         End Set
     End Property
 
-    Private 提示毛玻璃模式 As PopupBackdropMode = PopupBackdropMode.None
-    <Category("LakeUI - ToolTip Backdrop"), Description("工具提示毛玻璃背景模式。Auto = 显示前截取提示窗所在屏幕区域；Image = 使用 ToolTipBackdropImage。"), DefaultValue(GetType(PopupBackdropMode), "None"), Browsable(True)>
-    Public Property ToolTipBackdropMode As PopupBackdropMode
-        Get
-            Return 提示毛玻璃模式
-        End Get
-        Set(value As PopupBackdropMode)
-            提示毛玻璃模式 = value
-            If 提示窗体 IsNot Nothing AndAlso Not 提示窗体.IsDisposed AndAlso 提示窗体.Visible Then 显示信息图标提示()
-        End Set
-    End Property
-
-    Private 提示毛玻璃图片 As Image = Nothing
-    <Category("LakeUI - ToolTip Backdrop"), Description("Image 模式下作为工具提示毛玻璃源的图片。"), DefaultValue(GetType(Image), Nothing), Browsable(True)>
-    Public Property ToolTipBackdropImage As Image
-        Get
-            Return 提示毛玻璃图片
-        End Get
-        Set(value As Image)
-            提示毛玻璃图片 = value
-            If 提示窗体 IsNot Nothing AndAlso Not 提示窗体.IsDisposed AndAlso 提示窗体.Visible Then 显示信息图标提示()
-        End Set
-    End Property
-
-    Private 提示毛玻璃Tint颜色 As Color = Color.FromArgb(20, 220, 220, 220)
-    <Category("LakeUI - ToolTip Backdrop"), Description("工具提示毛玻璃 tint 叠加颜色（含 Alpha）。"), DefaultValue(GetType(Color), "20, 220, 220, 220"), Browsable(True)>
-    Public Property ToolTipBackdropTintColor As Color
-        Get
-            Return 提示毛玻璃Tint颜色
-        End Get
-        Set(value As Color)
-            提示毛玻璃Tint颜色 = value
-            If 提示窗体 IsNot Nothing AndAlso Not 提示窗体.IsDisposed AndAlso 提示窗体.Visible Then 显示信息图标提示()
-        End Set
-    End Property
-
-    Private 提示毛玻璃模糊半径 As Integer = 10
-    <Category("LakeUI - ToolTip Backdrop"), Description("工具提示毛玻璃模糊半径（逻辑像素）。1 - 96。"), DefaultValue(10), Browsable(True)>
-    Public Property ToolTipBackdropBlurRadius As Integer
-        Get
-            Return 提示毛玻璃模糊半径
-        End Get
-        Set(value As Integer)
-            提示毛玻璃模糊半径 = Math.Max(1, Math.Min(96, value))
-            If 提示窗体 IsNot Nothing AndAlso Not 提示窗体.IsDisposed AndAlso 提示窗体.Visible Then 显示信息图标提示()
-        End Set
-    End Property
-
-    Private 提示毛玻璃模糊次数 As Integer = 1
-    <Category("LakeUI - ToolTip Backdrop"), Description("工具提示毛玻璃 box blur 通过次数（0=不模糊，3≈高斯）。"), DefaultValue(1), Browsable(True)>
-    Public Property ToolTipBackdropBlurPasses As Integer
-        Get
-            Return 提示毛玻璃模糊次数
-        End Get
-        Set(value As Integer)
-            提示毛玻璃模糊次数 = Math.Max(0, Math.Min(5, value))
-            If 提示窗体 IsNot Nothing AndAlso Not 提示窗体.IsDisposed AndAlso 提示窗体.Visible Then 显示信息图标提示()
-        End Set
-    End Property
-
-    Private 提示毛玻璃下采样 As Integer = 4
-    <Category("LakeUI - ToolTip Backdrop"), Description("工具提示毛玻璃下采样倍率（建议 1/2/4/6/8）。"), DefaultValue(4), Browsable(True)>
-    Public Property ToolTipBackdropDownsampleFactor As Integer
-        Get
-            Return 提示毛玻璃下采样
-        End Get
-        Set(value As Integer)
-            提示毛玻璃下采样 = Math.Max(1, value)
-            If 提示窗体 IsNot Nothing AndAlso Not 提示窗体.IsDisposed AndAlso 提示窗体.Visible Then 显示信息图标提示()
-        End Set
-    End Property
-
-    Private 提示毛玻璃噪点不透明度 As Byte = 0
-    <Category("LakeUI - ToolTip Backdrop"), Description("工具提示毛玻璃噪点叠加层不透明度 (0-255)。0 = 关闭噪点。"), DefaultValue(CByte(0)), Browsable(True)>
-    Public Property ToolTipBackdropNoiseOpacity As Byte
-        Get
-            Return 提示毛玻璃噪点不透明度
-        End Get
-        Set(value As Byte)
-            提示毛玻璃噪点不透明度 = value
-            If 提示窗体 IsNot Nothing AndAlso Not 提示窗体.IsDisposed AndAlso 提示窗体.Visible Then 显示信息图标提示()
-        End Set
-    End Property
-
-    Private 提示毛玻璃噪点缩放 As Single = 1.0F
-    <Category("LakeUI - ToolTip Backdrop"), Description("工具提示毛玻璃噪点 tile 缩放（>1 颗粒变粗）。"), DefaultValue(1.0F), Browsable(True)>
-    Public Property ToolTipBackdropNoiseScale As Single
-        Get
-            Return 提示毛玻璃噪点缩放
-        End Get
-        Set(value As Single)
-            提示毛玻璃噪点缩放 = Math.Max(0.1F, value)
-            If 提示窗体 IsNot Nothing AndAlso Not 提示窗体.IsDisposed AndAlso 提示窗体.Visible Then 显示信息图标提示()
-        End Set
-    End Property
-
     Private Function CreateToolTipStyle() As FloatingToolTipStyle
         Return New FloatingToolTipStyle With {
             .Font = Me.Font,
@@ -1599,15 +1503,7 @@ Public Class HtmlColorLabel
             .BorderSize = 提示边框宽度,
             .BorderRadius = 提示圆角半径,
             .Padding = 提示内边距,
-            .MaxWidth = 提示最大宽度,
-            .BackdropMode = 提示毛玻璃模式,
-            .BackdropImage = 提示毛玻璃图片,
-            .BackdropTintColor = 提示毛玻璃Tint颜色,
-            .BackdropBlurRadius = 提示毛玻璃模糊半径,
-            .BackdropBlurPasses = 提示毛玻璃模糊次数,
-            .BackdropDownsampleFactor = 提示毛玻璃下采样,
-            .BackdropNoiseOpacity = 提示毛玻璃噪点不透明度,
-            .BackdropNoiseScale = 提示毛玻璃噪点缩放
+            .MaxWidth = 提示最大宽度
         }
     End Function
 
@@ -1629,6 +1525,14 @@ Public Class HtmlColorLabel
             提示窗体.Dispose()
         End If
         提示窗体 = Nothing
+    End Sub
+
+    Private Sub 延迟关闭信息图标提示()
+        If 提示窗体 Is Nothing OrElse 提示窗体.IsDisposed Then Return
+        Dim iconScreenRect As Rectangle = If(_infoIconBounds.IsEmpty,
+                                             RectangleToScreen(ClientRectangle),
+                                             RectangleToScreen(_infoIconBounds))
+        提示窗体.ScheduleCloseIfPointerOutside(180, iconScreenRect)
     End Sub
 
 #End Region

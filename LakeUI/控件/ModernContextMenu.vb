@@ -232,6 +232,17 @@ Public Class ModernContextMenu
         End Set
     End Property
 
+    Private 子菜单水平偏移 As Integer = 0
+    <Category("LakeUI"), Description("子菜单相对父级菜单边缘的水平修正距离；正数远离，负数靠近。"), DefaultValue(GetType(Integer), "0"), Browsable(True)>
+    Public Property SubMenuHorizontalOffset As Integer
+        Get
+            Return 子菜单水平偏移
+        End Get
+        Set(value As Integer)
+            SetValue(子菜单水平偏移, value)
+        End Set
+    End Property
+
     Private 图标大小 As Integer = 24
     <Category("LakeUI"), Description("图标绘制大小，同时决定图标列宽度；0 = 不保留图标列"), DefaultValue(GetType(Integer), "24"), Browsable(True)>
     Public Property IconSize As Integer
@@ -563,6 +574,7 @@ Public Class ModernContextMenu
         Private ReadOnly 父弹窗 As MenuPopupForm
         Private 悬停索引 As Integer = -1
         Private 子菜单弹窗 As MenuPopupForm = Nothing
+        Private 正在关闭子菜单弹窗 As MenuPopupForm = Nothing
         Private ReadOnly 项目区域列表 As New List(Of Rectangle)
         Private 正在关闭 As Boolean = False
         Private 鼠标按下 As Boolean = False
@@ -655,6 +667,36 @@ Public Class ModernContextMenu
             If Me.Top < scr.Top Then Me.Top = scr.Top
             准备毛玻璃背景()
             If 父弹窗 Is Nothing Then Application.AddMessageFilter(Me)
+            If 菜单.展开关闭动画时长 > 0 Then
+                Me.Size = New Size(Me.Width, 1)
+                Me.Show()
+                展开关闭动画中 = True
+                正在关闭动画 = False
+                展开关闭秒表.Restart()
+                启动展开关闭驱动()
+            Else
+                Me.Show()
+            End If
+        End Sub
+
+        Friend Sub ShowSubMenuAt(parentBounds As Rectangle, y As Integer, offsetX As Integer)
+            菜单.EnsureItemOwners()
+            计算布局()
+            最终高度 = Me.Height
+
+            Dim scr = Screen.FromRectangle(parentBounds).WorkingArea
+            Dim rightX As Integer = parentBounds.Right + offsetX
+            Dim leftX As Integer = parentBounds.Left - Me.Width - offsetX
+            Dim canOpenRight As Boolean = rightX + Me.Width <= scr.Right
+            Dim canOpenLeft As Boolean = leftX >= scr.Left
+            Dim x As Integer = If(canOpenRight OrElse Not canOpenLeft, rightX, leftX)
+
+            Me.Location = New Point(x, y)
+            If Me.Right > scr.Right Then Me.Left = scr.Right - Me.Width
+            If Me.Bottom > scr.Bottom Then Me.Top = y - Me.Height
+            If Me.Left < scr.Left Then Me.Left = scr.Left
+            If Me.Top < scr.Top Then Me.Top = scr.Top
+            准备毛玻璃背景()
             If 菜单.展开关闭动画时长 > 0 Then
                 Me.Size = New Size(Me.Width, 1)
                 Me.Show()
@@ -940,7 +982,7 @@ Public Class ModernContextMenu
 
         Protected Overrides Sub OnMouseMove(e As MouseEventArgs)
             MyBase.OnMouseMove(e)
-            Dim newIndex = 获取项目索引(e.Location)
+            Dim newIndex = 获取项目索引(e.Location, True)
             If newIndex <> 悬停索引 Then
                 悬停索引 = newIndex
                 更新悬停动画()
@@ -988,9 +1030,13 @@ Public Class ModernContextMenu
             End If
         End Sub
 
-        Private Function 获取项目索引(location As Point) As Integer
+        Private Function 获取项目索引(location As Point, Optional 包含横向内边距 As Boolean = False) As Integer
             For i = 0 To 项目区域列表.Count - 1
-                If 项目区域列表(i).Contains(location) Then
+                Dim rect = 项目区域列表(i)
+                If 包含横向内边距 Then
+                    rect = New Rectangle(0, rect.Y, ClientSize.Width, rect.Height)
+                End If
+                If rect.Contains(location) Then
                     If i < 菜单.项目列表.Count AndAlso (菜单.项目列表(i).IsSeparator OrElse 菜单.项目列表(i).IsDescription) Then Return -1
                     Return i
                 End If
@@ -1004,17 +1050,47 @@ Public Class ModernContextMenu
 
         Private Sub 处理子菜单悬停()
             If 子菜单弹窗 IsNot Nothing AndAlso Not 子菜单弹窗.IsDisposed Then
-                子菜单弹窗.关闭自身及子菜单()
+                Dim oldPopup = 子菜单弹窗
                 子菜单弹窗 = Nothing
+                正在关闭子菜单弹窗 = oldPopup
+                AddHandler oldPopup.FormClosed, AddressOf 子菜单关闭后显示当前悬停子菜单
+                oldPopup.关闭自身及子菜单()
+                Return
             End If
+            If 正在关闭子菜单弹窗 IsNot Nothing AndAlso Not 正在关闭子菜单弹窗.IsDisposed Then
+                Return
+            End If
+            显示当前悬停子菜单()
+        End Sub
+
+        Private Sub 子菜单关闭后显示当前悬停子菜单(sender As Object, e As FormClosedEventArgs)
+            Dim popup = TryCast(sender, MenuPopupForm)
+            If popup IsNot Nothing Then RemoveHandler popup.FormClosed, AddressOf 子菜单关闭后显示当前悬停子菜单
+            If 正在关闭子菜单弹窗 Is popup Then 正在关闭子菜单弹窗 = Nothing
+            If 正在关闭 OrElse 正在关闭动画 OrElse IsDisposed OrElse Not IsHandleCreated Then Return
+            Try
+                BeginInvoke(Sub()
+                                If 正在关闭 OrElse 正在关闭动画 OrElse IsDisposed Then Return
+                                显示当前悬停子菜单()
+                            End Sub)
+            Catch ex As InvalidOperationException
+            End Try
+        End Sub
+
+        Private Sub 显示当前悬停子菜单()
+            If 子菜单弹窗 IsNot Nothing AndAlso Not 子菜单弹窗.IsDisposed Then Return
+            If 正在关闭子菜单弹窗 IsNot Nothing AndAlso Not 正在关闭子菜单弹窗.IsDisposed Then Return
+            If 正在关闭 OrElse 正在关闭动画 OrElse IsDisposed Then Return
             If 悬停索引 < 0 OrElse 悬停索引 >= 菜单.项目列表.Count Then Return
+            If 悬停索引 >= 项目区域列表.Count Then Return
             Dim item = 菜单.项目列表(悬停索引)
             If item.IsSeparator Then Return
             If item.SubMenu Is Nothing OrElse item.SubMenu.Items.Count = 0 Then Return
             Dim rect = 项目区域列表(悬停索引)
-            Dim screenPt = Me.PointToScreen(New Point(rect.Right, rect.Top))
+            Dim offsetX As Integer = CInt(菜单.子菜单水平偏移 * DpiScale())
+            Dim screenPt = Me.PointToScreen(New Point(0, rect.Top))
             子菜单弹窗 = New MenuPopupForm(item.SubMenu, Me)
-            子菜单弹窗.ShowAt(screenPt.X, screenPt.Y)
+            子菜单弹窗.ShowSubMenuAt(Me.Bounds, screenPt.Y, offsetX)
         End Sub
 
 #End Region
@@ -1222,6 +1298,10 @@ Public Class ModernContextMenu
             If 子菜单弹窗 IsNot Nothing AndAlso Not 子菜单弹窗.IsDisposed Then
                 子菜单弹窗.关闭自身及子菜单()
                 子菜单弹窗 = Nothing
+            End If
+            If 正在关闭子菜单弹窗 IsNot Nothing AndAlso Not 正在关闭子菜单弹窗.IsDisposed Then
+                正在关闭子菜单弹窗.关闭自身及子菜单()
+                正在关闭子菜单弹窗 = Nothing
             End If
             If Not 正在关闭动画 AndAlso 菜单.展开关闭动画时长 > 0 AndAlso IsHandleCreated AndAlso Not IsDisposed Then
                 开始关闭动画()

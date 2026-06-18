@@ -59,9 +59,7 @@ Public Class ModernCheckBox
             绘制文本_D2D(dcRT, compositor)
 
             ' 4) 禁用遮罩
-            If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
-                RectangleRenderer.绘制矩形背景_D2D(dcRT, New RectangleF(0, 0, Me.Width, Me.Height), 禁用时遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Vertical, compositor.BrushCache)
-            End If
+            绘制禁用遮罩_D2D(dcRT, compositor.BrushCache)
         End Using
     End Sub
 
@@ -101,6 +99,43 @@ Public Class ModernCheckBox
         Dim 框Y As Single = Math.Max(Me.Padding.Top + 边框偏移, 主文本Y + (主文本高度 - 框尺寸) / 2.0F)
         Return New RectangleF(框X, 框Y, 框尺寸, 框尺寸)
     End Function
+
+    Private Function 计算框外缘区域(s As Single) As RectangleF
+        Dim 边框偏移 As Single = 框边框宽度 * s / 2.0F
+        Dim 框区域 As RectangleF = 计算框区域(s)
+        Return New RectangleF(
+            框区域.X - 边框偏移,
+            框区域.Y - 边框偏移,
+            框区域.Width + 框边框宽度 * s,
+            框区域.Height + 框边框宽度 * s)
+    End Function
+
+    Private Sub 绘制禁用遮罩_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache)
+        If Enabled OrElse 禁用时遮罩颜色.A <= 0 Then Return
+
+        Dim s As Single = DpiScale()
+        Dim 边框偏移 As Single = 框边框宽度 * s / 2.0F
+        Dim 遮罩区域 As RectangleF = 计算框外缘区域(s)
+        If 当前模式 = CheckModeEnum.CheckBox Then
+            Dim 圆角 As Single = 框圆角半径 * s + 边框偏移
+            If 圆角 > 0 Then
+                Using geo = RectangleRenderer.创建圆角矩形几何(遮罩区域, 圆角)
+                    RectangleRenderer.绘制圆角背景_D2D(rt, geo, 遮罩区域, 禁用时遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Vertical, brushCache)
+                End Using
+            Else
+                RectangleRenderer.绘制矩形背景_D2D(rt, 遮罩区域, 禁用时遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Vertical, brushCache)
+            End If
+        Else
+            Dim brush = brushCache.Get(rt, 禁用时遮罩颜色)
+            If brush Is Nothing Then Return
+
+            Dim ellipse As New Ellipse(
+                New Vector2(遮罩区域.X + 遮罩区域.Width / 2.0F, 遮罩区域.Y + 遮罩区域.Height / 2.0F),
+                遮罩区域.Width / 2.0F,
+                遮罩区域.Height / 2.0F)
+            rt.FillEllipse(ellipse, brush)
+        End If
+    End Sub
 
     Private Sub 绘制方框_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache, 框区域 As RectangleF, 背景色 As Color, 边框色 As Color, 边框宽 As Single, s As Single)
         Dim 圆角 As Single = 框圆角半径 * s
@@ -807,7 +842,7 @@ Public Class ModernCheckBox
     End Property
 
     Private 禁用时遮罩颜色 As Color = Color.FromArgb(120, 0, 0, 0)
-    <Category("LakeUI"), Description("禁用（Enabled = False）时覆盖在主体区域上的遮罩颜色（受圆角裁剪，不影响圆角外的透明区域）。"), DefaultValue(GetType(Color), "120, 0, 0, 0"), Browsable(True)>
+    <Category("LakeUI"), Description("禁用（Enabled = False）时覆盖在复选框区域上的遮罩颜色。"), DefaultValue(GetType(Color), "120, 0, 0, 0"), Browsable(True)>
     Public Property DisabledOverlayColor As Color
         Get
             Return 禁用时遮罩颜色

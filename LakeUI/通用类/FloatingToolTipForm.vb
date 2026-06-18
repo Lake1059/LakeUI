@@ -1,4 +1,6 @@
+Imports SharpGen.Runtime
 Imports Vortice.Direct2D1
+Imports Vortice.DirectWrite
 
 ''' <summary>
 ''' 控件共用的自绘浮动提示窗，支持 D2D 文本、边框、圆角以及弹出层毛玻璃背景。
@@ -18,8 +20,14 @@ Imports Vortice.Direct2D1
 '''   外层重新算窗口尺寸，不需要进测量 key。
 ''' • ShowWithoutActivation + WM_MOUSEACTIVATE 是必要组合，避免提示窗抢走原控件焦点。
 ''' </remarks>
-Friend NotInheritable Class FloatingToolTipForm
+Public Enum FloatingToolTipSide
+    Left = 0
+    Right = 1
+End Enum
+
+Public NotInheritable Class FloatingToolTipForm
     Inherits PopupForm
+    Implements IMessageFilter
 
     Private ReadOnly _owner As Control
     Private _tipText As String = ""
@@ -27,6 +35,29 @@ Friend NotInheritable Class FloatingToolTipForm
     Private _backdrop As PopupBackdropRenderer
     Private _lastMeasureKey As String = Nothing
     Private _lastMeasuredSize As Size = Size.Empty
+    Private _selectionAnchor As Integer = 0
+    Private _selectionCaret As Integer = 0
+    Private _isMouseSelecting As Boolean = False
+    Private _messageFilterInstalled As Boolean = False
+    Private _closeTimer As Timer = Nothing
+    Private _closeRelatedBounds As Rectangle() = Array.Empty(Of Rectangle)()
+
+    Private Const WM_KEYDOWN As Integer = &H100
+    Private Const WM_SYSKEYDOWN As Integer = &H104
+
+    Private Shared _keyboardSelectionOwner As FloatingToolTipForm = Nothing
+    Public Shared Property SelectableCopyEnabled As Boolean = True
+    Public Shared Property SelectionFocusColor As Color = Color.FromArgb(40, 220, 220, 220)
+    Public Shared Property BackdropEnabled As Boolean = False
+    Public Shared Property BackdropMode As PopupBackdropMode = PopupBackdropMode.Auto
+    Public Shared Property BackdropImage As Image = Nothing
+    Public Shared Property BackdropTintColor As Color = Color.FromArgb(20, 0, 0, 0)
+    Public Shared Property BackdropBlurRadius As Integer = 30
+    Public Shared Property BackdropBlurPasses As Integer = 1
+    Public Shared Property BackdropDownsampleFactor As Integer = 4
+    Public Shared Property BackdropNoiseOpacity As Byte = 0
+    Public Shared Property BackdropNoiseScale As Single = 1.0F
+
 
     Public Sub New(owner As Control)
         _owner = owner
@@ -37,9 +68,16 @@ Friend NotInheritable Class FloatingToolTipForm
     End Sub
 
     Public Sub ShowTip(text As String, screenLocation As Point, style As FloatingToolTipStyle,
-                       Optional overflowFlipDistance As Integer = 0)
-        _tipText = If(text, "")
+                       Optional overflowFlipDistance As Integer = 0,
+                       Optional preferredSide As FloatingToolTipSide = FloatingToolTipSide.Right)
+        Dim newText As String = If(text, "")
+        If Not IsSelectableCopyEnabled() OrElse Not String.Equals(_tipText, newText, StringComparison.Ordinal) Then
+            ClearSelection(False)
+        End If
+        CancelScheduledClose()
+        _tipText = newText
         _style = If(style, New FloatingToolTipStyle()).Clone()
+        ClampSelection()
 
         Dim pad As Padding = NormalizePadding(_style.Padding)
         Dim bw As Integer = BorderWidth()
@@ -65,22 +103,62 @@ Friend NotInheritable Class FloatingToolTipForm
 
         Dim scr As Screen = Screen.FromPoint(screenLocation)
         Dim loc As Point = screenLocation
-        If loc.X + w > scr.WorkingArea.Right Then
-            If overflowFlipDistance > 0 Then
+        Dim hasFlipTarget As Boolean = overflowFlipDistance > 0
+        If preferredSide = FloatingToolTipSide.Left AndAlso hasFlipTarget Then
+            loc.X = screenLocation.X - w - overflowFlipDistance
+            If loc.X < scr.WorkingArea.Left Then
+                loc.X = screenLocation.X
+            End If
+        ElseIf loc.X + w > scr.WorkingArea.Right Then
+            If hasFlipTarget Then
                 loc.X = screenLocation.X - w - overflowFlipDistance
             Else
                 loc.X = scr.WorkingArea.Right - w
             End If
-            If loc.X < scr.WorkingArea.Left Then loc.X = scr.WorkingArea.Left
         End If
+        If loc.X + w > scr.WorkingArea.Right Then loc.X = scr.WorkingArea.Right - w
+        If loc.X < scr.WorkingArea.Left Then loc.X = scr.WorkingArea.Left
         If loc.Y + h > scr.WorkingArea.Bottom Then loc.Y = scr.WorkingArea.Bottom - h
         If loc.Y < scr.WorkingArea.Top Then loc.Y = scr.WorkingArea.Top
         Location = loc
 
         ApplyPopupWindowState()
         准备毛玻璃背景()
+        EnsureMessageFilter()
         If Not Visible Then Show()
         Invalidate()
+    End Sub
+
+    Friend ReadOnly Property HasSelectedText As Boolean
+        Get
+            Return IsSelectableCopyEnabled() AndAlso SelectionLength() > 0
+        End Get
+    End Property
+
+    Friend Function ContainsScreenPoint(screenPoint As Point) As Boolean
+        Return Not IsDisposed AndAlso Visible AndAlso Bounds.Contains(screenPoint)
+    End Function
+
+    Friend Sub ScheduleCloseIfPointerOutside(delayMs As Integer, ParamArray relatedScreenBounds As Rectangle())
+        If IsDisposed OrElse HasSelectedText OrElse _isMouseSelecting Then Return
+        _closeRelatedBounds = If(relatedScreenBounds, Array.Empty(Of Rectangle)())
+        If _closeTimer Is Nothing Then
+            _closeTimer = New Timer()
+            AddHandler _closeTimer.Tick, AddressOf CloseTimerTick
+        End If
+        _closeTimer.Stop()
+        _closeTimer.Interval = Math.Max(1, delayMs)
+        _closeTimer.Start()
+    End Sub
+
+    Friend Sub CopySelectedText()
+        If Not IsSelectableCopyEnabled() Then Return
+        Dim text As String = GetSelectedText()
+        If String.IsNullOrEmpty(text) Then Return
+        Try
+            Clipboard.SetText(text)
+        Catch
+        End Try
     End Sub
 
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
@@ -105,14 +183,75 @@ Friend NotInheritable Class FloatingToolTipForm
             DrawBackground_D2D(rt, brushCache, bw, w, h, Not HasBackdropFrame())
             scope.FlushGraphics()
 
-            Dim textRect As New RectangleF(bw + pad.Left, bw + pad.Top,
-                                           w - bw * 2 - pad.Left - pad.Right,
-                                           h - bw * 2 - pad.Top - pad.Bottom)
+            Dim textRect As RectangleF = GetTextRectangle()
+            DrawSelection_D2D(scope.DCRenderTarget, brushCache, textRect)
             D2DTextRenderer.DrawText(scope.DCRenderTarget, _tipText, TipFont(), textRect, _style.ForeColor,
                                      TextFormatFlags.WordBreak Or TextFormatFlags.NoPadding Or TextFormatFlags.Left Or TextFormatFlags.Top,
                                      OwnerDpiScale(), scope.Compositor.TextFormatCache, brushCache)
         End Using
     End Sub
+
+    Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
+        MyBase.OnMouseDown(e)
+        If Not IsSelectableCopyEnabled() OrElse e.Button <> MouseButtons.Left OrElse String.IsNullOrEmpty(_tipText) Then Return
+
+        _keyboardSelectionOwner = Me
+        _selectionAnchor = TextPositionFromPoint(e.Location)
+        _selectionCaret = _selectionAnchor
+        _isMouseSelecting = True
+        Capture = True
+        Cursor = Cursors.IBeam
+        Invalidate()
+    End Sub
+
+    Protected Overrides Sub OnMouseMove(e As MouseEventArgs)
+        MyBase.OnMouseMove(e)
+        CancelScheduledClose()
+        Cursor = If(IsSelectableCopyEnabled() AndAlso GetTextRectangle().Contains(e.Location), Cursors.IBeam, Cursors.Default)
+
+        If Not _isMouseSelecting Then Return
+        _selectionCaret = TextPositionFromPoint(e.Location)
+        ClampSelection()
+        Invalidate()
+    End Sub
+
+    Protected Overrides Sub OnMouseUp(e As MouseEventArgs)
+        MyBase.OnMouseUp(e)
+        If e.Button <> MouseButtons.Left Then Return
+        _isMouseSelecting = False
+        Capture = False
+    End Sub
+
+    Protected Overrides Sub OnMouseLeave(e As EventArgs)
+        MyBase.OnMouseLeave(e)
+        If Not _isMouseSelecting Then Cursor = Cursors.Default
+        ScheduleCloseIfPointerOutside(180)
+    End Sub
+
+    Protected Overrides Sub OnVisibleChanged(e As EventArgs)
+        MyBase.OnVisibleChanged(e)
+        If Not Visible AndAlso ReferenceEquals(_keyboardSelectionOwner, Me) Then
+            _keyboardSelectionOwner = Nothing
+        End If
+    End Sub
+
+    Public Function PreFilterMessage(ByRef m As Message) As Boolean Implements IMessageFilter.PreFilterMessage
+        If Not IsSelectableCopyEnabled() Then Return False
+        If IsDisposed OrElse Not Visible OrElse Not ReferenceEquals(_keyboardSelectionOwner, Me) Then Return False
+        If m.Msg <> WM_KEYDOWN AndAlso m.Msg <> WM_SYSKEYDOWN Then Return False
+        If (Control.ModifierKeys And Keys.Control) <> Keys.Control Then Return False
+
+        Dim keyCode As Keys = CType(m.WParam.ToInt32() And &HFFFF, Keys)
+        Select Case keyCode
+            Case Keys.A
+                SelectAllText()
+                Return True
+            Case Keys.C, Keys.Insert
+                CopySelectedText()
+                Return HasSelectedText
+        End Select
+        Return False
+    End Function
 
     Private Function MeasureWrappedText(text As String, font As Font, contentW As Integer) As Size
         If String.IsNullOrEmpty(text) Then Return Size.Empty
@@ -121,6 +260,150 @@ Friend NotInheritable Class FloatingToolTipForm
                                            TextFormatFlags.WordBreak Or TextFormatFlags.NoPadding Or TextFormatFlags.Left Or TextFormatFlags.Top,
                                            OwnerDpiScale(), textFormatCache)
     End Function
+
+    Private Sub DrawSelection_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache, textRect As RectangleF)
+        If Not IsSelectableCopyEnabled() Then Return
+        Dim length As Integer = SelectionLength()
+        If rt Is Nothing OrElse length <= 0 OrElse textRect.Width <= 0 OrElse textRect.Height <= 0 Then Return
+
+        Dim start As Integer = SelectionStart()
+        Using fmt = CreateTipTextFormat()
+            If fmt Is Nothing Then Return
+            Using layout = D2DGlobals.GetDWriteFactory().CreateTextLayout(_tipText, fmt,
+                                                                          Math.Max(1.0F, textRect.Width),
+                                                                          Math.Max(1.0F, textRect.Height))
+                Dim metrics(Math.Max(1, length + 1) - 1) As HitTestMetrics
+                Dim actual As UInteger = 0
+                Try
+                    layout.HitTestTextRange(CUInt(start), CUInt(length), textRect.X, textRect.Y, metrics, actual)
+                Catch
+                    Return
+                End Try
+                If actual <= 0 Then Return
+
+                Dim selectionBrush = brushCache.Get(rt, EffectiveSelectionFocusColor())
+                Dim count As Integer = Math.Min(metrics.Length, CInt(actual))
+                For i As Integer = 0 To count - 1
+                    Dim m = metrics(i)
+                    If m.Width <= 0.0F OrElse m.Height <= 0.0F Then Continue For
+                    rt.FillRectangle(New Vortice.Mathematics.Rect(m.Left, m.Top, m.Width, m.Height), selectionBrush)
+                Next
+            End Using
+        End Using
+    End Sub
+
+    Private Function TextPositionFromPoint(point As Point) As Integer
+        If Not IsSelectableCopyEnabled() Then Return 0
+        If String.IsNullOrEmpty(_tipText) Then Return 0
+
+        Dim textRect As RectangleF = GetTextRectangle()
+        If textRect.Width <= 0 OrElse textRect.Height <= 0 Then Return 0
+
+        Using fmt = CreateTipTextFormat()
+            If fmt Is Nothing Then Return 0
+            Using layout = D2DGlobals.GetDWriteFactory().CreateTextLayout(_tipText, fmt,
+                                                                          Math.Max(1.0F, textRect.Width),
+                                                                          Math.Max(1.0F, textRect.Height))
+                Dim trailing As RawBool = False
+                Dim inside As RawBool = False
+                Dim metrics As HitTestMetrics
+                layout.HitTestPoint(point.X - textRect.X, point.Y - textRect.Y, trailing, inside, metrics)
+
+                Dim pos As Integer = CInt(metrics.TextPosition)
+                If CBool(trailing) Then pos += Math.Max(1, CInt(metrics.Length))
+                Return Math.Max(0, Math.Min(_tipText.Length, pos))
+            End Using
+        End Using
+    End Function
+
+    Private Function CreateTipTextFormat() As IDWriteTextFormat
+        Dim font As Font = TipFont()
+        If font Is Nothing Then Return Nothing
+
+        Dim sizePx As Single = font.SizeInPoints * (96.0F / 72.0F) * OwnerDpiScale()
+        Dim fmt = D2DGlobals.CreateTextFormat(font, sizePx)
+        fmt.TextAlignment = TextAlignment.Leading
+        fmt.ParagraphAlignment = ParagraphAlignment.Near
+        fmt.WordWrapping = WordWrapping.Wrap
+        Return fmt
+    End Function
+
+    Private Function GetTextRectangle() As RectangleF
+        Dim bw As Integer = BorderWidth()
+        Dim pad As Padding = NormalizePadding(_style.Padding)
+        Return New RectangleF(bw + pad.Left,
+                              bw + pad.Top,
+                              Math.Max(0, ClientSize.Width - bw * 2 - pad.Left - pad.Right),
+                              Math.Max(0, ClientSize.Height - bw * 2 - pad.Top - pad.Bottom))
+    End Function
+
+    Private Function SelectionStart() As Integer
+        Return Math.Min(_selectionAnchor, _selectionCaret)
+    End Function
+
+    Private Function SelectionLength() As Integer
+        Return Math.Abs(_selectionCaret - _selectionAnchor)
+    End Function
+
+    Private Function GetSelectedText() As String
+        Dim start As Integer = SelectionStart()
+        Dim length As Integer = SelectionLength()
+        If length <= 0 OrElse String.IsNullOrEmpty(_tipText) Then Return String.Empty
+        Return _tipText.Substring(start, Math.Min(length, _tipText.Length - start))
+    End Function
+
+    Private Sub SelectAllText()
+        If Not IsSelectableCopyEnabled() Then Return
+        If String.IsNullOrEmpty(_tipText) Then Return
+        _selectionAnchor = 0
+        _selectionCaret = _tipText.Length
+        _keyboardSelectionOwner = Me
+        Invalidate()
+    End Sub
+
+    Private Sub ClearSelection(Optional invalidateForm As Boolean = True)
+        _selectionAnchor = 0
+        _selectionCaret = 0
+        _isMouseSelecting = False
+        If ReferenceEquals(_keyboardSelectionOwner, Me) Then _keyboardSelectionOwner = Nothing
+        If invalidateForm Then Invalidate()
+    End Sub
+
+    Private Sub ClampSelection()
+        Dim maxLen As Integer = If(_tipText Is Nothing, 0, _tipText.Length)
+        _selectionAnchor = Math.Max(0, Math.Min(maxLen, _selectionAnchor))
+        _selectionCaret = Math.Max(0, Math.Min(maxLen, _selectionCaret))
+    End Sub
+
+    Private Sub EnsureMessageFilter()
+        If _messageFilterInstalled Then Return
+        Application.AddMessageFilter(Me)
+        _messageFilterInstalled = True
+    End Sub
+
+    Private Sub CancelScheduledClose()
+        If _closeTimer IsNot Nothing Then _closeTimer.Stop()
+        _closeRelatedBounds = Array.Empty(Of Rectangle)()
+    End Sub
+
+    Private Sub CloseTimerTick(sender As Object, e As EventArgs)
+        If _closeTimer IsNot Nothing Then _closeTimer.Stop()
+        If IsDisposed OrElse HasSelectedText OrElse _isMouseSelecting Then Return
+
+        Dim screenPos As Point = Control.MousePosition
+        If ContainsScreenPoint(screenPos) Then Return
+        For Each rect In _closeRelatedBounds
+            If rect.Contains(screenPos) Then Return
+        Next
+
+        Close()
+    End Sub
+
+    Private Sub RemoveMessageFilter()
+        If Not _messageFilterInstalled Then Return
+        Application.RemoveMessageFilter(Me)
+        _messageFilterInstalled = False
+    End Sub
 
     Private Sub DrawBackground_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache,
                                    bw As Integer, w As Integer, h As Integer, fillBackground As Boolean)
@@ -185,15 +468,15 @@ Friend NotInheritable Class FloatingToolTipForm
         If _backdrop Is Nothing Then _backdrop = New PopupBackdropRenderer(Me)
         _backdrop.TransientExcludeOnCapture = True
 
-        If _style.BackdropMode <> PopupBackdropMode.None Then
-            _backdrop.Configure(_style.BackdropMode,
-                                _style.BackdropImage,
-                                _style.BackdropTintColor,
-                                _style.BackdropBlurRadius,
-                                _style.BackdropBlurPasses,
-                                _style.BackdropDownsampleFactor,
-                                _style.BackdropNoiseOpacity,
-                                _style.BackdropNoiseScale)
+        If BackdropEnabled AndAlso BackdropMode <> PopupBackdropMode.None Then
+            _backdrop.Configure(BackdropMode,
+                                BackdropImage,
+                                BackdropTintColor,
+                                BackdropBlurRadius,
+                                BackdropBlurPasses,
+                                BackdropDownsampleFactor,
+                                BackdropNoiseOpacity,
+                                BackdropNoiseScale)
         ElseIf ShouldCaptureTransparentBackground() Then
             _backdrop.Configure(PopupBackdropMode.Auto,
                                 Nothing,
@@ -226,11 +509,20 @@ Friend NotInheritable Class FloatingToolTipForm
     End Function
 
     Private Function ShouldCaptureTransparentBackground() As Boolean
-        Return _style.BackdropMode = PopupBackdropMode.None AndAlso _style.BackColor.A < 255
+        Return _style.BackColor.A < 255
     End Function
 
     Private Function ToolTipFillColor() As Color
         Return Color.FromArgb(255, _style.BackColor.R, _style.BackColor.G, _style.BackColor.B)
+    End Function
+
+    Private Shared Function IsSelectableCopyEnabled() As Boolean
+        Return SelectableCopyEnabled
+    End Function
+
+    Private Function EffectiveSelectionFocusColor() As Color
+        If _style.SelectionBackColor <> Color.Empty Then Return _style.SelectionBackColor
+        Return SelectionFocusColor
     End Function
 
     Private Function BorderWidth() As Integer
@@ -257,6 +549,13 @@ Friend NotInheritable Class FloatingToolTipForm
 
     Protected Overrides Sub Dispose(disposing As Boolean)
         If disposing Then
+            RemoveMessageFilter()
+            If _closeTimer IsNot Nothing Then
+                RemoveHandler _closeTimer.Tick, AddressOf CloseTimerTick
+                _closeTimer.Dispose()
+                _closeTimer = Nothing
+            End If
+            If ReferenceEquals(_keyboardSelectionOwner, Me) Then _keyboardSelectionOwner = Nothing
             If _backdrop IsNot Nothing Then
                 _backdrop.Dispose()
                 _backdrop = Nothing
@@ -272,9 +571,9 @@ End Class
 ''' </summary>
 ''' <remarks>
 ''' ShowTip 会 clone 一份样式，之后外部继续修改原对象不会影响已经显示的提示窗。
-''' Font / BackdropImage 由调用方持有，本类不负责 Dispose。
+''' Font 由调用方持有，本类不负责 Dispose。
 ''' </remarks>
-Friend Class FloatingToolTipStyle
+Public Class FloatingToolTipStyle
     Public Property Font As Font = Nothing
     Public Property BackColor As Color = Color.FromArgb(50, 50, 50)
     Public Property ForeColor As Color = Color.Silver
@@ -283,14 +582,7 @@ Friend Class FloatingToolTipStyle
     Public Property BorderRadius As Integer = 0
     Public Property Padding As Padding = New Padding(10, 10, 10, 10)
     Public Property MaxWidth As Integer = 300
-    Public Property BackdropMode As PopupBackdropMode = PopupBackdropMode.None
-    Public Property BackdropImage As Image = Nothing
-    Public Property BackdropTintColor As Color = Color.FromArgb(20, 220, 220, 220)
-    Public Property BackdropBlurRadius As Integer = 10
-    Public Property BackdropBlurPasses As Integer = 1
-    Public Property BackdropDownsampleFactor As Integer = 4
-    Public Property BackdropNoiseOpacity As Byte = 0
-    Public Property BackdropNoiseScale As Single = 1.0F
+    Public Property SelectionBackColor As Color = Color.Empty
 
     Public Function Clone() As FloatingToolTipStyle
         Return DirectCast(MemberwiseClone(), FloatingToolTipStyle)

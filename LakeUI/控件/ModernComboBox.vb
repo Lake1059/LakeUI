@@ -984,6 +984,12 @@ Public Class ModernComboBox
         Classic = 0
         Overlay = 1
     End Enum
+
+    Public Enum ToolTipSideEnum
+        Left = 0
+        Right = 1
+    End Enum
+
     Private 下拉显示模式 As DropDownDisplayMode = DropDownDisplayMode.Classic
     <Category("LakeUI"), Description("下拉列表显示模式（Classic = 常规下拉；Overlay = 选中项与控件重合）"), DefaultValue(DropDownDisplayMode.Classic), Browsable(True)>
     Public Property DropDownMode As DropDownDisplayMode
@@ -1089,6 +1095,17 @@ Public Class ModernComboBox
         End Get
         Set(value As Integer)
             提示间距 = value
+        End Set
+    End Property
+
+    Private 提示默认侧 As ToolTipSideEnum = ToolTipSideEnum.Right
+    <Category("LakeUI"), Description("工具提示默认显示在下拉列表左侧还是右侧"), DefaultValue(GetType(ToolTipSideEnum), "Right"), Browsable(True)>
+    Public Property ToolTipSide As ToolTipSideEnum
+        Get
+            Return 提示默认侧
+        End Get
+        Set(value As ToolTipSideEnum)
+            提示默认侧 = value
         End Set
     End Property
 
@@ -2234,7 +2251,8 @@ Public Class ModernComboBox
                     Dim screenPos As Point = Control.MousePosition
                     If Not Bounds.Contains(screenPos) Then
                         Dim ownerScreen As Rectangle = _owner.RectangleToScreen(_owner.ClientRectangle)
-                        If Not ownerScreen.Contains(screenPos) Then
+                        If (_tipForm Is Nothing OrElse _tipForm.IsDisposed OrElse Not _tipForm.ContainsScreenPoint(screenPos)) AndAlso
+                           Not ownerScreen.Contains(screenPos) Then
                             BeginInvoke(Sub() _owner.CloseDropDown())
                         End If
                     End If
@@ -2460,7 +2478,11 @@ Public Class ModernComboBox
             If idx <> _hoverIndex Then
                 _hoverIndex = idx
                 更新悬停动画()
-                更新工具提示()
+                If idx >= 0 Then
+                    更新工具提示()
+                Else
+                    延迟关闭工具提示()
+                End If
                 请求重绘()
             End If
         End Sub
@@ -2496,7 +2518,7 @@ Public Class ModernComboBox
             If _hoverIndex <> -1 Then
                 _hoverIndex = -1
                 更新悬停动画()
-                关闭工具提示()
+                延迟关闭工具提示()
                 请求重绘()
             End If
             If _scrollBar.ResetHover() Then 请求重绘()
@@ -2513,6 +2535,7 @@ Public Class ModernComboBox
         End Sub
 
         Private _tipForm As FloatingToolTipForm = Nothing
+        Private _tipHoverIndex As Integer = -1
 
         Private Sub 更新工具提示()
             If _hoverIndex >= 0 AndAlso _hoverIndex < _owner._items.Count Then
@@ -2522,16 +2545,29 @@ Public Class ModernComboBox
                     If _tipForm Is Nothing OrElse _tipForm.IsDisposed Then
                         _tipForm = New FloatingToolTipForm(_owner)
                     End If
+                    _tipHoverIndex = _hoverIndex
                     Dim itemRect = GetItemRect(_hoverIndex)
                     Dim screenPt As Point = Me.PointToScreen(New Point(Me.Width + _owner.提示间距, CInt(itemRect.Y)))
-                    _tipForm.ShowTip(tipText, screenPt, _owner.CreateToolTipStyle(), Math.Max(0, _owner.Width + _owner.提示间距 * 2))
+                    Dim preferredSide As FloatingToolTipSide = If(_owner.提示默认侧 = ToolTipSideEnum.Left,
+                                                                  FloatingToolTipSide.Left,
+                                                                  FloatingToolTipSide.Right)
+                    _tipForm.ShowTip(tipText, screenPt, _owner.CreateToolTipStyle(),
+                                     Math.Max(0, _owner.Width + _owner.提示间距 * 2),
+                                     preferredSide)
                     Return
                 End If
             End If
             关闭工具提示()
         End Sub
 
+        Private Sub 延迟关闭工具提示()
+            If _tipForm Is Nothing OrElse _tipForm.IsDisposed Then Return
+            Dim ownerScreen As Rectangle = _owner.RectangleToScreen(_owner.ClientRectangle)
+            _tipForm.ScheduleCloseIfPointerOutside(180, Bounds, ownerScreen)
+        End Sub
+
         Private Sub 关闭工具提示()
+            _tipHoverIndex = -1
             If _tipForm IsNot Nothing AndAlso Not _tipForm.IsDisposed Then
                 _tipForm.Close()
                 _tipForm.Dispose()
@@ -2603,15 +2639,7 @@ Public Class ModernComboBox
             .BorderSize = Math.Max(0, 提示边框宽度),
             .BorderRadius = Math.Max(0, 提示圆角半径),
             .Padding = 提示内边距,
-            .MaxWidth = Math.Max(50, 提示最大宽度),
-            .BackdropMode = 下拉毛玻璃模式,
-            .BackdropImage = 下拉毛玻璃图片,
-            .BackdropTintColor = 下拉毛玻璃Tint颜色,
-            .BackdropBlurRadius = 下拉毛玻璃模糊半径,
-            .BackdropBlurPasses = 下拉毛玻璃模糊次数,
-            .BackdropDownsampleFactor = 下拉毛玻璃下采样,
-            .BackdropNoiseOpacity = 下拉毛玻璃噪点不透明度,
-            .BackdropNoiseScale = 下拉毛玻璃噪点缩放
+            .MaxWidth = Math.Max(50, 提示最大宽度)
         }
     End Function
 

@@ -198,11 +198,19 @@ Public Class BooleanSwitch
     Private ReadOnly 动画助手 As New AnimationHelperV2(Me)
 
     Private Sub 开关动画脏区(helper As AnimationHelperV2, owner As Control, sink As AnimationHelperV2.InvalidateRegionSink)
-        sink.InvalidateAll()
+        sink.Add(计算动画脏区())
     End Sub
 
     Private Function DpiScale() As Single
         Return Me.DeviceDpi / 96.0F
+    End Function
+
+    Private Function 计算动画脏区() As Rectangle
+        If Me.Width <= 0 OrElse Me.Height <= 0 Then Return Rectangle.Empty
+        Dim inflate As Integer = Math.Max(2, CInt(Math.Ceiling((边框宽度 + 2) * DpiScale())))
+        Dim rect As New Rectangle(0, 0, Me.Width, Me.Height)
+        rect.Inflate(inflate, inflate)
+        Return Rectangle.Intersect(Me.ClientRectangle, rect)
     End Function
 #End Region
 

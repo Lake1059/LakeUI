@@ -940,6 +940,31 @@ Public Class UltraDetailListView
         Return If(自动换行, flags Or TextFormatFlags.WordBreak, flags Or TextFormatFlags.EndEllipsis)
     End Function
 
+    Private Function 截断文本到宽度(text As String, font As Font, availW As Integer) As String
+        If String.IsNullOrEmpty(text) Then Return ""
+        If availW <= 0 Then Return TruncationSuffix.TrimStart()
+
+        Dim measureFlags As TextFormatFlags = TextFormatFlags.Left Or TextFormatFlags.Top Or TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine
+        Dim fullW As Integer = 测量文本宽度_D2D(text, font, measureFlags)
+        If fullW <= availW Then Return text
+
+        Dim suffix As String = TruncationSuffix
+        Dim suffixW As Integer = 测量文本宽度_D2D(suffix, font, measureFlags)
+        If suffixW >= availW Then Return TruncationSuffix.TrimStart()
+
+        Dim lo As Integer = 0
+        Dim hi As Integer = text.Length
+        While lo < hi
+            Dim mid As Integer = (lo + hi + 1) \ 2
+            If 测量文本宽度_D2D(text.Substring(0, mid), font, measureFlags) + suffixW <= availW Then
+                lo = mid
+            Else
+                hi = mid - 1
+            End If
+        End While
+        Return text.Substring(0, lo) & suffix
+    End Function
+
     Private Function 测量文本_D2D(text As String, font As Font, proposedSize As Size, flags As TextFormatFlags) As Size
         Dim measureText As String = If(String.IsNullOrEmpty(text), "Ag", text)
         Dim measureFont As Font = If(font, Me.Font)
@@ -1957,6 +1982,94 @@ Public Class UltraDetailListView
 
 #End Region
 
+#Region "外观属性 - 工具提示"
+
+    Private 提示背景颜色 As Color = Color.FromArgb(50, 50, 50)
+    <Category("LakeUI"), Description("工具提示背景颜色"), DefaultValue(GetType(Color), "50,50,50"), Browsable(True)>
+    Public Property ToolTipBackColor As Color
+        Get
+            Return 提示背景颜色
+        End Get
+        Set(value As Color)
+            提示背景颜色 = value
+            If _truncTooltip IsNot Nothing AndAlso Not _truncTooltip.IsDisposed AndAlso _truncTooltip.Visible Then 更新截断提示(PointToClient(Cursor.Position), True)
+        End Set
+    End Property
+
+    Private 提示文本颜色 As Color = Color.Silver
+    <Category("LakeUI"), Description("工具提示文本颜色"), DefaultValue(GetType(Color), "Silver"), Browsable(True)>
+    Public Property ToolTipForeColor As Color
+        Get
+            Return 提示文本颜色
+        End Get
+        Set(value As Color)
+            提示文本颜色 = value
+            If _truncTooltip IsNot Nothing AndAlso Not _truncTooltip.IsDisposed AndAlso _truncTooltip.Visible Then 更新截断提示(PointToClient(Cursor.Position), True)
+        End Set
+    End Property
+
+    Private 提示边框颜色 As Color = Color.Gray
+    <Category("LakeUI"), Description("工具提示边框颜色"), DefaultValue(GetType(Color), "Gray"), Browsable(True)>
+    Public Property ToolTipBorderColor As Color
+        Get
+            Return 提示边框颜色
+        End Get
+        Set(value As Color)
+            提示边框颜色 = value
+            If _truncTooltip IsNot Nothing AndAlso Not _truncTooltip.IsDisposed AndAlso _truncTooltip.Visible Then 更新截断提示(PointToClient(Cursor.Position), True)
+        End Set
+    End Property
+
+    Private 提示边框宽度 As Integer = 1
+    <Category("LakeUI"), Description("工具提示边框宽度"), DefaultValue(GetType(Integer), "1"), Browsable(True)>
+    Public Property ToolTipBorderSize As Integer
+        Get
+            Return 提示边框宽度
+        End Get
+        Set(value As Integer)
+            提示边框宽度 = Math.Max(0, value)
+            If _truncTooltip IsNot Nothing AndAlso Not _truncTooltip.IsDisposed AndAlso _truncTooltip.Visible Then 更新截断提示(PointToClient(Cursor.Position), True)
+        End Set
+    End Property
+
+    Private 提示圆角半径 As Integer = 0
+    <Category("LakeUI"), Description("工具提示圆角半径"), DefaultValue(GetType(Integer), "0"), Browsable(True)>
+    Public Property ToolTipBorderRadius As Integer
+        Get
+            Return 提示圆角半径
+        End Get
+        Set(value As Integer)
+            提示圆角半径 = Math.Max(0, value)
+            If _truncTooltip IsNot Nothing AndAlso Not _truncTooltip.IsDisposed AndAlso _truncTooltip.Visible Then 更新截断提示(PointToClient(Cursor.Position), True)
+        End Set
+    End Property
+
+    Private 提示内边距 As New Padding(10, 10, 10, 10)
+    <Category("LakeUI"), Description("工具提示内边距"), DefaultValue(GetType(Padding), "10, 10, 10, 10"), Browsable(True)>
+    Public Property ToolTipPadding As Padding
+        Get
+            Return 提示内边距
+        End Get
+        Set(value As Padding)
+            提示内边距 = value
+            If _truncTooltip IsNot Nothing AndAlso Not _truncTooltip.IsDisposed AndAlso _truncTooltip.Visible Then 更新截断提示(PointToClient(Cursor.Position), True)
+        End Set
+    End Property
+
+    Private 提示最大宽度 As Integer = 300
+    <Category("LakeUI"), Description("工具提示最大宽度"), DefaultValue(GetType(Integer), "300"), Browsable(True)>
+    Public Property ToolTipMaxWidth As Integer
+        Get
+            Return 提示最大宽度
+        End Get
+        Set(value As Integer)
+            提示最大宽度 = Math.Max(50, value)
+            If _truncTooltip IsNot Nothing AndAlso Not _truncTooltip.IsDisposed AndAlso _truncTooltip.Visible Then 更新截断提示(PointToClient(Cursor.Position), True)
+        End Set
+    End Property
+
+#End Region
+
 #Region "行为属性"
 
     Private 允许多选 As Boolean = True
@@ -2062,9 +2175,11 @@ Public Class UltraDetailListView
     Private _editColumnIndex As Integer = -1
     Private _labelEditPendingColumn As Integer = -1
 
-    Private _truncTooltip As ToolTip
+    Private _truncTooltip As FloatingToolTipForm
     Private _truncTooltipText As String = ""
     Private _truncTooltipActive As Boolean = False
+    Private _truncTooltipSourceScreenRect As Rectangle = Rectangle.Empty
+    Private Const TruncationSuffix As String = " ..."
 
     <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
     Public Property SelectedIndex As Integer
@@ -2604,7 +2719,7 @@ Public Class UltraDetailListView
         Dim headerRect As Rectangle = 获取列标题区域()
         确保列X缓存()
         Dim dpiS As Single = DpiScale()
-        Dim flags As TextFormatFlags = TextFormatFlags.Left Or TextFormatFlags.VerticalCenter Or TextFormatFlags.EndEllipsis Or TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine
+        Dim flags As TextFormatFlags = TextFormatFlags.Left Or TextFormatFlags.VerticalCenter Or TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine
         Dim brushCache = _当前合成器.BrushCache
         Dim tfc = _当前合成器.TextFormatCache
         For i As Integer = 0 To _columns.Count - 1
@@ -2612,7 +2727,8 @@ Public Class UltraDetailListView
             Dim x As Integer = _columnXCache(i)
             Dim pad As Padding = Dpi(col.HeaderPadding)
             Dim textRect As New Rectangle(x + pad.Left, headerRect.Y + pad.Top, col.Width - pad.Horizontal, headerRect.Height - pad.Vertical)
-            D2DTextRenderer.DrawText(rt, col.Text, Me.Font, textRect, 列标题文字颜色, flags, dpiS, tfc, brushCache)
+            Dim drawText As String = 截断文本到宽度(col.Text, Me.Font, textRect.Width)
+            D2DTextRenderer.DrawText(rt, drawText, Me.Font, textRect, 列标题文字颜色, flags, dpiS, tfc, brushCache)
         Next
     End Sub
 
@@ -2665,8 +2781,9 @@ Public Class UltraDetailListView
         Dim arrowX As Integer = rect.X + arrowMargin
         Dim textX As Integer = arrowX + arrowSize + Dpi(6)
         Dim textRect As New Rectangle(textX, rect.Y, rect.Right - textX - Dpi(4), rect.Height)
-        D2DTextRenderer.DrawText(rt, grp.Text, Me.Font, textRect, effectiveColor,
-            TextFormatFlags.Left Or TextFormatFlags.VerticalCenter Or TextFormatFlags.EndEllipsis Or TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine,
+        Dim drawText As String = 截断文本到宽度(grp.Text, Me.Font, textRect.Width)
+        D2DTextRenderer.DrawText(rt, drawText, Me.Font, textRect, effectiveColor,
+            TextFormatFlags.Left Or TextFormatFlags.VerticalCenter Or TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine,
             DpiScale(), _当前合成器.TextFormatCache, _当前合成器.BrushCache)
     End Sub
 
@@ -2698,7 +2815,7 @@ Public Class UltraDetailListView
 
             Dim colFixed As Boolean = (_columns.Count > 0 AndAlso colIdx < _columns.Count AndAlso _columns(colIdx).WordWrapHeightFixed)
             Dim cellFlags As TextFormatFlags = If(colFixed AndAlso 自动换行,
-                (flags And Not TextFormatFlags.WordBreak) Or TextFormatFlags.EndEllipsis,
+                (flags And Not TextFormatFlags.WordBreak) Or TextFormatFlags.SingleLine,
                 flags)
 
             Dim cellRect As New Rectangle(
@@ -2732,7 +2849,7 @@ Public Class UltraDetailListView
             If Not String.IsNullOrEmpty(sub_.Text) Then
                 Dim remainH As Integer = cellRect.Bottom - lineY
                 If remainH > 0 Then
-                    D2DTextRenderer.DrawText(rt, sub_.Text, mf, New Rectangle(cellRect.X, lineY, cellRect.Width, Math.Min(mh, remainH)), mc, cellFlags, dpiS, tfc, brushCache)
+                    绘制可能截断文本_D2D(rt, sub_.Text, mf, New Rectangle(cellRect.X, lineY, cellRect.Width, Math.Min(mh, remainH)), mc, cellFlags, dpiS, tfc, brushCache)
                 End If
             End If
             lineY += mh
@@ -2745,7 +2862,7 @@ Public Class UltraDetailListView
                 If Not String.IsNullOrEmpty(line_.Text) Then
                     Dim remainH As Integer = cellRect.Bottom - lineY
                     If remainH > 0 Then
-                        D2DTextRenderer.DrawText(rt, line_.Text, lf, New Rectangle(cellRect.X, lineY, cellRect.Width, Math.Min(lh, remainH)), lc, cellFlags, dpiS, tfc, brushCache)
+                        绘制可能截断文本_D2D(rt, line_.Text, lf, New Rectangle(cellRect.X, lineY, cellRect.Width, Math.Min(lh, remainH)), lc, cellFlags, dpiS, tfc, brushCache)
                     End If
                 End If
                 lineY += lh
@@ -2762,11 +2879,26 @@ Public Class UltraDetailListView
                 Dim lc As Color = If(bl.ForeColor <> Color.Empty, bl.ForeColor, 项文本颜色)
                 Dim lh As Integer = 测量文本行高度缓存(bl, blW, flags)
                 If Not String.IsNullOrEmpty(bl.Text) Then
-                    D2DTextRenderer.DrawText(rt, bl.Text, lf, New Rectangle(blX, blY, blW, lh), lc, flags, dpiS, tfc, brushCache)
+                    绘制可能截断文本_D2D(rt, bl.Text, lf, New Rectangle(blX, blY, blW, lh), lc, flags, dpiS, tfc, brushCache)
                 End If
                 blY += lh
             Next
         End If
+    End Sub
+
+    Private Sub 绘制可能截断文本_D2D(rt As Vortice.Direct2D1.ID2D1RenderTarget, text As String, font As Font,
+                                   rect As Rectangle, color As Color, flags As TextFormatFlags, dpiScale As Single,
+                                   tfc As D2DGlobals.TextFormatCache, brushCache As D2DGlobals.SolidColorBrushCache)
+        If String.IsNullOrEmpty(text) OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        Dim canWrap As Boolean = (flags And TextFormatFlags.WordBreak) = TextFormatFlags.WordBreak AndAlso
+                                 (flags And TextFormatFlags.SingleLine) <> TextFormatFlags.SingleLine
+        Dim drawFlags As TextFormatFlags = flags
+        Dim drawText As String = text
+        If Not canWrap Then
+            drawFlags = (drawFlags And Not TextFormatFlags.EndEllipsis) Or TextFormatFlags.SingleLine
+            drawText = 截断文本到宽度(text, font, rect.Width)
+        End If
+        D2DTextRenderer.DrawText(rt, drawText, font, rect, color, drawFlags, dpiScale, tfc, brushCache)
     End Sub
 
     Private Sub 绘制更多指示器符号_D2D(rt As Vortice.Direct2D1.ID2D1RenderTarget, rect As Rectangle, isTop As Boolean)
@@ -2886,7 +3018,11 @@ Public Class UltraDetailListView
                 Dim resizeCol = 检测列分隔线(e.X)
                 Me.Cursor = If(resizeCol >= 0, Cursors.VSplit, Cursors.Default)
                 更新悬停(-1)
-                隐藏截断提示()
+                If resizeCol >= 0 Then
+                    隐藏截断提示()
+                Else
+                    更新截断提示(e.Location)
+                End If
                 Return
             End If
         End If
@@ -2904,6 +3040,7 @@ Public Class UltraDetailListView
         If _editTextBox IsNot Nothing Then 结束标签编辑(False)
 
         _mouseDownInContent = False
+        If e.Button <> MouseButtons.Left Then Return
 
         If _scrollBar.BeginDrag(e.Location, _scrollOffset) Then Return
         If Not _scrollBar.TrackRect.IsEmpty Then
@@ -2987,10 +3124,12 @@ Public Class UltraDetailListView
             Return
         End If
 
-        If _mouseDownInContent Then
+        If e.Button = MouseButtons.Left AndAlso _mouseDownInContent Then
             _mouseDownInContent = False
             Dim hitRow As Integer = 命中测试行(e.Location)
             处理点击选择(hitRow, e)
+        Else
+            _mouseDownInContent = False
         End If
 
         _scrollBar.EndDrag()
@@ -3001,7 +3140,7 @@ Public Class UltraDetailListView
     Protected Overrides Sub OnMouseLeave(e As EventArgs)
         MyBase.OnMouseLeave(e)
         更新悬停(-1)
-        隐藏截断提示()
+        延迟隐藏截断提示(True)
         Dim needInvalidate2 As Boolean = False
         If _scrollBar.ResetHover() Then needInvalidate2 = True
         If _hScrollBar.ResetHover() Then needInvalidate2 = True
@@ -3406,6 +3545,48 @@ Public Class UltraDetailListView
 
 #Region "标签编辑"
 
+    Private NotInheritable Class LabelEditTextBox
+        Inherits ModernTextBox
+
+        Private _frozenBackground As Image
+
+        <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+        Public Property FrozenBackground As Image
+            Get
+                Return _frozenBackground
+            End Get
+            Set(value As Image)
+                If Object.ReferenceEquals(_frozenBackground, value) Then Return
+                If _frozenBackground IsNot Nothing Then
+                    Try : _frozenBackground.Dispose() : Catch : End Try
+                End If
+                _frozenBackground = value
+                Invalidate()
+            End Set
+        End Property
+
+        Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
+            If _frozenBackground IsNot Nothing Then
+                If BackColor.A > 0 Then
+                    Using b As New SolidBrush(BackColor)
+                        e.Graphics.FillRectangle(b, ClientRectangle)
+                    End Using
+                End If
+                e.Graphics.DrawImage(_frozenBackground, New Rectangle(0, 0, Width, Height))
+                Return
+            End If
+            MyBase.OnPaintBackground(e)
+        End Sub
+
+        Protected Overrides Sub Dispose(disposing As Boolean)
+            If disposing AndAlso _frozenBackground IsNot Nothing Then
+                Try : _frozenBackground.Dispose() : Catch : End Try
+                _frozenBackground = Nothing
+            End If
+            MyBase.Dispose(disposing)
+        End Sub
+    End Class
+
     Private Sub 开始标签编辑等待(displayRowIndex As Integer, columnIndex As Integer)
         取消标签编辑等待()
         _labelEditPendingIndex = displayRowIndex
@@ -3458,16 +3639,17 @@ Public Class UltraDetailListView
         _editRowIndex = displayRowIndex
         _editColumnIndex = columnIndex
         Dim sub_ = item.SubItems(columnIndex)
+        Dim editDirtyRect As New Rectangle(cellX, rowY, cellW, row.Height)
+        Dim editBackground As Image = 创建编辑框背景快照(editDirtyRect)
+        Dim fallbackBackColor As Color = 获取编辑框回退背景颜色(displayRowIndex)
 
-        ' 让内嵌编辑框通过 V2 背景穿透采样宿主列表视图，使其底图自动匹配行的当前
-        ' 选中/悬停/普通状态像素；BackColor1/BackColor 设为透明避免叠色"自照"。
-        _editTextBox = New ModernTextBox With {
+        _editTextBox = New LabelEditTextBox With {
             .Text = sub_.Text,
             .Font = If(sub_.Font, Me.Font),
             .ForeColor = If(sub_.ForeColor <> Color.Empty, sub_.ForeColor, 项文本颜色),
             .BackColor1 = Color.Transparent,
-            .BackColor = Color.Transparent,
-            .BackgroundSource = CType(Me, Control),
+            .BackColor = fallbackBackColor,
+            .FrozenBackground = editBackground,
             .BorderSize = 1,
             .BorderColor = 项高亮边框颜色,
             .BorderColorFocus = 项高亮边框颜色,
@@ -3478,7 +3660,6 @@ Public Class UltraDetailListView
 
         ' 让 list view 立刻重画一次，使穿透缓存中不再包含正在编辑的 cell 文字，
         ' 避免编辑框采样时拍到旧文字 → 与 DirectWrite 文字层叠加成重影。
-        Dim editDirtyRect As New Rectangle(cellX, rowY, cellW, row.Height)
         BackgroundPenetrationV2.Invalidate(Me, editDirtyRect)
         OuterToInnerRefreshScheduler.Request(Me, editDirtyRect, immediate:=True)
 
@@ -3491,6 +3672,81 @@ Public Class UltraDetailListView
         AddHandler _editTextBox.LostFocus, AddressOf 编辑框失焦
         AddHandler _editTextBox.KeyDown, AddressOf 编辑框按键
     End Sub
+
+    Private Function 创建编辑框背景快照(cellRect As Rectangle) As Image
+        If cellRect.Width <= 0 OrElse cellRect.Height <= 0 Then Return Nothing
+        If Me.Width <= 0 OrElse Me.Height <= 0 Then Return Nothing
+
+        Dim fullBmp As Bitmap = Nothing
+        Try
+            fullBmp = New Bitmap(Me.Width, Me.Height, System.Drawing.Imaging.PixelFormat.Format32bppPArgb)
+            Using g = Graphics.FromImage(fullBmp)
+                g.Clear(Color.Transparent)
+                Using pea As New PaintEventArgs(g, Me.ClientRectangle)
+                    InvokePaintBackground(Me, pea)
+                    InvokePaint(Me, pea)
+                End Using
+            End Using
+
+            Dim clipped = Rectangle.Intersect(Me.ClientRectangle, cellRect)
+            If clipped.Width <= 0 OrElse clipped.Height <= 0 Then Return Nothing
+
+            Dim crop As New Bitmap(cellRect.Width, cellRect.Height, System.Drawing.Imaging.PixelFormat.Format32bppPArgb)
+            Using g = Graphics.FromImage(crop)
+                g.Clear(Color.Transparent)
+                g.DrawImage(fullBmp,
+                            New Rectangle(clipped.X - cellRect.X, clipped.Y - cellRect.Y, clipped.Width, clipped.Height),
+                            clipped,
+                            GraphicsUnit.Pixel)
+            End Using
+            Return crop
+        Catch
+            Return Nothing
+        Finally
+            If fullBmp IsNot Nothing Then
+                Try : fullBmp.Dispose() : Catch : End Try
+            End If
+        End Try
+    End Function
+
+    Private Function 获取编辑框回退背景颜色(displayRowIndex As Integer) As Color
+        Dim baseColor As Color = 合成到不透明底(背景颜色, 获取背景回退底色())
+
+        If _selectedIndices.Contains(displayRowIndex) Then
+            baseColor = AlphaBlend(项选中背景颜色, baseColor)
+        ElseIf displayRowIndex = _hoverRowIndex Then
+            baseColor = AlphaBlend(项悬停背景颜色, baseColor)
+        End If
+
+        Return baseColor
+    End Function
+
+    Private Function 获取背景回退底色() As Color
+        Dim fallback As Color = SystemColors.Control
+        Try
+            If Parent IsNot Nothing Then fallback = Parent.BackColor
+        Catch
+        End Try
+        If fallback.A < 255 Then fallback = Color.FromArgb(255, fallback.R, fallback.G, fallback.B)
+        Return fallback
+    End Function
+
+    Private Shared Function 合成到不透明底(over As Color, under As Color) As Color
+        If over.A >= 255 Then Return Color.FromArgb(255, over.R, over.G, over.B)
+        Return AlphaBlend(over, under)
+    End Function
+
+    Private Shared Function AlphaBlend(over As Color, under As Color) As Color
+        If over.A <= 0 Then Return Color.FromArgb(255, under.R, under.G, under.B)
+        If over.A >= 255 Then Return Color.FromArgb(255, over.R, over.G, over.B)
+
+        Dim a As Integer = over.A
+        Dim inv As Integer = 255 - a
+        Dim r As Integer = (over.R * a + under.R * inv + 127) \ 255
+        Dim g As Integer = (over.G * a + under.G * inv + 127) \ 255
+        Dim b As Integer = (over.B * a + under.B * inv + 127) \ 255
+        Return Color.FromArgb(255, r, g, b)
+    End Function
 
     Private Sub 编辑框预览按键(sender As Object, e As PreviewKeyDownEventArgs)
         If e.KeyCode = Keys.Escape Then e.IsInputKey = True
@@ -3716,50 +3972,115 @@ Public Class UltraDetailListView
 #Region "截断提示"
 
     Private Sub 确保工具提示已初始化()
-        If _truncTooltip IsNot Nothing Then Return
-        _truncTooltip = New ToolTip()
-        AddHandler _truncTooltip.Popup, AddressOf 工具提示弹出
+        If _truncTooltip IsNot Nothing AndAlso Not _truncTooltip.IsDisposed Then Return
+        _truncTooltip = New FloatingToolTipForm(Me)
     End Sub
 
-    Private Sub 工具提示弹出(sender As Object, e As PopupEventArgs)
-        Dim maxW As Integer = Math.Max(200, Me.Width)
-        Dim flags As TextFormatFlags = TextFormatFlags.Left Or TextFormatFlags.Top Or TextFormatFlags.WordBreak Or TextFormatFlags.NoPadding
-        Dim sz = 测量文本_D2D(_truncTooltipText, Me.Font, New Size(maxW - 10, Integer.MaxValue), flags)
-        e.ToolTipSize = New Size(Math.Min(sz.Width + 12, maxW), sz.Height + 8)
-    End Sub
+    Private Function CreateToolTipStyle() As FloatingToolTipStyle
+        Return New FloatingToolTipStyle With {
+            .Font = Me.Font,
+            .BackColor = 提示背景颜色,
+            .ForeColor = 提示文本颜色,
+            .BorderColor = 提示边框颜色,
+            .BorderSize = Math.Max(0, 提示边框宽度),
+            .BorderRadius = Math.Max(0, 提示圆角半径),
+            .Padding = 提示内边距,
+            .MaxWidth = Math.Max(50, 提示最大宽度)
+        }
+    End Function
 
-    Private Sub 更新截断提示(pt As Point)
-        Dim text = 获取截断文本(pt)
-        If text = _truncTooltipText Then Return
-        _truncTooltipText = text
-        确保工具提示已初始化()
+    Private Sub 更新截断提示(pt As Point, Optional forceRefresh As Boolean = False)
+        Dim sourceRect As Rectangle = Rectangle.Empty
+        Dim text = 获取截断文本(pt, sourceRect)
+        If Not forceRefresh AndAlso
+           text = _truncTooltipText AndAlso
+           _truncTooltip IsNot Nothing AndAlso
+           Not _truncTooltip.IsDisposed AndAlso
+           _truncTooltip.Visible Then Return
         If String.IsNullOrEmpty(text) Then
-            _truncTooltip.Hide(Me)
-            _truncTooltipActive = False
+            延迟隐藏截断提示()
         Else
-            _truncTooltip.Show(text, Me, pt.X + 10, pt.Y + 20, 10000)
+            _truncTooltipText = text
+            _truncTooltipSourceScreenRect = RectangleToScreen(sourceRect)
+            确保工具提示已初始化()
+            Dim screenPt As Point = PointToScreen(New Point(pt.X + Dpi(12), pt.Y + Dpi(20)))
+            _truncTooltip.ShowTip(text, screenPt, CreateToolTipStyle())
             _truncTooltipActive = True
         End If
     End Sub
 
     Private Sub 隐藏截断提示()
-        If Not _truncTooltipActive Then Return
         _truncTooltipText = ""
-        _truncTooltip?.Hide(Me)
+        If _truncTooltip IsNot Nothing AndAlso Not _truncTooltip.IsDisposed Then
+            _truncTooltip.Close()
+            _truncTooltip.Dispose()
+        End If
+        _truncTooltip = Nothing
         _truncTooltipActive = False
+        _truncTooltipSourceScreenRect = Rectangle.Empty
     End Sub
 
-    Private Function 获取截断文本(pt As Point) As String
-        If 自动换行 Then Return ""
+    Private Sub 延迟隐藏截断提示(Optional keepOwnerBounds As Boolean = False)
+        If Not _truncTooltipActive Then Return
+        If _truncTooltip Is Nothing OrElse _truncTooltip.IsDisposed Then
+            _truncTooltipText = ""
+            _truncTooltipActive = False
+            _truncTooltipSourceScreenRect = Rectangle.Empty
+            Return
+        End If
+        If keepOwnerBounds Then
+            _truncTooltip.ScheduleCloseIfPointerOutside(180, RectangleToScreen(ClientRectangle))
+        ElseIf Not _truncTooltipSourceScreenRect.IsEmpty Then
+            _truncTooltip.ScheduleCloseIfPointerOutside(180, _truncTooltipSourceScreenRect)
+        Else
+            _truncTooltip.ScheduleCloseIfPointerOutside(180)
+        End If
+    End Sub
+
+    Private Function 获取截断文本(pt As Point, ByRef sourceRect As Rectangle) As String
+        sourceRect = Rectangle.Empty
+        Dim headerRect As Rectangle = 获取列标题区域()
+        If 列标题可见 AndAlso _columns.Count > 0 AndAlso headerRect.Contains(pt) Then
+            确保列X缓存()
+            Dim colIdx As Integer = 命中测试列(pt)
+            If colIdx >= 0 Then
+                Dim col = _columns(colIdx)
+                Dim pad As Padding = Dpi(col.HeaderPadding)
+                Dim textRect As New Rectangle(_columnXCache(colIdx) + pad.Left, headerRect.Y + pad.Top, col.Width - pad.Horizontal, headerRect.Height - pad.Vertical)
+                If textRect.Contains(pt) Then
+                    Dim truncated = 检测文本截断(col.Text, Me.Font, textRect.Width,
+                                             TextFormatFlags.Left Or TextFormatFlags.VerticalCenter Or TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine)
+                    If Not String.IsNullOrEmpty(truncated) Then sourceRect = textRect
+                    Return truncated
+                End If
+            End If
+        End If
 
         Dim rowIdx = 命中测试行(pt)
         If rowIdx < 0 OrElse rowIdx >= _displayRows.Count Then Return ""
         Dim row = _displayRows(rowIdx)
+        Dim rowY = 获取行Y坐标(rowIdx)
+        If rowY < 0 Then Return ""
+
+        If row.Type = DisplayRowType.GroupHeader Then
+            Dim groupContentRect = 获取内容区域()
+            Dim groupRowRect As New Rectangle(groupContentRect.X, rowY, 获取行绘制宽度(groupContentRect), row.Height)
+            Dim arrowSize As Integer = Dpi(12)
+            Dim arrowMargin As Integer = Dpi(10)
+            Dim textX As Integer = groupRowRect.X + arrowMargin + arrowSize + Dpi(6)
+            Dim textRect As New Rectangle(textX, groupRowRect.Y, groupRowRect.Right - textX - Dpi(4), groupRowRect.Height)
+            If textRect.Contains(pt) Then
+                Dim truncated = 检测文本截断(row.Group.Text, Me.Font, textRect.Width,
+                                         TextFormatFlags.Left Or TextFormatFlags.VerticalCenter Or TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine)
+                If Not String.IsNullOrEmpty(truncated) Then sourceRect = textRect
+                Return truncated
+            End If
+            Return ""
+        End If
+
         If row.Type <> DisplayRowType.Item Then Return ""
 
         Dim item = row.Item
-        Dim rowY = 获取行Y坐标(rowIdx)
-        If rowY < 0 Then Return ""
 
         Dim contentRect = 获取内容区域()
         Dim availW = 获取行绘制宽度(contentRect)
@@ -3767,7 +4088,6 @@ Public Class UltraDetailListView
 
         Dim iconAreaW = 获取图标区域宽度(item)
         确保列X缓存()
-        Dim measureFlags As TextFormatFlags = TextFormatFlags.Left Or TextFormatFlags.Top Or TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine
         Dim scaledPadding As Padding = Dpi(项内边距)
 
         Dim bottomLinesH As Integer = 计算底部文本行高度(item, rowRect.Width)
@@ -3787,16 +4107,23 @@ Public Class UltraDetailListView
             If colIdx = 0 Then cellW -= iconAreaW
             If cellW <= 0 Then Return ""
 
-            Dim contentH = 计算子项内容高度(sub_, cellW)
+            Dim colFixed As Boolean = (_columns.Count > 0 AndAlso colIdx < _columns.Count AndAlso _columns(colIdx).WordWrapHeightFixed)
+            Dim cellFlags As TextFormatFlags = If(colFixed AndAlso 自动换行,
+                TextFormatFlags.Left Or TextFormatFlags.Top Or TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine,
+                获取文本格式标志())
+            Dim contentH = 计算子项内容高度(sub_, cellW, cellFlags)
             Dim cellTop = rowRect.Y + scaledPadding.Top
             Dim startY = cellTop + Math.Max(0, (upperPartH - contentH) \ 2)
             Dim lineY = startY
 
             ' 主文本
             Dim mf = If(sub_.Font, Me.Font)
-            Dim mh = 测量子项主文本高度缓存(sub_, cellW, measureFlags)
+            Dim mh = 测量子项主文本高度缓存(sub_, cellW, cellFlags)
             If pt.Y >= lineY AndAlso pt.Y < lineY + mh Then
-                Return 检测文本截断(sub_.Text, mf, cellW, measureFlags)
+                Dim textRect As New Rectangle(colX + scaledPadding.Left + If(colIdx = 0, iconAreaW, 0), lineY, cellW, mh)
+                Dim truncated = 检测文本截断(sub_.Text, mf, cellW, cellFlags)
+                If Not String.IsNullOrEmpty(truncated) Then sourceRect = textRect
+                Return truncated
             End If
             lineY += mh
 
@@ -3804,9 +4131,12 @@ Public Class UltraDetailListView
             For Each line_ In sub_.ExtraLines
                 lineY += Dpi(文本行间距)
                 Dim lf = If(line_.Font, Me.Font)
-                Dim lh = 测量文本行高度缓存(line_, cellW, measureFlags)
+                Dim lh = 测量文本行高度缓存(line_, cellW, cellFlags)
                 If pt.Y >= lineY AndAlso pt.Y < lineY + lh Then
-                    Return 检测文本截断(line_.Text, lf, cellW, measureFlags)
+                    Dim textRect As New Rectangle(colX + scaledPadding.Left + If(colIdx = 0, iconAreaW, 0), lineY, cellW, lh)
+                    Dim truncated = 检测文本截断(line_.Text, lf, cellW, cellFlags)
+                    If Not String.IsNullOrEmpty(truncated) Then sourceRect = textRect
+                    Return truncated
                 End If
                 lineY += lh
             Next
@@ -3821,9 +4151,12 @@ Public Class UltraDetailListView
             For Each bl In item.BottomLines
                 blY += Dpi(文本行间距)
                 Dim lf = If(bl.Font, Me.Font)
-                Dim lh = 测量文本行高度缓存(bl, blW, measureFlags)
+                Dim lh = 测量文本行高度缓存(bl, blW, 获取文本格式标志())
                 If pt.Y >= blY AndAlso pt.Y < blY + lh Then
-                    Return 检测文本截断(bl.Text, lf, blW, measureFlags)
+                    Dim textRect As New Rectangle(rowRect.X + scaledPadding.Left, blY, blW, lh)
+                    Dim truncated = 检测文本截断(bl.Text, lf, blW, 获取文本格式标志())
+                    If Not String.IsNullOrEmpty(truncated) Then sourceRect = textRect
+                    Return truncated
                 End If
                 blY += lh
             Next
@@ -3834,6 +4167,10 @@ Public Class UltraDetailListView
 
     Private Function 检测文本截断(text As String, font As Font, availW As Integer, flags As TextFormatFlags) As String
         If String.IsNullOrEmpty(text) Then Return ""
+        If availW <= 0 Then Return text
+        Dim wraps As Boolean = (flags And TextFormatFlags.WordBreak) = TextFormatFlags.WordBreak AndAlso
+                               (flags And TextFormatFlags.SingleLine) <> TextFormatFlags.SingleLine
+        If wraps Then Return ""
         Dim fullW = 测量文本宽度_D2D(text, font, flags)
         If fullW > availW Then Return text
         Return ""
@@ -3970,11 +4307,7 @@ Public Class UltraDetailListView
             _labelEditTimer.Dispose()
             _labelEditTimer = Nothing
         End If
-        If _truncTooltip IsNot Nothing Then
-            RemoveHandler _truncTooltip.Popup, AddressOf 工具提示弹出
-            _truncTooltip.Dispose()
-            _truncTooltip = Nothing
-        End If
+        隐藏截断提示()
         释放GDI缓存()
     End Sub
 

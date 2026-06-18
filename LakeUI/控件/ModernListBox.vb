@@ -1182,6 +1182,14 @@ Public Class ModernListBox
         Return contentRect.Y + (index - _scrollOffset) * CInt(Math.Round(行高 * DpiScale()))
     End Function
 
+    Private Function 获取项矩形(index As Integer) As Rectangle
+        Dim y As Integer = 获取项Y坐标(index)
+        If y < 0 Then Return Rectangle.Empty
+        Dim contentRect = 获取内容区域()
+        Dim scaledH As Integer = CInt(Math.Round(行高 * DpiScale()))
+        Return New Rectangle(contentRect.X, y, contentRect.Width, scaledH)
+    End Function
+
     Private Function 获取复选框区域宽度() As Integer
         If Not 显示复选框 Then Return 0
         Dim s As Single = DpiScale()
@@ -1548,7 +1556,7 @@ Public Class ModernListBox
     Protected Overrides Sub OnMouseLeave(e As EventArgs)
         MyBase.OnMouseLeave(e)
         更新悬停(-1)
-        关闭工具提示()
+        延迟关闭工具提示(True)
         _scrollBar.ResetHover()
         OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
@@ -1676,7 +1684,11 @@ Public Class ModernListBox
 
         Dim hitRow As Integer = 命中测试(e.Y)
         更新悬停(hitRow)
-        更新工具提示(hitRow)
+        If hitRow >= 0 Then
+            更新工具提示(hitRow)
+        Else
+            延迟关闭工具提示()
+        End If
     End Sub
 
     Protected Overrides Sub OnMouseUp(e As MouseEventArgs)
@@ -2108,8 +2120,13 @@ Public Class ModernListBox
 
 #Region "工具提示"
 
+    Private _tipSourceScreenRect As Rectangle = Rectangle.Empty
+
     Private Sub 更新工具提示(hitIdx As Integer)
-        If hitIdx = _tipHoverIndex Then Return
+        If hitIdx = _tipHoverIndex AndAlso
+           _tipForm IsNot Nothing AndAlso
+           Not _tipForm.IsDisposed AndAlso
+           _tipForm.Visible Then Return
         _tipHoverIndex = hitIdx
 
         If hitIdx >= 0 AndAlso hitIdx < _items.Count Then
@@ -2119,6 +2136,7 @@ Public Class ModernListBox
                 If _tipForm Is Nothing OrElse _tipForm.IsDisposed Then
                     _tipForm = New FloatingToolTipForm(Me)
                 End If
+                _tipSourceScreenRect = RectangleToScreen(获取项矩形(hitIdx))
                 Dim screenPt As Point = Cursor.Position
                 screenPt.Offset(16, 16)
                 _tipForm.ShowTip(tipText, screenPt, CreateToolTipStyle())
@@ -2128,8 +2146,20 @@ Public Class ModernListBox
         关闭工具提示()
     End Sub
 
+    Private Sub 延迟关闭工具提示(Optional keepOwnerBounds As Boolean = False)
+        If _tipForm Is Nothing OrElse _tipForm.IsDisposed Then Return
+        If keepOwnerBounds Then
+            _tipForm.ScheduleCloseIfPointerOutside(180, RectangleToScreen(ClientRectangle))
+        ElseIf Not _tipSourceScreenRect.IsEmpty Then
+            _tipForm.ScheduleCloseIfPointerOutside(180, _tipSourceScreenRect)
+        Else
+            _tipForm.ScheduleCloseIfPointerOutside(180)
+        End If
+    End Sub
+
     Private Sub 关闭工具提示()
         _tipHoverIndex = -1
+        _tipSourceScreenRect = Rectangle.Empty
         If _tipForm IsNot Nothing AndAlso Not _tipForm.IsDisposed Then
             _tipForm.Close()
             _tipForm.Dispose()
