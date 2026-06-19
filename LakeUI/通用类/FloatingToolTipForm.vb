@@ -86,11 +86,12 @@ Public NotInheritable Class FloatingToolTipForm
         _style = If(style, New FloatingToolTipStyle()).Clone()
         ClampSelection()
 
-        Dim pad As Padding = NormalizePadding(_style.Padding)
+        Dim pad As Padding = ScaledPadding(_style.Padding)
         Dim bw As Integer = BorderWidth()
-        Dim maxW As Integer = Math.Max(50, _style.MaxWidth)
+        Dim maxW As Integer = ScaledMaxWidth()
         Dim contentW As Integer = maxW - pad.Left - pad.Right - bw * 2
-        If contentW < 10 Then contentW = 10
+        Dim minContentW As Integer = ScaledLogicalSize(10)
+        If contentW < minContentW Then contentW = minContentW
 
         Dim displayFont = TipFont()
         Dim measureKey As String = String.Concat(_tipText, ChrW(0), contentW, ChrW(0), displayFont.GetHashCode(), ChrW(0), OwnerDpiScale())
@@ -181,7 +182,6 @@ Public NotInheritable Class FloatingToolTipForm
         If w <= 0 OrElse h <= 0 Then Return
 
         Dim bw As Integer = BorderWidth()
-        Dim pad As Padding = NormalizePadding(_style.Padding)
 
         Using scope = D2DHelperV2.BeginPaint(e, Me, 1)
             If scope Is Nothing Then Return
@@ -342,7 +342,7 @@ Public NotInheritable Class FloatingToolTipForm
 
     Private Function GetTextRectangle() As RectangleF
         Dim bw As Integer = BorderWidth()
-        Dim pad As Padding = NormalizePadding(_style.Padding)
+        Dim pad As Padding = ScaledPadding(_style.Padding)
         Return New RectangleF(bw + pad.Left,
                               bw + pad.Top,
                               Math.Max(0, ClientSize.Width - bw * 2 - pad.Left - pad.Right),
@@ -493,7 +493,7 @@ Public NotInheritable Class FloatingToolTipForm
 
     Private Sub DrawBackground_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache,
                                    bw As Integer, w As Integer, h As Integer, fillBackground As Boolean)
-        Dim radius As Single = Math.Max(0.0F, _style.BorderRadius * OwnerDpiScale())
+        Dim radius As Single = BorderRadius()
         Dim fillColor As Color = ToolTipFillColor()
 
         If radius > 0 Then
@@ -539,7 +539,7 @@ Public NotInheritable Class FloatingToolTipForm
 
     Private Sub ApplyRoundedRegion()
         Dim oldRegion As Region = Region
-        Dim radius As Single = Math.Max(0.0F, _style.BorderRadius * OwnerDpiScale())
+        Dim radius As Single = BorderRadius()
         If radius <= 0 OrElse Width <= 0 OrElse Height <= 0 Then
             Region = Nothing
         Else
@@ -612,7 +612,27 @@ Public NotInheritable Class FloatingToolTipForm
     End Function
 
     Private Function BorderWidth() As Integer
-        Return Math.Max(0, CInt(Math.Round(_style.BorderSize * OwnerDpiScale())))
+        Return Math.Max(0, ScaledLogicalSize(_style.BorderSize))
+    End Function
+
+    Private Function BorderRadius() As Single
+        Return Math.Max(0.0F, _style.BorderRadius * OwnerDpiScale())
+    End Function
+
+    Private Function ScaledMaxWidth() As Integer
+        Return Math.Max(ScaledLogicalSize(50), ScaledLogicalSize(_style.MaxWidth))
+    End Function
+
+    Private Function ScaledPadding(value As Padding) As Padding
+        Dim pad As Padding = NormalizePadding(value)
+        Return New Padding(ScaledLogicalSize(pad.Left),
+                           ScaledLogicalSize(pad.Top),
+                           ScaledLogicalSize(pad.Right),
+                           ScaledLogicalSize(pad.Bottom))
+    End Function
+
+    Private Function ScaledLogicalSize(value As Integer) As Integer
+        Return CInt(Math.Round(value * OwnerDpiScale(), MidpointRounding.AwayFromZero))
     End Function
 
     Private Function TipFont() As Font

@@ -355,6 +355,40 @@ Public Class ThisIsYourWindow
 
 #Region "通用辅助"
 
+    Private Shared Function 取Dpi缩放(control As Control) As Single
+        If control IsNot Nothing AndAlso Not control.IsDisposed Then
+            Return Math.Max(0.01F, control.DeviceDpi / 96.0F)
+        End If
+        Return 1.0F
+    End Function
+
+    Private Shared Function 缩放逻辑尺寸(control As Control, value As Integer) As Integer
+        Return CInt(Math.Round(value * 取Dpi缩放(control), MidpointRounding.AwayFromZero))
+    End Function
+
+    Private Shared Function 缩放逻辑尺寸(control As Control, value As Single) As Single
+        Return value * 取Dpi缩放(control)
+    End Function
+
+    Private Shared Function 缩放逻辑内边距(control As Control, value As Padding) As Padding
+        Return New Padding(缩放逻辑尺寸(control, value.Left),
+                           缩放逻辑尺寸(control, value.Top),
+                           缩放逻辑尺寸(control, value.Right),
+                           缩放逻辑尺寸(control, value.Bottom))
+    End Function
+
+    Private Function 取缩放边框厚度(control As Control) As Integer
+        Return Math.Max(0, 缩放逻辑尺寸(control, _边框厚度))
+    End Function
+
+    Private Function 取缩放标题栏高度(control As Control) As Integer
+        Return Math.Max(0, 缩放逻辑尺寸(control, _标题栏高度))
+    End Function
+
+    Private Function 取缩放标题栏总高度(control As Control) As Integer
+        Return 取缩放边框厚度(control) + 取缩放标题栏高度(control)
+    End Function
+
     Private Sub 通知重绘(Optional immediate As Boolean = True)
         For Each s In _forms.Values
             Dim frm = s.HostForm
@@ -402,7 +436,7 @@ Public Class ThisIsYourWindow
         If form Is Nothing Then Return Rectangle.Empty
         Dim b As Rectangle = form.Bounds
         If _毛玻璃模式 = BackdropModeEnum.CaptionOnly Then
-            Dim ch As Integer = Math.Max(1, _边框厚度 + _标题栏高度)
+            Dim ch As Integer = Math.Max(1, 取缩放标题栏总高度(form))
             If ch > b.Height Then ch = b.Height
             Return New Rectangle(b.X, b.Y, b.Width, ch)
         End If
@@ -647,11 +681,24 @@ Public Class ThisIsYourWindow
 
     Private Sub 更新窗口内边距(s As PerFormState)
         If s Is Nothing Then Return
+        Dim bdr As Integer = 取缩放边框厚度(s.HostForm)
+        Dim captionH As Integer = 取缩放标题栏高度(s.HostForm)
         s.HostForm.Padding = New Padding(
-            s.OriginalPadding.Left + _边框厚度,
-            s.OriginalPadding.Top + _边框厚度 + _标题栏高度,
-            s.OriginalPadding.Right + _边框厚度,
-            s.OriginalPadding.Bottom + _边框厚度)
+            s.OriginalPadding.Left + bdr,
+            s.OriginalPadding.Top + bdr + captionH,
+            s.OriginalPadding.Right + bdr,
+            s.OriginalPadding.Bottom + bdr)
+    End Sub
+
+    Private Sub 处理DpiChanged(s As PerFormState)
+        If s Is Nothing OrElse s.HostForm Is Nothing OrElse s.HostForm.IsDisposed Then Return
+        s.LayoutSignature = -1
+        RecalculateButtonBounds(s)
+        更新窗口内边距(s)
+        D2DHelperV2.InvalidateTextFormatCache(s.HostForm)
+        If 毛玻璃当前启用(s) Then 请求毛玻璃帧(s, True, forceImageMode:=True)
+        更新阴影(s)
+        OuterToInnerRefreshScheduler.RequestFull(s.HostForm, invalidateChildren:=True)
     End Sub
 
     Friend Sub 开始渐入动画(s As PerFormState)
@@ -1907,18 +1954,22 @@ Public Class ThisIsYourWindow
 
     Friend Sub RecalculateButtonBounds(s As PerFormState)
         If s Is Nothing Then Return
-        Dim w As Integer = s.HostForm.ClientSize.Width
-        Dim bdr As Integer = Math.Max(0, _边框厚度)
-        Dim bw As Integer = _按钮宽度
-        Dim bh As Integer = _标题栏高度
-        Dim sp As Integer = _按钮间距
+        Dim form = s.HostForm
+        Dim w As Integer = form.ClientSize.Width
+        Dim bdr As Integer = 取缩放边框厚度(form)
+        Dim bw As Integer = Math.Max(缩放逻辑尺寸(form, 16), 缩放逻辑尺寸(form, _按钮宽度))
+        Dim bh As Integer = 取缩放标题栏高度(form)
+        Dim sp As Integer = Math.Max(0, 缩放逻辑尺寸(form, _按钮间距))
+        Dim iconSize As Integer = Math.Max(0, 缩放逻辑尺寸(form, _图标大小))
+        Dim iconPadLeft As Integer = Math.Max(0, 缩放逻辑尺寸(form, _图标左边距))
         Dim hasMin As Boolean = s.HostForm.MinimizeBox
         Dim hasMax As Boolean = s.HostForm.MaximizeBox
         Dim posRight As Boolean = (_按钮位置 = ButtonPositionEnum.Right)
         Dim iconNone As Boolean = (_图标来源 = IconSourceEnum.None)
 
         ' 布局签名：所有影响按钮/图标位置的输入生成哈希，避免手工 bit-pack 截断导致缓存误命中。
-        Dim sig As Long = HashCode.Combine(w, bdr, bw, bh, sp, _图标大小, _图标左边距, hasMin)
+        Dim sig As Long = HashCode.Combine(w, form.DeviceDpi, bdr, bw, bh, sp, iconSize, iconPadLeft)
+        sig = HashCode.Combine(sig, hasMin)
         sig = HashCode.Combine(sig, hasMax, posRight, iconNone)
         If s.LayoutSignature = sig Then Return
         s.LayoutSignature = sig
@@ -1948,13 +1999,13 @@ Public Class ThisIsYourWindow
         If Not hasMax Then s.MaxRect = Rectangle.Empty
         If Not hasMin Then s.MinRect = Rectangle.Empty
 
-        If Not iconNone Then
-            Dim iconY As Integer = bdr + (bh - _图标大小) \ 2
+        If Not iconNone AndAlso iconSize > 0 Then
+            Dim iconY As Integer = bdr + (bh - iconSize) \ 2
             If Not posRight Then
                 Dim totalBtnW As Integer = 数量 * bw + Math.Max(0, 数量 - 1) * sp
-                s.IconRect = New Rectangle(bdr + totalBtnW + _图标左边距, iconY, _图标大小, _图标大小)
+                s.IconRect = New Rectangle(bdr + totalBtnW + iconPadLeft, iconY, iconSize, iconSize)
             Else
-                s.IconRect = New Rectangle(bdr + _图标左边距, iconY, _图标大小, _图标大小)
+                s.IconRect = New Rectangle(bdr + iconPadLeft, iconY, iconSize, iconSize)
             End If
         Else
             s.IconRect = Rectangle.Empty
@@ -1965,12 +2016,17 @@ Public Class ThisIsYourWindow
 
 #Region "绘制"
 
-    Private Function 获取标题栏内容矩形(w As Integer, h As Integer) As Rectangle
-        Dim bdr As Integer = Math.Max(0, _边框厚度)
+    Private Function 获取标题栏内容矩形(form As Form) As Rectangle
+        If form Is Nothing Then Return Rectangle.Empty
+        Return 获取标题栏内容矩形(form, form.ClientSize.Width, form.ClientSize.Height)
+    End Function
+
+    Private Function 获取标题栏内容矩形(form As Form, w As Integer, h As Integer) As Rectangle
+        Dim bdr As Integer = 取缩放边框厚度(form)
         Dim x As Integer = Math.Min(bdr, Math.Max(0, w))
         Dim y As Integer = Math.Min(bdr, Math.Max(0, h))
         Dim rw As Integer = Math.Max(0, w - bdr * 2)
-        Dim rh As Integer = Math.Min(_标题栏高度, Math.Max(0, h - bdr * 2))
+        Dim rh As Integer = Math.Min(取缩放标题栏高度(form), Math.Max(0, h - bdr * 2))
         Return New Rectangle(x, y, rw, rh)
     End Function
 
@@ -2004,9 +2060,9 @@ Public Class ThisIsYourWindow
                                       s.Renderer.HasFrame
         Dim captionOnly As Boolean = (_毛玻璃模式 = BackdropModeEnum.CaptionOnly)
         Dim fullRect As New Rectangle(0, 0, w, h)
-        Dim captionRect As Rectangle = 获取标题栏内容矩形(w, h)
+        Dim captionRect As Rectangle = 获取标题栏内容矩形(s.HostForm, w, h)
         Dim backdropRect As Rectangle = If(captionOnly,
-                                           New Rectangle(0, 0, w, Math.Min(h, _边框厚度 + _标题栏高度)),
+                                           New Rectangle(0, 0, w, Math.Min(h, 取缩放标题栏总高度(s.HostForm))),
                                            fullRect)
 
         ' ── 1) 毛玻璃层（GDI 路径）──
@@ -2089,7 +2145,8 @@ Public Class ThisIsYourWindow
                 If s.HostForm.MinimizeBox Then 绘制控制按钮_D2D(gRT, compositor, s, s.MinRect, HTMINBUTTON)
 
                 ' 2.6 外边框
-                If _边框厚度 > 0 Then
+                Dim scaledBorderSize As Integer = 取缩放边框厚度(s.HostForm)
+                If scaledBorderSize > 0 Then
                     Dim bdrColor As Color
                     If useBackdrop AndAlso _边框自动颜色 Then
                         bdrColor = s.Renderer.DeriveBorderColor(active, If(active, _边框颜色, _边框失焦颜色))
@@ -2097,7 +2154,7 @@ Public Class ThisIsYourWindow
                         bdrColor = If(active, _边框颜色, _边框失焦颜色)
                     End If
                     If bdrColor.A > 0 Then
-                        Dim bdr As Integer = Math.Min(_边框厚度, Math.Max(0, Math.Min(w, h)))
+                        Dim bdr As Integer = Math.Min(scaledBorderSize, Math.Max(0, Math.Min(w, h)))
                         Dim b = compositor.BrushCache.[Get](gRT, bdrColor)
                         If bdr > 0 Then
                             gRT.FillRectangle(D2DGlobals.ToD2DRect(New RectangleF(0, 0, w, Math.Min(bdr, h))), b)
@@ -2232,13 +2289,14 @@ Public Class ThisIsYourWindow
             End If
         End If
 
-        Dim vis As New RectangleF(rect.X + _按钮内边距.Left, rect.Y + _按钮内边距.Top,
-                                  rect.Width - _按钮内边距.Horizontal, rect.Height - _按钮内边距.Vertical)
+        Dim buttonPadding As Padding = 缩放逻辑内边距(s.HostForm, _按钮内边距)
+        Dim vis As New RectangleF(rect.X + buttonPadding.Left, rect.Y + buttonPadding.Top,
+                                  rect.Width - buttonPadding.Horizontal, rect.Height - buttonPadding.Vertical)
         If vis.Width <= 0 OrElse vis.Height <= 0 Then Return
 
         ' 背景
         If bgColor.A > 0 Then
-            Dim r As Integer = Math.Min(_按钮圆角半径, CInt(Math.Min(vis.Width, vis.Height)) \ 2)
+            Dim r As Integer = Math.Min(Math.Max(0, 缩放逻辑尺寸(s.HostForm, _按钮圆角半径)), CInt(Math.Min(vis.Width, vis.Height)) \ 2)
             Dim bgBrush = compositor.BrushCache.[Get](rt, bgColor)
             If r > 0 Then
                 Using geo = RectangleRenderer.创建圆角矩形几何(vis, r)
@@ -2251,10 +2309,10 @@ Public Class ThisIsYourWindow
 
         ' 符号
         If symColor.A = 0 Then Return
-        Dim sz As Integer = _按钮符号大小
+        Dim sz As Integer = Math.Max(缩放逻辑尺寸(s.HostForm, 4), 缩放逻辑尺寸(s.HostForm, _按钮符号大小))
         Dim cx As Single = vis.X + (vis.Width - sz) / 2.0F
         Dim cy As Single = vis.Y + (vis.Height - sz) / 2.0F
-        Dim lw As Single = Math.Max(0.5F, _按钮符号线宽)
+        Dim lw As Single = Math.Max(0.5F * 取Dpi缩放(s.HostForm), 缩放逻辑尺寸(s.HostForm, _按钮符号线宽))
         Dim pen = compositor.BrushCache.[Get](rt, symColor)
         If True Then
             Select Case htValue
@@ -2278,26 +2336,28 @@ Public Class ThisIsYourWindow
 
     Private Function 获取标题文字布局矩形(s As PerFormState) As RectangleF
         If s Is Nothing OrElse s.HostForm Is Nothing Then Return RectangleF.Empty
-        Dim captionRect As Rectangle = 获取标题栏内容矩形(s.HostForm.ClientSize.Width, s.HostForm.ClientSize.Height)
+        Dim captionRect As Rectangle = 获取标题栏内容矩形(s.HostForm)
         If captionRect.Width <= 0 OrElse captionRect.Height <= 0 Then Return RectangleF.Empty
 
         Dim leftEdge, rightEdge As Integer
+        Dim titlePadLeft As Integer = Math.Max(0, 缩放逻辑尺寸(s.HostForm, _标题文字左边距))
+        Dim titlePadRight As Integer = Math.Max(0, 缩放逻辑尺寸(s.HostForm, _标题文字右边距))
         If _按钮位置 = ButtonPositionEnum.Right Then
-            leftEdge = If(Not s.IconRect.IsEmpty, s.IconRect.Right + _标题文字左边距, captionRect.Left + _标题文字左边距)
+            leftEdge = If(Not s.IconRect.IsEmpty, s.IconRect.Right + titlePadLeft, captionRect.Left + titlePadLeft)
             Dim btnLeft As Integer = s.CloseRect.Left
             If s.HostForm.MaximizeBox AndAlso Not s.MaxRect.IsEmpty Then btnLeft = Math.Min(btnLeft, s.MaxRect.Left)
             If s.HostForm.MinimizeBox AndAlso Not s.MinRect.IsEmpty Then btnLeft = Math.Min(btnLeft, s.MinRect.Left)
-            rightEdge = btnLeft - _标题文字右边距
+            rightEdge = btnLeft - titlePadRight
         Else
             If Not s.IconRect.IsEmpty Then
-                leftEdge = s.IconRect.Right + _标题文字左边距
+                leftEdge = s.IconRect.Right + titlePadLeft
             Else
                 Dim btnRight As Integer = s.CloseRect.Right
                 If s.HostForm.MaximizeBox AndAlso Not s.MaxRect.IsEmpty Then btnRight = Math.Max(btnRight, s.MaxRect.Right)
                 If s.HostForm.MinimizeBox AndAlso Not s.MinRect.IsEmpty Then btnRight = Math.Max(btnRight, s.MinRect.Right)
-                leftEdge = btnRight + _标题文字左边距
+                leftEdge = btnRight + titlePadLeft
             End If
-            rightEdge = captionRect.Right - _标题文字右边距
+            rightEdge = captionRect.Right - titlePadRight
         End If
 
         Return New RectangleF(leftEdge, captionRect.Top, Math.Max(0, rightEdge - leftEdge), captionRect.Height)
@@ -2307,7 +2367,8 @@ Public Class ThisIsYourWindow
         Dim textRect As RectangleF = 获取标题文字布局矩形(s)
         If textRect.Width <= 0 OrElse textRect.Height <= 0 Then Return Rectangle.Empty
         Dim dirty As Rectangle = Rectangle.Ceiling(textRect)
-        dirty.Inflate(2, 2)
+        Dim inflate As Integer = Math.Max(1, 缩放逻辑尺寸(s.HostForm, 2))
+        dirty.Inflate(inflate, inflate)
         Return Rectangle.Intersect(New Rectangle(Point.Empty, s.HostForm.ClientSize), dirty)
     End Function
 
@@ -2351,7 +2412,7 @@ Public Class ThisIsYourWindow
     ''' <summary>请求指定窗体重绘标题栏区域。</summary>
     Public Sub InvalidateCaption(form As Form, Optional immediate As Boolean = False)
         If form IsNot Nothing AndAlso form.IsHandleCreated Then
-            form.Invalidate(New Rectangle(0, 0, form.ClientSize.Width, _边框厚度 + _标题栏高度), False)
+            form.Invalidate(New Rectangle(0, 0, form.ClientSize.Width, Math.Min(form.ClientSize.Height, 取缩放标题栏总高度(form))), False)
             If immediate Then form.Update()
         End If
     End Sub
@@ -2580,7 +2641,7 @@ Public Class ThisIsYourWindow
         If s Is Nothing Then Return HTCLIENT
         Dim w As Integer = s.HostForm.ClientSize.Width
         Dim h As Integer = s.HostForm.ClientSize.Height
-        Dim bw As Integer = _调整边框宽度
+        Dim bw As Integer = Math.Max(1, 缩放逻辑尺寸(s.HostForm, _调整边框宽度))
         Dim zoomed As Boolean = (s.HostForm.WindowState = FormWindowState.Maximized)
 
         If _允许调整大小 AndAlso Not (zoomed AndAlso _最大化时隐藏调整边框) Then
@@ -2599,7 +2660,7 @@ Public Class ThisIsYourWindow
         If Not s.MinRect.IsEmpty AndAlso s.MinRect.Contains(clientPoint) Then Return HTMINBUTTON
         If Not s.IconRect.IsEmpty AndAlso s.IconRect.Contains(clientPoint) Then Return HTSYSMENU
 
-        Dim captionRect As Rectangle = 获取标题栏内容矩形(w, h)
+        Dim captionRect As Rectangle = 获取标题栏内容矩形(s.HostForm, w, h)
         If captionRect.Contains(clientPoint) Then
             For Each rect In _标题栏排除区域
                 If rect.Contains(clientPoint) Then Return HTCLIENT
@@ -2629,6 +2690,7 @@ Public Class ThisIsYourWindow
     Private Const WM_EXITSIZEMOVE As Integer = &H232
     Private Const WM_SHOWWINDOW As Integer = &H18
     Private Const WM_CLOSE As Integer = &H10
+    Private Const WM_DPICHANGED As Integer = &H2E0
 
     Friend Class WindowMessageInterceptor
         Inherits NativeWindow
@@ -2970,6 +3032,11 @@ Public Class ThisIsYourWindow
                     If Not _state.HostForm.IsDisposed AndAlso Not _state.HostForm.Visible Then
                         _owner.销毁阴影(_state)
                     End If
+                    Return
+
+                Case WM_DPICHANGED
+                    MyBase.WndProc(m)
+                    _owner.处理DpiChanged(_state)
                     Return
 
                 Case WM_SYSCOMMAND
