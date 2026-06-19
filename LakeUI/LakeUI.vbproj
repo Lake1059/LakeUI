@@ -9,9 +9,9 @@
     <GeneratePackageOnBuild>True</GeneratePackageOnBuild>
     <Description>湖界 LakeUI 是专为 WinForms 设计的一套精致交互控件，主打简单易用、精致美观、高度定制、高效性能，新手强烈推荐。主要面向个人项目提供。</Description>
     <PackageReadmeFile>README.md</PackageReadmeFile>
-    <AssemblyVersion>2.11.0</AssemblyVersion>
-    <FileVersion>2.11.0</FileVersion>
-	<Version>2.11.0</Version>
+    <AssemblyVersion>2.12.0</AssemblyVersion>
+    <FileVersion>2.12.0</FileVersion>
+	<Version>2.12.0</Version>
     <PackageRequireLicenseAcceptance>True</PackageRequireLicenseAcceptance>
     <PackageLicenseExpression>GPL-3.0-only</PackageLicenseExpression>
     <Copyright>Copyright © 1059 Studio</Copyright>

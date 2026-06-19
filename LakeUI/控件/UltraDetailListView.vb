@@ -16,9 +16,14 @@ Public Class UltraDetailListView
         Inherits EventArgs
         Public ReadOnly Property Item As ListItem
         Public ReadOnly Property DisplayRowIndex As Integer
+        Public ReadOnly Property ColumnIndex As Integer
         Public Sub New(item As ListItem, displayRowIndex As Integer)
+            Me.New(item, displayRowIndex, -1)
+        End Sub
+        Public Sub New(item As ListItem, displayRowIndex As Integer, columnIndex As Integer)
             Me.Item = item
             Me.DisplayRowIndex = displayRowIndex
+            Me.ColumnIndex = columnIndex
         End Sub
     End Class
 
@@ -3227,7 +3232,7 @@ Public Class UltraDetailListView
             取消标签编辑等待()
         End If
 
-        RaiseEvent ItemClick(Me, New ListItemEventArgs(row.Item, hitRow))
+        RaiseEvent ItemClick(Me, New ListItemEventArgs(row.Item, hitRow, clickedCol))
     End Sub
 
 #End Region
@@ -3241,7 +3246,7 @@ Public Class UltraDetailListView
         If hitRow >= 0 AndAlso hitRow < _displayRows.Count Then
             Dim row = _displayRows(hitRow)
             If row.Type = DisplayRowType.Item Then
-                RaiseEvent ItemDoubleClick(Me, New ListItemEventArgs(row.Item, hitRow))
+                RaiseEvent ItemDoubleClick(Me, New ListItemEventArgs(row.Item, hitRow, 命中测试列(e.Location)))
             ElseIf row.Type = DisplayRowType.GroupHeader Then
                 row.Group.IsCollapsed = Not row.Group.IsCollapsed
                 重建显示列表()
