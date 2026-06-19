@@ -41,6 +41,8 @@ Public NotInheritable Class FloatingToolTipForm
     Private _messageFilterInstalled As Boolean = False
     Private _closeTimer As Timer = Nothing
     Private _closeRelatedBounds As Rectangle() = Array.Empty(Of Rectangle)()
+    Private _ownerForm As Form = Nothing
+    Private _ownerStateHandlersInstalled As Boolean = False
 
     Private Const WM_KEYDOWN As Integer = &H100
     Private Const WM_SYSKEYDOWN As Integer = &H104
@@ -75,6 +77,11 @@ Public NotInheritable Class FloatingToolTipForm
             ClearSelection(False)
         End If
         CancelScheduledClose()
+        If Not CanShowForOwner() Then
+            CloseImmediately()
+            Return
+        End If
+
         _tipText = newText
         _style = If(style, New FloatingToolTipStyle()).Clone()
         ClampSelection()
@@ -124,6 +131,7 @@ Public NotInheritable Class FloatingToolTipForm
 
         ApplyPopupWindowState()
         准备毛玻璃背景()
+        EnsureOwnerStateHandlers()
         EnsureMessageFilter()
         If Not Visible Then Show()
         Invalidate()
@@ -230,8 +238,12 @@ Public NotInheritable Class FloatingToolTipForm
 
     Protected Overrides Sub OnVisibleChanged(e As EventArgs)
         MyBase.OnVisibleChanged(e)
-        If Not Visible AndAlso ReferenceEquals(_keyboardSelectionOwner, Me) Then
-            _keyboardSelectionOwner = Nothing
+        If Not Visible Then
+            CancelScheduledClose()
+            RemoveOwnerStateHandlers()
+            If ReferenceEquals(_keyboardSelectionOwner, Me) Then
+                _keyboardSelectionOwner = Nothing
+            End If
         End If
     End Sub
 
@@ -386,6 +398,15 @@ Public NotInheritable Class FloatingToolTipForm
         _closeRelatedBounds = Array.Empty(Of Rectangle)()
     End Sub
 
+    Private Function CanShowForOwner() As Boolean
+        If _owner Is Nothing OrElse _owner.IsDisposed Then Return False
+        If Not _owner.Visible OrElse Not _owner.Enabled Then Return False
+
+        Dim ownerForm As Form = _owner.FindForm()
+        If ownerForm IsNot Nothing AndAlso (ownerForm.IsDisposed OrElse Not ownerForm.Visible OrElse Not ownerForm.Enabled) Then Return False
+        Return True
+    End Function
+
     Private Sub CloseTimerTick(sender As Object, e As EventArgs)
         If _closeTimer IsNot Nothing Then _closeTimer.Stop()
         If IsDisposed OrElse HasSelectedText OrElse _isMouseSelecting Then Return
@@ -397,6 +418,71 @@ Public NotInheritable Class FloatingToolTipForm
         Next
 
         Close()
+    End Sub
+
+    Private Sub EnsureOwnerStateHandlers()
+        If _owner Is Nothing OrElse _owner.IsDisposed Then Return
+
+        Dim currentOwnerForm As Form = _owner.FindForm()
+        If _ownerStateHandlersInstalled AndAlso Not ReferenceEquals(_ownerForm, currentOwnerForm) Then
+            RemoveOwnerStateHandlers()
+        End If
+
+        If _ownerStateHandlersInstalled Then Return
+
+        AddHandler _owner.HandleDestroyed, AddressOf OwnerStateChanged
+        AddHandler _owner.VisibleChanged, AddressOf OwnerStateChanged
+        AddHandler _owner.EnabledChanged, AddressOf OwnerStateChanged
+
+        _ownerForm = currentOwnerForm
+        If _ownerForm IsNot Nothing Then
+            AddHandler _ownerForm.Deactivate, AddressOf OwnerStateChanged
+            AddHandler _ownerForm.FormClosed, AddressOf OwnerFormClosed
+            AddHandler _ownerForm.HandleDestroyed, AddressOf OwnerStateChanged
+            AddHandler _ownerForm.VisibleChanged, AddressOf OwnerStateChanged
+            AddHandler _ownerForm.EnabledChanged, AddressOf OwnerStateChanged
+        End If
+
+        _ownerStateHandlersInstalled = True
+    End Sub
+
+    Private Sub OwnerStateChanged(sender As Object, e As EventArgs)
+        CloseImmediately()
+    End Sub
+
+    Private Sub OwnerFormClosed(sender As Object, e As FormClosedEventArgs)
+        CloseImmediately()
+    End Sub
+
+    Private Sub CloseImmediately()
+        If IsDisposed Then Return
+        CancelScheduledClose()
+        ClearSelection(False)
+        Close()
+    End Sub
+
+    Private Sub RemoveOwnerStateHandlers()
+        If Not _ownerStateHandlersInstalled Then
+            _ownerForm = Nothing
+            Return
+        End If
+
+        If _owner IsNot Nothing Then
+            RemoveHandler _owner.HandleDestroyed, AddressOf OwnerStateChanged
+            RemoveHandler _owner.VisibleChanged, AddressOf OwnerStateChanged
+            RemoveHandler _owner.EnabledChanged, AddressOf OwnerStateChanged
+        End If
+
+        If _ownerForm IsNot Nothing Then
+            RemoveHandler _ownerForm.Deactivate, AddressOf OwnerStateChanged
+            RemoveHandler _ownerForm.FormClosed, AddressOf OwnerFormClosed
+            RemoveHandler _ownerForm.HandleDestroyed, AddressOf OwnerStateChanged
+            RemoveHandler _ownerForm.VisibleChanged, AddressOf OwnerStateChanged
+            RemoveHandler _ownerForm.EnabledChanged, AddressOf OwnerStateChanged
+        End If
+
+        _ownerForm = Nothing
+        _ownerStateHandlersInstalled = False
     End Sub
 
     Private Sub RemoveMessageFilter()
@@ -549,6 +635,7 @@ Public NotInheritable Class FloatingToolTipForm
 
     Protected Overrides Sub Dispose(disposing As Boolean)
         If disposing Then
+            RemoveOwnerStateHandlers()
             RemoveMessageFilter()
             If _closeTimer IsNot Nothing Then
                 RemoveHandler _closeTimer.Tick, AddressOf CloseTimerTick

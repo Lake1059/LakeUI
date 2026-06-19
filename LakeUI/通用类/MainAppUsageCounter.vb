@@ -1,25 +1,61 @@
+Imports System.Diagnostics
 Imports System.Globalization
 Imports System.Runtime.InteropServices
 Imports System.Text
 Imports System.Threading
 
 ''' <summary>
-''' 当前主应用进程的资源占用计数器。
+''' 当前主应用进程或指定进程的资源占用计数器。
 ''' 默认不启动任何后台线程；调用 <see cref="Enable"/> 后才会在后台采样，所有 Get 方法只返回最近一次采样快照中的值。
 ''' </summary>
 ''' <remarks>
 ''' <para>内存数据对应任务管理器详细信息页的活动专用工作集、专用工作集、共享工作集和提交大小。</para>
 ''' <para>CPU 数据来自 GetProcessTimes 与高精度墙钟差分，仅保留当前进程总体占用百分比。</para>
-''' <para>GPU 数据来自 Windows PDH 的 GPU Process Memory / GPU Engine 计数器，仅保留 3D、专用显存和共享显存。</para>
+''' <para>GPU 数据来自 Windows PDH 的 GPU Process Memory / GPU Engine 计数器，汇总当前进程全部 GPU Engine，并保留 3D、专用显存和共享显存兼容字段。</para>
 ''' <para>本类是观察工具，不参与任何 D2D / D3D / GDI 资源释放。不要在采样线程里调用渲染清理 API。</para>
 ''' <para>GPU 显存来自系统性能计数器，采样粒度和任务管理器类似，会有延迟和驱动侧保留；它适合看趋势，
 ''' 不适合用来断言某一次 Dispose 后显存必须立即下降。</para>
 ''' <para>Enable/Disable 可以多次调用。Disable 会停止后台线程并释放 PDH 查询句柄，但保留最后一份快照供 UI 显示。</para>
 ''' </remarks>
 Public NotInheritable Class MainAppUsageCounter
+    Implements IDisposable
 
-    ''' <summary>静态工具类，不允许实例化。</summary>
-    Private Sub New()
+    Private 实例状态 As 计数器状态
+    Private disposedValue As Boolean
+
+    ''' <summary>创建一个统计当前进程的独立计数器实例。</summary>
+    Public Sub New()
+        初始化实例(CInt(获取当前进程编号()), False)
+    End Sub
+
+    ''' <summary>创建一个统计指定进程的独立计数器实例。</summary>
+    Public Sub New(目标进程 As Process)
+        If 目标进程 Is Nothing Then Throw New ArgumentNullException(NameOf(目标进程))
+        初始化实例(目标进程.Id, False)
+    End Sub
+
+    ''' <summary>创建一个统计指定进程的独立计数器实例。</summary>
+    Public Sub New(目标进程 As Process, autoStart As Boolean)
+        If 目标进程 Is Nothing Then Throw New ArgumentNullException(NameOf(目标进程))
+        初始化实例(目标进程.Id, autoStart)
+    End Sub
+
+    ''' <summary>创建一个统计指定进程 ID 的独立计数器实例。</summary>
+    Public Sub New(目标进程编号 As Integer)
+        初始化实例(目标进程编号, False)
+    End Sub
+
+    ''' <summary>创建一个统计指定进程 ID 的独立计数器实例。</summary>
+    Public Sub New(目标进程编号 As Integer, autoStart As Boolean)
+        初始化实例(目标进程编号, autoStart)
+    End Sub
+
+    Private Sub 初始化实例(目标进程编号 As Integer, autoStart As Boolean)
+        If 目标进程编号 <= 0 Then Throw New ArgumentOutOfRangeException(NameOf(目标进程编号))
+        Dim 进程句柄 = 打开进程句柄(CUInt(目标进程编号))
+        If 进程句柄 = IntPtr.Zero Then Throw New InvalidOperationException("无法打开目标进程句柄。")
+        实例状态 = New 计数器状态(CUInt(目标进程编号), 进程句柄, True)
+        If autoStart Then 启用计数器(实例状态, True)
     End Sub
 
 #Region "公开类型"
@@ -78,11 +114,17 @@ Public NotInheritable Class MainAppUsageCounter
         ''' <summary>CPU 总体占用百分比，范围 0 到 100，已经按全部活动逻辑处理器归一化。</summary>
         Public CpuUsagePercent As Single
 
+        ''' <summary>GPU 总占用百分比，范围 0 到 100，来自当前进程所有 GPU Engine 计数器聚合。</summary>
+        Public GpuUsagePercent As Single
+
         ''' <summary>GPU 3D 引擎占用百分比，范围 0 到 100，来自当前进程所有 3D 引擎计数器聚合。</summary>
         Public Gpu3DUsagePercent As Single
 
         ''' <summary>兼容旧 API：CPU 占用，范围 0.0 到 1.0。</summary>
         Public CpuUsage As Single
+
+        ''' <summary>GPU 总占用，范围 0.0 到 1.0。</summary>
+        Public GpuUsage As Single
 
         ''' <summary>兼容旧 API：GPU 3D 引擎占用，范围 0.0 到 1.0。</summary>
         Public Gpu3DUsage As Single
@@ -96,9 +138,37 @@ Public NotInheritable Class MainAppUsageCounter
         ''' <summary>本次快照是否拿到了 GPU 显存数据。</summary>
         Public HasGpuMemoryData As Boolean
 
+        ''' <summary>本次快照是否拿到了 GPU 总占用数据。</summary>
+        Public HasGpuUsageData As Boolean
+
         ''' <summary>本次快照是否拿到了 GPU 3D 占用数据。</summary>
         Public HasGpu3DData As Boolean
     End Structure
+
+    Private NotInheritable Class 计数器状态
+        Public ReadOnly 目标进程编号 As UInteger
+        Public ReadOnly 目标进程句柄 As IntPtr
+        Public ReadOnly 需要关闭进程句柄 As Boolean
+        Public ReadOnly 状态锁 As New Object()
+        Public ReadOnly 快照锁 As New Object()
+        Public ReadOnly 首次采样完成事件 As New ManualResetEventSlim(False)
+        Public ReadOnly 停止采样事件 As New ManualResetEventSlim(False)
+        Public 是否启用 As Boolean
+        Public 采样线程 As Thread
+        Public 采样间隔毫秒 As Integer = 1000
+        Public 最新快照 As UsageSnapshot
+        Public 性能查询句柄 As IntPtr = IntPtr.Zero
+        Public 性能计数器列表 As New List(Of 性能计数器项)()
+        Public 性能计数器签名 As String = ""
+        Public 上次重建性能查询毫秒 As Long = Long.MinValue
+
+        Public Sub New(目标进程编号 As UInteger, 目标进程句柄 As IntPtr, 需要关闭进程句柄 As Boolean)
+            Me.目标进程编号 = 目标进程编号
+            Me.目标进程句柄 = 目标进程句柄
+            Me.需要关闭进程句柄 = 需要关闭进程句柄
+        End Sub
+    End Class
+
 #End Region
 
 #Region "公开接口"
@@ -107,13 +177,13 @@ Public NotInheritable Class MainAppUsageCounter
     ''' </summary>
     Public Shared Property SampleIntervalMilliseconds As Integer
         Get
-            SyncLock 状态锁
-                Return 采样间隔毫秒
+            SyncLock 默认状态.状态锁
+                Return 默认状态.采样间隔毫秒
             End SyncLock
         End Get
         Set(value As Integer)
-            SyncLock 状态锁
-                采样间隔毫秒 = Math.Max(100, value)
+            SyncLock 默认状态.状态锁
+                默认状态.采样间隔毫秒 = Math.Max(100, value)
             End SyncLock
         End Set
     End Property
@@ -123,8 +193,31 @@ Public NotInheritable Class MainAppUsageCounter
     ''' </summary>
     Public Shared ReadOnly Property IsEnabled As Boolean
         Get
-            SyncLock 状态锁
-                Return 是否启用
+            SyncLock 默认状态.状态锁
+                Return 默认状态.是否启用
+            End SyncLock
+        End Get
+    End Property
+
+    ''' <summary>独立计数器的后台采样间隔，单位：毫秒。最小值为 100，默认值为 1000。</summary>
+    Public Property InstanceSampleIntervalMilliseconds As Integer
+        Get
+            SyncLock 实例状态.状态锁
+                Return 实例状态.采样间隔毫秒
+            End SyncLock
+        End Get
+        Set(value As Integer)
+            SyncLock 实例状态.状态锁
+                实例状态.采样间隔毫秒 = Math.Max(100, value)
+            End SyncLock
+        End Set
+    End Property
+
+    ''' <summary>独立计数器当前是否已经启用后台采样线程。</summary>
+    Public ReadOnly Property InstanceIsEnabled As Boolean
+        Get
+            SyncLock 实例状态.状态锁
+                Return 实例状态.是否启用
             End SyncLock
         End Get
     End Property
@@ -134,51 +227,14 @@ Public NotInheritable Class MainAppUsageCounter
     ''' </summary>
     ''' <param name="waitForFirstSample">是否等待首次采样完成。默认最多等待一个很短的时间，方便立即读取到第一份快照。</param>
     Public Shared Sub Enable(Optional waitForFirstSample As Boolean = True)
-        Dim 需要等待首次采样 As Boolean = False
-
-        SyncLock 状态锁
-            是否启用 = True
-
-            If 采样线程 Is Nothing OrElse Not 采样线程.IsAlive Then
-                首次采样完成事件.Reset()
-                停止采样事件.Reset()
-                采样线程 = New Thread(AddressOf 后台采样循环) With {
-                    .IsBackground = True,
-                    .Name = "LakeUI MainAppUsageCounter"
-                }
-                采样线程.Start()
-                需要等待首次采样 = waitForFirstSample
-            Else
-                需要等待首次采样 = waitForFirstSample AndAlso Not 首次采样完成事件.IsSet
-            End If
-        End SyncLock
-
-        If 需要等待首次采样 AndAlso Not Object.ReferenceEquals(Thread.CurrentThread, 采样线程) Then
-            Try
-                首次采样完成事件.Wait(首次采样等待毫秒)
-            Catch
-            End Try
-        End If
+        启用计数器(默认状态, waitForFirstSample)
     End Sub
 
     ''' <summary>
     ''' 禁用后台采样线程，并释放 PDH 查询等本地资源。最近一次快照会被保留。
     ''' </summary>
     Public Shared Sub Disable()
-        Dim 待等待线程 As Thread = Nothing
-
-        SyncLock 状态锁
-            是否启用 = False
-            停止采样事件.Set()
-            待等待线程 = 采样线程
-        End SyncLock
-
-        If 待等待线程 IsNot Nothing AndAlso Not Object.ReferenceEquals(待等待线程, Thread.CurrentThread) Then
-            Try
-                待等待线程.Join(1000)
-            Catch
-            End Try
-        End If
+        禁用计数器(默认状态)
     End Sub
 
     ''' <summary>
@@ -188,6 +244,20 @@ Public NotInheritable Class MainAppUsageCounter
         Enable()
     End Sub
 
+    ''' <summary>创建并启动一个统计指定进程的独立计数器实例。</summary>
+    Public Shared Function Start(目标进程 As Process, Optional waitForFirstSample As Boolean = True) As MainAppUsageCounter
+        Dim counter As New MainAppUsageCounter(目标进程)
+        counter.StartInstance(waitForFirstSample)
+        Return counter
+    End Function
+
+    ''' <summary>创建并启动一个统计指定进程 ID 的独立计数器实例。</summary>
+    Public Shared Function Start(目标进程编号 As Integer, Optional waitForFirstSample As Boolean = True) As MainAppUsageCounter
+        Dim counter As New MainAppUsageCounter(目标进程编号)
+        counter.StartInstance(waitForFirstSample)
+        Return counter
+    End Function
+
     ''' <summary>
     ''' 禁用后台采样线程。保留该方法名是为了兼容常见 Start/Shutdown 风格调用。
     ''' </summary>
@@ -195,12 +265,34 @@ Public NotInheritable Class MainAppUsageCounter
         Disable()
     End Sub
 
+    ''' <summary>启用独立计数器后台采样线程。</summary>
+    Public Sub StartInstance(Optional waitForFirstSample As Boolean = True)
+        ThrowIfDisposed()
+        启用计数器(实例状态, waitForFirstSample)
+    End Sub
+
+    ''' <summary>禁用独立计数器后台采样线程。</summary>
+    Public Sub ShutdownInstance()
+        If disposedValue Then Return
+        禁用计数器(实例状态)
+    End Sub
+
     ''' <summary>
     ''' 返回最近一次采样快照。未启用采样时不会自动启动后台线程。
     ''' </summary>
     Public Shared Function GetSnapshot() As UsageSnapshot
-        SyncLock 快照锁
-            Dim snapshot = 最新快照
+        Return 读取快照(默认状态)
+    End Function
+
+    ''' <summary>返回独立计数器最近一次采样快照。</summary>
+    Public Function GetSnapshot(Optional instanceSnapshot As Boolean = True) As UsageSnapshot
+        ThrowIfDisposed()
+        Return 读取快照(实例状态)
+    End Function
+
+    Private Shared Function 读取快照(状态 As 计数器状态) As UsageSnapshot
+        SyncLock 状态.快照锁
+            Dim snapshot = 状态.最新快照
             FillCompatibilitySnapshot(snapshot)
             Return snapshot
         End SyncLock
@@ -286,6 +378,16 @@ Public NotInheritable Class MainAppUsageCounter
         Return GetSnapshot().CpuUsagePercent
     End Function
 
+    ''' <summary>返回最近一次采样的 GPU 总占用，范围 0.0 到 1.0。</summary>
+    Public Shared Function GetGpuUsage() As Single
+        Return GetSnapshot().GpuUsage
+    End Function
+
+    ''' <summary>返回最近一次采样的 GPU 总占用百分比，范围 0 到 100。</summary>
+    Public Shared Function GetGpuUsagePercent() As Single
+        Return GetSnapshot().GpuUsagePercent
+    End Function
+
     ''' <summary>返回最近一次采样的 GPU 3D 引擎占用，范围 0.0 到 1.0。</summary>
     Public Shared Function GetGpu3DUsage() As Single
         Return GetSnapshot().Gpu3DUsage
@@ -311,6 +413,11 @@ Public NotInheritable Class MainAppUsageCounter
         Return GetSnapshot().HasGpuMemoryData
     End Function
 
+    ''' <summary>最近一次快照是否包含 GPU 总占用数据。</summary>
+    Public Shared Function HasGpuUsageData() As Boolean
+        Return GetSnapshot().HasGpuUsageData
+    End Function
+
     ''' <summary>最近一次快照是否包含 GPU 3D 占用数据。</summary>
     Public Shared Function HasGpu3DData() As Boolean
         Return GetSnapshot().HasGpu3DData
@@ -318,38 +425,64 @@ Public NotInheritable Class MainAppUsageCounter
 #End Region
 
 #Region "后台采样"
-    ''' <summary>保护启用状态、采样线程和采样间隔的锁。</summary>
-    Private Shared ReadOnly 状态锁 As New Object()
-
-    ''' <summary>保护最近一次采样快照的锁。</summary>
-    Private Shared ReadOnly 快照锁 As New Object()
-
-    ''' <summary>首次采样完成信号，用于 Enable 后短暂等待第一份数据。</summary>
-    Private Shared ReadOnly 首次采样完成事件 As New ManualResetEventSlim(False)
-
-    ''' <summary>后台采样线程停止信号。</summary>
-    Private Shared ReadOnly 停止采样事件 As New ManualResetEventSlim(False)
-
-    ''' <summary>当前是否处于启用状态。</summary>
-    Private Shared 是否启用 As Boolean
-
-    ''' <summary>后台采样线程实例。</summary>
-    Private Shared 采样线程 As Thread
-
-    ''' <summary>后台采样间隔，单位：毫秒。</summary>
-    Private Shared 采样间隔毫秒 As Integer = 1000
-
-    ''' <summary>最近一次采样快照。未启用时保持默认值或禁用前最后一次值。</summary>
-    Private Shared 最新快照 As UsageSnapshot
+    ''' <summary>默认静态计数器状态，保留旧 API 的当前进程采样行为。</summary>
+    Private Shared ReadOnly 默认状态 As New 计数器状态(获取当前进程编号(), 获取当前进程伪句柄(), False)
 
     ''' <summary>Enable 默认等待首次采样的最大时间，单位：毫秒。</summary>
     Private Const 首次采样等待毫秒 As Integer = 350
 
+    Private Shared Sub 启用计数器(状态 As 计数器状态, waitForFirstSample As Boolean)
+        Dim 需要等待首次采样 As Boolean = False
+        Dim 待等待线程 As Thread = Nothing
+
+        SyncLock 状态.状态锁
+            状态.是否启用 = True
+
+            If 状态.采样线程 Is Nothing OrElse Not 状态.采样线程.IsAlive Then
+                状态.首次采样完成事件.Reset()
+                状态.停止采样事件.Reset()
+                状态.采样线程 = New Thread(Sub() 后台采样循环(状态)) With {
+                    .IsBackground = True,
+                    .Name = "LakeUI MainAppUsageCounter"
+                }
+                状态.采样线程.Start()
+                需要等待首次采样 = waitForFirstSample
+            Else
+                需要等待首次采样 = waitForFirstSample AndAlso Not 状态.首次采样完成事件.IsSet
+            End If
+            待等待线程 = 状态.采样线程
+        End SyncLock
+
+        If 需要等待首次采样 AndAlso 待等待线程 IsNot Nothing AndAlso Not Object.ReferenceEquals(Thread.CurrentThread, 待等待线程) Then
+            Try
+                状态.首次采样完成事件.Wait(首次采样等待毫秒)
+            Catch
+            End Try
+        End If
+    End Sub
+
+    Private Shared Sub 禁用计数器(状态 As 计数器状态)
+        Dim 待等待线程 As Thread = Nothing
+
+        SyncLock 状态.状态锁
+            状态.是否启用 = False
+            状态.停止采样事件.Set()
+            待等待线程 = 状态.采样线程
+        End SyncLock
+
+        If 待等待线程 IsNot Nothing AndAlso Not Object.ReferenceEquals(待等待线程, Thread.CurrentThread) Then
+            Try
+                待等待线程.Join(1000)
+            Catch
+            End Try
+        End If
+    End Sub
+
     ''' <summary>
     ''' 后台采样线程主体。线程只在 Enable 后启动，Disable 后退出并释放 PDH 资源。
     ''' </summary>
-    Private Shared Sub 后台采样循环()
-        Dim 当前进程编号 As UInteger = 获取当前进程编号()
+    Private Shared Sub 后台采样循环(状态 As 计数器状态)
+        Dim 当前进程编号 As UInteger = 状态.目标进程编号
         Dim 高精度频率 As Long = 0
         Dim 使用高精度计时 As Boolean = 查询高精度频率(高精度频率) AndAlso 高精度频率 > 0
         Dim 活动逻辑处理器数 As UInteger = 取活动逻辑处理器数()
@@ -359,34 +492,34 @@ Public NotInheritable Class MainAppUsageCounter
         Dim 已有上次CPU样本 As Boolean = False
 
         Try
-            Do While Not 停止采样事件.IsSet
+            Do While Not 状态.停止采样事件.IsSet
                 Dim 本次快照 As New UsageSnapshot With {
                     .ProcessId = 当前进程编号,
                     .TimestampUtc = DateTime.UtcNow
                 }
 
-                填充内存数据(本次快照)
-                填充CPU数据(本次快照, 活动逻辑处理器数, 使用高精度计时, 高精度频率, 上次进程时间100纳秒, 上次墙钟计数, 已有上次CPU样本)
-                填充GPU数据(本次快照, 当前进程编号)
+                填充内存数据(本次快照, 状态.目标进程句柄)
+                填充CPU数据(本次快照, 状态.目标进程句柄, 活动逻辑处理器数, 使用高精度计时, 高精度频率, 上次进程时间100纳秒, 上次墙钟计数, 已有上次CPU样本)
+                填充GPU数据(本次快照, 状态, 当前进程编号)
                 FillCompatibilitySnapshot(本次快照)
 
-                SyncLock 快照锁
-                    最新快照 = 本次快照
+                SyncLock 状态.快照锁
+                    状态.最新快照 = 本次快照
                 End SyncLock
 
-                首次采样完成事件.Set()
+                状态.首次采样完成事件.Set()
 
                 Dim 本轮间隔 As Integer
-                SyncLock 状态锁
-                    本轮间隔 = 采样间隔毫秒
+                SyncLock 状态.状态锁
+                    本轮间隔 = 状态.采样间隔毫秒
                 End SyncLock
-                停止采样事件.Wait(本轮间隔)
+                状态.停止采样事件.Wait(本轮间隔)
             Loop
         Finally
-            关闭性能查询()
-            SyncLock 状态锁
-                If Object.ReferenceEquals(采样线程, Thread.CurrentThread) Then
-                    采样线程 = Nothing
+            关闭性能查询(状态)
+            SyncLock 状态.状态锁
+                If Object.ReferenceEquals(状态.采样线程, Thread.CurrentThread) Then
+                    状态.采样线程 = Nothing
                 End If
             End SyncLock
         End Try
@@ -477,13 +610,13 @@ Public NotInheritable Class MainAppUsageCounter
     ''' <summary>
     ''' 填充当前进程内存数据，对齐任务管理器详细信息页的四个内存列。
     ''' </summary>
-    Private Shared Sub 填充内存数据(ByRef 快照 As UsageSnapshot)
+    Private Shared Sub 填充内存数据(ByRef 快照 As UsageSnapshot, 进程句柄 As IntPtr)
         Try
             Dim 内存计数器2 As New 进程内存计数器扩展2 With {
                 .结构大小 = CUInt(Marshal.SizeOf(Of 进程内存计数器扩展2)())
             }
 
-            If 获取进程内存信息2(获取当前进程伪句柄(), 内存计数器2, 内存计数器2.结构大小) Then
+            If 获取进程内存信息2(进程句柄, 内存计数器2, 内存计数器2.结构大小) Then
                 Dim 工作集大小 = 指针大小转无符号64位(内存计数器2.工作集大小)
                 Dim 专用工作集大小 = 指针大小转无符号64位(内存计数器2.专用工作集大小)
 
@@ -492,7 +625,7 @@ Public NotInheritable Class MainAppUsageCounter
                     快照.PrivateWorkingSetBytes = 专用工作集大小
                     快照.SharedWorkingSetBytes = 饱和相减(工作集大小, 专用工作集大小)
                     快照.CommitSizeBytes = 指针大小转无符号64位(内存计数器2.私有用量)
-                    填充虚拟内存兼容数据(快照)
+                    填充虚拟内存兼容数据(快照, 进程句柄)
                     快照.HasMemoryData = True
                     Return
                 End If
@@ -505,7 +638,7 @@ Public NotInheritable Class MainAppUsageCounter
                 .结构大小 = CUInt(Marshal.SizeOf(Of 进程内存计数器扩展)())
             }
 
-            If 获取进程内存信息(获取当前进程伪句柄(), 内存计数器, 内存计数器.结构大小) Then
+            If 获取进程内存信息(进程句柄, 内存计数器, 内存计数器.结构大小) Then
                 Dim 工作集大小 = 指针大小转无符号64位(内存计数器.工作集大小)
                 Dim 提交大小 = 指针大小转无符号64位(内存计数器.私有用量)
 
@@ -513,20 +646,20 @@ Public NotInheritable Class MainAppUsageCounter
                 快照.ActivePrivateWorkingSetBytes = 快照.PrivateWorkingSetBytes
                 快照.SharedWorkingSetBytes = 饱和相减(工作集大小, 快照.PrivateWorkingSetBytes)
                 快照.CommitSizeBytes = 提交大小
-                填充虚拟内存兼容数据(快照)
+                填充虚拟内存兼容数据(快照, 进程句柄)
                 快照.HasMemoryData = True
             End If
         Catch
         End Try
     End Sub
 
-    Private Shared Sub 填充虚拟内存兼容数据(ByRef 快照 As UsageSnapshot)
+    Private Shared Sub 填充虚拟内存兼容数据(ByRef 快照 As UsageSnapshot, 进程句柄 As IntPtr)
         Try
             Dim 虚拟计数器 As New 虚拟内存计数器扩展()
             Dim 返回长度 As UInteger = 0UI
             Dim 结构大小 As UInteger = CUInt(Marshal.SizeOf(Of 虚拟内存计数器扩展)())
 
-            If 查询进程信息(获取当前进程伪句柄(), 进程虚拟内存计数器信息类, 虚拟计数器, 结构大小, 返回长度) = 本地状态成功 Then
+            If 查询进程信息(进程句柄, 进程虚拟内存计数器信息类, 虚拟计数器, 结构大小, 返回长度) = 本地状态成功 Then
                 快照.VirtualMemoryBytes = 指针大小转无符号64位(虚拟计数器.虚拟大小)
                 快照.PhysicalMemoryBytes = 指针大小转无符号64位(虚拟计数器.工作集大小)
                 快照.CommitMemoryBytes = 指针大小转无符号64位(虚拟计数器.页面文件用量)
@@ -577,6 +710,7 @@ Public NotInheritable Class MainAppUsageCounter
     ''' 首次采样没有差分基准，因此不会设置 HasCpuUsageData。
     ''' </summary>
     Private Shared Sub 填充CPU数据(ByRef 快照 As UsageSnapshot,
+                                  进程句柄 As IntPtr,
                                   活动逻辑处理器数 As UInteger,
                                   使用高精度计时 As Boolean,
                                   高精度频率 As Long,
@@ -584,7 +718,7 @@ Public NotInheritable Class MainAppUsageCounter
                                   ByRef 上次墙钟计数 As Long,
                                   ByRef 已有上次CPU样本 As Boolean)
         Dim 当前进程时间100纳秒 As ULong = 0UL
-        If Not 取进程CPU总时间(当前进程时间100纳秒) Then Return
+        If Not 取进程CPU总时间(进程句柄, 当前进程时间100纳秒) Then Return
 
         Dim 当前墙钟计数 As Long = 取墙钟计数(使用高精度计时)
         If 已有上次CPU样本 AndAlso 当前进程时间100纳秒 >= 上次进程时间100纳秒 AndAlso 当前墙钟计数 > 上次墙钟计数 Then
@@ -609,13 +743,13 @@ Public NotInheritable Class MainAppUsageCounter
     End Sub
 
     ''' <summary>读取当前进程内核态与用户态 CPU 累计时间，单位为 100 纳秒。</summary>
-    Private Shared Function 取进程CPU总时间(ByRef 总时间100纳秒 As ULong) As Boolean
+    Private Shared Function 取进程CPU总时间(进程句柄 As IntPtr, ByRef 总时间100纳秒 As ULong) As Boolean
         Dim 创建时间 As 原生文件时间 = Nothing
         Dim 退出时间 As 原生文件时间 = Nothing
         Dim 内核时间 As 原生文件时间 = Nothing
         Dim 用户时间 As 原生文件时间 = Nothing
 
-        If Not 获取进程时间(获取当前进程伪句柄(), 创建时间, 退出时间, 内核时间, 用户时间) Then Return False
+        If Not 获取进程时间(进程句柄, 创建时间, 退出时间, 内核时间, 用户时间) Then Return False
         总时间100纳秒 = 饱和相加(文件时间转无符号64位(内核时间), 文件时间转无符号64位(用户时间))
         Return True
     End Function
@@ -645,6 +779,7 @@ Public NotInheritable Class MainAppUsageCounter
     Private Enum 性能计数器类型
         专用显存
         共享显存
+        GPU总占用
         三维占用
     End Enum
 
@@ -730,39 +865,36 @@ Public NotInheritable Class MainAppUsageCounter
     ''' <summary>重新枚举 GPU PDH 实例的最小间隔，单位：毫秒。</summary>
     Private Const 性能计数器刷新间隔毫秒 As Long = 2000
 
-    ''' <summary>当前 PDH 查询句柄。</summary>
-    Private Shared 性能查询句柄 As IntPtr = IntPtr.Zero
-
-    ''' <summary>当前 PDH 查询中已添加的计数器列表。</summary>
-    Private Shared 性能计数器列表 As New List(Of 性能计数器项)()
-
-    ''' <summary>当前 PDH 计数器路径签名，用于判断是否需要重建查询。</summary>
-    Private Shared 性能计数器签名 As String = ""
-
-    ''' <summary>上一次重建 PDH 查询的 Environment.TickCount64 毫秒值。</summary>
-    Private Shared 上次重建性能查询毫秒 As Long = Long.MinValue
-
     ''' <summary>
-    ''' 填充 GPU 显存和 GPU 3D 占用数据。PDH 实例按当前进程 PID 过滤。
+    ''' 填充 GPU 显存、GPU 总占用和 GPU 3D 占用数据。PDH 实例按当前进程 PID 过滤。
     ''' </summary>
-    Private Shared Sub 填充GPU数据(ByRef 快照 As UsageSnapshot, 当前进程编号 As UInteger)
-        确保性能查询(当前进程编号, False)
-        If 性能查询句柄 = IntPtr.Zero OrElse 性能计数器列表.Count = 0 Then Return
+    Private Shared Sub 填充GPU数据(ByRef 快照 As UsageSnapshot, 状态 As 计数器状态, 当前进程编号 As UInteger)
+        确保性能查询(状态, 当前进程编号, False)
+        If 状态.性能查询句柄 = IntPtr.Zero OrElse 状态.性能计数器列表.Count = 0 Then Return
 
-        If 采集性能查询数据(性能查询句柄) <> 性能操作成功 Then
-            确保性能查询(当前进程编号, True)
-            If 性能查询句柄 = IntPtr.Zero Then Return
-            采集性能查询数据(性能查询句柄)
+        If 采集性能查询数据(状态.性能查询句柄) <> 性能操作成功 Then
+            确保性能查询(状态, 当前进程编号, True)
+            If 状态.性能查询句柄 = IntPtr.Zero Then Return
+            采集性能查询数据(状态.性能查询句柄)
         End If
 
         Dim 专用显存字节 As ULong = 0UL
         Dim 共享显存字节 As ULong = 0UL
+        Dim 总占用百分比 As Double = 0.0R
         Dim 三维占用百分比 As Double = 0.0R
         Dim 有显存数据 As Boolean = False
+        Dim 有总占用数据 As Boolean = False
         Dim 有三维数据 As Boolean = False
 
-        For Each 计数器 In 性能计数器列表
+        For Each 计数器 In 状态.性能计数器列表
             Select Case 计数器.类型
+                Case 性能计数器类型.GPU总占用
+                    Dim 值 As Double = 读取双精度计数器(计数器.句柄)
+                    If Not Double.IsNaN(值) Then
+                        总占用百分比 += Math.Max(0.0R, 值)
+                        有总占用数据 = True
+                    End If
+
                 Case 性能计数器类型.三维占用
                     Dim 值 As Double = 读取双精度计数器(计数器.句柄)
                     If Not Double.IsNaN(值) Then
@@ -787,6 +919,11 @@ Public NotInheritable Class MainAppUsageCounter
         快照.GpuSharedMemoryBytes = 共享显存字节
         快照.HasGpuMemoryData = 有显存数据 OrElse 专用显存字节 > 0UL OrElse 共享显存字节 > 0UL
 
+        If 有总占用数据 Then
+            快照.GpuUsagePercent = 限制到0到100(总占用百分比)
+            快照.HasGpuUsageData = True
+        End If
+
         If 有三维数据 Then
             快照.Gpu3DUsagePercent = 限制到0到100(三维占用百分比)
             快照.HasGpu3DData = True
@@ -796,9 +933,9 @@ Public NotInheritable Class MainAppUsageCounter
     ''' <summary>
     ''' 按当前进程 PID 枚举 GPU PDH 实例，并在实例变化时重建查询。
     ''' </summary>
-    Private Shared Sub 确保性能查询(当前进程编号 As UInteger, 强制重建 As Boolean)
+    Private Shared Sub 确保性能查询(状态 As 计数器状态, 当前进程编号 As UInteger, 强制重建 As Boolean)
         Dim 当前毫秒 As Long = Environment.TickCount64
-        If Not 强制重建 AndAlso 性能查询句柄 <> IntPtr.Zero AndAlso 性能计数器列表.Count > 0 AndAlso 当前毫秒 - 上次重建性能查询毫秒 < 性能计数器刷新间隔毫秒 Then Return
+        If Not 强制重建 AndAlso 状态.性能查询句柄 <> IntPtr.Zero AndAlso 状态.性能计数器列表.Count > 0 AndAlso 当前毫秒 - 状态.上次重建性能查询毫秒 < 性能计数器刷新间隔毫秒 Then Return
 
         Dim 路径列表 As New List(Of 性能计数器路径)()
 
@@ -810,13 +947,16 @@ Public NotInheritable Class MainAppUsageCounter
 
         For Each 实例名 In 枚举性能实例("GPU Engine")
             If Not 是当前进程实例(实例名, 当前进程编号) Then Continue For
-            If Not 是三维引擎实例(实例名) Then Continue For
-            路径列表.Add(New 性能计数器路径 With {.路径 = "\GPU Engine(" & 实例名 & ")\Utilization Percentage", .类型 = 性能计数器类型.三维占用})
+            Dim 路径 As String = "\GPU Engine(" & 实例名 & ")\Utilization Percentage"
+            路径列表.Add(New 性能计数器路径 With {.路径 = 路径, .类型 = 性能计数器类型.GPU总占用})
+            If 是三维引擎实例(实例名) Then
+                路径列表.Add(New 性能计数器路径 With {.路径 = 路径, .类型 = 性能计数器类型.三维占用})
+            End If
         Next
 
         Dim 新签名 = 计算路径签名(路径列表)
-        If Not 强制重建 AndAlso 性能查询句柄 <> IntPtr.Zero AndAlso String.Equals(新签名, 性能计数器签名, StringComparison.Ordinal) Then
-            上次重建性能查询毫秒 = 当前毫秒
+        If Not 强制重建 AndAlso 状态.性能查询句柄 <> IntPtr.Zero AndAlso String.Equals(新签名, 状态.性能计数器签名, StringComparison.Ordinal) Then
+            状态.上次重建性能查询毫秒 = 当前毫秒
             Return
         End If
 
@@ -836,11 +976,11 @@ Public NotInheritable Class MainAppUsageCounter
             Thread.Sleep(20)
             采集性能查询数据(新查询句柄)
 
-            Dim 旧查询句柄 = 性能查询句柄
-            性能查询句柄 = 新查询句柄
-            性能计数器列表 = 新计数器列表
-            性能计数器签名 = 新签名
-            上次重建性能查询毫秒 = 当前毫秒
+            Dim 旧查询句柄 = 状态.性能查询句柄
+            状态.性能查询句柄 = 新查询句柄
+            状态.性能计数器列表 = 新计数器列表
+            状态.性能计数器签名 = 新签名
+            状态.上次重建性能查询毫秒 = 当前毫秒
             新查询句柄 = IntPtr.Zero
 
             If 旧查询句柄 <> IntPtr.Zero Then
@@ -942,15 +1082,15 @@ Public NotInheritable Class MainAppUsageCounter
     End Function
 
     ''' <summary>关闭当前 PDH 查询，并清空计数器缓存。</summary>
-    Private Shared Sub 关闭性能查询()
-        If 性能查询句柄 <> IntPtr.Zero Then
-            Try : 关闭性能查询句柄(性能查询句柄) : Catch : End Try
+    Private Shared Sub 关闭性能查询(状态 As 计数器状态)
+        If 状态.性能查询句柄 <> IntPtr.Zero Then
+            Try : 关闭性能查询句柄(状态.性能查询句柄) : Catch : End Try
         End If
 
-        性能查询句柄 = IntPtr.Zero
-        性能计数器列表 = New List(Of 性能计数器项)()
-        性能计数器签名 = ""
-        上次重建性能查询毫秒 = Long.MinValue
+        状态.性能查询句柄 = IntPtr.Zero
+        状态.性能计数器列表 = New List(Of 性能计数器项)()
+        状态.性能计数器签名 = ""
+        状态.上次重建性能查询毫秒 = Long.MinValue
     End Sub
 #End Region
 
@@ -972,6 +1112,7 @@ Public NotInheritable Class MainAppUsageCounter
         If 快照.GpuMemoryBytes = 0UL Then 快照.GpuMemoryBytes = 快照.GpuTotalCommittedMemoryBytes
 
         快照.CpuUsage = 限制到0到1(快照.CpuUsagePercent / 100.0R)
+        快照.GpuUsage = 限制到0到1(快照.GpuUsagePercent / 100.0R)
         快照.Gpu3DUsage = 限制到0到1(快照.Gpu3DUsagePercent / 100.0R)
     End Sub
 
@@ -984,6 +1125,48 @@ Public NotInheritable Class MainAppUsageCounter
     <DllImport("kernel32.dll", EntryPoint:="GetCurrentProcessId")>
     Private Shared Function 获取当前进程编号() As UInteger
     End Function
+
+    ''' <summary>打开指定进程用于查询资源占用。</summary>
+    <DllImport("kernel32.dll", EntryPoint:="OpenProcess", SetLastError:=True)>
+    Private Shared Function 打开进程(访问权限 As UInteger,
+                                    <MarshalAs(UnmanagedType.Bool)> 是否继承句柄 As Boolean,
+                                    进程编号 As UInteger) As IntPtr
+    End Function
+
+    ''' <summary>关闭内核对象句柄。</summary>
+    <DllImport("kernel32.dll", EntryPoint:="CloseHandle", SetLastError:=True)>
+    Private Shared Function 关闭句柄(句柄 As IntPtr) As <MarshalAs(UnmanagedType.Bool)> Boolean
+    End Function
+
+    Private Const 进程查询信息 As UInteger = &H400UI
+    Private Const 进程查询受限信息 As UInteger = &H1000UI
+
+    Private Shared Function 打开进程句柄(进程编号 As UInteger) As IntPtr
+        Dim 句柄 = 打开进程(进程查询受限信息 Or 进程查询信息, False, 进程编号)
+        If 句柄 = IntPtr.Zero Then 句柄 = 打开进程(进程查询受限信息, False, 进程编号)
+        Return 句柄
+    End Function
+
+    Private Sub ThrowIfDisposed()
+        If disposedValue Then Throw New ObjectDisposedException(NameOf(MainAppUsageCounter))
+    End Sub
+
+    Private Sub Dispose(disposing As Boolean)
+        If disposedValue Then Return
+        If 实例状态 IsNot Nothing Then
+            禁用计数器(实例状态)
+            关闭性能查询(实例状态)
+            If 实例状态.需要关闭进程句柄 AndAlso 实例状态.目标进程句柄 <> IntPtr.Zero Then
+                Try : 关闭句柄(实例状态.目标进程句柄) : Catch : End Try
+            End If
+        End If
+        disposedValue = True
+    End Sub
+
+    Public Sub Dispose() Implements IDisposable.Dispose
+        Dispose(True)
+        GC.SuppressFinalize(Me)
+    End Sub
 
     ''' <summary>将 UIntPtr 转成 ULong。</summary>
     Private Shared Function 指针大小转无符号64位(值 As UIntPtr) As ULong
