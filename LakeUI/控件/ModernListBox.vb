@@ -29,6 +29,11 @@ Public Class ModernListBox
         Crossed = 2
     End Enum
 
+    Public Enum ToolTipSideEnum
+        Left = 0
+        Right = 1
+    End Enum
+
     <TypeConverter(GetType(ExpandableObjectConverter))>
     Public Class ToolTipEntry
         Private _itemText As String = ""
@@ -955,6 +960,28 @@ Public Class ModernListBox
         End Get
         Set(value As Integer)
             提示最大宽度 = Math.Max(50, value)
+        End Set
+    End Property
+
+    Private 提示间距 As Integer = 0
+    <Category("LakeUI"), Description("工具提示与列表框的水平间距（逻辑像素，可为负数）"), DefaultValue(GetType(Integer), "0"), Browsable(True)>
+    Public Property ToolTipGap As Integer
+        Get
+            Return 提示间距
+        End Get
+        Set(value As Integer)
+            提示间距 = value
+        End Set
+    End Property
+
+    Private 提示默认侧 As ToolTipSideEnum = ToolTipSideEnum.Right
+    <Category("LakeUI"), Description("工具提示默认显示在列表框左侧还是右侧"), DefaultValue(GetType(ToolTipSideEnum), "Right"), Browsable(True)>
+    Public Property ToolTipSide As ToolTipSideEnum
+        Get
+            Return 提示默认侧
+        End Get
+        Set(value As ToolTipSideEnum)
+            提示默认侧 = value
         End Set
     End Property
 
@@ -2136,10 +2163,20 @@ Public Class ModernListBox
                 If _tipForm Is Nothing OrElse _tipForm.IsDisposed Then
                     _tipForm = New FloatingToolTipForm(Me)
                 End If
-                _tipSourceScreenRect = RectangleToScreen(获取项矩形(hitIdx))
-                Dim screenPt As Point = Cursor.Position
-                screenPt.Offset(16, 16)
-                _tipForm.ShowTip(tipText, screenPt, CreateToolTipStyle())
+                Dim itemRect As Rectangle = 获取项矩形(hitIdx)
+                If itemRect.IsEmpty Then
+                    关闭工具提示()
+                    Return
+                End If
+                _tipSourceScreenRect = RectangleToScreen(itemRect)
+                Dim gap As Integer = ScaledToolTipGap()
+                Dim screenPt As Point = Me.PointToScreen(New Point(Me.Width + gap, itemRect.Y))
+                Dim preferredSide As FloatingToolTipSide = If(提示默认侧 = ToolTipSideEnum.Left,
+                                                              FloatingToolTipSide.Left,
+                                                              FloatingToolTipSide.Right)
+                _tipForm.ShowTip(tipText, screenPt, CreateToolTipStyle(),
+                                 Math.Max(0, Me.Width + gap * 2),
+                                 preferredSide)
                 Return
             End If
         End If
@@ -2178,6 +2215,10 @@ Public Class ModernListBox
             .Padding = 提示内边距,
             .MaxWidth = Math.Max(50, 提示最大宽度)
         }
+    End Function
+
+    Private Function ScaledToolTipGap() As Integer
+        Return CInt(Math.Round(提示间距 * DpiScale(), MidpointRounding.AwayFromZero))
     End Function
 
 #End Region
