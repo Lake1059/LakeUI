@@ -65,6 +65,23 @@ Friend Class ShadowWindow
                                          uFlags As UInteger) As Boolean
     End Function
 
+    <ComImport, Guid("a5cd92ff-29be-454c-8d04-d82879fb3f1b"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)>
+    Private Interface IVirtualDesktopManager
+        <PreserveSig>
+        Function IsWindowOnCurrentVirtualDesktop(topLevelWindow As IntPtr,
+                                                 <MarshalAs(UnmanagedType.Bool)> ByRef onCurrentDesktop As Boolean) As Integer
+
+        <PreserveSig>
+        Function GetWindowDesktopId(topLevelWindow As IntPtr, ByRef desktopId As Guid) As Integer
+
+        <PreserveSig>
+        Function MoveWindowToDesktop(topLevelWindow As IntPtr, ByRef desktopId As Guid) As Integer
+    End Interface
+
+    <ComImport, Guid("aa509086-5ca9-4c25-8f95-589d3c07b48a")>
+    Private Class CVirtualDesktopManager
+    End Class
+
     <StructLayout(LayoutKind.Sequential)>
     Private Structure W32Point
         Public X, Y As Integer
@@ -167,6 +184,31 @@ Friend Class ShadowWindow
             Return True
         End Get
     End Property
+
+    Public Sub SyncVirtualDesktopWithHost()
+        If HostHandle = IntPtr.Zero Then Return
+
+        Dim shadowHandle As IntPtr = Me.Handle
+        If shadowHandle = IntPtr.Zero Then Return
+
+        Dim manager As IVirtualDesktopManager = Nothing
+        Try
+            manager = DirectCast(New CVirtualDesktopManager(), IVirtualDesktopManager)
+
+            Dim desktopId As Guid = Guid.Empty
+            If manager.GetWindowDesktopId(HostHandle, desktopId) <> 0 Then Return
+
+            Dim unused = manager.MoveWindowToDesktop(shadowHandle, desktopId)
+        Catch
+        Finally
+            If manager IsNot Nothing Then
+                Try
+                    Marshal.FinalReleaseComObject(manager)
+                Catch
+                End Try
+            End If
+        End Try
+    End Sub
 
     ''' <summary>根据 ResizeWidth / ResizeFullArea 更新是否允许鼠标命中测试。</summary>
     Public Sub UpdateHitTestTransparency()

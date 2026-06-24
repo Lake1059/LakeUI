@@ -668,8 +668,8 @@ Public Class ModernComboBox
         End Set
     End Property
 
-    Private 下拉毛玻璃Tint颜色 As Color = Color.FromArgb(40, 0, 0, 0)
-    <Category("LakeUI - DropDown Backdrop"), Description("下拉列表毛玻璃 tint 叠加颜色（含 Alpha）。"), DefaultValue(GetType(Color), "40,0,0,0"), Browsable(True)>
+    Private 下拉毛玻璃Tint颜色 As Color = Color.FromArgb(120, 0, 0, 0)
+    <Category("LakeUI - DropDown Backdrop"), Description("下拉列表毛玻璃 tint 叠加颜色（含 Alpha）。"), DefaultValue(GetType(Color), "120,0,0,0"), Browsable(True)>
     Public Property DropDownBackdropTintColor As Color
         Get
             Return 下拉毛玻璃Tint颜色
@@ -679,7 +679,7 @@ Public Class ModernComboBox
         End Set
     End Property
 
-    Private 下拉毛玻璃模糊半径 As Integer = 30
+    Private 下拉毛玻璃模糊半径 As Integer = 10
     <Category("LakeUI - DropDown Backdrop"), Description("下拉列表毛玻璃模糊半径（逻辑像素）。1 - 96。"), DefaultValue(10), Browsable(True)>
     Public Property DropDownBackdropBlurRadius As Integer
         Get
@@ -690,7 +690,7 @@ Public Class ModernComboBox
         End Set
     End Property
 
-    Private 下拉毛玻璃模糊次数 As Integer = 2
+    Private 下拉毛玻璃模糊次数 As Integer = 1
     <Category("LakeUI - DropDown Backdrop"), Description("下拉列表毛玻璃 box blur 通过次数（0=不模糊，3≈高斯）。"), DefaultValue(1), Browsable(True)>
     Public Property DropDownBackdropBlurPasses As Integer
         Get

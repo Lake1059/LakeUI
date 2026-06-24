@@ -1478,6 +1478,7 @@ Public Class ThisIsYourWindow
         s.ShadowForm.ResizeWidth = _分层阴影调整宽度
         s.ShadowForm.ResizeFullArea = _分层阴影整区可调
         s.ShadowForm.UpdateHitTestTransparency()
+        s.ShadowForm.SyncVirtualDesktopWithHost()
         Dim shadowColor As Color = _分层阴影颜色
         If _分层阴影自动颜色 AndAlso 毛玻璃当前启用(s) Then
             shadowColor = s.Renderer.DeriveShadowColor(_分层阴影颜色)

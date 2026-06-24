@@ -1,6 +1,6 @@
 <Global.Microsoft.VisualBasic.CompilerServices.DesignerGenerated()> _
 Partial Class MarkDownViewer
-    Inherits System.Windows.Forms.UserControl
+    Inherits MarkdownViewerCore
 
     'UserControl 重写释放以清理组件列表。
     <System.Diagnostics.DebuggerNonUserCode()> _

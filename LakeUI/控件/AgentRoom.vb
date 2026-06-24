@@ -34,6 +34,9 @@ Public Class AgentRoom
         Friend BubbleRect As Rectangle
         Friend TextOriginX As Integer
         Friend TextOriginY As Integer
+        Friend MarkdownRenderer As MarkdownViewerCore
+        Friend MarkdownRendererText As String = Nothing
+        Friend MarkdownRendererWidth As Integer = -1
 
         Private _kind As ChatItemKind = ChatItemKind.AssistantMessage
         Private _text As String = ""
@@ -111,6 +114,7 @@ Public Class AgentRoom
 
         Protected Overrides Sub RemoveItem(index As Integer)
             Dim it = Me(index)
+            _owner?.ReleaseMarkdownRenderer(it)
             it.OwnerRoom = Nothing
             MyBase.RemoveItem(index)
             _owner?.OnItemsChanged(index, False)
@@ -118,6 +122,7 @@ Public Class AgentRoom
 
         Protected Overrides Sub ClearItems()
             For Each it In Me
+                _owner?.ReleaseMarkdownRenderer(it)
                 it.OwnerRoom = Nothing
             Next
             MyBase.ClearItems()
@@ -127,7 +132,10 @@ Public Class AgentRoom
         Protected Overrides Sub SetItem(index As Integer, item As ChatItem)
             If item Is Nothing Then Return
             Dim old = Me(index)
-            If old IsNot Nothing Then old.OwnerRoom = Nothing
+            If old IsNot Nothing Then
+                _owner?.ReleaseMarkdownRenderer(old)
+                old.OwnerRoom = Nothing
+            End If
             MyBase.SetItem(index, item)
             item.OwnerRoom = _owner
             item.NeedsRelayout = True
@@ -199,12 +207,43 @@ Public Class AgentRoom
             Return System.HashCode.Combine(ItemIndex, CharIndex)
         End Function
     End Structure
+
+    Private Structure MarkdownHitInfo
+        Public Renderer As MarkdownViewerCore
+        Public LocalPoint As Point
+
+        Public ReadOnly Property HasValue As Boolean
+            Get
+                Return Renderer IsNot Nothing
+            End Get
+        End Property
+    End Structure
+
+    Private Structure LinkHitInfo
+        Public Url As String
+        Public ItemIndex As Integer
+
+        Public ReadOnly Property HasValue As Boolean
+            Get
+                Return Not String.IsNullOrEmpty(Url)
+            End Get
+        End Property
+    End Structure
+
     Friend _selAnchor As New TextPos(-1, 0)
     Friend _selCaret As New TextPos(-1, 0)
     Friend _hasSelection As Boolean = False
     Friend _mouseSelecting As Boolean = False
+    Friend _mouseSelectingMarkdown As Boolean = False
+    Friend _activeMarkdownRenderer As MarkdownViewerCore = Nothing
+    Friend _mouseDownLinkUrl As String = Nothing
+    Friend _mouseDownLinkItemIndex As Integer = -1
 
     Friend _copyContextMenu As ContextMenuStrip
+
+    Friend _enableMarkdownForAssistant As Boolean = True
+    Private _markdownParser As MarkdownViewerCore.MarkdownParser = Nothing
+    Private _markdownBasePath As String = Nothing
 #End Region
 
 #Region "构造"
@@ -437,7 +476,7 @@ Public Class AgentRoom
         End Set
     End Property
 
-    Friend _linkColor As Color = Color.FromArgb(86, 156, 214)
+    Friend _linkColor As Color = MarkdownViewerCore.DefaultMarkdownLinkColor
     <Category("LakeUI"), Description("链接颜色"), DefaultValue(GetType(Color), "86, 156, 214")>
     Public Property LinkColor As Color
         Get
@@ -467,6 +506,28 @@ Public Class AgentRoom
         End Get
         Set(value As Boolean)
             SetValue(_linkUnderline, value)
+        End Set
+    End Property
+
+    Friend _linkUnderlineThickness As Integer = MarkdownViewerCore.DefaultMarkdownLinkUnderlineThickness
+    <Category("LakeUI"), Description("链接下划线粗细"), DefaultValue(1)>
+    Public Property LinkUnderlineThickness As Integer
+        Get
+            Return _linkUnderlineThickness
+        End Get
+        Set(value As Integer)
+            SetValue(_linkUnderlineThickness, Math.Max(1, value))
+        End Set
+    End Property
+
+    Friend _linkUnderlineOffset As Integer = MarkdownViewerCore.DefaultMarkdownLinkUnderlineOffset
+    <Category("LakeUI"), Description("链接下划线距离文本行底部的偏移"), DefaultValue(3)>
+    Public Property LinkUnderlineOffset As Integer
+        Get
+            Return _linkUnderlineOffset
+        End Get
+        Set(value As Integer)
+            SetValue(_linkUnderlineOffset, Math.Max(0, value))
         End Set
     End Property
 
@@ -681,6 +742,587 @@ Public Class AgentRoom
         End Set
     End Property
 
+    <Category("LakeUI - Markdown"), Description("助手消息是否按 Markdown 渲染"), DefaultValue(True)>
+    Public Property EnableMarkdownForAssistant As Boolean
+        Get
+            Return _enableMarkdownForAssistant
+        End Get
+        Set(value As Boolean)
+            If _enableMarkdownForAssistant <> value Then
+                _enableMarkdownForAssistant = value
+                InvalidateMarkdownRenderers()
+            End If
+        End Set
+    End Property
+
+    <Category("LakeUI - Markdown"), Description("卡片消息固定按普通文本渲染"), DefaultValue(False)>
+    <Browsable(False), EditorBrowsable(EditorBrowsableState.Never)>
+    Public Property EnableMarkdownForCard As Boolean
+        Get
+            Return False
+        End Get
+        Set(value As Boolean)
+        End Set
+    End Property
+
+    <Category("LakeUI - Markdown"), Description("用户消息固定按普通文本渲染"), DefaultValue(False)>
+    <Browsable(False), EditorBrowsable(EditorBrowsableState.Never)>
+    Public Property EnableMarkdownForUser As Boolean
+        Get
+            Return False
+        End Get
+        Set(value As Boolean)
+        End Set
+    End Property
+
+    <Category("LakeUI - Markdown"), Description("AgentRoom 内部 Markdown 解析器"), Browsable(False),
+     DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+    Public Property MarkdownParser As MarkdownViewerCore.MarkdownParser
+        Get
+            Return _markdownParser
+        End Get
+        Set(value As MarkdownViewerCore.MarkdownParser)
+            If Not Object.ReferenceEquals(_markdownParser, value) Then
+                _markdownParser = value
+                InvalidateMarkdownRenderers()
+            End If
+        End Set
+    End Property
+
+    <Category("LakeUI - Markdown"), Description("Markdown 图片相对路径的基准目录"), DefaultValue(GetType(String), "")>
+    Public Property MarkdownBasePath As String
+        Get
+            Return _markdownBasePath
+        End Get
+        Set(value As String)
+            If _markdownBasePath <> value Then
+                _markdownBasePath = value
+                InvalidateMarkdownRenderers()
+            End If
+        End Set
+    End Property
+
+    Friend _markdownHeadingColor As Color = MarkdownViewerCore.DefaultMarkdownHeadingColor
+    <Category("LakeUI - Markdown"), Description("Markdown 标题颜色"), DefaultValue(GetType(Color), "Silver")>
+    Public Property HeadingColor As Color
+        Get
+            Return _markdownHeadingColor
+        End Get
+        Set(value As Color)
+            SetMarkdownStyleValue(_markdownHeadingColor, value)
+        End Set
+    End Property
+
+    Friend _markdownHeadingSeparatorColor As Color = MarkdownViewerCore.DefaultMarkdownHeadingSeparatorColor
+    <Category("LakeUI - Markdown"), Description("Markdown H1/H2 标题下方分隔线颜色"), DefaultValue(GetType(Color), "80, 220, 220, 220")>
+    Public Property HeadingSeparatorColor As Color
+        Get
+            Return _markdownHeadingSeparatorColor
+        End Get
+        Set(value As Color)
+            SetMarkdownStyleValue(_markdownHeadingSeparatorColor, value)
+        End Set
+    End Property
+
+    Friend _markdownHeadingSeparatorThickness As Integer = MarkdownViewerCore.DefaultMarkdownHeadingSeparatorThickness
+    <Category("LakeUI - Markdown"), Description("Markdown H1/H2 标题下方分隔线粗细"), DefaultValue(2)>
+    Public Property HeadingSeparatorThickness As Integer
+        Get
+            Return _markdownHeadingSeparatorThickness
+        End Get
+        Set(value As Integer)
+            SetMarkdownStyleValue(_markdownHeadingSeparatorThickness, Math.Max(0, value))
+        End Set
+    End Property
+
+    Friend _markdownHeadingSeparatorGap As Integer = MarkdownViewerCore.DefaultMarkdownHeadingSeparatorGap
+    <Category("LakeUI - Markdown"), Description("Markdown H1/H2 标题文字与分隔线之间的间距"), DefaultValue(4)>
+    Public Property HeadingSeparatorGap As Integer
+        Get
+            Return _markdownHeadingSeparatorGap
+        End Get
+        Set(value As Integer)
+            SetMarkdownStyleValue(_markdownHeadingSeparatorGap, Math.Max(0, value))
+        End Set
+    End Property
+
+    Friend _markdownBoldColor As Color = MarkdownViewerCore.DefaultMarkdownBoldColor
+    <Category("LakeUI - Markdown"), Description("Markdown 粗体颜色。Empty 时跟随当前文本颜色"), DefaultValue(GetType(Color), "")>
+    Public Property BoldColor As Color
+        Get
+            Return _markdownBoldColor
+        End Get
+        Set(value As Color)
+            SetMarkdownStyleValue(_markdownBoldColor, value)
+        End Set
+    End Property
+
+    Friend _markdownItalicColor As Color = MarkdownViewerCore.DefaultMarkdownItalicColor
+    <Category("LakeUI - Markdown"), Description("Markdown 斜体颜色。Empty 时跟随当前文本颜色"), DefaultValue(GetType(Color), "")>
+    Public Property ItalicColor As Color
+        Get
+            Return _markdownItalicColor
+        End Get
+        Set(value As Color)
+            SetMarkdownStyleValue(_markdownItalicColor, value)
+        End Set
+    End Property
+
+    Friend _markdownInlineCodeColor As Color = MarkdownViewerCore.DefaultMarkdownInlineCodeColor
+    <Category("LakeUI - Markdown"), Description("Markdown 行内代码文字颜色"), DefaultValue(GetType(Color), "206, 145, 120")>
+    Public Property InlineCodeColor As Color
+        Get
+            Return _markdownInlineCodeColor
+        End Get
+        Set(value As Color)
+            SetMarkdownStyleValue(_markdownInlineCodeColor, value)
+        End Set
+    End Property
+
+    Friend _markdownInlineCodeBackColor As Color = MarkdownViewerCore.DefaultMarkdownCodeBackColor
+    Friend _markdownCodeBlockBackColor As Color = MarkdownViewerCore.DefaultMarkdownCodeBackColor
+    <Category("LakeUI - Markdown"), Description("Markdown 行内代码 / 代码块背景颜色。Empty 时自动跟随当前气泡/卡片背景"), DefaultValue(GetType(Color), "120, 0, 0, 0")>
+    Public Property CodeBackColor As Color
+        Get
+            Return _markdownCodeBlockBackColor
+        End Get
+        Set(value As Color)
+            If _markdownInlineCodeBackColor <> value OrElse _markdownCodeBlockBackColor <> value Then
+                _markdownInlineCodeBackColor = value
+                _markdownCodeBlockBackColor = value
+                InvalidateMarkdownRenderers()
+            End If
+        End Set
+    End Property
+
+    <Category("LakeUI - Markdown"), Description("Markdown 行内代码背景颜色。Empty 时自动跟随当前气泡/卡片背景"), DefaultValue(GetType(Color), "120, 0, 0, 0")>
+    Public Property InlineCodeBackColor As Color
+        Get
+            Return _markdownInlineCodeBackColor
+        End Get
+        Set(value As Color)
+            SetMarkdownStyleValue(_markdownInlineCodeBackColor, value)
+        End Set
+    End Property
+
+    <Category("LakeUI - Markdown"), Description("Markdown 代码块背景颜色。Empty 时自动跟随当前气泡/卡片背景"), DefaultValue(GetType(Color), "120, 0, 0, 0")>
+    Public Property CodeBlockBackColor As Color
+        Get
+            Return _markdownCodeBlockBackColor
+        End Get
+        Set(value As Color)
+            SetMarkdownStyleValue(_markdownCodeBlockBackColor, value)
+        End Set
+    End Property
+
+    Friend _markdownCodeBlockForeColor As Color = MarkdownViewerCore.DefaultMarkdownCodeBlockForeColor
+    <Category("LakeUI - Markdown"), Description("Markdown 代码块文字颜色"), DefaultValue(GetType(Color), "Silver")>
+    Public Property CodeBlockForeColor As Color
+        Get
+            Return _markdownCodeBlockForeColor
+        End Get
+        Set(value As Color)
+            SetMarkdownStyleValue(_markdownCodeBlockForeColor, value)
+        End Set
+    End Property
+
+    Friend _markdownInlineCodePadding As Padding = MarkdownViewerCore.DefaultMarkdownInlineCodePadding
+    <Category("LakeUI - Markdown"), Description("Markdown 行内代码内边距"), DefaultValue(GetType(Padding), "5, 3, 5, 3")>
+    Public Property InlineCodePadding As Padding
+        Get
+            Return _markdownInlineCodePadding
+        End Get
+        Set(value As Padding)
+            SetMarkdownStyleValue(_markdownInlineCodePadding, value)
+        End Set
+    End Property
+
+    Friend _markdownInlineCodeRadius As Integer = MarkdownViewerCore.DefaultMarkdownInlineCodeRadius
+    <Category("LakeUI - Markdown"), Description("Markdown 行内代码圆角半径"), DefaultValue(3)>
+    Public Property InlineCodeRadius As Integer
+        Get
+            Return _markdownInlineCodeRadius
+        End Get
+        Set(value As Integer)
+            SetMarkdownStyleValue(_markdownInlineCodeRadius, Math.Max(0, value))
+        End Set
+    End Property
+
+    Friend _markdownCodeBlockPadding As Padding = MarkdownViewerCore.DefaultMarkdownCodeBlockPadding
+    <Category("LakeUI - Markdown"), Description("Markdown 代码块内边距"), DefaultValue(GetType(Padding), "7, 5, 7, 5")>
+    Public Property CodeBlockPadding As Padding
+        Get
+            Return _markdownCodeBlockPadding
+        End Get
+        Set(value As Padding)
+            SetMarkdownStyleValue(_markdownCodeBlockPadding, value)
+        End Set
+    End Property
+
+    Friend _markdownCodeFont As Font = Nothing
+    <Category("LakeUI - Markdown"), Description("Markdown 代码字体，Nothing 时使用 Consolas"), Browsable(True),
+     DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+    Public Property CodeFont As Font
+        Get
+            Return _markdownCodeFont
+        End Get
+        Set(value As Font)
+            SetMarkdownStyleValue(_markdownCodeFont, value)
+        End Set
+    End Property
+
+    Friend _markdownBlockSpacing As Integer = MarkdownViewerCore.DefaultMarkdownBlockSpacing
+    <Category("LakeUI - Markdown"), Description("Markdown 段落间距"), DefaultValue(20)>
+    Public Property BlockSpacing As Integer
+        Get
+            Return _markdownBlockSpacing
+        End Get
+        Set(value As Integer)
+            SetMarkdownStyleValue(_markdownBlockSpacing, Math.Max(0, value))
+        End Set
+    End Property
+
+    Friend _markdownInlineLineSpacing As Integer = MarkdownViewerCore.DefaultMarkdownInlineLineSpacing
+    <Category("LakeUI - Markdown"), Description("Markdown 自动换行后的行内行距"), DefaultValue(4)>
+    Public Property InlineLineSpacing As Integer
+        Get
+            Return _markdownInlineLineSpacing
+        End Get
+        Set(value As Integer)
+            SetMarkdownStyleValue(_markdownInlineLineSpacing, Math.Max(0, value))
+        End Set
+    End Property
+
+    Friend _markdownTableCellPadding As Integer = MarkdownViewerCore.DefaultMarkdownTableCellPadding
+    <Category("LakeUI - Markdown"), Description("Markdown 表格单元格内边距"), DefaultValue(7)>
+    Public Property TableCellPadding As Integer
+        Get
+            Return _markdownTableCellPadding
+        End Get
+        Set(value As Integer)
+            SetMarkdownStyleValue(_markdownTableCellPadding, Math.Max(0, value))
+        End Set
+    End Property
+
+    Friend _markdownTableBorderThickness As Integer = MarkdownViewerCore.DefaultMarkdownTableBorderThickness
+    <Category("LakeUI - Markdown"), Description("Markdown 表格边框粗细"), DefaultValue(1)>
+    Public Property TableBorderThickness As Integer
+        Get
+            Return _markdownTableBorderThickness
+        End Get
+        Set(value As Integer)
+            SetMarkdownStyleValue(_markdownTableBorderThickness, Math.Max(1, value))
+        End Set
+    End Property
+
+    Friend _markdownTableBorderColor As Color = MarkdownViewerCore.DefaultMarkdownTableBorderColor
+    <Category("LakeUI - Markdown"), Description("Markdown 表格边框颜色。Empty 时自动跟随当前气泡/卡片背景"), DefaultValue(GetType(Color), "80, 220, 220, 220")>
+    Public Property TableBorderColor As Color
+        Get
+            Return _markdownTableBorderColor
+        End Get
+        Set(value As Color)
+            SetMarkdownStyleValue(_markdownTableBorderColor, value)
+        End Set
+    End Property
+
+    Friend _markdownTableHeaderBackColor As Color = MarkdownViewerCore.DefaultMarkdownTableHeaderBackColor
+    <Category("LakeUI - Markdown"), Description("Markdown 表头背景颜色。Empty 时自动跟随当前气泡/卡片背景"), DefaultValue(GetType(Color), "40, 220, 220, 220")>
+    Public Property TableHeaderBackColor As Color
+        Get
+            Return _markdownTableHeaderBackColor
+        End Get
+        Set(value As Color)
+            SetMarkdownStyleValue(_markdownTableHeaderBackColor, value)
+        End Set
+    End Property
+
+    Friend _markdownBlockQuoteBarColor As Color = MarkdownViewerCore.DefaultMarkdownBlockQuoteBarColor
+    <Category("LakeUI - Markdown"), Description("Markdown 引用块竖条颜色"), DefaultValue(GetType(Color), "80, 220, 220, 220")>
+    Public Property BlockQuoteBarColor As Color
+        Get
+            Return _markdownBlockQuoteBarColor
+        End Get
+        Set(value As Color)
+            SetMarkdownStyleValue(_markdownBlockQuoteBarColor, value)
+        End Set
+    End Property
+
+    Friend _markdownBlockQuoteForeColor As Color = MarkdownViewerCore.DefaultMarkdownBlockQuoteForeColor
+    <Category("LakeUI - Markdown"), Description("Markdown 引用块文字颜色"), DefaultValue(GetType(Color), "100, 255, 255, 255")>
+    Public Property BlockQuoteForeColor As Color
+        Get
+            Return _markdownBlockQuoteForeColor
+        End Get
+        Set(value As Color)
+            SetMarkdownStyleValue(_markdownBlockQuoteForeColor, value)
+        End Set
+    End Property
+
+    Friend _markdownBlockQuoteIndent As Integer = MarkdownViewerCore.DefaultMarkdownBlockQuoteIndent
+    <Category("LakeUI - Markdown"), Description("Markdown 引用块文字缩进"), DefaultValue(16)>
+    Public Property BlockQuoteIndent As Integer
+        Get
+            Return _markdownBlockQuoteIndent
+        End Get
+        Set(value As Integer)
+            SetMarkdownStyleValue(_markdownBlockQuoteIndent, Math.Max(0, value))
+        End Set
+    End Property
+
+    Friend _markdownBlockQuoteBarOffset As Integer = MarkdownViewerCore.DefaultMarkdownBlockQuoteBarOffset
+    <Category("LakeUI - Markdown"), Description("Markdown 引用块竖条偏移"), DefaultValue(4)>
+    Public Property BlockQuoteBarOffset As Integer
+        Get
+            Return _markdownBlockQuoteBarOffset
+        End Get
+        Set(value As Integer)
+            SetMarkdownStyleValue(_markdownBlockQuoteBarOffset, Math.Max(0, value))
+        End Set
+    End Property
+
+    Friend _markdownBlockQuoteBarWidth As Integer = MarkdownViewerCore.DefaultMarkdownBlockQuoteBarWidth
+    <Category("LakeUI - Markdown"), Description("Markdown 引用块竖条宽度"), DefaultValue(3)>
+    Public Property BlockQuoteBarWidth As Integer
+        Get
+            Return _markdownBlockQuoteBarWidth
+        End Get
+        Set(value As Integer)
+            SetMarkdownStyleValue(_markdownBlockQuoteBarWidth, Math.Max(1, value))
+        End Set
+    End Property
+
+    Friend _markdownUnorderedListIndent As Integer = MarkdownViewerCore.DefaultMarkdownUnorderedListIndent
+    <Category("LakeUI - Markdown"), Description("Markdown 无序列表文字缩进"), DefaultValue(20)>
+    Public Property UnorderedListIndent As Integer
+        Get
+            Return _markdownUnorderedListIndent
+        End Get
+        Set(value As Integer)
+            SetMarkdownStyleValue(_markdownUnorderedListIndent, Math.Max(0, value))
+        End Set
+    End Property
+
+    Friend _markdownOrderedListIndent As Integer = MarkdownViewerCore.DefaultMarkdownOrderedListIndent
+    <Category("LakeUI - Markdown"), Description("Markdown 有序列表文字缩进"), DefaultValue(24)>
+    Public Property OrderedListIndent As Integer
+        Get
+            Return _markdownOrderedListIndent
+        End Get
+        Set(value As Integer)
+            SetMarkdownStyleValue(_markdownOrderedListIndent, Math.Max(0, value))
+        End Set
+    End Property
+
+    Friend _markdownBulletRadius As Integer = MarkdownViewerCore.DefaultMarkdownBulletRadius
+    <Category("LakeUI - Markdown"), Description("Markdown 无序列表圆点半径"), DefaultValue(3)>
+    Public Property BulletRadius As Integer
+        Get
+            Return _markdownBulletRadius
+        End Get
+        Set(value As Integer)
+            SetMarkdownStyleValue(_markdownBulletRadius, Math.Max(1, value))
+        End Set
+    End Property
+
+    Friend _markdownBulletOffsetX As Integer = MarkdownViewerCore.DefaultMarkdownBulletOffsetX
+    <Category("LakeUI - Markdown"), Description("Markdown 无序列表圆点 X 偏移"), DefaultValue(6)>
+    Public Property BulletOffsetX As Integer
+        Get
+            Return _markdownBulletOffsetX
+        End Get
+        Set(value As Integer)
+            SetMarkdownStyleValue(_markdownBulletOffsetX, Math.Max(0, value))
+        End Set
+    End Property
+
+    Friend _markdownBulletOffsetY As Integer = MarkdownViewerCore.DefaultMarkdownBulletOffsetY
+    <Category("LakeUI - Markdown"), Description("Markdown 无序列表圆点 Y 偏移"), DefaultValue(-2)>
+    Public Property BulletOffsetY As Integer
+        Get
+            Return _markdownBulletOffsetY
+        End Get
+        Set(value As Integer)
+            SetMarkdownStyleValue(_markdownBulletOffsetY, value)
+        End Set
+    End Property
+
+    Friend _markdownOrderedListMarkerWidth As Integer = MarkdownViewerCore.DefaultMarkdownOrderedListMarkerWidth
+    <Category("LakeUI - Markdown"), Description("Markdown 有序列表序号标记宽度"), DefaultValue(22)>
+    Public Property OrderedListMarkerWidth As Integer
+        Get
+            Return _markdownOrderedListMarkerWidth
+        End Get
+        Set(value As Integer)
+            SetMarkdownStyleValue(_markdownOrderedListMarkerWidth, Math.Max(1, value))
+        End Set
+    End Property
+
+    Friend _markdownAlertNoteColor As Color = MarkdownViewerCore.DefaultMarkdownAlertNoteColor
+    <Category("LakeUI - Markdown"), Description("Markdown [!NOTE] 提示块颜色"), DefaultValue(GetType(Color), "83, 155, 245")>
+    Public Property AlertNoteColor As Color
+        Get
+            Return _markdownAlertNoteColor
+        End Get
+        Set(value As Color)
+            SetMarkdownStyleValue(_markdownAlertNoteColor, value)
+        End Set
+    End Property
+
+    Friend _markdownAlertTipColor As Color = MarkdownViewerCore.DefaultMarkdownAlertTipColor
+    <Category("LakeUI - Markdown"), Description("Markdown [!TIP] 提示块颜色"), DefaultValue(GetType(Color), "87, 171, 90")>
+    Public Property AlertTipColor As Color
+        Get
+            Return _markdownAlertTipColor
+        End Get
+        Set(value As Color)
+            SetMarkdownStyleValue(_markdownAlertTipColor, value)
+        End Set
+    End Property
+
+    Friend _markdownAlertImportantColor As Color = MarkdownViewerCore.DefaultMarkdownAlertImportantColor
+    <Category("LakeUI - Markdown"), Description("Markdown [!IMPORTANT] 提示块颜色"), DefaultValue(GetType(Color), "152, 110, 226")>
+    Public Property AlertImportantColor As Color
+        Get
+            Return _markdownAlertImportantColor
+        End Get
+        Set(value As Color)
+            SetMarkdownStyleValue(_markdownAlertImportantColor, value)
+        End Set
+    End Property
+
+    Friend _markdownAlertWarningColor As Color = MarkdownViewerCore.DefaultMarkdownAlertWarningColor
+    <Category("LakeUI - Markdown"), Description("Markdown [!WARNING] 提示块颜色"), DefaultValue(GetType(Color), "198, 144, 38")>
+    Public Property AlertWarningColor As Color
+        Get
+            Return _markdownAlertWarningColor
+        End Get
+        Set(value As Color)
+            SetMarkdownStyleValue(_markdownAlertWarningColor, value)
+        End Set
+    End Property
+
+    Friend _markdownAlertCautionColor As Color = MarkdownViewerCore.DefaultMarkdownAlertCautionColor
+    <Category("LakeUI - Markdown"), Description("Markdown [!CAUTION] 提示块颜色"), DefaultValue(GetType(Color), "229, 83, 75")>
+    Public Property AlertCautionColor As Color
+        Get
+            Return _markdownAlertCautionColor
+        End Get
+        Set(value As Color)
+            SetMarkdownStyleValue(_markdownAlertCautionColor, value)
+        End Set
+    End Property
+
+    Friend _markdownHorizontalRuleColor As Color = MarkdownViewerCore.DefaultMarkdownHorizontalRuleColor
+    <Category("LakeUI - Markdown"), Description("Markdown 分隔线颜色"), DefaultValue(GetType(Color), "60, 60, 60")>
+    Public Property HorizontalRuleColor As Color
+        Get
+            Return _markdownHorizontalRuleColor
+        End Get
+        Set(value As Color)
+            SetMarkdownStyleValue(_markdownHorizontalRuleColor, value)
+        End Set
+    End Property
+
+    Friend _markdownHorizontalRuleThickness As Integer = MarkdownViewerCore.DefaultMarkdownHorizontalRuleThickness
+    <Category("LakeUI - Markdown"), Description("Markdown 分隔线粗细"), DefaultValue(1)>
+    Public Property HorizontalRuleThickness As Integer
+        Get
+            Return _markdownHorizontalRuleThickness
+        End Get
+        Set(value As Integer)
+            SetMarkdownStyleValue(_markdownHorizontalRuleThickness, Math.Max(1, value))
+        End Set
+    End Property
+
+    Friend _markdownHorizontalRulePadding As Integer = MarkdownViewerCore.DefaultMarkdownHorizontalRulePadding
+    <Category("LakeUI - Markdown"), Description("Markdown 分隔线上下内边距"), DefaultValue(4)>
+    Public Property HorizontalRulePadding As Integer
+        Get
+            Return _markdownHorizontalRulePadding
+        End Get
+        Set(value As Integer)
+            SetMarkdownStyleValue(_markdownHorizontalRulePadding, Math.Max(0, value))
+        End Set
+    End Property
+
+    Friend _markdownHorizontalRuleInset As Integer = MarkdownViewerCore.DefaultMarkdownHorizontalRuleInset
+    <Category("LakeUI - Markdown"), Description("Markdown 分隔线水平缩进"), DefaultValue(4)>
+    Public Property HorizontalRuleInset As Integer
+        Get
+            Return _markdownHorizontalRuleInset
+        End Get
+        Set(value As Integer)
+            SetMarkdownStyleValue(_markdownHorizontalRuleInset, Math.Max(0, value))
+        End Set
+    End Property
+
+    Friend _markdownImagePlaceholderBorderColor As Color = MarkdownViewerCore.DefaultMarkdownImagePlaceholderBorderColor
+    <Category("LakeUI - Markdown"), Description("Markdown 图片占位边框颜色"), DefaultValue(GetType(Color), "40, 220, 220, 220")>
+    Public Property ImagePlaceholderBorderColor As Color
+        Get
+            Return _markdownImagePlaceholderBorderColor
+        End Get
+        Set(value As Color)
+            SetMarkdownStyleValue(_markdownImagePlaceholderBorderColor, value)
+        End Set
+    End Property
+
+    Friend _markdownImagePlaceholderTextColor As Color = MarkdownViewerCore.DefaultMarkdownImagePlaceholderTextColor
+    <Category("LakeUI - Markdown"), Description("Markdown 图片占位文字颜色"), DefaultValue(GetType(Color), "80, 220, 220, 220")>
+    Public Property ImagePlaceholderTextColor As Color
+        Get
+            Return _markdownImagePlaceholderTextColor
+        End Get
+        Set(value As Color)
+            SetMarkdownStyleValue(_markdownImagePlaceholderTextColor, value)
+        End Set
+    End Property
+
+    Friend _markdownImagePlaceholderWidth As Integer = MarkdownViewerCore.DefaultMarkdownImagePlaceholderWidth
+    <Category("LakeUI - Markdown"), Description("Markdown 图片占位宽度"), DefaultValue(300)>
+    Public Property ImagePlaceholderWidth As Integer
+        Get
+            Return _markdownImagePlaceholderWidth
+        End Get
+        Set(value As Integer)
+            SetMarkdownStyleValue(_markdownImagePlaceholderWidth, Math.Max(1, value))
+        End Set
+    End Property
+
+    Friend _markdownImagePlaceholderHeightLines As Integer = MarkdownViewerCore.DefaultMarkdownImagePlaceholderHeightLines
+    <Category("LakeUI - Markdown"), Description("Markdown 图片占位高度行数"), DefaultValue(2)>
+    Public Property ImagePlaceholderHeightLines As Integer
+        Get
+            Return _markdownImagePlaceholderHeightLines
+        End Get
+        Set(value As Integer)
+            SetMarkdownStyleValue(_markdownImagePlaceholderHeightLines, Math.Max(1, value))
+        End Set
+    End Property
+
+    Friend _markdownStrikethroughColor As Color = MarkdownViewerCore.DefaultMarkdownStrikethroughColor
+    <Category("LakeUI - Markdown"), Description("Markdown 删除线颜色"), DefaultValue(GetType(Color), "Gray")>
+    Public Property StrikethroughColor As Color
+        Get
+            Return _markdownStrikethroughColor
+        End Get
+        Set(value As Color)
+            SetMarkdownStyleValue(_markdownStrikethroughColor, value)
+        End Set
+    End Property
+
+    Friend _markdownStrikethroughThickness As Integer = MarkdownViewerCore.DefaultMarkdownStrikethroughThickness
+    <Category("LakeUI - Markdown"), Description("Markdown 删除线粗细"), DefaultValue(1)>
+    Public Property StrikethroughThickness As Integer
+        Get
+            Return _markdownStrikethroughThickness
+        End Get
+        Set(value As Integer)
+            SetMarkdownStyleValue(_markdownStrikethroughThickness, Math.Max(1, value))
+        End Set
+    End Property
+
     Public Event LinkClicked As EventHandler(Of LinkClickedEventArgs)
 #End Region
 #Region "公共 API"
@@ -791,17 +1433,223 @@ Public Class AgentRoom
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
+            InvalidateAllItemsLayout()
             OuterToInnerRefreshScheduler.RequestFull(Me)
+        End If
+    End Sub
+
+    Private Sub SetMarkdownStyleValue(Of T)(ByRef field As T, value As T)
+        If Not EqualityComparer(Of T).Default.Equals(field, value) Then
+            field = value
+            InvalidateMarkdownRenderers()
+        End If
+    End Sub
+
+    Private Function DpiScale() As Single
+        Return Math.Max(0.01F, CSng(Me.DeviceDpi) / 96.0F)
+    End Function
+
+    Private Function Dpi(value As Integer) As Integer
+        Return CInt(Math.Round(value * DpiScale()))
+    End Function
+
+    Private Function Dpi(value As Single) As Single
+        Return value * DpiScale()
+    End Function
+
+    Private Function Dpi(value As Padding) As Padding
+        Dim s As Single = DpiScale()
+        Return New Padding(
+            CInt(Math.Round(value.Left * s)),
+            CInt(Math.Round(value.Top * s)),
+            CInt(Math.Round(value.Right * s)),
+            CInt(Math.Round(value.Bottom * s)))
+    End Function
+
+    Private Function GetLineHeight(font As Font) As Integer
+        If font Is Nothing Then Return Dpi(18)
+        Return CInt(Math.Ceiling(font.GetHeight(Me.DeviceDpi)))
+    End Function
+
+    Private Sub InvalidateMarkdownRenderers()
+        For Each it In _items
+            ReleaseMarkdownRenderer(it)
+            it.NeedsRelayout = True
+        Next
+        _contentHeightDirty = True
+        OuterToInnerRefreshScheduler.RequestFull(Me)
+    End Sub
+
+    Friend Sub ReleaseMarkdownRenderer(it As ChatItem)
+        If it Is Nothing OrElse it.MarkdownRenderer Is Nothing Then Return
+        Dim renderer = it.MarkdownRenderer
+        it.MarkdownRenderer = Nothing
+        it.MarkdownRendererText = Nothing
+        it.MarkdownRendererWidth = -1
+        Try
+            Controls.Remove(renderer)
+            renderer.BackgroundSource = Nothing
+            renderer.Dispose()
+        Catch
+        End Try
+    End Sub
+
+    Private Function ShouldUseMarkdown(it As ChatItem) As Boolean
+        If it Is Nothing Then Return False
+        Return it.Kind = ChatItemKind.AssistantMessage AndAlso _enableMarkdownForAssistant
+    End Function
+
+    Private Function GetItemForeColor(it As ChatItem) As Color
+        If it.Kind = ChatItemKind.Card Then Return _cardForeColor
+        If it.Kind = ChatItemKind.UserMessage Then Return _userBubbleForeColor
+        Return _assistantBubbleForeColor
+    End Function
+
+    Private Function GetItemBackColor(it As ChatItem) As Color
+        If it.Kind = ChatItemKind.Card Then Return _cardBackColor
+        If it.Kind = ChatItemKind.UserMessage Then Return _userBubbleBackColor
+        Return _assistantBubbleBackColor
+    End Function
+
+    Private Function EnsureMarkdownRenderer(it As ChatItem, contentWidth As Integer) As MarkdownViewerCore
+        If it.MarkdownRenderer Is Nothing OrElse it.MarkdownRenderer.IsDisposed Then
+            Dim renderer As New MarkdownViewerCore With {
+                .EmbeddedContentMode = True,
+                .BackColor = Color.Transparent,
+                .BackColor1 = Color.Transparent,
+                .BorderSize = 0,
+                .BorderRadius = 0,
+                .Padding = Padding.Empty,
+                .TabStop = False
+            }
+            AddHandler renderer.EmbeddedMouseWheel,
+                Sub(sender, e)
+                    ScrollByPixels(-Math.Sign(e.Delta) * Dpi(_wheelStep))
+                End Sub
+            AddHandler renderer.LinkClicked,
+                Sub(sender, e)
+                    ActivateLink(e.LinkText, _items.IndexOf(it))
+                End Sub
+            AddHandler renderer.ContentHeightChanged,
+                Sub(sender, e)
+                    If Not Object.ReferenceEquals(it.MarkdownRenderer, sender) Then Return
+                    If it.MarkdownRendererText <> it.Text Then Return
+                    it.NeedsRelayout = True
+                    _contentHeightDirty = True
+                    OuterToInnerRefreshScheduler.RequestFull(Me)
+                End Sub
+            it.MarkdownRenderer = renderer
+        End If
+
+        ConfigureMarkdownRenderer(it.MarkdownRenderer, it)
+        Dim safeWidth As Integer = Math.Max(1, contentWidth)
+        it.MarkdownRenderer.PrepareEmbeddedContent(safeWidth, Me.DeviceDpi, Me)
+        If it.MarkdownRendererText <> it.Text OrElse it.MarkdownRendererWidth <> safeWidth Then
+            it.MarkdownRenderer.SetMarkdownImmediate(it.Text, resetScroll:=True, clearSelectionOnApply:=True)
+            it.MarkdownRendererText = it.Text
+            it.MarkdownRendererWidth = safeWidth
+        End If
+        Return it.MarkdownRenderer
+    End Function
+
+    Private Sub ConfigureMarkdownRenderer(renderer As MarkdownViewerCore, it As ChatItem)
+        Dim fore As Color = GetItemForeColor(it)
+        If renderer.BackgroundSource IsNot Nothing Then renderer.BackgroundSource = Nothing
+        renderer.Font = Me.Font
+        renderer.ForeColor = fore
+        renderer.HeadingColor = _markdownHeadingColor
+        renderer.HeadingSeparatorColor = _markdownHeadingSeparatorColor
+        renderer.HeadingSeparatorThickness = _markdownHeadingSeparatorThickness
+        renderer.HeadingSeparatorGap = _markdownHeadingSeparatorGap
+        renderer.BoldColor = _markdownBoldColor
+        renderer.ItalicColor = _markdownItalicColor
+        renderer.LinkColor = _linkColor
+        renderer.LinkUnderlineThickness = _linkUnderlineThickness
+        renderer.LinkUnderlineOffset = _linkUnderlineOffset
+        renderer.SelectionColor = _selectionBackColor
+        renderer.BackColor1 = Color.Transparent
+        renderer.InlineCodeColor = _markdownInlineCodeColor
+        renderer.CodeBlockForeColor = _markdownCodeBlockForeColor
+        renderer.InlineCodeBackColor = If(_markdownInlineCodeBackColor = Color.Empty, Color.FromArgb(If(it.Kind = ChatItemKind.UserMessage, 52, 56), GetItemBackColor(it)), _markdownInlineCodeBackColor)
+        renderer.CodeBlockBackColor = If(_markdownCodeBlockBackColor = Color.Empty, Color.FromArgb(If(it.Kind = ChatItemKind.UserMessage, 44, 48), GetItemBackColor(it)), _markdownCodeBlockBackColor)
+        renderer.InlineCodePadding = _markdownInlineCodePadding
+        renderer.InlineCodeRadius = _markdownInlineCodeRadius
+        renderer.CodeBlockPadding = _markdownCodeBlockPadding
+        renderer.CodeFont = _markdownCodeFont
+        renderer.BlockSpacing = _markdownBlockSpacing
+        renderer.InlineLineSpacing = _markdownInlineLineSpacing
+        renderer.TableCellPadding = _markdownTableCellPadding
+        renderer.TableBorderThickness = _markdownTableBorderThickness
+        renderer.TableBorderColor = If(_markdownTableBorderColor = Color.Empty, ControlPaint.Light(GetItemBackColor(it), 0.25F), _markdownTableBorderColor)
+        renderer.TableHeaderBackColor = If(_markdownTableHeaderBackColor = Color.Empty, ControlPaint.Light(GetItemBackColor(it), 0.12F), _markdownTableHeaderBackColor)
+        renderer.BlockQuoteBarColor = If(_markdownBlockQuoteBarColor = Color.Empty, ControlPaint.Light(fore, 0.2F), _markdownBlockQuoteBarColor)
+        renderer.BlockQuoteForeColor = If(_markdownBlockQuoteForeColor = Color.Empty, ControlPaint.Light(fore, 0.15F), _markdownBlockQuoteForeColor)
+        renderer.BlockQuoteIndent = _markdownBlockQuoteIndent
+        renderer.BlockQuoteBarOffset = _markdownBlockQuoteBarOffset
+        renderer.BlockQuoteBarWidth = _markdownBlockQuoteBarWidth
+        renderer.UnorderedListIndent = _markdownUnorderedListIndent
+        renderer.OrderedListIndent = _markdownOrderedListIndent
+        renderer.BulletRadius = _markdownBulletRadius
+        renderer.BulletOffsetX = _markdownBulletOffsetX
+        renderer.BulletOffsetY = _markdownBulletOffsetY
+        renderer.OrderedListMarkerWidth = _markdownOrderedListMarkerWidth
+        renderer.AlertNoteColor = _markdownAlertNoteColor
+        renderer.AlertTipColor = _markdownAlertTipColor
+        renderer.AlertImportantColor = _markdownAlertImportantColor
+        renderer.AlertWarningColor = _markdownAlertWarningColor
+        renderer.AlertCautionColor = _markdownAlertCautionColor
+        renderer.HorizontalRuleColor = _markdownHorizontalRuleColor
+        renderer.HorizontalRuleThickness = _markdownHorizontalRuleThickness
+        renderer.HorizontalRulePadding = _markdownHorizontalRulePadding
+        renderer.HorizontalRuleInset = _markdownHorizontalRuleInset
+        renderer.ImagePlaceholderBorderColor = _markdownImagePlaceholderBorderColor
+        renderer.ImagePlaceholderTextColor = _markdownImagePlaceholderTextColor
+        renderer.ImagePlaceholderWidth = _markdownImagePlaceholderWidth
+        renderer.ImagePlaceholderHeightLines = _markdownImagePlaceholderHeightLines
+        renderer.StrikethroughColor = _markdownStrikethroughColor
+        renderer.StrikethroughThickness = _markdownStrikethroughThickness
+        renderer.BasePath = _markdownBasePath
+        If _markdownParser IsNot Nothing Then renderer.Parser = _markdownParser
+    End Sub
+
+    Private Sub ScrollByPixels(delta As Integer)
+        SetScrollOffset(_滚动偏移 + delta)
+    End Sub
+
+    Private Function GetMaxScrollOffset() As Integer
+        Return Math.Max(0, _contentHeight - ContentViewportHeight())
+    End Function
+
+    Private Sub SetScrollOffset(value As Integer)
+        EnsureLayout()
+        Dim maxOff = GetMaxScrollOffset()
+        Dim clamped = Math.Max(0, Math.Min(maxOff, value))
+        If _滚动偏移 = clamped AndAlso _pinnedToBottom = (_滚动偏移 >= maxOff) Then Return
+
+        _滚动偏移 = clamped
+        _pinnedToBottom = (_滚动偏移 >= maxOff)
+        EnsureLayout()
+        OuterToInnerRefreshScheduler.RequestFull(Me)
+    End Sub
+
+    Private Sub AutoScrollSelectionAtEdge(mouseY As Integer)
+        Dim area = GetContentArea()
+        If mouseY < area.Top Then
+            ScrollByPixels(-Dpi(8))
+        ElseIf mouseY > area.Bottom Then
+            ScrollByPixels(Dpi(8))
         End If
     End Sub
 #End Region
 #Region "布局与测量"
     Private Function GetContentArea() As Rectangle
-        Dim inset As Integer = Math.Max(_borderSize, If(_borderRadius > 0, _borderRadius \ 2, 0))
-        Dim pad As Padding = Me.Padding
+        Dim borderSize As Integer = Dpi(_borderSize)
+        Dim borderRadius As Integer = Dpi(_borderRadius)
+        Dim inset As Integer = Math.Max(borderSize, If(borderRadius > 0, borderRadius \ 2, 0))
+        Dim pad As Padding = Dpi(Me.Padding)
         Dim x As Integer = inset + pad.Left
         Dim y As Integer = inset + pad.Top
-        Dim sbReserved As Integer = If(_scrollBarWidth > 0, _scrollBarWidth + ScrollBarRenderer.Margin * 2, 0)
+        Dim sbReserved As Integer = If(_scrollBarWidth > 0, Dpi(_scrollBarWidth) + ScrollBarRenderer.Margin * 2, 0)
         Dim w As Integer = Math.Max(0, Width - inset * 2 - pad.Horizontal - sbReserved)
         Dim h As Integer = Math.Max(0, Height - inset * 2 - pad.Vertical)
         Return New Rectangle(x, y, w, h)
@@ -812,26 +1660,24 @@ Public Class AgentRoom
     End Function
 
     Private Sub EnsureLayout()
-        If Not _contentHeightDirty Then
-            ' 仍可能有局部脏；统一遍历会处理
-        End If
         Dim area = GetContentArea()
         If area.Width <= 0 Then
             _contentHeight = 0
             _contentHeightDirty = False
             Return
         End If
-        Dim y As Integer = 0
+
+        Dim totalHeight As Integer = 0
+        Dim itemSpacing As Integer = Dpi(_itemSpacing)
         For i = 0 To _items.Count - 1
             Dim it = _items(i)
             If it.NeedsRelayout OrElse it.CachedRect.Width <> area.Width Then
                 LayoutItem(it, area.Width)
             End If
-            it.CachedRect = New Rectangle(area.X, area.Y + y - _滚动偏移, area.Width, it.CachedRect.Height)
-            y += it.CachedRect.Height
-            If i < _items.Count - 1 Then y += _itemSpacing
+            totalHeight += it.CachedRect.Height
+            If i < _items.Count - 1 Then totalHeight += itemSpacing
         Next
-        _contentHeight = y
+        _contentHeight = totalHeight
         _contentHeightDirty = False
 
         ' clamp
@@ -848,17 +1694,17 @@ Public Class AgentRoom
             Dim it = _items(i)
             it.CachedRect = New Rectangle(area.X, area.Y + y2 - _滚动偏移, area.Width, it.CachedRect.Height)
             y2 += it.CachedRect.Height
-            If i < _items.Count - 1 Then y2 += _itemSpacing
+            If i < _items.Count - 1 Then y2 += itemSpacing
         Next
     End Sub
 
     Private Sub LayoutItem(it As ChatItem, areaWidth As Integer)
         it.LineRanges.Clear()
         Dim font As Font = Me.Font
-        Dim lineHeight As Integer = TextRenderer.MeasureText("Ag", font).Height
+        Dim lineHeight As Integer = GetLineHeight(font)
 
         Dim isCard As Boolean = (it.Kind = ChatItemKind.Card)
-        Dim pad As Padding = If(isCard, _cardPadding, _bubblePadding)
+        Dim pad As Padding = If(isCard, Dpi(_cardPadding), Dpi(_bubblePadding))
         Dim maxBubbleW As Integer
         If isCard Then
             maxBubbleW = Math.Max(40, CInt(areaWidth * _cardMaxWidthRatio))
@@ -867,14 +1713,39 @@ Public Class AgentRoom
                 Case BubbleWidthMode.FillAvailable
                     maxBubbleW = areaWidth
                 Case BubbleWidthMode.Fixed
-                    maxBubbleW = Math.Min(areaWidth, _bubbleFixedWidth)
+                    maxBubbleW = Math.Min(areaWidth, Dpi(_bubbleFixedWidth))
                 Case Else
                     maxBubbleW = Math.Max(40, CInt(areaWidth * _bubbleMaxWidthRatio))
             End Select
         End If
 
-        Dim borderExtra As Integer = If(isCard, _cardBorderSize * 2, 0)
+        Dim borderInset As Integer = If(isCard, Dpi(_cardBorderSize), 0)
+        Dim borderExtra As Integer = borderInset * 2
         Dim contentMaxW As Integer = Math.Max(10, maxBubbleW - pad.Horizontal - borderExtra)
+
+        If ShouldUseMarkdown(it) Then
+            Dim renderer = EnsureMarkdownRenderer(it, contentMaxW)
+            Dim markdownBubbleW As Integer = maxBubbleW
+            Dim markdownBubbleH As Integer = Math.Max(lineHeight, renderer.ContentHeight) + pad.Vertical + borderExtra
+
+            Dim markdownBubbleX As Integer
+            If isCard Then
+                markdownBubbleX = 0
+            ElseIf it.Kind = ChatItemKind.UserMessage Then
+                markdownBubbleX = areaWidth - markdownBubbleW
+            Else
+                markdownBubbleX = 0
+            End If
+
+            it.BubbleRect = New Rectangle(markdownBubbleX, 0, markdownBubbleW, markdownBubbleH)
+            it.TextOriginX = markdownBubbleX + pad.Left + borderInset
+            it.TextOriginY = pad.Top + borderInset
+            it.CachedRect = New Rectangle(0, 0, areaWidth, markdownBubbleH)
+            it.NeedsRelayout = False
+            Return
+        End If
+
+        ReleaseMarkdownRenderer(it)
 
         ' 折行
         ChatTextHelper.WrapLines(it.Text, font, lineHeight, contentMaxW, it.LineRanges, AddressOf MeasureTextWidthCached)
@@ -908,7 +1779,6 @@ Public Class AgentRoom
         End If
 
         it.BubbleRect = New Rectangle(bubbleX, 0, bubbleW, bubbleH)
-        Dim borderInset As Integer = If(isCard, _cardBorderSize, 0)
         it.TextOriginX = bubbleX + pad.Left + borderInset
         it.TextOriginY = pad.Top + borderInset
         it.CachedRect = New Rectangle(0, 0, areaWidth, bubbleH)
@@ -916,6 +1786,17 @@ Public Class AgentRoom
     End Sub
 #End Region
 #Region "绘制"
+    Private Shared Function GetCenteredStrokeRect(bounds As RectangleF, strokeWidth As Single) As RectangleF
+        If strokeWidth <= 0 Then Return bounds
+
+        Dim half As Single = strokeWidth / 2.0F
+        Return New RectangleF(
+            bounds.X + half,
+            bounds.Y + half,
+            Math.Max(0.0F, bounds.Width - strokeWidth),
+            Math.Max(0.0F, bounds.Height - strokeWidth))
+    End Function
+
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
         ' V2 契约：显式 BackgroundSource 由 OnPaint 内绘制穿透底图；否则交给基类处理透明 BackColor。
         If _backgroundSource IsNot Nothing Then Return
@@ -944,12 +1825,16 @@ Public Class AgentRoom
 
             Dim gRT As Vortice.Direct2D1.ID2D1RenderTarget = scope.GraphicsLayer
             Dim brushCache = scope.Compositor.BrushCache
-            Dim bgRect As New RectangleF(0, 0, Width, Height)
+            Dim borderSize As Integer = Dpi(_borderSize)
+            Dim borderRadius As Integer = Dpi(_borderRadius)
+            Dim scrollBarWidth As Integer = Dpi(_scrollBarWidth)
+            Dim scaledPadding As Padding = Dpi(Me.Padding)
+            Dim bgRect As RectangleF = GetCenteredStrokeRect(New RectangleF(0, 0, Width, Height), borderSize)
 
             ' 主体背景：BackColor 仅作透明/遮罩协议，BackColor1 负责控件主体填充。
             Dim backColorMask As Color = MyBase.BackColor
-            If _borderRadius > 0 Then
-                Using geo = RectangleRenderer.创建圆角矩形几何(bgRect, _borderRadius)
+            If borderRadius > 0 Then
+                Using geo = RectangleRenderer.创建圆角矩形几何(bgRect, borderRadius)
                     If backColorMask.A > 0 AndAlso backColorMask.A < 255 Then
                         RectangleRenderer.绘制圆角背景_D2D(gRT, geo, bgRect, backColorMask, Color.Empty, 0, brushCache)
                     End If
@@ -969,7 +1854,7 @@ Public Class AgentRoom
             ' 气泡形状 + 选区填充（GraphicsLayer 上、文字之下）
             Dim area As Rectangle = GetContentArea()
             Dim font As Font = Me.Font
-            Dim lineHeight As Integer = TextRenderer.MeasureText("Ag", font).Height
+            Dim lineHeight As Integer = GetLineHeight(font)
             gRT.PushAxisAlignedClip(New Vortice.RawRectF(area.Left, area.Top, area.Right, area.Bottom),
                                      Vortice.Direct2D1.AntialiasMode.PerPrimitive)
             Try
@@ -978,6 +1863,7 @@ Public Class AgentRoom
                     Dim r As Rectangle = it.CachedRect
                     If r.Bottom < area.Top OrElse r.Top > area.Bottom Then Continue For
                     DrawItemShapes_D2D(gRT, brushCache, it, r, font, lineHeight, i)
+                    If ShouldUseMarkdown(it) Then DrawMarkdownItem_D2D(gRT, scope.Compositor, it, r)
                 Next
             Finally
                 gRT.PopAxisAlignedClip()
@@ -986,22 +1872,21 @@ Public Class AgentRoom
             ' 滚动条
             Dim viewH As Integer = area.Height
             Dim totalH As Integer = Math.Max(viewH, _contentHeight)
-            If _contentHeight > viewH AndAlso _scrollBarWidth > 0 Then
-                _scrollBar.ComputeLayout(Width, Height, _borderSize, _borderRadius,
-                                         Me.Padding.Top, Me.Padding.Bottom,
-                                         _scrollBarWidth, totalH, viewH, _滚动偏移)
-                _scrollBar.Draw_D2D(gRT, Width, Height, _borderSize, _borderRadius, _scrollBarWidth,
+            If _contentHeight > viewH AndAlso scrollBarWidth > 0 Then
+                _scrollBar.ComputeLayout(Width, Height, borderSize, borderRadius,
+                                         scaledPadding.Top, scaledPadding.Bottom,
+                                         scrollBarWidth, totalH, viewH, _滚动偏移)
+                _scrollBar.Draw_D2D(gRT, Width, Height, borderSize, borderRadius, scrollBarWidth,
                                     _scrollBarTrackColor, _scrollBarThumbColor, _scrollBarThumbHoverColor, brushCache)
             End If
 
             ' 边框
-            If _borderSize > 0 Then
-                Dim half As Single = _borderSize / 2.0F
-                Dim brRect As New RectangleF(half, half, Width - _borderSize, Height - _borderSize)
-                If _borderRadius > 0 Then
-                    RectangleRenderer.绘制圆角边框_D2D(gRT, brRect, _borderRadius, _borderColor, _borderSize, brushCache)
+            If borderSize > 0 Then
+                Dim brRect As RectangleF = bgRect
+                If borderRadius > 0 Then
+                    RectangleRenderer.绘制圆角边框_D2D(gRT, brRect, borderRadius, _borderColor, borderSize, brushCache)
                 Else
-                    RectangleRenderer.绘制矩形边框_D2D(gRT, brRect, _borderColor, _borderSize, brushCache)
+                    RectangleRenderer.绘制矩形边框_D2D(gRT, brRect, _borderColor, borderSize, brushCache)
                 End If
             End If
 
@@ -1042,19 +1927,22 @@ Public Class AgentRoom
         Else
             backColor = _assistantBubbleBackColor
         End If
-        Dim radius As Integer = If(isCard, _cardRadius, _bubbleRadius)
-        Dim rectF As New RectangleF(bubbleAbs.X, bubbleAbs.Y, bubbleAbs.Width, bubbleAbs.Height)
+        Dim radius As Integer = If(isCard, Dpi(_cardRadius), Dpi(_bubbleRadius))
+        Dim borderSize As Integer = If(isCard, Dpi(_cardBorderSize), 0)
+        Dim rectF As RectangleF = GetCenteredStrokeRect(
+            New RectangleF(bubbleAbs.X, bubbleAbs.Y, bubbleAbs.Width, bubbleAbs.Height),
+            If(isCard, CSng(borderSize), 0.0F))
         If radius > 0 Then
             Using geo = RectangleRenderer.创建圆角矩形几何(rectF, radius)
                 RectangleRenderer.绘制圆角背景_D2D(rt, geo, rectF, backColor, Color.Empty, 0, brushCache)
-                If isCard AndAlso _cardBorderSize > 0 Then
-                    RectangleRenderer.绘制圆角边框_D2D(rt, geo, _cardBorderColor, _cardBorderSize, brushCache)
+                If isCard AndAlso borderSize > 0 Then
+                    RectangleRenderer.绘制圆角边框_D2D(rt, geo, _cardBorderColor, borderSize, brushCache)
                 End If
             End Using
         Else
             RectangleRenderer.绘制矩形背景_D2D(rt, rectF, backColor, Color.Empty, 0, brushCache)
-            If isCard AndAlso _cardBorderSize > 0 Then
-                RectangleRenderer.绘制矩形边框_D2D(rt, rectF, _cardBorderColor, _cardBorderSize, brushCache)
+            If isCard AndAlso borderSize > 0 Then
+                RectangleRenderer.绘制矩形边框_D2D(rt, rectF, _cardBorderColor, borderSize, brushCache)
             End If
         End If
 
@@ -1066,6 +1954,7 @@ Public Class AgentRoom
                                           brushCache As D2DGlobals.SolidColorBrushCache,
                                           it As ChatItem, itemIndex As Integer,
                                           areaItemRect As Rectangle, font As Font, lineHeight As Integer)
+        If ShouldUseMarkdown(it) Then Return
         If Not _hasSelection Then Return
         Dim rangeStart, rangeEnd As TextPos
         GetNormalizedSelection(rangeStart, rangeEnd)
@@ -1093,6 +1982,7 @@ Public Class AgentRoom
                                   brushCache As D2DGlobals.SolidColorBrushCache,
                                   tfc As D2DGlobals.TextFormatCache, dpiS As Single,
                                   it As ChatItem, areaItemRect As Rectangle, font As Font, lineHeight As Integer)
+        If ShouldUseMarkdown(it) Then Return
         Dim isCard As Boolean = (it.Kind = ChatItemKind.Card)
         Dim foreColor As Color
         If isCard Then
@@ -1110,6 +2000,18 @@ Public Class AgentRoom
             DrawLineWithLinks_D2D(rt, brushCache, tfc, dpiS, it, line, lr.Start,
                                    textX, textY + li * lineHeight, font, lineHeight, foreColor)
         Next
+    End Sub
+
+    Private Sub DrawMarkdownItem_D2D(rt As Vortice.Direct2D1.ID2D1RenderTarget,
+                                     compositor As WindowCompositor,
+                                     it As ChatItem,
+                                     areaItemRect As Rectangle)
+        Dim renderer = it.MarkdownRenderer
+        If renderer Is Nothing OrElse renderer.IsDisposed Then Return
+
+        Dim origin As New Point(areaItemRect.X + it.TextOriginX, areaItemRect.Y + it.TextOriginY)
+        Dim clipSize As New Size(Math.Max(1, renderer.Width), Math.Max(1, renderer.ContentHeight))
+        renderer.DrawEmbeddedContent_D2D(rt, compositor, origin, clipSize, drawBackground:=False)
     End Sub
 
     Private Sub DrawLineWithLinks_D2D(rt As Vortice.Direct2D1.ID2D1RenderTarget,
@@ -1156,13 +2058,14 @@ Public Class AgentRoom
         Dim part As String = line.Substring(startIndex, length)
         Dim w As Integer = MeasureTextWidthCached(part, font, lineHeight)
         If url IsNot Nothing Then
-                Dim col As Color = If(url = _hoverLinkUrl, _linkHoverColor, _linkColor)
-                D2DTextRenderer.DrawText(rt, part, font, New Rectangle(curX, y, w, lineHeight), col, flags, dpiS, tfc, brushCache)
-                If _linkUnderline Then
-                    Dim br = brushCache.Get(rt, col)
-                    rt.DrawLine(New System.Numerics.Vector2(curX, y + lineHeight - 2),
-                                New System.Numerics.Vector2(curX + w, y + lineHeight - 2), br, 1.0F)
-                End If
+            Dim col As Color = If(url = _hoverLinkUrl, _linkHoverColor, _linkColor)
+            D2DTextRenderer.DrawText(rt, part, font, New Rectangle(curX, y, w, lineHeight), col, flags, dpiS, tfc, brushCache)
+            If _linkUnderline Then
+                Dim br = brushCache.Get(rt, col)
+                Dim underlineY As Integer = y + lineHeight - Dpi(_linkUnderlineOffset)
+                rt.DrawLine(New System.Numerics.Vector2(curX, underlineY),
+                                New System.Numerics.Vector2(curX + w, underlineY), br, Math.Max(1.0F, Dpi(_linkUnderlineThickness)))
+            End If
         Else
             D2DTextRenderer.DrawText(rt, part, font, New Rectangle(curX, y, w, lineHeight), normalColor, flags, dpiS, tfc, brushCache)
         End If
@@ -1193,16 +2096,27 @@ Public Class AgentRoom
     End Sub
 
     Public Sub ClearSelection()
-        If _hasSelection Then
-            _hasSelection = False
-            _selAnchor = New TextPos(-1, 0)
-            _selCaret = New TextPos(-1, 0)
-            OuterToInnerRefreshScheduler.RequestFull(Me)
-        End If
+        Dim hadSelection As Boolean = _hasSelection OrElse HasAnyMarkdownSelection()
+        _hasSelection = False
+        _mouseSelecting = False
+        _mouseSelectingMarkdown = False
+        _selAnchor = New TextPos(-1, 0)
+        _selCaret = New TextPos(-1, 0)
+        ClearAllMarkdownSelections()
+        If hadSelection Then OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Public Sub SelectAllText()
+        If _activeMarkdownRenderer IsNot Nothing AndAlso Not _activeMarkdownRenderer.IsDisposed Then
+            _hasSelection = False
+            _mouseSelecting = False
+            ClearOtherMarkdownSelections(_activeMarkdownRenderer)
+            _activeMarkdownRenderer.SelectAllEmbeddedText()
+            Return
+        End If
+
         If _items.Count = 0 Then Return
+        ClearAllMarkdownSelections()
         _selAnchor = New TextPos(0, 0)
         Dim last = _items(_items.Count - 1)
         _selCaret = New TextPos(_items.Count - 1, last.Text.Length)
@@ -1211,6 +2125,9 @@ Public Class AgentRoom
     End Sub
 
     Public Function GetSelectedText() As String
+        Dim markdownSelection = GetSelectedMarkdownRenderer()
+        If markdownSelection IsNot Nothing Then Return markdownSelection.GetSelectedText()
+
         If Not _hasSelection Then Return ""
         Dim a, b As TextPos
         GetNormalizedSelection(a, b)
@@ -1239,14 +2156,171 @@ Public Class AgentRoom
         End If
     End Sub
 
+    Private Function HitTestMarkdown(pt As Point) As MarkdownHitInfo
+        For i = 0 To _items.Count - 1
+            Dim it = _items(i)
+            If Not ShouldUseMarkdown(it) Then Continue For
+            Dim md = it.MarkdownRenderer
+            If md Is Nothing OrElse md.IsDisposed Then Continue For
+
+            Dim r = it.CachedRect
+            If pt.Y < r.Top OrElse pt.Y > r.Bottom Then Continue For
+
+            Dim textX As Integer = r.X + it.TextOriginX
+            Dim textY As Integer = r.Y + it.TextOriginY
+            Dim localX As Integer = pt.X - textX
+            Dim localY As Integer = pt.Y - textY
+            If localX < 0 OrElse localY < 0 OrElse localX >= md.Width OrElse localY >= md.ContentHeight Then Continue For
+
+            Return New MarkdownHitInfo With {
+                .Renderer = md,
+                .LocalPoint = New Point(localX, localY)
+            }
+        Next
+
+        Return New MarkdownHitInfo()
+    End Function
+
+    Private Function TryGetMarkdownLocalPoint(renderer As MarkdownViewerCore,
+                                             pt As Point,
+                                             ByRef localPoint As Point) As Boolean
+        localPoint = Point.Empty
+        If renderer Is Nothing OrElse renderer.IsDisposed Then Return False
+
+        For Each it In _items
+            If Not Object.ReferenceEquals(it.MarkdownRenderer, renderer) Then Continue For
+            Dim r = it.CachedRect
+            localPoint = New Point(pt.X - (r.X + it.TextOriginX), pt.Y - (r.Y + it.TextOriginY))
+            Return True
+        Next
+
+        Return False
+    End Function
+
+    Private Sub ClearAllMarkdownSelections()
+        For Each it In _items
+            Dim renderer = it.MarkdownRenderer
+            If renderer IsNot Nothing AndAlso Not renderer.IsDisposed Then renderer.ClearEmbeddedSelection()
+        Next
+        _activeMarkdownRenderer = Nothing
+        _mouseSelectingMarkdown = False
+    End Sub
+
+    Private Sub ClearOtherMarkdownSelections(activeRenderer As MarkdownViewerCore)
+        For Each it In _items
+            Dim renderer = it.MarkdownRenderer
+            If renderer Is Nothing OrElse renderer.IsDisposed Then Continue For
+            If Not Object.ReferenceEquals(renderer, activeRenderer) Then renderer.ClearEmbeddedSelection()
+        Next
+    End Sub
+
+    Private Function HasAnyMarkdownSelection() As Boolean
+        Return GetSelectedMarkdownRenderer() IsNot Nothing
+    End Function
+
+    Private Function GetSelectedMarkdownRenderer() As MarkdownViewerCore
+        If _activeMarkdownRenderer IsNot Nothing AndAlso
+           Not _activeMarkdownRenderer.IsDisposed AndAlso
+           _activeMarkdownRenderer.HasEmbeddedSelection Then
+            Return _activeMarkdownRenderer
+        End If
+
+        For Each it In _items
+            Dim renderer = it.MarkdownRenderer
+            If renderer IsNot Nothing AndAlso
+               Not renderer.IsDisposed AndAlso
+               renderer.HasEmbeddedSelection Then
+                _activeMarkdownRenderer = renderer
+                Return renderer
+            End If
+        Next
+
+        Return Nothing
+    End Function
+
+    Private Sub ActivateLink(url As String, itemIndex As Integer)
+        If String.IsNullOrEmpty(url) Then Return
+        RaiseEvent LinkClicked(Me, New LinkClickedEventArgs With {.Url = url, .ItemIndex = itemIndex})
+        Try
+            Process.Start(New ProcessStartInfo(url) With {.UseShellExecute = True})
+        Catch
+        End Try
+    End Sub
+
+    Private Sub StoreMouseDownLink(link As LinkHitInfo)
+        _mouseDownLinkUrl = link.Url
+        _mouseDownLinkItemIndex = If(link.HasValue, link.ItemIndex, -1)
+    End Sub
+
+    Private Sub ClearMouseDownLink()
+        _mouseDownLinkUrl = Nothing
+        _mouseDownLinkItemIndex = -1
+    End Sub
+
+    Private Sub BeginMarkdownSelection(hit As MarkdownHitInfo)
+        _hasSelection = False
+        _mouseSelecting = False
+        _selAnchor = New TextPos(-1, 0)
+        _selCaret = New TextPos(-1, 0)
+        ClearOtherMarkdownSelections(hit.Renderer)
+        _activeMarkdownRenderer = hit.Renderer
+        _mouseSelectingMarkdown = True
+        hit.Renderer.BeginEmbeddedSelection(hit.LocalPoint.X, hit.LocalPoint.Y)
+        Capture = True
+        OuterToInnerRefreshScheduler.RequestFull(Me)
+    End Sub
+
+    Private Sub BeginPlainTextSelection(pos As TextPos)
+        ClearAllMarkdownSelections()
+        _selAnchor = pos
+        _selCaret = pos
+        _hasSelection = False
+        _mouseSelecting = True
+        Capture = True
+        OuterToInnerRefreshScheduler.RequestFull(Me)
+    End Sub
+
+    Private Sub UpdateMarkdownSelection(pt As Point)
+        Dim local As Point = Point.Empty
+        If TryGetMarkdownLocalPoint(_activeMarkdownRenderer, pt, local) Then
+            _activeMarkdownRenderer.UpdateEmbeddedSelection(local.X, local.Y)
+        End If
+    End Sub
+
+    Private Function EndMarkdownSelection() As Boolean
+        Dim selectedMarkdown = _activeMarkdownRenderer
+        Dim hadSelection As Boolean = selectedMarkdown IsNot Nothing AndAlso
+                                      Not selectedMarkdown.IsDisposed AndAlso
+                                      selectedMarkdown.HasEmbeddedSelection
+        If selectedMarkdown IsNot Nothing AndAlso Not selectedMarkdown.IsDisposed Then selectedMarkdown.EndEmbeddedSelection()
+        _mouseSelectingMarkdown = False
+        Capture = False
+        Return hadSelection
+    End Function
+
+    Private Sub ActivateMouseDownLinkIfClick(pt As Point, hadSelection As Boolean)
+        If hadSelection OrElse String.IsNullOrEmpty(_mouseDownLinkUrl) Then
+            ClearMouseDownLink()
+            Return
+        End If
+
+        Dim link = HitTestLink(pt)
+        If link.HasValue AndAlso
+           link.ItemIndex = _mouseDownLinkItemIndex AndAlso
+           String.Equals(link.Url, _mouseDownLinkUrl, StringComparison.Ordinal) Then
+            ActivateLink(_mouseDownLinkUrl, _mouseDownLinkItemIndex)
+        End If
+        ClearMouseDownLink()
+    End Sub
+
     Private Function HitTestText(pt As Point, ByRef result As TextPos, Optional snap As Boolean = True) As Boolean
         result = New TextPos(-1, 0)
         Dim font As Font = Me.Font
-        Dim lineHeight As Integer = TextRenderer.MeasureText("Ag", font).Height
+        Dim lineHeight As Integer = GetLineHeight(font)
         For i = 0 To _items.Count - 1
             Dim it = _items(i)
+            If ShouldUseMarkdown(it) Then Continue For
             Dim r = it.CachedRect
-            Dim bubbleAbs As New Rectangle(r.X + it.BubbleRect.X, r.Y + it.BubbleRect.Y, it.BubbleRect.Width, it.BubbleRect.Height)
             If pt.Y < r.Top Then
                 If snap Then
                     result = New TextPos(i, 0) : Return True
@@ -1276,15 +2350,25 @@ Public Class AgentRoom
         Return False
     End Function
 
-    Private Function HitTestLink(pt As Point) As String
+    Private Function HitTestLink(pt As Point) As LinkHitInfo
         Dim font As Font = Me.Font
-        Dim lineHeight As Integer = TextRenderer.MeasureText("Ag", font).Height
+        Dim lineHeight As Integer = GetLineHeight(font)
         For i = 0 To _items.Count - 1
             Dim it = _items(i)
             Dim r = it.CachedRect
             If pt.Y < r.Top OrElse pt.Y > r.Bottom Then Continue For
             Dim textX As Integer = r.X + it.TextOriginX
             Dim textY As Integer = r.Y + it.TextOriginY
+            If ShouldUseMarkdown(it) Then
+                Dim renderer = it.MarkdownRenderer
+                If renderer Is Nothing OrElse renderer.IsDisposed Then Continue For
+                Dim localX As Integer = pt.X - textX
+                Dim localY As Integer = pt.Y - textY
+                If localX < 0 OrElse localY < 0 OrElse localX >= renderer.Width OrElse localY >= renderer.ContentHeight Then Continue For
+                Dim markdownUrl = renderer.HitTestEmbeddedLink(localX, localY)
+                If markdownUrl IsNot Nothing Then Return New LinkHitInfo With {.Url = markdownUrl, .ItemIndex = i}
+                Continue For
+            End If
             Dim relY As Integer = pt.Y - textY
             If relY < 0 Then Continue For
             Dim li As Integer = relY \ Math.Max(1, lineHeight)
@@ -1295,11 +2379,11 @@ Public Class AgentRoom
             Dim absCharIndex As Integer = lr.Start + col
             For Each ls In it.LinkSpans
                 If absCharIndex >= ls.Start AndAlso absCharIndex < ls.Start + ls.Length Then
-                    Return ls.Url
+                    Return New LinkHitInfo With {.Url = ls.Url, .ItemIndex = i}
                 End If
             Next
         Next
-        Return Nothing
+        Return New LinkHitInfo()
     End Function
 #End Region
 #Region "鼠标与键盘"
@@ -1325,25 +2409,26 @@ Public Class AgentRoom
             End If
 
             ' 链接点击
-            Dim url = HitTestLink(e.Location)
-            If url IsNot Nothing Then
-                RaiseEvent LinkClicked(Me, New LinkClickedEventArgs With {.Url = url, .ItemIndex = -1})
-                Try
-                    Process.Start(New ProcessStartInfo(url) With {.UseShellExecute = True})
-                Catch
-                End Try
-                Return
-            End If
+            StoreMouseDownLink(HitTestLink(e.Location))
 
             If _selectableText Then
+                Dim mdHit = HitTestMarkdown(e.Location)
+                If mdHit.HasValue Then
+                    BeginMarkdownSelection(mdHit)
+                    Return
+                End If
+
                 Dim pos As TextPos
                 If HitTestText(e.Location, pos, snap:=True) Then
-                    _selAnchor = pos : _selCaret = pos
-                    _hasSelection = False
-                    _mouseSelecting = True
-                    Capture = True
-                    OuterToInnerRefreshScheduler.RequestFull(Me)
+                    BeginPlainTextSelection(pos)
+                    Return
                 End If
+            End If
+
+            If Not String.IsNullOrEmpty(_mouseDownLinkUrl) Then
+                ActivateLink(_mouseDownLinkUrl, _mouseDownLinkItemIndex)
+                ClearMouseDownLink()
+                Return
             End If
         End If
     End Sub
@@ -1359,6 +2444,12 @@ Public Class AgentRoom
             Return
         End If
 
+        If _mouseSelectingMarkdown Then
+            UpdateMarkdownSelection(e.Location)
+            AutoScrollSelectionAtEdge(e.Y)
+            Return
+        End If
+
         If _mouseSelecting Then
             Dim pos As TextPos
             If HitTestText(e.Location, pos, snap:=True) Then
@@ -1367,24 +2458,17 @@ Public Class AgentRoom
                 OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
             ' 边缘自动滚动
-            Dim area = GetContentArea()
-            If e.Y < area.Top Then
-                _滚动偏移 = Math.Max(0, _滚动偏移 - 8) : OuterToInnerRefreshScheduler.RequestFull(Me)
-            ElseIf e.Y > area.Bottom Then
-                Dim viewH = ContentViewportHeight()
-                Dim maxOff = Math.Max(0, _contentHeight - viewH)
-                _滚动偏移 = Math.Min(maxOff, _滚动偏移 + 8) : OuterToInnerRefreshScheduler.RequestFull(Me)
-            End If
+            AutoScrollSelectionAtEdge(e.Y)
             Return
         End If
 
         ' 悬停光标
-        Dim url = HitTestLink(e.Location)
-        If url IsNot _hoverLinkUrl Then
-            _hoverLinkUrl = url
+        Dim link = HitTestLink(e.Location)
+        If Not String.Equals(link.Url, _hoverLinkUrl, StringComparison.Ordinal) Then
+            _hoverLinkUrl = link.Url
             OuterToInnerRefreshScheduler.RequestFull(Me)
         End If
-        If url IsNot Nothing Then
+        If link.HasValue Then
             Cursor = Cursors.Hand
         ElseIf _selectableText AndAlso GetContentArea().Contains(e.Location) Then
             Cursor = Cursors.IBeam
@@ -1402,12 +2486,23 @@ Public Class AgentRoom
             Capture = False
             OuterToInnerRefreshScheduler.RequestFull(Me)
         End If
+        If _mouseSelectingMarkdown Then
+            Dim hadSelection As Boolean = EndMarkdownSelection()
+            If e.Button = MouseButtons.Left Then ActivateMouseDownLinkIfClick(e.Location, hadSelection)
+            Return
+        End If
+
         If _mouseSelecting Then
+            Dim hadSelection As Boolean = _hasSelection
             _mouseSelecting = False
             Capture = False
+
+            If e.Button = MouseButtons.Left Then ActivateMouseDownLinkIfClick(e.Location, hadSelection)
         End If
 
         If e.Button = MouseButtons.Right AndAlso _showCopyContextMenu Then
+            Dim mdHit = HitTestMarkdown(e.Location)
+            If mdHit.HasValue Then _activeMarkdownRenderer = mdHit.Renderer
             _copyContextMenu.Show(Me, e.Location)
         End If
     End Sub
@@ -1424,12 +2519,7 @@ Public Class AgentRoom
 
     Protected Overrides Sub OnMouseWheel(e As MouseEventArgs)
         MyBase.OnMouseWheel(e)
-        Dim viewH = ContentViewportHeight()
-        Dim maxOff = Math.Max(0, _contentHeight - viewH)
-        Dim delta As Integer = -Math.Sign(e.Delta) * _wheelStep
-        _滚动偏移 = Math.Max(0, Math.Min(maxOff, _滚动偏移 + delta))
-        _pinnedToBottom = (_滚动偏移 >= maxOff)
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        ScrollByPixels(-Math.Sign(e.Delta) * Dpi(_wheelStep))
     End Sub
 
     Protected Overrides Sub OnSizeChanged(e As EventArgs)
@@ -1441,7 +2531,17 @@ Public Class AgentRoom
     Protected Overrides Sub OnFontChanged(e As EventArgs)
         MyBase.OnFontChanged(e)
         InvalidateAllItemsLayout()
+        InvalidateMarkdownRenderers()
         D2DHelperV2.RefreshFontDependentRendering(Me)
+    End Sub
+
+    Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
+        MyBase.OnDpiChangedAfterParent(e)
+        InvalidateMeasureCache()
+        InvalidateMarkdownRenderers()
+        InvalidateAllItemsLayout()
+        D2DHelperV2.RefreshFontDependentRendering(Me)
+        OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
     Protected Overrides Function IsInputKey(keyData As Keys) As Boolean
@@ -1460,21 +2560,21 @@ Public Class AgentRoom
         If e.Control AndAlso e.KeyCode = Keys.A Then
             SelectAllText() : e.Handled = True : Return
         End If
-        Dim viewH = ContentViewportHeight()
-        Dim maxOff = Math.Max(0, _contentHeight - viewH)
+        Dim wheelStep As Integer = Dpi(_wheelStep)
         Select Case e.KeyCode
             Case Keys.Up
-                _滚动偏移 = Math.Max(0, _滚动偏移 - _wheelStep) : OuterToInnerRefreshScheduler.RequestFull(Me)
+                SetScrollOffset(_滚动偏移 - wheelStep)
             Case Keys.Down
-                _滚动偏移 = Math.Min(maxOff, _滚动偏移 + _wheelStep) : OuterToInnerRefreshScheduler.RequestFull(Me)
+                SetScrollOffset(_滚动偏移 + wheelStep)
             Case Keys.PageUp
-                _滚动偏移 = Math.Max(0, _滚动偏移 - viewH) : OuterToInnerRefreshScheduler.RequestFull(Me)
+                SetScrollOffset(_滚动偏移 - ContentViewportHeight())
             Case Keys.PageDown
-                _滚动偏移 = Math.Min(maxOff, _滚动偏移 + viewH) : OuterToInnerRefreshScheduler.RequestFull(Me)
+                SetScrollOffset(_滚动偏移 + ContentViewportHeight())
             Case Keys.Home
-                _滚动偏移 = 0 : _pinnedToBottom = (maxOff = 0) : OuterToInnerRefreshScheduler.RequestFull(Me)
+                SetScrollOffset(0)
             Case Keys.End
-                _滚动偏移 = maxOff : _pinnedToBottom = True : OuterToInnerRefreshScheduler.RequestFull(Me)
+                EnsureLayout()
+                SetScrollOffset(GetMaxScrollOffset())
         End Select
     End Sub
 #End Region
