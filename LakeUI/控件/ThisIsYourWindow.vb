@@ -1455,7 +1455,7 @@ Public Class ThisIsYourWindow
                 If Not s.HostForm.Visible Then
                     销毁阴影(s)
                 Else
-                    s.ShadowForm.Visible = False
+                    s.ShadowForm.SetDesktopAwareVisible(False)
                 End If
             End If
             Return
@@ -1469,7 +1469,6 @@ Public Class ThisIsYourWindow
                 .ResizeFullArea = _分层阴影整区可调
             }
             s.ShadowForm.UpdateHitTestTransparency()
-            s.ShadowForm.Show()
         End If
 
         Dim bounds = If(boundsOverride.IsEmpty, s.HostForm.Bounds, boundsOverride)
@@ -1478,14 +1477,14 @@ Public Class ThisIsYourWindow
         s.ShadowForm.ResizeWidth = _分层阴影调整宽度
         s.ShadowForm.ResizeFullArea = _分层阴影整区可调
         s.ShadowForm.UpdateHitTestTransparency()
-        s.ShadowForm.SyncVirtualDesktopWithHost()
         Dim shadowColor As Color = _分层阴影颜色
         If _分层阴影自动颜色 AndAlso 毛玻璃当前启用(s) Then
             shadowColor = s.Renderer.DeriveShadowColor(_分层阴影颜色)
         End If
         s.ShadowForm.UpdateShadow(bounds, _分层阴影深度, shadowColor, _分层阴影不透明度, If(forceFullRender, False, s.IsInSizeMove))
+        s.ShadowForm.SyncVirtualDesktopWithHost()
         s.ShadowForm.PlaceBehind(s.HostForm.Handle)
-        If Not s.ShadowForm.Visible Then s.ShadowForm.Visible = True
+        s.ShadowForm.SetDesktopAwareVisible(True)
 
         If s.AnimatingShow AndAlso _显示动画模式 = WindowShowAnimationMode.Win32 Then
             s.ShadowForm.SetGlobalAlpha(0)
@@ -1498,6 +1497,7 @@ Public Class ThisIsYourWindow
             s.ShadowForm = Nothing
             Try
                 If Not shadow.IsDisposed Then
+                    shadow.SetDesktopAwareVisible(False)
                     shadow.Hide()
                     shadow.Close()
                 End If

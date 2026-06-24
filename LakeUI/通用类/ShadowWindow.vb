@@ -148,6 +148,8 @@ Friend Class ShadowWindow
 
     Private _lastHostSize As Size
     Private _globalAlpha As Byte = 255
+    Private _desktopVisibilityTimer As Timer
+    Private _desiredVisible As Boolean = False
 
     ''' <summary>宿主窗口句柄，用于转发调整大小消息。</summary>
     <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
@@ -185,6 +187,16 @@ Friend Class ShadowWindow
         End Get
     End Property
 
+    Public Sub SetDesktopAwareVisible(visible As Boolean)
+        _desiredVisible = visible
+        If visible Then
+            EnsureDesktopVisibilityTimer()
+        Else
+            StopDesktopVisibilityTimer()
+        End If
+        ApplyDesktopAwareVisibility()
+    End Sub
+
     Public Sub SyncVirtualDesktopWithHost()
         If HostHandle = IntPtr.Zero Then Return
 
@@ -210,9 +222,66 @@ Friend Class ShadowWindow
         End Try
     End Sub
 
+    Private Sub EnsureDesktopVisibilityTimer()
+        If _desktopVisibilityTimer IsNot Nothing Then Return
+        _desktopVisibilityTimer = New Timer() With {.Interval = 120}
+        AddHandler _desktopVisibilityTimer.Tick, AddressOf DesktopVisibilityTimerTick
+        _desktopVisibilityTimer.Start()
+    End Sub
+
+    Private Sub StopDesktopVisibilityTimer()
+        If _desktopVisibilityTimer Is Nothing Then Return
+        RemoveHandler _desktopVisibilityTimer.Tick, AddressOf DesktopVisibilityTimerTick
+        _desktopVisibilityTimer.Stop()
+        _desktopVisibilityTimer.Dispose()
+        _desktopVisibilityTimer = Nothing
+    End Sub
+
+    Private Sub DesktopVisibilityTimerTick(sender As Object, e As EventArgs)
+        ApplyDesktopAwareVisibility()
+    End Sub
+
+    Private Sub ApplyDesktopAwareVisibility()
+        If Me.IsDisposed Then Return
+
+        Dim shouldShow As Boolean = _desiredVisible AndAlso IsHostOnCurrentVirtualDesktop()
+        If shouldShow Then
+            If Not MyBase.Visible Then
+                Me.Show()
+                If HostHandle <> IntPtr.Zero Then PlaceBehind(HostHandle)
+            End If
+        ElseIf MyBase.Visible Then
+            MyBase.Visible = False
+        End If
+    End Sub
+
+    Private Function IsHostOnCurrentVirtualDesktop() As Boolean
+        If HostHandle = IntPtr.Zero Then Return False
+
+        Dim manager As IVirtualDesktopManager = Nothing
+        Try
+            manager = DirectCast(New CVirtualDesktopManager(), IVirtualDesktopManager)
+
+            Dim onCurrentDesktop As Boolean = True
+            If manager.IsWindowOnCurrentVirtualDesktop(HostHandle, onCurrentDesktop) <> 0 Then Return True
+            Return onCurrentDesktop
+        Catch
+            Return True
+        Finally
+            If manager IsNot Nothing Then
+                Try
+                    Marshal.FinalReleaseComObject(manager)
+                Catch
+                End Try
+            End If
+        End Try
+    End Function
+
     ''' <summary>根据 ResizeWidth / ResizeFullArea 更新是否允许鼠标命中测试。</summary>
     Public Sub UpdateHitTestTransparency()
-        If Not Me.IsHandleCreated Then Return
+        If Not Me.IsHandleCreated Then
+            Dim unused = Me.Handle
+        End If
         Dim exStyle As Long = GetWindowLongPtr(Me.Handle, GWL_EXSTYLE).ToInt64()
         If ResizeWidth > 0 OrElse ResizeFullArea Then
             exStyle = exStyle And Not CLng(WS_EX_TRANSPARENT)
@@ -307,7 +376,7 @@ Friend Class ShadowWindow
     ''' </summary>
     Public Sub UpdateShadow(hostBounds As Rectangle, depth As Integer, color As Color, opacity As Byte, Optional moveOnly As Boolean = False)
         If depth <= 0 Then
-            Me.Visible = False
+            SetDesktopAwareVisible(False)
             Return
         End If
 
@@ -352,6 +421,11 @@ Friend Class ShadowWindow
     ''' <summary>强制下次 UpdateShadow 时重新渲染。</summary>
     Public Sub ForceReset()
         _lastHostSize = Size.Empty
+    End Sub
+
+    Protected Overrides Sub Dispose(disposing As Boolean)
+        If disposing Then StopDesktopVisibilityTimer()
+        MyBase.Dispose(disposing)
     End Sub
 
     <DllImport("user32.dll", EntryPoint:="UpdateLayeredWindow")>
