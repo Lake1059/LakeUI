@@ -170,7 +170,7 @@ Public Class RoundDashBoard
         If String.IsNullOrEmpty(文字内容) Then Return
 
         Dim s As Single = DpiScale()
-        Dim sizePx As Single = Me.Font.SizeInPoints * (96.0F / 72.0F) * s
+        Dim sizePx As Single = D2DGlobals.GetDWriteFontSizePx(Me.Font, s)
         Dim weight As Vortice.DirectWrite.FontWeight = If(Me.Font.Bold, Vortice.DirectWrite.FontWeight.Bold, Vortice.DirectWrite.FontWeight.Normal)
         Dim style As Vortice.DirectWrite.FontStyle = If(Me.Font.Italic, Vortice.DirectWrite.FontStyle.Italic, Vortice.DirectWrite.FontStyle.Normal)
         Dim fmt = textFormatCache.Get(Me.Font.FontFamily.Name, weight, style, sizePx, TextAlignment.Center, ParagraphAlignment.Center, False)
@@ -306,7 +306,7 @@ Public Class RoundDashBoard
     End Sub
 
     Private Function DpiScale() As Single
-        Return Me.DeviceDpi / 96.0F
+        Return D2DGlobals.GetCurrentDpiScale(Me)
     End Function
 #End Region
 

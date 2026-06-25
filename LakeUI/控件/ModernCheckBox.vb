@@ -255,8 +255,8 @@ Public Class ModernCheckBox
         Dim mainText As String = If(MyBase.Text, "")
 
         Dim familyName As String = Me.Font.FontFamily.Name
-        ' DirectWrite 字号必须叠加 DPI 缩放（参考 ModernButton 的注释）
-        Dim mainSizePx As Single = Me.Font.SizeInPoints * (96.0F / 72.0F) * s
+        ' 控件 Font 可能已被 WinForms AutoScale 修改，DirectWrite 字号统一交给 D2DGlobals 推断基准 DPI。
+        Dim mainSizePx As Single = D2DGlobals.GetDWriteFontSizePx(Me.Font, s)
 
         Dim dw = D2DGlobals.GetDWriteFactory()
         Dim textFormatCache = compositor.TextFormatCache
@@ -439,7 +439,7 @@ Public Class ModernCheckBox
     End Sub
 
     Private Function DpiScale() As Single
-        Return Me.DeviceDpi / 96.0F
+        Return D2DGlobals.GetCurrentDpiScale(Me)
     End Function
 
     Private _缓存主文本行高 As Integer = -1

@@ -202,7 +202,7 @@ Public Class BooleanSwitch
     End Sub
 
     Private Function DpiScale() As Single
-        Return Me.DeviceDpi / 96.0F
+        Return D2DGlobals.GetCurrentDpiScale(Me)
     End Function
 
     Private Function 计算动画脏区() As Rectangle

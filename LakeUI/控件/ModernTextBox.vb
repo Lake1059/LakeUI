@@ -1061,6 +1061,7 @@ Public Class ModernTextBox
     End Sub
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
+        EnsureDpiCacheCurrent()
         Dim w As Integer = ClientRectangle.Width
         Dim h As Integer = ClientRectangle.Height
         If w <= 0 OrElse h <= 0 Then Return
@@ -1450,7 +1451,7 @@ Public Class ModernTextBox
         Dim useFont As Font = If(font, Me.Font)
         If useFont Is Nothing Then Return Nothing
         Dim s As Single = DpiScale()
-        Dim sizePx As Single = useFont.SizeInPoints * (96.0F / 72.0F) * s
+        Dim sizePx As Single = D2DGlobals.GetDWriteFontSizePx(useFont, s)
         ownsFormat = (textFormatCache Is Nothing)
         If textFormatCache IsNot Nothing Then
             Return textFormatCache.[Get](
@@ -1733,6 +1734,7 @@ Public Class ModernTextBox
         OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
     Private Function HitTest(x As Integer, y As Integer) As Point
+        EnsureDpiCacheCurrent()
         Dim bi As Integer = ScaledBorderWidth()
         Dim gutterW As Integer = LineNumberGutterWidth()
         Dim textLeft As Integer = If(gutterW > 0, bi + gutterW + Padding.Left, Math.Max(Padding.Left, bi))
@@ -3041,7 +3043,7 @@ Public Class ModernTextBox
         Return total
     End Function
     Private Sub UpdateDpiCache()
-        _cachedDpiScale = Me.DeviceDpi / 96.0F
+        _cachedDpiScale = D2DGlobals.GetCurrentDpiScale(Me)
         _cachedBorderInset = CInt(Math.Round(边框宽度 * _cachedDpiScale))
         _scaledLineHeight = CInt(Math.Round(行高 * _cachedDpiScale))
         _scaledCaretWidth = CInt(Math.Round(光标线宽 * _cachedDpiScale))
@@ -3050,6 +3052,14 @@ Public Class ModernTextBox
         InvalidateLineNumberGutterCache()
         InvalidateMeasureCache()
     End Sub
+
+    Private Sub EnsureDpiCacheCurrent()
+        Dim currentScale As Single = D2DGlobals.GetCurrentDpiScale(Me)
+        If Math.Abs(currentScale - _cachedDpiScale) < 0.0001F Then Return
+        UpdateDpiCache()
+        RefreshVisualLayout(True)
+    End Sub
+
     Private Function IsWordWrapActive() As Boolean
         Return 启用多行 AndAlso _wordWrap
     End Function

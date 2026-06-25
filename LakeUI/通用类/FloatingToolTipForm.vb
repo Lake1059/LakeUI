@@ -332,7 +332,7 @@ Public NotInheritable Class FloatingToolTipForm
         Dim font As Font = TipFont()
         If font Is Nothing Then Return Nothing
 
-        Dim sizePx As Single = font.SizeInPoints * (96.0F / 72.0F) * OwnerDpiScale()
+        Dim sizePx As Single = D2DGlobals.GetDWriteFontSizePx(font, OwnerDpiScale())
         Dim fmt = D2DGlobals.CreateTextFormat(font, sizePx)
         fmt.TextAlignment = TextAlignment.Leading
         fmt.ParagraphAlignment = ParagraphAlignment.Near
@@ -642,8 +642,8 @@ Public NotInheritable Class FloatingToolTipForm
     End Function
 
     Private Function OwnerDpiScale() As Single
-        If _owner IsNot Nothing AndAlso Not _owner.IsDisposed Then Return _owner.DeviceDpi / 96.0F
-        Return DeviceDpi / 96.0F
+        If _owner IsNot Nothing AndAlso Not _owner.IsDisposed Then Return D2DGlobals.GetCurrentDpiScale(_owner)
+        Return D2DGlobals.GetCurrentDpiScale(Me)
     End Function
 
     Private Shared Function NormalizePadding(value As Padding) As Padding

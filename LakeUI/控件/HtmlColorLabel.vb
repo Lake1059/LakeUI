@@ -783,7 +783,7 @@ Public Class HtmlColorLabel
     End Sub
 
     Private Sub 绘制纯文本_D2D(rt As ID2D1DCRenderTarget, text As String, 内容区域 As Rectangle)
-        Dim sizePx As Single = Me.Font.SizeInPoints * (96.0F / 72.0F) * DpiScale()
+        Dim sizePx As Single = D2DGlobals.GetDWriteFontSizePx(Me.Font, DpiScale())
         Dim weight As Vortice.DirectWrite.FontWeight = If(Me.Font.Bold, Vortice.DirectWrite.FontWeight.Bold, Vortice.DirectWrite.FontWeight.Normal)
         Dim style As Vortice.DirectWrite.FontStyle = If(Me.Font.Italic, Vortice.DirectWrite.FontStyle.Italic, Vortice.DirectWrite.FontStyle.Normal)
 
@@ -810,7 +810,7 @@ Public Class HtmlColorLabel
     Private Sub 绘制单元_D2D(rt As ID2D1DCRenderTarget, text As String, font As Font, color As Color,
                            pt As PointF, w As Integer, h As Integer)
         If String.IsNullOrEmpty(text) Then Return
-        Dim sizePx As Single = font.SizeInPoints * (96.0F / 72.0F) * DpiScale()
+        Dim sizePx As Single = D2DGlobals.GetDWriteFontSizePx(font, DpiScale())
         Dim weight As Vortice.DirectWrite.FontWeight = If((font.Style And FontStyle.Bold) <> 0, Vortice.DirectWrite.FontWeight.Bold, Vortice.DirectWrite.FontWeight.Normal)
         Dim style As Vortice.DirectWrite.FontStyle = If((font.Style And FontStyle.Italic) <> 0, Vortice.DirectWrite.FontStyle.Italic, Vortice.DirectWrite.FontStyle.Normal)
         Dim fmt = _当前合成器.TextFormatCache.Get(font.FontFamily.Name, weight, style, sizePx,
@@ -969,7 +969,7 @@ Public Class HtmlColorLabel
     End Sub
 
     Private Function DpiScale() As Single
-        Return Me.DeviceDpi / 96.0F
+        Return D2DGlobals.GetCurrentDpiScale(Me)
     End Function
 
     Private 超采样倍率 As Integer = 1

@@ -644,7 +644,7 @@ Public Class BreadcrumbNavigationBar
 
 #Region "布局"
     Private Function DpiScale() As Single
-        Return Me.DeviceDpi / 96.0F
+        Return D2DGlobals.GetCurrentDpiScale(Me)
     End Function
 
     Private Sub RebuildLayout()

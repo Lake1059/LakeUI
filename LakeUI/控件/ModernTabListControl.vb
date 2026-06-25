@@ -168,6 +168,7 @@ Public Class ModernTabListControl
     Private Class BoundPageState
         Public HasBeenShown As Boolean
         Public LastShownSize As Size = Size.Empty
+        Public LastShownDpi As Integer
         Public LastShownBackgroundVersion As Integer = -1
         Public LastShownPanelBounds As Rectangle = Rectangle.Empty
         Public LastShownBackgroundSource As Control = Nothing
@@ -663,6 +664,7 @@ Public Class ModernTabListControl
         If ctrl Is Nothing OrElse state Is Nothing Then Return False
         If Not state.HasBeenShown Then Return False
         If state.LastShownSize <> ctrl.ClientSize Then Return False
+        If state.LastShownDpi <> D2DGlobals.GetCurrentDpi(Me) Then Return False
         If state.LastShownPanelBounds <> _内容面板.Bounds Then Return False
         If state.LastShownBackgroundVersion <> _背景刷新版本 Then Return False
         If state.LastShownBackgroundSource IsNot 获取切页背景源() Then Return False
@@ -824,6 +826,59 @@ Public Class ModernTabListControl
         End If
     End Sub
 
+    Private Function 同步绑定控件Dpi(ctrl As Control, forceRefresh As Boolean, firstShow As Boolean) As Boolean
+        If ctrl Is Nothing OrElse ctrl.IsDisposed Then Return False
+
+        Dim hostDpi As Integer = D2DGlobals.GetCurrentDpi(Me)
+        If hostDpi <= 0 Then Return False
+
+        Dim changed As Boolean = False
+        Try
+            If ctrl.IsHandleCreated Then D2DGlobals.SetWindowDpi(ctrl.Handle, hostDpi)
+        Catch
+        End Try
+
+        Dim container = TryCast(ctrl, ContainerControl)
+        If container IsNot Nothing AndAlso Not container.IsDisposed Then
+            Try
+                If container.AutoScaleMode <> AutoScaleMode.None Then
+                    Dim oldDim = container.AutoScaleDimensions
+                    Dim newDim = container.CurrentAutoScaleDimensions
+                    If Math.Abs(oldDim.Width - newDim.Width) > 0.1F OrElse
+                       Math.Abs(oldDim.Height - newDim.Height) > 0.1F Then
+                        ' 绑定页多为非 TopLevel Form，隐藏期间不会完整跟随宿主 DPI。
+                        ' 首次显示时只在 AutoScaleDimensions 落后时补一次 WinForms autoscale；
+                        ' FontChanged 产生的 D2D 刷新统一延后到切页调用栈之后，避免按钮密集页面卡住。
+                        Using D2DHelperV2.EnterDeferredFontRefresh()
+                            Try : container.SuspendLayout() : Catch : End Try
+                            Try
+                                container.PerformAutoScale()
+                            Finally
+                                Try : container.ResumeLayout(True) : Catch : End Try
+                            End Try
+                        End Using
+                        changed = True
+                    End If
+                End If
+            Catch
+            End Try
+        End If
+
+        Dim frm = TryCast(ctrl, Form)
+        If frm IsNot Nothing AndAlso changed AndAlso Not firstShow Then
+            Try
+                D2DHelperV2.NotifyDpiChanged(frm, hostDpi)
+            Catch
+            End Try
+        ElseIf changed OrElse forceRefresh Then
+            ' 首次显示已完成必要 autoscale，不再立即释放整页 D2D 目标并递归 Update。
+            ' 下一轮消息循环的外到内刷新足够重建文字缓存和位图缓存。
+            D2DHelperV2.RefreshFontDependentRendering(ctrl, invalidateChildren:=True, immediate:=False)
+        End If
+
+        Return changed
+    End Function
+
     Private Sub 解除绑定页背景穿透消费者(root As Control)
         If root Is Nothing Then Return
         Try : BackgroundPenetrationV2.UnregisterConsumer(root) : Catch : End Try
@@ -852,6 +907,10 @@ Public Class ModernTabListControl
         Dim panelWasVisible As Boolean = _内容面板.Visible
         If Not panelWasVisible Then _内容面板.Visible = True
         If _内容面板.Controls.GetChildIndex(ctrl) <> 0 Then ctrl.BringToFront()
+        Dim currentDpi As Integer = D2DGlobals.GetCurrentDpi(Me)
+        Dim firstShow As Boolean = state Is Nothing OrElse Not state.HasBeenShown
+        Dim dpiChanged As Boolean = state Is Nothing OrElse state.LastShownDpi <> currentDpi
+        Dim dpiSyncChanged As Boolean = 同步绑定控件Dpi(ctrl, parentChanged OrElse firstShow OrElse dpiChanged, firstShow)
 
         Dim backgroundChanged As Boolean = state Is Nothing OrElse
                                            Not state.HasBeenShown OrElse
@@ -866,7 +925,9 @@ Public Class ModernTabListControl
                                       Not panelWasVisible OrElse
                                       backgroundChanged OrElse
                                       panelChanged OrElse
-                                      sizeChanged
+                                      sizeChanged OrElse
+                                      dpiChanged OrElse
+                                      dpiSyncChanged
         If state IsNot Nothing Then state.ForceRefreshDuringSwitch = needsRefresh AndAlso 正在切页刷新过滤期()
         If needsRefresh Then
             OuterToInnerRefreshScheduler.RequestFull(ctrl, invalidateChildren:=True)
@@ -874,6 +935,7 @@ Public Class ModernTabListControl
         If state IsNot Nothing Then
             state.HasBeenShown = True
             state.LastShownSize = ctrl.ClientSize
+            state.LastShownDpi = currentDpi
             state.LastShownBackgroundVersion = _背景刷新版本
             state.LastShownPanelBounds = _内容面板.Bounds
             state.LastShownBackgroundSource = 获取切页背景源()
@@ -1322,7 +1384,7 @@ Public Class ModernTabListControl
             Dim descColor As Color = If(item.NormalForeColor <> Color.Empty, item.NormalForeColor, 说明文本颜色值)
             Dim r As New RectangleF(bounds.X + _textPad, bounds.Y, bounds.Width - _textPad * 2, bounds.Height)
             If r.Width <= 0 OrElse r.Height <= 0 Then Return
-            画文本_D2D(rt, dw, item.Text, descFont, r, descColor, Vortice.DirectWrite.TextAlignment.Leading)
+            画文本_D2D(rt, dw, item.Text, descFont, r, descColor, Vortice.DirectWrite.TextAlignment.Leading, forceDpiScale:=True)
             Return
         End If
 
@@ -1366,10 +1428,13 @@ Public Class ModernTabListControl
     ''' <summary>DirectWrite 单行文本绘制（垂直居中、末尾省略号）。</summary>
     Private Sub 画文本_D2D(rt As ID2D1RenderTarget, dw As IDWriteFactory,
                           text As String, font As Font, rect As RectangleF, color As Color,
-                          hAlign As Vortice.DirectWrite.TextAlignment)
+                          hAlign As Vortice.DirectWrite.TextAlignment,
+                          Optional forceDpiScale As Boolean = False)
         If String.IsNullOrEmpty(text) OrElse rect.Width <= 0 OrElse rect.Height <= 0 OrElse color.A = 0 Then Return
         Dim s As Single = DpiScale()
-        Dim sizePx As Single = font.SizeInPoints * (96.0F / 72.0F) * s
+        Dim sizePx As Single = If(forceDpiScale,
+                                  Math.Max(1.0F, CSng(font.SizeInPoints * (96.0F / 72.0F) * s)),
+                                  D2DGlobals.GetDWriteFontSizePx(font, s))
         Dim weight As Vortice.DirectWrite.FontWeight = If(font.Bold, Vortice.DirectWrite.FontWeight.Bold, Vortice.DirectWrite.FontWeight.Normal)
         Dim style As Vortice.DirectWrite.FontStyle = If(font.Italic, Vortice.DirectWrite.FontStyle.Italic, Vortice.DirectWrite.FontStyle.Normal)
         Dim familyName As String = font.FontFamily.Name
@@ -2102,7 +2167,7 @@ Public Class ModernTabListControl
     End Sub
 
     Private Function DpiScale() As Single
-        Return Me.DeviceDpi / 96.0F
+        Return D2DGlobals.GetCurrentDpiScale(Me)
     End Function
 
     Friend Sub InvalidateFontResources()

@@ -220,15 +220,13 @@ Partial Class Form1
         ThisIsYourWindow1.BorderInactiveColor = Color.MediumPurple
         ThisIsYourWindow1.ButtonCornerRadius = 5
         ThisIsYourWindow1.ButtonGlyphLineWidth = 2F
-        ThisIsYourWindow1.ButtonGlyphSize = 12
         ThisIsYourWindow1.ButtonPadding = New Padding(0, 5, 5, 5)
-        ThisIsYourWindow1.ButtonWidth = 50
+        ThisIsYourWindow1.ButtonWidth = 38
         ThisIsYourWindow1.CaptionBackColor = Color.FromArgb(CByte(48), CByte(48), CByte(48))
         ThisIsYourWindow1.CaptionButtonGlyphColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
-        ThisIsYourWindow1.CaptionHeight = 50
+        ThisIsYourWindow1.CaptionHeight = 40
         ThisIsYourWindow1.CaptionInactiveBackColor = Color.FromArgb(CByte(48), CByte(48), CByte(48))
         ThisIsYourWindow1.CloseButtonGlyphColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
-        ThisIsYourWindow1.IconPaddingLeft = 15
         ThisIsYourWindow1.IconSize = 25
         ThisIsYourWindow1.LayerShadowColor = Color.MediumPurple
         ThisIsYourWindow1.LayerShadowResizeFullArea = True
@@ -249,7 +247,7 @@ Partial Class Form1
         MinimumSize = New Size(1000, 700)
         Name = "Form1"
         StartPosition = FormStartPosition.CenterScreen
-        Text = "LakeUI 2.16 DEMO"
+        Text = "LakeUI 2.17 DEMO"
         ModernTabListControl1.ResumeLayout(False)
         ResumeLayout(False)
     End Sub

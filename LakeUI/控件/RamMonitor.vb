@@ -772,7 +772,7 @@ Public Class RamMonitor
     End Sub
 
     Private Function 文本像素高度(s As Single) As Single
-        Return Me.Font.SizeInPoints * (96.0F / 72.0F) * s
+        Return D2DGlobals.GetDWriteFontSizePx(Me.Font, s)
     End Function
 
     Private Shared Function 转文本水平对齐(a As ContentAlignment) As TextAlignment
@@ -996,7 +996,7 @@ Public Class RamMonitor
     End Sub
 
     Private Function DpiScale() As Single
-        Return Me.DeviceDpi / 96.0F
+        Return D2DGlobals.GetCurrentDpiScale(Me)
     End Function
 
     Private Function 应执行采样刷新() As Boolean

@@ -380,6 +380,7 @@ Public Class CpuMonitor
         Dim simplified As Boolean = 应使用简化模式(count)
         Dim cols As Integer = 计算列数(count, simplified)
         Dim rows As Integer = CInt(Math.Ceiling(count / CDbl(cols)))
+        Dim currentDpi As Integer = D2DGlobals.GetCurrentDpi(Me)
 
         Dim pad As Padding = Me.Padding
         Dim gap As Single = 网格间距值 * s
@@ -391,7 +392,7 @@ Public Class CpuMonitor
         If cached IsNot Nothing AndAlso
            cached.ControlWidth = Me.Width AndAlso
            cached.ControlHeight = Me.Height AndAlso
-           cached.Dpi = Me.DeviceDpi AndAlso
+           cached.Dpi = currentDpi AndAlso
            cached.StartIndex = startIndex AndAlso
            cached.Count = count AndAlso
            cached.Columns = cols AndAlso
@@ -411,7 +412,7 @@ Public Class CpuMonitor
         Dim layout As New 绘制布局信息 With {
             .ControlWidth = Me.Width,
             .ControlHeight = Me.Height,
-            .Dpi = Me.DeviceDpi,
+            .Dpi = currentDpi,
             .StartIndex = startIndex,
             .Count = count,
             .Columns = cols,
@@ -730,7 +731,7 @@ Public Class CpuMonitor
     End Function
 
     Private Function 文本像素高度(s As Single) As Single
-        Return Me.Font.SizeInPoints * (96.0F / 72.0F) * s
+        Return D2DGlobals.GetDWriteFontSizePx(Me.Font, s)
     End Function
 
     Private Function 文本行像素高度(s As Single) As Single
@@ -1028,7 +1029,7 @@ Public Class CpuMonitor
     End Sub
 
     Private Function DpiScale() As Single
-        Return Me.DeviceDpi / 96.0F
+        Return D2DGlobals.GetCurrentDpiScale(Me)
     End Function
 
     Private Function 应执行采样刷新() As Boolean

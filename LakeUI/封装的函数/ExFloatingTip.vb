@@ -231,7 +231,7 @@ Friend Class ExFloatingTipForm
         Me.DoubleBuffered = True
         Me.BackColor = 主题.CardBackColor
 
-        SC = Me.DeviceDpi / 96.0F
+        SC = D2DGlobals.GetCurrentDpiScale(Me)
         卡片内边距 = CInt(主题.Padding * SC)
         卡片最大宽度 = CInt(主题.MaxWidth * SC)
 

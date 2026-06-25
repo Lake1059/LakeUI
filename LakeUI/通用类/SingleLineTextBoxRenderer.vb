@@ -518,7 +518,7 @@ Public Class SingleLineTextBoxRenderer
 
     Private Function DpiScale() As Single
         If DpiScaleProvider IsNot Nothing Then Return Math.Max(0.01F, DpiScaleProvider.Invoke())
-        Return _owner.DeviceDpi / 96.0F
+        Return D2DGlobals.GetCurrentDpiScale(_owner)
     End Function
 
     Private Function IsFocused() As Boolean
@@ -632,7 +632,7 @@ Public Class SingleLineTextBoxRenderer
         Dim ownsBrush As Boolean = (brushCache Is Nothing)
         Dim br As ID2D1Brush = Nothing
         Try
-            Dim sizePx As Single = font.SizeInPoints * (96.0F / 72.0F) * dpiScale
+            Dim sizePx As Single = D2DGlobals.GetDWriteFontSizePx(font, dpiScale)
             If textFormatCache IsNot Nothing Then
                 fmt = textFormatCache.Get(font, sizePx,
                                           Vortice.DirectWrite.TextAlignment.Leading,

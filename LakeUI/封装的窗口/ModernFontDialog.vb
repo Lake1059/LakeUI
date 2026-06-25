@@ -1184,7 +1184,7 @@ Public Class ModernFontDialog
         If String.IsNullOrEmpty(text) OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
         Dim f = SelectedFont
         Dim s = 取D2D缩放()
-        Dim sizePx As Single = f.SizeInPoints * (96.0F / 72.0F) * s
+        Dim sizePx As Single = D2DGlobals.GetDWriteFontSizePx(f, s)
         Dim selectedStyle = 查找字形项(取文本框文本(FontDialogTextBoxKind.Style))
         Dim weight As DW.FontWeight = If(selectedStyle IsNot Nothing, selectedStyle.DWriteWeight, If(f.Bold, DW.FontWeight.Bold, DW.FontWeight.Normal))
         Dim style As DW.FontStyle = If(selectedStyle IsNot Nothing, selectedStyle.DWriteStyle, If(f.Italic, DW.FontStyle.Italic, DW.FontStyle.Normal))
@@ -2188,7 +2188,7 @@ Public Class ModernFontDialog
 
         Try
             Dim s = 取D2D缩放()
-            Dim sizePx As Single = Font.SizeInPoints * (96.0F / 72.0F) * s
+            Dim sizePx As Single = D2DGlobals.GetDWriteFontSizePx(Font, s)
             Dim fmt = compositor.TextFormatCache.Get(familyName, entry.DWriteWeight, entry.DWriteStyle,
                                                      entry.DWriteStretch, sizePx,
                                                      DW.TextAlignment.Leading, DW.ParagraphAlignment.Center,
@@ -2289,7 +2289,7 @@ Public Class ModernFontDialog
 #Region "辅助方法"
 
     Private Function 取D2D缩放() As Single
-        Return Math.Max(0.01F, DeviceDpi / 96.0F)
+        Return D2DGlobals.GetCurrentDpiScale(Me)
     End Function
 
     Private Function 缩放值(value As Integer) As Integer

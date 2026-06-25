@@ -357,7 +357,7 @@ Public Class ThisIsYourWindow
 
     Private Shared Function 取Dpi缩放(control As Control) As Single
         If control IsNot Nothing AndAlso Not control.IsDisposed Then
-            Return Math.Max(0.01F, control.DeviceDpi / 96.0F)
+            Return D2DGlobals.GetCurrentDpiScale(control)
         End If
         Return 1.0F
     End Function
@@ -1969,7 +1969,7 @@ Public Class ThisIsYourWindow
         Dim iconNone As Boolean = (_图标来源 = IconSourceEnum.None)
 
         ' 布局签名：所有影响按钮/图标位置的输入生成哈希，避免手工 bit-pack 截断导致缓存误命中。
-        Dim sig As Long = HashCode.Combine(w, form.DeviceDpi, bdr, bw, bh, sp, iconSize, iconPadLeft)
+        Dim sig As Long = HashCode.Combine(w, D2DGlobals.GetCurrentDpi(form), bdr, bw, bh, sp, iconSize, iconPadLeft)
         sig = HashCode.Combine(sig, hasMin)
         sig = HashCode.Combine(sig, hasMax, posRight, iconNone)
         If s.LayoutSignature = sig Then Return
@@ -2398,9 +2398,9 @@ Public Class ThisIsYourWindow
             Case Else : align = Vortice.DirectWrite.TextAlignment.Leading
         End Select
 
-        ' DirectWrite 字号必须叠加 DPI 缩放（参考 ModernButton.vb 中的注释说明）。
-        Dim dpiScale As Single = s.HostForm.DeviceDpi / 96.0F
-        Dim sizePx As Single = font.SizeInPoints * (96.0F / 72.0F) * dpiScale
+        Dim dpiScale As Single = D2DGlobals.GetCurrentDpiScale(s.HostForm)
+        ' 控件 Font 可能已被 WinForms AutoScale 修改，DirectWrite 字号统一交给 D2DGlobals 推断基准 DPI。
+        Dim sizePx As Single = D2DGlobals.GetDWriteFontSizePx(font, dpiScale)
         Dim weight As Vortice.DirectWrite.FontWeight = If(font.Bold, Vortice.DirectWrite.FontWeight.Bold, Vortice.DirectWrite.FontWeight.Normal)
         Dim style As Vortice.DirectWrite.FontStyle = If(font.Italic, Vortice.DirectWrite.FontStyle.Italic, Vortice.DirectWrite.FontStyle.Normal)
 
@@ -3036,7 +3036,13 @@ Public Class ThisIsYourWindow
                     Return
 
                 Case WM_DPICHANGED
+                    Dim newDpi As Integer = D2DGlobals.ExtractDpiFromWParam(m.WParam)
+                    If newDpi > 0 AndAlso _state.HostForm IsNot Nothing AndAlso
+                       Not _state.HostForm.IsDisposed AndAlso _state.HostForm.IsHandleCreated Then
+                        D2DGlobals.SetWindowDpi(_state.HostForm.Handle, newDpi)
+                    End If
                     MyBase.WndProc(m)
+                    D2DHelperV2.NotifyDpiChanged(_state.HostForm, newDpi)
                     _owner.处理DpiChanged(_state)
                     Return
 

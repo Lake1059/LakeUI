@@ -718,6 +718,7 @@ Public Class MarkdownViewerCore
     Private _fontCache As Dictionary(Of String, Font) = Nothing
     Private _lastBaseFont As Font = Nothing
     Private _measureVersion As Integer
+    Private _layoutDpi As Integer = 0
     Private ReadOnly _textWidthCache As New Dictionary(Of TextWidthKey, Integer)(512)
     Private Const MaxTextWidthCacheEntries As Integer = 4096
 
@@ -1901,6 +1902,7 @@ Public Class MarkdownViewerCore
     Private Sub RebuildLayout()
         Dim oldContentHeight As Integer = _totalContentHeight
         InvalidateMeasureCache()
+        _layoutDpi = EffectiveDeviceDpi()
         _visualLines.Clear()
         _tableColumnWidths.Clear()
         _totalContentHeight = 0
@@ -1981,6 +1983,13 @@ Public Class MarkdownViewerCore
         If _totalContentHeight <> oldContentHeight Then RaiseEvent ContentHeightChanged(Me, EventArgs.Empty)
     End Sub
 
+    Private Sub EnsureLayoutDpiCurrent()
+        Dim currentDpi As Integer = EffectiveDeviceDpi()
+        If currentDpi <= 0 OrElse currentDpi = _layoutDpi Then Return
+        RebuildLayout()
+        ClampScroll()
+    End Sub
+
     ''' <summary>判断两个相邻块是否属于同一元素组（使用行内行距而非段落行距）。</summary>
     Private Shared Function IsSameGroup(prev As BlockKind, curr As BlockKind) As Boolean
         If IsListBlock(prev) AndAlso IsListBlock(curr) Then Return True
@@ -1998,7 +2007,7 @@ Public Class MarkdownViewerCore
         Dim padB As Integer = CInt(代码块内边距.Bottom * s)
         Dim padL As Integer = CInt(代码块内边距.Left * s)
         Dim padR As Integer = CInt(代码块内边距.Right * s)
-        Dim fontH As Integer = CInt(Math.Ceiling(cFont.GetHeight(EffectiveDeviceDpi())))
+        Dim fontH As Integer = GetLayoutLineHeight(cFont)
         y += padT
         For cli As Integer = 0 To codeLines.Length - 1
             Dim cText = codeLines(cli)
@@ -2027,7 +2036,7 @@ Public Class MarkdownViewerCore
         If colCount = 0 Then Return y
 
         ' 计算每列最小宽度（单行时的理想宽度）
-        Dim lineH As Integer = CInt(Math.Ceiling(Font.GetHeight(EffectiveDeviceDpi())))
+        Dim lineH As Integer = GetLayoutLineHeight(Font)
         Dim colWidths(colCount - 1) As Integer
         Dim minColW As Integer = cellPadding * 2 + MeasureTextWidthCached("W", Font, lineH)
         For Each row In block.TableRows
@@ -2139,7 +2148,7 @@ Public Class MarkdownViewerCore
             blockFore = GetAlertColor(block.AlertKind)
         End If
         Dim indent As Integer = GetBlockIndent(block, s)
-        Dim textLineH As Integer = CInt(Math.Ceiling(blockFont.GetHeight(EffectiveDeviceDpi())))
+        Dim textLineH As Integer = GetLayoutLineHeight(blockFont)
         Dim fragments As New List(Of VisualFragment)
         Dim x As Integer = indent
         Dim firstLine As Boolean = True
@@ -2175,7 +2184,7 @@ Public Class MarkdownViewerCore
                     renderH = img.Height
                 Else
                     renderW = Math.Min(CInt(图片占位宽度 * s), maxW)
-                    renderH = CInt(Math.Ceiling(blockFont.GetHeight(EffectiveDeviceDpi()))) * 图片占位高度行数
+                    renderH = GetLayoutLineHeight(blockFont) * 图片占位高度行数
                 End If
 
                 If inl.ImageWidth > 0 AndAlso inl.ImageHeight > 0 Then
@@ -2348,6 +2357,7 @@ Public Class MarkdownViewerCore
         Dim w As Integer = ClientRectangle.Width
         Dim h As Integer = ClientRectangle.Height
         If w <= 0 OrElse h <= 0 Then Return
+        EnsureLayoutDpiCurrent()
         Dim s As Single = DpiScale()
 
         Dim ssaa As Integer = D2DHelperV2.GetEffectiveSsaaScale(1)
@@ -2416,6 +2426,7 @@ Public Class MarkdownViewerCore
                                        Optional drawBackground As Boolean = False)
         If rt Is Nothing OrElse compositor Is Nothing Then Return
         If clipSize.Width <= 0 OrElse clipSize.Height <= 0 Then Return
+        EnsureLayoutDpiCurrent()
 
         Dim oldCompositor = _当前合成器
         _当前合成器 = compositor
@@ -2706,7 +2717,7 @@ Public Class MarkdownViewerCore
             Case Else : textAlign = Vortice.DirectWrite.TextAlignment.Leading
         End Select
         Dim paraAlign As Vortice.DirectWrite.ParagraphAlignment = If(verticalCenter, Vortice.DirectWrite.ParagraphAlignment.Center, Vortice.DirectWrite.ParagraphAlignment.Near)
-        Dim sizePx As Single = font.SizeInPoints * EffectiveDeviceDpi() / 72.0F
+        Dim sizePx As Single = D2DGlobals.GetDWriteFontSizePx(font, DpiScale())
         Dim fmt = _当前合成器.TextFormatCache.Get(font.FontFamily.Name, weight, style, sizePx, textAlign, paraAlign, True)
         rt.DrawText(text, fmt, D2DGlobals.ToD2DRect(rect), _当前合成器.BrushCache.Get(rt, color))
     End Sub
@@ -2920,6 +2931,7 @@ Public Class MarkdownViewerCore
     End Function
 
     Private Function HitTestPos(mx As Integer, my As Integer) As SelectionPos
+        EnsureLayoutDpiCurrent()
         If _visualLines.Count = 0 Then Return New SelectionPos(0, 0, 0)
         Dim hit = HitTestCoords(mx, my)
         Dim vl = _visualLines(hit.vli)
@@ -2930,7 +2942,7 @@ Public Class MarkdownViewerCore
             If hit.hitX < frag.X + frag.Width OrElse fi = vl.Fragments.Count - 1 Then
                 Dim charOff As Integer = 0
                 If frag.Text IsNot Nothing AndAlso frag.Text.Length > 0 Then
-                    charOff = TextRenderHelper.FindColFromX(frag.Text, hit.hitX - frag.X, frag.UseFont, vl.Height)
+                    charOff = TextRenderHelper.FindColFromX_D2D(frag.Text, hit.hitX - frag.X, frag.UseFont, DpiScale(), GetTextFormatCacheForMeasure())
                 End If
                 Return New SelectionPos(hit.vli, fi, charOff)
             End If
@@ -2939,6 +2951,7 @@ Public Class MarkdownViewerCore
     End Function
 
     Private Function HitTestLink(mx As Integer, my As Integer) As String
+        EnsureLayoutDpiCurrent()
         If _visualLines.Count = 0 Then Return Nothing
         Dim hit = HitTestCoords(mx, my)
         If hit.vli >= _visualLines.Count Then Return Nothing
@@ -3118,6 +3131,15 @@ Public Class MarkdownViewerCore
         InvalidateFontCache()
         RebuildLayout()
         D2DHelperV2.RefreshFontDependentRendering(Me)
+    End Sub
+
+    Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
+        MyBase.OnDpiChangedAfterParent(e)
+        InvalidateFontCache()
+        RebuildLayout()
+        ClampScroll()
+        D2DHelperV2.RefreshFontDependentRendering(Me)
+        RequestEmbeddedOrSelfRefresh()
     End Sub
 
 #End Region
@@ -3463,10 +3485,19 @@ Public Class MarkdownViewerCore
         Dim cached As Integer = 0
         If _textWidthCache.TryGetValue(key, cached) Then Return cached
 
-        cached = TextRenderHelper.MeasureTextWidth(text, font, lineH)
+        cached = CInt(Math.Ceiling(TextRenderHelper.MeasureTextWidth_D2D(text, font, DpiScale(), GetTextFormatCacheForMeasure())))
         If _textWidthCache.Count >= MaxTextWidthCacheEntries Then _textWidthCache.Clear()
         _textWidthCache(key) = cached
         Return cached
+    End Function
+
+    Private Function GetLayoutLineHeight(font As Font) As Integer
+        Return CInt(Math.Ceiling(D2DGlobals.GetDWriteLineHeightPx(font, DpiScale())))
+    End Function
+
+    Private Function GetTextFormatCacheForMeasure() As D2DGlobals.TextFormatCache
+        Dim comp = If(_当前合成器, D2DHelperV2.GetCompositor(Me))
+        Return comp?.TextFormatCache
     End Function
 
     Private Function GetAlertColor(kind As AlertKind) As Color
@@ -3503,7 +3534,7 @@ Public Class MarkdownViewerCore
 
     Private Function EffectiveDeviceDpi() As Integer
         If _embeddedContentMode AndAlso _embeddedHostDpi > 0 Then Return _embeddedHostDpi
-        Return Me.DeviceDpi
+        Return D2DGlobals.GetCurrentDpi(Me)
     End Function
 
     Private Function GetContentInsets() As ContentInsets

@@ -212,7 +212,7 @@ Partial Public Class EasyStatesPanel
 #Region "通用"
 
     Private Function DpiScale() As Single
-        Return Me.DeviceDpi / 96.0F
+        Return D2DGlobals.GetCurrentDpiScale(Me)
     End Function
 
     Private Sub SetValue(Of T)(ByRef field As T, value As T, Optional affectsLayout As Boolean = False)
@@ -901,12 +901,12 @@ Partial Public Class EasyStatesPanel
         Try
             Dim s As Single = DpiScale()
             Dim dw = D2DGlobals.GetDWriteFactory()
-            Dim mainSizePx As Single = Font.SizeInPoints * (96.0F / 72.0F) * s
+            Dim mainSizePx As Single = D2DGlobals.GetDWriteFontSizePx(Font, s)
             Dim padX As Single = _cardHorizontalPadding * s
             Dim padY As Single = _cardVerticalPadding * s
             Dim lineGap As Single = _mainSubTextSpacing * s
             Dim subFont = GetSubTextFont()
-            Dim subSizePx As Single = subFont.SizeInPoints * (96.0F / 72.0F) * s
+            Dim subSizePx As Single = D2DGlobals.GetDWriteFontSizePx(subFont, s)
             Dim mainFmt = textFormatCache.Get(Font, mainSizePx, TextAlignment.Leading, ParagraphAlignment.Near, True)
             Dim subFmt = textFormatCache.Get(subFont.FontFamily.Name, Vortice.DirectWrite.FontWeight.Normal, Vortice.DirectWrite.FontStyle.Normal,
                                              subSizePx, TextAlignment.Leading, ParagraphAlignment.Near, True)

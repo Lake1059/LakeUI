@@ -1468,7 +1468,7 @@ Public Class ModernListBox
         Dim scrollW As Integer = If(Not _scrollBar.TrackRect.IsEmpty, Width - inset - _scrollBar.VisualLeft, 0)
         Dim availW As Integer = contentRect.Width - scrollW
 
-        Dim fontSizePx As Single = Font.SizeInPoints * (96.0F / 72.0F) * s
+        Dim fontSizePx As Single = D2DGlobals.GetDWriteFontSizePx(Font, s)
         Dim fontWeight As Vortice.DirectWrite.FontWeight = If(Font.Bold, Vortice.DirectWrite.FontWeight.Bold, Vortice.DirectWrite.FontWeight.Normal)
         Dim fontStyle As Vortice.DirectWrite.FontStyle = If(Font.Italic, Vortice.DirectWrite.FontStyle.Italic, Vortice.DirectWrite.FontStyle.Normal)
         Dim fmt = _当前合成器.TextFormatCache.Get(Font.FontFamily.Name, fontWeight, fontStyle, fontSizePx,
@@ -2347,7 +2347,7 @@ Public Class ModernListBox
 #Region "辅助"
 
     Private Function DpiScale() As Single
-        Return Me.DeviceDpi / 96.0F
+        Return D2DGlobals.GetCurrentDpiScale(Me)
     End Function
 
     Private Sub BeginInternalUpdate()

@@ -1,5 +1,6 @@
 Imports System.Drawing.Imaging
 Imports System.Numerics
+Imports System.Runtime.InteropServices
 Imports Vortice.Direct2D1
 Imports Vortice.DirectWrite
 Imports Vortice.DXGI
@@ -16,6 +17,198 @@ Imports Vortice.DXGI
 ''' 类型转换、上传缓存与把当前全局设置应用到 RenderTarget。
 ''' </summary>
 Public Module D2DGlobals
+
+#Region "DPI"
+
+    ' V2 文本/DPI 统一入口：
+    ' WinForms 在 PerMonitorV2 下会在 DPI 改变时调整控件字体与 AutoScaleDimensions，
+    ' 但嵌入到标签页里的非 TopLevel Form 往往不会自然收到完整的窗口 DPI 上下文。
+    ' 因此所有 D2D/DirectWrite 绘制路径都通过这里取“当前宿主窗口 DPI”，并用窗口句柄缓存补齐
+    ' 句柄尚未可见、WinForms DeviceDpi 尚未同步、或嵌入 Form 需要继承宿主 DPI 的情况。
+    <DllImport("user32.dll")>
+    Private Function GetDpiForWindow(hwnd As IntPtr) As UInteger
+    End Function
+
+    Private ReadOnly _windowDpiLock As New Object()
+    Private ReadOnly _windowDpi As New Dictionary(Of IntPtr, Integer)()
+
+    Private Function TryGetDpiForWindow(hwnd As IntPtr) As Integer
+        If hwnd = IntPtr.Zero Then Return 0
+        Try
+            Dim dpi As Integer = CInt(GetDpiForWindow(hwnd))
+            If dpi > 0 Then Return dpi
+        Catch
+        End Try
+        Return 0
+    End Function
+
+    Private Function TryGetCachedWindowDpi(hwnd As IntPtr) As Integer
+        If hwnd = IntPtr.Zero Then Return 0
+        SyncLock _windowDpiLock
+            Dim cachedDpi As Integer = 0
+            If _windowDpi.TryGetValue(hwnd, cachedDpi) AndAlso cachedDpi > 0 Then Return cachedDpi
+        End SyncLock
+        Return 0
+    End Function
+
+    Private Function TryGetDpiFromFormWindow(form As Form) As Integer
+        If form Is Nothing OrElse form.IsDisposed OrElse Not form.IsHandleCreated Then Return 0
+
+        Dim hwnd = form.Handle
+        Dim windowDpi As Integer = TryGetDpiForWindow(hwnd)
+        If windowDpi > 0 Then
+            Dim cachedDpi As Integer = TryGetCachedWindowDpi(hwnd)
+            If cachedDpi <> windowDpi Then SetWindowDpi(hwnd, windowDpi)
+            Return windowDpi
+        End If
+
+        Return TryGetCachedWindowDpi(hwnd)
+    End Function
+
+    Private Function ResolveDpiAuthorityForm(form As Form) As Form
+        If form Is Nothing OrElse form.IsDisposed Then Return form
+
+        Try
+            If Not form.TopLevel AndAlso form.Parent IsNot Nothing AndAlso Not form.Parent.IsDisposed Then
+                Dim host = form.Parent.FindForm()
+                If host IsNot Nothing AndAlso Not host.IsDisposed AndAlso host IsNot form Then Return host
+            End If
+        Catch
+        End Try
+
+        Return form
+    End Function
+
+    Friend Sub SetWindowDpi(hwnd As IntPtr, dpi As Integer)
+        If hwnd = IntPtr.Zero OrElse dpi <= 0 Then Return
+        SyncLock _windowDpiLock
+            _windowDpi(hwnd) = dpi
+        End SyncLock
+    End Sub
+
+    Friend Sub ClearWindowDpi(hwnd As IntPtr)
+        If hwnd = IntPtr.Zero Then Return
+        SyncLock _windowDpiLock
+            _windowDpi.Remove(hwnd)
+        End SyncLock
+    End Sub
+
+    Friend Function ExtractDpiFromWParam(wParam As IntPtr) As Integer
+        Dim v As Long = wParam.ToInt64()
+        Dim dpiX As Integer = CInt(v And &HFFFFL)
+        Dim dpiY As Integer = CInt((v >> 16) And &HFFFFL)
+        Return Math.Max(dpiX, dpiY)
+    End Function
+
+    Public Function GetCurrentDpi(control As Control) As Integer
+        If control IsNot Nothing AndAlso Not control.IsDisposed Then
+            Dim form As Form = Nothing
+            Try
+                form = If(TypeOf control Is Form, DirectCast(control, Form), control.FindForm())
+            Catch
+                form = Nothing
+            End Try
+
+            If form IsNot Nothing AndAlso Not form.IsDisposed AndAlso form.IsHandleCreated Then
+                Dim authorityForm As Form = ResolveDpiAuthorityForm(form)
+                If authorityForm IsNot Nothing AndAlso Not authorityForm.IsDisposed AndAlso authorityForm.IsHandleCreated Then
+                    Dim authorityDpi As Integer = TryGetDpiFromFormWindow(authorityForm)
+                    If authorityDpi > 0 Then
+                        If authorityForm IsNot form AndAlso form.IsHandleCreated Then SetWindowDpi(form.Handle, authorityDpi)
+                        Return authorityDpi
+                    End If
+                End If
+
+                Dim formDpi As Integer = TryGetDpiFromFormWindow(form)
+                If formDpi > 0 Then Return formDpi
+            End If
+
+            If control.IsHandleCreated Then
+                Dim dpi As Integer = TryGetDpiForWindow(control.Handle)
+                If dpi > 0 Then Return dpi
+            End If
+
+            Try
+                If control.DeviceDpi > 0 Then Return control.DeviceDpi
+            Catch
+            End Try
+        End If
+
+        Return 96
+    End Function
+
+    Public Function GetCurrentDpiScale(control As Control) As Single
+        Return Math.Max(0.01F, CSng(GetCurrentDpi(control)) / 96.0F)
+    End Function
+
+    ''' <summary>
+    ''' 返回 DirectWrite 应使用的物理像素字号。
+    ''' </summary>
+    ''' <remarks>
+    ''' 不要在普通控件文字路径继续使用 <c>font.SizeInPoints * 96 / 72 * DpiScale</c>。
+    ''' WinForms 自动缩放后 <see cref="Font.SizeInPoints"/> 已经可能包含当前 DPI 的缩放结果，
+    ''' 再乘当前 DPI 会二次放大；而未激活的嵌入页面又可能仍保留 96 DPI 字体。
+    ''' 这里用 <c>Font.Height / Font.GetHeight(96)</c> 反推出字体实际基准 DPI，
+    ''' 让 DirectWrite 的字号跟 WinForms/GDI 当前字体状态一致。
+    ''' </remarks>
+    Public Function GetDWriteFontSizePx(font As Font, dpiScale As Single) As Single
+        If font Is Nothing Then Return 1.0F
+
+        Dim fallbackDpi As Integer = 96
+        If Not Single.IsNaN(dpiScale) AndAlso Not Single.IsInfinity(dpiScale) AndAlso dpiScale > 0.0F Then
+            fallbackDpi = Math.Max(1, CInt(Math.Round(dpiScale * 96.0F)))
+        End If
+
+        Dim baselineDpi As Integer = GetDWriteFontBaselineDpi(font, fallbackDpi)
+        Return Math.Max(1.0F, CSng(font.SizeInPoints * baselineDpi / 72.0F))
+    End Function
+
+    ''' <summary>
+    ''' 返回与 <see cref="GetDWriteFontSizePx"/> 同源的布局行高，避免布局与绘制分别套用 DPI。
+    ''' </summary>
+    Public Function GetDWriteLineHeightPx(font As Font, dpiScale As Single) As Single
+        If font Is Nothing Then Return 1.0F
+
+        Dim sizePx As Single = GetDWriteFontSizePx(font, dpiScale)
+        Dim designPx As Single = CSng(font.SizeInPoints * 96.0F / 72.0F)
+        Try
+            Dim designHeight As Single = font.GetHeight(96.0F)
+            If designPx > 0.01F AndAlso designHeight > 0.01F Then
+                Return Math.Max(1.0F, sizePx * designHeight / designPx)
+            End If
+        Catch
+        End Try
+
+        Return Math.Max(1.0F, sizePx)
+    End Function
+
+    Public Function GetDWriteFontBaselineDpi(font As Font, fallbackDpi As Integer) As Integer
+        fallbackDpi = Math.Max(1, fallbackDpi)
+        If font Is Nothing Then Return fallbackDpi
+
+        Try
+            Dim height96 As Single = font.GetHeight(96.0F)
+            Dim currentHeight As Single = CSng(font.Height)
+            If height96 > 0.01F AndAlso currentHeight > 0.01F Then
+                Dim inferredDpi As Single = currentHeight * 96.0F / height96
+                If Not Single.IsNaN(inferredDpi) AndAlso Not Single.IsInfinity(inferredDpi) AndAlso
+                   inferredDpi >= 48.0F AndAlso inferredDpi <= 768.0F Then
+                    Return NormalizeDWriteFontBaselineDpi(inferredDpi, fallbackDpi)
+                End If
+            End If
+        Catch
+        End Try
+
+        Return fallbackDpi
+    End Function
+
+    Private Function NormalizeDWriteFontBaselineDpi(inferredDpi As Single, fallbackDpi As Integer) As Integer
+        Dim rounded As Integer = CInt(Math.Round(inferredDpi / 12.0F, MidpointRounding.AwayFromZero) * 12.0F)
+        If rounded < 48 OrElse rounded > 768 Then Return Math.Max(1, fallbackDpi)
+        Return rounded
+    End Function
+
+#End Region
 
 #Region "全局质量策略"
 

@@ -37,7 +37,7 @@ Public Class PixelPictureBox
     End Sub
 
     Private Function DpiScale() As Single
-        Return Me.DeviceDpi / 96.0F
+        Return D2DGlobals.GetCurrentDpiScale(Me)
     End Function
 
     ''' <summary>如果启用了强制居中模式，则将框选矩形居中到图片中心；否则原样返回。</summary>

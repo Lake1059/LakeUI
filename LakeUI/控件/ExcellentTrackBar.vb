@@ -167,7 +167,7 @@ Public Class ExcellentTrackBar
     End Sub
 
     Private Function DpiScale() As Single
-        Return Me.DeviceDpi / 96.0F
+        Return D2DGlobals.GetCurrentDpiScale(Me)
     End Function
 
     Private Function 计算值比例(val As Double) As Single
@@ -936,7 +936,7 @@ Public Class ExcellentTrackBar
 
     Private Function 获取文本格式(font As Font, align As DW.TextAlignment, paraAlign As DW.ParagraphAlignment, trimChar As Boolean) As DW.IDWriteTextFormat
         Dim s As Single = DpiScale()
-        Dim sizePx As Single = font.SizeInPoints * (96.0F / 72.0F) * s
+        Dim sizePx As Single = D2DGlobals.GetDWriteFontSizePx(font, s)
         Dim weight As DW.FontWeight = If(font.Bold, DW.FontWeight.Bold, DW.FontWeight.Normal)
         Dim style As DW.FontStyle = If(font.Italic, DW.FontStyle.Italic, DW.FontStyle.Normal)
         Return _当前合成器.TextFormatCache.Get(font.FontFamily.Name, weight, style, sizePx, align, paraAlign, trimChar)

@@ -455,7 +455,7 @@ Friend Class ExFloatingBoxForm
         Me.DoubleBuffered = True
         Me.BackColor = 主题.CardBackColor
 
-        SC = Me.DeviceDpi / 96.0F
+        SC = D2DGlobals.GetCurrentDpiScale(Me)
         缩放常量()
 
         Dim fontName = MessageDialogRendering.ResolveDialogFontName(anchor, Me)

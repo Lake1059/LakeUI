@@ -652,7 +652,7 @@ Public Class ModernContextMenu
         End Sub
 
         Private Function DpiScale() As Single
-            Return DeviceDpi / 96.0F
+            Return D2DGlobals.GetCurrentDpiScale(Me)
         End Function
 
         Friend Sub ShowAt(x As Integer, y As Integer)

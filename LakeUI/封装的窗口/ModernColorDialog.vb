@@ -2420,7 +2420,7 @@ Public Class ModernColorDialog
     End Function
 
     Private Function 取D2D缩放() As Single
-        Return Math.Max(0.01F, DeviceDpi / 96.0F)
+        Return D2DGlobals.GetCurrentDpiScale(Me)
     End Function
 
     Private Function 缩放值(value As Integer) As Integer

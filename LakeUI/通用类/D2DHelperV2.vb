@@ -77,6 +77,8 @@ Public Module D2DHelperV2
     Private _backgroundSamplingScratch As Stack(Of WindowCompositor)
     <ThreadStatic>
     Private _backgroundSamplingRetained As List(Of WindowCompositor)
+    <ThreadStatic>
+    Private _deferredFontRefreshDepth As Integer
 
     ' 背景穿透在重采 source 时可能会调用 D2DHelperV2.BeginPaint 去把 source 自身画进一张 GDI Bitmap。
     ' 如果此时同一 Form 已经处在正常 V2 PaintScope 内，共享 DC RT 不能再次 BindDC。
@@ -141,6 +143,26 @@ Public Module D2DHelperV2
                 End If
                 If _backgroundSamplingScratch IsNot Nothing Then _backgroundSamplingScratch.Clear()
             End If
+        End Sub
+    End Class
+
+    Friend Function EnterDeferredFontRefresh() As IDisposable
+        ' PerformAutoScale 会对大量子控件连续触发 FontChanged。
+        ' 这些刷新必须失效 TextFormat，但不应在同一个布局/切页调用栈里立即 Update，
+        ' 否则控件页首次显示时会把递归刷新和 D2D 资源重建叠在一起。
+        _deferredFontRefreshDepth += 1
+        Return New DeferredFontRefreshScope()
+    End Function
+
+    Private NotInheritable Class DeferredFontRefreshScope
+        Implements IDisposable
+
+        Private _disposed As Boolean
+
+        Public Sub Dispose() Implements IDisposable.Dispose
+            If _disposed Then Return
+            _disposed = True
+            If _deferredFontRefreshDepth > 0 Then _deferredFontRefreshDepth -= 1
         End Sub
     End Class
 
@@ -211,11 +233,96 @@ Public Module D2DHelperV2
     Public Sub RefreshFontDependentRendering(ctrl As Control, Optional invalidateChildren As Boolean = True, Optional immediate As Boolean = True)
         InvalidateTextFormatCache(ctrl)
         If ctrl Is Nothing OrElse ctrl.IsDisposed Then Return
+        If _deferredFontRefreshDepth > 0 Then immediate = False
 
         Try
             OuterToInnerRefreshScheduler.RequestFull(ctrl, invalidateChildren, immediate)
         Catch
         End Try
+    End Sub
+
+    Friend Sub NotifyDpiChanged(form As Form, newDpi As Integer)
+        If form Is Nothing OrElse form.IsDisposed Then Return
+
+        ' DPI 改变时，同一顶层窗口内可能存在嵌入的非 TopLevel Form。
+        ' 它们不会可靠地收到独立的 DpiChanged，但共享宿主窗口的真实 DPI；
+        ' 因此这里同步整棵 Form 子树的窗口 DPI 缓存与 compositor DPI，再释放渲染目标。
+        Dim affectedForms = GetDpiAffectedForms(form, newDpi)
+
+        Try
+            For Each affected In affectedForms
+                CleanupD2DResources(D2DCacheCleanupLevel.ReleaseRenderTargets, affected, invalidateAfterCleanup:=False)
+            Next
+        Catch
+        End Try
+
+        Try
+            OuterToInnerRefreshScheduler.RequestFull(form, invalidateChildren:=True, immediate:=True)
+            For Each affected In affectedForms
+                If affected IsNot form Then
+                    OuterToInnerRefreshScheduler.RequestFull(affected, invalidateChildren:=True, immediate:=True)
+                End If
+            Next
+        Catch
+        End Try
+    End Sub
+
+    Private Function GetDpiAffectedForms(rootForm As Form, newDpi As Integer) As List(Of Form)
+        Dim forms As New List(Of Form)()
+        AddDpiAffectedForm(forms, rootForm, newDpi)
+
+        Try
+            AddDpiAffectedChildForms(forms, rootForm, newDpi)
+        Catch
+        End Try
+
+        Return forms
+    End Function
+
+    Private Sub AddDpiAffectedChildForms(forms As List(Of Form), parent As Control, newDpi As Integer)
+        If parent Is Nothing OrElse parent.IsDisposed Then Return
+
+        For Each child As Control In parent.Controls
+            Dim childForm = TryCast(child, Form)
+            If childForm IsNot Nothing Then AddDpiAffectedForm(forms, childForm, newDpi)
+            AddDpiAffectedChildForms(forms, child, newDpi)
+        Next
+    End Sub
+
+    Private Sub AddDpiAffectedForm(forms As List(Of Form), form As Form, newDpi As Integer)
+        If form Is Nothing OrElse form.IsDisposed Then Return
+        If forms.Contains(form) Then Return
+
+        Dim effectiveDpi As Integer = newDpi
+        If effectiveDpi <= 0 Then
+            Try
+                Dim currentDpi = D2DGlobals.GetCurrentDpi(form)
+                If currentDpi > 0 Then effectiveDpi = currentDpi
+            Catch
+            End Try
+        End If
+
+        If effectiveDpi > 0 Then
+            If form.IsHandleCreated Then D2DGlobals.SetWindowDpi(form.Handle, effectiveDpi)
+            SynchronizeCompositorDpi(form, effectiveDpi)
+        End If
+
+        forms.Add(form)
+    End Sub
+
+    Private Sub SynchronizeCompositorDpi(form As Form, dpi As Integer)
+        If form Is Nothing OrElse form.IsDisposed OrElse dpi <= 0 Then Return
+
+        SyncLock _compositorsLock
+            Dim comp As WindowCompositor = Nothing
+            If _compositors.TryGetValue(form, comp) Then
+                If comp Is Nothing OrElse comp.IsDisposed Then
+                    _compositors.Remove(form)
+                Else
+                    comp.SynchronizeDpi(dpi)
+                End If
+            End If
+        End SyncLock
     End Sub
 
     Friend Function IsPainting(ctrl As Control) As Boolean

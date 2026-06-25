@@ -180,6 +180,7 @@ Public Class AgentRoom
     Friend _contentHeight As Integer = 0
     Friend _contentHeightDirty As Boolean = True
     Friend _pinnedToBottom As Boolean = True
+    Private _layoutDpi As Integer = 0
     Private _measureVersion As Integer
     Private ReadOnly _textWidthCache As New Dictionary(Of TextWidthKey, Integer)(512)
     Private Const MaxTextWidthCacheEntries As Integer = 4096
@@ -1424,10 +1425,14 @@ Public Class AgentRoom
         }
         Dim cached As Integer = 0
         If _textWidthCache.TryGetValue(key, cached) Then Return cached
-        cached = TextRenderHelper.MeasureTextWidth(text, font, lineHeight)
+        cached = CInt(Math.Ceiling(TextRenderHelper.MeasureTextWidth_D2D(text, font, DpiScale(), GetTextFormatCacheForMeasure())))
         If _textWidthCache.Count >= MaxTextWidthCacheEntries Then _textWidthCache.Clear()
         _textWidthCache(key) = cached
         Return cached
+    End Function
+
+    Private Function GetTextFormatCacheForMeasure() As D2DGlobals.TextFormatCache
+        Return D2DHelperV2.GetCompositor(Me)?.TextFormatCache
     End Function
 
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
@@ -1446,7 +1451,7 @@ Public Class AgentRoom
     End Sub
 
     Private Function DpiScale() As Single
-        Return Math.Max(0.01F, CSng(Me.DeviceDpi) / 96.0F)
+        Return D2DGlobals.GetCurrentDpiScale(Me)
     End Function
 
     Private Function Dpi(value As Integer) As Integer
@@ -1468,7 +1473,7 @@ Public Class AgentRoom
 
     Private Function GetLineHeight(font As Font) As Integer
         If font Is Nothing Then Return Dpi(18)
-        Return CInt(Math.Ceiling(font.GetHeight(Me.DeviceDpi)))
+        Return CInt(Math.Ceiling(font.GetHeight(D2DGlobals.GetCurrentDpi(Me))))
     End Function
 
     Private Sub InvalidateMarkdownRenderers()
@@ -1543,7 +1548,7 @@ Public Class AgentRoom
 
         ConfigureMarkdownRenderer(it.MarkdownRenderer, it)
         Dim safeWidth As Integer = Math.Max(1, contentWidth)
-        it.MarkdownRenderer.PrepareEmbeddedContent(safeWidth, Me.DeviceDpi, Me)
+        it.MarkdownRenderer.PrepareEmbeddedContent(safeWidth, D2DGlobals.GetCurrentDpi(Me), Me)
         If it.MarkdownRendererText <> it.Text OrElse it.MarkdownRendererWidth <> safeWidth Then
             it.MarkdownRenderer.SetMarkdownImmediate(it.Text, resetScroll:=True, clearSelectionOnApply:=True)
             it.MarkdownRendererText = it.Text
@@ -1660,6 +1665,12 @@ Public Class AgentRoom
     End Function
 
     Private Sub EnsureLayout()
+        Dim currentDpi As Integer = D2DGlobals.GetCurrentDpi(Me)
+        If currentDpi > 0 AndAlso currentDpi <> _layoutDpi Then
+            _layoutDpi = currentDpi
+            InvalidateAllItemsLayout()
+        End If
+
         Dim area = GetContentArea()
         If area.Width <= 0 Then
             _contentHeight = 0
@@ -1895,7 +1906,7 @@ Public Class AgentRoom
             ' 文字层：所有气泡文本 + 链接
             Dim textRT As Vortice.Direct2D1.ID2D1RenderTarget = scope.TextLayer
             Dim tfc = scope.Compositor.TextFormatCache
-            Dim dpiS As Single = CSng(Me.DeviceDpi) / 96.0F
+            Dim dpiS As Single = D2DGlobals.GetCurrentDpiScale(Me)
             textRT.PushAxisAlignedClip(New Vortice.RawRectF(area.Left, area.Top, area.Right, area.Bottom),
                                        Vortice.Direct2D1.AntialiasMode.PerPrimitive)
             Try
@@ -2338,7 +2349,7 @@ Public Class AgentRoom
             End If
             Dim lr = it.LineRanges(li)
             Dim line As String = it.Text.Substring(lr.Start, lr.Length)
-            Dim col As Integer = TextRenderHelper.FindColFromX(line, pt.X - textX, font, lineHeight)
+            Dim col As Integer = TextRenderHelper.FindColFromX_D2D(line, pt.X - textX, font, DpiScale(), GetTextFormatCacheForMeasure())
             result = New TextPos(i, lr.Start + col)
             Return True
         Next
@@ -2375,7 +2386,7 @@ Public Class AgentRoom
             If li < 0 OrElse li >= it.LineRanges.Count Then Continue For
             Dim lr = it.LineRanges(li)
             Dim line As String = it.Text.Substring(lr.Start, lr.Length)
-            Dim col As Integer = TextRenderHelper.FindColFromX(line, pt.X - textX, font, lineHeight)
+            Dim col As Integer = TextRenderHelper.FindColFromX_D2D(line, pt.X - textX, font, DpiScale(), GetTextFormatCacheForMeasure())
             Dim absCharIndex As Integer = lr.Start + col
             For Each ls In it.LinkSpans
                 If absCharIndex >= ls.Start AndAlso absCharIndex < ls.Start + ls.Length Then

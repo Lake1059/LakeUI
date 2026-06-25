@@ -1211,7 +1211,7 @@ Public Class ModernTabControl
         If String.IsNullOrEmpty(text) OrElse rect.Width <= 0 OrElse rect.Height <= 0 OrElse color.A = 0 Then Return
         Dim weight As Vortice.DirectWrite.FontWeight = If(font.Bold, Vortice.DirectWrite.FontWeight.Bold, Vortice.DirectWrite.FontWeight.Normal)
         Dim style As Vortice.DirectWrite.FontStyle = If(font.Italic, Vortice.DirectWrite.FontStyle.Italic, Vortice.DirectWrite.FontStyle.Normal)
-        Dim sizePx As Single = font.SizeInPoints * (96.0F / 72.0F) * DpiScale()
+        Dim sizePx As Single = D2DGlobals.GetDWriteFontSizePx(font, DpiScale())
         Dim fmt = _当前合成器.TextFormatCache.Get(font.FontFamily.Name, weight, style, sizePx, TextAlignment.Center, ParagraphAlignment.Center, True)
         rt.DrawText(text, fmt, D2DGlobals.ToD2DRect(rect), _当前合成器.BrushCache.Get(rt, color), DrawTextOptions.Clip)
     End Sub
@@ -2021,7 +2021,7 @@ Public Class ModernTabControl
     End Sub
 
     Private Function DpiScale() As Single
-        Return Me.DeviceDpi / 96.0F
+        Return D2DGlobals.GetCurrentDpiScale(Me)
     End Function
 
     Friend Sub InvalidateFontResources()

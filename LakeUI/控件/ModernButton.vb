@@ -210,15 +210,12 @@ Public Class ModernButton
         Dim mainTextInfo = 解析助记键文本(If(MyBase.Text, ""))
         Dim mainText As String = mainTextInfo.DisplayText
         If String.IsNullOrEmpty(mainText) AndAlso String.IsNullOrEmpty(次要文本) Then Return
-        ' ── ⚠ DirectWrite 字号必须叠加 DPI 缩放（* s）──
-        ' DC RT 由 D2DGlobals 创建后默认按 96 DPI 像素映射；只用 (Pt * 96/72) 得到的是逻辑像素，
-        ' 在 HighDPI 下与 GDI+ TextRenderer 实际渲染尺寸不一致，会出现"换字体/字号像不生效"的现象。
-        ' 必须再乘以 DpiScale()=DeviceDpi/96，让物理像素字号与系统 GDI 文本一致。
-        ' 该规则适用于本仓库所有走 D2D + DirectWrite 的文字绘制路径，参考此实现。
-        Dim mainSizePx As Single = Me.Font.SizeInPoints * (96.0F / 72.0F) * s
+        ' 控件 Font 可能已被 WinForms AutoScale 修改，DirectWrite 字号统一交给 D2DGlobals 推断基准 DPI。
+        Dim mainSizePx As Single = D2DGlobals.GetDWriteFontSizePx(Me.Font, s)
         Dim dw = D2DGlobals.GetDWriteFactory()
 
         If Not String.IsNullOrEmpty(次要文本) Then
+            ' 次要文本字号是独立数值属性，不会被 WinForms 自动缩放，所以按当前 DPI 显式放大。
             Dim subSizePx As Single = 次要文本字号 * (96.0F / 72.0F) * s
             Dim mainFmt = textFormatCache.Get(Me.Font, mainSizePx, align, ParagraphAlignment.Near, False)
             Dim subFmt = textFormatCache.Get(Me.Font.FontFamily.Name, Vortice.DirectWrite.FontWeight.Normal, Vortice.DirectWrite.FontStyle.Normal, subSizePx, align, ParagraphAlignment.Near, False)
@@ -592,7 +589,7 @@ Public Class ModernButton
     End Sub
 
     Private Function DpiScale() As Single
-        Return Me.DeviceDpi / 96.0F
+        Return D2DGlobals.GetCurrentDpiScale(Me)
     End Function
 
     Private 超采样倍率 As Integer = 1

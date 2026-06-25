@@ -438,7 +438,7 @@ Friend Class ExMsgBoxForm
         Dim 默认样式 As Integer = buttons And &HF00
 
         ' DPI 缩放
-        SC = Me.DeviceDpi / 96.0F
+        SC = D2DGlobals.GetCurrentDpiScale(Me)
         缩放常量()
         ' 自定义按钮模式：允许更宽窗体以承载多行信息
         If 自定义按钮列表 IsNot Nothing Then 最大宽度 = CInt(900 * SC)

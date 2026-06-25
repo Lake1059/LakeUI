@@ -613,7 +613,7 @@ Friend Class ExOverlayMsgBoxHostForm
         目标不透明度 = Math.Max(0, Math.Min(255, 主题.OverlayOpacity)) / 255.0
         Opacity = 0
 
-        SC = DeviceDpi / 96.0F
+        SC = D2DGlobals.GetCurrentDpiScale(Me)
         缩放常量()
         Dim fontName = MessageDialogRendering.ResolveDialogFontName(owner, Me)
         标题字体 = New Font(fontName, 13.0F, FontStyle.Bold)
@@ -1205,7 +1205,7 @@ Friend Class ExOverlayMsgBoxForm
             居中区域 = Screen.PrimaryScreen.WorkingArea
         End If
 
-        SC = Me.DeviceDpi / 96.0F
+        SC = D2DGlobals.GetCurrentDpiScale(Me)
         缩放常量()
 
         Dim fontName = MessageDialogRendering.ResolveDialogFontName(ownerCtrl, Me)

@@ -229,7 +229,7 @@ Public Class ProgressRing
     End Sub
 
     Private Function DpiScale() As Single
-        Return Me.DeviceDpi / 96.0F
+        Return D2DGlobals.GetCurrentDpiScale(Me)
     End Function
 
     ''' <summary>开始播放动画</summary>

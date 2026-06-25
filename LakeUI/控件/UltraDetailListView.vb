@@ -923,7 +923,7 @@ Public Class UltraDetailListView
     End Sub
 
     Private Function DpiScale() As Single
-        Return Me.DeviceDpi / 96.0F
+        Return D2DGlobals.GetCurrentDpiScale(Me)
     End Function
 
     Private Function Dpi(value As Integer) As Integer
@@ -1246,25 +1246,9 @@ Public Class UltraDetailListView
         Return geo
     End Function
 
-    ''' <summary>D2D 绘制更多指示器渐变背景（不绘 ▲▼ 符号）。</summary>
+    ''' <summary>D2D 绘制更多指示器形状。当前仅保留符号层，背景保持透明。</summary>
     Private Sub 绘制更多指示器形状_D2D(rt As Vortice.Direct2D1.ID2D1RenderTarget, rect As Rectangle, isTop As Boolean)
-        If rect.Height < 2 Then Return
-        Dim c1 As Color = Color.FromArgb(200, 背景颜色)
-        Dim c2 As Color = Color.FromArgb(0, 背景颜色)
-        Dim startPt As New System.Numerics.Vector2(rect.X, If(isTop, rect.Y, rect.Bottom - 1))
-        Dim endPt As New System.Numerics.Vector2(rect.X, If(isTop, rect.Bottom - 1, rect.Y))
-        Dim stops() As Vortice.Direct2D1.GradientStop = {
-            New Vortice.Direct2D1.GradientStop With {.Position = 0F, .Color = D2DGlobals.ToColor4(c1)},
-            New Vortice.Direct2D1.GradientStop With {.Position = 1.0F, .Color = D2DGlobals.ToColor4(c2)}}
-        Dim gsc = rt.CreateGradientStopCollection(stops, Vortice.Direct2D1.Gamma.StandardRgb, Vortice.Direct2D1.ExtendMode.Clamp)
-        Try
-            Dim props As New Vortice.Direct2D1.LinearGradientBrushProperties With {.StartPoint = startPt, .EndPoint = endPt}
-            Using br = rt.CreateLinearGradientBrush(props, gsc)
-                rt.FillRectangle(D2DGlobals.ToD2DRect(rect), br)
-            End Using
-        Finally
-            gsc.Dispose()
-        End Try
+        Return
     End Sub
 
     ''' <summary>D2D 绘制拖选框（半透明填充 + 边框）。</summary>

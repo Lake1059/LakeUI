@@ -275,7 +275,7 @@ Partial Public Class MemberWall
 #Region "通用"
 
     Private Function DpiScale() As Single
-        Return Me.DeviceDpi / 96.0F
+        Return D2DGlobals.GetCurrentDpiScale(Me)
     End Function
 
     Private Function IsInDesignMode() As Boolean
@@ -760,7 +760,7 @@ Partial Public Class MemberWall
         Dim rowH As Single = 0.0F
         Dim hasAny As Boolean = False
         Dim dw = D2DGlobals.GetDWriteFactory()
-        Dim sizePx As Single = Font.SizeInPoints * (96.0F / 72.0F) * s
+        Dim sizePx As Single = D2DGlobals.GetDWriteFontSizePx(Font, s)
 
         Dim compositor = D2DHelperV2.GetCompositor(Me)
         Dim fmt As IDWriteTextFormat = Nothing

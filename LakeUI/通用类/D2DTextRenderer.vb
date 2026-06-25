@@ -18,7 +18,7 @@ Imports Vortice.DirectWrite
 ''' === 约束 ===
 ''' • 必须传入正确的 <paramref name="dpiScale"/>（控件 DpiScale），否则在 HighDPI 下与
 '''   GDI TextRenderer 的实际像素尺寸不一致（D2D DC RT 默认按 96 DPI 映射）。
-'''   规则同 ModernButton.vb：sizePx = Font.SizeInPoints * (96/72) * DpiScale。
+'''   DirectWrite 字号统一由 D2DGlobals.GetDWriteFontSizePx 推断，避免 WinForms 已自动缩放的字体再次乘 DPI。
 ''' • 文本应绘制在 PaintScopeV2.TextLayer（= DC RT），以利用 GDI HDC 的子像素抗锯齿。
 ''' • 默认 <see cref="WordWrapping.NoWrap"/>；需要换行的传 <see cref="TextFormatFlags.WordBreak"/>。
 ''' • TextLayout 是一次性资源（按字符串/字号变化），无法跨帧复用；TextFormat 由 cache 复用。
@@ -141,7 +141,7 @@ Public Module D2DTextRenderer
     Private Function AcquireTextFormat(font As Font, dpiScale As Single, flags As TextFormatFlags,
                                        cache As D2DGlobals.TextFormatCache,
                                        ByRef ownsFormat As Boolean) As IDWriteTextFormat
-        Dim sizePx As Single = font.SizeInPoints * (96.0F / 72.0F) * dpiScale
+        Dim sizePx As Single = D2DGlobals.GetDWriteFontSizePx(font, dpiScale)
         Dim textAlign As TextAlignment = MapTextAlignment(flags)
         Dim paraAlign As ParagraphAlignment = MapParagraphAlignment(flags)
         Dim trimChar As Boolean = (flags And TextFormatFlags.EndEllipsis) = TextFormatFlags.EndEllipsis
@@ -229,7 +229,7 @@ Friend Module TextRenderHelper
 
     ''' <summary>使用 DirectWrite 创建一个 TextFormat（调用方负责 Dispose）。</summary>
     Friend Function CreateDWriteTextFormat(font As Font, dpiScale As Single) As Vortice.DirectWrite.IDWriteTextFormat
-        Dim sizePx As Single = font.SizeInPoints * (96.0F / 72.0F) * dpiScale
+        Dim sizePx As Single = D2DGlobals.GetDWriteFontSizePx(font, dpiScale)
         Return D2DGlobals.CreateTextFormat(font, sizePx)
     End Function
 
@@ -307,7 +307,7 @@ Friend Module TextRenderHelper
                                              ByRef ownsFormat As Boolean) As Vortice.DirectWrite.IDWriteTextFormat
         If font Is Nothing Then Return Nothing
         ownsFormat = (textFormatCache Is Nothing)
-        Dim sizePx As Single = font.SizeInPoints * (96.0F / 72.0F) * dpiScale
+        Dim sizePx As Single = D2DGlobals.GetDWriteFontSizePx(font, dpiScale)
         If textFormatCache IsNot Nothing Then
             Return textFormatCache.Get(font, sizePx,
                                        Vortice.DirectWrite.TextAlignment.Leading,

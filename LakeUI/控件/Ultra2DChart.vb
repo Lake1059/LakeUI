@@ -1133,11 +1133,12 @@ Public Class Ultra2DChart
 
 #Region "布局"
     Private Function 获取布局() As ChartLayoutInfo
+        Dim currentDpi As Integer = D2DGlobals.GetCurrentDpi(Me)
         Dim cached = _layoutCache
         If cached IsNot Nothing AndAlso
            cached.Width = Me.Width AndAlso
            cached.Height = Me.Height AndAlso
-           cached.Dpi = Me.DeviceDpi AndAlso
+           cached.Dpi = currentDpi AndAlso
            cached.DataVersion = _dataVersion AndAlso
            cached.StyleVersion = _styleVersion Then
             Return cached
@@ -1147,7 +1148,7 @@ Public Class Ultra2DChart
         Dim layout As New ChartLayoutInfo With {
             .Width = Me.Width,
             .Height = Me.Height,
-            .Dpi = Me.DeviceDpi,
+            .Dpi = currentDpi,
             .DataVersion = _dataVersion,
             .StyleVersion = _styleVersion,
             .TickValues = New List(Of Double)(),
@@ -1837,7 +1838,7 @@ Public Class Ultra2DChart
     End Function
 
     Private Function DpiScale() As Single
-        Return Me.DeviceDpi / 96.0F
+        Return D2DGlobals.GetCurrentDpiScale(Me)
     End Function
 
     Private Function 测量文本尺寸(text As String, font As Font) As Size
@@ -1846,7 +1847,7 @@ Public Class Ultra2DChart
     End Function
 
     Private Function 获取文本格式(compositor As WindowCompositor, font As Font, align As DW.TextAlignment, paraAlign As DW.ParagraphAlignment, trim As Boolean, wrap As Boolean) As DW.IDWriteTextFormat
-        Dim sizePx As Single = font.SizeInPoints * (96.0F / 72.0F) * DpiScale()
+        Dim sizePx As Single = D2DGlobals.GetDWriteFontSizePx(font, DpiScale())
         Return compositor.TextFormatCache.Get(font, sizePx, align, paraAlign, trim, wrap)
     End Function
 

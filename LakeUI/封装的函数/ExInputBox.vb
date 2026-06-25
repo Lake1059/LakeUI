@@ -373,7 +373,7 @@ Friend Class ExInputBoxForm
         End If
 
         ' DPI 缩放
-        SC = Me.DeviceDpi / 96.0F
+        SC = D2DGlobals.GetCurrentDpiScale(Me)
         缩放常量()
 
         ' 字体

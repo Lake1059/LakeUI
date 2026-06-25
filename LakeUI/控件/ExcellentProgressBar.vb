@@ -228,7 +228,7 @@ Public Class ExcellentProgressBar
     End Function
 
     Private Function DpiScale() As Single
-        Return Me.DeviceDpi / 96.0F
+        Return D2DGlobals.GetCurrentDpiScale(Me)
     End Function
 
     Protected Overrides Sub OnEnabledChanged(e As EventArgs)

@@ -29,7 +29,7 @@ Imports Vortice.Direct2D1
 ''' === 已知限制 ===
 ''' • SSAA 池按字节预算做 LRU 修剪。极端大窗口 + 高倍率 SSAA 仍然可能瞬时占用较高显存；
 '''   但归还池时会尽快回落到预算内。
-''' • DPI 变更不重建 DC RT。BindDC 时给的 rect 即逻辑大小，DPI 切换由控件自身 Invalidate 重绘解决。
+''' • DPI 变更会释放 DC RT、TextFormat、位图上传和 SSAA 池，下一帧按新 DPI 全量重建。
 ''' • <see cref="GetBitmapCache"/> 用 <see cref="Image"/> 强引用作 key，因此临时 Bitmap 不应进入该缓存。
 '''   索引有 LRU 上限会释放旧引用，但外部替换 / Dispose 后仍推荐让控件切到新的 Image 引用。
 ''' </summary>
@@ -38,6 +38,7 @@ Public NotInheritable Class WindowCompositor
 
     Private ReadOnly _form As Form
     Private ReadOnly _unregisterOnDispose As Boolean
+    Private _formHwnd As IntPtr
     Private _dcRT As ID2D1DCRenderTarget
     Private _deviceContext As ID2D1DeviceContext
     Private _deviceContextProbed As Boolean
@@ -52,6 +53,7 @@ Public NotInheritable Class WindowCompositor
     Private _lastBitmapCacheImageLimit As Integer = Integer.MinValue
     Private _lastBitmapCacheBudgetBytes As Long = Long.MinValue
     Private _lastSsaaPoolBudgetBytes As Long = Long.MinValue
+    Private _lastObservedDpi As Integer
 
     ''' <summary>Image → D2DBitmapCache 映射；为长期存在的图标 / 背景图复用 D2D 上传。</summary>
     Private NotInheritable Class BitmapCacheEntry
@@ -88,14 +90,70 @@ Public NotInheritable Class WindowCompositor
         End Get
     End Property
 
+    Friend Sub SynchronizeDpi(newDpi As Integer)
+        If _disposed OrElse newDpi <= 0 Then Return
+        _lastObservedDpi = newDpi
+        Try
+            If _form IsNot Nothing AndAlso Not _form.IsDisposed AndAlso _form.IsHandleCreated Then
+                _formHwnd = _form.Handle
+                D2DGlobals.SetWindowDpi(_formHwnd, newDpi)
+            End If
+        Catch
+        End Try
+    End Sub
+
     Friend Sub New(form As Form, Optional unregisterOnDispose As Boolean = True)
         _form = form
         _unregisterOnDispose = unregisterOnDispose
+        _formHwnd = If(form.IsHandleCreated, form.Handle, IntPtr.Zero)
+        AddHandler form.HandleCreated, AddressOf OnFormHandleCreated
         AddHandler form.HandleDestroyed, AddressOf OnFormHandleDestroyed
+        If _unregisterOnDispose Then AddHandler form.DpiChanged, AddressOf OnFormDpiChanged
+        If _unregisterOnDispose AndAlso form.IsHandleCreated Then
+            _lastObservedDpi = D2DGlobals.GetCurrentDpi(form)
+            D2DGlobals.SetWindowDpi(_formHwnd, _lastObservedDpi)
+        End If
+    End Sub
+
+    Private Sub OnFormHandleCreated(sender As Object, e As EventArgs)
+        Dim frm = TryCast(sender, Form)
+        If frm Is Nothing OrElse Not frm.IsHandleCreated Then Return
+        _formHwnd = frm.Handle
+        If _unregisterOnDispose Then
+            _lastObservedDpi = D2DGlobals.GetCurrentDpi(frm)
+            D2DGlobals.SetWindowDpi(_formHwnd, _lastObservedDpi)
+        End If
     End Sub
 
     Private Sub OnFormHandleDestroyed(sender As Object, e As EventArgs)
+        If _unregisterOnDispose Then
+            Try
+                D2DGlobals.ClearWindowDpi(_formHwnd)
+            Catch
+            End Try
+        End If
         Dispose()
+    End Sub
+
+    Private Sub OnFormDpiChanged(sender As Object, e As DpiChangedEventArgs)
+        Dim frm = TryCast(sender, Form)
+        If frm Is Nothing OrElse frm.IsDisposed Then Return
+
+        Dim newDpi As Integer = 0
+        Try
+            newDpi = e.DeviceDpiNew
+        Catch
+            newDpi = 0
+        End Try
+        If newDpi <= 0 Then newDpi = D2DGlobals.GetCurrentDpi(frm)
+        If newDpi <= 0 Then Return
+        If newDpi = _lastObservedDpi Then
+            SynchronizeDpi(newDpi)
+            Return
+        End If
+
+        SynchronizeDpi(newDpi)
+        D2DHelperV2.NotifyDpiChanged(frm, newDpi)
     End Sub
 
     ''' <summary>
@@ -509,9 +567,23 @@ Public NotInheritable Class WindowCompositor
         If _disposed Then Return
         _disposed = True
         Try
+            RemoveHandler _form.HandleCreated, AddressOf OnFormHandleCreated
+        Catch
+        End Try
+        Try
             RemoveHandler _form.HandleDestroyed, AddressOf OnFormHandleDestroyed
         Catch
         End Try
+        Try
+            RemoveHandler _form.DpiChanged, AddressOf OnFormDpiChanged
+        Catch
+        End Try
+        If _unregisterOnDispose Then
+            Try
+                D2DGlobals.ClearWindowDpi(_formHwnd)
+            Catch
+            End Try
+        End If
         Try : BrushCache.Dispose() : Catch : End Try
         Try : TextFormatCache.Dispose() : Catch : End Try
         For Each kv In _bitmapCaches
