@@ -12,8 +12,7 @@ Imports Vortice.DXGI
 ''' • 进程内只创建一份 <see cref="ID3D11Device"/> + <see cref="ID2D1Device"/>，所有 Form 共享。
 ''' • 仍保留 V2 现有 <see cref="ID2D1DCRenderTarget"/> 出口不变，本模块只是"额外提供"
 '''   <see cref="ID2D1DeviceContext"/> 入口给愿意走 D2D 1.1 effect / 跨 Form bitmap 缓存的路径使用。
-''' • 任何创建失败（设计器、RDP 无 D3D11、显卡驱动不支持）一律静默返回 Nothing，
-'''   调用方按"无 DeviceContext"路径继续运行，不影响 DC RT 主路径。
+''' • LakeUI 假定目标环境具备硬件 D3D11；不提供 WARP 或 CPU 绘制回退路线。
 '''
 ''' === 设备丢失（device lost / TDR / 远程桌面切换）处理 ===
 ''' • D3D11 设备在以下情况会进入"丢失"状态：驱动崩溃 / GPU 重置（TDR）/ 系统休眠唤醒 /
@@ -24,8 +23,8 @@ Imports Vortice.DXGI
 '''   <see cref="DeviceLost"/> 事件让 per-form 的 <see cref="WindowCompositor"/> 收到通知，
 '''   及时释放与旧设备绑定的 DeviceContext / Bitmap1 等资源；
 '''   下一次 <see cref="GetD2DDevice"/> 调用会按需重建一份全新设备。
-''' • 上层调用方（例如 <c>ThisIsYourWindow.PaintWindow</c>）应把所有访问 DeviceContext 的代码用 Try 包裹，
-'''   Catch 后调用 <see cref="HandleDeviceLost"/> 并降级到 DC RT 路径，等待下一帧自动恢复。
+''' • 上层调用方（例如 <c>ThisIsYourWindow.PaintWindow</c>）应把所有访问 DeviceContext 的代码用 Try 包裹。
+'''   Catch 后调用 <see cref="HandleDeviceLost"/>；若确认为掉驱动，则释放旧资源、吞掉本帧并请求下一帧重建。
 '''
 ''' === 与 D2DGlobals.GetD2DFactory 的关系 ===
 ''' • <c>D2DGlobals.GetD2DFactory()</c> 返回 <see cref="ID2D1Factory"/>，仍按原逻辑创建 DC RT 给现有控件用。
@@ -48,10 +47,7 @@ Public Module D3D11Globals
     Private _d3dDevice As ID3D11Device
     Private _dxgiDevice As IDXGIDevice
     Private _d2dDevice As ID2D1Device
-    Private _isWarp As Boolean
     Private _deviceGeneration As Integer
-    Private _lastCreateFailedTick As Long = Long.MinValue
-    Private Const CreateFailureRetryDelayMs As Long = 2000
 
     ''' <summary>
     ''' 设备丢失或被显式失效时触发。所有持有 per-device 资源（DeviceContext / Bitmap1 / Brush 等）的对象
@@ -63,13 +59,6 @@ Public Module D3D11Globals
     ''' </summary>
     Public Event DeviceLost As EventHandler
 
-    ''' <summary>当前 D2D Device 是否由 WARP 软件渲染器承载（RDP / 无 GPU 环境）。</summary>
-    Public ReadOnly Property IsWarp As Boolean
-        Get
-            Return _isWarp
-        End Get
-    End Property
-
     ''' <summary>
     ''' 设备代号。每次设备被重建会递增；外部缓存可用它判断"我手里的 DeviceContext 是不是过期了"。
     ''' </summary>
@@ -80,48 +69,30 @@ Public Module D3D11Globals
     End Property
 
     ''' <summary>
-    ''' 取（按需创建）进程级 <see cref="ID2D1Device"/>。创建失败返回 <c>Nothing</c>。
+    ''' 取（按需创建）进程级 <see cref="ID2D1Device"/>。
     ''' 设备丢失后首次调用会自动重建（计数器 <see cref="DeviceGeneration"/> 增加）。
     ''' </summary>
     Public Function GetD2DDevice() As ID2D1Device
         If _initialized Then Return _d2dDevice
-        Dim nowTicks As Long = Environment.TickCount64
         SyncLock _lock
             If _initialized Then Return _d2dDevice
-            If _lastCreateFailedTick <> Long.MinValue AndAlso
-               nowTicks - _lastCreateFailedTick < CreateFailureRetryDelayMs Then
-                Return Nothing
-            End If
-            Try
-                EnsureCreatedNoLock()
-            Catch
-                ' 静默失败：保留 _d2dDevice = Nothing，所有 GetD2DDevice 调用都返回 Nothing。
-                ReleaseAllNoLock()
-            End Try
-            If _d2dDevice IsNot Nothing Then
-                _initialized = True
-                _lastCreateFailedTick = Long.MinValue
-            Else
-                _initialized = False
-                _lastCreateFailedTick = Environment.TickCount64
-            End If
+            EnsureCreatedNoLock()
+            _initialized = True
         End SyncLock
         Return _d2dDevice
     End Function
 
     ''' <summary>
     ''' 从进程级 D2D Device 创建一个 <see cref="ID2D1DeviceContext"/>。调用方负责 Dispose。
-    ''' 设备不可用时返回 <c>Nothing</c>。
     ''' </summary>
     Public Function CreateDeviceContext() As ID2D1DeviceContext
         Dim dev = GetD2DDevice()
-        If dev Is Nothing Then Return Nothing
         Try
             Return dev.CreateDeviceContext(DeviceContextOptions.None)
         Catch ex As Exception
             ' 创建 DeviceContext 时也可能踩到设备级错误。
-            HandleDeviceLost(ex)
-            Return Nothing
+            If HandleDeviceLost(ex) Then Throw
+            Throw
         End Try
     End Function
 
@@ -148,7 +119,7 @@ Public Module D3D11Globals
     ''' <summary>
     ''' 统一的设备丢失处理入口。<paramref name="ex"/> 是设备级错误时立即失效全部资源并触发 <see cref="DeviceLost"/>；
     ''' 不是设备级错误则不做任何事，原异常应由上层处理（例如继续抛出）。
-    ''' 返回 <c>True</c> 表示本次确实是设备丢失，调用方应 swallow 异常并降级到 DC RT 路径，等待下一帧自动恢复。
+    ''' 返回 <c>True</c> 表示本次确实是设备丢失，调用方应 swallow 本帧并请求下一帧自动恢复。
     ''' </summary>
     Public Function HandleDeviceLost(ex As Exception) As Boolean
         If Not IsDeviceLostException(ex) Then Return False
@@ -168,7 +139,6 @@ Public Module D3D11Globals
                         _dxgiDevice IsNot Nothing OrElse _d3dDevice IsNot Nothing
             ReleaseAllNoLock()
             _initialized = False
-            _lastCreateFailedTick = Long.MinValue
         End SyncLock
         If Not hadDevice Then Return
         Try
@@ -180,7 +150,7 @@ Public Module D3D11Globals
 
     Private Sub EnsureCreatedNoLock()
         Dim factory1 As ID2D1Factory1 = D2DGlobals.GetD2DFactory1()
-        If factory1 Is Nothing Then Return
+        If factory1 Is Nothing Then Throw New InvalidOperationException("Direct2D factory is not available.")
 
         ' BgraSupport 是 D2D interop 的硬性要求；SingleThreaded 与 D2D Factory 单例策略保持一致。
         Dim flags As DeviceCreationFlags = DeviceCreationFlags.BgraSupport Or DeviceCreationFlags.Singlethreaded
@@ -194,32 +164,12 @@ Public Module D3D11Globals
             Vortice.Direct3D.FeatureLevel.Level_9_1
         }
 
-        Dim hwOk As Boolean = TryCreateDevice(Vortice.Direct3D.DriverType.Hardware, flags, levels)
-        If Not hwOk Then
-            ' 硬件失败（如 RDP 早期 / 驱动异常）：退回 WARP 软件渲染器，行为可用、性能下降。
-            If TryCreateDevice(Vortice.Direct3D.DriverType.Warp, flags, levels) Then
-                _isWarp = True
-            Else
-                Return
-            End If
-        End If
+        _d3dDevice = D3D11.D3D11CreateDevice(Vortice.Direct3D.DriverType.Hardware, flags, levels)
 
         _dxgiDevice = _d3dDevice.QueryInterface(Of IDXGIDevice)()
         _d2dDevice = factory1.CreateDevice(_dxgiDevice)
         _deviceGeneration += 1
     End Sub
-
-    Private Function TryCreateDevice(driver As Vortice.Direct3D.DriverType, flags As DeviceCreationFlags, levels As Vortice.Direct3D.FeatureLevel()) As Boolean
-        Try
-            ' Vortice 提供的便捷重载：返回 ID3D11Device，不输出 ImmediateContext（D2D 不需要它）。
-            Dim dev As ID3D11Device = D3D11.D3D11CreateDevice(driver, flags, levels)
-            If dev Is Nothing Then Return False
-            _d3dDevice = dev
-            Return True
-        Catch
-            Return False
-        End Try
-    End Function
 
     Private Sub ReleaseAllNoLock()
         If _d2dDevice IsNot Nothing Then
@@ -234,7 +184,6 @@ Public Module D3D11Globals
             Try : _d3dDevice.Dispose() : Catch : End Try
             _d3dDevice = Nothing
         End If
-        _isWarp = False
     End Sub
 
 End Module

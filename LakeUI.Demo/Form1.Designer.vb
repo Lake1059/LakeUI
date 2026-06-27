@@ -210,12 +210,8 @@ Partial Class Form1
         ' 
         ' ThisIsYourWindow1
         ' 
-        ThisIsYourWindow1.BackdropBlurPasses = 0
         ThisIsYourWindow1.BackdropImage = CType(resources.GetObject("ThisIsYourWindow1.BackdropImage"), Image)
         ThisIsYourWindow1.BackdropMode = ThisIsYourWindow.BackdropModeEnum.Image
-        ThisIsYourWindow1.BackdropNoiseScale = 0.5F
-        ThisIsYourWindow1.BackdropTintColor = Color.FromArgb(CByte(80), CByte(0), CByte(0), CByte(0))
-        ThisIsYourWindow1.BackdropTintInactiveColor = Color.FromArgb(CByte(80), CByte(0), CByte(0), CByte(0))
         ThisIsYourWindow1.BorderColor = Color.MediumPurple
         ThisIsYourWindow1.BorderInactiveColor = Color.MediumPurple
         ThisIsYourWindow1.ButtonCornerRadius = 5
@@ -247,7 +243,7 @@ Partial Class Form1
         MinimumSize = New Size(1000, 700)
         Name = "Form1"
         StartPosition = FormStartPosition.CenterScreen
-        Text = "LakeUI 2.18 DEMO"
+        Text = "LakeUI 2.19 DEMO"
         ModernTabListControl1.ResumeLayout(False)
         ResumeLayout(False)
     End Sub

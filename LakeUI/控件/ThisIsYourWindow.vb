@@ -229,40 +229,6 @@ Public Class ThisIsYourWindow
         Return form IsNot Nothing AndAlso ReferenceEquals(form, _首个附加窗体)
     End Function
 
-    Friend Shared Function TryPaintImageBackdropForBackgroundMapping(source As Control,
-                                                                    rt As ID2D1RenderTarget,
-                                                                    sourceClientRect As Rectangle,
-                                                                    destRect As Rectangle) As Boolean
-        Dim form = TryCast(source, Form)
-        If form Is Nothing OrElse rt Is Nothing Then Return False
-
-        Dim owner As ThisIsYourWindow = Nothing
-        SyncLock _attachedFormsLock
-            _attachedForms.TryGetValue(form, owner)
-        End SyncLock
-        If owner Is Nothing Then Return False
-        Return owner.TryPaintImageBackdropSlice(form, rt, sourceClientRect, destRect)
-    End Function
-
-    Friend Shared Function TryGetImageBackdropFrameVersion(source As Control,
-                                                          ByRef frameVersion As Integer) As Boolean
-        frameVersion = -1
-        Dim form = TryCast(source, Form)
-        If form Is Nothing Then Return False
-
-        Dim owner As ThisIsYourWindow = Nothing
-        SyncLock _attachedFormsLock
-            _attachedForms.TryGetValue(form, owner)
-        End SyncLock
-        If owner Is Nothing Then Return False
-
-        Dim state = owner.查找状态(form)
-        If state Is Nothing OrElse state.Renderer Is Nothing Then Return False
-        If owner._毛玻璃模式 <> BackdropModeEnum.Image OrElse Not state.Renderer.IsImageSource Then Return False
-        frameVersion = state.Renderer.FrameVersion
-        Return frameVersion >= 0
-    End Function
-
 #End Region
 
 #Region "枚举"
@@ -483,42 +449,6 @@ Public Class ThisIsYourWindow
         Return _毛玻璃模式 <> BackdropModeEnum.None AndAlso
                s IsNot Nothing AndAlso
                (Not _毛玻璃仅首个窗口 OrElse 是首个附加窗体(s.HostForm))
-    End Function
-
-    Private Function TryPaintImageBackdropSlice(form As Form,
-                                                rt As ID2D1RenderTarget,
-                                                sourceClientRect As Rectangle,
-                                                destRect As Rectangle) As Boolean
-        Dim s = 查找状态(form)
-        If s Is Nothing OrElse s.Renderer Is Nothing Then Return False
-        If _毛玻璃模式 <> BackdropModeEnum.Image Then Return False
-        If Not 毛玻璃当前启用(s) OrElse Not s.Renderer.HasFrame OrElse Not s.Renderer.IsImageSource Then Return False
-        If sourceClientRect.Width <= 0 OrElse sourceClientRect.Height <= 0 OrElse
-           destRect.Width <= 0 OrElse destRect.Height <= 0 Then Return False
-
-        Dim clientBounds As New Rectangle(Point.Empty, form.ClientSize)
-        Dim visibleSource = Rectangle.Intersect(clientBounds, sourceClientRect)
-        If visibleSource.Width <= 0 OrElse visibleSource.Height <= 0 Then Return False
-
-        Dim visibleDest As New Rectangle(
-            destRect.X + visibleSource.X - sourceClientRect.X,
-            destRect.Y + visibleSource.Y - sourceClientRect.Y,
-            visibleSource.Width,
-            visibleSource.Height)
-
-        If Not s.Renderer.DrawImageBackdropSlice(rt, visibleSource, visibleDest) Then Return False
-
-        Dim tint As Color = If(s.Activated, _毛玻璃Tint颜色, _毛玻璃Tint失焦颜色)
-        If tint.A > 0 Then
-            Using b = rt.CreateSolidColorBrush(D2DGlobals.ToColor4(tint))
-                rt.FillRectangle(D2DGlobals.ToD2DRect(visibleDest), b)
-            End Using
-        End If
-
-        If _毛玻璃模糊次数 > 0 AndAlso _毛玻璃噪点不透明度 > 0 Then
-            s.Renderer.DrawNoise(rt, visibleDest, _毛玻璃噪点不透明度)
-        End If
-        Return True
     End Function
 
     Private Sub 开始延迟客户区坐标上报(s As PerFormState)
@@ -1745,7 +1675,7 @@ Public Class ThisIsYourWindow
     Private Sub 应用毛玻璃状态(s As PerFormState)
         If s Is Nothing OrElse s.HostForm Is Nothing OrElse Not s.HostForm.IsHandleCreated Then Return
         Dim mode As BackdropModeEnum = _毛玻璃模式
-        ' Auto / CaptionOnly 模式需要 OS 支持 WDA_EXCLUDEFROMCAPTURE，否则降级为 None
+        ' Auto / CaptionOnly 模式依赖 WDA_EXCLUDEFROMCAPTURE 防自照；OS 不支持时不启用抓屏背景。
         Dim shouldEnable As Boolean = 毛玻璃允许用于窗体(s) AndAlso
                                       ((mode = BackdropModeEnum.Image) OrElse
                                        ((mode = BackdropModeEnum.Auto OrElse mode = BackdropModeEnum.CaptionOnly) AndAlso IsBackdropSupported)
@@ -2034,7 +1964,7 @@ Public Class ThisIsYourWindow
     ''' <summary>
     ''' 为指定窗体执行完整绘制。通常由内部 Paint 事件自动调用。
     ''' <para>
-    ''' 绘制流程分三段：① GDI 毛玻璃层（必须留在 GDI 上，原因见函数体内注释）；② D2D V2 scope（DC RT + DirectWrite）；
+    ''' 绘制流程分三段：① GPU 合成毛玻璃背景层（结果一次性贴回 GDI HDC）；② D2D V2 scope（DC RT + DirectWrite）；
     ''' ③ 自定义 <c>CaptionPaint</c> 事件（仍以 GDI <see cref="Graphics"/> 暴露）。
     ''' </para>
     ''' <para>
@@ -2066,40 +1996,27 @@ Public Class ThisIsYourWindow
                                            New Rectangle(0, 0, w, Math.Min(h, 取缩放标题栏总高度(s.HostForm))),
                                            fullRect)
 
-        ' ── 1) 毛玻璃层（GDI 路径）──
-        ' 必须在进入 D2D scope（=BeginPaint → e.Graphics.GetHdc + DCRT.BindDC + BeginDraw）之前完成：
-        ' • BeginPaint 一旦发生，e.Graphics 的 HDC 已被释放给 DC RT 独占，再在 e.Graphics 上画会跨越
-        '   D2D 的 BeginDraw/EndDraw，造成像素丢失或闪烁；
-        ' • BackdropRenderer 的 _currentFrame 是 CPU GDI Bitmap (PArgb)，在 D2D scope 内上传 + 绘制
-        '   实测会出现毛玻璃帧不可见的情况（DC RT 与 HDC 的合成时序边界问题）。
-        ' 因此“必须 GDI+ 的部分”就是这一层 —— 把毛玻璃 / tint / 噪点画在 e.Graphics 上，
-        ' 再进入 D2D scope 继续画标题栏等。
-        If useBackdrop Then
-            g.SmoothingMode = SmoothingMode.Default
-            g.PixelOffsetMode = PixelOffsetMode.Default
-            If D2DHelperV2.IsBackgroundSamplingPaint Then
-                s.Renderer.DrawToCpu(g, backdropRect)
-            Else
-                s.Renderer.DrawTo(g, backdropRect)
-            End If
-            Dim tint = If(active, _毛玻璃Tint颜色, _毛玻璃Tint失焦颜色)
-            If tint.A > 0 Then
-                _共享画刷.Color = tint
-                g.FillRectangle(_共享画刷, backdropRect)
-            End If
-            If _毛玻璃模糊次数 > 0 AndAlso _毛玻璃噪点不透明度 > 0 Then
-                s.Renderer.DrawNoise(g, backdropRect, _毛玻璃噪点不透明度)
-            End If
-        End If
-
-        ' ── 2) D2D V2 scope：标题栏背景 / 图片 / 遮罩 / 图标 / 按钮 / 边框 / 标题文字 ──
-        ' ThisIsYourWindow 只画矩形 / 位图 / DirectWrite 文字（文字在 DC RT 走 ClearType），
-        ' 没有任何需要超采的几何（无圆角、无旋转、无抗锯齿曲线），
-        ' 因此强制 ssaa=1，省下每帧一次离屏 BitmapRT 申请 + Flush 回采的开销。
-        ' GlobalOptions.GlobalSSAA 仍然对其他控件（ModernButton 等）生效，这里只是本控件不参与。
         Const ssaa As Integer = 1
         Dim deviceLost As Boolean = False
         Try
+            ' ── 1) 毛玻璃背景层 ──
+            ' 必须在进入 D2D scope（=BeginPaint → e.Graphics.GetHdc + DCRT.BindDC + BeginDraw）之前完成：
+            ' • BeginPaint 一旦发生，e.Graphics 的 HDC 已被释放给 DC RT 独占，再在 e.Graphics 上画会跨越
+            '   D2D 的 BeginDraw/EndDraw，造成像素丢失或闪烁；
+            ' • 窗口显示与背景映射都由 BackdropRenderer 在自己的 GPU target 里一次性合成 backdrop/tint/noise 后回贴，
+            '   保证透明页采到的窗口级背景与主窗体真实背景完全同源。
+            If useBackdrop Then
+                g.SmoothingMode = SmoothingMode.Default
+                g.PixelOffsetMode = PixelOffsetMode.Default
+                Dim tint = If(active, _毛玻璃Tint颜色, _毛玻璃Tint失焦颜色)
+                s.Renderer.DrawTo(g, backdropRect, tint, _毛玻璃噪点不透明度)
+            End If
+
+            ' ── 2) D2D V2 scope：标题栏背景 / 图片 / 遮罩 / 图标 / 按钮 / 边框 / 标题文字 ──
+            ' ThisIsYourWindow 只画矩形 / 位图 / DirectWrite 文字（文字在 DC RT 走 ClearType），
+            ' 没有任何需要超采的几何（无圆角、无旋转、无抗锯齿曲线），
+            ' 因此强制 ssaa=1，省下每帧一次离屏 BitmapRT 申请 + Flush 回采的开销。
+            ' GlobalOptions.GlobalSSAA 仍然对其他控件（ModernButton 等）生效，这里只是本控件不参与。
             Using scope = D2DHelperV2.BeginPaint(e, s.HostForm, ssaa)
                 If scope Is Nothing Then
                     ' 设计期 / 无 compositor：仅触发外部自定义绘制事件即可。
@@ -2110,7 +2027,8 @@ Public Class ThisIsYourWindow
 
                 ' ── 2.0 D3D11 设备激活 + 设备丢失订阅触发 ──
                 ' 主动 touch DeviceContext 让本 Form 的 D3D11 / D2D 1.1 设备完成实例化与
-                ' D3D11Globals.DeviceLost 事件订阅。返回 Nothing（设计器 / RDP 早期）也无关紧要：
+                ' D3D11Globals.DeviceLost 事件订阅。LakeUI 不提供 GPU 不支持时的显示回退路线；
+                ' 只有运行时掉驱动会被本函数吞掉当前帧并请求下一帧重建。
                 ' 本控件实际绘制走 DC RT 以保留 ClearType；DeviceContext 仅作为"设备状态心跳"存在。
                 Dim ctx As ID2D1DeviceContext = compositor.DeviceContext
 

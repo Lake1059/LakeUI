@@ -35,15 +35,6 @@ Imports Vortice.Direct2D1
 '''   source 离开可见控件链后仍会主动释放整份背景采样缓存。
 ''' • <see cref="Invalidate"/> 用于换主题等需要立即重采的极端场景，常规情况下不需要手动调用。
 '''
-''' === Image backdrop 快路径 ===
-''' • 当 BackgroundSource 是接入 <see cref="ThisIsYourWindow"/> 的 Form，且窗口玻璃背景处于 Image 模式时，
-'''   本模块不再把整棵 source 重采成 GDI Bitmap，而是直接让 ThisIsYourWindow/BackdropRenderer 把对应切片
-'''   画到当前 D2D 背景层。
-''' • 快路径 entry 只记录消费者映射、source 尺寸和 backdrop frameVersion，不保留 Bmp / crop D2D 位图。
-'''   这样静态图片背景在选项卡切换、最小化恢复、标题栏局部刷新时不会因为 source 全量失效而唤醒全部页面。
-''' • source Invalidated/Resize 会先比较 frameVersion 与尺寸；图片帧未变且尺寸未变时直接返回。
-'''   最小化期间的隐藏态 Resize 也会被忽略，避免恢复普通窗口时出现一次全量重建风暴。
-'''
 ''' === 调用坑点 ===
 ''' • RegisterConsumer 会把同一个 child 从其他 source 的消费者列表中移除，保证控件换 BackgroundSource 后
 '''   旧 source 不再传播失效。
@@ -87,8 +78,6 @@ Public Module BackgroundPenetrationV2
         Public ReadOnly AncestorSubscriptions As New List(Of Control)()
         Public IsSolidColor As Boolean
         Public SolidArgb As Integer
-        Public UsesImageBackdropFastPath As Boolean
-        Public ImageBackdropFrameVersion As Integer = -1
     End Class
 
     Private Structure ConsumerInvalidation
@@ -147,17 +136,6 @@ Public Module BackgroundPenetrationV2
         Dim srcRect As New Rectangle(offset.X + destRect.X, offset.Y + destRect.Y, destRect.Width, destRect.Height)
 
         Dim rt = scope.BackgroundLayer
-        ' 静态图片玻璃背景的关键路径：直接从 BackdropRenderer 当前帧裁切绘制，避免把整个 Form
-        ' 重采为 GDI backing bitmap。entry 只保留消费者关系和 frameVersion，用于后续失效过滤。
-        If ThisIsYourWindow.TryPaintImageBackdropForBackgroundMapping(sourceForSampling, rt, srcRect, destRect) Then
-            Dim imageBackdropVersion As Integer = -1
-            ThisIsYourWindow.TryGetImageBackdropFrameVersion(sourceForSampling, imageBackdropVersion)
-            EnsureEntry(sourceForSampling)
-            ReleaseLegacySampleCache(sourceForSampling, imageBackdropVersion)
-            RegisterConsumerMappings(child, sourceMappings, childBounds)
-            Return
-        End If
-
         Dim isSolid As Boolean
         Dim solidColor As Color = Color.Empty
         Dim acquired As New BitmapAcquireResult()
@@ -225,10 +203,6 @@ Public Module BackgroundPenetrationV2
         SyncLock _cache
             Dim entry As Entry = Nothing
             If _cache.TryGetValue(source, entry) Then
-                If IsImageBackdropMappingOnly(entry) AndAlso Not AnyConsumerIntersects(entry, dirtyRect) Then
-                    If entry.Consumers.Count = 0 Then RemoveSourceEntryNoLock(source, entry)
-                    Return
-                End If
                 AddDirtyRect(entry, dirtyRect, New Rectangle(0, 0, source.Width, source.Height))
                 InvalidateCropEntries(entry, dirtyRect)
                 If entry.FullDirty Then
@@ -415,7 +389,6 @@ Public Module BackgroundPenetrationV2
         Dim reuseExistingBitmapWhilePainting As Boolean
         SyncLock _cache
             entry = EnsureEntryNoLock(source)
-            entry.UsesImageBackdropFastPath = False
             entry.LastUsed = NextClock()
             ' Pure-color entries intentionally drop Bmp to save RAM; the cached SolidArgb is still valid
             ' while the source size matches and no invalidation has marked it dirty.
@@ -811,28 +784,6 @@ Public Module BackgroundPenetrationV2
         entry.DirtyRects.Clear()
         entry.IsSolidColor = False
         entry.SolidArgb = 0
-        entry.UsesImageBackdropFastPath = False
-        entry.ImageBackdropFrameVersion = -1
-    End Sub
-
-    Private Sub ReleaseLegacySampleCache(source As Control, Optional imageBackdropFrameVersion As Integer = -1)
-        If source Is Nothing Then Return
-        SyncLock _cache
-            Dim entry As Entry = Nothing
-            If Not _cache.TryGetValue(source, entry) Then Return
-            ' 进入 Image backdrop 快路径后，旧的 GDI source bitmap 与 crop D2D 上传缓存都没有意义。
-            ' 保留它们会让“静态图片背景 + 多页面穿透”继续按普通背景路径占 RAM/VRAM。
-            ReleaseSourceBitmap(entry)
-            InvalidateCropEntries(entry, Nothing)
-            entry.FullDirty = False
-            entry.DirtyRects.Clear()
-            entry.IsSolidColor = False
-            entry.SolidArgb = 0
-            entry.UsesImageBackdropFastPath = True
-            entry.ImageBackdropFrameVersion = imageBackdropFrameVersion
-            entry.Width = source.Width
-            entry.Height = source.Height
-        End SyncLock
     End Sub
 
     Private Sub RemoveSourceEntryNoLock(source As Control, entry As Entry)
@@ -943,50 +894,6 @@ Public Module BackgroundPenetrationV2
         Next
     End Sub
 
-    Private Function AnyConsumerIntersects(entry As Entry, dirtyRect As Rectangle) As Boolean
-        If entry Is Nothing OrElse dirtyRect.Width <= 0 OrElse dirtyRect.Height <= 0 Then Return False
-        For i As Integer = entry.Consumers.Count - 1 To 0 Step -1
-            Dim consumer = entry.Consumers(i)
-            Dim child = TryCast(consumer.ChildRef.Target, Control)
-            If child Is Nothing OrElse child.IsDisposed OrElse Not IsRenderableControl(child) Then
-                entry.Consumers.RemoveAt(i)
-                Continue For
-            End If
-            If consumer.SourceRect.IntersectsWith(dirtyRect) Then Return True
-        Next
-        Return False
-    End Function
-
-    Private Function IsImageBackdropMappingOnly(entry As Entry) As Boolean
-        Return entry IsNot Nothing AndAlso
-               entry.UsesImageBackdropFastPath AndAlso
-               entry.Bmp Is Nothing AndAlso
-               entry.Crops.Count = 0 AndAlso
-               Not entry.IsSolidColor
-    End Function
-
-    Private Function IsUnchangedImageBackdropMapping(source As Control,
-                                                     entry As Entry,
-                                                     Optional requireSourceSizeMatch As Boolean = False) As Boolean
-        If Not IsImageBackdropMappingOnly(entry) Then Return False
-        If requireSourceSizeMatch AndAlso
-           (entry.Width <> source.Width OrElse entry.Height <> source.Height) Then Return False
-        Dim currentVersion As Integer = -1
-        If Not ThisIsYourWindow.TryGetImageBackdropFrameVersion(source, currentVersion) Then Return False
-        Return currentVersion >= 0 AndAlso currentVersion = entry.ImageBackdropFrameVersion
-    End Function
-
-    Private Function IsSourceInMinimizedForm(source As Control) As Boolean
-        If source Is Nothing OrElse source.IsDisposed Then Return False
-        Try
-            Dim frm = TryCast(source, Form)
-            If frm Is Nothing Then frm = source.FindForm()
-            Return frm IsNot Nothing AndAlso frm.WindowState = FormWindowState.Minimized
-        Catch
-            Return False
-        End Try
-    End Function
-
     Private Sub CollectConsumerInvalidations(source As Control, entry As Entry, dirtyRect As Rectangle?,
                                              invalidations As List(Of ConsumerInvalidation),
                                              Optional removeWhenEmpty As Boolean = True)
@@ -1046,16 +953,11 @@ Public Module BackgroundPenetrationV2
             If _cache.TryGetValue(source, entry) Then
                 Dim dirtyRect As Rectangle = If(e IsNot Nothing, e.InvalidRect, Rectangle.Empty)
                 If dirtyRect.Width <= 0 OrElse dirtyRect.Height <= 0 Then
-                    If IsUnchangedImageBackdropMapping(source, entry) Then Return
                     entry.FullDirty = True
                     entry.DirtyRects.Clear()
                     InvalidateCropEntries(entry, Nothing)
                     CollectConsumerInvalidations(source, entry, Nothing, invalidations)
                 Else
-                    If IsImageBackdropMappingOnly(entry) AndAlso Not AnyConsumerIntersects(entry, dirtyRect) Then
-                        If entry.Consumers.Count = 0 Then RemoveSourceEntryNoLock(source, entry)
-                        Return
-                    End If
                     AddDirtyRect(entry, dirtyRect, New Rectangle(0, 0, source.Width, source.Height))
                     InvalidateCropEntries(entry, dirtyRect)
                     If entry.FullDirty Then
@@ -1077,8 +979,6 @@ Public Module BackgroundPenetrationV2
         SyncLock _cache
             Dim entry As Entry = Nothing
             If _cache.TryGetValue(source, entry) Then
-                If IsImageBackdropMappingOnly(entry) AndAlso IsSourceInMinimizedForm(source) Then Return
-                If IsUnchangedImageBackdropMapping(source, entry, requireSourceSizeMatch:=True) Then Return
                 entry.FullDirty = True
                 entry.DirtyRects.Clear()
                 InvalidateCropEntries(entry, Nothing)

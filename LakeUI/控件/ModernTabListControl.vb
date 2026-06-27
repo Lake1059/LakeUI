@@ -171,7 +171,6 @@ Public Class ModernTabListControl
         Public LastShownDpi As Integer
         Public LastShownBackgroundVersion As Integer = -1
         Public LastShownPanelBounds As Rectangle = Rectangle.Empty
-        Public LastShownBackgroundSource As Control = Nothing
         Public ForceRefreshDuringSwitch As Boolean
     End Class
 
@@ -216,12 +215,10 @@ Public Class ModernTabListControl
         End Sub
         Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
             If BackColor.A < 255 Then
-                ' V2 透明背景穿透：source 选择 ModernTabListControl 的 BackgroundSource，
-                ' 若未指定再回退到祖父级控件（兼容旧行为）。
                 Dim tabListCtrl As ModernTabListControl = TryCast(Me.Parent, ModernTabListControl)
                 Dim source As Control = Nothing
                 If tabListCtrl IsNot Nothing Then
-                    source = If(tabListCtrl.BackgroundSource, tabListCtrl.Parent)
+                    source = tabListCtrl
                 End If
                 If source IsNot Nothing Then
                     Using scope = D2DHelperV2.BeginPaint(e, Me, 1)
@@ -657,7 +654,7 @@ Public Class ModernTabListControl
     End Sub
 
     Private Function 获取切页背景源() As Control
-        Return If(_backgroundSource, Me.Parent)
+        Return Me.Parent
     End Function
 
     Private Function 当前切页签名已匹配(ctrl As Control, state As BoundPageState) As Boolean
@@ -667,7 +664,6 @@ Public Class ModernTabListControl
         If state.LastShownDpi <> D2DGlobals.GetCurrentDpi(Me) Then Return False
         If state.LastShownPanelBounds <> _内容面板.Bounds Then Return False
         If state.LastShownBackgroundVersion <> _背景刷新版本 Then Return False
-        If state.LastShownBackgroundSource IsNot 获取切页背景源() Then Return False
         Return True
     End Function
 
@@ -914,8 +910,7 @@ Public Class ModernTabListControl
 
         Dim backgroundChanged As Boolean = state Is Nothing OrElse
                                            Not state.HasBeenShown OrElse
-                                           state.LastShownBackgroundVersion <> _背景刷新版本 OrElse
-                                           state.LastShownBackgroundSource IsNot 获取切页背景源()
+                                           state.LastShownBackgroundVersion <> _背景刷新版本
         Dim panelChanged As Boolean = state Is Nothing OrElse
                                       state.LastShownPanelBounds <> _内容面板.Bounds
         Dim sizeChanged As Boolean = state Is Nothing OrElse state.LastShownSize <> ctrl.ClientSize
@@ -938,7 +933,6 @@ Public Class ModernTabListControl
             state.LastShownDpi = currentDpi
             state.LastShownBackgroundVersion = _背景刷新版本
             state.LastShownPanelBounds = _内容面板.Bounds
-            state.LastShownBackgroundSource = 获取切页背景源()
         End If
     End Sub
 #End Region
@@ -1070,12 +1064,15 @@ Public Class ModernTabListControl
 
 #Region "绘制"
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
-        ' V2 契约（与 ModernButton 对齐）：
-        '   • BackgroundSource 已设置 → 跳过 BackColor 整个逻辑，背景由 OnPaint 内 BackgroundPenetrationV2 绘制；
-        '   • 否则一律走 .NET 自身透明逻辑（半透明 BackColor 由基类合成父级背景，不透明色由基类填底）。
-        If _backgroundSource IsNot Nothing Then Return
+        ' 透明背景由 OnPaint 内的 BackgroundPenetrationV2 统一映射，避免 WinForms 默认透明逻辑重放父级 Paint。
+        If MyBase.BackColor.A < 255 Then Return
         MyBase.OnPaintBackground(e)
     End Sub
+
+    Private Function 获取控件背景源() As Control
+        If MyBase.BackColor.A < 255 Then Return Me.Parent
+        Return Nothing
+    End Function
 
     Private Function 获取内容面板有效背景色() As Color
         ' Panel 不支持完全透明的 BackColor 显示，需要使用 Transparent 触发透明背景路径。
@@ -1097,13 +1094,13 @@ Public Class ModernTabListControl
                 Dim gRT As ID2D1RenderTarget = scope.GraphicsLayer
                 Dim dcRT As ID2D1DCRenderTarget = scope.DCRenderTarget
 
-                ' 1) 背景层（1× 直绘）：
-                '    • 显式 BackgroundSource → 绘制穿透底图（跳过 BackColor）；
-                '    • 否则若 MyBase.BackColor 半透明 → 基类 OnPaintBackground 已把父级背景合成到 DC，
-                '      这里再叠加 BackColor 作为半透明遮罩（"颜色覆盖在上面"）。
-                If _backgroundSource IsNot Nothing Then
-                    BackgroundPenetrationV2.PaintBackground(Me, scope, _backgroundSource)
-                ElseIf MyBase.BackColor.A > 0 AndAlso MyBase.BackColor.A < 255 Then
+                Dim backgroundSource As Control = 获取控件背景源()
+                If backgroundSource IsNot Nothing Then
+                    BackgroundPenetrationV2.PaintBackground(Me, scope, backgroundSource)
+                End If
+
+                ' 半透明 BackColor 是叠在映射背景上的遮罩。
+                If MyBase.BackColor.A > 0 AndAlso MyBase.BackColor.A < 255 Then
                     Dim bgLayer = scope.BackgroundLayer
                     Dim brush = compositor.BrushCache.[Get](bgLayer, MyBase.BackColor)
                     If brush IsNot Nothing Then
@@ -2212,29 +2209,21 @@ Public Class ModernTabListControl
     End Property
 
     Private _backgroundSource As Control = Nothing
-    <Category("LakeUI"),
-     Description("背景采样源（V2 透明背景穿透）。设置后将跨越任意层级直接采样此控件的绘制内容作为透明背景；为空时按 BackColor 协议处理。"),
-     DefaultValue(GetType(Control), Nothing), Browsable(True)>
+    <Browsable(False),
+     EditorBrowsable(EditorBrowsableState.Never),
+     DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden),
+     DefaultValue(GetType(Control), Nothing)>
     Public Property BackgroundSource As Control
         Get
             Return _backgroundSource
         End Get
         Set(value As Control)
-            If _backgroundSource IsNot value Then
-                解除背景穿透消费者()
-                Try : BackgroundPenetrationV2.UnregisterConsumer(_内容面板) : Catch : End Try
-                _backgroundSource = BackgroundPenetrationV2.SetConsumerSource(Me, _backgroundSource, value)
-                同步切页背景源订阅()
-                ' 内容面板上的透明背景来自同一 source。
-                If _内容面板 IsNot Nothing Then OuterToInnerRefreshScheduler.RequestFull(_内容面板, invalidateChildren:=True)
-                OuterToInnerRefreshScheduler.RequestFull(Me)
-            End If
+            _backgroundSource = value
         End Set
     End Property
 
     Private Sub 解除背景穿透消费者()
-        If _backgroundSource Is Nothing Then Return
-        Try : BackgroundPenetrationV2.UnregisterConsumer(Me, _backgroundSource) : Catch : End Try
+        Try : BackgroundPenetrationV2.UnregisterConsumer(Me) : Catch : End Try
     End Sub
 
     <Category("LakeUI"), Description("切换绑定页面时保留已访问页面；仅在首次显示、尺寸或背景穿透源变化时主动递归刷新。控件自身的正常刷新不受影响。"), DefaultValue(True), Browsable(True)>

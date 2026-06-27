@@ -235,16 +235,6 @@ Public Class GlobalOptions
     Public Shared Property BackgroundPenetrationFullDirtyAreaRatio As Single = 0.6F
 
     ''' <summary>
-    ''' BackdropRenderer CPU blur 字节缓冲的保留上限。
-    ''' </summary>
-    ''' <remarks>
-    ''' <para>默认值：32 MiB，单位为字节，分别作用于 BoxBlur 的两块 scratch buffer。</para>
-    ''' <para>影响对象是 CPU 模糊算法临时使用的字节数组，用于存放当前帧采样像素和中间计算结果；它不是 Image 图片缓存，也不是 D2D 绘制图形资源。</para>
-    ''' <para>GPU blur 可用时这些缓冲不是画质所需；CPU fallback 用完后若容量明显超出当前帧需求，会被缩回以释放 RAM。</para>
-    ''' </remarks>
-    Public Shared Property BackdropCpuBlurBufferRetainBytes As Long = 32L * 1024L * 1024L
-
-    ''' <summary>
     ''' BackgroundPenetrationV2 可保留的 D2D 裁剪上传缓存全局预算。
     ''' </summary>
     ''' <remarks>

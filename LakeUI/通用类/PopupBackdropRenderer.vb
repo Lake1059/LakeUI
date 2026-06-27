@@ -15,8 +15,8 @@
 '''
 ''' 坑点：
 ''' • <see cref="WaitForFrame"/> 只等待 worker 空闲；它不是强制同步重绘。调用方仍需 Invalidate / Paint。
-''' • <see cref="Draw"/> 使用 GDI Graphics 路径，适合顶层 popup；V2 控件内的图片背景穿透应走
-'''   <see cref="BackgroundPenetrationV2"/> 的 D2D 快路径。
+''' • <see cref="Draw"/> 使用 BackdropRenderer 的 GPU 合成路径一次性输出到 GDI HDC，适合顶层 popup；
+'''   V2 控件内的背景穿透应走 <see cref="BackgroundPenetrationV2"/> 采样宿主容器。
 ''' </remarks>
 Friend NotInheritable Class PopupBackdropRenderer
     Implements IDisposable
@@ -84,15 +84,15 @@ Friend NotInheritable Class PopupBackdropRenderer
     Public Sub Draw(g As Graphics, target As Rectangle)
         If Not HasFrame OrElse target.Width <= 0 OrElse target.Height <= 0 Then Return
 
-        _renderer.DrawTo(g, target)
-        If TintColor.A > 0 Then
-            Using brush As New SolidBrush(TintColor)
-                g.FillRectangle(brush, target)
-            End Using
-        End If
-        If BlurPasses > 0 AndAlso NoiseOpacity > 0 Then
-            _renderer.DrawNoise(g, target, NoiseOpacity)
-        End If
+        Try
+            _renderer.DrawTo(g, target, TintColor, NoiseOpacity)
+        Catch ex As Exception
+            If D3D11Globals.HandleDeviceLost(ex) Then
+                Try : _host?.Invalidate() : Catch : End Try
+                Return
+            End If
+            Throw
+        End Try
     End Sub
 
     Private Sub ResetRenderer()

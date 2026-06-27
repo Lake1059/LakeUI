@@ -89,13 +89,13 @@ Public NotInheritable Class PaintScopeV2
     ''' <para>
     ''' 仅用于愿意走 D2D 1.1 effect / 跨 Form bitmap 缓存等高级路径的代码；常规控件继续使用
     ''' <see cref="BackgroundLayer"/> / <see cref="GraphicsLayer"/> / <see cref="TextLayer"/> 即可。
-    ''' 设计器、RDP、驱动异常等环境下返回 <c>Nothing</c>，调用方必须自行处理回退。
+    ''' LakeUI 不提供 GPU 不支持时的显示回退路线；除 compositor 已释放外，创建失败会直接向调用方抛出。
     ''' </para>
     ''' <para>
     ''' <b>其他控件未来接入指南（可选 / 完全自愿）</b>：
     ''' <list type="number">
     '''   <item>在 <c>OnPaint</c> 中先按常规走 <see cref="D2DHelperV2.BeginPaint"/> 拿到 <see cref="PaintScopeV2"/>。</item>
-    '''   <item>访问本属性拿 <see cref="ID2D1DeviceContext"/>；为 <c>Nothing</c> 时直接跳过 D2D 1.1 增强逻辑、按常规层继续。</item>
+    '''   <item>访问本属性拿 <see cref="ID2D1DeviceContext"/>；调用方只需要处理运行时设备丢失。</item>
     '''   <item>把要画的内容渲染到自己创建的 <c>ID2D1Bitmap1</c>（带 <c>BitmapOptions.Target Or GdiCompatible</c>）：
     '''         <c>ctx.Target = bmp1 → ctx.BeginDraw → ... → ctx.EndDraw</c>。
     '''         注意保存并恢复 <c>ctx.Target</c>，避免污染其他控件后续使用。</item>

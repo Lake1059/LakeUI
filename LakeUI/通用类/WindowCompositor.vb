@@ -41,7 +41,6 @@ Public NotInheritable Class WindowCompositor
     Private _formHwnd As IntPtr
     Private _dcRT As ID2D1DCRenderTarget
     Private _deviceContext As ID2D1DeviceContext
-    Private _deviceContextProbed As Boolean
     Private _deviceContextGeneration As Integer
     Private _deviceLostHandlerAttached As Boolean
     Private _disposed As Boolean
@@ -175,14 +174,14 @@ Public NotInheritable Class WindowCompositor
     ''' 取（按需创建）本窗口的 <see cref="ID2D1DeviceContext"/>（D2D 1.1 入口）。
     ''' <para>
     ''' 阶段 A 行为：首次访问时通过 <see cref="D3D11Globals.CreateDeviceContext"/> 创建一份
-    ''' per-form 的 DeviceContext，与本窗口的 DC RT 同生共死。设计器、RDP、驱动异常等环境下
-    ''' 返回 <c>Nothing</c>，调用方应自行回退到 DC RT 路径。
+    ''' per-form 的 DeviceContext，与本窗口的 DC RT 同生共死。LakeUI 不提供 GPU 不支持时的
+    ''' 降级路线；除 compositor 已释放外，创建失败会直接向调用方抛出。
     ''' </para>
     ''' <para>
     ''' <b>设备丢失处理</b>：本属性会在第一次成功创建 DeviceContext 时订阅
     ''' <see cref="D3D11Globals.DeviceLost"/>；一旦进程级设备失效，订阅回调会立即
-    ''' Dispose 当前 DeviceContext 并清空 _deviceContextProbed，下一次访问本属性会用
-    ''' 新设备重建。此外每次访问都会比对 <see cref="D3D11Globals.DeviceGeneration"/>，
+    ''' Dispose 当前 DeviceContext，下一次访问本属性会用新设备重建。
+    ''' 此外每次访问都会比对 <see cref="D3D11Globals.DeviceGeneration"/>，
     ''' 一旦发现代号变化也会主动放弃旧 DeviceContext，保证不会把死设备暴露给调用方。
     ''' </para>
     ''' <para>
@@ -200,14 +199,8 @@ Public NotInheritable Class WindowCompositor
                 ReleaseDeviceContextNoLock()
             End If
             If _deviceContext IsNot Nothing Then Return _deviceContext
-            If _deviceContextProbed Then Return Nothing
-            _deviceContextProbed = True
-            Try
-                _deviceContext = D3D11Globals.CreateDeviceContext()
-                _deviceContextGeneration = D3D11Globals.DeviceGeneration
-            Catch
-                _deviceContext = Nothing
-            End Try
+            _deviceContext = D3D11Globals.CreateDeviceContext()
+            _deviceContextGeneration = D3D11Globals.DeviceGeneration
             If _deviceContext IsNot Nothing AndAlso Not _deviceLostHandlerAttached Then
                 AddHandler D3D11Globals.DeviceLost, AddressOf OnDeviceLost
                 _deviceLostHandlerAttached = True
@@ -220,7 +213,7 @@ Public NotInheritable Class WindowCompositor
     ''' 通知本 compositor"DeviceContext 抛出了设备级错误"。
     ''' 内部会调用 <see cref="D3D11Globals.HandleDeviceLost"/>；如果确认是设备丢失，
     ''' 还会顺手清空本 compositor 的 DeviceContext 引用以加快下一帧重建。
-    ''' 返回 <c>True</c> 表示确实是设备丢失，调用方应 swallow 异常并降级到 DC RT。
+    ''' 返回 <c>True</c> 表示确实是设备丢失，调用方应 swallow 本帧并请求下一帧重画。
     ''' </summary>
     Public Function NotifyDeviceContextException(ex As Exception) As Boolean
         Dim isLost = D3D11Globals.HandleDeviceLost(ex)
@@ -246,7 +239,6 @@ Public NotInheritable Class WindowCompositor
             Try : _deviceContext.Dispose() : Catch : End Try
             _deviceContext = Nothing
         End If
-        _deviceContextProbed = False
         _deviceContextGeneration = 0
     End Sub
 
