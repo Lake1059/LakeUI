@@ -243,7 +243,7 @@ Partial Class Form1
         MinimumSize = New Size(1000, 700)
         Name = "Form1"
         StartPosition = FormStartPosition.CenterScreen
-        Text = "LakeUI 2.19 DEMO"
+        Text = "LakeUI DEMO"
         ModernTabListControl1.ResumeLayout(False)
         ResumeLayout(False)
     End Sub
