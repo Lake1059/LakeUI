@@ -431,6 +431,53 @@ Public Module D2DHelperV2
         Return cleaned
     End Function
 
+    ''' <summary>
+    ''' 释放某张 <see cref="Image"/> 在窗口级 compositor 中的 D2D 上传缓存。
+    ''' 不 Dispose 传入的 Image；调用方仍然拥有源图对象。
+    ''' </summary>
+    Public Function ReleaseImageD2DCache(image As Image,
+                                         Optional owner As Control = Nothing,
+                                         Optional invalidateAfterCleanup As Boolean = False) As Integer
+        If image Is Nothing Then Return 0
+        Dim targetForm As Form = ResolveCleanupForm(owner)
+        Dim comps As New List(Of WindowCompositor)()
+
+        SyncLock _compositorsLock
+            If targetForm IsNot Nothing Then
+                Dim comp As WindowCompositor = Nothing
+                If _compositors.TryGetValue(targetForm, comp) AndAlso comp IsNot Nothing AndAlso Not comp.IsDisposed Then
+                    comps.Add(comp)
+                End If
+            Else
+                For Each comp In _compositors.Values
+                    If comp IsNot Nothing AndAlso Not comp.IsDisposed Then comps.Add(comp)
+                Next
+            End If
+        End SyncLock
+
+        Dim cleaned As Integer = 0
+        Dim invalidateForms As New List(Of Form)()
+        For Each comp In comps
+            If comp.ReleaseBitmapCache(image) Then
+                cleaned += 1
+                If comp.Form IsNot Nothing AndAlso Not comp.Form.IsDisposed Then invalidateForms.Add(comp.Form)
+            End If
+        Next
+
+        If invalidateAfterCleanup Then
+            For Each form In invalidateForms
+                Try
+                    If form IsNot Nothing AndAlso Not form.IsDisposed AndAlso form.IsHandleCreated Then
+                        OuterToInnerRefreshScheduler.RequestFull(form, invalidateChildren:=True)
+                    End If
+                Catch
+                End Try
+            Next
+        End If
+
+        Return cleaned
+    End Function
+
     Private Function ResolveCleanupForm(owner As Control) As Form
         If owner Is Nothing OrElse owner.IsDisposed Then Return Nothing
         If TypeOf owner Is Form Then Return DirectCast(owner, Form)

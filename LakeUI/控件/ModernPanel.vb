@@ -243,9 +243,11 @@ Public Class ModernPanel
         End Get
         Set(value As Image)
             If _image Is value Then Return
+            Dim oldImage = _image
             停止图片动画()
             _image = value
             清除图片缓存()
+            D2DHelperV2.ReleaseImageD2DCache(oldImage, Me)
             启动图片动画()
             OuterToInnerRefreshScheduler.RequestFull(Me)
         End Set
@@ -1138,6 +1140,7 @@ Public Class ModernPanel
     ''' <summary>清理控件级动图帧上传缓存；静态背景图缓存仍由 WindowCompositor 共享管理。</summary>
     Private Sub 清除图片缓存()
         清除动画帧图片缓存()
+        清除缩放图片缓存()
     End Sub
 
 #End Region

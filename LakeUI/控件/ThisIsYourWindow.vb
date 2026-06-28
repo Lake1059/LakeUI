@@ -771,7 +771,11 @@ Public Class ThisIsYourWindow
             Return _标题栏背景图片
         End Get
         Set(value As Image)
-            _标题栏背景图片 = value : 通知重绘()
+            If _标题栏背景图片 Is value Then Return
+            Dim oldImage = _标题栏背景图片
+            _标题栏背景图片 = value
+            D2DHelperV2.ReleaseImageD2DCache(oldImage, _首个附加窗体)
+            通知重绘()
         End Set
     End Property
 
@@ -916,7 +920,11 @@ Public Class ThisIsYourWindow
             Return _自定义图标
         End Get
         Set(value As Image)
-            _自定义图标 = value : 通知重绘()
+            If _自定义图标 Is value Then Return
+            Dim oldImage = _自定义图标
+            _自定义图标 = value
+            D2DHelperV2.ReleaseImageD2DCache(oldImage, _首个附加窗体)
+            通知重绘()
         End Set
     End Property
 
@@ -1512,9 +1520,11 @@ Public Class ThisIsYourWindow
             Return _毛玻璃图片
         End Get
         Set(value As Image)
+            If _毛玻璃图片 Is value Then Return
             _毛玻璃图片 = value
             For Each s In _forms.Values
                 If s.Renderer IsNot Nothing AndAlso _毛玻璃模式 = BackdropModeEnum.Image Then
+                    s.Renderer.CleanupD2DResources(D2DCacheCleanupLevel.ReleaseAllCaches)
                     s.Renderer.SetSource(True, value)
                     s.Renderer.RequestFrame(s.HostForm.Bounds, True)
                 End If
@@ -1702,8 +1712,9 @@ Public Class ThisIsYourWindow
                                                             End If
                                                         End Sub
             End If
-            ' 配置源
-            s.Renderer.SetSource(mode = BackdropModeEnum.Image, _毛玻璃图片)
+            ' 配置源。非 Image 模式必须清掉静态源图引用，避免切回桌面抓屏后旧 Image 仍被 Renderer 持有。
+            s.Renderer.CleanupD2DResources(D2DCacheCleanupLevel.ReleaseAllCaches)
+            s.Renderer.SetSource(mode = BackdropModeEnum.Image, If(mode = BackdropModeEnum.Image, _毛玻璃图片, Nothing))
             ' Auto / CaptionOnly 模式且未长期启用 WDA 时，让 Renderer 在每次 BitBlt 瞬间临时排除自身，
             ' 避免事件驱动抓屏抓到自己产生镜像反馈。
             s.Renderer.SetTransientExcludeOnCapture(
@@ -2163,10 +2174,10 @@ Public Class ThisIsYourWindow
             img = _自定义图标
         ElseIf _图标来源 = IconSourceEnum.FormIcon AndAlso s.HostForm?.Icon IsNot Nothing Then
             If s.CachedIconSource IsNot s.HostForm.Icon Then
+                D2DHelperV2.ReleaseImageD2DCache(s.CachedIconBitmap, s.HostForm)
                 s.CachedIconBitmap?.Dispose()
                 s.CachedIconBitmap = s.HostForm.Icon.ToBitmap()
                 s.CachedIconSource = s.HostForm.Icon
-                ' V2：新 Bitmap 引用即新缓存键，旧条目随 Form Dispose 时一同清理；无需手动 Invalidate。
             End If
             img = s.CachedIconBitmap
         End If

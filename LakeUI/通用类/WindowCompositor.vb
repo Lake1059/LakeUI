@@ -311,6 +311,15 @@ Public NotInheritable Class WindowCompositor
         Return cache
     End Function
 
+    Friend Function ReleaseBitmapCache(src As Image) As Boolean
+        If _disposed OrElse src Is Nothing Then Return False
+        Dim entry As BitmapCacheEntry = Nothing
+        If Not _bitmapCaches.TryGetValue(src, entry) Then Return False
+        _bitmapCaches.Remove(src)
+        Try : entry.Cache.Dispose() : Catch : End Try
+        Return True
+    End Function
+
     Private Function NextBitmapCacheClock() As Long
         _bitmapCacheClock += 1
         Return _bitmapCacheClock
