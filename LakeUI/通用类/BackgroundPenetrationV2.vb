@@ -610,23 +610,17 @@ Public Module BackgroundPenetrationV2
     Private Sub PaintSourceDirtyRectsInPlace(source As Control, target As Bitmap, repaintRects As IEnumerable(Of Rectangle))
         If source Is Nothing OrElse target Is Nothing OrElse repaintRects Is Nothing Then Return
         Dim targetBounds As New Rectangle(0, 0, target.Width, target.Height)
-        For Each repaintRect In repaintRects
-            repaintRect = Rectangle.Intersect(targetBounds, repaintRect)
-            If repaintRect.Width <= 0 OrElse repaintRect.Height <= 0 Then Continue For
 
-            Using patchBmp As New Bitmap(repaintRect.Width, repaintRect.Height, PixelFormat.Format32bppPArgb)
-                Using patchGraphics As Graphics = Graphics.FromImage(patchBmp)
-                    patchGraphics.TranslateTransform(-repaintRect.X, -repaintRect.Y)
-                    PaintSourceRect(source, patchGraphics, repaintRect)
-                End Using
-                ForceOpaqueAlpha(patchBmp, {New Rectangle(0, 0, patchBmp.Width, patchBmp.Height)})
+        ' 局部重采必须保持 source 的原始坐标系。部分窗口级绘制会走 HDC/BitBlt，
+        ' 不可靠继承 GDI+ TranslateTransform；若画到小 patch 再贴回，会把窗口顶部像素误贴到脏区。
+        Using targetGraphics As Graphics = Graphics.FromImage(target)
+            For Each repaintRect In repaintRects
+                repaintRect = Rectangle.Intersect(targetBounds, repaintRect)
+                If repaintRect.Width <= 0 OrElse repaintRect.Height <= 0 Then Continue For
 
-                Using targetGraphics As Graphics = Graphics.FromImage(target)
-                    targetGraphics.CompositingMode = Drawing2D.CompositingMode.SourceCopy
-                    targetGraphics.DrawImageUnscaled(patchBmp, repaintRect.Location)
-                End Using
-            End Using
-        Next
+                PaintSourceRect(source, targetGraphics, repaintRect)
+            Next
+        End Using
     End Sub
 
     Private Sub PaintSourceRect(source As Control, bg As Graphics, repaintRect As Rectangle)
