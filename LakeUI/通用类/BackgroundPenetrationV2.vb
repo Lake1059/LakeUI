@@ -10,9 +10,9 @@ Imports Vortice.Direct2D1
 '''   完全不画背景层。不再自动回退到 child.Parent，避免无意识的递归与采样链。
 ''' • 每个 source 在窗口内共享一份 GDI Bitmap 作权威，按 source 的
 '''   <see cref="Control.Invalidated"/> / <see cref="Control.Resize"/> / <see cref="Control.Disposed"/> 失效。
-'''   Invalidated 带矩形时只重采 dirty rect，并只丢弃相交的 D2D 裁剪缓存。
-''' • D2D 上传不再保留整张 source 位图，而是按当前 <see cref="PaintScopeV2.ClipRectangle"/>
-'''   建立 source crop → RT 的小位图缓存；同一 RT / 同一 crop 命中时直接复用。
+'''   Invalidated 带矩形时只重采 dirty rect，并释放对应 source 的共享 D2D 上传图。
+''' • D2D 上传按 source / RenderTarget 共享一张整源位图；各 child 使用 DrawBitmap 的 sourceRect
+'''   从共享图中取样，避免大量控件各自持有一份裁剪上传副本。
 ''' • 不区分 GDI / D2D 消费者：GDI Bitmap 负责重采与 dirty rect 合并，ID2D1Bitmap 只作为当前 RT 的上传缓存。
 '''
 ''' === BackColor 与背景穿透的优先级（V2 强约束） ===
@@ -30,7 +30,7 @@ Imports Vortice.Direct2D1
 ''' • source 自身若也是带 BackgroundSource 的 V2 透明控件，本类仍采样 source 本身，保留其中间
 '''   背景、遮罩、边框、背景图片与子控件等视觉层。采样期间若遇到同窗口 V2 重入，会由
 '''   D2DHelperV2 使用临时离屏 compositor 绘制到当前 GDI Bitmap，避免嵌套共享 BindDC。
-''' • 裁剪缓存由 <see cref="GlobalOptions.BackgroundPenetrationCropCacheMaxEntriesPerSource"/> 的每源数量上限
+''' • D2D 共享上传缓存沿用 <see cref="GlobalOptions.BackgroundPenetrationCropCacheMaxEntriesPerSource"/> 的每源数量上限
 '''   和 <see cref="GlobalOptions.BackgroundPenetrationCropCacheBudgetBytes"/> 的全局字节预算共同控制；
 '''   source 离开可见控件链后仍会主动释放整份背景采样缓存。
 ''' • <see cref="Invalidate"/> 用于换主题等需要立即重采的极端场景，常规情况下不需要手动调用。
@@ -49,13 +49,13 @@ Imports Vortice.Direct2D1
 Public Module BackgroundPenetrationV2
 
     Private Class Entry
-        Public Class CropEntry
-            Public SourceRect As Rectangle
+        Public Class SharedUploadEntry
             Public Width As Integer
             Public Height As Integer
             Public Bytes As Long
             Public D2DBmp As ID2D1Bitmap
             Public D2DOwnerRT As WeakReference
+            Public Version As Integer
             Public LastUsed As Long
         End Class
 
@@ -70,10 +70,11 @@ Public Module BackgroundPenetrationV2
         Public Height As Integer
         Public BitmapBytes As Long
         Public LastUsed As Long
+        Public Version As Integer
         Public FullDirty As Boolean = True
         Public ReadOnly DirtyRects As New List(Of Rectangle)()
         Public Painting As Boolean
-        Public ReadOnly Crops As New List(Of CropEntry)()
+        Public ReadOnly SharedUploads As New List(Of SharedUploadEntry)()
         Public ReadOnly Consumers As New List(Of ConsumerEntry)()
         Public ReadOnly AncestorSubscriptions As New List(Of Control)()
         Public IsSolidColor As Boolean
@@ -92,13 +93,15 @@ Public Module BackgroundPenetrationV2
 
     Private Structure BitmapAcquireResult
         Public Bitmap As ID2D1Bitmap
+        Public SourceRect As Rectangle
+        Public DrawDestRect As Rectangle
         Public DisposeAfterDraw As Boolean
     End Structure
 
     Private ReadOnly _cache As New Dictionary(Of Control, Entry)
     Private ReadOnly _ancestorSubscriptionRefs As New Dictionary(Of Control, Integer)
     Private _sourceBitmapBytes As Long
-    Private _cropBitmapBytes As Long
+    Private _sharedUploadBytes As Long
     Private _clock As Long
 
 #Region "公开 API"
@@ -139,7 +142,7 @@ Public Module BackgroundPenetrationV2
         Dim isSolid As Boolean
         Dim solidColor As Color = Color.Empty
         Dim acquired As New BitmapAcquireResult()
-        If Not TryAcquireContainedStockPanelBackgroundBitmap(sourceForSampling, child, rt, srcRect, acquired) Then
+        If Not TryAcquireContainedStockPanelBackgroundBitmap(sourceForSampling, child, rt, srcRect, destRect, acquired) Then
             acquired = AcquireD2DBitmap(sourceForSampling, rt, srcRect, isSolid, solidColor)
         End If
         Try
@@ -156,11 +159,20 @@ Public Module BackgroundPenetrationV2
                 Return
             End If
             If acquired.Bitmap Is Nothing Then Return
+            Dim drawDestRect As Rectangle = acquired.DrawDestRect
+            If drawDestRect.Width <= 0 OrElse drawDestRect.Height <= 0 Then
+                drawDestRect = New Rectangle(
+                    destRect.X + acquired.SourceRect.X - srcRect.X,
+                    destRect.Y + acquired.SourceRect.Y - srcRect.Y,
+                    acquired.SourceRect.Width,
+                    acquired.SourceRect.Height)
+            End If
+            If drawDestRect.Width <= 0 OrElse drawDestRect.Height <= 0 Then Return
             rt.DrawBitmap(acquired.Bitmap,
-                D2DGlobals.ToD2DRect(destRect),
+                D2DGlobals.ToD2DRect(drawDestRect),
                 1.0F,
                 BitmapInterpolationMode.Linear,
-                D2DGlobals.ToD2DRect(New Rectangle(0, 0, destRect.Width, destRect.Height)))
+                D2DGlobals.ToD2DRect(acquired.SourceRect))
         Finally
             If acquired.DisposeAfterDraw AndAlso acquired.Bitmap IsNot Nothing Then
                 Try : acquired.Bitmap.Dispose() : Catch : End Try
@@ -182,7 +194,7 @@ Public Module BackgroundPenetrationV2
             Dim entry As Entry = Nothing
             If _cache.TryGetValue(source, entry) Then
                 entry.FullDirty = True
-                InvalidateCropEntries(entry, Nothing)
+                InvalidateSharedUploads(entry, Nothing)
                 CollectConsumerInvalidations(source, entry, Nothing, invalidations)
             End If
         End SyncLock
@@ -204,9 +216,9 @@ Public Module BackgroundPenetrationV2
             Dim entry As Entry = Nothing
             If _cache.TryGetValue(source, entry) Then
                 AddDirtyRect(entry, dirtyRect, New Rectangle(0, 0, source.Width, source.Height))
-                InvalidateCropEntries(entry, dirtyRect)
+                InvalidateSharedUploads(entry, dirtyRect)
                 If entry.FullDirty Then
-                    InvalidateCropEntries(entry, Nothing)
+                    InvalidateSharedUploads(entry, Nothing)
                     CollectConsumerInvalidations(source, entry, Nothing, invalidations)
                 Else
                     CollectConsumerInvalidations(source, entry, dirtyRect, invalidations)
@@ -246,12 +258,12 @@ Public Module BackgroundPenetrationV2
             Select Case level
                 Case D2DCacheCleanupLevel.TrimToBudget
                     TrimSourceBitmaps(Nothing)
-                    TrimCropEntriesGlobal(Nothing)
+                    TrimSharedUploadsGlobal(Nothing)
 
                 Case D2DCacheCleanupLevel.ReleaseVolatileCaches
                     For Each kv In _cache.ToArray()
                         If ShouldCleanupSource(kv.Key, targetForm) Then
-                            InvalidateCropEntries(kv.Value, Nothing)
+                            InvalidateSharedUploads(kv.Value, Nothing)
                         End If
                     Next
 
@@ -395,7 +407,7 @@ Public Module BackgroundPenetrationV2
             Dim sizeOk As Boolean = ((entry.Bmp IsNot Nothing OrElse entry.IsSolidColor) AndAlso entry.Width = sw AndAlso entry.Height = sh)
             If Not sizeOk Then
                 entry.FullDirty = True
-                InvalidateCropEntries(entry, Nothing)
+                InvalidateSharedUploads(entry, Nothing)
             End If
             If entry.Painting Then
                 If entry.IsSolidColor AndAlso sizeOk Then
@@ -414,7 +426,7 @@ Public Module BackgroundPenetrationV2
             End If
         End SyncLock
 
-        If reuseExistingBitmapWhilePainting Then Return AcquireCropBitmap(entry, rt, sourceRect)
+        If reuseExistingBitmapWhilePainting Then Return AcquireSharedSourceBitmap(entry, rt, sourceRect)
 
         If needRebuild Then
             Try
@@ -440,7 +452,7 @@ Public Module BackgroundPenetrationV2
             Return Nothing
         End If
 
-        Return AcquireCropBitmap(entry, rt, sourceRect)
+        Return AcquireSharedSourceBitmap(entry, rt, sourceRect)
     End Function
 
     Private Function EnsureEntry(source As Control) As Entry
@@ -522,55 +534,33 @@ Public Module BackgroundPenetrationV2
         Dim replacedEntryBitmap As Boolean
         Try
             Using D2DHelperV2.EnterBackgroundSamplingPaint()
-                workingBmp = New Bitmap(sw, sh, PixelFormat.Format32bppPArgb)
-                If Not fullRebuild AndAlso entry.Bmp IsNot Nothing Then
-                    Using copyG = Graphics.FromImage(workingBmp)
-                        copyG.CompositingMode = Drawing2D.CompositingMode.SourceCopy
-                        copyG.DrawImageUnscaled(entry.Bmp, 0, 0)
-                    End Using
+                If fullRebuild OrElse entry.Bmp Is Nothing Then
+                    workingBmp = New Bitmap(sw, sh, PixelFormat.Format32bppPArgb)
+                    PaintSourceRectsToBitmap(source, workingBmp, repaintRects)
+                Else
+                    workingBmp = entry.Bmp
+                    PaintSourceDirtyRectsInPlace(source, workingBmp, repaintRects)
                 End If
-
-                Using bg As Graphics = Graphics.FromImage(workingBmp)
-                    For Each repaintRect In repaintRects
-                        repaintRect = Rectangle.Intersect(New Rectangle(0, 0, sw, sh), repaintRect)
-                        If repaintRect.Width <= 0 OrElse repaintRect.Height <= 0 Then Continue For
-                        Dim oldMode = bg.CompositingMode
-                        bg.CompositingMode = Drawing2D.CompositingMode.SourceCopy
-                        Using transparentBrush As New SolidBrush(Color.Transparent)
-                            bg.FillRectangle(transparentBrush, repaintRect)
-                        End Using
-                        bg.CompositingMode = oldMode
-
-                        Dim state = bg.Save()
-                        Try
-                            bg.SetClip(repaintRect)
-                            Using pea As New PaintEventArgs(bg, repaintRect)
-                                InvokePaintBackgroundProxy(source, pea)
-                                InvokePaintProxy(source, pea)
-                            End Using
-                        Finally
-                            bg.Restore(state)
-                        End Try
-                    Next
-                End Using
             End Using
 
-            SyncLock _cache
-                oldBmp = entry.Bmp
-                entry.Bmp = workingBmp
-                workingBmp = Nothing
-                replacedEntryBitmap = True
-                InvalidateCropEntries(entry, Nothing)
-                _sourceBitmapBytes -= entry.BitmapBytes
-                If _sourceBitmapBytes < 0 Then _sourceBitmapBytes = 0
-                entry.Width = sw
-                entry.Height = sh
-                entry.BitmapBytes = EstimateBitmapBytes(sw, sh)
-                _sourceBitmapBytes += entry.BitmapBytes
-            End SyncLock
-            If oldBmp IsNot Nothing Then
-                Try : oldBmp.Dispose() : Catch : End Try
-                oldBmp = Nothing
+            If fullRebuild OrElse Not Object.ReferenceEquals(workingBmp, entry.Bmp) Then
+                SyncLock _cache
+                    oldBmp = entry.Bmp
+                    entry.Bmp = workingBmp
+                    workingBmp = Nothing
+                    replacedEntryBitmap = True
+                    InvalidateSharedUploads(entry, Nothing)
+                    _sourceBitmapBytes -= entry.BitmapBytes
+                    If _sourceBitmapBytes < 0 Then _sourceBitmapBytes = 0
+                    entry.Width = sw
+                    entry.Height = sh
+                    entry.BitmapBytes = EstimateBitmapBytes(sw, sh)
+                    _sourceBitmapBytes += entry.BitmapBytes
+                End SyncLock
+                If oldBmp IsNot Nothing Then
+                    Try : oldBmp.Dispose() : Catch : End Try
+                    oldBmp = Nothing
+                End If
             End If
 
             If fullRebuild Then
@@ -580,18 +570,23 @@ Public Module BackgroundPenetrationV2
                 entry.SolidArgb = solidArgb
                 If entry.IsSolidColor Then
                     ' Pure color sources can be redrawn from SolidArgb; keeping the full CPU bitmap only wastes RAM.
-                    InvalidateCropEntries(entry, Nothing)
-                    ReleaseSourceBitmap(entry)
+                    SyncLock _cache
+                        InvalidateSharedUploads(entry, Nothing)
+                        ReleaseSourceBitmap(entry)
+                    End SyncLock
                 End If
             Else
                 ForceOpaqueAlpha(entry.Bmp, repaintRects)
                 entry.IsSolidColor = False
             End If
 
-            entry.FullDirty = False
-            entry.DirtyRects.Clear()
+            SyncLock _cache
+                entry.Version += 1
+                entry.FullDirty = False
+                entry.DirtyRects.Clear()
+            End SyncLock
         Finally
-            If workingBmp IsNot Nothing Then
+            If workingBmp IsNot Nothing AndAlso Not Object.ReferenceEquals(workingBmp, entry.Bmp) Then
                 Try : workingBmp.Dispose() : Catch : End Try
             End If
             If replacedEntryBitmap AndAlso oldBmp IsNot Nothing Then
@@ -600,75 +595,113 @@ Public Module BackgroundPenetrationV2
         End Try
     End Sub
 
-    Private Function AcquireCropBitmap(entry As Entry, rt As ID2D1RenderTarget, sourceBounds As Rectangle) As BitmapAcquireResult
-        Dim sourceRect As Rectangle = sourceBounds
-        Dim cropWidth As Integer = sourceRect.Width
-        Dim cropHeight As Integer = sourceRect.Height
+    Private Sub PaintSourceRectsToBitmap(source As Control, target As Bitmap, repaintRects As IEnumerable(Of Rectangle))
+        If source Is Nothing OrElse target Is Nothing OrElse repaintRects Is Nothing Then Return
+        Dim targetBounds As New Rectangle(0, 0, target.Width, target.Height)
+        Using bg As Graphics = Graphics.FromImage(target)
+            For Each repaintRect In repaintRects
+                repaintRect = Rectangle.Intersect(targetBounds, repaintRect)
+                If repaintRect.Width <= 0 OrElse repaintRect.Height <= 0 Then Continue For
+                PaintSourceRect(source, bg, repaintRect)
+            Next
+        End Using
+    End Sub
+
+    Private Sub PaintSourceDirtyRectsInPlace(source As Control, target As Bitmap, repaintRects As IEnumerable(Of Rectangle))
+        If source Is Nothing OrElse target Is Nothing OrElse repaintRects Is Nothing Then Return
+        Dim targetBounds As New Rectangle(0, 0, target.Width, target.Height)
+        For Each repaintRect In repaintRects
+            repaintRect = Rectangle.Intersect(targetBounds, repaintRect)
+            If repaintRect.Width <= 0 OrElse repaintRect.Height <= 0 Then Continue For
+
+            Using patchBmp As New Bitmap(repaintRect.Width, repaintRect.Height, PixelFormat.Format32bppPArgb)
+                Using patchGraphics As Graphics = Graphics.FromImage(patchBmp)
+                    patchGraphics.TranslateTransform(-repaintRect.X, -repaintRect.Y)
+                    PaintSourceRect(source, patchGraphics, repaintRect)
+                End Using
+                ForceOpaqueAlpha(patchBmp, {New Rectangle(0, 0, patchBmp.Width, patchBmp.Height)})
+
+                Using targetGraphics As Graphics = Graphics.FromImage(target)
+                    targetGraphics.CompositingMode = Drawing2D.CompositingMode.SourceCopy
+                    targetGraphics.DrawImageUnscaled(patchBmp, repaintRect.Location)
+                End Using
+            End Using
+        Next
+    End Sub
+
+    Private Sub PaintSourceRect(source As Control, bg As Graphics, repaintRect As Rectangle)
+        If source Is Nothing OrElse bg Is Nothing OrElse repaintRect.Width <= 0 OrElse repaintRect.Height <= 0 Then Return
+
+        Dim oldMode = bg.CompositingMode
+        bg.CompositingMode = Drawing2D.CompositingMode.SourceCopy
+        Using transparentBrush As New SolidBrush(Color.Transparent)
+            bg.FillRectangle(transparentBrush, repaintRect)
+        End Using
+        bg.CompositingMode = oldMode
+
+        Dim state = bg.Save()
+        Try
+            bg.SetClip(repaintRect)
+            Using pea As New PaintEventArgs(bg, repaintRect)
+                InvokePaintBackgroundProxy(source, pea)
+                InvokePaintProxy(source, pea)
+            End Using
+        Finally
+            bg.Restore(state)
+        End Try
+    End Sub
+
+    Private Function AcquireSharedSourceBitmap(entry As Entry, rt As ID2D1RenderTarget, sourceBounds As Rectangle) As BitmapAcquireResult
+        If entry Is Nothing OrElse entry.Bmp Is Nothing OrElse rt Is Nothing Then Return Nothing
+
+        Dim sourceRect = Rectangle.Intersect(New Rectangle(0, 0, entry.Bmp.Width, entry.Bmp.Height), sourceBounds)
+        If sourceRect.Width <= 0 OrElse sourceRect.Height <= 0 Then Return Nothing
+
+        Dim uploadWidth As Integer = entry.Bmp.Width
+        Dim uploadHeight As Integer = entry.Bmp.Height
+        Dim uploadBytes As Long = EstimateBitmapBytes(uploadWidth, uploadHeight)
         Dim maxEntries As Integer = Math.Max(0, GlobalOptions.BackgroundPenetrationCropCacheMaxEntriesPerSource)
         Dim cacheBudget As Long = Math.Max(0L, GlobalOptions.BackgroundPenetrationCropCacheBudgetBytes)
-        Dim cropBytes As Long = EstimateBitmapBytes(cropWidth, cropHeight)
         Dim cacheEnabled As Boolean = maxEntries > 0 AndAlso cacheBudget > 0
-        Dim canCache As Boolean = cacheEnabled AndAlso cropBytes <= cacheBudget
+        Dim canCache As Boolean = cacheEnabled
 
-        If Not cacheEnabled AndAlso entry.Crops.Count > 0 Then
-            InvalidateCropEntries(entry, Nothing)
-        ElseIf cacheEnabled Then
-            TrimCropEntries(entry)
+        If Not cacheEnabled AndAlso entry.SharedUploads.Count > 0 Then
+            InvalidateSharedUploads(entry, Nothing)
         End If
 
         If canCache Then
-            For Each crop In entry.Crops
-                Dim ownerAlive As Boolean = crop.D2DOwnerRT IsNot Nothing AndAlso ReferenceEquals(crop.D2DOwnerRT.Target, rt)
-                If ownerAlive AndAlso crop.Width = cropWidth AndAlso crop.Height = cropHeight AndAlso crop.SourceRect.Equals(sourceRect) Then
-                    crop.LastUsed = NextClock()
-                    Return New BitmapAcquireResult With {.Bitmap = crop.D2DBmp}
+            For Each upload In entry.SharedUploads
+                Dim ownerAlive As Boolean = upload.D2DOwnerRT IsNot Nothing AndAlso ReferenceEquals(upload.D2DOwnerRT.Target, rt)
+                If ownerAlive AndAlso upload.Width = uploadWidth AndAlso upload.Height = uploadHeight AndAlso upload.Version = entry.Version Then
+                    upload.LastUsed = NextClock()
+                    TrimSharedUploads(entry, upload)
+                    Return New BitmapAcquireResult With {.Bitmap = upload.D2DBmp, .SourceRect = sourceRect}
                 End If
             Next
         End If
 
-        Dim newCrop As New Entry.CropEntry With {
-            .SourceRect = sourceRect,
-            .Width = cropWidth,
-            .Height = cropHeight,
-            .Bytes = cropBytes,
-            .D2DBmp = CreateCropD2DBitmap(entry.Bmp, sourceRect, cropWidth, cropHeight, rt),
+        Dim newUpload As New Entry.SharedUploadEntry With {
+            .Width = uploadWidth,
+            .Height = uploadHeight,
+            .Bytes = uploadBytes,
+            .D2DBmp = D2DGlobals.CreateBitmapFromGdi(rt, entry.Bmp),
             .D2DOwnerRT = New WeakReference(rt),
+            .Version = entry.Version,
             .LastUsed = NextClock()
         }
-        If newCrop.D2DBmp Is Nothing Then Return Nothing
+        If newUpload.D2DBmp Is Nothing Then Return Nothing
         If Not canCache Then
-            Return New BitmapAcquireResult With {.Bitmap = newCrop.D2DBmp, .DisposeAfterDraw = True}
+            Return New BitmapAcquireResult With {.Bitmap = newUpload.D2DBmp, .SourceRect = sourceRect, .DisposeAfterDraw = True}
         End If
-        _cropBitmapBytes += newCrop.Bytes
-        entry.Crops.Add(newCrop)
-        TrimCropEntries(entry, newCrop)
-        Return New BitmapAcquireResult With {.Bitmap = newCrop.D2DBmp}
-    End Function
-
-    Private Function CreateCropD2DBitmap(src As Bitmap, sourceRect As Rectangle, cropWidth As Integer,
-                                         cropHeight As Integer, rt As ID2D1RenderTarget) As ID2D1Bitmap
-        If src Is Nothing OrElse rt Is Nothing Then Return Nothing
-        Dim srcBounds As New Rectangle(0, 0, src.Width, src.Height)
-        Dim srcIntersection = Rectangle.Intersect(srcBounds, sourceRect)
-        If srcIntersection.Width <= 0 OrElse srcIntersection.Height <= 0 Then Return Nothing
-        If srcIntersection.Width = cropWidth AndAlso srcIntersection.Height = cropHeight AndAlso
-           srcIntersection.X = sourceRect.X AndAlso srcIntersection.Y = sourceRect.Y Then
-            Return D2DGlobals.CreateBitmapFromGdi(rt, src, srcIntersection)
-        End If
-
-        Using cropBmp As New Bitmap(cropWidth, cropHeight, PixelFormat.Format32bppPArgb)
-            Using g = Graphics.FromImage(cropBmp)
-                g.Clear(Color.Transparent)
-                Dim destRect As New Rectangle(srcIntersection.X - sourceRect.X, srcIntersection.Y - sourceRect.Y,
-                                              srcIntersection.Width, srcIntersection.Height)
-                g.DrawImage(src, destRect, srcIntersection, GraphicsUnit.Pixel)
-            End Using
-            Return D2DGlobals.CreateBitmapFromGdi(rt, cropBmp)
-        End Using
+        _sharedUploadBytes += newUpload.Bytes
+        entry.SharedUploads.Add(newUpload)
+        TrimSharedUploads(entry, newUpload)
+        Return New BitmapAcquireResult With {.Bitmap = newUpload.D2DBmp, .SourceRect = sourceRect}
     End Function
 
     Private Function TryAcquireContainedStockPanelBackgroundBitmap(source As Control, consumer As Control,
                                                                    rt As ID2D1RenderTarget, sourceRect As Rectangle,
+                                                                   destRect As Rectangle,
                                                                    ByRef acquired As BitmapAcquireResult) As Boolean
         acquired = Nothing
         If source Is Nothing OrElse consumer Is Nothing OrElse rt Is Nothing Then Return False
@@ -696,6 +729,8 @@ Public Module BackgroundPenetrationV2
             ForceOpaqueAlpha(bmp, {validRect})
             acquired = New BitmapAcquireResult With {
                 .Bitmap = D2DGlobals.CreateBitmapFromGdi(rt, bmp),
+                .SourceRect = New Rectangle(0, 0, sourceRect.Width, sourceRect.Height),
+                .DrawDestRect = destRect,
                 .DisposeAfterDraw = True
             }
         End Using
@@ -703,39 +738,39 @@ Public Module BackgroundPenetrationV2
         Return acquired.Bitmap IsNot Nothing
     End Function
 
-    Private Sub TrimCropEntries(entry As Entry, Optional protectedCrop As Entry.CropEntry = Nothing)
-        Dim maxCropsPerSource As Integer = Math.Max(0, GlobalOptions.BackgroundPenetrationCropCacheMaxEntriesPerSource)
-        While entry.Crops.Count > maxCropsPerSource
+    Private Sub TrimSharedUploads(entry As Entry, Optional protectedUpload As Entry.SharedUploadEntry = Nothing)
+        Dim maxUploadsPerSource As Integer = Math.Max(0, GlobalOptions.BackgroundPenetrationCropCacheMaxEntriesPerSource)
+        While entry.SharedUploads.Count > maxUploadsPerSource
             Dim removeIndex As Integer = -1
             Dim oldestUsed As Long = Long.MaxValue
-            For i As Integer = 0 To entry.Crops.Count - 1
-                Dim candidate = entry.Crops(i)
-                If protectedCrop IsNot Nothing AndAlso ReferenceEquals(candidate, protectedCrop) Then Continue For
+            For i As Integer = 0 To entry.SharedUploads.Count - 1
+                Dim candidate = entry.SharedUploads(i)
+                If protectedUpload IsNot Nothing AndAlso ReferenceEquals(candidate, protectedUpload) Then Continue For
                 If candidate.LastUsed < oldestUsed Then
                     oldestUsed = candidate.LastUsed
                     removeIndex = i
                 End If
             Next
             If removeIndex < 0 Then Exit While
-            ReleaseCropEntry(entry, removeIndex)
+            ReleaseSharedUpload(entry, removeIndex)
         End While
-        TrimCropEntriesGlobal(protectedCrop)
+        TrimSharedUploadsGlobal(protectedUpload)
     End Sub
 
-    Private Sub TrimCropEntriesGlobal(Optional protectedCrop As Entry.CropEntry = Nothing)
+    Private Sub TrimSharedUploadsGlobal(Optional protectedUpload As Entry.SharedUploadEntry = Nothing)
         Dim budget As Long = Math.Max(0L, GlobalOptions.BackgroundPenetrationCropCacheBudgetBytes)
-        While _cropBitmapBytes > budget
+        While _sharedUploadBytes > budget
             Dim oldestEntry As Entry = Nothing
             Dim oldestIndex As Integer = -1
             Dim oldestUsed As Long = Long.MaxValue
 
             For Each kv In _cache
                 Dim candidateEntry = kv.Value
-                If candidateEntry Is Nothing OrElse candidateEntry.Crops.Count = 0 Then Continue For
+                If candidateEntry Is Nothing OrElse candidateEntry.SharedUploads.Count = 0 Then Continue For
 
-                For i As Integer = 0 To candidateEntry.Crops.Count - 1
-                    Dim candidate = candidateEntry.Crops(i)
-                    If protectedCrop IsNot Nothing AndAlso ReferenceEquals(candidate, protectedCrop) Then Continue For
+                For i As Integer = 0 To candidateEntry.SharedUploads.Count - 1
+                    Dim candidate = candidateEntry.SharedUploads(i)
+                    If protectedUpload IsNot Nothing AndAlso ReferenceEquals(candidate, protectedUpload) Then Continue For
                     If candidate.LastUsed < oldestUsed Then
                         oldestEntry = candidateEntry
                         oldestIndex = i
@@ -745,17 +780,17 @@ Public Module BackgroundPenetrationV2
             Next
 
             If oldestEntry Is Nothing OrElse oldestIndex < 0 Then Exit While
-            ReleaseCropEntry(oldestEntry, oldestIndex)
+            ReleaseSharedUpload(oldestEntry, oldestIndex)
         End While
     End Sub
 
-    Private Sub ReleaseCropEntry(entry As Entry, index As Integer)
-        If entry Is Nothing OrElse index < 0 OrElse index >= entry.Crops.Count Then Return
-        Dim removedCrop = entry.Crops(index)
-        Try : removedCrop.D2DBmp?.Dispose() : Catch : End Try
-        _cropBitmapBytes -= removedCrop.Bytes
-        If _cropBitmapBytes < 0 Then _cropBitmapBytes = 0
-        entry.Crops.RemoveAt(index)
+    Private Sub ReleaseSharedUpload(entry As Entry, index As Integer)
+        If entry Is Nothing OrElse index < 0 OrElse index >= entry.SharedUploads.Count Then Return
+        Dim removedUpload = entry.SharedUploads(index)
+        Try : removedUpload.D2DBmp?.Dispose() : Catch : End Try
+        _sharedUploadBytes -= removedUpload.Bytes
+        If _sharedUploadBytes < 0 Then _sharedUploadBytes = 0
+        entry.SharedUploads.RemoveAt(index)
     End Sub
 
     Private Function NextClock() As Long
@@ -779,7 +814,7 @@ Public Module BackgroundPenetrationV2
     Private Sub ReleaseEntryCache(entry As Entry)
         If entry Is Nothing Then Return
         ReleaseSourceBitmap(entry)
-        InvalidateCropEntries(entry, Nothing)
+        InvalidateSharedUploads(entry, Nothing)
         entry.FullDirty = True
         entry.DirtyRects.Clear()
         entry.IsSolidColor = False
@@ -829,8 +864,8 @@ Public Module BackgroundPenetrationV2
                 If oldest Is Nothing OrElse candidate.LastUsed < oldest.LastUsed Then oldest = candidate
             Next
             If oldest Is Nothing Then Exit While
-            ' The crop uploads depend on the old bitmap pixels; drop them together and resample on next paint.
-            InvalidateCropEntries(oldest, Nothing)
+            ' Shared uploads depend on the old bitmap pixels; drop them together and resample on next paint.
+            InvalidateSharedUploads(oldest, Nothing)
             ReleaseSourceBitmap(oldest)
             oldest.FullDirty = True
         End While
@@ -885,12 +920,11 @@ Public Module BackgroundPenetrationV2
         End If
     End Sub
 
-    Private Sub InvalidateCropEntries(entry As Entry, dirtyRect As Rectangle?)
-        For i As Integer = entry.Crops.Count - 1 To 0 Step -1
-            Dim crop = entry.Crops(i)
-            If Not dirtyRect.HasValue OrElse crop.SourceRect.IntersectsWith(dirtyRect.Value) Then
-                ReleaseCropEntry(entry, i)
-            End If
+    Private Sub InvalidateSharedUploads(entry As Entry, dirtyRect As Rectangle?)
+        If entry Is Nothing Then Return
+        ' Shared uploads cover the whole source, so any source pixel change invalidates every RT upload.
+        For i As Integer = entry.SharedUploads.Count - 1 To 0 Step -1
+            ReleaseSharedUpload(entry, i)
         Next
     End Sub
 
@@ -955,13 +989,13 @@ Public Module BackgroundPenetrationV2
                 If dirtyRect.Width <= 0 OrElse dirtyRect.Height <= 0 Then
                     entry.FullDirty = True
                     entry.DirtyRects.Clear()
-                    InvalidateCropEntries(entry, Nothing)
+                    InvalidateSharedUploads(entry, Nothing)
                     CollectConsumerInvalidations(source, entry, Nothing, invalidations)
                 Else
                     AddDirtyRect(entry, dirtyRect, New Rectangle(0, 0, source.Width, source.Height))
-                    InvalidateCropEntries(entry, dirtyRect)
+                    InvalidateSharedUploads(entry, dirtyRect)
                     If entry.FullDirty Then
-                        InvalidateCropEntries(entry, Nothing)
+                        InvalidateSharedUploads(entry, Nothing)
                         CollectConsumerInvalidations(source, entry, Nothing, invalidations)
                     Else
                         CollectConsumerInvalidations(source, entry, dirtyRect, invalidations)
@@ -981,7 +1015,7 @@ Public Module BackgroundPenetrationV2
             If _cache.TryGetValue(source, entry) Then
                 entry.FullDirty = True
                 entry.DirtyRects.Clear()
-                InvalidateCropEntries(entry, Nothing)
+                InvalidateSharedUploads(entry, Nothing)
                 CollectConsumerInvalidations(source, entry, Nothing, invalidations)
             End If
         End SyncLock
@@ -1041,7 +1075,7 @@ Public Module BackgroundPenetrationV2
                     RefreshAncestorSubscriptions(source, entry)
                     entry.FullDirty = True
                     entry.DirtyRects.Clear()
-                    InvalidateCropEntries(entry, Nothing)
+                    InvalidateSharedUploads(entry, Nothing)
                     CollectConsumerInvalidations(source, entry, Nothing, invalidations, removeWhenEmpty:=False)
                     If entry.Consumers.Count = 0 Then RemoveSourceEntryNoLock(source, entry)
                     Continue For
@@ -1090,14 +1124,14 @@ Public Module BackgroundPenetrationV2
                 If dirtyRect.Width <= 0 OrElse dirtyRect.Height <= 0 Then
                     entry.FullDirty = True
                     entry.DirtyRects.Clear()
-                    InvalidateCropEntries(entry, Nothing)
+                    InvalidateSharedUploads(entry, Nothing)
                     CollectConsumerInvalidations(source, entry, Nothing, invalidations, removeWhenEmpty:=False)
                     If entry.Consumers.Count = 0 Then RemoveSourceEntryNoLock(source, entry)
                 Else
                     AddDirtyRect(entry, dirtyRect, New Rectangle(0, 0, source.Width, source.Height))
-                    InvalidateCropEntries(entry, dirtyRect)
+                    InvalidateSharedUploads(entry, dirtyRect)
                     If entry.FullDirty Then
-                        InvalidateCropEntries(entry, Nothing)
+                        InvalidateSharedUploads(entry, Nothing)
                         CollectConsumerInvalidations(source, entry, Nothing, invalidations, removeWhenEmpty:=False)
                     Else
                         CollectConsumerInvalidations(source, entry, dirtyRect, invalidations, removeWhenEmpty:=False)

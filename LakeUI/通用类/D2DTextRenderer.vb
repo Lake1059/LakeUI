@@ -25,6 +25,8 @@ Imports Vortice.DirectWrite
 ''' </summary>
 Public Module D2DTextRenderer
 
+    Private Const UnboundedLayoutExtent As Single = 100000.0F
+
     ''' <summary>
     ''' 在 <paramref name="rt"/> 上按 (Font, Rectangle, Color, Flags) 绘制单行（或带 WordBreak 时多行）文本。
     ''' </summary>
@@ -163,7 +165,8 @@ Public Module D2DTextRenderer
 
     Private Function NormalizeLayoutExtent(value As Integer) As Single
         If value <= 0 Then Return 1.0F
-        If value = Integer.MaxValue Then Return Single.MaxValue
+        If value = Integer.MaxValue Then Return UnboundedLayoutExtent
+        If value > UnboundedLayoutExtent Then Return UnboundedLayoutExtent
         Return CSng(value)
     End Function
 
@@ -187,6 +190,8 @@ End Module
 ''' 文本渲染相关的共享辅助方法。
 ''' </summary>
 Friend Module TextRenderHelper
+
+    Private Const UnboundedLayoutExtent As Single = 100000.0F
 
     ''' <summary>
     ''' 测量文本渲染宽度。
@@ -241,7 +246,7 @@ Friend Module TextRenderHelper
         Dim fmt = AcquireDWriteTextFormat(font, dpiScale, textFormatCache, ownsFormat)
         If fmt Is Nothing Then Return 0
         Try
-            Using layout = D2DGlobals.GetDWriteFactory().CreateTextLayout(text, fmt, Single.MaxValue, Single.MaxValue)
+            Using layout = D2DGlobals.GetDWriteFactory().CreateTextLayout(text, fmt, UnboundedLayoutExtent, UnboundedLayoutExtent)
                 Return layout.Metrics.WidthIncludingTrailingWhitespace
             End Using
         Finally
@@ -259,7 +264,7 @@ Friend Module TextRenderHelper
             Dim fmt = AcquireDWriteTextFormat(font, dpiScale, textFormatCache, ownsFormat)
             If fmt Is Nothing Then Return 0
             Try
-                Using layout = D2DGlobals.GetDWriteFactory().CreateTextLayout(lineStr, fmt, Single.MaxValue, Single.MaxValue)
+                Using layout = D2DGlobals.GetDWriteFactory().CreateTextLayout(lineStr, fmt, UnboundedLayoutExtent, UnboundedLayoutExtent)
                     If x >= layout.Metrics.WidthIncludingTrailingWhitespace Then Return n
 
                     Dim trailing As SharpGen.Runtime.RawBool = False

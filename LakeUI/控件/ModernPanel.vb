@@ -274,6 +274,10 @@ Public Class ModernPanel
     Private _animationFrameImage As Bitmap = Nothing
     Private _animationFrameImageSource As Image = Nothing
     Private _animationFrameImageIndex As Integer = -1
+    Private _animationFrameSourceRect As Rectangle = Rectangle.Empty
+    Private _animationFrameSize As Size = Size.Empty
+    Private _animationFrameD2DBitmap As ID2D1Bitmap = Nothing
+    Private _animationFrameD2DRenderTarget As ID2D1RenderTarget = Nothing
 
     Private _scaledImageBitmap As ID2D1Bitmap = Nothing
     Private _scaledImageRenderTarget As ID2D1RenderTarget = Nothing
@@ -644,12 +648,19 @@ Public Class ModernPanel
     End Sub
 
     Private Sub 清除动画帧图片缓存()
+        If _animationFrameD2DBitmap IsNot Nothing Then
+            Try : _animationFrameD2DBitmap.Dispose() : Catch : End Try
+            _animationFrameD2DBitmap = Nothing
+        End If
         If _animationFrameImage IsNot Nothing Then
             Try : _animationFrameImage.Dispose() : Catch : End Try
             _animationFrameImage = Nothing
         End If
         _animationFrameImageSource = Nothing
         _animationFrameImageIndex = -1
+        _animationFrameSourceRect = Rectangle.Empty
+        _animationFrameSize = Size.Empty
+        _animationFrameD2DRenderTarget = Nothing
     End Sub
 
     Private Function 获取背景图片位图_D2D(rt As ID2D1RenderTarget, compositor As WindowCompositor,
@@ -657,32 +668,48 @@ Public Class ModernPanel
         shouldDispose = False
         If _image Is Nothing OrElse rt Is Nothing Then Return Nothing
 
-        If _animatedImage IsNot Nothing AndAlso _animationFrameDimension IsNot Nothing AndAlso _animationFrameCount > 1 Then
-            shouldDispose = True
-            Return 获取动画帧位图_D2D(rt)
-        End If
-
         If compositor Is Nothing Then Return Nothing
         Dim cache = compositor.GetBitmapCache(_image)
         Return If(cache Is Nothing, Nothing, cache.GetBitmap(rt, _image))
     End Function
 
-    Private Function 获取动画帧位图_D2D(rt As ID2D1RenderTarget) As ID2D1Bitmap
+    Private Function 获取动画帧位图_D2D(rt As ID2D1RenderTarget, sourceRect As Rectangle, frameSize As Size) As ID2D1Bitmap
         If _image Is Nothing OrElse rt Is Nothing Then Return Nothing
+        If sourceRect.Width <= 0 OrElse sourceRect.Height <= 0 OrElse frameSize.Width <= 0 OrElse frameSize.Height <= 0 Then Return Nothing
 
-        Dim frameImage As Bitmap = 获取动画帧图像()
+        If _animationFrameD2DBitmap IsNot Nothing AndAlso
+           _animationFrameD2DRenderTarget Is rt AndAlso
+           _animationFrameImageSource Is _animatedImage AndAlso
+           _animationFrameImageIndex = _animationFrameIndex AndAlso
+           _animationFrameSourceRect.Equals(sourceRect) AndAlso
+           _animationFrameSize.Equals(frameSize) Then
+            Return _animationFrameD2DBitmap
+        End If
+
+        Dim frameImage As Bitmap = 获取动画帧图像(sourceRect, frameSize)
         If frameImage Is Nothing Then Return Nothing
 
-        Return D2DGlobals.CreateBitmapFromGdi(rt, frameImage)
+        If _animationFrameD2DBitmap IsNot Nothing Then
+            Try : _animationFrameD2DBitmap.Dispose() : Catch : End Try
+            _animationFrameD2DBitmap = Nothing
+        End If
+        _animationFrameD2DRenderTarget = Nothing
+
+        _animationFrameD2DBitmap = D2DGlobals.CreateBitmapFromGdi(rt, frameImage)
+        If _animationFrameD2DBitmap Is Nothing Then Return Nothing
+        _animationFrameD2DRenderTarget = rt
+        Return _animationFrameD2DBitmap
     End Function
 
-    Private Function 获取动画帧图像() As Bitmap
+    Private Function 获取动画帧图像(sourceRect As Rectangle, frameSize As Size) As Bitmap
         Dim img = _animatedImage
         If img Is Nothing OrElse _animationFrameDimension Is Nothing Then Return Nothing
 
         If _animationFrameImage IsNot Nothing AndAlso
            _animationFrameImageSource Is img AndAlso
-           _animationFrameImageIndex = _animationFrameIndex Then
+           _animationFrameImageIndex = _animationFrameIndex AndAlso
+           _animationFrameSourceRect.Equals(sourceRect) AndAlso
+           _animationFrameSize.Equals(frameSize) Then
             Return _animationFrameImage
         End If
 
@@ -692,10 +719,26 @@ Public Class ModernPanel
         Try
             SyncLock img
                 img.SelectActiveFrame(_animationFrameDimension, _animationFrameIndex)
-                frameImage = New Bitmap(img.Width, img.Height, PixelFormat.Format32bppPArgb)
+                frameImage = New Bitmap(frameSize.Width, frameSize.Height, PixelFormat.Format32bppPArgb)
                 frameImage.SetResolution(img.HorizontalResolution, img.VerticalResolution)
                 Using g = Graphics.FromImage(frameImage)
-                    g.DrawImage(img, 0, 0, img.Width, img.Height)
+                    g.CompositingMode = Drawing2D.CompositingMode.SourceCopy
+                    g.CompositingQuality = Drawing2D.CompositingQuality.HighQuality
+                    g.InterpolationMode = Drawing2D.InterpolationMode.HighQualityBicubic
+                    g.PixelOffsetMode = Drawing2D.PixelOffsetMode.HighQuality
+                    g.SmoothingMode = Drawing2D.SmoothingMode.HighQuality
+                    Using attr As New ImageAttributes()
+                        attr.SetWrapMode(Drawing2D.WrapMode.TileFlipXY)
+                        g.DrawImage(
+                            img,
+                            New Rectangle(0, 0, frameSize.Width, frameSize.Height),
+                            sourceRect.X,
+                            sourceRect.Y,
+                            sourceRect.Width,
+                            sourceRect.Height,
+                            GraphicsUnit.Pixel,
+                            attr)
+                    End Using
                 End Using
             End SyncLock
 
@@ -703,6 +746,8 @@ Public Class ModernPanel
             frameImage = Nothing
             _animationFrameImageSource = img
             _animationFrameImageIndex = _animationFrameIndex
+            _animationFrameSourceRect = sourceRect
+            _animationFrameSize = frameSize
         Catch
             If frameImage IsNot Nothing Then
                 Try : frameImage.Dispose() : Catch : End Try
@@ -1451,22 +1496,28 @@ Public Class ModernPanel
         If visibleDest.Width <= 0 OrElse visibleDest.Height <= 0 Then Return
 
         Dim ratio As Single = destRect.Width / srcW
-        Dim sourceRect As New Rectangle(0, 0, srcW, srcH)
+        Dim sourceRect As Rectangle = 计算可见源矩形(destRect, visibleDest, ratio, srcW, srcH)
+        If sourceRect.IsEmpty Then Return
         Dim drawBitmap As ID2D1Bitmap = Nothing
         Dim drawDestRect As RectangleF = destRect
         Dim drawSourceRect As RectangleF = New RectangleF(0, 0, srcW, srcH)
         Dim shouldDisposeBitmap As Boolean = False
 
         Try
-            If _animatedImage Is Nothing AndAlso ratio < 0.999F Then
-                sourceRect = 计算可见源矩形(destRect, visibleDest, ratio, srcW, srcH)
-                If Not sourceRect.IsEmpty Then
-                    Dim scaledSize As Size = 计算缩放位图尺寸(visibleDest, renderScale)
-                    drawBitmap = 获取高质量缩放背景位图_D2D(rt, _image, sourceRect, scaledSize)
-                    If drawBitmap IsNot Nothing Then
-                        drawDestRect = visibleDest
-                        drawSourceRect = New RectangleF(0, 0, scaledSize.Width, scaledSize.Height)
-                    End If
+            If _animatedImage IsNot Nothing AndAlso _animationFrameDimension IsNot Nothing AndAlso _animationFrameCount > 1 Then
+                Dim frameSize As Size = 计算缩放位图尺寸(visibleDest, renderScale)
+                drawBitmap = 获取动画帧位图_D2D(rt, sourceRect, frameSize)
+                If drawBitmap IsNot Nothing Then
+                    drawDestRect = visibleDest
+                    drawSourceRect = New RectangleF(0, 0, frameSize.Width, frameSize.Height)
+                End If
+                If drawBitmap Is Nothing Then Return
+            ElseIf ratio < 0.999F Then
+                Dim scaledSize As Size = 计算缩放位图尺寸(visibleDest, renderScale)
+                drawBitmap = 获取高质量缩放背景位图_D2D(rt, _image, sourceRect, scaledSize)
+                If drawBitmap IsNot Nothing Then
+                    drawDestRect = visibleDest
+                    drawSourceRect = New RectangleF(0, 0, scaledSize.Width, scaledSize.Height)
                 End If
             End If
 

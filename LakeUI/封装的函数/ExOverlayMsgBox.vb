@@ -270,6 +270,59 @@ End Module
 
 #End Region
 
+#Region "D2D 文本度量"
+
+Friend Module ExOverlayMsgBoxTextMetrics
+
+    Private Const 按钮水平留白 As Single = 24.0F
+    Private ReadOnly 对话框文本标志 As TextFormatFlags =
+        TextFormatFlags.WordBreak Or TextFormatFlags.Left Or TextFormatFlags.Top Or TextFormatFlags.NoPadding
+    Private ReadOnly 按钮文本标志 As TextFormatFlags =
+        TextFormatFlags.SingleLine Or TextFormatFlags.HorizontalCenter Or TextFormatFlags.VerticalCenter Or TextFormatFlags.NoPadding
+
+    Friend Function MeasureDialogText(owner As Control, text As String, font As Font, proposedSize As Size, dpiScale As Single) As Size
+        Dim safeSize As New Size(Math.Max(1, proposedSize.Width), Math.Max(1, proposedSize.Height))
+        Return D2DTextRenderer.MeasureText(If(text, ""), font, safeSize, 对话框文本标志, dpiScale, GetTextFormatCache(owner))
+    End Function
+
+    Friend Function MeasureButtonWidth(owner As Control, text As String, font As Font, minimumWidth As Integer, dpiScale As Single) As Integer
+        Dim displayText = GetModernButtonDisplayText(If(text, ""))
+        Dim textSize = D2DTextRenderer.MeasureText(displayText, font, New Size(Integer.MaxValue, Integer.MaxValue),
+                                                   按钮文本标志, dpiScale, GetTextFormatCache(owner))
+        Dim measuredWidth = CInt(Math.Ceiling(textSize.Width + 按钮水平留白 * dpiScale))
+        Return Math.Max(minimumWidth, measuredWidth)
+    End Function
+
+    Private Function GetTextFormatCache(owner As Control) As D2DGlobals.TextFormatCache
+        Return D2DHelperV2.GetCompositor(owner)?.TextFormatCache
+    End Function
+
+    Private Function GetModernButtonDisplayText(text As String) As String
+        If String.IsNullOrEmpty(text) OrElse text.IndexOf("&"c) < 0 Then Return If(text, "")
+
+        Dim sb As New System.Text.StringBuilder(text.Length)
+        Dim i As Integer = 0
+        While i < text.Length
+            Dim ch As Char = text(i)
+            If ch = "&"c Then
+                If i + 1 < text.Length AndAlso text(i + 1) = "&"c Then
+                    sb.Append("&"c)
+                    i += 2
+                    Continue While
+                End If
+                i += 1
+                Continue While
+            End If
+            sb.Append(ch)
+            i += 1
+        End While
+        Return sb.ToString()
+    End Function
+
+End Module
+
+#End Region
+
 #Region "遮罩窗体"
 
 ''' <summary>
@@ -730,10 +783,12 @@ Friend Class ExOverlayMsgBoxHostForm
     End Sub
 
     Private Sub 添加按钮(text As String, tag As Object, index As Integer, isDefault As Boolean)
+        Dim buttonFont As New Font(MessageDialogRendering.ResolveDialogFontName(拥有者, Me), 9.0F)
+        Dim actualButtonWidth = ExOverlayMsgBoxTextMetrics.MeasureButtonWidth(Me, text, buttonFont, 按钮宽度, SC)
         Dim btn As New ModernButton() With {
             .Text = If(text, ""),
-            .Size = New Size(按钮宽度, 按钮高度),
-            .Font = New Font(MessageDialogRendering.ResolveDialogFontName(拥有者, Me), 9.0F),
+            .Size = New Size(actualButtonWidth, 按钮高度),
+            .Font = buttonFont,
             .Tag = tag,
             .BorderRadius = 0,
             .AnimationDuration = 150,
@@ -755,17 +810,16 @@ Friend Class ExOverlayMsgBoxHostForm
         Dim hasIcon = 消息图标位图 IsNot Nothing
         Dim iconSpan = If(hasIcon, 图标尺寸 + 图标间距, 0)
         Dim maxTextWidth = 卡片最大宽度 - 卡片内边距 * 2 - iconSpan
-        Dim titleSize = TextRenderer.MeasureText(标题文本, 标题字体, New Size(maxTextWidth, Integer.MaxValue),
-                                                  TextFormatFlags.WordBreak Or TextFormatFlags.TextBoxControl)
-        Dim messageSize = TextRenderer.MeasureText(消息文本, 消息字体, New Size(maxTextWidth, Integer.MaxValue),
-                                                    TextFormatFlags.WordBreak Or TextFormatFlags.TextBoxControl)
+        Dim titleSize = ExOverlayMsgBoxTextMetrics.MeasureDialogText(Me, 标题文本, 标题字体, New Size(maxTextWidth, Integer.MaxValue), SC)
+        Dim messageSize = ExOverlayMsgBoxTextMetrics.MeasureDialogText(Me, 消息文本, 消息字体, New Size(maxTextWidth, Integer.MaxValue), SC)
 
-        Dim buttonGroupWidth = 操作按钮.Count * 按钮宽度 + Math.Max(0, 操作按钮.Count - 1) * 按钮间距 + 卡片内边距 * 2
+        Dim buttonWidthSum = 操作按钮.Sum(Function(btn) btn.Width)
+        Dim buttonGroupWidth = buttonWidthSum + Math.Max(0, 操作按钮.Count - 1) * 按钮间距 + 卡片内边距 * 2
         Dim contentWidth = Math.Max(titleSize.Width, messageSize.Width + iconSpan) + 卡片内边距 * 2
-        Dim cardWidth = Math.Min(卡片最大宽度, Math.Max(卡片最小宽度, Math.Max(buttonGroupWidth, contentWidth)))
+        Dim availableCardWidth = Math.Max(卡片最小宽度, ClientSize.Width - 卡片内边距 * 2)
+        Dim cardWidth = Math.Min(availableCardWidth, Math.Max(卡片最小宽度, Math.Max(buttonGroupWidth, Math.Min(contentWidth, 卡片最大宽度))))
         Dim actualTextWidth = cardWidth - 卡片内边距 * 2 - iconSpan
-        messageSize = TextRenderer.MeasureText(消息文本, 消息字体, New Size(actualTextWidth, Integer.MaxValue),
-                                               TextFormatFlags.WordBreak Or TextFormatFlags.TextBoxControl)
+        messageSize = ExOverlayMsgBoxTextMetrics.MeasureDialogText(Me, 消息文本, 消息字体, New Size(actualTextWidth, Integer.MaxValue), SC)
         Dim messageHeight = Math.Max(最小内容高, Math.Max(messageSize.Height, If(hasIcon, 图标尺寸, 0)))
         Dim cardHeight = 卡片内边距 + titleSize.Height + 标题下间距 + messageHeight + 卡片内边距 + 按钮区高度
         cardHeight = Math.Min(cardHeight, CInt(ClientSize.Height * 0.8))
@@ -780,13 +834,13 @@ Friend Class ExOverlayMsgBoxHostForm
                               actualTextWidth, Math.Min(messageSize.Height, messageHeight))
         按钮区域 = New Rectangle(卡片区域.X, 卡片区域.Bottom - 按钮区高度, 卡片区域.Width, 按钮区高度)
 
-        Dim groupWidth = 操作按钮.Count * 按钮宽度 + Math.Max(0, 操作按钮.Count - 1) * 按钮间距
+        Dim groupWidth = buttonWidthSum + Math.Max(0, 操作按钮.Count - 1) * 按钮间距
         Dim btnX = 卡片区域.Right - 卡片内边距 - groupWidth
         Dim btnY = 按钮区域.Y + (按钮区高度 - 按钮高度) \ 2
         For Each btn In 操作按钮
             btn.Location = New Point(btnX, btnY)
-            btn.Size = New Size(按钮宽度, 按钮高度)
-            btnX += 按钮宽度 + 按钮间距
+            btn.Size = New Size(btn.Width, 按钮高度)
+            btnX += btn.Width + 按钮间距
         Next
     End Sub
 
@@ -1366,10 +1420,12 @@ Friend Class ExOverlayMsgBoxForm
     End Sub
 
     Private Sub 添加按钮(text As String, tag As Object, index As Integer, isDefault As Boolean)
+        Dim 按钮字体 As New Font(MessageDialogRendering.ResolveDialogFontName(拥有者控件, Me), 9.0F)
+        Dim 实际按钮宽度 = ExOverlayMsgBoxTextMetrics.MeasureButtonWidth(Me, text, 按钮字体, 按钮宽度, SC)
         Dim btn As New ModernButton() With {
             .Text = text,
-            .Size = New Size(按钮宽度, 按钮高度),
-            .Font = New Font(MessageDialogRendering.ResolveDialogFontName(拥有者控件, Me), 9.0F),
+            .Size = New Size(实际按钮宽度, 按钮高度),
+            .Font = 按钮字体,
             .Tag = tag,
             .BorderRadius = 0,
             .BorderSize = 1,
@@ -1394,29 +1450,27 @@ Friend Class ExOverlayMsgBoxForm
         Dim 最大文本宽 As Integer = 卡片最大宽度 - 卡片内边距 * 2 - 图标占宽
 
         ' 测量标题
-        Dim 标题尺寸 = TextRenderer.MeasureText(
-            标题标签.Text, 标题字体,
-            New Size(最大文本宽, Integer.MaxValue),
-            TextFormatFlags.WordBreak Or TextFormatFlags.TextBoxControl)
+        Dim 标题尺寸 = ExOverlayMsgBoxTextMetrics.MeasureDialogText(
+            Me, 标题标签.Text, 标题字体,
+            New Size(最大文本宽, Integer.MaxValue), SC)
 
         ' 测量消息
-        Dim 文本尺寸 = TextRenderer.MeasureText(
-            消息标签.Text, 消息字体,
-            New Size(最大文本宽, Integer.MaxValue),
-            TextFormatFlags.WordBreak Or TextFormatFlags.TextBoxControl)
+        Dim 文本尺寸 = ExOverlayMsgBoxTextMetrics.MeasureDialogText(
+            Me, 消息标签.Text, 消息字体,
+            New Size(最大文本宽, Integer.MaxValue), SC)
 
         ' 计算卡片宽度
-        Dim 按钮组总宽 As Integer = 操作按钮.Count * 按钮宽度 + (操作按钮.Count - 1) * 按钮间距 + 卡片内边距 * 2
+        Dim 按钮宽合计 As Integer = 操作按钮.Sum(Function(btn) btn.Width)
+        Dim 按钮组总宽 As Integer = 按钮宽合计 + Math.Max(0, 操作按钮.Count - 1) * 按钮间距 + 卡片内边距 * 2
         Dim 内容需要宽 As Integer = Math.Max(标题尺寸.Width, 文本尺寸.Width + 图标占宽) + 卡片内边距 * 2
         Dim 卡片宽度 As Integer = Math.Max(卡片最小宽度, Math.Max(按钮组总宽, 内容需要宽))
-        卡片宽度 = Math.Min(卡片宽度, 卡片最大宽度)
+        卡片宽度 = Math.Min(卡片宽度, Math.Max(卡片最小宽度, 居中区域.Width - 卡片内边距 * 2))
 
         ' 用实际宽度重新测量
         Dim 实际文本宽 As Integer = 卡片宽度 - 卡片内边距 * 2 - 图标占宽
-        文本尺寸 = TextRenderer.MeasureText(
-            消息标签.Text, 消息字体,
-            New Size(实际文本宽, Integer.MaxValue),
-            TextFormatFlags.WordBreak Or TextFormatFlags.TextBoxControl)
+        文本尺寸 = ExOverlayMsgBoxTextMetrics.MeasureDialogText(
+            Me, 消息标签.Text, 消息字体,
+            New Size(实际文本宽, Integer.MaxValue), SC)
 
         ' 内容高度
         Dim 消息高度 As Integer = Math.Max(最小内容高, Math.Max(文本尺寸.Height, If(有图标, 图标尺寸, 0)))
@@ -1464,12 +1518,13 @@ Friend Class ExOverlayMsgBoxForm
         消息区域 = 消息标签.Bounds
 
         ' 按钮位置（在按钮区内右对齐）
-        Dim 按钮组宽度 As Integer = 操作按钮.Count * 按钮宽度 + (操作按钮.Count - 1) * 按钮间距
+        Dim 按钮组宽度 As Integer = 按钮宽合计 + Math.Max(0, 操作按钮.Count - 1) * 按钮间距
         Dim btnX As Integer = 卡片宽度 - 卡片内边距 - 按钮组宽度
         Dim btnY As Integer = 按钮区域.Y + (按钮区高度 - 按钮高度) \ 2
         For Each btn In 操作按钮
             btn.Location = New Point(btnX, btnY)
-            btnX += 按钮宽度 + 按钮间距
+            btn.Size = New Size(btn.Width, 按钮高度)
+            btnX += btn.Width + 按钮间距
         Next
     End Sub
 

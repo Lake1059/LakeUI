@@ -303,7 +303,28 @@ Partial Public Class MemberWall
     ''' </summary>
     Public Sub Redraw()
         _layoutDirty = True
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        _hoverIndex = -1
+        _pressedIndex = -1
+        ForceRefreshSelf()
+    End Sub
+
+    Private Sub ForceRefreshSelf()
+        If IsDisposed Then Return
+
+        Try
+            If Not IsHandleCreated Then
+                Invalidate()
+                Return
+            End If
+
+            ' Redraw 是显式手动刷新入口，需要绕过父级切页刷新过滤。
+            Invalidate(ClientRectangle, False)
+            If Not D2DHelperV2.IsPainting(Me) AndAlso Not D2DHelperV2.IsBackgroundSamplingPaint Then
+                Update()
+            End If
+        Catch
+            Try : OuterToInnerRefreshScheduler.RequestFull(Me, immediate:=True) : Catch : End Try
+        End Try
     End Sub
 
     ''' <summary>

@@ -578,6 +578,7 @@ Public Class ModernContextMenu
         Private ReadOnly 项目区域列表 As New List(Of Rectangle)
         Private 正在关闭 As Boolean = False
         Private 鼠标按下 As Boolean = False
+        Private 关闭后触发项目 As ModernMenuItem = Nothing
 
         ' 悬停动画相关
         Private ReadOnly 动画秒表 As New Stopwatch()
@@ -1013,10 +1014,11 @@ Public Class ModernContextMenu
             Dim item = 菜单.项目列表(index)
             If item.IsSeparator Then Return
             If item.SubMenu IsNot Nothing Then Return
-            item.PerformClick()
             If item.CloseOnClick Then
+                获取根弹窗().关闭后触发项目 = item
                 关闭全部()
             Else
+                item.PerformClick()
                 OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Sub
@@ -1323,12 +1325,20 @@ Public Class ModernContextMenu
                 菜单.通知菜单关闭()
             End If
             If Not IsDisposed Then Close()
+            执行关闭后点击()
         End Sub
 
         Private Function 获取根弹窗() As MenuPopupForm
             If 父弹窗 IsNot Nothing Then Return 父弹窗.获取根弹窗()
             Return Me
         End Function
+
+        Private Sub 执行关闭后点击()
+            If 父弹窗 IsNot Nothing Then Return
+            Dim item = 关闭后触发项目
+            关闭后触发项目 = Nothing
+            item?.PerformClick()
+        End Sub
 
         Protected Overrides Sub OnDeactivate(e As EventArgs)
             MyBase.OnDeactivate(e)

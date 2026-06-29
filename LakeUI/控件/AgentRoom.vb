@@ -2252,10 +2252,6 @@ Public Class AgentRoom
     Private Sub ActivateLink(url As String, itemIndex As Integer)
         If String.IsNullOrEmpty(url) Then Return
         RaiseEvent LinkClicked(Me, New LinkClickedEventArgs With {.Url = url, .ItemIndex = itemIndex})
-        Try
-            Process.Start(New ProcessStartInfo(url) With {.UseShellExecute = True})
-        Catch
-        End Try
     End Sub
 
     Private Sub StoreMouseDownLink(link As LinkHitInfo)
