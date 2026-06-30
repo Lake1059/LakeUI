@@ -151,6 +151,10 @@ Friend NotInheritable Class BackdropRenderer
     Private _noiseD2DBrush As ID2D1BitmapBrush
     Private _noiseD2DOwnerRT As WeakReference
     Private _noiseD2DBrushTile As Integer = 0
+    Private ReadOnly _cpuOwner As CpuBudgetOwner
+    Private ReadOnly _gpuOwner As GpuBudgetOwner
+    Private _lastCpuUse As Long
+    Private _lastGpuUse As Long
 
 #End Region
 
@@ -159,6 +163,8 @@ Friend NotInheritable Class BackdropRenderer
 
     Public Sub New(host As Form)
         _host = host
+        _cpuOwner = New CpuBudgetOwner(Me)
+        _gpuOwner = New GpuBudgetOwner(Me)
         ' 必须在 UI 线程读取 Handle（会强制创建句柄）。
         ' 之后后台线程通过 _hostHandle 字段访问，避免 InvalidOperationException。
         If host IsNot Nothing Then
@@ -170,6 +176,90 @@ Friend NotInheritable Class BackdropRenderer
         End If
         RegisterInstance(Me)
     End Sub
+
+    Private NotInheritable Class CpuBudgetOwner
+        Implements IRenderCacheOwner
+
+        Private ReadOnly _ownerRef As WeakReference(Of BackdropRenderer)
+
+        Public Sub New(owner As BackdropRenderer)
+            _ownerRef = New WeakReference(Of BackdropRenderer)(owner)
+            CpuCache.Register(Me)
+        End Sub
+
+        Private Function TryGetOwner(ByRef owner As BackdropRenderer) As Boolean
+            Return _ownerRef.TryGetTarget(owner) AndAlso owner IsNot Nothing AndAlso Volatile.Read(owner._disposed) = 0
+        End Function
+
+        Public ReadOnly Property CacheBytes As Long Implements IRenderCacheOwner.CacheBytes
+            Get
+                Dim owner As BackdropRenderer = Nothing
+                If Not TryGetOwner(owner) Then Return 0
+                Return owner.EstimateCpuCacheBytes()
+            End Get
+        End Property
+
+        Public ReadOnly Property OldestUseTick As Long Implements IRenderCacheOwner.OldestUseTick
+            Get
+                Dim owner As BackdropRenderer = Nothing
+                If Not TryGetOwner(owner) Then Return Long.MaxValue
+                Return owner._lastCpuUse
+            End Get
+        End Property
+
+        Public Function TrimOldest() As Boolean Implements IRenderCacheOwner.TrimOldest
+            Dim owner As BackdropRenderer = Nothing
+            If Not TryGetOwner(owner) Then Return False
+            Return owner.TrimCpuCaches()
+        End Function
+
+        Public Sub ReleaseAll() Implements IRenderCacheOwner.ReleaseAll
+            Dim owner As BackdropRenderer = Nothing
+            If TryGetOwner(owner) Then owner.ReleaseCpuCaches()
+        End Sub
+    End Class
+
+    Private NotInheritable Class GpuBudgetOwner
+        Implements IRenderCacheOwner
+
+        Private ReadOnly _ownerRef As WeakReference(Of BackdropRenderer)
+
+        Public Sub New(owner As BackdropRenderer)
+            _ownerRef = New WeakReference(Of BackdropRenderer)(owner)
+            GpuCache.Register(Me)
+        End Sub
+
+        Private Function TryGetOwner(ByRef owner As BackdropRenderer) As Boolean
+            Return _ownerRef.TryGetTarget(owner) AndAlso owner IsNot Nothing AndAlso Volatile.Read(owner._disposed) = 0
+        End Function
+
+        Public ReadOnly Property CacheBytes As Long Implements IRenderCacheOwner.CacheBytes
+            Get
+                Dim owner As BackdropRenderer = Nothing
+                If Not TryGetOwner(owner) Then Return 0
+                Return owner.EstimateGpuCacheBytes()
+            End Get
+        End Property
+
+        Public ReadOnly Property OldestUseTick As Long Implements IRenderCacheOwner.OldestUseTick
+            Get
+                Dim owner As BackdropRenderer = Nothing
+                If Not TryGetOwner(owner) Then Return Long.MaxValue
+                Return owner._lastGpuUse
+            End Get
+        End Property
+
+        Public Function TrimOldest() As Boolean Implements IRenderCacheOwner.TrimOldest
+            Dim owner As BackdropRenderer = Nothing
+            If Not TryGetOwner(owner) Then Return False
+            Return owner.TrimGpuCaches()
+        End Function
+
+        Public Sub ReleaseAll() Implements IRenderCacheOwner.ReleaseAll
+            Dim owner As BackdropRenderer = Nothing
+            If TryGetOwner(owner) Then owner.DisposeGpuResources()
+        End Sub
+    End Class
 
     Private Shared Sub RegisterInstance(instance As BackdropRenderer)
         If instance Is Nothing Then Return
@@ -245,7 +335,11 @@ Friend NotInheritable Class BackdropRenderer
 
     Friend Sub CleanupD2DResources(level As D2DCacheCleanupLevel)
         If Volatile.Read(_disposed) <> 0 Then Return
-        If level = D2DCacheCleanupLevel.TrimToBudget Then Return
+        If level = D2DCacheCleanupLevel.TrimToBudget Then
+            CpuCache.TrimToBudget()
+            GpuCache.TrimToBudget()
+            Return
+        End If
         Dim releaseCpuCaches As Boolean = level >= D2DCacheCleanupLevel.ReleaseAllCaches
         If releaseCpuCaches Then
             Try
@@ -272,6 +366,102 @@ Friend NotInheritable Class BackdropRenderer
         End If
         DisposeNoiseD2DResources()
     End Sub
+
+    Private Function EstimateCpuCacheBytes() As Long
+        Dim total As Long = 0
+        SyncLock _frameLock
+            total += EstimateBitmapBytes(_currentFrame)
+            total += EstimateBitmapBytes(_spareFrame)
+        End SyncLock
+        total += EstimateBitmapBytes(_capturedBitmap)
+        Return total
+    End Function
+
+    Private Function EstimateGpuCacheBytes() As Long
+        Dim total As Long = 0
+        If _gpuSource IsNot Nothing Then
+            Dim ps = _gpuSource.PixelSize
+            total += EstimateBitmapBytes(ps.Width, ps.Height)
+        End If
+        If _gpuTarget IsNot Nothing Then total += EstimateBitmapBytes(_gpuTargetSize.Width, _gpuTargetSize.Height)
+        If _noiseD2DBitmap IsNot Nothing AndAlso _noiseBitmap IsNot Nothing Then total += EstimateBitmapBytes(_noiseBitmap)
+        Return total
+    End Function
+
+    Private Shared Function EstimateBitmapBytes(bmp As Bitmap) As Long
+        If bmp Is Nothing Then Return 0
+        Return EstimateBitmapBytes(bmp.Width, bmp.Height)
+    End Function
+
+    Private Shared Function EstimateBitmapBytes(w As Integer, h As Integer) As Long
+        Return CLng(Math.Max(1, w)) * CLng(Math.Max(1, h)) * 4L
+    End Function
+
+    Private Function TrimCpuCaches() As Boolean
+        If Not WaitForIdle(0) Then Return False
+        If _capturedBitmap IsNot Nothing Then
+            ReleaseCaptureBitmap()
+            Return True
+        End If
+        SyncLock _frameLock
+            If _spareFrame IsNot Nothing Then
+                _spareFrame.Dispose()
+                _spareFrame = Nothing
+                Return True
+            End If
+            If _currentFrame IsNot Nothing Then
+                _currentFrame.Dispose()
+                _currentFrame = Nothing
+                Interlocked.Increment(_frameVersion)
+                Volatile.Write(_publishedAverage, -1)
+                Return True
+            End If
+        End SyncLock
+        If _blurBufferA IsNot Nothing Then
+            _blurBufferA = Nothing
+            Return True
+        End If
+        Return False
+    End Function
+
+    Private Sub ReleaseCpuCaches()
+        If Not WaitForIdle(500) Then Return
+        SyncLock _frameLock
+            _currentFrame?.Dispose()
+            _currentFrame = Nothing
+            _spareFrame?.Dispose()
+            _spareFrame = Nothing
+            Interlocked.Increment(_frameVersion)
+        End SyncLock
+        ReleaseCaptureBitmap()
+        Volatile.Write(_publishedAverage, -1)
+        _blurBufferA = Nothing
+    End Sub
+
+    Private Function TrimGpuCaches() As Boolean
+        If _gpuTarget IsNot Nothing Then
+            Try : _gpuTarget.Dispose() : Catch : End Try
+            _gpuTarget = Nothing
+            _gpuTargetSize = Size.Empty
+            Return True
+        End If
+        If _gpuBlurEffect IsNot Nothing Then
+            Try : _gpuBlurEffect.Dispose() : Catch : End Try
+            _gpuBlurEffect = Nothing
+            Return True
+        End If
+        If _gpuSource IsNot Nothing Then
+            Try : _gpuSource.Dispose() : Catch : End Try
+            _gpuSource = Nothing
+            _gpuSourceVersion = -1
+            Return True
+        End If
+        If _noiseD2DBrush IsNot Nothing OrElse _noiseD2DBitmap IsNot Nothing Then
+            DisposeNoiseD2DResources()
+            Return True
+        End If
+        Return False
+    End Function
 
     Private Sub ReleaseCaptureBitmap()
         Dim old = _capturedBitmap
@@ -506,6 +696,7 @@ Friend NotInheritable Class BackdropRenderer
                 _currentFrame = small
                 smallCommitted = True
                 _spareFrame = previousCurrent
+                _lastCpuUse = CpuCache.NextTick()
                 Interlocked.Increment(_frameVersion)
             End SyncLock
 
@@ -534,6 +725,7 @@ Friend NotInheritable Class BackdropRenderer
             _spareFrame = Nothing
         End SyncLock
         If bmp IsNot Nothing AndAlso bmp.Width = dw AndAlso bmp.Height = dh Then
+            _lastCpuUse = CpuCache.NextTick()
             Return bmp
         End If
         bmp?.Dispose()
@@ -545,6 +737,7 @@ Friend NotInheritable Class BackdropRenderer
         SyncLock _frameLock
             If _spareFrame Is Nothing Then
                 _spareFrame = bmp
+                _lastCpuUse = CpuCache.NextTick()
                 Return
             End If
         End SyncLock
@@ -554,10 +747,14 @@ Friend NotInheritable Class BackdropRenderer
     ''' <summary>取得（必要时分配）抓屏临时位图。</summary>
     Private Function AcquireCaptureBitmap(w As Integer, h As Integer) As Bitmap
         Dim bmp As Bitmap = _capturedBitmap
-        If bmp IsNot Nothing AndAlso bmp.Width = w AndAlso bmp.Height = h Then Return bmp
+        If bmp IsNot Nothing AndAlso bmp.Width = w AndAlso bmp.Height = h Then
+            _lastCpuUse = CpuCache.NextTick()
+            Return bmp
+        End If
         bmp?.Dispose()
         Try
             _capturedBitmap = New Bitmap(w, h, PixelFormat.Format32bppRgb)
+            _lastCpuUse = CpuCache.NextTick()
         Catch
             _capturedBitmap = Nothing
         End Try
@@ -635,6 +832,7 @@ Friend NotInheritable Class BackdropRenderer
             EnsureGpuContext()
             If Not EnsureGpuSource(sourceSize) Then Return
             EnsureGpuTarget(target.Size)
+            _lastGpuUse = GpuCache.NextTick()
 
             Dim previousTarget As ID2D1Image = Nothing
             Dim interop As ID2D1GdiInteropRenderTarget = Nothing
@@ -754,6 +952,7 @@ Friend NotInheritable Class BackdropRenderer
         If _gpuSource IsNot Nothing AndAlso _gpuSourceVersion = curVer Then
             Dim ps = _gpuSource.PixelSize
             sourceSize = New Size(ps.Width, ps.Height)
+            _lastGpuUse = GpuCache.NextTick()
             Return True
         End If
 
@@ -782,6 +981,7 @@ Friend NotInheritable Class BackdropRenderer
                     data.Scan0, CUInt(data.Stride), props)
                 _gpuSourceVersion = curVer
                 sourceSize = New Size(_currentFrame.Width, _currentFrame.Height)
+                _lastGpuUse = GpuCache.NextTick()
             Finally
                 _currentFrame.UnlockBits(data)
             End Try
@@ -792,7 +992,10 @@ Friend NotInheritable Class BackdropRenderer
 
     Private Sub EnsureGpuTarget(size As Size)
         If _gpuContext Is Nothing OrElse size.Width <= 0 OrElse size.Height <= 0 Then Return
-        If _gpuTarget IsNot Nothing AndAlso _gpuTargetSize = size Then Return
+        If _gpuTarget IsNot Nothing AndAlso _gpuTargetSize = size Then
+            _lastGpuUse = GpuCache.NextTick()
+            Return
+        End If
 
         If _gpuTarget IsNot Nothing Then
             Try : _gpuTarget.Dispose() : Catch : End Try
@@ -808,6 +1011,8 @@ Friend NotInheritable Class BackdropRenderer
             New Vortice.Mathematics.SizeI(size.Width, size.Height),
             IntPtr.Zero, 0UI, props)
         _gpuTargetSize = size
+        _lastGpuUse = GpuCache.NextTick()
+        GpuCache.TrimToBudget(_gpuOwner)
     End Sub
 
     Private Function GetGpuOutputImage() As ID2D1Image
@@ -889,6 +1094,7 @@ Friend NotInheritable Class BackdropRenderer
             _noiseD2DBitmap = D2DGlobals.CreateBitmapFromGdi(rt, _noiseBitmap)
             If _noiseD2DBitmap Is Nothing Then Return Nothing
             _noiseD2DOwnerRT = New WeakReference(rt)
+            _lastGpuUse = GpuCache.NextTick()
         End If
 
         If _noiseD2DBrush Is Nothing Then
@@ -900,10 +1106,13 @@ Friend NotInheritable Class BackdropRenderer
                 }
                 _noiseD2DBrush = rt.CreateBitmapBrush(_noiseD2DBitmap, bbp)
                 _noiseD2DBrushTile = tile
+                _lastGpuUse = GpuCache.NextTick()
+                GpuCache.TrimToBudget(_gpuOwner)
             Catch
                 Return Nothing
             End Try
         End If
+        _lastGpuUse = GpuCache.NextTick()
         Return _noiseD2DBrush
     End Function
 

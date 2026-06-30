@@ -10,7 +10,7 @@ Imports Vortice.Direct2D1
 '''   - <see cref="D2DGlobals.SolidColorBrushCache"/> 内部按 RT 分桶，因此 BindDC 不会让 brush 失效。
 ''' • 1 个 <see cref="D2DGlobals.SolidColorBrushCache"/>（按 RT 分桶；<see cref="BrushCache"/>）。
 ''' • 1 个 <see cref="D2DGlobals.TextFormatCache"/>（DWrite TextFormat 与 RT 无关，全 Form 通用）。
-''' • 一组 <see cref="D2DGlobals.D2DBitmapCache"/>：按 Image 引用建索引，用于图标 / 背景图复用上传。
+''' • 一组 <see cref="D2DGlobals.D2DBitmapCache"/>：按 Image 弱引用建索引，用于图标 / 背景图复用上传。
 ''' • 一个 SSAA <see cref="ID2D1BitmapRenderTarget"/> 池：按分桶像素尺寸 (W,H) 共享 1 份，避免每帧分配/释放。
 '''
 ''' === 不持有 ===
@@ -27,14 +27,13 @@ Imports Vortice.Direct2D1
 ''' • BeginPaint 仅防重入，不提供跨线程互斥；V2 绘制仍必须在 UI 线程完成。
 '''
 ''' === 已知限制 ===
-''' • SSAA 池按字节预算做 LRU 修剪。极端大窗口 + 高倍率 SSAA 仍然可能瞬时占用较高显存；
-'''   但归还池时会尽快回落到预算内。
+''' • SSAA 池接入进程级 GPU 总预算。极端大窗口 + 高倍率 SSAA 仍然可能瞬时占用较高显存；
+'''   但归还池时会交给全局 LRU 尽快回落到预算内。
 ''' • DPI 变更会释放 DC RT、TextFormat、位图上传和 SSAA 池，下一帧按新 DPI 全量重建。
-''' • <see cref="GetBitmapCache"/> 用 <see cref="Image"/> 强引用作 key，因此临时 Bitmap 不应进入该缓存。
-'''   索引有 LRU 上限会释放旧引用，但外部替换 / Dispose 后仍推荐让控件切到新的 Image 引用。
+''' • <see cref="GetBitmapCache"/> 不再强持有 <see cref="Image"/>；源图被替换或释放后索引会在后续修剪中自动脱落。
 ''' </summary>
 Public NotInheritable Class WindowCompositor
-    Implements IDisposable
+    Implements IDisposable, IRenderCacheOwner
 
     Private ReadOnly _form As Form
     Private ReadOnly _unregisterOnDispose As Boolean
@@ -49,18 +48,17 @@ Public NotInheritable Class WindowCompositor
     Private _paintScopesSinceTransientTrim As Integer
     Private _lastBrushCacheLimit As Integer = Integer.MinValue
     Private _lastTextFormatCacheLimit As Integer = Integer.MinValue
-    Private _lastBitmapCacheImageLimit As Integer = Integer.MinValue
-    Private _lastBitmapCacheBudgetBytes As Long = Long.MinValue
-    Private _lastSsaaPoolBudgetBytes As Long = Long.MinValue
+    Private _lastGpuBudgetBytes As Long = Long.MinValue
     Private _lastObservedDpi As Integer
 
-    ''' <summary>Image → D2DBitmapCache 映射；为长期存在的图标 / 背景图复用 D2D 上传。</summary>
+    ''' <summary>Image → D2DBitmapCache 弱索引；为长期存在的图标 / 背景图复用 D2D 上传。</summary>
     Private NotInheritable Class BitmapCacheEntry
+        Public SourceRef As WeakReference(Of Image)
         Public Cache As D2DGlobals.D2DBitmapCache
         Public LastUsed As Long
     End Class
 
-    Private ReadOnly _bitmapCaches As New Dictionary(Of Image, BitmapCacheEntry)()
+    Private ReadOnly _bitmapCaches As New List(Of BitmapCacheEntry)()
     Private _bitmapCacheClock As Long
 
     ''' <summary>共享的 SolidColorBrush 缓存（按 RT 切换自动失效）。</summary>
@@ -105,6 +103,7 @@ Public NotInheritable Class WindowCompositor
         _form = form
         _unregisterOnDispose = unregisterOnDispose
         _formHwnd = If(form.IsHandleCreated, form.Handle, IntPtr.Zero)
+        GpuCache.Register(Me)
         AddHandler form.HandleCreated, AddressOf OnFormHandleCreated
         AddHandler form.HandleDestroyed, AddressOf OnFormHandleDestroyed
         If _unregisterOnDispose Then AddHandler form.DpiChanged, AddressOf OnFormDpiChanged
@@ -291,33 +290,49 @@ Public NotInheritable Class WindowCompositor
     ''' Key 为 Image 引用本身（不复制，不哈希像素）。
     ''' </summary>
     ''' <remarks>
-    ''' 适用于 ImageList 中长期存在的图标 / 背景图。字典 key 是强引用，内部会按 LRU 上限释放旧索引；
-    ''' 但调用方仍不要把临时 Bitmap（如 OnPaint 内 new 出来的）放进来。
+    ''' 适用于 ImageList 中长期存在的图标 / 背景图。索引只弱持有源 Image；
+    ''' 调用方仍不要把临时 Bitmap（如 OnPaint 内 new 出来的）放进来。
     ''' </remarks>
     Friend Function GetBitmapCache(src As Image) As D2DGlobals.D2DBitmapCache
         If _disposed OrElse src Is Nothing Then Return Nothing
-        Dim entry As BitmapCacheEntry = Nothing
-        If _bitmapCaches.TryGetValue(src, entry) Then
-            entry.LastUsed = NextBitmapCacheClock()
-            Return entry.Cache
-        End If
+        For i As Integer = _bitmapCaches.Count - 1 To 0 Step -1
+            Dim entry = _bitmapCaches(i)
+            Dim entrySource As Image = Nothing
+            If entry Is Nothing OrElse entry.SourceRef Is Nothing OrElse
+               Not entry.SourceRef.TryGetTarget(entrySource) OrElse entrySource Is Nothing Then
+                If entry IsNot Nothing Then Try : entry.Cache?.Dispose() : Catch : End Try
+                _bitmapCaches.RemoveAt(i)
+                Continue For
+            End If
+            If entrySource Is src Then
+                entry.LastUsed = NextBitmapCacheClock()
+                Return entry.Cache
+            End If
+        Next
         Dim cache = New D2DGlobals.D2DBitmapCache()
-        _bitmapCaches(src) = New BitmapCacheEntry With {
+        _bitmapCaches.Add(New BitmapCacheEntry With {
+            .SourceRef = New WeakReference(Of Image)(src),
             .Cache = cache,
             .LastUsed = NextBitmapCacheClock()
-        }
-        ' The dictionary key is a strong Image reference; trim the index so replaced images do not live until Form dispose.
+        })
         TrimBitmapCacheIndex(src)
         Return cache
     End Function
 
     Friend Function ReleaseBitmapCache(src As Image) As Boolean
         If _disposed OrElse src Is Nothing Then Return False
-        Dim entry As BitmapCacheEntry = Nothing
-        If Not _bitmapCaches.TryGetValue(src, entry) Then Return False
-        _bitmapCaches.Remove(src)
-        Try : entry.Cache.Dispose() : Catch : End Try
-        Return True
+        Dim released As Boolean
+        For i As Integer = _bitmapCaches.Count - 1 To 0 Step -1
+            Dim entry = _bitmapCaches(i)
+            Dim entrySource As Image = Nothing
+            If entry Is Nothing OrElse entry.SourceRef Is Nothing OrElse
+               Not entry.SourceRef.TryGetTarget(entrySource) OrElse entrySource Is Nothing OrElse entrySource Is src Then
+                _bitmapCaches.RemoveAt(i)
+                Try : entry?.Cache?.Dispose() : Catch : End Try
+                released = True
+            End If
+        Next
+        Return released
     End Function
 
     Private Function NextBitmapCacheClock() As Long
@@ -326,30 +341,20 @@ Public NotInheritable Class WindowCompositor
     End Function
 
     Private Sub TrimBitmapCacheIndex(protectedImage As Image)
-        Dim maxImages As Integer = Math.Max(0, GlobalOptions.D2DBitmapCacheMaxImagesPerCompositor)
-        If maxImages = 0 Then
-            ReleaseBitmapCacheIndexNoLock()
-            Return
-        End If
-        While _bitmapCaches.Count > maxImages AndAlso _bitmapCaches.Count > 0
-            Dim oldestImage As Image = Nothing
-            Dim oldestEntry As BitmapCacheEntry = Nothing
-            For Each kv In _bitmapCaches
-                If protectedImage IsNot Nothing AndAlso kv.Key Is protectedImage Then Continue For
-                If oldestEntry Is Nothing OrElse kv.Value.LastUsed < oldestEntry.LastUsed Then
-                    oldestImage = kv.Key
-                    oldestEntry = kv.Value
-                End If
-            Next
-            If oldestImage Is Nothing Then Exit While
-            _bitmapCaches.Remove(oldestImage)
-            Try : oldestEntry.Cache.Dispose() : Catch : End Try
-        End While
+        For i As Integer = _bitmapCaches.Count - 1 To 0 Step -1
+            Dim entry = _bitmapCaches(i)
+            Dim entrySource As Image = Nothing
+            If entry Is Nothing OrElse entry.SourceRef Is Nothing OrElse
+               Not entry.SourceRef.TryGetTarget(entrySource) OrElse entrySource Is Nothing Then
+                _bitmapCaches.RemoveAt(i)
+                Try : entry?.Cache?.Dispose() : Catch : End Try
+            End If
+        Next
     End Sub
 
     Private Sub ReleaseBitmapCacheIndexNoLock()
-        For Each kv In _bitmapCaches
-            Try : kv.Value.Cache.Dispose() : Catch : End Try
+        For Each entry In _bitmapCaches
+            Try : entry.Cache.Dispose() : Catch : End Try
         Next
         _bitmapCaches.Clear()
     End Sub
@@ -371,15 +376,13 @@ Public NotInheritable Class WindowCompositor
 
     Private ReadOnly _ssaaPool As New Dictionary(Of Long, SsaaPoolEntry)()
     Private _ssaaPoolBytes As Long
-    Private _ssaaPoolClock As Long
-
     Private Shared Function MakeSsaaKey(w As Integer, h As Integer) As Long
         Return (CLng(w) << 32) Or (CLng(h) And &HFFFFFFFFL)
     End Function
 
     Private Shared Function BucketPixels(value As Integer) As Integer
         value = Math.Max(1, value)
-        Dim bucketSize As Integer = Math.Max(1, GlobalOptions.SsaaRenderTargetPoolBucketSize)
+        Dim bucketSize As Integer = Math.Max(1, GlobalOptions.SsaaBucketSize)
         Return CInt(Math.Ceiling(value / CDbl(bucketSize)) * bucketSize)
     End Function
 
@@ -401,7 +404,8 @@ Public NotInheritable Class WindowCompositor
         If _ssaaPool.TryGetValue(key, entry) Then
             _ssaaPool.Remove(key)
             _ssaaPoolBytes -= entry.Bytes
-            entry.LastUsed = NextSsaaClock()
+            If _ssaaPoolBytes < 0 Then _ssaaPoolBytes = 0
+            entry.LastUsed = GpuCache.NextTick()
             Return entry.RenderTarget
         End If
         Return owner.CreateCompatibleRenderTarget(New Vortice.Mathematics.SizeI(rentedPixelW, rentedPixelH))
@@ -431,22 +435,12 @@ Public NotInheritable Class WindowCompositor
             .PixelW = pixelW,
             .PixelH = pixelH,
             .Bytes = EstimateBytes(pixelW, pixelH),
-            .LastUsed = NextSsaaClock()
+            .LastUsed = GpuCache.NextTick()
         }
-        If entry.Bytes > Math.Max(0L, GlobalOptions.SsaaRenderTargetPoolBudgetBytes) Then
-            ReleaseRenderTargetCaches(rt)
-            Try : rt.Dispose() : Catch : End Try
-            Return
-        End If
         _ssaaPool(key) = entry
         _ssaaPoolBytes += entry.Bytes
-        TrimSsaaPool()
+        GpuCache.TrimToBudget(Me)
     End Sub
-
-    Private Function NextSsaaClock() As Long
-        _ssaaPoolClock += 1
-        Return _ssaaPoolClock
-    End Function
 
     Private Sub ReleaseSsaaPoolNoLock()
         For Each kv In _ssaaPool
@@ -457,30 +451,29 @@ Public NotInheritable Class WindowCompositor
         _ssaaPoolBytes = 0
     End Sub
 
-    Private Sub TrimSsaaPool()
-        Dim budget As Long = Math.Max(0L, GlobalOptions.SsaaRenderTargetPoolBudgetBytes)
-        While _ssaaPoolBytes > budget AndAlso _ssaaPool.Count > 0
-            Dim oldestKey As Long = 0
-            Dim oldestEntry As SsaaPoolEntry = Nothing
-            For Each kv In _ssaaPool
-                If oldestEntry Is Nothing OrElse kv.Value.LastUsed < oldestEntry.LastUsed Then
-                    oldestKey = kv.Key
-                    oldestEntry = kv.Value
-                End If
-            Next
-            If oldestEntry Is Nothing Then Exit While
-            _ssaaPool.Remove(oldestKey)
-            _ssaaPoolBytes -= oldestEntry.Bytes
-            ReleaseRenderTargetCaches(oldestEntry.RenderTarget)
-            Try : oldestEntry.RenderTarget.Dispose() : Catch : End Try
-        End While
-    End Sub
+    Private Function TrimSsaaPool() As Boolean
+        Dim oldestKey As Long = 0
+        Dim oldestEntry As SsaaPoolEntry = Nothing
+        For Each kv In _ssaaPool
+            If oldestEntry Is Nothing OrElse kv.Value.LastUsed < oldestEntry.LastUsed Then
+                oldestKey = kv.Key
+                oldestEntry = kv.Value
+            End If
+        Next
+        If oldestEntry Is Nothing Then Return False
+        _ssaaPool.Remove(oldestKey)
+        _ssaaPoolBytes -= oldestEntry.Bytes
+        If _ssaaPoolBytes < 0 Then _ssaaPoolBytes = 0
+        ReleaseRenderTargetCaches(oldestEntry.RenderTarget)
+        Try : oldestEntry.RenderTarget.Dispose() : Catch : End Try
+        Return True
+    End Function
 
     Private Sub ReleaseRenderTargetCaches(rt As ID2D1RenderTarget)
         If rt Is Nothing Then Return
         Try : BrushCache.InvalidateFor(rt) : Catch : End Try
-        For Each kv In _bitmapCaches
-            Try : kv.Value.Cache.InvalidateFor(rt) : Catch : End Try
+        For Each entry In _bitmapCaches
+            Try : entry.Cache.InvalidateFor(rt) : Catch : End Try
         Next
     End Sub
 
@@ -518,22 +511,16 @@ Public NotInheritable Class WindowCompositor
     Private Function ShouldTrimTransientCaches() As Boolean
         If _disposed Then Return False
 
-        Dim brushLimit As Integer = Math.Max(0, GlobalOptions.D2DBrushCacheMaxEntriesPerRenderTarget)
-        Dim textFormatLimit As Integer = Math.Max(0, GlobalOptions.DWriteTextFormatCacheMaxEntriesPerCompositor)
-        Dim bitmapImageLimit As Integer = Math.Max(0, GlobalOptions.D2DBitmapCacheMaxImagesPerCompositor)
-        Dim bitmapBudgetBytes As Long = Math.Max(0L, GlobalOptions.D2DBitmapCacheBudgetBytes)
-        Dim ssaaPoolBudgetBytes As Long = Math.Max(0L, GlobalOptions.SsaaRenderTargetPoolBudgetBytes)
+        Dim brushLimit As Integer = Math.Max(0, GlobalOptions.BrushCacheLimit)
+        Dim textFormatLimit As Integer = Math.Max(0, GlobalOptions.TextFormatCacheLimit)
+        Dim gpuBudgetBytes As Long = Math.Max(0L, GlobalOptions.GpuCacheBudgetBytes)
 
         If brushLimit <> _lastBrushCacheLimit OrElse
            textFormatLimit <> _lastTextFormatCacheLimit OrElse
-           bitmapImageLimit <> _lastBitmapCacheImageLimit OrElse
-           bitmapBudgetBytes <> _lastBitmapCacheBudgetBytes OrElse
-           ssaaPoolBudgetBytes <> _lastSsaaPoolBudgetBytes Then
+           gpuBudgetBytes <> _lastGpuBudgetBytes Then
             _lastBrushCacheLimit = brushLimit
             _lastTextFormatCacheLimit = textFormatLimit
-            _lastBitmapCacheImageLimit = bitmapImageLimit
-            _lastBitmapCacheBudgetBytes = bitmapBudgetBytes
-            _lastSsaaPoolBudgetBytes = ssaaPoolBudgetBytes
+            _lastGpuBudgetBytes = gpuBudgetBytes
             _paintScopesSinceTransientTrim = 0
             Return True
         End If
@@ -548,20 +535,18 @@ Public NotInheritable Class WindowCompositor
         If _disposed Then Return
         Try : BrushCache.TrimToCurrentLimit() : Catch : End Try
         Try : TextFormatCache.TrimToCurrentLimit() : Catch : End Try
-        For Each kv In _bitmapCaches
-            Try : kv.Value.Cache.TrimToCurrentBudget() : Catch : End Try
+        For Each entry In _bitmapCaches
+            Try : entry.Cache.TrimToCurrentBudget() : Catch : End Try
         Next
         Try : TrimBitmapCacheIndex(Nothing) : Catch : End Try
-        Try : TrimSsaaPool() : Catch : End Try
+        Try : GpuCache.TrimToBudget() : Catch : End Try
     End Sub
 
     Private Sub ResetTransientTrimState()
         _paintScopesSinceTransientTrim = 0
         _lastBrushCacheLimit = Integer.MinValue
         _lastTextFormatCacheLimit = Integer.MinValue
-        _lastBitmapCacheImageLimit = Integer.MinValue
-        _lastBitmapCacheBudgetBytes = Long.MinValue
-        _lastSsaaPoolBudgetBytes = Long.MinValue
+        _lastGpuBudgetBytes = Long.MinValue
     End Sub
 
     Public Sub Dispose() Implements IDisposable.Dispose
@@ -587,8 +572,8 @@ Public NotInheritable Class WindowCompositor
         End If
         Try : BrushCache.Dispose() : Catch : End Try
         Try : TextFormatCache.Dispose() : Catch : End Try
-        For Each kv In _bitmapCaches
-            Try : kv.Value.Cache.Dispose() : Catch : End Try
+        For Each entry In _bitmapCaches
+            Try : entry.Cache.Dispose() : Catch : End Try
         Next
         _bitmapCaches.Clear()
         ReleaseDCRenderTargetNoLock()
@@ -598,5 +583,29 @@ Public NotInheritable Class WindowCompositor
         End If
         ReleaseDeviceContextNoLock()
         If _unregisterOnDispose Then D2DHelperV2.UnregisterCompositor(_form)
+    End Sub
+
+    Public ReadOnly Property CacheBytes As Long Implements IRenderCacheOwner.CacheBytes
+        Get
+            Return _ssaaPoolBytes
+        End Get
+    End Property
+
+    Public ReadOnly Property OldestUseTick As Long Implements IRenderCacheOwner.OldestUseTick
+        Get
+            Dim oldest As Long = Long.MaxValue
+            For Each entry In _ssaaPool.Values
+                If entry IsNot Nothing AndAlso entry.LastUsed < oldest Then oldest = entry.LastUsed
+            Next
+            Return oldest
+        End Get
+    End Property
+
+    Public Function TrimOldest() As Boolean Implements IRenderCacheOwner.TrimOldest
+        Return TrimSsaaPool()
+    End Function
+
+    Public Sub ReleaseAll() Implements IRenderCacheOwner.ReleaseAll
+        ReleaseSsaaPoolNoLock()
     End Sub
 End Class

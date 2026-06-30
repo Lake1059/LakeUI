@@ -306,12 +306,12 @@ Public Module D2DGlobals
     Friend Sub CleanupD2DResources(level As D2DCacheCleanupLevel)
         Select Case level
             Case D2DCacheCleanupLevel.TrimToBudget
-                TrimRegisteredBitmapCaches()
+                GpuCache.TrimToBudget()
                 TrimFontResolveCacheToCurrentLimit()
 
             Case D2DCacheCleanupLevel.ReleaseVolatileCaches
                 InvalidateOutlineRenderingParams()
-                TrimRegisteredBitmapCaches()
+                GpuCache.TrimToBudget()
                 TrimFontResolveCacheToCurrentLimit()
 
             Case D2DCacheCleanupLevel.ReleaseAllCaches,
@@ -605,7 +605,7 @@ Public Module D2DGlobals
     ''' • 预算按“同一个 Image 在不同 RT 上的上传副本”估算，不包含源 Image 自身的 RAM。
     ''' </remarks>
     Public Class D2DBitmapCache
-        Implements IDisposable
+        Implements IDisposable, IRenderCacheOwner
 
         Private NotInheritable Class Entry
             Public Bitmap As ID2D1Bitmap
@@ -617,10 +617,10 @@ Public Module D2DGlobals
 
         Private ReadOnly _entries As New Dictionary(Of ID2D1RenderTarget, Entry)()
         Private _bytes As Long
-        Private _clock As Long
 
         Public Sub New()
             RegisterBitmapCache(Me)
+            GpuCache.Register(Me)
         End Sub
 
         Public Function GetBitmap(rt As ID2D1RenderTarget, src As Image) As ID2D1Bitmap
@@ -635,7 +635,7 @@ Public Module D2DGlobals
                    entry.SourceRef.TryGetTarget(entrySource) AndAlso
                    entrySource Is src AndAlso
                    entry.Bitmap IsNot Nothing Then
-                    entry.LastUsed = NextClock()
+                    entry.LastUsed = GpuCache.NextTick()
                     Return entry.Bitmap
                 End If
                 RemoveEntry(rt)
@@ -649,11 +649,11 @@ Public Module D2DGlobals
                 .SourceRef = New WeakReference(Of Image)(src),
                 .RenderTarget = rt,
                 .Bytes = EstimateBytes(src),
-                .LastUsed = NextClock()
+                .LastUsed = GpuCache.NextTick()
             }
             _entries(rt) = entry
             _bytes += entry.Bytes
-            TrimToBudget(entry)
+            GpuCache.TrimToBudget(Me)
             Return bmp
         End Function
 
@@ -665,15 +665,22 @@ Public Module D2DGlobals
             _bytes = 0
         End Sub
 
+        Public Sub InvalidateSource(src As Image)
+            If src Is Nothing Then Return
+            For Each kv In _entries.ToArray()
+                Dim entrySource As Image = Nothing
+                If kv.Value.SourceRef Is Nothing OrElse
+                   Not kv.Value.SourceRef.TryGetTarget(entrySource) OrElse
+                   entrySource Is src Then
+                    RemoveEntry(kv.Key)
+                End If
+            Next
+        End Sub
+
         Public Sub InvalidateFor(rt As ID2D1RenderTarget)
             If rt Is Nothing Then Return
             RemoveEntry(rt)
         End Sub
-
-        Private Function NextClock() As Long
-            _clock += 1
-            Return _clock
-        End Function
 
         Private Shared Function EstimateBytes(src As Image) As Long
             If src Is Nothing Then Return 0
@@ -685,28 +692,46 @@ Public Module D2DGlobals
             If Not _entries.TryGetValue(rt, entry) Then Return
             _entries.Remove(rt)
             _bytes -= entry.Bytes
+            If _bytes < 0 Then _bytes = 0
             Try : entry.Bitmap.Dispose() : Catch : End Try
         End Sub
 
-        Private Sub TrimToBudget(Optional protectedEntry As Entry = Nothing)
-            Dim budget As Long = Math.Max(0L, GlobalOptions.D2DBitmapCacheBudgetBytes)
-            While _bytes > budget AndAlso _entries.Count > 0
-                Dim oldestRt As ID2D1RenderTarget = Nothing
-                Dim oldestEntry As Entry = Nothing
-                For Each kv In _entries
-                    If protectedEntry IsNot Nothing AndAlso ReferenceEquals(kv.Value, protectedEntry) Then Continue For
-                    If oldestEntry Is Nothing OrElse kv.Value.LastUsed < oldestEntry.LastUsed Then
-                        oldestRt = kv.Key
-                        oldestEntry = kv.Value
-                    End If
-                Next
-                If oldestRt Is Nothing Then Exit While
-                RemoveEntry(oldestRt)
-            End While
+        Friend Sub TrimToCurrentBudget()
+            GpuCache.TrimToBudget()
         End Sub
 
-        Friend Sub TrimToCurrentBudget()
-            TrimToBudget()
+        Public ReadOnly Property CacheBytes As Long Implements IRenderCacheOwner.CacheBytes
+            Get
+                Return _bytes
+            End Get
+        End Property
+
+        Public ReadOnly Property OldestUseTick As Long Implements IRenderCacheOwner.OldestUseTick
+            Get
+                Dim oldest As Long = Long.MaxValue
+                For Each entry In _entries.Values
+                    If entry IsNot Nothing AndAlso entry.LastUsed < oldest Then oldest = entry.LastUsed
+                Next
+                Return oldest
+            End Get
+        End Property
+
+        Public Function TrimOldest() As Boolean Implements IRenderCacheOwner.TrimOldest
+            Dim oldestRt As ID2D1RenderTarget = Nothing
+            Dim oldestEntry As Entry = Nothing
+            For Each kv In _entries
+                If oldestEntry Is Nothing OrElse kv.Value.LastUsed < oldestEntry.LastUsed Then
+                    oldestRt = kv.Key
+                    oldestEntry = kv.Value
+                End If
+            Next
+            If oldestRt Is Nothing Then Return False
+            RemoveEntry(oldestRt)
+            Return True
+        End Function
+
+        Public Sub ReleaseAll() Implements IRenderCacheOwner.ReleaseAll
+            Invalidate()
         End Sub
 
         Public Sub Dispose() Implements IDisposable.Dispose
@@ -776,7 +801,7 @@ Public Module D2DGlobals
         Dim resolved = ResolveTextFontNameUncached(fallback)
 
         SyncLock _fontResolveLock
-            If GlobalOptions.DWriteFontResolveCacheMaxEntries <= 0 Then
+            If GlobalOptions.FontResolveCacheLimit <= 0 Then
                 _fontResolveCache.Clear()
                 Return resolved
             End If
@@ -813,7 +838,7 @@ Public Module D2DGlobals
     End Sub
 
     Private Sub TrimFontResolveCache(protectedKey As FontResolveKey, hasProtectedKey As Boolean)
-        Dim maxEntries As Integer = Math.Max(0, GlobalOptions.DWriteFontResolveCacheMaxEntries)
+        Dim maxEntries As Integer = Math.Max(0, GlobalOptions.FontResolveCacheLimit)
         While _fontResolveCache.Count > maxEntries AndAlso _fontResolveCache.Count > 0
             Dim oldestKey As FontResolveKey = Nothing
             Dim oldestEntry As FontResolveEntry = Nothing
@@ -1042,7 +1067,7 @@ Public Module D2DGlobals
         End Function
 
         Private Sub TrimBucket(bucket As Dictionary(Of Integer, BrushEntry), protectedKey As Integer)
-            Dim maxEntries As Integer = Math.Max(0, GlobalOptions.D2DBrushCacheMaxEntriesPerRenderTarget)
+            Dim maxEntries As Integer = Math.Max(0, GlobalOptions.BrushCacheLimit)
             While bucket.Count > maxEntries AndAlso bucket.Count > 0
                 Dim oldestKey As Integer = 0
                 Dim oldestEntry As BrushEntry = Nothing
@@ -1060,7 +1085,7 @@ Public Module D2DGlobals
         End Sub
 
         Friend Sub TrimToCurrentLimit()
-            Dim maxEntries As Integer = Math.Max(0, GlobalOptions.D2DBrushCacheMaxEntriesPerRenderTarget)
+            Dim maxEntries As Integer = Math.Max(0, GlobalOptions.BrushCacheLimit)
             For Each bucket In _buckets.Values
                 While bucket.Count > maxEntries AndAlso bucket.Count > 0
                     Dim oldestKey As Integer = 0
@@ -1223,7 +1248,7 @@ Public Module D2DGlobals
         End Function
 
         Private Sub TrimToLimit(protectedKey As Key)
-            Dim maxEntries As Integer = Math.Max(0, GlobalOptions.DWriteTextFormatCacheMaxEntriesPerCompositor)
+            Dim maxEntries As Integer = Math.Max(0, GlobalOptions.TextFormatCacheLimit)
             While _map.Count > maxEntries AndAlso _map.Count > 0
                 Dim oldestKey As Key = Nothing
                 Dim oldestEntry As TextFormatEntry = Nothing
@@ -1243,7 +1268,7 @@ Public Module D2DGlobals
         End Sub
 
         Friend Sub TrimToCurrentLimit()
-            Dim maxEntries As Integer = Math.Max(0, GlobalOptions.DWriteTextFormatCacheMaxEntriesPerCompositor)
+            Dim maxEntries As Integer = Math.Max(0, GlobalOptions.TextFormatCacheLimit)
             While _map.Count > maxEntries AndAlso _map.Count > 0
                 Dim oldestKey As Key = Nothing
                 Dim oldestEntry As TextFormatEntry = Nothing

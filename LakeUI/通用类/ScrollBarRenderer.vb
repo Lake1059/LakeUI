@@ -6,7 +6,7 @@ Imports Vortice.Direct2D1
 ''' </summary>
 ''' <remarks>
 ''' 渲染路径已全面切换到 Direct2D；不再保留 GDI+ 版本。
-''' D2D 画刷会按颜色 + RenderTarget 缓存复用，避免每帧重建。
+''' D2D 画刷优先使用调用方传入的窗口级 BrushCache；没有传入时只在本次绘制内临时创建。
 '''
 ''' 调用契约：
 ''' • 每次绘制前先调用 ComputeLayout / ComputeHorizontalLayout；不要把旧布局拿到 resize 后继续用。
@@ -14,9 +14,8 @@ Imports Vortice.Direct2D1
 ''' • Draw_D2D 的 rt 应来自当前 PaintScopeV2.GraphicsLayer；如果开启 SSAA，滚动条也会和其他图形一起回采。
 '''
 ''' 缓存与坑点：
-''' • 内置画刷缓存只在 brushCache 参数为 Nothing 时使用，且与当前 RenderTarget 绑定。
-'''   若调用方已经有 scope.Compositor.BrushCache，应优先传入它，让窗口级缓存统一管理。
-''' • 当控件释放或 RenderTarget 被外部重建时，调用 <see cref="DisposeBrushes"/> 可主动释放本地画刷。
+''' • 调用方已经有 scope.Compositor.BrushCache 时应传入它，让窗口级缓存统一管理。
+''' • 本类不再持有 D2D 画刷，ReleaseEverything 不需要额外扫描 ScrollBarRenderer 实例。
 ''' • 本类只管理滚动条交互状态，不持有内容滚动偏移；真实 offset 必须由宿主控件保存。
 ''' </remarks>
 Public Class ScrollBarRenderer
@@ -41,17 +40,6 @@ Public Class ScrollBarRenderer
 
     ''' <summary>轨道两侧/上下额外的命中区像素数（同时也是滑块外扩的命中区）。</summary>
     Public Const Margin As Integer = 2
-
-    ' --- D2D 画刷缓存 ---
-    ' 画刷与 RenderTarget 生命周期绑定，因此缓存键包含 RT 引用。
-    ' 一旦 RT 变化或颜色变化，旧画刷会被释放并按新参数重建。
-    Private _cachedRT As ID2D1RenderTarget = Nothing
-    Private _trackBrush As ID2D1SolidColorBrush = Nothing
-    Private _thumbBrush As ID2D1SolidColorBrush = Nothing
-    Private _thumbHoverBrush As ID2D1SolidColorBrush = Nothing
-    Private _trackBrushColor As Color = Color.Empty
-    Private _thumbBrushColor As Color = Color.Empty
-    Private _thumbHoverBrushColor As Color = Color.Empty
 
     ''' <summary>
     ''' 计算竖向滚动条的轨道与滑块矩形。
@@ -253,45 +241,18 @@ Public Class ScrollBarRenderer
 
 #Region "D2D 渲染"
 
-    ''' <summary>
-    ''' 当目标 RenderTarget 或任一颜色变更时，重建并缓存三只 SolidColorBrush；
-    ''' 否则保持复用。可显著降低高频重绘时的画刷创建/销毁开销。
-    ''' </summary>
-    Private Sub EnsureBrushes(rt As ID2D1RenderTarget,
-                              trackColor As Color, thumbColor As Color, thumbHoverColor As Color)
-        ' RenderTarget 切换时必须丢弃旧画刷（它们与原 RT 绑定）
-        If Not Object.ReferenceEquals(_cachedRT, rt) Then
-            DisposeBrushes()
-            _cachedRT = rt
-        End If
-
-        If _trackBrush Is Nothing OrElse Not _trackBrushColor.Equals(trackColor) Then
-            _trackBrush?.Dispose()
-            _trackBrush = rt.CreateSolidColorBrush(D2DGlobals.ToColor4(trackColor))
-            _trackBrushColor = trackColor
-        End If
-        If _thumbBrush Is Nothing OrElse Not _thumbBrushColor.Equals(thumbColor) Then
-            _thumbBrush?.Dispose()
-            _thumbBrush = rt.CreateSolidColorBrush(D2DGlobals.ToColor4(thumbColor))
-            _thumbBrushColor = thumbColor
-        End If
-        If _thumbHoverBrush Is Nothing OrElse Not _thumbHoverBrushColor.Equals(thumbHoverColor) Then
-            _thumbHoverBrush?.Dispose()
-            _thumbHoverBrush = rt.CreateSolidColorBrush(D2DGlobals.ToColor4(thumbHoverColor))
-            _thumbHoverBrushColor = thumbHoverColor
-        End If
-    End Sub
-
-    ''' <summary>释放缓存的 D2D 画刷。RenderTarget 重建/控件释放时调用。</summary>
+    ''' <summary>兼容旧调用点；本类已不再持有 D2D 画刷。</summary>
     Public Sub DisposeBrushes()
-        _trackBrush?.Dispose() : _trackBrush = Nothing
-        _thumbBrush?.Dispose() : _thumbBrush = Nothing
-        _thumbHoverBrush?.Dispose() : _thumbHoverBrush = Nothing
-        _trackBrushColor = Color.Empty
-        _thumbBrushColor = Color.Empty
-        _thumbHoverBrushColor = Color.Empty
-        _cachedRT = Nothing
     End Sub
+
+    Private Shared Function RentBrush(rt As ID2D1RenderTarget, color As Color,
+                                      brushCache As D2DGlobals.SolidColorBrushCache,
+                                      ByRef ownsBrush As Boolean) As ID2D1SolidColorBrush
+        ownsBrush = False
+        If brushCache IsNot Nothing Then Return brushCache.Get(rt, color)
+        ownsBrush = True
+        Return rt.CreateSolidColorBrush(D2DGlobals.ToColor4(color))
+    End Function
 
     ''' <summary>
     ''' 当存在圆角边框时，PushLayer 一个对应几何掩膜，避免滚动条溢出圆角外。
@@ -324,20 +285,20 @@ Public Class ScrollBarRenderer
         If TrackRect.IsEmpty Then Return
         If TrackRect.Width < 1 OrElse TrackRect.Height < 1 OrElse scrollBarWidth < 1 Then Return
 
-        If brushCache Is Nothing Then
-            EnsureBrushes(rt, trackColor, thumbColor, thumbHoverColor)
-        End If
-
         Dim clipPushed As Boolean = False
         Dim clipGeo As ID2D1Geometry = Nothing
         PushClipLayerIfNeeded(rt, containerW, containerH, borderWidth, borderRadius, clipPushed, clipGeo)
+        Dim trackBrush As ID2D1SolidColorBrush = Nothing
+        Dim thumbBrush As ID2D1SolidColorBrush = Nothing
+        Dim ownsTrackBrush As Boolean = False
+        Dim ownsThumbBrush As Boolean = False
         Try
             Dim sbH As Integer = TrackRect.Height
             ' 轨道（A=0 表示完全透明，直接跳过以节省一次填充）
             If trackColor.A > 0 Then
                 Dim trackRadius As Integer = Math.Min(scrollBarWidth \ 2, sbH \ 2)
                 Dim trackArea As New RectangleF(VisualLeft, TrackRect.Y, scrollBarWidth, sbH)
-                Dim trackBrush = If(brushCache Is Nothing, _trackBrush, brushCache.Get(rt, trackColor))
+                trackBrush = RentBrush(rt, trackColor, brushCache, ownsTrackBrush)
                 Using geo = RectangleRenderer.创建圆角矩形几何(trackArea, trackRadius)
                     rt.FillGeometry(geo, trackBrush)
                 End Using
@@ -345,19 +306,16 @@ Public Class ScrollBarRenderer
 
             ' 滑块；悬停或拖拽时使用 hover 色
             Dim useHoverColor As Boolean = IsDragging OrElse IsHover
-            Dim thumbBr As ID2D1SolidColorBrush
-            If brushCache Is Nothing Then
-                thumbBr = If(useHoverColor, _thumbHoverBrush, _thumbBrush)
-            Else
-                thumbBr = brushCache.Get(rt, If(useHoverColor, thumbHoverColor, thumbColor))
-            End If
+            thumbBrush = RentBrush(rt, If(useHoverColor, thumbHoverColor, thumbColor), brushCache, ownsThumbBrush)
             Dim thumbH As Integer = ThumbRect.Height
             Dim thumbRadius As Integer = Math.Min(scrollBarWidth \ 2, thumbH \ 2)
             Dim thumbArea As New RectangleF(VisualLeft, ThumbRect.Y, scrollBarWidth, thumbH)
             Using geo = RectangleRenderer.创建圆角矩形几何(thumbArea, thumbRadius)
-                rt.FillGeometry(geo, thumbBr)
+                rt.FillGeometry(geo, thumbBrush)
             End Using
         Finally
+            If ownsTrackBrush Then Try : trackBrush?.Dispose() : Catch : End Try
+            If ownsThumbBrush Then Try : thumbBrush?.Dispose() : Catch : End Try
             If clipPushed Then
                 rt.PopLayer()
             End If
@@ -375,38 +333,35 @@ Public Class ScrollBarRenderer
         If TrackRect.IsEmpty Then Return
         If TrackRect.Width < 1 OrElse TrackRect.Height < 1 OrElse scrollBarHeight < 1 Then Return
 
-        If brushCache Is Nothing Then
-            EnsureBrushes(rt, trackColor, thumbColor, thumbHoverColor)
-        End If
-
         Dim clipPushed As Boolean = False
         Dim clipGeo As ID2D1Geometry = Nothing
         PushClipLayerIfNeeded(rt, containerW, containerH, borderWidth, borderRadius, clipPushed, clipGeo)
+        Dim trackBrush As ID2D1SolidColorBrush = Nothing
+        Dim thumbBrush As ID2D1SolidColorBrush = Nothing
+        Dim ownsTrackBrush As Boolean = False
+        Dim ownsThumbBrush As Boolean = False
         Try
             Dim sbW As Integer = TrackRect.Width
             If trackColor.A > 0 Then
                 Dim trackRadius As Integer = Math.Min(scrollBarHeight \ 2, sbW \ 2)
                 Dim trackArea As New RectangleF(TrackRect.X, VisualTop, sbW, scrollBarHeight)
-                Dim trackBrush = If(brushCache Is Nothing, _trackBrush, brushCache.Get(rt, trackColor))
+                trackBrush = RentBrush(rt, trackColor, brushCache, ownsTrackBrush)
                 Using geo = RectangleRenderer.创建圆角矩形几何(trackArea, trackRadius)
                     rt.FillGeometry(geo, trackBrush)
                 End Using
             End If
 
             Dim useHoverColor As Boolean = IsDragging OrElse IsHover
-            Dim thumbBr As ID2D1SolidColorBrush
-            If brushCache Is Nothing Then
-                thumbBr = If(useHoverColor, _thumbHoverBrush, _thumbBrush)
-            Else
-                thumbBr = brushCache.Get(rt, If(useHoverColor, thumbHoverColor, thumbColor))
-            End If
+            thumbBrush = RentBrush(rt, If(useHoverColor, thumbHoverColor, thumbColor), brushCache, ownsThumbBrush)
             Dim thumbW As Integer = ThumbRect.Width
             Dim thumbRadius As Integer = Math.Min(scrollBarHeight \ 2, thumbW \ 2)
             Dim thumbArea As New RectangleF(ThumbRect.X, VisualTop, thumbW, scrollBarHeight)
             Using geo = RectangleRenderer.创建圆角矩形几何(thumbArea, thumbRadius)
-                rt.FillGeometry(geo, thumbBr)
+                rt.FillGeometry(geo, thumbBrush)
             End Using
         Finally
+            If ownsTrackBrush Then Try : trackBrush?.Dispose() : Catch : End Try
+            If ownsThumbBrush Then Try : thumbBrush?.Dispose() : Catch : End Try
             If clipPushed Then
                 rt.PopLayer()
             End If

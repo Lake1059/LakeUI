@@ -2,17 +2,17 @@
 ''' D2D 显存 / 缓存清理力度。级别越高，释放越彻底，下一帧需要重建的资源也越多。
 ''' </summary>
 Public Enum D2DCacheCleanupLevel
-    ''' <summary>只按当前预算修剪 LRU 缓存。适合周期性内存压力检查，视觉影响最小。</summary>
+    ''' <summary>只强制执行进程级 GPU/CPU 总预算。适合周期性内存压力检查，视觉影响最小。</summary>
     TrimToBudget = 0
-    ''' <summary>释放容易重建的临时缓存，例如 SSAA 离屏 RT、纯色画刷、背景裁剪上传。</summary>
+    ''' <summary>释放容易重建的临时缓存，例如 SSAA 离屏 RT、背景上传和画刷缓存。</summary>
     ReleaseVolatileCaches = 1
-    ''' <summary>释放所有缓存条目，包括 D2D 位图上传、TextFormat、Backdrop GPU 缓存等。</summary>
+    ''' <summary>释放所有缓存条目，但保留 D3D11/D2D device 与 D2D/DWrite factory。</summary>
     ReleaseAllCaches = 2
     ''' <summary>释放窗口级 RenderTarget / DeviceContext。下一帧会完整重建渲染目标。</summary>
     ReleaseRenderTargets = 3
     ''' <summary>释放窗口级资源并让进程级 D3D11 / D2D 1.1 device 失效重建。</summary>
     RecreateDevice = 4
-    ''' <summary>释放当前全部渲染核心资源，包括 compositor 注册表与全局工厂缓存。</summary>
+    ''' <summary>冷启动级重置：释放可追踪 GPU/CPU 缓存、RT、device、compositor 注册表与全局工厂缓存。</summary>
     ReleaseEverything = 5
 End Enum
 
@@ -369,6 +369,7 @@ Public Module D2DHelperV2
                                         Optional owner As Control = Nothing,
                                         Optional invalidateAfterCleanup As Boolean = True) As Integer
         Dim targetForm As Form = ResolveCleanupForm(owner)
+        If level = D2DCacheCleanupLevel.ReleaseEverything Then targetForm = Nothing
         Dim comps As New List(Of WindowCompositor)()
         Dim hasActivePaint As Boolean = False
 
@@ -403,9 +404,21 @@ Public Module D2DHelperV2
             If targetForm IsNot Nothing Then
                 BackgroundPenetrationV2.CleanupD2DResources(level, targetForm)
                 BackdropRenderer.CleanupAllD2DResources(level, targetForm)
+                MarkdownViewerCore.CleanupAllD2DResources(level, targetForm)
             Else
                 BackgroundPenetrationV2.CleanupD2DResources(level)
                 BackdropRenderer.CleanupAllD2DResources(level)
+                MarkdownViewerCore.CleanupAllD2DResources(level)
+            End If
+
+            If level = D2DCacheCleanupLevel.TrimToBudget Then
+                CpuCache.TrimToBudget()
+                GpuCache.TrimToBudget()
+            End If
+
+            If level = D2DCacheCleanupLevel.ReleaseEverything Then
+                CpuCache.ReleaseAll()
+                GpuCache.ReleaseAll()
             End If
 
             If level >= D2DCacheCleanupLevel.RecreateDevice Then
@@ -429,6 +442,15 @@ Public Module D2DHelperV2
         End If
 
         Return cleaned
+    End Function
+
+    ''' <summary>
+    ''' 冷启动级重置渲染核心：释放可追踪 CPU/GPU 缓存、窗口 RT、D3D11/D2D device 与 D2D/DWrite factory。
+    ''' 下一帧会按需重建。
+    ''' </summary>
+    Public Function ResetRenderCore(Optional owner As Control = Nothing,
+                                    Optional invalidateAfterCleanup As Boolean = True) As Integer
+        Return CleanupD2DResources(D2DCacheCleanupLevel.ReleaseEverything, owner, invalidateAfterCleanup)
     End Function
 
     ''' <summary>

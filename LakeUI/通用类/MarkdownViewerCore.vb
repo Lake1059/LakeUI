@@ -11,25 +11,12 @@ Imports Vortice.Direct2D1
 <DefaultEvent("LinkClicked")>
 Public Class MarkdownViewerCore
     Inherits UserControl
+    Implements IRenderCacheOwner
+
     Public Event LinkClicked As EventHandler(Of LinkClickedEventArgs)
 
-    ''' <summary>
-    ''' 每个控件可保留的 GDI 图片缓存条目上限。
-    ''' </summary>
-    ''' <remarks>
-    ''' <para>默认值：64。长文档或流式内容引用大量图片时按 LRU 丢弃最久未使用的图片，下一次显示再重新加载；视觉结果不变。</para>
-    ''' <para>该预算仅限制控件持有的 Image/Bitmap RAM 对象，同时会释放对应 D2D 上传缓存引用。</para>
-    ''' </remarks>
-    Public Shared Property MarkDownViewerImageCacheMaxEntries As Integer = 64
-
-    ''' <summary>
-    ''' 每个控件可保留的 GDI 图片缓存近似字节预算。
-    ''' </summary>
-    ''' <remarks>
-    ''' <para>默认值：64 MiB。估算按 Width x Height x 4 字节计算，避免大图集合长期占用托管/GDI 内存。</para>
-    ''' <para>设置为 0 表示不保留已加载图片缓存；图片仍会在需要时加载并参与当前布局。</para>
-    ''' </remarks>
-    Public Shared Property MarkDownViewerImageCacheBudgetBytes As Long = 64L * 1024L * 1024L
+    Private Shared ReadOnly _instancesLock As New Object()
+    Private Shared ReadOnly _instances As New List(Of WeakReference(Of MarkdownViewerCore))()
 
 #Region "Markdown 默认样式"
 
@@ -740,6 +727,56 @@ Public Class MarkdownViewerCore
     Private _embeddedContentMode As Boolean = False
     Private _embeddedHostDpi As Integer = 0
     Private _embeddedInvalidationTarget As Control = Nothing
+
+    Friend Shared Sub CleanupAllD2DResources(level As D2DCacheCleanupLevel, Optional owner As Control = Nothing)
+        Dim targetForm As Form = ResolveCleanupForm(owner)
+        Dim viewers As New List(Of MarkdownViewerCore)()
+
+        SyncLock _instancesLock
+            For i As Integer = _instances.Count - 1 To 0 Step -1
+                Dim viewer As MarkdownViewerCore = Nothing
+                If Not _instances(i).TryGetTarget(viewer) OrElse viewer Is Nothing OrElse viewer.IsDisposed Then
+                    _instances.RemoveAt(i)
+                    Continue For
+                End If
+                If targetForm IsNot Nothing Then
+                    Dim viewerForm As Form = Nothing
+                    Try : viewerForm = viewer.FindForm() : Catch : viewerForm = Nothing : End Try
+                    If viewerForm IsNot targetForm Then Continue For
+                End If
+                viewers.Add(viewer)
+            Next
+        End SyncLock
+
+        For Each viewer In viewers
+            viewer.CleanupRenderCaches(level)
+        Next
+    End Sub
+
+    Private Shared Function ResolveCleanupForm(owner As Control) As Form
+        If owner Is Nothing OrElse owner.IsDisposed Then Return Nothing
+        If TypeOf owner Is Form Then Return DirectCast(owner, Form)
+        Try
+            Return owner.FindForm()
+        Catch
+            Return Nothing
+        End Try
+    End Function
+
+    Private Shared Sub RegisterInstance(viewer As MarkdownViewerCore)
+        If viewer Is Nothing Then Return
+        SyncLock _instancesLock
+            For i As Integer = _instances.Count - 1 To 0 Step -1
+                Dim existing As MarkdownViewerCore = Nothing
+                If Not _instances(i).TryGetTarget(existing) OrElse existing Is Nothing OrElse existing.IsDisposed Then
+                    _instances.RemoveAt(i)
+                ElseIf existing Is viewer Then
+                    Return
+                End If
+            Next
+            _instances.Add(New WeakReference(Of MarkdownViewerCore)(viewer))
+        End SyncLock
+    End Sub
 
     ''' <summary>
     ''' 作为其他控件内部内容渲染器使用时开启：不绘制自身背景/边框/滚动条，高度由宿主控制。
@@ -1619,6 +1656,8 @@ Public Class MarkdownViewerCore
 #Region "构造"
 
     Public Sub New()
+        RegisterInstance(Me)
+        CpuCache.Register(Me)
         SetStyle(ControlStyles.OptimizedDoubleBuffer Or
                  ControlStyles.AllPaintingInWmPaint Or
                  ControlStyles.UserPaint Or
@@ -3334,8 +3373,7 @@ Public Class MarkdownViewerCore
     End Sub
 
     Private Function NextImageCacheClock() As Long
-        _imageCacheClock += 1
-        Return _imageCacheClock
+        Return CpuCache.NextTick()
     End Function
 
     Private Shared Function EstimateImageBytes(img As Image) As Long
@@ -3354,6 +3392,7 @@ Public Class MarkdownViewerCore
         Else
             _imageLastUsed.Remove(url)
         End If
+        CpuCache.TrimToBudget(Me)
     End Sub
 
     Private Function GetActiveImageUrls() As HashSet(Of String)
@@ -3369,46 +3408,40 @@ Public Class MarkdownViewerCore
     End Function
 
     Private Sub TrimImageCache(protectedUrls As HashSet(Of String))
-        Dim maxEntries As Integer = Math.Max(0, MarkDownViewerImageCacheMaxEntries)
-        Dim budgetBytes As Long = Math.Max(0, MarkDownViewerImageCacheBudgetBytes)
-        If maxEntries = Integer.MaxValue AndAlso budgetBytes = Long.MaxValue Then Return
+        While CacheBytes > Math.Max(0L, GlobalOptions.CpuCacheBudgetBytes)
+            If Not TrimOldestImage(protectedUrls) Then Exit While
+        End While
+    End Sub
 
-        Dim liveEntries As Integer = 0
-        Dim totalBytes As Long = 0
+    Private Function TrimOldestImage(protectedUrls As HashSet(Of String)) As Boolean
+        Dim removeUrl As String = Nothing
+        Dim oldest As Long = Long.MaxValue
         For Each kvp In _imageCache
-            If kvp.Value IsNot Nothing Then
-                liveEntries += 1
-                totalBytes += EstimateImageBytes(kvp.Value)
+            If kvp.Value Is Nothing Then Continue For
+            If protectedUrls IsNot Nothing AndAlso protectedUrls.Contains(kvp.Key) Then Continue For
+            Dim lastUsed As Long = 0
+            If Not _imageLastUsed.TryGetValue(kvp.Key, lastUsed) Then lastUsed = 0
+            If lastUsed < oldest Then
+                oldest = lastUsed
+                removeUrl = kvp.Key
             End If
         Next
+        If String.IsNullOrEmpty(removeUrl) Then Return False
+        RemoveImageCacheEntry(removeUrl)
+        Return True
+    End Function
 
-        While liveEntries > maxEntries OrElse totalBytes > budgetBytes
-            Dim removeUrl As String = Nothing
-            Dim oldest As Long = Long.MaxValue
-            For Each kvp In _imageCache
-                If kvp.Value Is Nothing Then Continue For
-                If protectedUrls IsNot Nothing AndAlso protectedUrls.Contains(kvp.Key) Then Continue For
-                Dim lastUsed As Long = 0
-                If Not _imageLastUsed.TryGetValue(kvp.Key, lastUsed) Then lastUsed = 0
-                If lastUsed < oldest Then
-                    oldest = lastUsed
-                    removeUrl = kvp.Key
-                End If
-            Next
-            If String.IsNullOrEmpty(removeUrl) Then Exit While
-
-            Dim img = _imageCache(removeUrl)
-            totalBytes -= EstimateImageBytes(img)
-            liveEntries -= 1
-            img?.Dispose()
-            _imageCache.Remove(removeUrl)
-            _imageLastUsed.Remove(removeUrl)
-            Dim d2dCache As D2DGlobals.D2DBitmapCache = Nothing
-            If _d2dImageCaches.TryGetValue(removeUrl, d2dCache) Then
-                d2dCache.Dispose()
-                _d2dImageCaches.Remove(removeUrl)
-            End If
-        End While
+    Private Sub RemoveImageCacheEntry(url As String)
+        If String.IsNullOrEmpty(url) Then Return
+        Dim img As Image = Nothing
+        If _imageCache.TryGetValue(url, img) Then img?.Dispose()
+        _imageCache.Remove(url)
+        _imageLastUsed.Remove(url)
+        Dim d2dCache As D2DGlobals.D2DBitmapCache = Nothing
+        If _d2dImageCaches.TryGetValue(url, d2dCache) Then
+            d2dCache.Dispose()
+            _d2dImageCaches.Remove(url)
+        End If
     End Sub
 
     Private Sub DisposeImageCache()
@@ -3432,6 +3465,22 @@ Public Class MarkdownViewerCore
 #End Region
 
 #Region "D2D 资源管理"
+
+    Private Sub CleanupRenderCaches(level As D2DCacheCleanupLevel)
+        Select Case level
+            Case D2DCacheCleanupLevel.TrimToBudget
+                CpuCache.TrimToBudget()
+                For Each cache In _d2dImageCaches.Values
+                    Try : cache.TrimToCurrentBudget() : Catch : End Try
+                Next
+
+            Case D2DCacheCleanupLevel.ReleaseVolatileCaches
+                DisposeD2DImageCache()
+
+            Case Else
+                DisposeImageCache()
+        End Select
+    End Sub
 
     Private Sub DisposeD2DResources()
         DisposeD2DImageCache()
@@ -3458,6 +3507,37 @@ Public Class MarkdownViewerCore
         For Each cache In _d2dImageCaches.Values
             Try : cache.TrimToCurrentBudget() : Catch : End Try
         Next
+    End Sub
+
+    Public ReadOnly Property CacheBytes As Long Implements IRenderCacheOwner.CacheBytes
+        Get
+            Dim total As Long = 0
+            For Each img In _imageCache.Values
+                total += EstimateImageBytes(img)
+            Next
+            Return total
+        End Get
+    End Property
+
+    Public ReadOnly Property OldestUseTick As Long Implements IRenderCacheOwner.OldestUseTick
+        Get
+            Dim oldest As Long = Long.MaxValue
+            For Each kvp In _imageCache
+                If kvp.Value Is Nothing Then Continue For
+                Dim tick As Long = 0
+                If Not _imageLastUsed.TryGetValue(kvp.Key, tick) Then tick = 0
+                If tick < oldest Then oldest = tick
+            Next
+            Return oldest
+        End Get
+    End Property
+
+    Public Function TrimOldest() As Boolean Implements IRenderCacheOwner.TrimOldest
+        Return TrimOldestImage(Nothing)
+    End Function
+
+    Public Sub ReleaseAll() Implements IRenderCacheOwner.ReleaseAll
+        DisposeImageCache()
     End Sub
 
 #End Region

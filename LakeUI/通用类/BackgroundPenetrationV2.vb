@@ -27,12 +27,10 @@ Imports Vortice.Direct2D1
 '''   End If
 '''
 ''' === 注意 ===
-''' • source 自身若也是带 BackgroundSource 的 V2 透明控件，本类仍采样 source 本身，保留其中间
-'''   背景、遮罩、边框、背景图片与子控件等视觉层。采样期间若遇到同窗口 V2 重入，会由
-'''   D2DHelperV2 使用临时离屏 compositor 绘制到当前 GDI Bitmap，避免嵌套共享 BindDC。
-''' • D2D 共享上传缓存沿用 <see cref="GlobalOptions.BackgroundPenetrationCropCacheMaxEntriesPerSource"/> 的每源数量上限
-'''   和 <see cref="GlobalOptions.BackgroundPenetrationCropCacheBudgetBytes"/> 的全局字节预算共同控制；
-'''   source 离开可见控件链后仍会主动释放整份背景采样缓存。
+''' • source 自身若是纯透明转发面板，会先解析到最终真实 source，再按该 canonical source 共享 CPU backing
+'''   与 D2D 整源上传；Demo 中多个透明页面透出的 Form1 因此命中同一份缓存。
+''' • D2D 共享上传缓存接入 <see cref="GlobalOptions.GpuCacheBudgetBytes"/>；CPU backing bitmap 接入
+'''   <see cref="GlobalOptions.CpuCacheBudgetBytes"/>。source 离开可见控件链后仍会主动释放整份背景采样缓存。
 ''' • <see cref="Invalidate"/> 用于换主题等需要立即重采的极端场景，常规情况下不需要手动调用。
 '''
 ''' === 调用坑点 ===
@@ -63,6 +61,7 @@ Public Module BackgroundPenetrationV2
             Public ChildRef As WeakReference
             Public SourceRect As Rectangle
             Public DestRect As Rectangle
+            Public TopologyRefs As List(Of Control)
         End Class
 
         Public Bmp As Bitmap
@@ -100,9 +99,88 @@ Public Module BackgroundPenetrationV2
 
     Private ReadOnly _cache As New Dictionary(Of Control, Entry)
     Private ReadOnly _ancestorSubscriptionRefs As New Dictionary(Of Control, Integer)
+    Private ReadOnly _topologySubscriptionRefs As New Dictionary(Of Control, Integer)
     Private _sourceBitmapBytes As Long
     Private _sharedUploadBytes As Long
-    Private _clock As Long
+    Private ReadOnly _cpuOwner As New CpuBudgetOwner()
+    Private ReadOnly _gpuOwner As New GpuBudgetOwner()
+
+    Private NotInheritable Class CpuBudgetOwner
+        Implements IRenderCacheOwner
+
+        Public Sub New()
+            CpuCache.Register(Me)
+        End Sub
+
+        Public ReadOnly Property CacheBytes As Long Implements IRenderCacheOwner.CacheBytes
+            Get
+                SyncLock _cache
+                    Return _sourceBitmapBytes
+                End SyncLock
+            End Get
+        End Property
+
+        Public ReadOnly Property OldestUseTick As Long Implements IRenderCacheOwner.OldestUseTick
+            Get
+                SyncLock _cache
+                    Return GetOldestSourceBitmapTick()
+                End SyncLock
+            End Get
+        End Property
+
+        Public Function TrimOldest() As Boolean Implements IRenderCacheOwner.TrimOldest
+            SyncLock _cache
+                Return TrimOldestSourceBitmap(Nothing)
+            End SyncLock
+        End Function
+
+        Public Sub ReleaseAll() Implements IRenderCacheOwner.ReleaseAll
+            SyncLock _cache
+                For Each entry In _cache.Values
+                    ReleaseSourceBitmap(entry)
+                    entry.FullDirty = True
+                Next
+            End SyncLock
+        End Sub
+    End Class
+
+    Private NotInheritable Class GpuBudgetOwner
+        Implements IRenderCacheOwner
+
+        Public Sub New()
+            GpuCache.Register(Me)
+        End Sub
+
+        Public ReadOnly Property CacheBytes As Long Implements IRenderCacheOwner.CacheBytes
+            Get
+                SyncLock _cache
+                    Return _sharedUploadBytes
+                End SyncLock
+            End Get
+        End Property
+
+        Public ReadOnly Property OldestUseTick As Long Implements IRenderCacheOwner.OldestUseTick
+            Get
+                SyncLock _cache
+                    Return GetOldestSharedUploadTick()
+                End SyncLock
+            End Get
+        End Property
+
+        Public Function TrimOldest() As Boolean Implements IRenderCacheOwner.TrimOldest
+            SyncLock _cache
+                Return TrimOldestSharedUpload(Nothing)
+            End SyncLock
+        End Function
+
+        Public Sub ReleaseAll() Implements IRenderCacheOwner.ReleaseAll
+            SyncLock _cache
+                For Each entry In _cache.Values
+                    InvalidateSharedUploads(entry, Nothing)
+                Next
+            End SyncLock
+        End Sub
+    End Class
 
 #Region "公开 API"
 
@@ -133,7 +211,8 @@ Public Module BackgroundPenetrationV2
         Dim sourceForSampling As Control = source
         Dim offset As Point = ComputeOffset(child, sourceForSampling)
         Dim sourceMappings As New List(Of KeyValuePair(Of Control, Rectangle))()
-        If Not ResolveTransparentSourceChain(childBounds, sourceForSampling, offset, sourceMappings) Then Return
+        Dim topologyNodes As New List(Of Control)()
+        If Not ResolveTransparentSourceChain(childBounds, sourceForSampling, offset, sourceMappings, topologyNodes) Then Return
         sw = sourceForSampling.Width
         sh = sourceForSampling.Height
         Dim srcRect As New Rectangle(offset.X + destRect.X, offset.Y + destRect.Y, destRect.Width, destRect.Height)
@@ -146,7 +225,7 @@ Public Module BackgroundPenetrationV2
             acquired = AcquireD2DBitmap(sourceForSampling, rt, srcRect, isSolid, solidColor)
         End If
         Try
-            RegisterConsumerMappings(child, sourceMappings, childBounds)
+            RegisterConsumerMappings(child, sourceMappings, childBounds, topologyNodes)
             If isSolid Then
                 Dim brushCache = scope.Compositor?.BrushCache
                 If brushCache IsNot Nothing Then
@@ -231,11 +310,17 @@ Public Module BackgroundPenetrationV2
     ''' <summary>
     ''' 为控件切换背景源时移除旧 source 订阅并返回新值，避免已切换控件继续响应旧 source 的失效传播。
     ''' </summary>
-    Public Function SetConsumerSource(child As Control, oldSource As Control, newSource As Control) As Control
-        If child IsNot Nothing AndAlso oldSource IsNot Nothing AndAlso oldSource IsNot newSource Then
-            UnregisterConsumer(child, oldSource)
+    Public Function SetBackgroundSource(owner As Control, oldSource As Control, newSource As Control) As Control
+        If owner IsNot Nothing Then
+            DetachConsumerLifecycle(owner)
+            If oldSource IsNot Nothing AndAlso oldSource IsNot newSource Then UnregisterSingleConsumer(owner, Nothing)
+            If newSource IsNot Nothing Then AttachConsumerLifecycle(owner)
         End If
         Return newSource
+    End Function
+
+    Public Function SetConsumerSource(child As Control, oldSource As Control, newSource As Control) As Control
+        Return SetBackgroundSource(child, oldSource, newSource)
     End Function
 
     ''' <summary>
@@ -243,13 +328,67 @@ Public Module BackgroundPenetrationV2
     ''' 避免已下线页面继续留在 source 的失效传播列表中。
     ''' </summary>
     Public Sub UnregisterConsumer(child As Control, Optional source As Control = Nothing)
+        UnregisterBackgroundConsumer(child)
+    End Sub
+
+    Public Sub UnregisterBackgroundConsumer(owner As Control)
+        If owner Is Nothing Then Return
+        UnregisterSingleConsumer(owner, Nothing)
+        For Each child As Control In owner.Controls
+            UnregisterBackgroundConsumer(child)
+        Next
+    End Sub
+
+    Private Sub UnregisterSingleConsumer(child As Control, Optional source As Control = Nothing)
         If child Is Nothing Then Return
 
         SyncLock _cache
             For Each kv In _cache.ToArray()
+                If source IsNot Nothing AndAlso kv.Key IsNot source Then Continue For
                 RemoveConsumerNoLock(kv.Key, kv.Value, child)
             Next
         End SyncLock
+    End Sub
+
+    Private Sub AttachConsumerLifecycle(owner As Control)
+        If owner Is Nothing Then Return
+        Try : AddHandler owner.HandleDestroyed, AddressOf OnConsumerHandleDestroyed : Catch : End Try
+        Try : AddHandler owner.Disposed, AddressOf OnConsumerDisposed : Catch : End Try
+        Try : AddHandler owner.VisibleChanged, AddressOf OnConsumerVisibleChanged : Catch : End Try
+        Try : AddHandler owner.ParentChanged, AddressOf OnConsumerParentChanged : Catch : End Try
+    End Sub
+
+    Private Sub DetachConsumerLifecycle(owner As Control)
+        If owner Is Nothing Then Return
+        Try : RemoveHandler owner.HandleDestroyed, AddressOf OnConsumerHandleDestroyed : Catch : End Try
+        Try : RemoveHandler owner.Disposed, AddressOf OnConsumerDisposed : Catch : End Try
+        Try : RemoveHandler owner.VisibleChanged, AddressOf OnConsumerVisibleChanged : Catch : End Try
+        Try : RemoveHandler owner.ParentChanged, AddressOf OnConsumerParentChanged : Catch : End Try
+    End Sub
+
+    Private Sub OnConsumerHandleDestroyed(sender As Object, e As EventArgs)
+        Dim owner = TryCast(sender, Control)
+        If owner Is Nothing Then Return
+        UnregisterBackgroundConsumer(owner)
+    End Sub
+
+    Private Sub OnConsumerDisposed(sender As Object, e As EventArgs)
+        Dim owner = TryCast(sender, Control)
+        If owner Is Nothing Then Return
+        DetachConsumerLifecycle(owner)
+        UnregisterBackgroundConsumer(owner)
+    End Sub
+
+    Private Sub OnConsumerVisibleChanged(sender As Object, e As EventArgs)
+        Dim owner = TryCast(sender, Control)
+        If owner Is Nothing OrElse owner.Visible Then Return
+        UnregisterBackgroundConsumer(owner)
+    End Sub
+
+    Private Sub OnConsumerParentChanged(sender As Object, e As EventArgs)
+        Dim owner = TryCast(sender, Control)
+        If owner Is Nothing Then Return
+        UnregisterBackgroundConsumer(owner)
     End Sub
 
     Friend Sub CleanupD2DResources(level As D2DCacheCleanupLevel, Optional owner As Control = Nothing)
@@ -257,8 +396,8 @@ Public Module BackgroundPenetrationV2
         SyncLock _cache
             Select Case level
                 Case D2DCacheCleanupLevel.TrimToBudget
-                    TrimSourceBitmaps(Nothing)
-                    TrimSharedUploadsGlobal(Nothing)
+                    CpuCache.TrimToBudget()
+                    GpuCache.TrimToBudget()
 
                 Case D2DCacheCleanupLevel.ReleaseVolatileCaches
                     For Each kv In _cache.ToArray()
@@ -311,21 +450,24 @@ Public Module BackgroundPenetrationV2
         Dim mappings As New List(Of KeyValuePair(Of Control, Rectangle)) From {
             New KeyValuePair(Of Control, Rectangle)(source, sourceRect)
         }
-        RegisterConsumers(child, mappings, destRect)
+        RegisterConsumers(child, mappings, destRect, Nothing)
     End Sub
 
     Private Sub RegisterConsumerMappings(child As Control, mappings As List(Of KeyValuePair(Of Control, Rectangle)),
-                                         destRect As Rectangle)
-        RegisterConsumers(child, mappings, destRect)
+                                         destRect As Rectangle,
+                                         topologyNodes As List(Of Control))
+        RegisterConsumers(child, mappings, destRect, topologyNodes)
     End Sub
 
-    Private Sub RegisterConsumers(child As Control, mappings As List(Of KeyValuePair(Of Control, Rectangle)), destRect As Rectangle)
+    Private Sub RegisterConsumers(child As Control, mappings As List(Of KeyValuePair(Of Control, Rectangle)),
+                                  destRect As Rectangle,
+                                  topologyNodes As List(Of Control))
         If child Is Nothing OrElse mappings Is Nothing OrElse mappings.Count = 0 Then Return
         If Not IsRenderableControl(child) Then Return
 
         SyncLock _cache
-            ' 一个 child 同一时刻只能跟随一条 BackgroundSource 链。透明 ModernPanel 可能转发到外层 source，
-            ' 因此同一条链上允许同时注册原始 source 与转发后的真实 source；其它旧 source 一律移除。
+            ' 一个 child 同一时刻只注册到 canonical source。透明转发面板只作为 topology 节点，
+            ' 用于坐标/层级变化时触发重算，不参与像素缓存，也不监听其 Invalidated。
             For Each kv In _cache.ToArray()
                 If MappingContainsSource(mappings, kv.Key) Then Continue For
                 RemoveConsumerNoLock(kv.Key, kv.Value, child)
@@ -336,7 +478,7 @@ Public Module BackgroundPenetrationV2
                 If source Is Nothing OrElse source.IsDisposed Then Continue For
                 Dim entry = EnsureEntryNoLock(source)
                 If entry Is Nothing Then Continue For
-                AddOrUpdateConsumerNoLock(entry, child, mapping.Value, destRect)
+                AddOrUpdateConsumerNoLock(entry, child, mapping.Value, destRect, topologyNodes)
             Next
         End SyncLock
     End Sub
@@ -349,26 +491,35 @@ Public Module BackgroundPenetrationV2
         Return False
     End Function
 
-    Private Sub AddOrUpdateConsumerNoLock(entry As Entry, child As Control, sourceRect As Rectangle, destRect As Rectangle)
+    Private Sub AddOrUpdateConsumerNoLock(entry As Entry, child As Control, sourceRect As Rectangle,
+                                          destRect As Rectangle,
+                                          topologyNodes As List(Of Control))
         If entry Is Nothing OrElse child Is Nothing Then Return
 
         For i As Integer = entry.Consumers.Count - 1 To 0 Step -1
             Dim consumer = entry.Consumers(i)
             Dim existingChild = TryCast(consumer.ChildRef.Target, Control)
             If existingChild Is Nothing OrElse existingChild.IsDisposed Then
+                ReleaseConsumerTopology(consumer)
                 entry.Consumers.RemoveAt(i)
             ElseIf existingChild Is child Then
+                ReleaseConsumerTopology(consumer)
                 consumer.SourceRect = sourceRect
                 consumer.DestRect = destRect
+                consumer.TopologyRefs = CloneTopologyNodes(topologyNodes)
+                AcquireConsumerTopology(consumer)
                 Return
             End If
         Next
 
-        entry.Consumers.Add(New Entry.ConsumerEntry With {
+        Dim newConsumer As New Entry.ConsumerEntry With {
             .ChildRef = New WeakReference(child),
             .SourceRect = sourceRect,
-            .DestRect = destRect
-        })
+            .DestRect = destRect,
+            .TopologyRefs = CloneTopologyNodes(topologyNodes)
+        }
+        AcquireConsumerTopology(newConsumer)
+        entry.Consumers.Add(newConsumer)
     End Sub
 
     Private Sub RemoveConsumerNoLock(source As Control, entry As Entry, child As Control)
@@ -378,6 +529,7 @@ Public Module BackgroundPenetrationV2
             Dim consumer = entry.Consumers(i)
             Dim existingChild = TryCast(consumer.ChildRef.Target, Control)
             If existingChild Is Nothing OrElse existingChild.IsDisposed OrElse existingChild Is child Then
+                ReleaseConsumerTopology(consumer)
                 entry.Consumers.RemoveAt(i)
             End If
         Next
@@ -401,7 +553,7 @@ Public Module BackgroundPenetrationV2
         Dim reuseExistingBitmapWhilePainting As Boolean
         SyncLock _cache
             entry = EnsureEntryNoLock(source)
-            entry.LastUsed = NextClock()
+            entry.LastUsed = CpuCache.NextTick()
             ' Pure-color entries intentionally drop Bmp to save RAM; the cached SolidArgb is still valid
             ' while the source size matches and no invalidation has marked it dirty.
             Dim sizeOk As Boolean = ((entry.Bmp IsNot Nothing OrElse entry.IsSolidColor) AndAlso entry.Width = sw AndAlso entry.Height = sh)
@@ -434,7 +586,7 @@ Public Module BackgroundPenetrationV2
             Finally
                 SyncLock _cache
                     entry.Painting = False
-                    entry.LastUsed = NextClock()
+                    entry.LastUsed = CpuCache.NextTick()
                     TrimSourceBitmaps(entry)
                 End SyncLock
             End Try
@@ -495,7 +647,8 @@ Public Module BackgroundPenetrationV2
     Private Function ResolveTransparentSourceChain(childBounds As Rectangle,
                                                    ByRef sourceForSampling As Control,
                                                    ByRef offset As Point,
-                                                   mappings As List(Of KeyValuePair(Of Control, Rectangle))) As Boolean
+                                                   mappings As List(Of KeyValuePair(Of Control, Rectangle)),
+                                                   topologyNodes As List(Of Control)) As Boolean
         If sourceForSampling Is Nothing OrElse mappings Is Nothing Then Return False
 
         Dim visited As New HashSet(Of Control)()
@@ -509,10 +662,12 @@ Public Module BackgroundPenetrationV2
             If visited.Contains(sourceForSampling) Then Return False
             visited.Add(sourceForSampling)
 
-            mappings.Add(New KeyValuePair(Of Control, Rectangle)(sourceForSampling, New Rectangle(offset, childBounds.Size)))
-
             Dim forwardedSource As Control = Nothing
-            If Not TryForwardTransparentSource(sourceForSampling, forwardedSource) Then Return True
+            If Not TryForwardTransparentSource(sourceForSampling, forwardedSource) Then
+                mappings.Add(New KeyValuePair(Of Control, Rectangle)(sourceForSampling, New Rectangle(offset, childBounds.Size)))
+                Return True
+            End If
+            If topologyNodes IsNot Nothing AndAlso Not topologyNodes.Contains(sourceForSampling) Then topologyNodes.Add(sourceForSampling)
             Dim sourceOffset = ComputeOffset(sourceForSampling, forwardedSource)
             offset = New Point(offset.X + sourceOffset.X, offset.Y + sourceOffset.Y)
             sourceForSampling = forwardedSource
@@ -654,21 +809,18 @@ Public Module BackgroundPenetrationV2
         Dim uploadWidth As Integer = entry.Bmp.Width
         Dim uploadHeight As Integer = entry.Bmp.Height
         Dim uploadBytes As Long = EstimateBitmapBytes(uploadWidth, uploadHeight)
-        Dim maxEntries As Integer = Math.Max(0, GlobalOptions.BackgroundPenetrationCropCacheMaxEntriesPerSource)
-        Dim cacheBudget As Long = Math.Max(0L, GlobalOptions.BackgroundPenetrationCropCacheBudgetBytes)
-        Dim cacheEnabled As Boolean = maxEntries > 0 AndAlso cacheBudget > 0
-        Dim canCache As Boolean = cacheEnabled
+        Dim cacheEnabled As Boolean = GlobalOptions.GpuCacheBudgetBytes > 0L AndAlso uploadBytes <= Math.Max(0L, GlobalOptions.GpuCacheBudgetBytes)
 
         If Not cacheEnabled AndAlso entry.SharedUploads.Count > 0 Then
             InvalidateSharedUploads(entry, Nothing)
         End If
 
-        If canCache Then
+        If cacheEnabled Then
             For Each upload In entry.SharedUploads
                 Dim ownerAlive As Boolean = upload.D2DOwnerRT IsNot Nothing AndAlso ReferenceEquals(upload.D2DOwnerRT.Target, rt)
                 If ownerAlive AndAlso upload.Width = uploadWidth AndAlso upload.Height = uploadHeight AndAlso upload.Version = entry.Version Then
-                    upload.LastUsed = NextClock()
-                    TrimSharedUploads(entry, upload)
+                    upload.LastUsed = GpuCache.NextTick()
+                    GpuCache.TrimToBudget(_gpuOwner)
                     Return New BitmapAcquireResult With {.Bitmap = upload.D2DBmp, .SourceRect = sourceRect}
                 End If
             Next
@@ -681,15 +833,15 @@ Public Module BackgroundPenetrationV2
             .D2DBmp = D2DGlobals.CreateBitmapFromGdi(rt, entry.Bmp),
             .D2DOwnerRT = New WeakReference(rt),
             .Version = entry.Version,
-            .LastUsed = NextClock()
+            .LastUsed = GpuCache.NextTick()
         }
         If newUpload.D2DBmp Is Nothing Then Return Nothing
-        If Not canCache Then
+        If Not cacheEnabled Then
             Return New BitmapAcquireResult With {.Bitmap = newUpload.D2DBmp, .SourceRect = sourceRect, .DisposeAfterDraw = True}
         End If
         _sharedUploadBytes += newUpload.Bytes
         entry.SharedUploads.Add(newUpload)
-        TrimSharedUploads(entry, newUpload)
+        GpuCache.TrimToBudget(_gpuOwner)
         Return New BitmapAcquireResult With {.Bitmap = newUpload.D2DBmp, .SourceRect = sourceRect}
     End Function
 
@@ -732,51 +884,39 @@ Public Module BackgroundPenetrationV2
         Return acquired.Bitmap IsNot Nothing
     End Function
 
-    Private Sub TrimSharedUploads(entry As Entry, Optional protectedUpload As Entry.SharedUploadEntry = Nothing)
-        Dim maxUploadsPerSource As Integer = Math.Max(0, GlobalOptions.BackgroundPenetrationCropCacheMaxEntriesPerSource)
-        While entry.SharedUploads.Count > maxUploadsPerSource
-            Dim removeIndex As Integer = -1
-            Dim oldestUsed As Long = Long.MaxValue
+    Private Function GetOldestSharedUploadTick() As Long
+        Dim oldest As Long = Long.MaxValue
+        For Each entry In _cache.Values
+            If entry Is Nothing Then Continue For
+            For Each upload In entry.SharedUploads
+                If upload IsNot Nothing AndAlso upload.LastUsed < oldest Then oldest = upload.LastUsed
+            Next
+        Next
+        Return oldest
+    End Function
+
+    Private Function TrimOldestSharedUpload(protectedUpload As Entry.SharedUploadEntry) As Boolean
+        Dim oldestEntry As Entry = Nothing
+        Dim oldestIndex As Integer = -1
+        Dim oldestUsed As Long = Long.MaxValue
+
+        For Each entry In _cache.Values
+            If entry Is Nothing OrElse entry.SharedUploads.Count = 0 Then Continue For
             For i As Integer = 0 To entry.SharedUploads.Count - 1
                 Dim candidate = entry.SharedUploads(i)
                 If protectedUpload IsNot Nothing AndAlso ReferenceEquals(candidate, protectedUpload) Then Continue For
                 If candidate.LastUsed < oldestUsed Then
+                    oldestEntry = entry
+                    oldestIndex = i
                     oldestUsed = candidate.LastUsed
-                    removeIndex = i
                 End If
             Next
-            If removeIndex < 0 Then Exit While
-            ReleaseSharedUpload(entry, removeIndex)
-        End While
-        TrimSharedUploadsGlobal(protectedUpload)
-    End Sub
+        Next
 
-    Private Sub TrimSharedUploadsGlobal(Optional protectedUpload As Entry.SharedUploadEntry = Nothing)
-        Dim budget As Long = Math.Max(0L, GlobalOptions.BackgroundPenetrationCropCacheBudgetBytes)
-        While _sharedUploadBytes > budget
-            Dim oldestEntry As Entry = Nothing
-            Dim oldestIndex As Integer = -1
-            Dim oldestUsed As Long = Long.MaxValue
-
-            For Each kv In _cache
-                Dim candidateEntry = kv.Value
-                If candidateEntry Is Nothing OrElse candidateEntry.SharedUploads.Count = 0 Then Continue For
-
-                For i As Integer = 0 To candidateEntry.SharedUploads.Count - 1
-                    Dim candidate = candidateEntry.SharedUploads(i)
-                    If protectedUpload IsNot Nothing AndAlso ReferenceEquals(candidate, protectedUpload) Then Continue For
-                    If candidate.LastUsed < oldestUsed Then
-                        oldestEntry = candidateEntry
-                        oldestIndex = i
-                        oldestUsed = candidate.LastUsed
-                    End If
-                Next
-            Next
-
-            If oldestEntry Is Nothing OrElse oldestIndex < 0 Then Exit While
-            ReleaseSharedUpload(oldestEntry, oldestIndex)
-        End While
-    End Sub
+        If oldestEntry Is Nothing OrElse oldestIndex < 0 Then Return False
+        ReleaseSharedUpload(oldestEntry, oldestIndex)
+        Return True
+    End Function
 
     Private Sub ReleaseSharedUpload(entry As Entry, index As Integer)
         If entry Is Nothing OrElse index < 0 OrElse index >= entry.SharedUploads.Count Then Return
@@ -786,11 +926,6 @@ Public Module BackgroundPenetrationV2
         If _sharedUploadBytes < 0 Then _sharedUploadBytes = 0
         entry.SharedUploads.RemoveAt(index)
     End Sub
-
-    Private Function NextClock() As Long
-        _clock += 1
-        Return _clock
-    End Function
 
     Private Function EstimateBitmapBytes(w As Integer, h As Integer) As Long
         Return CLng(Math.Max(1, w)) * CLng(Math.Max(1, h)) * 4L
@@ -818,6 +953,7 @@ Public Module BackgroundPenetrationV2
     Private Sub RemoveSourceEntryNoLock(source As Control, entry As Entry)
         If source Is Nothing OrElse entry Is Nothing Then Return
         ClearAncestorSubscriptions(entry)
+        ClearConsumerTopologies(entry)
         Try : RemoveHandler source.Disposed, AddressOf OnSourceDisposed : Catch : End Try
         Try : RemoveHandler source.HandleDestroyed, AddressOf OnSourceHandleDestroyed : Catch : End Try
         Try : RemoveHandler source.Invalidated, AddressOf OnSourceInvalidated : Catch : End Try
@@ -827,7 +963,6 @@ Public Module BackgroundPenetrationV2
         Try : RemoveHandler source.VisibleChanged, AddressOf OnSourceParentOrVisibleChanged : Catch : End Try
 
         ReleaseEntryCache(entry)
-        entry.Consumers.Clear()
         _cache.Remove(source)
     End Sub
 
@@ -841,29 +976,34 @@ Public Module BackgroundPenetrationV2
         End SyncLock
     End Sub
 
-    Private Function NormalizeSourceBitmapBudgetBytes() As Long
-        Dim budget As Long = GlobalOptions.BackgroundPenetrationSourceBitmapBudgetBytes
-        If budget > 0L AndAlso budget <= 1024L Then Return budget * 1024L * 1024L
-        Return Math.Max(0L, budget)
-    End Function
-
     Private Sub TrimSourceBitmaps(protectedEntry As Entry)
-        Dim budget As Long = NormalizeSourceBitmapBudgetBytes()
-        While _sourceBitmapBytes > budget
-            Dim oldest As Entry = Nothing
-            For Each kv In _cache
-                Dim candidate = kv.Value
-                If candidate Is Nothing OrElse candidate Is protectedEntry Then Continue For
-                If candidate.Bmp Is Nothing OrElse candidate.Painting Then Continue For
-                If oldest Is Nothing OrElse candidate.LastUsed < oldest.LastUsed Then oldest = candidate
-            Next
-            If oldest Is Nothing Then Exit While
-            ' Shared uploads depend on the old bitmap pixels; drop them together and resample on next paint.
-            InvalidateSharedUploads(oldest, Nothing)
-            ReleaseSourceBitmap(oldest)
-            oldest.FullDirty = True
+        While _sourceBitmapBytes > Math.Max(0L, GlobalOptions.CpuCacheBudgetBytes)
+            If Not TrimOldestSourceBitmap(protectedEntry) Then Exit While
         End While
     End Sub
+
+    Private Function GetOldestSourceBitmapTick() As Long
+        Dim oldest As Long = Long.MaxValue
+        For Each entry In _cache.Values
+            If entry Is Nothing OrElse entry.Bmp Is Nothing OrElse entry.Painting Then Continue For
+            If entry.LastUsed < oldest Then oldest = entry.LastUsed
+        Next
+        Return oldest
+    End Function
+
+    Private Function TrimOldestSourceBitmap(protectedEntry As Entry) As Boolean
+        Dim oldest As Entry = Nothing
+        For Each entry In _cache.Values
+            If entry Is Nothing OrElse entry Is protectedEntry Then Continue For
+            If entry.Bmp Is Nothing OrElse entry.Painting Then Continue For
+            If oldest Is Nothing OrElse entry.LastUsed < oldest.LastUsed Then oldest = entry
+        Next
+        If oldest Is Nothing Then Return False
+        InvalidateSharedUploads(oldest, Nothing)
+        ReleaseSourceBitmap(oldest)
+        oldest.FullDirty = True
+        Return True
+    End Function
 
     Private Function DirtyRectsIntersect(entry As Entry, rect As Rectangle) As Boolean
         If entry.FullDirty Then Return True
@@ -896,8 +1036,8 @@ Public Module BackgroundPenetrationV2
 
         entry.DirtyRects.Add(mergedRect)
 
-        Dim maxRects As Integer = Math.Max(1, GlobalOptions.BackgroundPenetrationDirtyRectMaxCount)
-        Dim ratio As Single = Math.Max(0.05F, Math.Min(1.0F, GlobalOptions.BackgroundPenetrationFullDirtyAreaRatio))
+        Dim maxRects As Integer = Math.Max(1, GlobalOptions.BackgroundDirtyRectLimit)
+        Dim ratio As Single = Math.Max(0.05F, Math.Min(1.0F, GlobalOptions.BackgroundFullDirtyRatio))
         Dim unionRect As Rectangle = Rectangle.Empty
         Dim totalArea As Long = 0
         For Each rect In entry.DirtyRects
@@ -931,6 +1071,7 @@ Public Module BackgroundPenetrationV2
             Dim consumer = entry.Consumers(i)
             Dim child = TryCast(consumer.ChildRef.Target, Control)
             If child Is Nothing OrElse child.IsDisposed OrElse Not IsRenderableControl(child) Then
+                ReleaseConsumerTopology(consumer)
                 entry.Consumers.RemoveAt(i)
                 Continue For
             End If
@@ -1096,6 +1237,35 @@ Public Module BackgroundPenetrationV2
         InvalidateSourcesForAncestorChange(ancestor, Rectangle.Empty)
     End Sub
 
+    Private Sub OnForwarderTopologyChanged(sender As Object, e As EventArgs)
+        Dim changed = TryCast(sender, Control)
+        If changed Is Nothing Then Return
+
+        Dim invalidations As New List(Of ConsumerInvalidation)()
+        SyncLock _cache
+            For Each kv In _cache.ToArray()
+                Dim source = kv.Key
+                Dim entry = kv.Value
+                If entry Is Nothing Then Continue For
+                For i As Integer = entry.Consumers.Count - 1 To 0 Step -1
+                    Dim consumer = entry.Consumers(i)
+                    If Not ConsumerUsesTopology(consumer, changed) Then Continue For
+
+                    Dim child = TryCast(consumer.ChildRef.Target, Control)
+                    If child Is Nothing OrElse child.IsDisposed OrElse changed.IsDisposed OrElse Not IsRenderableControl(changed) Then
+                        ReleaseConsumerTopology(consumer)
+                        entry.Consumers.RemoveAt(i)
+                    Else
+                        invalidations.Add(New ConsumerInvalidation(child, consumer.DestRect))
+                    End If
+                Next
+                If entry.Consumers.Count = 0 Then RemoveSourceEntryNoLock(source, entry)
+            Next
+        End SyncLock
+
+        FlushConsumerInvalidations(invalidations)
+    End Sub
+
     Private Sub InvalidateSourcesForAncestorChange(ancestor As Control, ancestorDirtyRect As Rectangle)
         If ancestor Is Nothing Then Return
         Dim invalidations As New List(Of ConsumerInvalidation)()
@@ -1162,6 +1332,85 @@ Public Module BackgroundPenetrationV2
             ReleaseAncestorSubscription(ancestor)
         Next
         entry.AncestorSubscriptions.Clear()
+    End Sub
+
+    Private Function CloneTopologyNodes(topologyNodes As List(Of Control)) As List(Of Control)
+        If topologyNodes Is Nothing OrElse topologyNodes.Count = 0 Then Return Nothing
+        Dim result As New List(Of Control)()
+        For Each node In topologyNodes
+            If node Is Nothing OrElse node.IsDisposed OrElse result.Contains(node) Then Continue For
+            result.Add(node)
+        Next
+        If result.Count = 0 Then Return Nothing
+        Return result
+    End Function
+
+    Private Sub AcquireConsumerTopology(consumer As Entry.ConsumerEntry)
+        If consumer Is Nothing OrElse consumer.TopologyRefs Is Nothing Then Return
+        For Each node In consumer.TopologyRefs
+            AddTopologySubscription(node)
+        Next
+    End Sub
+
+    Private Sub ReleaseConsumerTopology(consumer As Entry.ConsumerEntry)
+        If consumer Is Nothing OrElse consumer.TopologyRefs Is Nothing Then Return
+        For Each node In consumer.TopologyRefs
+            ReleaseTopologySubscription(node)
+        Next
+        consumer.TopologyRefs = Nothing
+    End Sub
+
+    Private Sub ClearConsumerTopologies(entry As Entry)
+        If entry Is Nothing Then Return
+        For Each consumer In entry.Consumers
+            ReleaseConsumerTopology(consumer)
+        Next
+        entry.Consumers.Clear()
+    End Sub
+
+    Private Function ConsumerUsesTopology(consumer As Entry.ConsumerEntry, node As Control) As Boolean
+        If consumer Is Nothing OrElse node Is Nothing OrElse consumer.TopologyRefs Is Nothing Then Return False
+        For Each existing In consumer.TopologyRefs
+            If existing Is node Then Return True
+        Next
+        Return False
+    End Function
+
+    Private Sub AddTopologySubscription(node As Control)
+        If node Is Nothing Then Return
+
+        Dim refCount As Integer = 0
+        If _topologySubscriptionRefs.TryGetValue(node, refCount) Then
+            _topologySubscriptionRefs(node) = refCount + 1
+        Else
+            _topologySubscriptionRefs(node) = 1
+            AddHandler node.Disposed, AddressOf OnForwarderTopologyChanged
+            AddHandler node.HandleDestroyed, AddressOf OnForwarderTopologyChanged
+            AddHandler node.LocationChanged, AddressOf OnForwarderTopologyChanged
+            AddHandler node.ParentChanged, AddressOf OnForwarderTopologyChanged
+            AddHandler node.Resize, AddressOf OnForwarderTopologyChanged
+            AddHandler node.VisibleChanged, AddressOf OnForwarderTopologyChanged
+        End If
+    End Sub
+
+    Private Sub ReleaseTopologySubscription(node As Control)
+        If node Is Nothing Then Return
+
+        Dim refCount As Integer = 0
+        If Not _topologySubscriptionRefs.TryGetValue(node, refCount) Then Return
+
+        If refCount > 1 Then
+            _topologySubscriptionRefs(node) = refCount - 1
+            Return
+        End If
+
+        _topologySubscriptionRefs.Remove(node)
+        Try : RemoveHandler node.Disposed, AddressOf OnForwarderTopologyChanged : Catch : End Try
+        Try : RemoveHandler node.HandleDestroyed, AddressOf OnForwarderTopologyChanged : Catch : End Try
+        Try : RemoveHandler node.LocationChanged, AddressOf OnForwarderTopologyChanged : Catch : End Try
+        Try : RemoveHandler node.ParentChanged, AddressOf OnForwarderTopologyChanged : Catch : End Try
+        Try : RemoveHandler node.Resize, AddressOf OnForwarderTopologyChanged : Catch : End Try
+        Try : RemoveHandler node.VisibleChanged, AddressOf OnForwarderTopologyChanged : Catch : End Try
     End Sub
 
     Private Sub AddAncestorSubscription(entry As Entry, ancestor As Control)
