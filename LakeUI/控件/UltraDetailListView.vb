@@ -3817,7 +3817,14 @@ Public Class UltraDetailListView
         ' 同时校验该行在屏幕上未越过底部限制
         Dim rowScreenBottom As Integer = baseY + (_rowBottoms(lo) - baseTop)
         If rowScreenBottom > bottomLimit Then Return -1
+        If _displayRows(lo).Type = DisplayRowType.Item AndAlso Not 项焦点区域包含点(pt, contentRect) Then Return -1
         Return lo
+    End Function
+
+    Private Function 项焦点区域包含点(pt As Point, contentRect As Rectangle) As Boolean
+        Dim itemFocusW As Integer = 获取项焦点宽度(contentRect)
+        If itemFocusW <= 0 Then Return False
+        Return pt.X >= contentRect.X AndAlso pt.X < contentRect.X + itemFocusW
     End Function
 
     Private Function 命中测试矩形(dragRect As Rectangle) As List(Of Integer)
