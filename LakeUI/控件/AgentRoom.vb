@@ -37,17 +37,30 @@ Public Class AgentRoom
         Friend MarkdownRenderer As MarkdownViewerCore
         Friend MarkdownRendererText As String = Nothing
         Friend MarkdownRendererWidth As Integer = -1
+        Friend MarkdownRendererSubmittedTextVersion As Integer = -1
+        Friend MarkdownRendererAppliedTextVersion As Integer = -1
+        Friend TextVersion As Integer = 0
+        Friend LinkSpansVersion As Integer = -1
 
         Private _kind As ChatItemKind = ChatItemKind.AssistantMessage
         Private _text As String = ""
+        Private _textBuilder As System.Text.StringBuilder = Nothing
+        Private _textSnapshotDirty As Boolean = False
+        Private _pendingMarkdownRendererAppend As System.Text.StringBuilder = Nothing
 
         Public Sub New()
         End Sub
 
-        Public Sub New(kind As ChatItemKind, text As String)
+        Public Sub New(kind As ChatItemKind, text As String, Optional scanLinks As Boolean = True)
             _kind = kind
             _text = If(text, "")
-            ChatTextHelper.RescanLinks(_text, LinkSpans)
+            BumpTextVersion()
+            If scanLinks Then
+                RescanLinksInternal()
+            Else
+                LinkSpans.Clear()
+                LinkSpansVersion = -1
+            End If
         End Sub
 
         <Category("LakeUI"), Description("条目类型"), DefaultValue(ChatItemKind.AssistantMessage)>
@@ -68,28 +81,84 @@ Public Class AgentRoom
         <Editor("System.ComponentModel.Design.MultilineStringEditor, System.Design", GetType(System.Drawing.Design.UITypeEditor))>
         Public Property Text As String
             Get
+                If _textSnapshotDirty AndAlso _textBuilder IsNot Nothing Then
+                    _text = _textBuilder.ToString()
+                    _textSnapshotDirty = False
+                End If
                 Return _text
             End Get
             Set(value As String)
                 Dim v = If(value, "")
-                If _text <> v Then
+                If Text <> v Then
                     _text = v
-                    ChatTextHelper.RescanLinks(_text, LinkSpans)
+                    _textBuilder = Nothing
+                    _textSnapshotDirty = False
+                    BumpTextVersion()
+                    RescanLinksInternal()
                     NeedsRelayout = True
                     OwnerRoom?.NotifyItemChanged(Me)
                 End If
             End Set
         End Property
 
-        Friend Sub AppendTextInternal(more As String)
+        Friend Sub AppendTextInternal(more As String,
+                                      Optional rescanLinks As Boolean = False,
+                                      Optional markRelayout As Boolean = True)
             If String.IsNullOrEmpty(more) Then Return
-            _text &= more
-            ChatTextHelper.RescanLinks(_text, LinkSpans)
-            NeedsRelayout = True
+            If _textBuilder Is Nothing Then _textBuilder = New System.Text.StringBuilder(_text)
+            _textBuilder.Append(more)
+            _textSnapshotDirty = True
+            BumpTextVersion()
+            If rescanLinks Then
+                RescanLinksInternal()
+            Else
+                LinkSpansVersion = -1
+            End If
+            If markRelayout Then NeedsRelayout = True
+        End Sub
+
+        Friend Sub QueueMarkdownRendererAppend(more As String)
+            If String.IsNullOrEmpty(more) Then Return
+            If _pendingMarkdownRendererAppend Is Nothing Then _pendingMarkdownRendererAppend = New System.Text.StringBuilder()
+            _pendingMarkdownRendererAppend.Append(more)
+        End Sub
+
+        Friend Function TakeMarkdownRendererAppend() As String
+            If _pendingMarkdownRendererAppend Is Nothing OrElse _pendingMarkdownRendererAppend.Length = 0 Then Return ""
+            Dim value = _pendingMarkdownRendererAppend.ToString()
+            _pendingMarkdownRendererAppend.Clear()
+            Return value
+        End Function
+
+        Friend Sub ClearMarkdownRendererAppend()
+            _pendingMarkdownRendererAppend?.Clear()
+        End Sub
+
+        Friend ReadOnly Property HasMarkdownRendererAppend As Boolean
+            Get
+                Return _pendingMarkdownRendererAppend IsNot Nothing AndAlso _pendingMarkdownRendererAppend.Length > 0
+            End Get
+        End Property
+
+        Friend Sub EnsureLinksCurrent()
+            If LinkSpansVersion <> TextVersion Then RescanLinksInternal()
+        End Sub
+
+        Private Sub RescanLinksInternal()
+            ChatTextHelper.RescanLinks(Text, LinkSpans)
+            LinkSpansVersion = TextVersion
+        End Sub
+
+        Private Sub BumpTextVersion()
+            If TextVersion = Integer.MaxValue Then
+                TextVersion = 0
+            Else
+                TextVersion += 1
+            End If
         End Sub
 
         Public Overrides Function ToString() As String
-            Dim p = If(_text, "")
+            Dim p = If(Text, "")
             If p.Length > 24 Then p = String.Concat(p.AsSpan(0, 24), "…")
             Return $"[{_kind}] {p}"
         End Function
@@ -184,6 +253,15 @@ Public Class AgentRoom
     Private _measureVersion As Integer
     Private ReadOnly _textWidthCache As New Dictionary(Of TextWidthKey, Integer)(512)
     Private Const MaxTextWidthCacheEntries As Integer = 4096
+    Private ReadOnly _streamLayoutTimer As New PrecisionTimer() With {
+        .Interval = 50,
+        .DispatchMode = PrecisionTimer.DispatchModeEnum.NonBlocking,
+        .OverrunPolicy = PrecisionTimer.OverrunPolicyEnum.Drop,
+        .WorkerThreadCount = 1,
+        .AutoReset = True
+    }
+    Private ReadOnly _dirtyStreamItems As New HashSet(Of ChatItem)()
+    Private _suppressMarkdownRendererAppliedEvents As Integer
 
     Friend _hoverLinkUrl As String = Nothing
 
@@ -266,6 +344,29 @@ Public Class AgentRoom
         AddHandler miSelAll.Click, Sub(s, e) SelectAllText()
         _copyContextMenu.Items.Add(miCopy)
         _copyContextMenu.Items.Add(miSelAll)
+        _streamLayoutTimer.SynchronizingObject = Me
+        AddHandler _streamLayoutTimer.Tick, AddressOf StreamLayoutTimerTick
+    End Sub
+
+    Protected Overrides Sub Dispose(disposing As Boolean)
+        If disposing Then
+            Try
+                RemoveHandler _streamLayoutTimer.Tick, AddressOf StreamLayoutTimerTick
+                _streamLayoutTimer.Stop()
+                _streamLayoutTimer.Dispose()
+            Catch
+            End Try
+
+            For Each it In _items
+                ReleaseMarkdownRenderer(it)
+            Next
+
+            Try
+                _copyContextMenu?.Dispose()
+            Catch
+            End Try
+        End If
+        MyBase.Dispose(disposing)
     End Sub
 #End Region
 #Region "属性"
@@ -1330,6 +1431,8 @@ Public Class AgentRoom
     ''' <summary>清空所有消息并重置滚动/选区。</summary>
     Public Sub Clear()
         ClearSelection()
+        _streamLayoutTimer.Stop()
+        _dirtyStreamItems.Clear()
         _items.Clear()
         _滚动偏移 = 0
         _pinnedToBottom = True
@@ -1353,7 +1456,7 @@ Public Class AgentRoom
     End Function
 
     Private Function AddItem(kind As ChatItemKind, text As String) As ChatItem
-        Dim it As New ChatItem(kind, text)
+        Dim it As New ChatItem(kind, text, scanLinks:=Not (kind = ChatItemKind.AssistantMessage AndAlso _enableMarkdownForAssistant))
         _items.Add(it)
         Return it
     End Function
@@ -1366,8 +1469,14 @@ Public Class AgentRoom
             Dim unused As ChatItem = AddAssistantMessage(more)
         Else
             last = _items(_items.Count - 1)
-            last.AppendTextInternal(more)
-            NotifyItemChanged(last)
+            If ShouldUseMarkdown(last) Then
+                last.AppendTextInternal(more, rescanLinks:=False, markRelayout:=False)
+                last.QueueMarkdownRendererAppend(more)
+                If Not SubmitPendingMarkdownRendererAppend(last) Then QueueStreamItemLayout(last)
+            Else
+                last.AppendTextInternal(more, rescanLinks:=True)
+                NotifyItemChanged(last)
+            End If
         End If
     End Sub
 
@@ -1388,6 +1497,54 @@ Public Class AgentRoom
         _contentHeightDirty = True
         OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
+
+    Private Sub QueueStreamItemLayout(item As ChatItem)
+        If item Is Nothing OrElse item.OwnerRoom IsNot Me Then Return
+        _dirtyStreamItems.Add(item)
+        If Not _streamLayoutTimer.IsRunning Then
+            Try
+                _streamLayoutTimer.Start()
+            Catch
+                StreamLayoutTimerTick(_streamLayoutTimer, EventArgs.Empty)
+            End Try
+        End If
+    End Sub
+
+    Private Sub StreamLayoutTimerTick(sender As Object, e As EventArgs)
+        _streamLayoutTimer.Stop()
+        If _dirtyStreamItems.Count = 0 Then Return
+
+        Dim snapshot = _dirtyStreamItems.ToArray()
+        _dirtyStreamItems.Clear()
+        Dim needOuterRefresh As Boolean = False
+        For Each it In snapshot
+            If it Is Nothing OrElse it.OwnerRoom IsNot Me Then Continue For
+            If ShouldUseMarkdown(it) AndAlso CanSubmitMarkdownRendererAppend(it) Then
+                SubmitPendingMarkdownRendererAppend(it)
+            Else
+                it.NeedsRelayout = True
+                _contentHeightDirty = True
+                needOuterRefresh = True
+            End If
+        Next
+        If needOuterRefresh Then OuterToInnerRefreshScheduler.RequestFull(Me)
+    End Sub
+
+    Private Function CanSubmitMarkdownRendererAppend(it As ChatItem) As Boolean
+        Return it IsNot Nothing AndAlso
+               it.MarkdownRenderer IsNot Nothing AndAlso
+               Not it.MarkdownRenderer.IsDisposed AndAlso
+               it.MarkdownRendererWidth > 0
+    End Function
+
+    Private Function SubmitPendingMarkdownRendererAppend(it As ChatItem) As Boolean
+        If Not CanSubmitMarkdownRendererAppend(it) Then Return False
+        Dim appended = it.TakeMarkdownRendererAppend()
+        If String.IsNullOrEmpty(appended) Then Return True
+        it.MarkdownRenderer.AppendMarkdown(appended)
+        it.MarkdownRendererSubmittedTextVersion = it.TextVersion
+        Return True
+    End Function
 
     Friend Sub OnItemsChanged(index As Integer, isInsert As Boolean)
         _contentHeightDirty = True
@@ -1491,6 +1648,9 @@ Public Class AgentRoom
         it.MarkdownRenderer = Nothing
         it.MarkdownRendererText = Nothing
         it.MarkdownRendererWidth = -1
+        it.MarkdownRendererSubmittedTextVersion = -1
+        it.MarkdownRendererAppliedTextVersion = -1
+        it.ClearMarkdownRendererAppend()
         Try
             Controls.Remove(renderer)
             renderer.BackgroundSource = Nothing
@@ -1538,10 +1698,14 @@ Public Class AgentRoom
             AddHandler renderer.ContentHeightChanged,
                 Sub(sender, e)
                     If Not Object.ReferenceEquals(it.MarkdownRenderer, sender) Then Return
-                    If it.MarkdownRendererText <> it.Text Then Return
-                    it.NeedsRelayout = True
-                    _contentHeightDirty = True
-                    OuterToInnerRefreshScheduler.RequestFull(Me)
+                    CommitMarkdownRendererLayout(it, requestRefresh:=True)
+                End Sub
+            AddHandler renderer.EmbeddedContentApplied,
+                Sub(sender, e)
+                    If Not Object.ReferenceEquals(it.MarkdownRenderer, sender) Then Return
+                    If _suppressMarkdownRendererAppliedEvents > 0 Then Return
+                    it.MarkdownRendererAppliedTextVersion = it.MarkdownRendererSubmittedTextVersion
+                    CommitMarkdownRendererLayout(it, requestRefresh:=False)
                 End Sub
             it.MarkdownRenderer = renderer
         End If
@@ -1549,13 +1713,40 @@ Public Class AgentRoom
         ConfigureMarkdownRenderer(it.MarkdownRenderer, it)
         Dim safeWidth As Integer = Math.Max(1, contentWidth)
         it.MarkdownRenderer.PrepareEmbeddedContent(safeWidth, D2DGlobals.GetCurrentDpi(Me), Me)
-        If it.MarkdownRendererText <> it.Text OrElse it.MarkdownRendererWidth <> safeWidth Then
-            it.MarkdownRenderer.SetMarkdownImmediate(it.Text, resetScroll:=True, clearSelectionOnApply:=True)
-            it.MarkdownRendererText = it.Text
+        If it.MarkdownRendererSubmittedTextVersion <> it.TextVersion OrElse it.MarkdownRendererWidth <> safeWidth Then
+            If it.MarkdownRendererWidth = safeWidth AndAlso it.MarkdownRendererSubmittedTextVersion >= 0 Then
+                If Not it.HasMarkdownRendererAppend Then
+                    SetMarkdownRendererImmediate(it)
+                End If
+            Else
+                it.ClearMarkdownRendererAppend()
+                SetMarkdownRendererImmediate(it)
+            End If
+            it.MarkdownRendererText = Nothing
             it.MarkdownRendererWidth = safeWidth
         End If
         Return it.MarkdownRenderer
     End Function
+
+    Private Sub SetMarkdownRendererImmediate(it As ChatItem)
+        If it Is Nothing OrElse it.MarkdownRenderer Is Nothing OrElse it.MarkdownRenderer.IsDisposed Then Return
+        _suppressMarkdownRendererAppliedEvents += 1
+        Try
+            it.MarkdownRenderer.SetMarkdownImmediate(it.Text, resetScroll:=True, clearSelectionOnApply:=True)
+        Finally
+            _suppressMarkdownRendererAppliedEvents -= 1
+        End Try
+        it.MarkdownRendererSubmittedTextVersion = it.TextVersion
+        it.MarkdownRendererAppliedTextVersion = it.TextVersion
+    End Sub
+
+    Private Sub CommitMarkdownRendererLayout(it As ChatItem, Optional requestRefresh As Boolean = True)
+        If it Is Nothing OrElse it.OwnerRoom IsNot Me Then Return
+        it.NeedsRelayout = True
+        _contentHeightDirty = True
+        EnsureLayout()
+        If requestRefresh Then OuterToInnerRefreshScheduler.RequestFull(Me)
+    End Sub
 
     Private Sub ConfigureMarkdownRenderer(renderer As MarkdownViewerCore, it As ChatItem)
         Dim fore As Color = GetItemForeColor(it)
@@ -1614,7 +1805,9 @@ Public Class AgentRoom
         renderer.StrikethroughColor = _markdownStrikethroughColor
         renderer.StrikethroughThickness = _markdownStrikethroughThickness
         renderer.BasePath = _markdownBasePath
-        If _markdownParser IsNot Nothing Then renderer.Parser = _markdownParser
+        If _markdownParser IsNot Nothing AndAlso Not Object.ReferenceEquals(renderer.Parser, _markdownParser) Then
+            renderer.Parser = _markdownParser
+        End If
     End Sub
 
     Private Sub ScrollByPixels(delta As Integer)
@@ -1757,6 +1950,7 @@ Public Class AgentRoom
         End If
 
         ReleaseMarkdownRenderer(it)
+        it.EnsureLinksCurrent()
 
         ' 折行
         ChatTextHelper.WrapLines(it.Text, font, lineHeight, contentMaxW, it.LineRanges, AddressOf MeasureTextWidthCached)
@@ -1874,7 +2068,7 @@ Public Class AgentRoom
                     Dim r As Rectangle = it.CachedRect
                     If r.Bottom < area.Top OrElse r.Top > area.Bottom Then Continue For
                     DrawItemShapes_D2D(gRT, brushCache, it, r, font, lineHeight, i)
-                    If ShouldUseMarkdown(it) Then DrawMarkdownItem_D2D(gRT, scope.Compositor, it, r)
+                    If ShouldUseMarkdown(it) Then DrawMarkdownItem_D2D(gRT, scope.Compositor, it, r, area)
                 Next
             Finally
                 gRT.PopAxisAlignedClip()
@@ -2016,13 +2210,20 @@ Public Class AgentRoom
     Private Sub DrawMarkdownItem_D2D(rt As Vortice.Direct2D1.ID2D1RenderTarget,
                                      compositor As WindowCompositor,
                                      it As ChatItem,
-                                     areaItemRect As Rectangle)
+                                     areaItemRect As Rectangle,
+                                     viewportRect As Rectangle)
         Dim renderer = it.MarkdownRenderer
         If renderer Is Nothing OrElse renderer.IsDisposed Then Return
 
         Dim origin As New Point(areaItemRect.X + it.TextOriginX, areaItemRect.Y + it.TextOriginY)
+        Dim visibleLocalTop As Integer = Math.Max(0, viewportRect.Top - origin.Y)
+        Dim visibleLocalBottom As Integer = Math.Min(renderer.ContentHeight, viewportRect.Bottom - origin.Y)
+        If visibleLocalBottom <= visibleLocalTop Then Return
+
         Dim clipSize As New Size(Math.Max(1, renderer.Width), Math.Max(1, renderer.ContentHeight))
-        renderer.DrawEmbeddedContent_D2D(rt, compositor, origin, clipSize, drawBackground:=False)
+        renderer.DrawEmbeddedContent_D2D(rt, compositor, origin, clipSize, drawBackground:=False,
+                                         visibleLocalTop:=visibleLocalTop,
+                                         visibleLocalBottom:=visibleLocalBottom)
     End Sub
 
     Private Sub DrawLineWithLinks_D2D(rt As Vortice.Direct2D1.ID2D1RenderTarget,
@@ -2084,6 +2285,7 @@ Public Class AgentRoom
     End Sub
 
     Private Function FindLinkAt(it As ChatItem, charIndex As Integer) As LinkSpan?
+        it?.EnsureLinksCurrent()
         Dim nearest As LinkSpan? = Nothing
         For Each ls In it.LinkSpans
             If charIndex >= ls.Start AndAlso charIndex < ls.Start + ls.Length Then

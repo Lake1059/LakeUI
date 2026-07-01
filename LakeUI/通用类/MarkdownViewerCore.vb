@@ -689,11 +689,18 @@ Public Class MarkdownViewerCore
     ' 流式追加
     Private _streamBuffer As New StringBuilder()
     Private _streamDirty As Boolean = False
-    Private _streamTimer As New Timer() With {.Interval = 30}
+    Private _streamTimer As New PrecisionTimer() With {
+        .Interval = 30,
+        .DispatchMode = PrecisionTimer.DispatchModeEnum.NonBlocking,
+        .OverrunPolicy = PrecisionTimer.OverrunPolicyEnum.Drop,
+        .WorkerThreadCount = 1,
+        .AutoReset = True
+    }
     Private _parseVersion As Integer
     Private _lastAppliedParseVersion As Integer
     Private _parseRunning As Boolean
     Private _runningParseVersion As Integer
+    Private _applyingParsedDocument As Boolean
     Private _pendingParseVersion As Integer
     Private _pendingParseParser As MarkdownParser
     Private _pendingParseText As String = ""
@@ -815,6 +822,7 @@ Public Class MarkdownViewerCore
         _scrollY = 0
         _scrollBarVisible = False
         _embeddedInvalidationTarget = invalidationTarget
+        If invalidationTarget IsNot Nothing Then _streamTimer.SynchronizingObject = invalidationTarget
 
         Dim safeDpi As Integer = Math.Max(1, hostDpi)
         Dim safeWidth As Integer = Math.Max(1, contentWidth)
@@ -839,6 +847,7 @@ Public Class MarkdownViewerCore
 
     ''' <summary>Markdown 内容重新布局后高度发生变化时触发，供嵌入宿主同步外层布局。</summary>
     Public Event ContentHeightChanged As EventHandler
+    Friend Event EmbeddedContentApplied As EventHandler
 
     <Category("LakeUI"),
      Description("背景采样源（V2 透明背景穿透）。设置后将跨越任意层级直接采样此控件的绘制内容作为透明背景。"),
@@ -1666,12 +1675,14 @@ Public Class MarkdownViewerCore
                  ControlStyles.SupportsTransparentBackColor, True)
         UpdateStyles()
 
+        _streamTimer.SynchronizingObject = Me
         AddHandler _autoScrollTimer.Tick, AddressOf AutoScrollTick
         AddHandler _streamTimer.Tick, AddressOf StreamTimerTick
     End Sub
 
     Protected Overrides Sub OnHandleCreated(e As EventArgs)
         MyBase.OnHandleCreated(e)
+        _streamTimer.SynchronizingObject = Me
         ParseAndLayout()
     End Sub
 
@@ -1694,6 +1705,8 @@ Public Class MarkdownViewerCore
         If disposing Then
             _autoScrollTimer.Stop()
             _streamTimer.Stop()
+            RemoveHandler _streamTimer.Tick, AddressOf StreamTimerTick
+            _streamTimer.Dispose()
             _parseVersion += 1
             _pendingParseVersion = 0
             _pendingParseParser = Nothing
@@ -1726,7 +1739,8 @@ Public Class MarkdownViewerCore
         If String.IsNullOrEmpty(text) Then Return
         _streamBuffer.Append(text)
         _streamDirty = True
-        If Not _streamTimer.Enabled Then _streamTimer.Start()
+        InvalidatePendingParse()
+        If Not _streamTimer.IsRunning Then _streamTimer.Start()
     End Sub
 
     ''' <summary>
@@ -1850,7 +1864,8 @@ Public Class MarkdownViewerCore
         Dim markdown = _streamBuffer.ToString()
         Dim version = System.Threading.Interlocked.Increment(_parseVersion)
 
-        If parser.GetType() IsNot GetType(MarkdownParser) OrElse Not IsHandleCreated Then
+        Dim callbackTarget = GetAsyncCallbackTarget()
+        If parser.GetType() IsNot GetType(MarkdownParser) OrElse callbackTarget Is Nothing Then
             Dim doc As MarkdownDocument = Nothing
             Try
                 doc = parser.Parse(markdown)
@@ -1868,6 +1883,16 @@ Public Class MarkdownViewerCore
         _pendingParseKeepAtBottom = keepAtBottom
         _pendingParseClearSelection = clearSelectionOnApply
         StartPendingParseIfIdle()
+    End Sub
+
+    Private Sub InvalidatePendingParse()
+        System.Threading.Interlocked.Increment(_parseVersion)
+        _pendingParseVersion = 0
+        _pendingParseParser = Nothing
+        _pendingParseText = ""
+        _pendingParseResetScroll = False
+        _pendingParseKeepAtBottom = False
+        _pendingParseClearSelection = False
     End Sub
 
     Private Sub StartPendingParseIfIdle()
@@ -1889,6 +1914,12 @@ Public Class MarkdownViewerCore
 
         _parseRunning = True
         _runningParseVersion = version
+        Dim callbackTarget = GetAsyncCallbackTarget()
+        If callbackTarget Is Nothing Then
+            _parseRunning = False
+            _runningParseVersion = 0
+            Return
+        End If
 
         Task.Run(Sub()
                      Dim doc As MarkdownDocument = Nothing
@@ -1898,14 +1929,15 @@ Public Class MarkdownViewerCore
                          doc = New MarkdownDocument()
                      End Try
 
-                     If IsHandleCreated AndAlso Not IsDisposed Then
-                         Try
-                             BeginInvoke(Sub()
-                                             CompleteAsyncParse(version, doc, resetScroll, keepAtBottom, clearSelectionOnApply)
-                                         End Sub)
-                         Catch
-                         End Try
-                     End If
+                     Try
+                         callbackTarget.BeginInvoke(
+                             Sub()
+                                 If Not IsDisposed Then CompleteAsyncParse(version, doc, resetScroll, keepAtBottom, clearSelectionOnApply)
+                             End Sub)
+                     Catch
+                         _parseRunning = False
+                         _runningParseVersion = 0
+                     End Try
                  End Sub)
     End Sub
 
@@ -1930,12 +1962,18 @@ Public Class MarkdownViewerCore
         If version < _lastAppliedParseVersion Then Return
         _lastAppliedParseVersion = version
         _document = If(doc, New MarkdownDocument())
-        RebuildLayout()
+        _applyingParsedDocument = True
+        Try
+            RebuildLayout()
+        Finally
+            _applyingParsedDocument = False
+        End Try
         If resetScroll Then _scrollY = 0
         If keepAtBottom Then _scrollY = MaxScrollY()
         If clearSelectionOnApply Then ClearSelection()
         ClampScroll()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        RaiseEvent EmbeddedContentApplied(Me, EventArgs.Empty)
+        RequestEmbeddedOrSelfRefresh()
     End Sub
 
     Private Sub RebuildLayout()
@@ -1946,12 +1984,12 @@ Public Class MarkdownViewerCore
         _tableColumnWidths.Clear()
         _totalContentHeight = 0
         If Not IsHandleCreated AndAlso Not _embeddedContentMode Then
-            If _totalContentHeight <> oldContentHeight Then RaiseEvent ContentHeightChanged(Me, EventArgs.Empty)
+            RaiseContentHeightChangedIfNeeded(oldContentHeight)
             Return
         End If
         Dim areaW As Integer = TextAreaWidth()
         If areaW <= 0 Then
-            If _totalContentHeight <> oldContentHeight Then RaiseEvent ContentHeightChanged(Me, EventArgs.Empty)
+            RaiseContentHeightChangedIfNeeded(oldContentHeight)
             Return
         End If
         Dim s As Single = DpiScale()
@@ -2015,11 +2053,17 @@ Public Class MarkdownViewerCore
         UpdateScrollBarState()
         If _scrollBarVisible <> prevVisible AndAlso _scrollBarVisible Then
             RebuildLayout()
-            If _totalContentHeight <> oldContentHeight Then RaiseEvent ContentHeightChanged(Me, EventArgs.Empty)
+            RaiseContentHeightChangedIfNeeded(oldContentHeight)
             Return
         End If
         TrimImageCache(GetActiveImageUrls())
-        If _totalContentHeight <> oldContentHeight Then RaiseEvent ContentHeightChanged(Me, EventArgs.Empty)
+        RaiseContentHeightChangedIfNeeded(oldContentHeight)
+    End Sub
+
+    Private Sub RaiseContentHeightChangedIfNeeded(oldContentHeight As Integer)
+        If _totalContentHeight = oldContentHeight Then Return
+        If _embeddedContentMode AndAlso _applyingParsedDocument Then Return
+        RaiseEvent ContentHeightChanged(Me, EventArgs.Empty)
     End Sub
 
     Private Sub EnsureLayoutDpiCurrent()
@@ -2434,7 +2478,7 @@ Public Class MarkdownViewerCore
                         If _hasSelection Then GetOrderedSelection(selStart, selEnd)
 
                         ' 绘制可见行
-                        For vli As Integer = 0 To _visualLines.Count - 1
+                        For vli As Integer = GetFirstVisibleVisualLine(_scrollY) To _visualLines.Count - 1
                             Dim vl = _visualLines(vli)
                             Dim drawY As Integer = vl.Y - _scrollY + ci.Top
                             If drawY + vl.Height < ci.Top Then Continue For
@@ -2462,7 +2506,9 @@ Public Class MarkdownViewerCore
                                        compositor As WindowCompositor,
                                        origin As Point,
                                        clipSize As Size,
-                                       Optional drawBackground As Boolean = False)
+                                       Optional drawBackground As Boolean = False,
+                                       Optional visibleLocalTop As Integer = -1,
+                                       Optional visibleLocalBottom As Integer = -1)
         If rt Is Nothing OrElse compositor Is Nothing Then Return
         If clipSize.Width <= 0 OrElse clipSize.Height <= 0 Then Return
         EnsureLayoutDpiCurrent()
@@ -2483,18 +2529,26 @@ Public Class MarkdownViewerCore
             Dim clipH As Integer = Math.Max(0, clipSize.Height - ci.Top - ci.Bottom)
             If clipW <= 0 OrElse clipH <= 0 Then Return
 
+            Dim localClipTop As Integer = ci.Top
+            Dim localClipBottom As Integer = ci.Top + clipH
+            If visibleLocalTop >= 0 Then localClipTop = Math.Max(localClipTop, visibleLocalTop)
+            If visibleLocalBottom >= 0 Then localClipBottom = Math.Min(localClipBottom, visibleLocalBottom)
+            If localClipBottom <= localClipTop Then Return
+
             Dim clipLeft As Single = origin.X + ci.Left
-            Dim clipTop As Single = origin.Y + ci.Top
-            rt.PushAxisAlignedClip(New Vortice.RawRectF(clipLeft, clipTop, clipLeft + clipW, clipTop + clipH), AntialiasMode.PerPrimitive)
+            Dim clipTop As Single = origin.Y + localClipTop
+            Dim clipBottom As Single = origin.Y + localClipBottom
+            rt.PushAxisAlignedClip(New Vortice.RawRectF(clipLeft, clipTop, clipLeft + clipW, clipBottom), AntialiasMode.PerPrimitive)
             Try
                 Dim selStart, selEnd As SelectionPos
                 If _hasSelection Then GetOrderedSelection(selStart, selEnd)
 
-                For vli As Integer = 0 To _visualLines.Count - 1
+                Dim visibleTop As Integer = Math.Max(0, _scrollY + localClipTop - ci.Top)
+                For vli As Integer = GetFirstVisibleVisualLine(visibleTop) To _visualLines.Count - 1
                     Dim vl = _visualLines(vli)
                     Dim drawY As Integer = origin.Y + vl.Y - _scrollY + ci.Top
                     If drawY + vl.Height < clipTop Then Continue For
-                    If drawY > clipTop + clipH Then Exit For
+                    If drawY > clipBottom Then Exit For
 
                     Dim block = _document.Blocks(vl.BlockIndex)
                     DrawBlockDecoration_D2D(rt, block, vl, vli, CInt(clipLeft), drawY, clipW, s)
@@ -2958,14 +3012,7 @@ Public Class MarkdownViewerCore
         Dim ci = GetContentInsets()
         Dim hitY As Integer = my - ci.Top + _scrollY
         Dim hitX As Integer = mx - ci.Left
-        Dim vli As Integer = 0
-        For i As Integer = 0 To _visualLines.Count - 1
-            If _visualLines(i).Y + _visualLines(i).Height > hitY Then
-                vli = i
-                Exit For
-            End If
-            vli = i
-        Next
+        Dim vli As Integer = GetFirstVisibleVisualLine(hitY)
         Return (hitX, hitY, vli)
     End Function
 
@@ -3011,6 +3058,26 @@ Public Class MarkdownViewerCore
 #End Region
 
 #Region "滚动辅助"
+
+    Private Function GetFirstVisibleVisualLine(contentY As Integer) As Integer
+        If _visualLines.Count = 0 Then Return 0
+        Dim lo As Integer = 0
+        Dim hi As Integer = _visualLines.Count - 1
+        Dim best As Integer = hi
+
+        While lo <= hi
+            Dim mid As Integer = (lo + hi) \ 2
+            Dim vl = _visualLines(mid)
+            If vl.Y + vl.Height > contentY Then
+                best = mid
+                hi = mid - 1
+            Else
+                lo = mid + 1
+            End If
+        End While
+
+        Return Math.Max(0, Math.Min(best, _visualLines.Count - 1))
+    End Function
 
     Private Sub ScrollBy(delta As Integer)
         _scrollY += delta
@@ -3207,6 +3274,11 @@ Public Class MarkdownViewerCore
         Dim target = _embeddedInvalidationTarget
         If target Is Nothing OrElse target.IsDisposed OrElse Not target.IsHandleCreated Then Return Nothing
         Return target
+    End Function
+
+    Private Function GetAsyncCallbackTarget() As Control
+        If IsHandleCreated AndAlso Not IsDisposed Then Return Me
+        Return GetEmbeddedInvalidationTarget()
     End Function
 
     ''' <summary>从缓存获取图片，如未加载则启动加载。</summary>
