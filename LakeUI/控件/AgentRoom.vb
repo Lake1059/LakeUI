@@ -27,6 +27,7 @@ Public Class AgentRoom
     <TypeConverter(GetType(ExpandableObjectConverter))>
     Public Class ChatItem
         Friend OwnerRoom As AgentRoom
+        Friend CachedIndex As Integer = -1
         Friend NeedsRelayout As Boolean = True
         Friend CachedRect As Rectangle
         Friend ReadOnly LineRanges As New List(Of LineRange)
@@ -173,10 +174,21 @@ Public Class AgentRoom
             _owner = owner
         End Sub
 
+        Private Sub RefreshCachedIndexes(startIndex As Integer)
+            Dim first As Integer = Math.Max(0, startIndex)
+            For i As Integer = first To Count - 1
+                Dim it = Me(i)
+                If it Is Nothing Then Continue For
+                it.OwnerRoom = _owner
+                it.CachedIndex = i
+            Next
+        End Sub
+
         Protected Overrides Sub InsertItem(index As Integer, item As ChatItem)
             If item Is Nothing Then Return
             MyBase.InsertItem(index, item)
             item.OwnerRoom = _owner
+            RefreshCachedIndexes(index)
             item.NeedsRelayout = True
             _owner?.OnItemsChanged(index, True)
         End Sub
@@ -185,7 +197,9 @@ Public Class AgentRoom
             Dim it = Me(index)
             _owner?.ReleaseMarkdownRenderer(it)
             it.OwnerRoom = Nothing
+            it.CachedIndex = -1
             MyBase.RemoveItem(index)
+            RefreshCachedIndexes(index)
             _owner?.OnItemsChanged(index, False)
         End Sub
 
@@ -193,6 +207,7 @@ Public Class AgentRoom
             For Each it In Me
                 _owner?.ReleaseMarkdownRenderer(it)
                 it.OwnerRoom = Nothing
+                it.CachedIndex = -1
             Next
             MyBase.ClearItems()
             _owner?.OnItemsChanged(0, False)
@@ -204,9 +219,11 @@ Public Class AgentRoom
             If old IsNot Nothing Then
                 _owner?.ReleaseMarkdownRenderer(old)
                 old.OwnerRoom = Nothing
+                old.CachedIndex = -1
             End If
             MyBase.SetItem(index, item)
             item.OwnerRoom = _owner
+            item.CachedIndex = index
             item.NeedsRelayout = True
             _owner?.OnItemsChanged(index, False)
         End Sub
@@ -250,6 +267,9 @@ Public Class AgentRoom
     Friend _contentHeightDirty As Boolean = True
     Friend _pinnedToBottom As Boolean = True
     Private _layoutDpi As Integer = 0
+    Private _layoutAreaWidth As Integer = -1
+    Private _layoutDirtyFromIndex As Integer = 0
+    Private ReadOnly _itemLayoutTops As New List(Of Integer)()
     Private _measureVersion As Integer
     Private ReadOnly _textWidthCache As New Dictionary(Of TextWidthKey, Integer)(512)
     Private Const MaxTextWidthCacheEntries As Integer = 4096
@@ -290,6 +310,7 @@ Public Class AgentRoom
     Private Structure MarkdownHitInfo
         Public Renderer As MarkdownViewerCore
         Public LocalPoint As Point
+        Public ItemIndex As Integer
 
         Public ReadOnly Property HasValue As Boolean
             Get
@@ -315,6 +336,7 @@ Public Class AgentRoom
     Friend _mouseSelecting As Boolean = False
     Friend _mouseSelectingMarkdown As Boolean = False
     Friend _activeMarkdownRenderer As MarkdownViewerCore = Nothing
+    Friend _activeMarkdownItemIndex As Integer = -1
     Friend _mouseDownLinkUrl As String = Nothing
     Friend _mouseDownLinkItemIndex As Integer = -1
 
@@ -459,7 +481,7 @@ Public Class AgentRoom
             value = Math.Max(0, value)
             If _itemSpacing <> value Then
                 _itemSpacing = value
-                _contentHeightDirty = True
+                MarkContentLayoutDirty(0)
                 OuterToInnerRefreshScheduler.RequestFull(Me)
             End If
         End Set
@@ -1062,7 +1084,7 @@ Public Class AgentRoom
     End Property
 
     Friend _markdownCodeFont As Font = Nothing
-    <Category("LakeUI - Markdown"), Description("Markdown 代码字体，Nothing 时使用 Consolas"), Browsable(True),
+    <Category("LakeUI - Markdown"), Description("Markdown 代码字体；Nothing 时代码块使用 Consolas，行内代码继承当前文本字体"), Browsable(True),
      DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
     Public Property CodeFont As Font
         Get
@@ -1436,7 +1458,9 @@ Public Class AgentRoom
         _items.Clear()
         _滚动偏移 = 0
         _pinnedToBottom = True
-        _contentHeightDirty = True
+        _itemLayoutTops.Clear()
+        _layoutAreaWidth = -1
+        MarkContentLayoutDirty(0)
         OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
@@ -1486,7 +1510,7 @@ Public Class AgentRoom
         EnsureLayout()
         Dim viewH As Integer = ContentViewportHeight()
         _滚动偏移 = Math.Max(0, _contentHeight - viewH)
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        RequestViewportRefresh()
     End Sub
 #End Region
 
@@ -1494,8 +1518,8 @@ Public Class AgentRoom
     Friend Sub NotifyItemChanged(item As ChatItem)
         If item Is Nothing Then Return
         item.NeedsRelayout = True
-        _contentHeightDirty = True
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        MarkContentLayoutDirty(GetItemIndex(item))
+        RequestViewportRefresh()
     End Sub
 
     Private Sub QueueStreamItemLayout(item As ChatItem)
@@ -1523,11 +1547,11 @@ Public Class AgentRoom
                 SubmitPendingMarkdownRendererAppend(it)
             Else
                 it.NeedsRelayout = True
-                _contentHeightDirty = True
+                MarkContentLayoutDirty(GetItemIndex(it))
                 needOuterRefresh = True
             End If
         Next
-        If needOuterRefresh Then OuterToInnerRefreshScheduler.RequestFull(Me)
+        If needOuterRefresh Then RequestViewportRefresh()
     End Sub
 
     Private Function CanSubmitMarkdownRendererAppend(it As ChatItem) As Boolean
@@ -1547,11 +1571,11 @@ Public Class AgentRoom
     End Function
 
     Friend Sub OnItemsChanged(index As Integer, isInsert As Boolean)
-        _contentHeightDirty = True
+        MarkContentLayoutDirty(index)
         If isInsert AndAlso _autoScrollToBottom AndAlso _pinnedToBottom Then
             ' 在贴底状态下插入，应保持贴底
         End If
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        RequestViewportRefresh()
     End Sub
 
     Private Sub InvalidateAllItemsLayout()
@@ -1559,7 +1583,44 @@ Public Class AgentRoom
         For Each it In _items
             it.NeedsRelayout = True
         Next
+        MarkContentLayoutDirty(0)
+    End Sub
+
+    Private Sub MarkContentLayoutDirty(firstIndex As Integer)
+        Dim normalized As Integer = Math.Max(0, firstIndex)
+        If Not _contentHeightDirty Then
+            _layoutDirtyFromIndex = normalized
+        Else
+            _layoutDirtyFromIndex = Math.Min(_layoutDirtyFromIndex, normalized)
+        End If
         _contentHeightDirty = True
+    End Sub
+
+    Private Function GetItemIndex(item As ChatItem) As Integer
+        If item Is Nothing Then Return -1
+        If item.CachedIndex >= 0 AndAlso item.CachedIndex < _items.Count AndAlso Object.ReferenceEquals(_items(item.CachedIndex), item) Then
+            Return item.CachedIndex
+        End If
+        Return _items.IndexOf(item)
+    End Function
+
+    Private Sub RequestViewportRefresh()
+        Dim dirty As Rectangle = GetContentArea()
+        If Not _scrollBar.TrackRect.IsEmpty Then dirty = Rectangle.Union(dirty, _scrollBar.TrackRect)
+        If _scrollBarWidth > 0 Then
+            Dim borderSize As Integer = Dpi(_borderSize)
+            Dim borderRadius As Integer = Dpi(_borderRadius)
+            Dim inset As Integer = Math.Max(borderSize, If(borderRadius > 0, borderRadius \ 2, 0))
+            Dim bandWidth As Integer = Dpi(_scrollBarWidth) + ScrollBarRenderer.Margin * 4 + inset
+            Dim bandLeft As Integer = Math.Max(0, Width - bandWidth)
+            dirty = Rectangle.Union(dirty, New Rectangle(bandLeft, 0, Width - bandLeft, Height))
+        End If
+        dirty = Rectangle.Intersect(ClientRectangle, dirty)
+        If dirty.Width > 0 AndAlso dirty.Height > 0 Then
+            OuterToInnerRefreshScheduler.Request(Me, dirty)
+        Else
+            OuterToInnerRefreshScheduler.RequestFull(Me)
+        End If
     End Sub
 
     Private Sub InvalidateMeasureCache()
@@ -1638,7 +1699,7 @@ Public Class AgentRoom
             ReleaseMarkdownRenderer(it)
             it.NeedsRelayout = True
         Next
-        _contentHeightDirty = True
+        MarkContentLayoutDirty(0)
         OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 
@@ -1693,7 +1754,7 @@ Public Class AgentRoom
                 End Sub
             AddHandler renderer.LinkClicked,
                 Sub(sender, e)
-                    ActivateLink(e.LinkText, _items.IndexOf(it))
+                    ActivateLink(e.LinkText, GetItemIndex(it))
                 End Sub
             AddHandler renderer.ContentHeightChanged,
                 Sub(sender, e)
@@ -1705,7 +1766,7 @@ Public Class AgentRoom
                     If Not Object.ReferenceEquals(it.MarkdownRenderer, sender) Then Return
                     If _suppressMarkdownRendererAppliedEvents > 0 Then Return
                     it.MarkdownRendererAppliedTextVersion = it.MarkdownRendererSubmittedTextVersion
-                    CommitMarkdownRendererLayout(it, requestRefresh:=False)
+                    CommitMarkdownRendererLayout(it, requestRefresh:=True)
                 End Sub
             it.MarkdownRenderer = renderer
         End If
@@ -1743,9 +1804,8 @@ Public Class AgentRoom
     Private Sub CommitMarkdownRendererLayout(it As ChatItem, Optional requestRefresh As Boolean = True)
         If it Is Nothing OrElse it.OwnerRoom IsNot Me Then Return
         it.NeedsRelayout = True
-        _contentHeightDirty = True
-        EnsureLayout()
-        If requestRefresh Then OuterToInnerRefreshScheduler.RequestFull(Me)
+        MarkContentLayoutDirty(GetItemIndex(it))
+        If requestRefresh Then RequestViewportRefresh()
     End Sub
 
     Private Sub ConfigureMarkdownRenderer(renderer As MarkdownViewerCore, it As ChatItem)
@@ -1826,8 +1886,7 @@ Public Class AgentRoom
 
         _滚动偏移 = clamped
         _pinnedToBottom = (_滚动偏移 >= maxOff)
-        EnsureLayout()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        RequestViewportRefresh()
     End Sub
 
     Private Sub AutoScrollSelectionAtEdge(mouseY As Integer)
@@ -1868,38 +1927,134 @@ Public Class AgentRoom
         If area.Width <= 0 Then
             _contentHeight = 0
             _contentHeightDirty = False
+            _layoutAreaWidth = -1
+            _layoutDirtyFromIndex = Integer.MaxValue
+            _itemLayoutTops.Clear()
             Return
         End If
 
-        Dim totalHeight As Integer = 0
-        Dim itemSpacing As Integer = Dpi(_itemSpacing)
-        For i = 0 To _items.Count - 1
-            Dim it = _items(i)
-            If it.NeedsRelayout OrElse it.CachedRect.Width <> area.Width Then
-                LayoutItem(it, area.Width)
-            End If
-            totalHeight += it.CachedRect.Height
-            If i < _items.Count - 1 Then totalHeight += itemSpacing
-        Next
-        _contentHeight = totalHeight
-        _contentHeightDirty = False
+        If _contentHeightDirty OrElse
+           _layoutAreaWidth <> area.Width OrElse
+           _itemLayoutTops.Count <> _items.Count Then
+            RebuildItemLayout(area.Width)
+        End If
 
-        ' clamp
-        Dim maxOff As Integer = Math.Max(0, _contentHeight - area.Height)
+        ClampScrollOffset(area.Height)
+    End Sub
+
+    Private Sub RebuildItemLayout(areaWidth As Integer)
+        Dim itemSpacing As Integer = Dpi(_itemSpacing)
+        Dim count As Integer = _items.Count
+        Dim fullRebuild As Boolean = _layoutAreaWidth <> areaWidth OrElse
+                                     _itemLayoutTops.Count <> count OrElse
+                                     _layoutDirtyFromIndex <= 0
+
+        If fullRebuild Then
+            _itemLayoutTops.Clear()
+            If _itemLayoutTops.Capacity < count Then _itemLayoutTops.Capacity = count
+            Dim totalHeight As Integer = 0
+            For i = 0 To count - 1
+                Dim it = _items(i)
+                If it.NeedsRelayout OrElse it.CachedRect.Width <> areaWidth Then
+                    LayoutItem(it, areaWidth)
+                End If
+                _itemLayoutTops.Add(totalHeight)
+                totalHeight += it.CachedRect.Height
+                If i < count - 1 Then totalHeight += itemSpacing
+            Next
+            _contentHeight = totalHeight
+        ElseIf count = 0 Then
+            _contentHeight = 0
+        Else
+            Dim startIndex As Integer = Math.Max(0, Math.Min(_layoutDirtyFromIndex, count - 1))
+            Dim y As Integer = _itemLayoutTops(startIndex)
+            For i = startIndex To count - 1
+                Dim it = _items(i)
+                If it.NeedsRelayout OrElse it.CachedRect.Width <> areaWidth Then
+                    LayoutItem(it, areaWidth)
+                End If
+                _itemLayoutTops(i) = y
+                y += it.CachedRect.Height
+                If i < count - 1 Then y += itemSpacing
+            Next
+            _contentHeight = y
+        End If
+
+        _layoutAreaWidth = areaWidth
+        _contentHeightDirty = False
+        _layoutDirtyFromIndex = Integer.MaxValue
+    End Sub
+
+    Private Sub ClampScrollOffset(viewHeight As Integer)
+        Dim maxOff As Integer = Math.Max(0, _contentHeight - viewHeight)
         If _滚动偏移 > maxOff Then _滚动偏移 = maxOff
         If _滚动偏移 < 0 Then _滚动偏移 = 0
         If _autoScrollToBottom AndAlso _pinnedToBottom Then
             _滚动偏移 = maxOff
         End If
+    End Sub
 
-        ' 更新 CachedRect 的 Y（基于最终 _滚动偏移）
-        Dim y2 As Integer = 0
-        For i = 0 To _items.Count - 1
-            Dim it = _items(i)
-            it.CachedRect = New Rectangle(area.X, area.Y + y2 - _滚动偏移, area.Width, it.CachedRect.Height)
-            y2 += it.CachedRect.Height
-            If i < _items.Count - 1 Then y2 += itemSpacing
-        Next
+    Private Function GetItemViewportRect(index As Integer, contentArea As Rectangle) As Rectangle
+        If index < 0 OrElse index >= _items.Count Then Return Rectangle.Empty
+        Dim top As Integer = If(index < _itemLayoutTops.Count, _itemLayoutTops(index), 0)
+        Dim it = _items(index)
+        Return New Rectangle(contentArea.X, contentArea.Y + top - _滚动偏移, contentArea.Width, it.CachedRect.Height)
+    End Function
+
+    Private Function FindFirstItemWithBottomAtOrAfter(contentY As Integer) As Integer
+        If _items.Count = 0 OrElse _itemLayoutTops.Count <> _items.Count Then Return _items.Count
+
+        Dim lo As Integer = 0
+        Dim hi As Integer = _items.Count - 1
+        Dim best As Integer = _items.Count
+
+        While lo <= hi
+            Dim mid As Integer = (lo + hi) \ 2
+            Dim bottom As Integer = _itemLayoutTops(mid) + _items(mid).CachedRect.Height
+            If bottom >= contentY Then
+                best = mid
+                hi = mid - 1
+            Else
+                lo = mid + 1
+            End If
+        End While
+
+        Return best
+    End Function
+
+    Private Function FindLastItemWithTopAtOrBefore(contentY As Integer) As Integer
+        If _items.Count = 0 OrElse _itemLayoutTops.Count <> _items.Count Then Return -1
+
+        Dim lo As Integer = 0
+        Dim hi As Integer = _itemLayoutTops.Count - 1
+        Dim best As Integer = -1
+
+        While lo <= hi
+            Dim mid As Integer = (lo + hi) \ 2
+            If _itemLayoutTops(mid) <= contentY Then
+                best = mid
+                lo = mid + 1
+            Else
+                hi = mid - 1
+            End If
+        End While
+
+        Return best
+    End Function
+
+    Private Sub GetVisibleItemRange(contentArea As Rectangle, ByRef first As Integer, ByRef last As Integer)
+        first = 0
+        last = -1
+        If _items.Count = 0 OrElse _itemLayoutTops.Count <> _items.Count OrElse contentArea.Height <= 0 Then Return
+
+        Dim contentTop As Integer = _滚动偏移
+        Dim contentBottom As Integer = _滚动偏移 + contentArea.Height
+        first = FindFirstItemWithBottomAtOrAfter(contentTop)
+        last = FindLastItemWithTopAtOrBefore(contentBottom)
+        If first >= _items.Count OrElse last < first Then
+            first = 0
+            last = -1
+        End If
     End Sub
 
     Private Sub LayoutItem(it As ChatItem, areaWidth As Integer)
@@ -2060,13 +2215,15 @@ Public Class AgentRoom
             Dim area As Rectangle = GetContentArea()
             Dim font As Font = Me.Font
             Dim lineHeight As Integer = GetLineHeight(font)
+            Dim firstVisible As Integer
+            Dim lastVisible As Integer
+            GetVisibleItemRange(area, firstVisible, lastVisible)
             gRT.PushAxisAlignedClip(New Vortice.RawRectF(area.Left, area.Top, area.Right, area.Bottom),
                                      Vortice.Direct2D1.AntialiasMode.PerPrimitive)
             Try
-                For i As Integer = 0 To _items.Count - 1
+                For i As Integer = firstVisible To lastVisible
                     Dim it = _items(i)
-                    Dim r As Rectangle = it.CachedRect
-                    If r.Bottom < area.Top OrElse r.Top > area.Bottom Then Continue For
+                    Dim r As Rectangle = GetItemViewportRect(i, area)
                     DrawItemShapes_D2D(gRT, brushCache, it, r, font, lineHeight, i)
                     If ShouldUseMarkdown(it) Then DrawMarkdownItem_D2D(gRT, scope.Compositor, it, r, area)
                 Next
@@ -2104,10 +2261,9 @@ Public Class AgentRoom
             textRT.PushAxisAlignedClip(New Vortice.RawRectF(area.Left, area.Top, area.Right, area.Bottom),
                                        Vortice.Direct2D1.AntialiasMode.PerPrimitive)
             Try
-                For i As Integer = 0 To _items.Count - 1
+                For i As Integer = firstVisible To lastVisible
                     Dim it = _items(i)
-                    Dim r As Rectangle = it.CachedRect
-                    If r.Bottom < area.Top OrElse r.Top > area.Bottom Then Continue For
+                    Dim r As Rectangle = GetItemViewportRect(i, area)
                     DrawItemText_D2D(textRT, brushCache, tfc, dpiS, it, r, font, lineHeight)
                 Next
             Finally
@@ -2316,7 +2472,7 @@ Public Class AgentRoom
         _selAnchor = New TextPos(-1, 0)
         _selCaret = New TextPos(-1, 0)
         ClearAllMarkdownSelections()
-        If hadSelection Then OuterToInnerRefreshScheduler.RequestFull(Me)
+        If hadSelection Then RequestViewportRefresh()
     End Sub
 
     Public Sub SelectAllText()
@@ -2334,7 +2490,7 @@ Public Class AgentRoom
         Dim last = _items(_items.Count - 1)
         _selCaret = New TextPos(_items.Count - 1, last.Text.Length)
         _hasSelection = True
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        RequestViewportRefresh()
     End Sub
 
     Public Function GetSelectedText() As String
@@ -2370,13 +2526,19 @@ Public Class AgentRoom
     End Sub
 
     Private Function HitTestMarkdown(pt As Point) As MarkdownHitInfo
-        For i = 0 To _items.Count - 1
+        EnsureLayout()
+        Dim area As Rectangle = GetContentArea()
+        Dim firstVisible As Integer
+        Dim lastVisible As Integer
+        GetVisibleItemRange(area, firstVisible, lastVisible)
+
+        For i = firstVisible To lastVisible
             Dim it = _items(i)
             If Not ShouldUseMarkdown(it) Then Continue For
             Dim md = it.MarkdownRenderer
             If md Is Nothing OrElse md.IsDisposed Then Continue For
 
-            Dim r = it.CachedRect
+            Dim r = GetItemViewportRect(i, area)
             If pt.Y < r.Top OrElse pt.Y > r.Bottom Then Continue For
 
             Dim textX As Integer = r.X + it.TextOriginX
@@ -2387,7 +2549,8 @@ Public Class AgentRoom
 
             Return New MarkdownHitInfo With {
                 .Renderer = md,
-                .LocalPoint = New Point(localX, localY)
+                .LocalPoint = New Point(localX, localY),
+                .ItemIndex = i
             }
         Next
 
@@ -2400,9 +2563,22 @@ Public Class AgentRoom
         localPoint = Point.Empty
         If renderer Is Nothing OrElse renderer.IsDisposed Then Return False
 
+        EnsureLayout()
+        Dim area As Rectangle = GetContentArea()
+        If _activeMarkdownItemIndex >= 0 AndAlso _activeMarkdownItemIndex < _items.Count Then
+            Dim activeItem = _items(_activeMarkdownItemIndex)
+            If Object.ReferenceEquals(activeItem.MarkdownRenderer, renderer) Then
+                Dim activeRect = GetItemViewportRect(_activeMarkdownItemIndex, area)
+                localPoint = New Point(pt.X - (activeRect.X + activeItem.TextOriginX), pt.Y - (activeRect.Y + activeItem.TextOriginY))
+                Return True
+            End If
+        End If
+
         For Each it In _items
             If Not Object.ReferenceEquals(it.MarkdownRenderer, renderer) Then Continue For
-            Dim r = it.CachedRect
+            Dim itemIndex As Integer = GetItemIndex(it)
+            If itemIndex < 0 Then Return False
+            Dim r = GetItemViewportRect(itemIndex, area)
             localPoint = New Point(pt.X - (r.X + it.TextOriginX), pt.Y - (r.Y + it.TextOriginY))
             Return True
         Next
@@ -2416,6 +2592,7 @@ Public Class AgentRoom
             If renderer IsNot Nothing AndAlso Not renderer.IsDisposed Then renderer.ClearEmbeddedSelection()
         Next
         _activeMarkdownRenderer = Nothing
+        _activeMarkdownItemIndex = -1
         _mouseSelectingMarkdown = False
     End Sub
 
@@ -2438,16 +2615,19 @@ Public Class AgentRoom
             Return _activeMarkdownRenderer
         End If
 
-        For Each it In _items
+        For i As Integer = 0 To _items.Count - 1
+            Dim it = _items(i)
             Dim renderer = it.MarkdownRenderer
             If renderer IsNot Nothing AndAlso
                Not renderer.IsDisposed AndAlso
                renderer.HasEmbeddedSelection Then
                 _activeMarkdownRenderer = renderer
+                _activeMarkdownItemIndex = i
                 Return renderer
             End If
         Next
 
+        _activeMarkdownItemIndex = -1
         Return Nothing
     End Function
 
@@ -2473,10 +2653,11 @@ Public Class AgentRoom
         _selCaret = New TextPos(-1, 0)
         ClearOtherMarkdownSelections(hit.Renderer)
         _activeMarkdownRenderer = hit.Renderer
+        _activeMarkdownItemIndex = hit.ItemIndex
         _mouseSelectingMarkdown = True
         hit.Renderer.BeginEmbeddedSelection(hit.LocalPoint.X, hit.LocalPoint.Y)
         Capture = True
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        RequestViewportRefresh()
     End Sub
 
     Private Sub BeginPlainTextSelection(pos As TextPos)
@@ -2486,7 +2667,7 @@ Public Class AgentRoom
         _hasSelection = False
         _mouseSelecting = True
         Capture = True
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        RequestViewportRefresh()
     End Sub
 
     Private Sub UpdateMarkdownSelection(pt As Point)
@@ -2524,12 +2705,32 @@ Public Class AgentRoom
 
     Private Function HitTestText(pt As Point, ByRef result As TextPos, Optional snap As Boolean = True) As Boolean
         result = New TextPos(-1, 0)
+        EnsureLayout()
+        If _items.Count = 0 Then Return False
+
+        Dim area As Rectangle = GetContentArea()
         Dim font As Font = Me.Font
         Dim lineHeight As Integer = GetLineHeight(font)
-        For i = 0 To _items.Count - 1
+        Dim firstIndex As Integer
+        Dim lastIndex As Integer
+
+        If snap Then
+            Dim contentY As Integer = pt.Y - area.Y + _滚动偏移
+            firstIndex = FindFirstItemWithBottomAtOrAfter(contentY)
+            If firstIndex >= _items.Count Then
+                Dim last = _items(_items.Count - 1)
+                result = New TextPos(_items.Count - 1, last.Text.Length)
+                Return True
+            End If
+            lastIndex = _items.Count - 1
+        Else
+            GetVisibleItemRange(area, firstIndex, lastIndex)
+        End If
+
+        For i = firstIndex To lastIndex
             Dim it = _items(i)
             If ShouldUseMarkdown(it) Then Continue For
-            Dim r = it.CachedRect
+            Dim r = GetItemViewportRect(i, area)
             If pt.Y < r.Top Then
                 If snap Then
                     result = New TextPos(i, 0) : Return True
@@ -2541,10 +2742,10 @@ Public Class AgentRoom
             Dim textX As Integer = r.X + it.TextOriginX
             Dim textY As Integer = r.Y + it.TextOriginY
             Dim relY As Integer = pt.Y - textY
-            Dim li As Integer = Math.Max(0, Math.Min(it.LineRanges.Count - 1, relY \ Math.Max(1, lineHeight)))
             If it.LineRanges.Count = 0 Then
                 result = New TextPos(i, 0) : Return True
             End If
+            Dim li As Integer = Math.Max(0, Math.Min(it.LineRanges.Count - 1, relY \ Math.Max(1, lineHeight)))
             Dim lr = it.LineRanges(li)
             Dim line As String = it.Text.Substring(lr.Start, lr.Length)
             Dim col As Integer = TextRenderHelper.FindColFromX_D2D(line, pt.X - textX, font, DpiScale(), GetTextFormatCacheForMeasure())
@@ -2560,11 +2761,17 @@ Public Class AgentRoom
     End Function
 
     Private Function HitTestLink(pt As Point) As LinkHitInfo
+        EnsureLayout()
+        Dim area As Rectangle = GetContentArea()
+        Dim firstVisible As Integer
+        Dim lastVisible As Integer
+        GetVisibleItemRange(area, firstVisible, lastVisible)
+
         Dim font As Font = Me.Font
         Dim lineHeight As Integer = GetLineHeight(font)
-        For i = 0 To _items.Count - 1
+        For i = firstVisible To lastVisible
             Dim it = _items(i)
-            Dim r = it.CachedRect
+            Dim r = GetItemViewportRect(i, area)
             If pt.Y < r.Top OrElse pt.Y > r.Bottom Then Continue For
             Dim textX As Integer = r.X + it.TextOriginX
             Dim textY As Integer = r.Y + it.TextOriginY
@@ -2586,6 +2793,7 @@ Public Class AgentRoom
             Dim line As String = it.Text.Substring(lr.Start, lr.Length)
             Dim col As Integer = TextRenderHelper.FindColFromX_D2D(line, pt.X - textX, font, DpiScale(), GetTextFormatCacheForMeasure())
             Dim absCharIndex As Integer = lr.Start + col
+            it.EnsureLinksCurrent()
             For Each ls In it.LinkSpans
                 If absCharIndex >= ls.Start AndAlso absCharIndex < ls.Start + ls.Length Then
                     Return New LinkHitInfo With {.Url = ls.Url, .ItemIndex = i}
@@ -2605,15 +2813,13 @@ Public Class AgentRoom
             ' 滚动条优先
             If _scrollBar.BeginDrag(e.Location, _滚动偏移) Then
                 Capture = True
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                RequestViewportRefresh()
                 Return
             End If
             If _scrollBar.TrackRect.Contains(e.Location) Then
                 Dim viewH = ContentViewportHeight()
                 Dim totalH = Math.Max(viewH, _contentHeight)
-                _滚动偏移 = _scrollBar.TrackClick(e.Location, _滚动偏移, totalH, viewH)
-                _pinnedToBottom = (_滚动偏移 >= totalH - viewH)
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                SetScrollOffset(_scrollBar.TrackClick(e.Location, _滚动偏移, totalH, viewH))
                 Return
             End If
 
@@ -2647,9 +2853,7 @@ Public Class AgentRoom
         If _scrollBar.IsDragging Then
             Dim viewH = ContentViewportHeight()
             Dim totalH = Math.Max(viewH, _contentHeight)
-            _滚动偏移 = _scrollBar.DragMove(e.Y, totalH, viewH)
-            _pinnedToBottom = (_滚动偏移 >= totalH - viewH)
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            SetScrollOffset(_scrollBar.DragMove(e.Y, totalH, viewH))
             Return
         End If
 
@@ -2662,9 +2866,11 @@ Public Class AgentRoom
         If _mouseSelecting Then
             Dim pos As TextPos
             If HitTestText(e.Location, pos, snap:=True) Then
-                _selCaret = pos
-                _hasSelection = (_selAnchor <> _selCaret)
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                If pos <> _selCaret Then
+                    _selCaret = pos
+                    _hasSelection = (_selAnchor <> _selCaret)
+                    RequestViewportRefresh()
+                End If
             End If
             ' 边缘自动滚动
             AutoScrollSelectionAtEdge(e.Y)
@@ -2675,17 +2881,19 @@ Public Class AgentRoom
         Dim link = HitTestLink(e.Location)
         If Not String.Equals(link.Url, _hoverLinkUrl, StringComparison.Ordinal) Then
             _hoverLinkUrl = link.Url
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            RequestViewportRefresh()
         End If
+        Dim desiredCursor As Cursor
         If link.HasValue Then
-            Cursor = Cursors.Hand
+            desiredCursor = Cursors.Hand
         ElseIf _selectableText AndAlso GetContentArea().Contains(e.Location) Then
-            Cursor = Cursors.IBeam
+            desiredCursor = Cursors.IBeam
         Else
-            Cursor = Cursors.Default
+            desiredCursor = Cursors.Default
         End If
+        If Cursor IsNot desiredCursor Then Cursor = desiredCursor
 
-        If _scrollBar.UpdateHover(e.Location) Then OuterToInnerRefreshScheduler.RequestFull(Me)
+        If _scrollBar.UpdateHover(e.Location) Then RequestViewportRefresh()
     End Sub
 
     Protected Overrides Sub OnMouseUp(e As MouseEventArgs)
@@ -2693,7 +2901,7 @@ Public Class AgentRoom
         If _scrollBar.IsDragging Then
             _scrollBar.EndDrag()
             Capture = False
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            RequestViewportRefresh()
         End If
         If _mouseSelectingMarkdown Then
             Dim hadSelection As Boolean = EndMarkdownSelection()
@@ -2711,7 +2919,10 @@ Public Class AgentRoom
 
         If e.Button = MouseButtons.Right AndAlso _showCopyContextMenu Then
             Dim mdHit = HitTestMarkdown(e.Location)
-            If mdHit.HasValue Then _activeMarkdownRenderer = mdHit.Renderer
+            If mdHit.HasValue Then
+                _activeMarkdownRenderer = mdHit.Renderer
+                _activeMarkdownItemIndex = mdHit.ItemIndex
+            End If
             _copyContextMenu.Show(Me, e.Location)
         End If
     End Sub
@@ -2720,9 +2931,9 @@ Public Class AgentRoom
         MyBase.OnMouseLeave(e)
         If _hoverLinkUrl IsNot Nothing Then
             _hoverLinkUrl = Nothing
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            RequestViewportRefresh()
         End If
-        If _scrollBar.ResetHover() Then OuterToInnerRefreshScheduler.RequestFull(Me)
+        If _scrollBar.ResetHover() Then RequestViewportRefresh()
         Cursor = Cursors.Default
     End Sub
 
@@ -2733,7 +2944,6 @@ Public Class AgentRoom
 
     Protected Overrides Sub OnSizeChanged(e As EventArgs)
         MyBase.OnSizeChanged(e)
-        InvalidateAllItemsLayout()
         OuterToInnerRefreshScheduler.RequestFull(Me)
     End Sub
 

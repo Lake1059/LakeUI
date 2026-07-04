@@ -713,6 +713,9 @@ Public Class MarkdownViewerCore
     Private _lastBaseFont As Font = Nothing
     Private _measureVersion As Integer
     Private _layoutDpi As Integer = 0
+    Private _layoutAreaWidth As Integer = 0
+    Private ReadOnly _blockLayoutTops As New List(Of Integer)
+    Private ReadOnly _blockLayoutBottoms As New List(Of Integer)
     Private ReadOnly _textWidthCache As New Dictionary(Of TextWidthKey, Integer)(512)
     Private Const MaxTextWidthCacheEntries As Integer = 4096
 
@@ -1443,7 +1446,7 @@ Public Class MarkdownViewerCore
 #Region "外观属性 - 字体"
 
     Private 代码字体 As Font = Nothing
-    <Category("LakeUI - Markdown"), Description("代码字体，Nothing 时使用 Consolas"), Browsable(True),
+    <Category("LakeUI - Markdown"), Description("代码字体；Nothing 时代码块使用 Consolas，行内代码继承当前文本字体"), Browsable(True),
      DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
     Public Property CodeFont As Font
         Get
@@ -1823,8 +1826,11 @@ Public Class MarkdownViewerCore
 
     Friend Sub UpdateEmbeddedSelection(localX As Integer, localY As Integer)
         If Not _mouseDownSelecting Then Return
-        _selCurrent = HitTestPos(localX, localY)
-        _hasSelection = CompareSelectionPos(_selAnchor, _selCurrent) <> 0
+        Dim newCurrent = HitTestPos(localX, localY)
+        Dim newHasSelection As Boolean = CompareSelectionPos(_selAnchor, newCurrent) <> 0
+        If CompareSelectionPos(_selCurrent, newCurrent) = 0 AndAlso _hasSelection = newHasSelection Then Return
+        _selCurrent = newCurrent
+        _hasSelection = newHasSelection
         RequestEmbeddedOrSelfRefresh()
     End Sub
 
@@ -1961,10 +1967,17 @@ Public Class MarkdownViewerCore
                                     clearSelectionOnApply As Boolean)
         If version < _lastAppliedParseVersion Then Return
         _lastAppliedParseVersion = version
+        Dim oldDoc = _document
+        Dim oldContentHeight As Integer = _totalContentHeight
+        Dim firstChangedBlock As Integer = FindFirstChangedBlock(oldDoc, doc)
         _document = If(doc, New MarkdownDocument())
         _applyingParsedDocument = True
         Try
-            RebuildLayout()
+            If firstChangedBlock < 0 Then
+                RaiseContentHeightChangedIfNeeded(oldContentHeight)
+            ElseIf Not TryRebuildLayoutFromChangedBlock(oldDoc, _document, firstChangedBlock, oldContentHeight) Then
+                RebuildLayout(oldContentHeight)
+            End If
         Finally
             _applyingParsedDocument = False
         End Try
@@ -1973,21 +1986,156 @@ Public Class MarkdownViewerCore
         If clearSelectionOnApply Then ClearSelection()
         ClampScroll()
         RaiseEvent EmbeddedContentApplied(Me, EventArgs.Empty)
-        RequestEmbeddedOrSelfRefresh()
+        If Not _embeddedContentMode Then RequestEmbeddedOrSelfRefresh()
     End Sub
 
-    Private Sub RebuildLayout()
-        Dim oldContentHeight As Integer = _totalContentHeight
+    Private Function TryRebuildLayoutFromChangedBlock(oldDoc As MarkdownDocument,
+                                                      newDoc As MarkdownDocument,
+                                                      firstChangedBlock As Integer,
+                                                      oldContentHeight As Integer) As Boolean
+        If Not CanIncrementalLayout(oldDoc, newDoc, firstChangedBlock) Then Return False
+
+        Dim areaW As Integer = TextAreaWidth()
+        If areaW <= 0 Then Return False
+
+        Dim startBlock As Integer = Math.Max(0, Math.Min(firstChangedBlock, newDoc.Blocks.Count))
+        Dim y As Integer = If(startBlock < _blockLayoutTops.Count, _blockLayoutTops(startBlock), oldContentHeight)
+
+        For i As Integer = _visualLines.Count - 1 To 0 Step -1
+            If _visualLines(i).BlockIndex >= startBlock Then _visualLines.RemoveAt(i)
+        Next
+
+        For Each key In _tableColumnWidths.Keys.ToArray()
+            If key >= startBlock Then _tableColumnWidths.Remove(key)
+        Next
+
+        If _blockLayoutTops.Count > startBlock Then _blockLayoutTops.RemoveRange(startBlock, _blockLayoutTops.Count - startBlock)
+        If _blockLayoutBottoms.Count > startBlock Then _blockLayoutBottoms.RemoveRange(startBlock, _blockLayoutBottoms.Count - startBlock)
+
+        Dim lastContentKind As BlockKind? = Nothing
+        Dim hadBlankLine As Boolean = False
+        GetLayoutContextBeforeBlock(newDoc, startBlock, lastContentKind, hadBlankLine)
+
+        Dim s As Single = DpiScale()
+        For bi As Integer = startBlock To newDoc.Blocks.Count - 1
+            y = LayoutDocumentBlock(bi, newDoc.Blocks(bi), areaW, y, s, lastContentKind, hadBlankLine)
+        Next
+
+        _totalContentHeight = y
+        Dim prevVisible As Boolean = _scrollBarVisible
+        UpdateScrollBarState()
+        If _scrollBarVisible <> prevVisible Then Return False
+
+        TrimImageCache(GetActiveImageUrls())
+        RaiseContentHeightChangedIfNeeded(oldContentHeight)
+        Return True
+    End Function
+
+    Private Function CanIncrementalLayout(oldDoc As MarkdownDocument,
+                                          newDoc As MarkdownDocument,
+                                          firstChangedBlock As Integer) As Boolean
+        If oldDoc Is Nothing OrElse newDoc Is Nothing Then Return False
+        If firstChangedBlock < 0 Then Return True
+        If _layoutDpi <= 0 OrElse _layoutDpi <> EffectiveDeviceDpi() Then Return False
+        If _layoutAreaWidth <= 0 OrElse _layoutAreaWidth <> TextAreaWidth() Then Return False
+        If _blockLayoutTops.Count <> oldDoc.Blocks.Count OrElse _blockLayoutBottoms.Count <> oldDoc.Blocks.Count Then Return False
+        If firstChangedBlock > oldDoc.Blocks.Count Then Return False
+        Return True
+    End Function
+
+    Private Shared Function FindFirstChangedBlock(oldDoc As MarkdownDocument, newDoc As MarkdownDocument) As Integer
+        If oldDoc Is Nothing OrElse oldDoc.Blocks Is Nothing Then
+            Return If(newDoc Is Nothing OrElse newDoc.Blocks Is Nothing OrElse newDoc.Blocks.Count = 0, -1, 0)
+        End If
+        If newDoc Is Nothing OrElse newDoc.Blocks Is Nothing Then
+            Return If(oldDoc.Blocks.Count = 0, -1, 0)
+        End If
+
+        Dim sharedCount As Integer = Math.Min(oldDoc.Blocks.Count, newDoc.Blocks.Count)
+        For i As Integer = 0 To sharedCount - 1
+            If Not BlocksEquivalent(oldDoc.Blocks(i), newDoc.Blocks(i)) Then Return i
+        Next
+        If oldDoc.Blocks.Count <> newDoc.Blocks.Count Then Return sharedCount
+        Return -1
+    End Function
+
+    Private Shared Function BlocksEquivalent(a As MarkdownBlock, b As MarkdownBlock) As Boolean
+        If a Is b Then Return True
+        If a Is Nothing OrElse b Is Nothing Then Return False
+        If a.Kind <> b.Kind OrElse
+           Not String.Equals(a.RawText, b.RawText, StringComparison.Ordinal) OrElse
+           a.OrderIndex <> b.OrderIndex OrElse
+           a.ListLevel <> b.ListLevel OrElse
+           a.HasHeader <> b.HasHeader OrElse
+           a.AlertKind <> b.AlertKind OrElse
+           a.IsAlertHeader <> b.IsAlertHeader Then Return False
+        If Not InlineListsEquivalent(a.Inlines, b.Inlines) Then Return False
+        If Not TableAlignmentsEquivalent(a.ColumnAlignments, b.ColumnAlignments) Then Return False
+        Return TableRowsEquivalent(a.TableRows, b.TableRows)
+    End Function
+
+    Private Shared Function InlineListsEquivalent(a As List(Of MarkdownInline), b As List(Of MarkdownInline)) As Boolean
+        If a Is b Then Return True
+        If a Is Nothing OrElse b Is Nothing Then Return False
+        If a.Count <> b.Count Then Return False
+        For i As Integer = 0 To a.Count - 1
+            Dim ai = a(i)
+            Dim bi = b(i)
+            If ai Is bi Then Continue For
+            If ai Is Nothing OrElse bi Is Nothing Then Return False
+            If ai.Kind <> bi.Kind OrElse
+               Not String.Equals(ai.Text, bi.Text, StringComparison.Ordinal) OrElse
+               Not String.Equals(ai.Url, bi.Url, StringComparison.Ordinal) OrElse
+               ai.ImageWidth <> bi.ImageWidth OrElse
+               ai.ImageHeight <> bi.ImageHeight Then Return False
+        Next
+        Return True
+    End Function
+
+    Private Shared Function TableAlignmentsEquivalent(a As List(Of TableAlignment), b As List(Of TableAlignment)) As Boolean
+        If a Is b Then Return True
+        If a Is Nothing OrElse b Is Nothing Then Return False
+        If a.Count <> b.Count Then Return False
+        For i As Integer = 0 To a.Count - 1
+            If a(i) <> b(i) Then Return False
+        Next
+        Return True
+    End Function
+
+    Private Shared Function TableRowsEquivalent(a As List(Of List(Of MarkdownTableCell)),
+                                                b As List(Of List(Of MarkdownTableCell))) As Boolean
+        If a Is b Then Return True
+        If a Is Nothing OrElse b Is Nothing Then Return False
+        If a.Count <> b.Count Then Return False
+        For ri As Integer = 0 To a.Count - 1
+            Dim ar = a(ri)
+            Dim br = b(ri)
+            If ar Is br Then Continue For
+            If ar Is Nothing OrElse br Is Nothing OrElse ar.Count <> br.Count Then Return False
+            For ci As Integer = 0 To ar.Count - 1
+                If ar(ci) Is br(ci) Then Continue For
+                If ar(ci) Is Nothing OrElse br(ci) Is Nothing Then Return False
+                If Not InlineListsEquivalent(ar(ci).Inlines, br(ci).Inlines) Then Return False
+            Next
+        Next
+        Return True
+    End Function
+
+    Private Sub RebuildLayout(Optional previousContentHeight As Integer = -1)
+        Dim oldContentHeight As Integer = If(previousContentHeight >= 0, previousContentHeight, _totalContentHeight)
         InvalidateMeasureCache()
         _layoutDpi = EffectiveDeviceDpi()
         _visualLines.Clear()
         _tableColumnWidths.Clear()
+        _blockLayoutTops.Clear()
+        _blockLayoutBottoms.Clear()
         _totalContentHeight = 0
         If Not IsHandleCreated AndAlso Not _embeddedContentMode Then
             RaiseContentHeightChangedIfNeeded(oldContentHeight)
             Return
         End If
         Dim areaW As Integer = TextAreaWidth()
+        _layoutAreaWidth = areaW
         If areaW <= 0 Then
             RaiseContentHeightChangedIfNeeded(oldContentHeight)
             Return
@@ -1999,65 +2147,103 @@ Public Class MarkdownViewerCore
         Dim hadBlankLine As Boolean = False
 
         For bi As Integer = 0 To _document.Blocks.Count - 1
-            Dim block = _document.Blocks(bi)
-
-            If block.Kind = BlockKind.BlankLine Then
-                hadBlankLine = True
-                Continue For
-            End If
-
-            ' 在内容块之前添加间距
-            If lastContentKind.HasValue Then
-                Dim isHeading = (block.Kind >= BlockKind.Heading1 AndAlso block.Kind <= BlockKind.Heading6)
-                Dim prevIsHeading = (lastContentKind.Value >= BlockKind.Heading1 AndAlso lastContentKind.Value <= BlockKind.Heading6)
-                If Not hadBlankLine AndAlso Not isHeading AndAlso IsSameGroup(lastContentKind.Value, block.Kind) Then
-                    ' 同组块（连续列表项、连续引用）使用段落内部间距
-                    y += 行内行距
-                ElseIf prevIsHeading AndAlso Not isHeading Then
-                    ' 标题下方与其他元素：块间距的一半，但不小于段落内部间距
-                    y += Math.Max(行内行距, 段落行距 \ 2)
-                Else
-                    ' 标题上方 / 不同组块之间：完整块间距
-                    y += 段落行距
-                End If
-            End If
-            hadBlankLine = False
-
-            Select Case block.Kind
-                Case BlockKind.HorizontalRule
-                    Dim ruleThick As Integer = Math.Max(1, CInt(分隔线粗细 * s))
-                    Dim rulePad As Integer = CInt(分隔线上下边距 * s)
-                    Dim vl As New VisualLine With {
-                        .BlockIndex = bi, .Y = y,
-                        .Height = ruleThick + rulePad * 2,
-                        .Fragments = New List(Of VisualFragment)
-                    }
-                    _visualLines.Add(vl)
-                    y += vl.Height
-
-                Case BlockKind.CodeBlock
-                    y = LayoutCodeBlock(bi, block, areaW, y, s)
-
-                Case BlockKind.Table
-                    y = LayoutTable(bi, block, areaW, y, s)
-
-                Case Else
-                    y = LayoutInlineBlock(bi, block, areaW, y, s)
-            End Select
-
-            lastContentKind = block.Kind
+            y = LayoutDocumentBlock(bi, _document.Blocks(bi), areaW, y, s, lastContentKind, hadBlankLine)
         Next
 
         _totalContentHeight = y
         Dim prevVisible As Boolean = _scrollBarVisible
         UpdateScrollBarState()
         If _scrollBarVisible <> prevVisible AndAlso _scrollBarVisible Then
-            RebuildLayout()
-            RaiseContentHeightChangedIfNeeded(oldContentHeight)
+            RebuildLayout(oldContentHeight)
             Return
         End If
         TrimImageCache(GetActiveImageUrls())
         RaiseContentHeightChangedIfNeeded(oldContentHeight)
+    End Sub
+
+    Private Function LayoutDocumentBlock(blockIndex As Integer,
+                                         block As MarkdownBlock,
+                                         areaW As Integer,
+                                         y As Integer,
+                                         s As Single,
+                                         ByRef lastContentKind As BlockKind?,
+                                         ByRef hadBlankLine As Boolean) As Integer
+        Dim blockTop As Integer = y
+
+        If block Is Nothing Then
+            AddBlockLayoutRange(blockTop, y)
+            Return y
+        End If
+
+        If block.Kind = BlockKind.BlankLine Then
+            hadBlankLine = True
+            AddBlockLayoutRange(blockTop, y)
+            Return y
+        End If
+
+        If lastContentKind.HasValue Then
+            Dim isHeading = (block.Kind >= BlockKind.Heading1 AndAlso block.Kind <= BlockKind.Heading6)
+            Dim prevIsHeading = (lastContentKind.Value >= BlockKind.Heading1 AndAlso lastContentKind.Value <= BlockKind.Heading6)
+            If Not hadBlankLine AndAlso Not isHeading AndAlso IsSameGroup(lastContentKind.Value, block.Kind) Then
+                y += 行内行距
+            ElseIf prevIsHeading AndAlso Not isHeading Then
+                y += Math.Max(行内行距, 段落行距 \ 2)
+            Else
+                y += 段落行距
+            End If
+        End If
+        hadBlankLine = False
+
+        Select Case block.Kind
+            Case BlockKind.HorizontalRule
+                Dim ruleThick As Integer = Math.Max(1, CInt(分隔线粗细 * s))
+                Dim rulePad As Integer = CInt(分隔线上下边距 * s)
+                Dim vl As New VisualLine With {
+                    .BlockIndex = blockIndex, .Y = y,
+                    .Height = ruleThick + rulePad * 2,
+                    .Fragments = New List(Of VisualFragment)
+                }
+                _visualLines.Add(vl)
+                y += vl.Height
+
+            Case BlockKind.CodeBlock
+                y = LayoutCodeBlock(blockIndex, block, areaW, y, s)
+
+            Case BlockKind.Table
+                y = LayoutTable(blockIndex, block, areaW, y, s)
+
+            Case Else
+                y = LayoutInlineBlock(blockIndex, block, areaW, y, s)
+        End Select
+
+        lastContentKind = block.Kind
+        AddBlockLayoutRange(blockTop, y)
+        Return y
+    End Function
+
+    Private Sub AddBlockLayoutRange(top As Integer, bottom As Integer)
+        _blockLayoutTops.Add(top)
+        _blockLayoutBottoms.Add(bottom)
+    End Sub
+
+    Private Sub GetLayoutContextBeforeBlock(doc As MarkdownDocument,
+                                            blockIndex As Integer,
+                                            ByRef lastContentKind As BlockKind?,
+                                            ByRef hadBlankLine As Boolean)
+        lastContentKind = Nothing
+        hadBlankLine = False
+        If doc Is Nothing OrElse doc.Blocks Is Nothing Then Return
+
+        For i As Integer = 0 To Math.Min(blockIndex, doc.Blocks.Count) - 1
+            Dim block = doc.Blocks(i)
+            If block Is Nothing Then Continue For
+            If block.Kind = BlockKind.BlankLine Then
+                hadBlankLine = True
+            Else
+                lastContentKind = block.Kind
+                hadBlankLine = False
+            End If
+        Next
     End Sub
 
     Private Sub RaiseContentHeightChangedIfNeeded(oldContentHeight As Integer)
@@ -2200,8 +2386,7 @@ Public Class MarkdownViewerCore
         End If
         Dim pos As Integer = 0
         While pos < text.Length
-            Dim remaining = text.Substring(pos)
-            Dim fitLen = FindFitLength(remaining, font, maxWidth, lineH)
+            Dim fitLen = FindFitLength(text, pos, text.Length, font, maxWidth, lineH)
             If fitLen <= 0 Then fitLen = 1
             lines.Add(text.Substring(pos, fitLen))
             pos += fitLen
@@ -2337,9 +2522,9 @@ Public Class MarkdownViewerCore
             End If
 
             While pos < inlText.Length
-                Dim remaining = inlText.Substring(pos)
-                Dim fitLen As Integer = FindFitLength(remaining, inlFont, areaW - x - codePadR, textLineH)
-                If fitLen <= 0 AndAlso x > indent Then
+                Dim fitLen As Integer = FindFitLength(inlText, pos, inlText.Length, inlFont, areaW - x - codePadR, textLineH)
+                Dim lineStartX As Integer = indent + If(isInlineCode, codePadL, 0)
+                If fitLen <= 0 AndAlso (fragments.Count > 0 OrElse x > lineStartX) Then
                     If isInlineCode Then x += codePadR
                     _visualLines.Add(New VisualLine With {
                         .BlockIndex = bi, .Y = y, .Height = currentLineH,
@@ -2350,6 +2535,7 @@ Public Class MarkdownViewerCore
                     x = indent
                     If isInlineCode Then x += codePadL
                     currentLineH = textLineH
+                    If isInlineCode Then currentLineH = Math.Max(currentLineH, textLineH + codePadV)
                     firstLine = False
                     Continue While
                 End If
@@ -2410,14 +2596,35 @@ Public Class MarkdownViewerCore
     End Function
 
     Private Function FindFitLength(text As String, font As Font, maxWidth As Integer, lineH As Integer) As Integer
+        Return FindFitLength(text, 0, If(text Is Nothing, 0, text.Length), font, maxWidth, lineH)
+    End Function
+
+    Private Function FindFitLength(text As String,
+                                   start As Integer,
+                                   endExclusive As Integer,
+                                   font As Font,
+                                   maxWidth As Integer,
+                                   lineH As Integer) As Integer
         If maxWidth <= 0 Then Return 0
-        If MeasureTextWidthCached(text, font, lineH) <= maxWidth Then Return text.Length
+        If String.IsNullOrEmpty(text) Then Return 0
+        start = Math.Max(0, Math.Min(start, text.Length))
+        endExclusive = Math.Max(start, Math.Min(endExclusive, text.Length))
+        Dim total As Integer = endExclusive - start
+        If total <= 0 Then Return 0
+
+        Dim hi As Integer = 1
+        While hi < total AndAlso MeasureTextRangeWidthCached(text, start, hi, font, lineH) <= maxWidth
+            hi = Math.Min(total, hi * 2)
+        End While
+
+        If hi = total AndAlso MeasureTextRangeWidthCached(text, start, total, font, lineH) <= maxWidth Then Return total
+
         Dim lo As Integer = 1
-        Dim hi As Integer = text.Length
+        hi = Math.Min(hi, total)
         Dim best As Integer = 0
         While lo <= hi
             Dim mid As Integer = (lo + hi) \ 2
-            If MeasureTextWidthCached(text.Substring(0, mid), font, lineH) <= maxWidth Then
+            If MeasureTextRangeWidthCached(text, start, mid, font, lineH) <= maxWidth Then
                 best = mid
                 lo = mid + 1
             Else
@@ -2425,6 +2632,16 @@ Public Class MarkdownViewerCore
             End If
         End While
         Return best
+    End Function
+
+    Private Function MeasureTextRangeWidthCached(text As String,
+                                                 start As Integer,
+                                                 length As Integer,
+                                                 font As Font,
+                                                 lineH As Integer) As Integer
+        If String.IsNullOrEmpty(text) OrElse length <= 0 Then Return 0
+        If start <= 0 AndAlso length >= text.Length Then Return MeasureTextWidthCached(text, font, lineH)
+        Return MeasureTextWidthCached(text.Substring(start, length), font, lineH)
     End Function
 
 #End Region
@@ -3175,7 +3392,7 @@ Public Class MarkdownViewerCore
             Case InlineKind.Bold : Return _fontCache(FontBold)
             Case InlineKind.Italic : Return _fontCache(FontItalic)
             Case InlineKind.BoldItalic : Return _fontCache(FontBoldItalic)
-            Case InlineKind.Code : Return GetCodeFont()
+            Case InlineKind.Code : Return GetInlineCodeFont(blockFont)
             Case Else : Return blockFont
         End Select
     End Function
@@ -3195,6 +3412,11 @@ Public Class MarkdownViewerCore
         If 代码字体 IsNot Nothing Then Return 代码字体
         EnsureFontCache()
         Return _fontCache(FontCode)
+    End Function
+
+    Private Function GetInlineCodeFont(blockFont As Font) As Font
+        If 代码字体 IsNot Nothing Then Return 代码字体
+        Return blockFont
     End Function
 
     Private Sub EnsureFontCache()
