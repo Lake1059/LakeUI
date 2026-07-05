@@ -5,11 +5,7 @@ Imports Vortice.DirectWrite
 
 <DefaultEvent("Click")>
 Public Class ModernButton
-
-#Region "D2D 资源（V2 占位）"
-    ' V2：所有 D2D 资源迁移到 WindowCompositor（Form 级共享）；ModernButton 不再持有任何 D2D 字段。
-    ' 旧的 _dcRT / _ssaaCache / _backImageCache / _iconCache 已移除。
-#End Region
+    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource
 
     Public Sub New()
         InitializeComponent()
@@ -19,17 +15,19 @@ Public Class ModernButton
 
 #Region "绘制"
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
-        ' V2 契约：
-        '   • BackgroundSource 已设置 → 跳过 BackColor 整个逻辑，背景由 OnPaint 内 BackgroundPenetrationV2 绘制；
-        '   • 否则一律走 .NET 自身透明逻辑（半透明 BackColor 由基类合成父级背景，不透明色由基类填底）。
         If _backgroundSource IsNot Nothing Then Return
         MyBase.OnPaintBackground(e)
     End Sub
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
+        If Not D3D_PaintBridge.PaintRenderable(e, Me, Me, 1) Then MyBase.OnPaint(e)
+    End Sub
+
+    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+        If context Is Nothing OrElse Me.Width <= 0 OrElse Me.Height <= 0 Then Return
+
         Dim 是否有圆角 As Boolean = 边框圆角半径 > 0
         Dim s As Single = DpiScale()
-
         Dim 极限矩形区域 As New RectangleF(0, 0, Me.Width, Me.Height)
         If 边框宽度 > 0 Then
             Dim half As Single = 边框宽度 * s / 2.0F
@@ -42,46 +40,18 @@ Public Class ModernButton
             极限矩形区域.Height - Me.Padding.Vertical)
         Dim 图标宽度 As Single = 计算图标占用的水平宽度(内容矩形区域, s)
 
-        Dim ssaa As Integer = D2DHelperV2.GetEffectiveSsaaScale(超采样倍率)
+        If _backgroundSource IsNot Nothing Then
+            context.DrawBackgroundSource(Me, _backgroundSource, 极限矩形区域)
+        ElseIf MyBase.BackColor.A > 0 Then
+            填充形状_GPU(context, 极限矩形区域, If(是否有圆角, 边框圆角半径 * s, 0.0F), MyBase.BackColor)
+        End If
 
-        Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
-            If scope Is Nothing Then Return  ' 设计期或无 Form 上下文
-            Dim compositor = scope.Compositor
-            Dim dcRT As ID2D1DCRenderTarget = scope.DCRenderTarget
+        绘制图形内容_GPU(context, 是否有圆角, 极限矩形区域, 内容矩形区域, 图标宽度, s)
+        绘制文本_GPU(context, 内容矩形区域, 图标宽度, s)
 
-            ' 1) 背景层（1× 直绘）：
-            '    • 显式 BackgroundSource → 绘制穿透底图（跳过 BackColor）；
-            '    • 否则若 MyBase.BackColor 半透明 → 基类 OnPaintBackground 已把父级背景合成到 DC，
-            '      这里再叠加 BackColor 作为半透明遮罩（"颜色覆盖在上面"）。
-            If _backgroundSource IsNot Nothing Then
-                BackgroundPenetrationV2.PaintBackground(Me, scope, _backgroundSource)
-            ElseIf MyBase.BackColor.A > 0 AndAlso MyBase.BackColor.A < 255 Then
-                Dim bgLayer = scope.BackgroundLayer
-                Dim brush = compositor.BrushCache.[Get](bgLayer, MyBase.BackColor)
-                If brush IsNot Nothing Then
-                    bgLayer.FillRectangle(D2DGlobals.ToD2DRect(New RectangleF(0, 0, Me.Width, Me.Height)), brush)
-                End If
-            End If
-
-            ' 2) 图形层（享受 SSAA）
-            Dim gRT As ID2D1RenderTarget = scope.GraphicsLayer
-            绘制图形内容_D2D(gRT, compositor, 是否有圆角, 极限矩形区域, 内容矩形区域, 图标宽度, s)
-
-            ' 3) 把图形层（如果是 BitmapRT）回采到 DC，然后在 DC 上画文字（保留 ClearType 子像素）
-            scope.FlushGraphics()
-            绘制文本_D2D(dcRT, 内容矩形区域, 图标宽度, s, compositor.TextFormatCache, compositor.BrushCache)
-
-            ' 4) 禁用遮罩（直接覆盖整个 DC，不需要 SSAA）
-            If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
-                If 是否有圆角 Then
-                    Using geo = RectangleRenderer.创建圆角矩形几何(极限矩形区域, 边框圆角半径 * s)
-                        RectangleRenderer.绘制圆角背景_D2D(dcRT, geo, 极限矩形区域, 禁用时遮罩颜色, Color.Empty, 渐变方向, compositor.BrushCache)
-                    End Using
-                Else
-                    RectangleRenderer.绘制矩形背景_D2D(dcRT, 极限矩形区域, 禁用时遮罩颜色, Color.Empty, 渐变方向, compositor.BrushCache)
-                End If
-            End If
-        End Using
+        If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
+            填充形状_GPU(context, 极限矩形区域, If(是否有圆角, 边框圆角半径 * s, 0.0F), 禁用时遮罩颜色)
+        End If
 
         If 长按正在进行 AndAlso 长按动画助手.Progress >= 1.0F Then
             长按正在进行 = False
@@ -89,8 +59,11 @@ Public Class ModernButton
         End If
     End Sub
 
-    Private Sub 绘制图形内容_D2D(rt As ID2D1RenderTarget, compositor As WindowCompositor, 是否有圆角 As Boolean, 极限矩形区域 As RectangleF, 内容矩形区域 As RectangleF, 图标宽度 As Single, s As Single)
-        Dim brushCache = compositor.BrushCache
+    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+        Return New Rectangle(Point.Empty, Me.Size)
+    End Function
+
+    Private Sub 绘制图形内容_GPU(context As D3D_PaintContext, 是否有圆角 As Boolean, 极限矩形区域 As RectangleF, 内容矩形区域 As RectangleF, 图标宽度 As Single, s As Single)
         Dim 背景颜色缓存值 As Color
         Dim 渐变颜色缓存值 As Color
         Dim 边框颜色缓存值 As Color
@@ -104,61 +77,47 @@ Public Class ModernButton
         Else
             根据鼠标状态分配颜色(背景颜色缓存值, 渐变颜色缓存值, 边框颜色缓存值)
         End If
-        Dim r As Single = 边框圆角半径 * s
-        ' BackColor 半透明遮罩层：在采样底图与状态填充色之间叠加；A=0 退化为不绘制，
-        ' A=255 走的是普通基类填底路径（不会进入本流程）。详见 TransparentBackgroundCache 契约。
-        Dim backColorMask As Color = MyBase.BackColor
 
-        If 是否有圆角 Then
-            Using geo = RectangleRenderer.创建圆角矩形几何(极限矩形区域, r)
-                If backColorMask.A > 0 AndAlso backColorMask.A < 255 Then
-                    RectangleRenderer.绘制圆角背景_D2D(rt, geo, 极限矩形区域, backColorMask, Color.Empty, 渐变方向, brushCache)
-                End If
-                If 背景颜色缓存值.A > 0 OrElse 渐变颜色缓存值.A > 0 Then
-                    RectangleRenderer.绘制圆角背景_D2D(rt, geo, 极限矩形区域, 背景颜色缓存值, 渐变颜色缓存值, 渐变方向, brushCache)
-                End If
-                绘制背景图片_D2D(rt, compositor, 极限矩形区域, geo)
-                绘制长按遮罩_D2D(rt, compositor, 极限矩形区域, geo)
-                If 边框颜色缓存值.A > 0 AndAlso 边框宽度 > 0 Then
-                    RectangleRenderer.绘制圆角边框_D2D(rt, geo, 边框颜色缓存值, 边框宽度 * s, brushCache)
-                End If
-            End Using
-        Else
-            If backColorMask.A > 0 AndAlso backColorMask.A < 255 Then
-                RectangleRenderer.绘制矩形背景_D2D(rt, 极限矩形区域, backColorMask, Color.Empty, 渐变方向, brushCache)
-            End If
-            If 背景颜色缓存值.A > 0 OrElse 渐变颜色缓存值.A > 0 Then
-                RectangleRenderer.绘制矩形背景_D2D(rt, 极限矩形区域, 背景颜色缓存值, 渐变颜色缓存值, 渐变方向, brushCache)
-            End If
-            绘制背景图片_D2D(rt, compositor, 极限矩形区域, Nothing)
-            绘制长按遮罩_D2D(rt, compositor, 极限矩形区域, Nothing)
-            If 边框颜色缓存值.A > 0 AndAlso 边框宽度 > 0 Then
-                RectangleRenderer.绘制矩形边框_D2D(rt, 极限矩形区域, 边框颜色缓存值, 边框宽度 * s, brushCache)
-            End If
+        Dim radius As Single = If(是否有圆角, 边框圆角半径 * s, 0.0F)
+        If 背景颜色缓存值.A > 0 OrElse 渐变颜色缓存值.A > 0 Then
+            填充形状_GPU(context, 极限矩形区域, radius, 背景颜色缓存值, 渐变颜色缓存值, 渐变方向)
         End If
 
-        绘制图标_D2D(rt, compositor, 内容矩形区域, 图标宽度, s)
+        Dim geo As ID2D1Geometry = Nothing
+        If 是否有圆角 Then geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New RoundedRectangle(极限矩形区域, radius, radius))
+        Try
+            绘制背景图片_GPU(context, 极限矩形区域, geo)
+            绘制长按遮罩_GPU(context, 极限矩形区域, geo)
+        Finally
+            geo?.Dispose()
+        End Try
+
+        If 边框颜色缓存值.A > 0 AndAlso 边框宽度 > 0 Then
+            绘制形状边框_GPU(context, 极限矩形区域, radius, 边框颜色缓存值, 边框宽度 * s)
+        End If
+
+        绘制图标_GPU(context, 内容矩形区域, 图标宽度, s)
     End Sub
 
-    Private Sub 绘制背景图片_D2D(rt As ID2D1RenderTarget, compositor As WindowCompositor, area As RectangleF, geo As ID2D1Geometry)
+    Private Sub 绘制背景图片_GPU(context As D3D_PaintContext, area As RectangleF, geo As ID2D1Geometry)
         If 背景图片 Is Nothing Then Return
-        Dim hasMask As Boolean = geo IsNot Nothing
-        If hasMask Then D2DGlobals.PushGeometryClip(rt, geo, area)
+        Dim clipped As Boolean
+        If geo IsNot Nothing Then
+            PushGeometryClip_GPU(context, geo, area)
+            clipped = True
+        End If
         Try
-            Dim cache = compositor.GetBitmapCache(背景图片)
-            Dim bmp = cache?.GetBitmap(rt, 背景图片)
-            If bmp IsNot Nothing Then
-                rt.DrawBitmap(bmp, D2DGlobals.ToD2DRect(area), 1.0F, BitmapInterpolationMode.Linear, Nothing)
-            End If
+            context.DrawImage(背景图片, area)
         Finally
-            If hasMask Then rt.PopLayer()
+            If clipped Then context.DeviceContext.PopLayer()
         End Try
     End Sub
 
-    Private Sub 绘制长按遮罩_D2D(rt As ID2D1RenderTarget, compositor As WindowCompositor, area As RectangleF, geo As ID2D1Geometry)
+    Private Sub 绘制长按遮罩_GPU(context As D3D_PaintContext, area As RectangleF, geo As ID2D1Geometry)
         If Not 长按确认已启用 Then Return
         Dim progress As Single = 长按动画助手.Progress
         If progress < 0.001F Then Return
+
         Dim maskRect As RectangleF
         If 长按遮罩方向 = HoldClickDirectionEnum.LeftToRight Then
             maskRect = New RectangleF(area.X, area.Y, area.Width * progress, area.Height)
@@ -166,30 +125,150 @@ Public Class ModernButton
             Dim w As Single = area.Width * progress
             maskRect = New RectangleF(area.Right - w, area.Y, w, area.Height)
         End If
-        Dim hasMask As Boolean = geo IsNot Nothing
-        If hasMask Then D2DGlobals.PushGeometryClip(rt, geo, area)
+
+        Dim clipped As Boolean
+        If geo IsNot Nothing Then
+            PushGeometryClip_GPU(context, geo, area)
+            clipped = True
+        End If
         Try
-            Dim brush = compositor.BrushCache.[Get](rt, 长按遮罩颜色)
-            If brush IsNot Nothing Then
-                rt.FillRectangle(D2DGlobals.ToD2DRect(maskRect), brush)
-            End If
+            If 长按遮罩颜色.A > 0 Then context.FillRectangle(maskRect, 长按遮罩颜色)
         Finally
-            If hasMask Then rt.PopLayer()
+            If clipped Then context.DeviceContext.PopLayer()
         End Try
     End Sub
 
-    Private Sub 绘制图标_D2D(rt As ID2D1RenderTarget, compositor As WindowCompositor, 内容矩形区域 As RectangleF, iconSize As Single, s As Single)
+    Private Sub 绘制图标_GPU(context As D3D_PaintContext, 内容矩形区域 As RectangleF, iconSize As Single, s As Single)
         If 图标 Is Nothing OrElse iconSize <= 0 Then Return
         Dim iconX As Single = 内容矩形区域.X + 图标边距 * s
         Dim iconY As Single = 内容矩形区域.Y + (内容矩形区域.Height - iconSize) / 2.0F
-        Dim cache = compositor.GetBitmapCache(图标)
-        Dim bmp = cache?.GetBitmap(rt, 图标)
-        If bmp IsNot Nothing Then
-            rt.DrawBitmap(bmp, New Vortice.Mathematics.Rect(iconX, iconY, iconSize, iconSize), 1.0F, BitmapInterpolationMode.Linear, Nothing)
+        context.DrawImage(图标, New RectangleF(iconX, iconY, iconSize, iconSize))
+    End Sub
+
+    Private Sub 绘制文本_GPU(context As D3D_PaintContext, 内容矩形区域 As RectangleF, 图标宽度 As Single, s As Single)
+        Dim _图标边距 As Single = 图标边距 * s
+        Dim _边框圆角半径 As Single = 边框圆角半径 * s
+        Dim 图标占用总宽度 As Single = If(图标宽度 > 0, 图标宽度 + _图标边距, 0)
+        Dim 文本绘制区域 As New RectangleF(
+            内容矩形区域.X + 图标占用总宽度 + _边框圆角半径,
+            内容矩形区域.Y,
+            内容矩形区域.Width - 图标占用总宽度 - _边框圆角半径 * 2,
+            内容矩形区域.Height)
+        If 文本绘制区域.Width <= 0 OrElse 文本绘制区域.Height <= 0 Then Return
+
+        Dim align As Vortice.DirectWrite.TextAlignment
+        Select Case 文字对齐方位
+            Case TextAlignEnum.Left : align = Vortice.DirectWrite.TextAlignment.Leading
+            Case TextAlignEnum.Right : align = Vortice.DirectWrite.TextAlignment.Trailing
+            Case Else : align = Vortice.DirectWrite.TextAlignment.Center
+        End Select
+
+        Dim mainText As String = 解析助记键文本(If(MyBase.Text, "")).DisplayText
+        If String.IsNullOrEmpty(mainText) AndAlso String.IsNullOrEmpty(次要文本) Then Return
+
+        If Not String.IsNullOrEmpty(次要文本) Then
+            Dim mainH As Single = Math.Max(1, TextRenderer.MeasureText(If(String.IsNullOrEmpty(mainText), "A", mainText), Me.Font).Height)
+            Using subFont As New Font(Me.Font.FontFamily, 次要文本字号, System.Drawing.FontStyle.Regular)
+                Dim subH As Single = Math.Max(1, TextRenderer.MeasureText(次要文本, subFont).Height)
+                Dim gap As Single = 主次文本间距 * s
+                Dim totalH As Single = mainH + gap + subH
+                Dim startY As Single = 文本绘制区域.Y + (文本绘制区域.Height - totalH) / 2.0F
+                context.DrawText(mainText, Me.Font, 文本颜色, New RectangleF(文本绘制区域.X, startY, 文本绘制区域.Width, mainH), align, ParagraphAlignment.Near)
+                context.DrawText(次要文本, subFont, 次要文本颜色, New RectangleF(文本绘制区域.X, startY + mainH + gap, 文本绘制区域.Width, subH), align, ParagraphAlignment.Near)
+            End Using
+        Else
+            context.DrawText(mainText, Me.Font, 文本颜色, 文本绘制区域, align, ParagraphAlignment.Center)
         End If
     End Sub
 
-    Private Sub 绘制文本_D2D(rt As ID2D1DCRenderTarget, 内容矩形区域 As RectangleF, 图标宽度 As Single, s As Single, textFormatCache As D2DGlobals.TextFormatCache, brushCache As D2DGlobals.SolidColorBrushCache)
+    Private Sub 填充形状_GPU(context As D3D_PaintContext,
+                         bounds As RectangleF,
+                         radius As Single,
+                         color As Color,
+                         Optional gradientColor As Color = Nothing,
+                         Optional gradientDirection As System.Windows.Forms.Orientation = System.Windows.Forms.Orientation.Horizontal)
+        If bounds.Width <= 0 OrElse bounds.Height <= 0 Then Return
+        If color.A = 0 AndAlso (gradientColor = Color.Empty OrElse gradientColor.A = 0) Then Return
+
+        Dim brush As ID2D1Brush = Nothing
+        Dim ownsBrush As Boolean
+        If gradientColor <> Color.Empty AndAlso gradientColor.A > 0 Then
+            brush = 创建线性渐变画刷_GPU(context, bounds, color, gradientColor, gradientDirection)
+            ownsBrush = True
+        Else
+            brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
+        End If
+
+        Try
+            If radius > 0 Then
+                Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New RoundedRectangle(bounds, radius, radius))
+                    context.DeviceContext.FillGeometry(geo, brush)
+                End Using
+            Else
+                context.DeviceContext.FillRectangle(D3D_PaintContext.ToRawRect(bounds), brush)
+            End If
+        Finally
+            If ownsBrush Then brush.Dispose()
+        End Try
+    End Sub
+
+    Private Sub 绘制形状边框_GPU(context As D3D_PaintContext, bounds As RectangleF, radius As Single, color As Color, strokeWidth As Single)
+        If color.A = 0 OrElse strokeWidth <= 0 OrElse bounds.Width <= 0 OrElse bounds.Height <= 0 Then Return
+        Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
+        If radius > 0 Then
+            Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New RoundedRectangle(bounds, radius, radius))
+                context.DeviceContext.DrawGeometry(geo, brush, strokeWidth)
+            End Using
+        Else
+            context.DeviceContext.DrawRectangle(D3D_PaintContext.ToRawRect(bounds), brush, strokeWidth)
+        End If
+    End Sub
+
+    Private Shared Function 创建线性渐变画刷_GPU(context As D3D_PaintContext,
+                                             bounds As RectangleF,
+                                             baseColor As Color,
+                                             gradColor As Color,
+                                             gradDir As System.Windows.Forms.Orientation) As ID2D1LinearGradientBrush
+        Dim startPt As Vector2
+        Dim endPt As Vector2
+        If gradDir = System.Windows.Forms.Orientation.Vertical Then
+            startPt = New Vector2(bounds.X, bounds.Y)
+            endPt = New Vector2(bounds.X, bounds.Bottom)
+        Else
+            startPt = New Vector2(bounds.X, bounds.Y)
+            endPt = New Vector2(bounds.Right, bounds.Y)
+        End If
+
+        Dim stops() As GradientStop = {
+            New GradientStop With {.Position = 0.0F, .Color = D3D_PaintContext.ToColor4(baseColor)},
+            New GradientStop With {.Position = 1.0F, .Color = D3D_PaintContext.ToColor4(gradColor)}}
+        Dim stopCollection = context.DeviceContext.CreateGradientStopCollection(stops)
+        Try
+            Return context.DeviceContext.CreateLinearGradientBrush(New LinearGradientBrushProperties(startPt, endPt), stopCollection)
+        Finally
+            stopCollection.Dispose()
+        End Try
+    End Function
+
+    Private Shared Sub PushGeometryClip_GPU(context As D3D_PaintContext, geo As ID2D1Geometry, bounds As RectangleF)
+        Dim parameters As New LayerParameters With {
+            .ContentBounds = New Vortice.RawRectF(bounds.X, bounds.Y, bounds.Right, bounds.Bottom),
+            .GeometricMask = geo,
+            .MaskAntialiasMode = AntialiasMode.PerPrimitive,
+            .MaskTransform = Matrix3x2.Identity,
+            .Opacity = 1.0F,
+            .OpacityBrush = Nothing,
+            .LayerOptions = LayerOptions.None
+        }
+        context.DeviceContext.PushLayer(parameters, Nothing)
+    End Sub
+
+
+
+
+
+
+    Private Sub 绘制文本_D2D(rt As ID2D1DCRenderTarget, 内容矩形区域 As RectangleF, 图标宽度 As Single, s As Single, textFormatCache As D3D_D2DInterop.TextFormatCache, brushCache As D3D_D2DInterop.SolidColorBrushCache)
         Dim _图标边距 As Single = 图标边距 * s
         Dim _边框圆角半径 As Single = 边框圆角半径 * s
         Dim 图标占用总宽度 As Single = If(图标宽度 > 0, 图标宽度 + _图标边距, 0)
@@ -210,9 +289,9 @@ Public Class ModernButton
         Dim mainTextInfo = 解析助记键文本(If(MyBase.Text, ""))
         Dim mainText As String = mainTextInfo.DisplayText
         If String.IsNullOrEmpty(mainText) AndAlso String.IsNullOrEmpty(次要文本) Then Return
-        ' 控件 Font 可能已被 WinForms AutoScale 修改，DirectWrite 字号统一交给 D2DGlobals 推断基准 DPI。
-        Dim mainSizePx As Single = D2DGlobals.GetDWriteFontSizePx(Me.Font, s)
-        Dim dw = D2DGlobals.GetDWriteFactory()
+        ' 控件 Font 可能已被 WinForms AutoScale 修改，DirectWrite 字号统一交给 D3D_D2DInterop 推断基准 DPI。
+        Dim mainSizePx As Single = D3D_D2DInterop.GetDWriteFontSizePx(Me.Font, s)
+        Dim dw = D3D_D2DInterop.GetDWriteFactory()
 
         If Not String.IsNullOrEmpty(次要文本) Then
             ' 次要文本字号是独立数值属性，不会被 WinForms 自动缩放，所以按当前 DPI 显式放大。
@@ -305,7 +384,7 @@ Public Class ModernButton
                 _边框颜色 = 边框颜色
         End Select
     End Sub
-    Private Sub 按钮动画脏区(helper As AnimationHelperV2, owner As Control, sink As AnimationHelperV2.InvalidateRegionSink)
+    Private Sub 按钮动画脏区(helper As V3_AnimationHelper, owner As Control, sink As V3_AnimationHelper.InvalidateRegionSink)
         If helper IsNot 长按动画助手 OrElse Not 长按确认已启用 Then
             sink.InvalidateAll()
             Return
@@ -384,8 +463,8 @@ Public Class ModernButton
         Pressed
     End Enum
     Private 鼠标状态 As MouseStateEnum = MouseStateEnum.Normal
-    Private ReadOnly 动画助手 As New AnimationHelperV2(Me)
-    Private ReadOnly 长按动画助手 As New AnimationHelperV2(Me) With {.EasingMode = AnimationHelperV2.EasingModeEnum.EaseInOut, .Duration = 800}
+    Private ReadOnly 动画助手 As New V3_AnimationHelper(Me)
+    Private ReadOnly 长按动画助手 As New V3_AnimationHelper(Me) With {.EasingMode = V3_AnimationHelper.EasingModeEnum.EaseInOut, .Duration = 800}
     Private 长按正在进行 As Boolean = False
     Private 长按上次失效进度 As Single = -1.0F
     Private 颜色动画已启用 As Boolean = False
@@ -453,8 +532,7 @@ Public Class ModernButton
             点击后等待鼠标移动 = False
         End If
 
-        OuterToInnerRefreshScheduler.RequestFull(Me)
-        If Visible AndAlso IsHandleCreated Then Update()
+        请求V3渲染()
     End Sub
 
     Private Sub 按当前鼠标位置刷新状态()
@@ -539,11 +617,11 @@ Public Class ModernButton
             助记键触发计时器 = Nothing
             停止长按确认()
         End If
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
     Protected Overrides Sub OnChangeUICues(e As UICuesEventArgs)
         MyBase.OnChangeUICues(e)
-        If (e.Changed And UICues.ChangeKeyboard) <> 0 Then OuterToInnerRefreshScheduler.RequestFull(Me)
+        If (e.Changed And UICues.ChangeKeyboard) <> 0 Then 请求V3渲染()
     End Sub
     Protected Overrides Function ProcessMnemonic(charCode As Char) As Boolean
         If CanSelect AndAlso IsMnemonic(charCode, MyBase.Text) Then
@@ -576,7 +654,7 @@ Public Class ModernButton
     End Sub
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 #End Region
 
@@ -584,13 +662,22 @@ Public Class ModernButton
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End If
     End Sub
 
     Private Function DpiScale() As Single
-        Return D2DGlobals.GetCurrentDpiScale(Me)
+        Return V3_DpiContext.FromControl(Me).Scale
     End Function
+
+    Private Sub 请求V3渲染(Optional immediate As Boolean = False)
+        请求V3渲染(New Rectangle(Point.Empty, Me.Size), immediate)
+    End Sub
+
+    Private Sub 请求V3渲染(dirtyRect As Rectangle, Optional immediate As Boolean = False)
+        If Me.IsDisposed Then Return
+        V3_InvalidationRouter.RequestRender(Me, dirtyRect)
+    End Sub
 
     Private 超采样倍率 As Integer = 1
     <Category("LakeUI"), Description(GlobalOptions.超采样抗锯齿描述词), DefaultValue(GetType(GlobalOptions.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
@@ -630,7 +717,7 @@ Public Class ModernButton
     ''' 为 Nothing 时自动沿祖先链查找首个不透明祖先（默认行为）。
     ''' </summary>
     <Category("LakeUI"),
-     Description("背景采样源（超容器背景映射）。设置后将跨越任意层级直接采样此控件的绘制内容作为透明背景；为空时自动选择首个不透明祖先。"),
+     Description("背景采样源。设置后记录关联源控件；V3 渲染由窗口合成器统一调度。"),
      DefaultValue(GetType(Control), Nothing), Browsable(True)>
     Public Property BackgroundSource As Control
         Get
@@ -638,8 +725,8 @@ Public Class ModernButton
         End Get
         Set(value As Control)
             If _backgroundSource IsNot value Then
-                _backgroundSource = BackgroundPenetrationV2.SetConsumerSource(Me, _backgroundSource, value)
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                _backgroundSource = D3D_BackgroundPenetration.SetBackgroundSource(Me, _backgroundSource, value)
+                请求V3渲染()
             End If
         End Set
     End Property
@@ -966,7 +1053,7 @@ Public Class ModernButton
 #Region "生命周期"
     Protected Overrides Sub OnFontChanged(e As EventArgs)
         MyBase.OnFontChanged(e)
-        D2DHelperV2.RefreshFontDependentRendering(Me)
+        请求V3渲染()
     End Sub
 #End Region
 

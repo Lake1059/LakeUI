@@ -7,7 +7,7 @@ Imports System.Runtime.InteropServices
 ''' 使用 UpdateLayeredWindow + 预乘 Alpha 位图绘制柔和阴影。
 ''' </summary>
 ''' <remarks>
-''' ShadowWindow 是 <see cref="ThisIsYourWindow"/> 的辅助顶层窗口，不参与 D2D V2 compositor。
+''' ShadowWindow 是 <see cref="ThisIsYourWindow"/> 的辅助顶层窗口，不参与兼容 D2D compositor。
 ''' 它通过一张 32bppPArgb 位图生成阴影，再用 UpdateLayeredWindow 一次性提交给 DWM。
 '''
 ''' 调用契约：

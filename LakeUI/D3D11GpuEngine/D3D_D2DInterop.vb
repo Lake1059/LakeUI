@@ -6,21 +6,21 @@ Imports Vortice.DirectWrite
 Imports Vortice.DXGI
 
 ''' <summary>
-''' Direct2D / DirectWrite 全局共享层（V2 体系的"共享基座"）。
+''' Direct2D / DirectWrite 全局共享层（V3 兼容层的共享基座）。
 '''
 ''' 旧兼容模块原本同时承担：①全局工厂与质量策略 / 类型转换 / 资源缓存
 ''' （进程级，跨控件复用），②控件级 <c>PaintScope</c> 渲染管线（含 SSAA BitmapRT 缓存）。
-''' V2 的窗口级合成器（<see cref="WindowCompositor"/> / <see cref="PaintScopeV2"/>）已完全取代后者，
+''' 兼容窗口级合成器（<see cref="D3D_SurfaceCompositor"/> / <see cref="D3D_PaintScope"/>）已完全取代后者，
 ''' 因此本文件只保留①里的"全局基座"，控件级 PaintScope 已从代码库移除。
 '''
 ''' 全局设置项集中放在 <see cref="GlobalOptions"/>；本模块只负责执行 D2D / DWrite 资源创建、
 ''' 类型转换、上传缓存与把当前全局设置应用到 RenderTarget。
 ''' </summary>
-Public Module D2DGlobals
+Public Module D3D_D2DInterop
 
 #Region "DPI"
 
-    ' V2 文本/DPI 统一入口：
+    ' 文本/DPI 统一入口：
     ' WinForms 在 PerMonitorV2 下会在 DPI 改变时调整控件字体与 AutoScaleDimensions，
     ' 但嵌入到标签页里的非 TopLevel Form 往往不会自然收到完整的窗口 DPI 上下文。
     ' 因此所有 D2D/DirectWrite 绘制路径都通过这里取“当前宿主窗口 DPI”，并用窗口句柄缓存补齐
@@ -228,7 +228,7 @@ Public Module D2DGlobals
     ''' <summary>
     ''' 将全局抗锯齿与文本质量策略一次性应用到指定 RT。
     ''' 任何新建的 RT（DC RT 或 BitmapRT）都应在 BeginDraw 前调用一次。
-    ''' V2 的 <see cref="PaintScopeV2"/> 已在内部对 DC RT 与 SSAA BitmapRT 自动调用，控件作者通常无需手动调用。
+    ''' <see cref="D3D_PaintScope"/> 已在内部对 DC RT 与 SSAA BitmapRT 自动调用，控件作者通常无需手动调用。
     ''' </summary>
     Public Sub ApplyGlobalQuality(rt As ID2D1RenderTarget)
         If rt Is Nothing Then Return
@@ -303,20 +303,20 @@ Public Module D2DGlobals
     Private ReadOnly _bitmapCacheRegistry As New List(Of WeakReference(Of D2DBitmapCache))()
     Private ReadOnly _bitmapCacheRegistryLock As New Object()
 
-    Friend Sub CleanupD2DResources(level As D2DCacheCleanupLevel)
+    Friend Sub CleanupD2DResources(level As D3DCacheCleanupLevel)
         Select Case level
-            Case D2DCacheCleanupLevel.TrimToBudget
-                GpuCache.TrimToBudget()
+            Case D3DCacheCleanupLevel.TrimToBudget
+                D3D_GpuCache.TrimToBudget()
                 TrimFontResolveCacheToCurrentLimit()
 
-            Case D2DCacheCleanupLevel.ReleaseVolatileCaches
+            Case D3DCacheCleanupLevel.ReleaseVolatileCaches
                 InvalidateOutlineRenderingParams()
-                GpuCache.TrimToBudget()
+                D3D_GpuCache.TrimToBudget()
                 TrimFontResolveCacheToCurrentLimit()
 
-            Case D2DCacheCleanupLevel.ReleaseAllCaches,
-                 D2DCacheCleanupLevel.ReleaseRenderTargets,
-                 D2DCacheCleanupLevel.RecreateDevice
+            Case D3DCacheCleanupLevel.ReleaseAllCaches,
+                 D3DCacheCleanupLevel.ReleaseRenderTargets,
+                 D3DCacheCleanupLevel.RecreateDevice
                 InvalidateOutlineRenderingParams()
                 InvalidateRegisteredBitmapCaches()
                 ClearFontResolveCache()
@@ -400,9 +400,9 @@ Public Module D2DGlobals
     ''' <summary>
     ''' 进程级 <see cref="ID2D1Factory1"/> 单例（SingleThreaded）。不要 Dispose。
     ''' <para>
-    ''' V2 阶段 A 把内部 factory 实例升级为 <c>ID2D1Factory1</c>，
+    ''' V3 兼容层把内部 factory 实例升级为 <c>ID2D1Factory1</c>，
     ''' 既不影响所有现有 <c>GetD2DFactory</c> 调用（ID2D1Factory1 派生自 ID2D1Factory），
-    ''' 又能让 <see cref="D3D11Globals"/> 通过 <c>CreateDevice(dxgiDevice)</c> 建出 D2D Device。
+    ''' 又能让 <see cref="D3D_DeviceGlobals"/> 通过 <c>CreateDevice(dxgiDevice)</c> 建出 D2D Device。
     ''' </para>
     ''' </summary>
     Public Function GetD2DFactory1() As ID2D1Factory1
@@ -507,7 +507,7 @@ Public Module D2DGlobals
     ''' <summary>
     ''' 创建一个未绑定 DC 的 <see cref="ID2D1DCRenderTarget"/>。
     ''' 像素格式：B8G8R8A8_UNorm，AlphaMode = Ignore（与 GDI HDC 兼容）。
-    ''' V2 由 <see cref="WindowCompositor"/> 共享一份；外部不再需要直接调用本函数。
+    ''' 兼容层由 <see cref="D3D_SurfaceCompositor"/> 共享一份；外部不再需要直接调用本函数。
     ''' </summary>
     Public Function CreateDCRenderTarget() As ID2D1DCRenderTarget
         Dim rtp As New RenderTargetProperties(
@@ -594,10 +594,10 @@ Public Module D2DGlobals
     ''' </summary>
     ''' <remarks>
     ''' 资源所有权：
-    ''' • 调用方拥有 D2DBitmapCache 实例，通常挂在 <see cref="WindowCompositor"/> 的 Image 索引里。
+    ''' • 调用方拥有 D2DBitmapCache 实例，通常挂在 <see cref="D3D_SurfaceCompositor"/> 的 Image 索引里。
     ''' • cache 内部按 RenderTarget 持有 ID2D1Bitmap；RenderTarget 被释放时，compositor 必须调用
     '''   <see cref="InvalidateFor"/> 清掉对应条目。
-    ''' • cache 不强持有源 Image，但 WindowCompositor 的索引字典会强持有 Image key；临时 Bitmap
+    ''' • cache 不强持有源 Image，但 D3D_SurfaceCompositor 的索引字典会强持有 Image key；临时 Bitmap
     '''   不要进入该索引，否则会活到 LRU 清理或 Form Dispose。
     '''
     ''' 坑点：
@@ -605,7 +605,7 @@ Public Module D2DGlobals
     ''' • 预算按“同一个 Image 在不同 RT 上的上传副本”估算，不包含源 Image 自身的 RAM。
     ''' </remarks>
     Public Class D2DBitmapCache
-        Implements IDisposable, IRenderCacheOwner
+        Implements IDisposable, D3D_IRenderCacheOwner
 
         Private NotInheritable Class Entry
             Public Bitmap As ID2D1Bitmap
@@ -620,7 +620,7 @@ Public Module D2DGlobals
 
         Public Sub New()
             RegisterBitmapCache(Me)
-            GpuCache.Register(Me)
+            D3D_GpuCache.Register(Me)
         End Sub
 
         Public Function GetBitmap(rt As ID2D1RenderTarget, src As Image) As ID2D1Bitmap
@@ -635,7 +635,7 @@ Public Module D2DGlobals
                    entry.SourceRef.TryGetTarget(entrySource) AndAlso
                    entrySource Is src AndAlso
                    entry.Bitmap IsNot Nothing Then
-                    entry.LastUsed = GpuCache.NextTick()
+                    entry.LastUsed = D3D_GpuCache.NextTick()
                     Return entry.Bitmap
                 End If
                 RemoveEntry(rt)
@@ -649,11 +649,11 @@ Public Module D2DGlobals
                 .SourceRef = New WeakReference(Of Image)(src),
                 .RenderTarget = rt,
                 .Bytes = EstimateBytes(src),
-                .LastUsed = GpuCache.NextTick()
+                .LastUsed = D3D_GpuCache.NextTick()
             }
             _entries(rt) = entry
             _bytes += entry.Bytes
-            GpuCache.TrimToBudget(Me)
+            D3D_GpuCache.TrimToBudget(Me)
             Return bmp
         End Function
 
@@ -697,16 +697,16 @@ Public Module D2DGlobals
         End Sub
 
         Friend Sub TrimToCurrentBudget()
-            GpuCache.TrimToBudget()
+            D3D_GpuCache.TrimToBudget()
         End Sub
 
-        Public ReadOnly Property CacheBytes As Long Implements IRenderCacheOwner.CacheBytes
+        Public ReadOnly Property CacheBytes As Long Implements D3D_IRenderCacheOwner.CacheBytes
             Get
                 Return _bytes
             End Get
         End Property
 
-        Public ReadOnly Property OldestUseTick As Long Implements IRenderCacheOwner.OldestUseTick
+        Public ReadOnly Property OldestUseTick As Long Implements D3D_IRenderCacheOwner.OldestUseTick
             Get
                 Dim oldest As Long = Long.MaxValue
                 For Each entry In _entries.Values
@@ -716,7 +716,7 @@ Public Module D2DGlobals
             End Get
         End Property
 
-        Public Function TrimOldest() As Boolean Implements IRenderCacheOwner.TrimOldest
+        Public Function TrimOldest() As Boolean Implements D3D_IRenderCacheOwner.TrimOldest
             Dim oldestRt As ID2D1RenderTarget = Nothing
             Dim oldestEntry As Entry = Nothing
             For Each kv In _entries
@@ -730,7 +730,7 @@ Public Module D2DGlobals
             Return True
         End Function
 
-        Public Sub ReleaseAll() Implements IRenderCacheOwner.ReleaseAll
+        Public Sub ReleaseAll() Implements D3D_IRenderCacheOwner.ReleaseAll
             Invalidate()
         End Sub
 

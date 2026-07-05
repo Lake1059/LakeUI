@@ -221,7 +221,7 @@ End Module
 ''' </summary>
 Friend Class ExFloatingBoxForm
     Inherits Form
-    Implements IMessageFilter
+    Implements IMessageFilter, V3_IGpuRenderable, V3_IGpuInvalidationSource
 
 #Region "Win32"
 
@@ -390,7 +390,7 @@ Friend Class ExFloatingBoxForm
 
     ' 动画
     Private ReadOnly 动画秒表 As New Stopwatch()
-    Private 动画计时器 As Timer
+    Private 动画计时器 As PrecisionTimer
     Private 正在展开动画 As Boolean = False
     Private 正在关闭动画 As Boolean = False
     Private 最终位置 As Point
@@ -455,7 +455,7 @@ Friend Class ExFloatingBoxForm
         Me.DoubleBuffered = True
         Me.BackColor = 主题.CardBackColor
 
-        SC = D2DGlobals.GetCurrentDpiScale(Me)
+        SC = V3_DpiContext.FromControl(Me).Scale
         缩放常量()
 
         Dim fontName = MessageDialogRendering.ResolveDialogFontName(anchor, Me)
@@ -492,8 +492,7 @@ Friend Class ExFloatingBoxForm
         ' 先启动展开动画，ShowDialog 的模态消息循环会处理定时器事件
         正在展开动画 = True
         动画秒表.Restart()
-        动画计时器 = New Timer() With {.Interval = 10}
-        AddHandler 动画计时器.Tick, AddressOf 动画帧更新
+        动画计时器 = 创建动画计时器()
         动画计时器.Start()
 
         Dim ownerForm As Form = Nothing
@@ -545,6 +544,23 @@ Friend Class ExFloatingBoxForm
         End If
         动画秒表.Stop()
     End Sub
+
+    Private Shared Function FrameIntervalMilliseconds(fps As Integer) As Integer
+        fps = Math.Max(1, fps)
+        Return Math.Max(1, CInt(Math.Ceiling(1000.0R / fps)))
+    End Function
+
+    Private Function 创建动画计时器() As PrecisionTimer
+        Dim timer As New PrecisionTimer() With {
+            .Interval = FrameIntervalMilliseconds(60),
+            .DispatchMode = PrecisionTimer.DispatchModeEnum.NonBlocking,
+            .OverrunPolicy = PrecisionTimer.OverrunPolicyEnum.Drop,
+            .WorkerThreadCount = 1,
+            .SynchronizingObject = Me
+        }
+        AddHandler timer.Tick, AddressOf 动画帧更新
+        Return timer
+    End Function
 
 #End Region
 
@@ -830,7 +846,7 @@ Friend Class ExFloatingBoxForm
 #Region "绘制"
 
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
-        If Not 毛玻璃.Enabled Then MyBase.OnPaintBackground(e)
+        ' V3-only: floating box pixels are emitted by RenderGpu.
     End Sub
 
     Protected Overrides Sub OnShown(e As EventArgs)
@@ -839,33 +855,45 @@ Friend Class ExFloatingBoxForm
         If Me.Owner IsNot Nothing AndAlso Me.Owner.IsHandleCreated Then
             EnableWindow(Me.Owner.Handle, True)
         End If
-        毛玻璃.Prepare()
-        Invalidate()
+        RequestV3Render()
     End Sub
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
-        毛玻璃.Draw(e.Graphics)
+        If Not D3D_PaintBridge.PaintRenderable(e, Me, Me, 1) Then MyBase.OnPaint(e)
+    End Sub
 
-        Using scope = D2DHelperV2.BeginPaint(e, Me, 1)
-            If scope Is Nothing Then Return
-            Dim rt = scope.GraphicsLayer
-            Dim compositor = scope.Compositor
-            Dim brushCache = compositor.BrushCache
-            If Not 毛玻璃.HasFrame Then
-                MessageDialogRendering.FillRectangle(rt, brushCache, New RectangleF(0, 0, ClientSize.Width, ClientSize.Height), 主题.CardBackColor)
-            End If
+    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+        If context Is Nothing OrElse ClientSize.Width <= 0 OrElse ClientSize.Height <= 0 Then Return
 
-            If 有标题 Then
-                MessageDialogRendering.DrawText(rt, compositor, 标题标签.Text, 标题字体, 标题标签.Bounds,
-                    主题.TitleForeColor, TextFormatFlags.WordBreak Or TextFormatFlags.Left Or TextFormatFlags.Top Or TextFormatFlags.NoPadding, SC)
-            End If
-            MessageDialogRendering.DrawText(rt, compositor, 消息标签.Text, 消息字体, 消息标签.Bounds,
-                主题.MessageForeColor, TextFormatFlags.WordBreak Or TextFormatFlags.Left Or TextFormatFlags.Top Or TextFormatFlags.NoPadding, SC)
-            MessageDialogRendering.DrawImage(rt, compositor, 消息图标位图, 图标区域)
-            MessageDialogRendering.DrawRectangle(rt, brushCache,
-                New RectangleF(0.5F, 0.5F, Math.Max(0, ClientSize.Width - 1), Math.Max(0, ClientSize.Height - 1)),
-                主题.CardBorderColor, 1.0F)
-        End Using
+        Dim bounds As New RectangleF(0, 0, ClientSize.Width, ClientSize.Height)
+        Dim glass = MessageDialogRendering.DrawBackdrop(context, bounds)
+        If Not glass Then
+            MessageDialogRendering.FillRectangle(context, bounds, 主题.CardBackColor)
+        End If
+
+        If 有标题 Then
+            MessageDialogRendering.DrawText(context, 标题标签.Text, 标题字体, 标题标签.Bounds,
+                主题.TitleForeColor, TextFormatFlags.WordBreak Or TextFormatFlags.Left Or TextFormatFlags.Top Or TextFormatFlags.NoPadding, SC)
+        End If
+        MessageDialogRendering.DrawText(context, 消息标签.Text, 消息字体, 消息标签.Bounds,
+            主题.MessageForeColor, TextFormatFlags.WordBreak Or TextFormatFlags.Left Or TextFormatFlags.Top Or TextFormatFlags.NoPadding, SC)
+        MessageDialogRendering.DrawImage(context, 消息图标位图, 图标区域)
+        MessageDialogRendering.DrawRectangle(context,
+            New RectangleF(0.5F, 0.5F, Math.Max(0, ClientSize.Width - 1), Math.Max(0, ClientSize.Height - 1)),
+            主题.CardBorderColor, 1.0F)
+    End Sub
+
+    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+        Return New Rectangle(Point.Empty, Me.Size)
+    End Function
+
+    Private Sub RequestV3Render()
+        RequestV3Render(New Rectangle(Point.Empty, Me.Size))
+    End Sub
+
+    Private Sub RequestV3Render(dirtyRect As Rectangle)
+        If IsDisposed Then Return
+        V3_InvalidationRouter.RequestRender(Me, dirtyRect)
     End Sub
 
 #End Region
@@ -888,8 +916,7 @@ Friend Class ExFloatingBoxForm
         正在关闭动画 = True
         动画秒表.Restart()
         If 动画计时器 Is Nothing Then
-            动画计时器 = New Timer() With {.Interval = 10}
-            AddHandler 动画计时器.Tick, AddressOf 动画帧更新
+            动画计时器 = 创建动画计时器()
         End If
         动画计时器.Start()
     End Sub

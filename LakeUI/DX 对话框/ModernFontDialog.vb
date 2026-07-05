@@ -7,6 +7,7 @@ Imports D2D = Vortice.Direct2D1
 Imports DW = Vortice.DirectWrite
 
 Public Class ModernFontDialog
+    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource
 
     Public Sub New()
         MyBase.New()
@@ -425,41 +426,43 @@ Public Class ModernFontDialog
     End Sub
 
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
-        Return
+        ' V3-only: dialog pixels are emitted by RenderGpu.
     End Sub
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
         If _isClosing OrElse IsDisposed OrElse Disposing Then
-            MyBase.OnPaint(e)
             Return
         End If
         If _d2dInSizeMove Then
-            MyBase.OnPaint(e)
+            If Not D3D_PaintBridge.PaintRenderable(e, Me, Me, 1) Then MyBase.OnPaint(e)
             Return
         End If
 
         初始化D2D字体对话框()
         确保D2D布局()
-        MyBase.OnPaint(e)
-
-        Dim ssaa As Integer = D2DHelperV2.GetEffectiveSsaaScale(2)
-
-        Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
-            If scope Is Nothing Then Return
-            Dim compositor = scope.Compositor
-            Dim gRT As D2D.ID2D1RenderTarget = scope.GraphicsLayer
-            Dim brushCache = compositor.BrushCache
-
-            If BackColor.A > 0 AndAlso Not 应保持窗口级背景透明() Then
-                Dim b = brushCache.Get(scope.BackgroundLayer, BackColor)
-                If b IsNot Nothing Then scope.BackgroundLayer.FillRectangle(D2DGlobals.ToD2DRect(DisplayRectangle), b)
-            End If
-
-            绘制D2D图形层(gRT, compositor)
-            scope.FlushGraphics()
-            绘制D2D文字层(scope.TextLayer, compositor)
-        End Using
+        If Not D3D_PaintBridge.PaintRenderable(e, Me, Me, 1) Then MyBase.OnPaint(e)
     End Sub
+
+    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+        If context Is Nothing OrElse _isClosing OrElse IsDisposed OrElse Disposing Then Return
+
+        初始化D2D字体对话框()
+        确保D2D布局()
+
+        Dim keepWindowBackdropTransparent As Boolean = 应保持窗口级背景透明()
+        ThisIsYourWindow.TryRenderAttachedChrome(context, Me)
+
+        If BackColor.A > 0 AndAlso Not keepWindowBackdropTransparent Then
+            context.FillRectangle(DisplayRectangle, BackColor)
+        End If
+
+        绘制D2D图形层_GPU(context)
+        绘制D2D文字层_GPU(context)
+    End Sub
+
+    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+        Return New Rectangle(Point.Empty, Me.Size)
+    End Function
 
     Protected Overrides Sub OnResize(e As EventArgs)
         MyBase.OnResize(e)
@@ -475,12 +478,12 @@ Public Class ModernFontDialog
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
         MyBase.OnFontChanged(e)
-        D2DHelperV2.InvalidateTextFormatCache(Me)
+        D3D_RenderCore.InvalidateExistingTextResources(Me)
         For Each box In _d2dTextBoxOrder
             box.Renderer.LineHeight = 缩放值(24)
         Next
         _d2dLayoutDirty = True
-        Invalidate()
+        RequestV3Render()
     End Sub
 
     Private Sub 清理D2D字体对话框()
@@ -498,7 +501,8 @@ Public Class ModernFontDialog
 
     Private Function 应保持窗口级背景透明() As Boolean
         If Not D2DKeepWindowBackdropTransparent Then Return False
-        Return Padding.Left > 0 OrElse Padding.Top > 0 OrElse Padding.Right > 0 OrElse Padding.Bottom > 0
+        If Not (Padding.Left > 0 OrElse Padding.Top > 0 OrElse Padding.Right > 0 OrElse Padding.Bottom > 0) Then Return False
+        Return ThisIsYourWindow.AttachedBackdropCoversClient(Me)
     End Function
 
 #End Region
@@ -512,7 +516,7 @@ Public Class ModernFontDialog
         _d2dLayoutDirty = False
 
         Dim s = 取D2D缩放()
-        Dim textFormatCache = D2DHelperV2.GetCompositor(Me)?.TextFormatCache
+        Dim textFormatCache As D3D_D2DInterop.TextFormatCache = Nothing
         Dim display = DisplayRectangle
         Dim leftW As Single = 300.0F * s
         Dim topH As Single = 300.0F * s
@@ -609,8 +613,8 @@ Public Class ModernFontDialog
 
         Dim previewX As Single = rightX + pad
         Dim previewW As Single = Math.Max(1.0F, rightW - pad * 2.0F)
-        Dim previewTitleH As Single = Math.Max(40.0F * s, CSng(Math.Max(1, D2DTextRenderer.MeasureLineHeight(Font, s, textFormatCache))) + 20.0F * s)
-        Dim previewLineH As Single = Math.Max(24.0F * s, CSng(Math.Max(1, D2DTextRenderer.MeasureLineHeight(SelectedFont, s, textFormatCache))) + 5.0F * s)
+        Dim previewTitleH As Single = Math.Max(40.0F * s, CSng(Math.Max(1, D3D_TextInterop.MeasureLineHeight(Font, s, textFormatCache))) + 20.0F * s)
+        Dim previewLineH As Single = Math.Max(24.0F * s, CSng(Math.Max(1, D3D_TextInterop.MeasureLineHeight(SelectedFont, s, textFormatCache))) + 5.0F * s)
         layout.PreviewTitle = New RectangleF(previewX, previewTop, previewW, previewTitleH)
         Dim lineY As Single = layout.PreviewTitle.Bottom
         For i = 0 To 3
@@ -1009,42 +1013,41 @@ Public Class ModernFontDialog
 
 #Region "D2D 绘制"
 
-    Private Sub 绘制D2D图形层(rt As D2D.ID2D1RenderTarget, compositor As WindowCompositor)
+
+
+    Private Sub 绘制D2D图形层_GPU(context As D3D_PaintContext)
         Dim l = _d2dLayout
         If l Is Nothing Then Return
-        Dim brushCache = compositor.BrushCache
 
         For Each box In _d2dTextBoxOrder
-            填充圆角矩形(rt, box.Bounds, D2DElementBackColor, l.Radius, brushCache)
+            MessageDialogRendering.FillRoundedRectangle(context, box.Bounds, D2DElementBackColor, l.Radius)
             Dim border = If(ReferenceEquals(_d2dActiveTextBox, box), D2DElementBorderColor, Color.Transparent)
-            描绘圆角边框(rt, box.Bounds, border, 1.0F * 取D2D缩放(), l.Radius, brushCache)
+            MessageDialogRendering.DrawRoundedRectangle(context, box.Bounds, border, 1.0F * 取D2D缩放(), l.Radius)
         Next
 
         For Each list In 所有列表()
-            绘制列表图形(rt, list, brushCache)
+            绘制列表图形_GPU(context, list)
         Next
 
-        绘制复选框(rt, l.StrikeoutSwitch, _strikeoutChecked, brushCache)
-        绘制复选框(rt, l.UnderlineSwitch, _underlineChecked, brushCache)
-        绘制按钮(rt, l.ButtonOK, FontDialogButtonKind.OK, brushCache)
-        绘制按钮(rt, l.ButtonCancel, FontDialogButtonKind.Cancel, brushCache)
+        绘制复选框_GPU(context, l.StrikeoutSwitch, _strikeoutChecked)
+        绘制复选框_GPU(context, l.UnderlineSwitch, _underlineChecked)
+        绘制按钮_GPU(context, l.ButtonOK, FontDialogButtonKind.OK)
+        绘制按钮_GPU(context, l.ButtonCancel, FontDialogButtonKind.Cancel)
     End Sub
 
-    Private Sub 绘制D2D文字层(rt As D2D.ID2D1RenderTarget, compositor As WindowCompositor)
+    Private Sub 绘制D2D文字层_GPU(context As D3D_PaintContext)
         Dim l = _d2dLayout
         If l Is Nothing Then Return
         Dim s = 取D2D缩放()
-        Dim tfc = compositor.TextFormatCache
-        Dim brushCache = compositor.BrushCache
         Dim flagsTitle As TextFormatFlags = TextFormatFlags.Left Or TextFormatFlags.Top Or TextFormatFlags.EndEllipsis Or TextFormatFlags.SingleLine
         Dim flagsMiddleLeft As TextFormatFlags = TextFormatFlags.Left Or TextFormatFlags.VerticalCenter Or TextFormatFlags.EndEllipsis Or TextFormatFlags.SingleLine
         Dim flagsCenter As TextFormatFlags = TextFormatFlags.HorizontalCenter Or TextFormatFlags.VerticalCenter Or TextFormatFlags.EndEllipsis Or TextFormatFlags.SingleLine
 
-        D2DTextRenderer.DrawText(rt, 取界面文本("FontTitle", "字体"), Font, l.FontTitle, ForeColor, flagsTitle, s, tfc, brushCache)
-        D2DTextRenderer.DrawText(rt, 取界面文本("StyleTitle", "字形"), Font, l.StyleTitle, ForeColor, flagsTitle, s, tfc, brushCache)
-        D2DTextRenderer.DrawText(rt, 取界面文本("SizeTitle", "字号"), Font, l.SizeTitle, ForeColor, flagsTitle, s, tfc, brushCache)
-        D2DTextRenderer.DrawText(rt, 取界面文本("EffectsTitle", "效果"), Font, l.EffectsTitle, ForeColor, flagsTitle, s, tfc, brushCache)
-        D2DTextRenderer.DrawText(rt, 取界面文本("PreviewTitle", "预览"), Font, l.PreviewTitle, ForeColor, flagsTitle, s, tfc, brushCache)
+        MessageDialogRendering.DrawText(context, 取界面文本("FontTitle", "字体"), Font, l.FontTitle, ForeColor, flagsTitle, s)
+        MessageDialogRendering.DrawText(context, 取界面文本("StyleTitle", "字形"), Font, l.StyleTitle, ForeColor, flagsTitle, s)
+        MessageDialogRendering.DrawText(context, 取界面文本("SizeTitle", "字号"), Font, l.SizeTitle, ForeColor, flagsTitle, s)
+        MessageDialogRendering.DrawText(context, 取界面文本("EffectsTitle", "效果"), Font, l.EffectsTitle, ForeColor, flagsTitle, s)
+        MessageDialogRendering.DrawText(context, 取界面文本("PreviewTitle", "预览"), Font, l.PreviewTitle, ForeColor, flagsTitle, s)
 
         _d2dTextBoxes(FontDialogTextBoxKind.FontName).Renderer.WaterText = 取界面文本("FontWatermark", "选择字体")
         _d2dTextBoxes(FontDialogTextBoxKind.Style).Renderer.WaterText = 取界面文本("StyleWatermark", "选择字形")
@@ -1052,22 +1055,156 @@ Public Class ModernFontDialog
         For Each box In _d2dTextBoxOrder
             box.Renderer.ForeColor = ForeColor
             box.Renderer.SelectionColor = D2DElementBackColor
-            box.Renderer.Draw(rt, tfc, brushCache)
+            box.Renderer.DrawGpu(context)
         Next
 
         For Each list In 所有列表()
-            绘制列表文字(rt, list, compositor)
+            绘制列表文字_GPU(context, list)
         Next
 
-        D2DTextRenderer.DrawText(rt, 取界面文本("Strikeout", "删除线"), Font, l.StrikeoutText, ForeColor, flagsMiddleLeft, s, tfc, brushCache)
-        D2DTextRenderer.DrawText(rt, 取界面文本("Underline", "下划线"), Font, l.UnderlineText, ForeColor, flagsMiddleLeft, s, tfc, brushCache)
+        MessageDialogRendering.DrawText(context, 取界面文本("Strikeout", "删除线"), Font, l.StrikeoutText, ForeColor, flagsMiddleLeft, s)
+        MessageDialogRendering.DrawText(context, 取界面文本("Underline", "下划线"), Font, l.UnderlineText, ForeColor, flagsMiddleLeft, s)
 
-        绘制预览文本(rt, compositor)
-        D2DTextRenderer.DrawText(rt, 取界面文本("OK", "确定"), Font, l.ButtonOK, ForeColor, flagsCenter, s, tfc, brushCache)
-        D2DTextRenderer.DrawText(rt, 取界面文本("Cancel", "取消"), Font, l.ButtonCancel, ForeColor, flagsCenter, s, tfc, brushCache)
+        绘制预览文本_GPU(context)
+        MessageDialogRendering.DrawText(context, 取界面文本("OK", "确定"), Font, l.ButtonOK, ForeColor, flagsCenter, s)
+        MessageDialogRendering.DrawText(context, 取界面文本("Cancel", "取消"), Font, l.ButtonCancel, ForeColor, flagsCenter, s)
     End Sub
 
-    Private Sub 绘制列表图形(rt As D2D.ID2D1RenderTarget, list As VirtualList, brushCache As D2DGlobals.SolidColorBrushCache)
+    Private Sub 绘制列表图形_GPU(context As D3D_PaintContext, list As VirtualList)
+        MessageDialogRendering.FillRoundedRectangle(context, list.Bounds, D2DElementBackColor, _d2dLayout.Radius)
+        Dim clip = list.Viewport
+        If clip.Width > 0 AndAlso clip.Height > 0 Then
+            Using context.PushClip(clip)
+                Dim firstIndex = list.ScrollIndex
+                Dim drawCount = 可绘制列表项数量(list)
+                For row = 0 To drawCount - 1
+                    Dim idx = firstIndex + row
+                    If idx < 0 OrElse idx >= list.Items.Count Then Exit For
+                    Dim itemRect = 取列表项矩形(list, row)
+                    If idx = list.SelectedIndex Then
+                        MessageDialogRendering.FillRoundedRectangle(context, itemRect, D2DElementPressedBackColor, 6.0F * 取D2D缩放())
+                    ElseIf idx = list.HoverIndex Then
+                        MessageDialogRendering.FillRoundedRectangle(context, itemRect, 取列表项悬停颜色(), 6.0F * 取D2D缩放())
+                    End If
+                Next
+            End Using
+        End If
+        绘制列表滚动条_GPU(context, list)
+    End Sub
+
+    Private Sub 绘制列表文字_GPU(context As D3D_PaintContext, list As VirtualList)
+        Dim clip = list.Viewport
+        If clip.Width <= 0 OrElse clip.Height <= 0 Then Return
+        Dim s = 取D2D缩放()
+        Dim flags As TextFormatFlags = TextFormatFlags.Left Or TextFormatFlags.VerticalCenter Or TextFormatFlags.EndEllipsis Or TextFormatFlags.SingleLine
+        Using context.PushClip(clip)
+            Dim firstIndex = list.ScrollIndex
+            Dim drawCount = 可绘制列表项数量(list)
+            For row = 0 To drawCount - 1
+                Dim idx = firstIndex + row
+                If idx < 0 OrElse idx >= list.Items.Count Then Exit For
+                Dim itemRect = 取列表项矩形(list, row)
+                Dim textX As Single = itemRect.X + _d2dLayout.ListItemPaddingLeft
+                Dim rightEdge As Single = itemRect.Right
+                If 需要列表滚动条(list) Then rightEdge = Math.Min(rightEdge, list.ScrollBarTrack.Left)
+                Dim textRect As New RectangleF(textX,
+                                                itemRect.Y,
+                                                Math.Max(1.0F, rightEdge - textX - _d2dLayout.ListItemPaddingLeft),
+                                                itemRect.Height)
+                Dim itemFont As Font = Nothing
+                Try
+                    Select Case list.Kind
+                        Case FontDialogListKind.FontName
+                            itemFont = 创建字体名称列表项字体(list.Items(idx))
+                            MessageDialogRendering.DrawText(context, list.Items(idx), If(itemFont, Font), textRect, ForeColor, flags, s)
+                        Case FontDialogListKind.Style
+                            Dim familyName = 取文本框文本(FontDialogTextBoxKind.FontName).Trim()
+                            Dim entry = If(idx >= 0 AndAlso idx < _styleEntries.Count, _styleEntries(idx), Nothing)
+                            itemFont = 创建字形列表项字体(familyName, entry)
+                            MessageDialogRendering.DrawText(context, list.Items(idx), If(itemFont, Font), textRect, ForeColor, flags, s)
+                        Case Else
+                            MessageDialogRendering.DrawText(context, list.Items(idx), Font, textRect, ForeColor, flags, s)
+                    End Select
+                Finally
+                    itemFont?.Dispose()
+                End Try
+            Next
+        End Using
+    End Sub
+
+    Private Sub 绘制列表滚动条_GPU(context As D3D_PaintContext, list As VirtualList)
+        If Not 需要列表滚动条(list) Then Return
+        Dim track = list.ScrollBarTrack
+        Dim thumb = 计算列表滚动滑块(list)
+        If track.Width <= 0 OrElse track.Height <= 0 OrElse thumb.Width <= 0 OrElse thumb.Height <= 0 Then Return
+        Dim radius As Single = Math.Max(1.0F, track.Width / 2.0F)
+        MessageDialogRendering.FillRoundedRectangle(context, track, Color.FromArgb(30, 220, 220, 220), radius)
+        MessageDialogRendering.FillRoundedRectangle(context, thumb, Color.FromArgb(120, 220, 220, 220), radius)
+    End Sub
+
+    Private Sub 绘制复选框_GPU(context As D3D_PaintContext, rect As RectangleF, checked As Boolean)
+        Dim s As Single = 取D2D缩放()
+        Dim fill As Color = If(checked, Color.FromArgb(0, 120, 215), D2DElementBackColor)
+        MessageDialogRendering.FillRoundedRectangle(context, rect, fill, 3.0F * s)
+
+        If Not checked Then Return
+        Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, Color.White, context.DeviceGeneration)
+        Dim points = {
+            New Vector2(rect.X + 5.8F * s, rect.Y + 12.6F * s),
+            New Vector2(rect.X + 10.0F * s, rect.Y + 16.8F * s),
+            New Vector2(rect.X + 18.4F * s, rect.Y + 8.2F * s)
+        }
+        Dim width = Math.Max(1.5F, 2.1F * s)
+        context.DeviceContext.DrawLine(points(0), points(1), brush, width)
+        context.DeviceContext.DrawLine(points(1), points(2), brush, width)
+    End Sub
+
+    Private Sub 绘制预览文本_GPU(context As D3D_PaintContext)
+        Dim texts = {
+            取界面文本("PreviewSampleChinese", "敏捷的棕色狐狸跳过了懒惰的狗。"),
+            取界面文本("PreviewSampleEnglish", "The quick brown fox jumps over the lazy dog."),
+            取界面文本("PreviewSampleGlyphs", "永字八法；横竖撇捺折钩点。"),
+            取界面文本("PreviewSampleSymbols", "+-*/~！@#￥%……&&*（）-= —— · <>?:;""'[]{}|\")
+        }
+        For i = 0 To 3
+            绘制预览行_GPU(context, texts(i), _d2dLayout.PreviewLines(i))
+        Next
+    End Sub
+
+    Private Sub 绘制预览行_GPU(context As D3D_PaintContext, text As String, rect As RectangleF)
+        If String.IsNullOrEmpty(text) OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        Dim f = SelectedFont
+        Dim s = 取D2D缩放()
+        Dim sizePx As Single = Math.Max(1.0F, CSng(f.SizeInPoints * 96.0F / 72.0F * Math.Max(0.01F, s)))
+        Dim selectedStyle = 查找字形项(取文本框文本(FontDialogTextBoxKind.Style))
+        Dim weight As DW.FontWeight = If(selectedStyle IsNot Nothing, selectedStyle.DWriteWeight, If(f.Bold, DW.FontWeight.Bold, DW.FontWeight.Normal))
+        Dim style As DW.FontStyle = If(selectedStyle IsNot Nothing, selectedStyle.DWriteStyle, If(f.Italic, DW.FontStyle.Italic, DW.FontStyle.Normal))
+        Dim stretch As DW.FontStretch = If(selectedStyle IsNot Nothing, selectedStyle.DWriteStretch, DW.FontStretch.Normal)
+        Using fmt = D3D_RenderCore.DeviceManager.DWriteFactory.CreateTextFormat(f.FontFamily.Name, Nothing, weight, style, stretch, sizePx)
+            fmt.TextAlignment = DW.TextAlignment.Leading
+            fmt.ParagraphAlignment = DW.ParagraphAlignment.Near
+            fmt.WordWrapping = DW.WordWrapping.Wrap
+            Using layout = D3D_RenderCore.DeviceManager.DWriteFactory.CreateTextLayout(text, fmt, Math.Max(1.0F, rect.Width), Math.Max(1.0F, rect.Height))
+                Dim range As New DW.TextRange(0, text.Length)
+                If f.Underline Then layout.SetUnderline(True, range)
+                If f.Strikeout Then layout.SetStrikethrough(True, range)
+                Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, Color.White, context.DeviceGeneration)
+                context.DeviceContext.DrawTextLayout(New Vector2(rect.X, rect.Y), layout, brush, D2D.DrawTextOptions.Clip)
+            End Using
+        End Using
+    End Sub
+
+    Private Sub 绘制按钮_GPU(context As D3D_PaintContext, rect As RectangleF, kind As FontDialogButtonKind)
+        Dim fill = D2DElementBackColor
+        If _d2dPressedButton = kind Then
+            fill = D2DElementPressedBackColor
+        ElseIf _d2dHoverButton = kind Then
+            fill = D2DElementHoverBackColor
+        End If
+        MessageDialogRendering.FillRoundedRectangle(context, rect, fill, _d2dLayout.Radius)
+    End Sub
+
+    Private Sub 绘制列表图形(rt As D2D.ID2D1RenderTarget, list As VirtualList, brushCache As D3D_D2DInterop.SolidColorBrushCache)
         填充圆角矩形(rt, list.Bounds, D2DElementBackColor, _d2dLayout.Radius, brushCache)
         Dim clip = list.Viewport
         If clip.Width > 0 AndAlso clip.Height > 0 Then
@@ -1092,56 +1229,8 @@ Public Class ModernFontDialog
         绘制列表滚动条(rt, list, brushCache)
     End Sub
 
-    Private Sub 绘制列表文字(rt As D2D.ID2D1RenderTarget, list As VirtualList, compositor As WindowCompositor)
-        Dim clip = list.Viewport
-        If clip.Width <= 0 OrElse clip.Height <= 0 Then Return
-        Dim s = 取D2D缩放()
-        Dim flags As TextFormatFlags = TextFormatFlags.Left Or TextFormatFlags.VerticalCenter Or TextFormatFlags.EndEllipsis Or TextFormatFlags.SingleLine
-        rt.PushAxisAlignedClip(New Vortice.RawRectF(clip.Left, clip.Top, clip.Right, clip.Bottom), D2D.AntialiasMode.PerPrimitive)
-        Try
-            Dim firstIndex = list.ScrollIndex
-            Dim drawCount = 可绘制列表项数量(list)
-            For row = 0 To drawCount - 1
-                Dim idx = firstIndex + row
-                If idx < 0 OrElse idx >= list.Items.Count Then Exit For
-                Dim itemRect = 取列表项矩形(list, row)
-                Dim textX As Single = itemRect.X + _d2dLayout.ListItemPaddingLeft
-                Dim rightEdge As Single = itemRect.Right
-                If 需要列表滚动条(list) Then rightEdge = Math.Min(rightEdge, list.ScrollBarTrack.Left)
-                Dim textRect As New RectangleF(textX,
-                                                itemRect.Y,
-                                                Math.Max(1.0F, rightEdge - textX - _d2dLayout.ListItemPaddingLeft),
-                                                itemRect.Height)
-                Dim itemFont As Font = Nothing
-                Try
-                    Select Case list.Kind
-                        Case FontDialogListKind.FontName
-                            itemFont = 创建字体名称列表项字体(list.Items(idx))
-                            D2DTextRenderer.DrawText(rt, list.Items(idx), If(itemFont, Font), textRect, ForeColor,
-                                                     flags, s, compositor.TextFormatCache, compositor.BrushCache)
-                        Case FontDialogListKind.Style
-                            Dim familyName = 取文本框文本(FontDialogTextBoxKind.FontName).Trim()
-                            Dim entry = If(idx >= 0 AndAlso idx < _styleEntries.Count, _styleEntries(idx), Nothing)
-                            If entry IsNot Nothing AndAlso 绘制DWrite列表项文本(rt, list.Items(idx), familyName, entry, textRect, compositor) Then
-                                Continue For
-                            End If
-                            itemFont = 创建字形列表项字体(familyName, entry)
-                            D2DTextRenderer.DrawText(rt, list.Items(idx), If(itemFont, Font), textRect, ForeColor,
-                                                     flags, s, compositor.TextFormatCache, compositor.BrushCache)
-                        Case Else
-                            D2DTextRenderer.DrawText(rt, list.Items(idx), Font, textRect, ForeColor,
-                                                     flags, s, compositor.TextFormatCache, compositor.BrushCache)
-                    End Select
-                Finally
-                    itemFont?.Dispose()
-                End Try
-            Next
-        Finally
-            rt.PopAxisAlignedClip()
-        End Try
-    End Sub
 
-    Private Sub 绘制列表滚动条(rt As D2D.ID2D1RenderTarget, list As VirtualList, brushCache As D2DGlobals.SolidColorBrushCache)
+    Private Sub 绘制列表滚动条(rt As D2D.ID2D1RenderTarget, list As VirtualList, brushCache As D3D_D2DInterop.SolidColorBrushCache)
         If Not 需要列表滚动条(list) Then Return
         Dim track = list.ScrollBarTrack
         Dim thumb = 计算列表滚动滑块(list)
@@ -1151,7 +1240,7 @@ Public Class ModernFontDialog
         填充圆角矩形(rt, thumb, Color.FromArgb(120, 220, 220, 220), radius, brushCache)
     End Sub
 
-    Private Sub 绘制复选框(rt As D2D.ID2D1RenderTarget, rect As RectangleF, checked As Boolean, brushCache As D2DGlobals.SolidColorBrushCache)
+    Private Sub 绘制复选框(rt As D2D.ID2D1RenderTarget, rect As RectangleF, checked As Boolean, brushCache As D3D_D2DInterop.SolidColorBrushCache)
         Dim s As Single = 取D2D缩放()
         Dim fill As Color = If(checked, Color.FromArgb(0, 120, 215), D2DElementBackColor)
         填充圆角矩形(rt, rect, fill, 3.0F * s, brushCache)
@@ -1164,45 +1253,13 @@ Public Class ModernFontDialog
                 New PointF(rect.X + 10.0F * s, rect.Y + 16.8F * s),
                 New PointF(rect.X + 18.4F * s, rect.Y + 8.2F * s)
             }
-            RectangleRenderer.画折线_D2D(rt, points, Color.White, Math.Max(1.5F, 2.1F * s), brushCache)
+            D3D_RectangleRenderer.画折线_D2D(rt, points, Color.White, Math.Max(1.5F, 2.1F * s), brushCache)
         End If
     End Sub
 
-    Private Sub 绘制预览文本(rt As D2D.ID2D1RenderTarget, compositor As WindowCompositor)
-        Dim texts = {
-            取界面文本("PreviewSampleChinese", "敏捷的棕色狐狸跳过了懒惰的狗。"),
-            取界面文本("PreviewSampleEnglish", "The quick brown fox jumps over the lazy dog."),
-            取界面文本("PreviewSampleGlyphs", "永字八法；横竖撇捺折钩点。"),
-            取界面文本("PreviewSampleSymbols", "+-*/~！@#￥%……&&*（）-= —— · <>?:;""'[]{}|\")
-        }
-        For i = 0 To 3
-            绘制预览行(rt, texts(i), _d2dLayout.PreviewLines(i), compositor)
-        Next
-    End Sub
 
-    Private Sub 绘制预览行(rt As D2D.ID2D1RenderTarget, text As String, rect As RectangleF, compositor As WindowCompositor)
-        If String.IsNullOrEmpty(text) OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
-        Dim f = SelectedFont
-        Dim s = 取D2D缩放()
-        Dim sizePx As Single = D2DGlobals.GetDWriteFontSizePx(f, s)
-        Dim selectedStyle = 查找字形项(取文本框文本(FontDialogTextBoxKind.Style))
-        Dim weight As DW.FontWeight = If(selectedStyle IsNot Nothing, selectedStyle.DWriteWeight, If(f.Bold, DW.FontWeight.Bold, DW.FontWeight.Normal))
-        Dim style As DW.FontStyle = If(selectedStyle IsNot Nothing, selectedStyle.DWriteStyle, If(f.Italic, DW.FontStyle.Italic, DW.FontStyle.Normal))
-        Dim stretch As DW.FontStretch = If(selectedStyle IsNot Nothing, selectedStyle.DWriteStretch, DW.FontStretch.Normal)
-        Dim fmt = compositor.TextFormatCache.Get(f.FontFamily.Name, weight, style, stretch, sizePx,
-                                                 DW.TextAlignment.Leading, DW.ParagraphAlignment.Near,
-                                                 True, False)
-        Dim brush = compositor.BrushCache.Get(rt, Color.White)
-        If fmt Is Nothing OrElse brush Is Nothing Then Return
-        Using layout = D2DGlobals.GetDWriteFactory().CreateTextLayout(text, fmt, Math.Max(1.0F, rect.Width), Math.Max(1.0F, rect.Height))
-            Dim range As New DW.TextRange(0, text.Length)
-            If f.Underline Then layout.SetUnderline(True, range)
-            If f.Strikeout Then layout.SetStrikethrough(True, range)
-            rt.DrawTextLayout(New Vector2(rect.X, rect.Y), layout, brush, D2D.DrawTextOptions.Clip)
-        End Using
-    End Sub
 
-    Private Sub 绘制按钮(rt As D2D.ID2D1RenderTarget, rect As RectangleF, kind As FontDialogButtonKind, brushCache As D2DGlobals.SolidColorBrushCache)
+    Private Sub 绘制按钮(rt As D2D.ID2D1RenderTarget, rect As RectangleF, kind As FontDialogButtonKind, brushCache As D3D_D2DInterop.SolidColorBrushCache)
         Dim fill = D2DElementBackColor
         If _d2dPressedButton = kind Then
             fill = D2DElementPressedBackColor
@@ -1212,18 +1269,18 @@ Public Class ModernFontDialog
         填充圆角矩形(rt, rect, fill, _d2dLayout.Radius, brushCache)
     End Sub
 
-    Private Sub 填充圆角矩形(rt As D2D.ID2D1RenderTarget, rect As RectangleF, color As Color, radius As Single, brushCache As D2DGlobals.SolidColorBrushCache)
+    Private Sub 填充圆角矩形(rt As D2D.ID2D1RenderTarget, rect As RectangleF, color As Color, radius As Single, brushCache As D3D_D2DInterop.SolidColorBrushCache)
         If color.A = 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
-        Using geo = RectangleRenderer.创建圆角矩形几何(rect, radius)
-            RectangleRenderer.绘制圆角背景_D2D(rt, geo, rect, color, Color.Empty, Orientation.Horizontal, brushCache)
+        Using geo = D3D_RectangleRenderer.创建圆角矩形几何(rect, radius)
+            D3D_RectangleRenderer.绘制圆角背景_D2D(rt, geo, rect, color, Color.Empty, Orientation.Horizontal, brushCache)
         End Using
     End Sub
 
-    Private Sub 描绘圆角边框(rt As D2D.ID2D1RenderTarget, rect As RectangleF, color As Color, width As Single, radius As Single, brushCache As D2DGlobals.SolidColorBrushCache)
+    Private Sub 描绘圆角边框(rt As D2D.ID2D1RenderTarget, rect As RectangleF, color As Color, width As Single, radius As Single, brushCache As D3D_D2DInterop.SolidColorBrushCache)
         If color.A = 0 OrElse width <= 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
         Dim half = width / 2.0F
         rect.Inflate(-half, -half)
-        RectangleRenderer.绘制圆角边框_D2D(rt, rect, radius, color, width, brushCache)
+        D3D_RectangleRenderer.绘制圆角边框_D2D(rt, rect, radius, color, width, brushCache)
     End Sub
 
     Private Function 取列表项悬停颜色() As Color
@@ -1987,7 +2044,7 @@ Public Class ModernFontDialog
         Dim collection As DW.IDWriteFontCollection = Nothing
         Dim dwriteFamily As DW.IDWriteFontFamily = Nothing
         Try
-            collection = D2DGlobals.GetDWriteFactory().GetSystemFontCollection(False)
+            collection = D3D_D2DInterop.GetDWriteFactory().GetSystemFontCollection(False)
             Dim familyIndex As UInteger = 0
             If Not CBool(collection.FindFamilyName(familyName, familyIndex)) Then Return Nothing
             dwriteFamily = collection.GetFontFamily(familyIndex)
@@ -2062,7 +2119,7 @@ Public Class ModernFontDialog
         Dim collection As DW.IDWriteFontCollection = Nothing
         Dim dwriteFamily As DW.IDWriteFontFamily = Nothing
         Try
-            collection = D2DGlobals.GetDWriteFactory().GetSystemFontCollection(False)
+            collection = D3D_D2DInterop.GetDWriteFactory().GetSystemFontCollection(False)
             Dim familyIndex As UInteger = 0
             If Not CBool(collection.FindFamilyName(familyName, familyIndex)) Then Return
             dwriteFamily = collection.GetFontFamily(familyIndex)
@@ -2179,28 +2236,6 @@ Public Class ModernFontDialog
         End Try
     End Function
 
-    Private Function 绘制DWrite列表项文本(rt As D2D.ID2D1RenderTarget, text As String, familyName As String,
-                                         entry As FontStyleEntry, rect As RectangleF,
-                                         compositor As WindowCompositor) As Boolean
-        If rt Is Nothing OrElse compositor Is Nothing OrElse entry Is Nothing Then Return False
-        If String.IsNullOrWhiteSpace(familyName) OrElse String.IsNullOrEmpty(text) Then Return False
-        If rect.Width <= 0 OrElse rect.Height <= 0 Then Return False
-
-        Try
-            Dim s = 取D2D缩放()
-            Dim sizePx As Single = D2DGlobals.GetDWriteFontSizePx(Font, s)
-            Dim fmt = compositor.TextFormatCache.Get(familyName, entry.DWriteWeight, entry.DWriteStyle,
-                                                     entry.DWriteStretch, sizePx,
-                                                     DW.TextAlignment.Leading, DW.ParagraphAlignment.Center,
-                                                     True, False)
-            Dim brush = compositor.BrushCache.Get(rt, ForeColor)
-            If fmt Is Nothing OrElse brush Is Nothing Then Return False
-            rt.DrawText(text, fmt, D2DGlobals.ToD2DRect(rect), brush, D2D.DrawTextOptions.Clip)
-            Return True
-        Catch
-            Return False
-        End Try
-    End Function
 
     Private Function 取字号显示文本(entry As FontSizeEntry) As String
         If entry Is Nothing Then Return String.Empty
@@ -2289,12 +2324,21 @@ Public Class ModernFontDialog
 #Region "辅助方法"
 
     Private Function 取D2D缩放() As Single
-        Return D2DGlobals.GetCurrentDpiScale(Me)
+        Return V3_DpiContext.FromControl(Me).Scale
     End Function
 
     Private Function 缩放值(value As Integer) As Integer
         Return CInt(Math.Round(value * 取D2D缩放()))
     End Function
+
+    Private Sub RequestV3Render()
+        RequestV3Render(New Rectangle(Point.Empty, Me.Size))
+    End Sub
+
+    Private Sub RequestV3Render(dirtyRect As Rectangle)
+        If IsDisposed Then Return
+        V3_InvalidationRouter.RequestRender(Me, dirtyRect)
+    End Sub
 
 #End Region
 

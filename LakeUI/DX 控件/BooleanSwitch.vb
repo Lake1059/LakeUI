@@ -3,6 +3,7 @@ Imports Vortice.Direct2D1
 
 <DefaultEvent("CheckedChanged")>
 Public Class BooleanSwitch
+    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource
 
     Public Event CheckedChanged As EventHandler
 
@@ -13,52 +14,92 @@ Public Class BooleanSwitch
 
 #Region "绘制"
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
-        ' V2: BackgroundSource 已指定时跳过基类填底，由 OnPaint 显式画穿透层。
         If _backgroundSource IsNot Nothing Then Return
         MyBase.OnPaintBackground(e)
     End Sub
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
-        If Me.Width <= 0 OrElse Me.Height <= 0 Then Return
+        If Not D3D_PaintBridge.PaintRenderable(e, Me, Me, 1) Then MyBase.OnPaint(e)
+    End Sub
 
-        Dim 极限矩形区域 As New RectangleF(0, 0, Me.Width - 1, Me.Height - 1)
-        Dim s As Single = DpiScale()
+    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+        If context Is Nothing OrElse Me.Width <= 0 OrElse Me.Height <= 0 Then Return
+
+        Dim bounds As New RectangleF(0, 0, Me.Width - 1, Me.Height - 1)
+        Dim scale As Single = DpiScale()
         If 边框宽度 > 0 Then
-            Dim half As Single = 边框宽度 * s / 2.0F
-            极限矩形区域.Inflate(-half, -half)
+            Dim half As Single = 边框宽度 * scale / 2.0F
+            bounds.Inflate(-half, -half)
+        End If
+        If bounds.Width <= 0 OrElse bounds.Height <= 0 Then Return
+
+        绘制图形内容_GPU(context, bounds)
+
+        If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
+            填充圆角矩形_GPU(context, bounds, CSng(Math.Floor(bounds.Height / 2.0F)), 禁用时遮罩颜色)
+        End If
+    End Sub
+
+    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+        Return New Rectangle(Point.Empty, Me.Size)
+    End Function
+
+    Private Sub 绘制图形内容_GPU(context As D3D_PaintContext, bounds As RectangleF)
+        Dim trackColor As Color = 获取当前轨道颜色()
+        Dim thumbColor As Color = 获取当前滑块颜色()
+        Dim currentBorderColor As Color = 获取当前边框颜色()
+        Dim radius As Single = CSng(Math.Floor(bounds.Height / 2.0F))
+
+        填充圆角矩形_GPU(context, bounds, radius, trackColor)
+
+        Dim borderWidth As Single = 边框宽度 * DpiScale()
+        If currentBorderColor.A > 0 AndAlso borderWidth > 0 Then
+            Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New RoundedRectangle(bounds, radius, radius))
+                Dim borderBrush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, currentBorderColor, context.DeviceGeneration)
+                context.DeviceContext.DrawGeometry(geo, borderBrush, borderWidth)
+            End Using
         End If
 
-        Dim ssaa As Integer = D2DHelperV2.GetEffectiveSsaaScale(超采样倍率)
+        Dim thumbMargin As Single = 滑块边距值 * DpiScale()
+        Dim thumbDiameter As Single = bounds.Height - thumbMargin * 2
+        If thumbDiameter <= 0 Then Return
+        Dim thumbMinX As Single = bounds.X + thumbMargin
+        Dim thumbMaxX As Single = bounds.Right - thumbMargin - thumbDiameter
+        Dim thumbX As Single = thumbMinX + (thumbMaxX - thumbMinX) * 动画助手.Progress
+        Dim thumbY As Single = bounds.Y + thumbMargin
+        Dim thumbRect As New RectangleF(thumbX, thumbY, thumbDiameter, thumbDiameter)
+        If thumbColor.A > 0 Then
+            Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, thumbColor, context.DeviceGeneration)
+            context.DeviceContext.FillEllipse(New Ellipse(New System.Numerics.Vector2(thumbRect.X + thumbRect.Width / 2.0F, thumbRect.Y + thumbRect.Height / 2.0F),
+                                                          thumbRect.Width / 2.0F,
+                                                          thumbRect.Height / 2.0F),
+                                             brush)
+        End If
+    End Sub
 
-        Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
-            If scope Is Nothing Then Return  ' 设计期 / 无 Form
-
-            If _backgroundSource IsNot Nothing Then
-                BackgroundPenetrationV2.PaintBackground(Me, scope, _backgroundSource)
-            End If
-
-            绘制图形内容_D2D(scope.GraphicsLayer, scope.Compositor.BrushCache, 极限矩形区域)
-            scope.FlushGraphics()
-
-            If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
-                Using geo = RectangleRenderer.创建圆角矩形几何(极限矩形区域, CSng(Math.Floor(极限矩形区域.Height / 2.0F)))
-                    RectangleRenderer.绘制圆角背景_D2D(scope.DCRenderTarget, geo, 极限矩形区域, 禁用时遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Vertical, scope.Compositor.BrushCache)
-                End Using
-            End If
+    Private Sub 填充圆角矩形_GPU(context As D3D_PaintContext, bounds As RectangleF, radius As Single, color As Color)
+        If color.A = 0 OrElse bounds.Width <= 0 OrElse bounds.Height <= 0 Then Return
+        Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
+        If radius <= 0 Then
+            context.DeviceContext.FillRectangle(D3D_PaintContext.ToRawRect(bounds), brush)
+            Return
+        End If
+        Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New RoundedRectangle(bounds, radius, radius))
+            context.DeviceContext.FillGeometry(geo, brush)
         End Using
     End Sub
 
-    Private Sub 绘制图形内容_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache, 极限矩形区域 As RectangleF)
+    Private Sub 绘制图形内容_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache, 极限矩形区域 As RectangleF)
         Dim 轨道颜色 As Color = 获取当前轨道颜色()
         Dim 滑块颜色 As Color = 获取当前滑块颜色()
         Dim 当前边框颜色 As Color = 获取当前边框颜色()
 
         Dim 圆角半径 As Single = CSng(Math.Floor(极限矩形区域.Height / 2.0F))
-        Using geo = RectangleRenderer.创建圆角矩形几何(极限矩形区域, 圆角半径)
+        Using geo = D3D_RectangleRenderer.创建圆角矩形几何(极限矩形区域, 圆角半径)
             Dim brush = brushCache.Get(rt, 轨道颜色)
             If brush IsNot Nothing Then rt.FillGeometry(geo, brush)
             Dim s As Single = DpiScale()
-            RectangleRenderer.绘制圆角边框_D2D(rt, geo, 当前边框颜色, 边框宽度 * s, brushCache)
+            D3D_RectangleRenderer.绘制圆角边框_D2D(rt, geo, 当前边框颜色, 边框宽度 * s, brushCache)
         End Using
 
         Dim _滑块边距 As Single = 滑块边距值 * DpiScale()
@@ -69,7 +110,7 @@ Public Class BooleanSwitch
         Dim 滑块X As Single = 滑块最小X + (滑块最大X - 滑块最小X) * 动画助手.Progress
         Dim 滑块Y As Single = 极限矩形区域.Y + _滑块边距
         Dim 滑块区域 As New RectangleF(滑块X, 滑块Y, 滑块直径, 滑块直径)
-        RectangleRenderer.填充椭圆_D2D(rt, 滑块区域, 滑块颜色, brushCache)
+        D3D_RectangleRenderer.填充椭圆_D2D(rt, 滑块区域, 滑块颜色, brushCache)
     End Sub
 
     Private Function 获取当前轨道颜色() As Color
@@ -140,25 +181,25 @@ Public Class BooleanSwitch
         MyBase.OnMouseEnter(e)
         If Not Enabled Then Return
         鼠标状态 = MouseStateEnum.Hover
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
     Protected Overrides Sub OnMouseLeave(e As EventArgs)
         MyBase.OnMouseLeave(e)
         If Not Enabled Then Return
         鼠标状态 = MouseStateEnum.Normal
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
     Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
         MyBase.OnMouseDown(e)
         If Not Enabled Then Return
         鼠标状态 = MouseStateEnum.Pressed
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
     Protected Overrides Sub OnMouseUp(e As MouseEventArgs)
         MyBase.OnMouseUp(e)
         If Not Enabled Then Return
         鼠标状态 = If(ClientRectangle.Contains(e.Location), MouseStateEnum.Hover, MouseStateEnum.Normal)
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
     Protected Overrides Sub OnClick(e As EventArgs)
         MyBase.OnClick(e)
@@ -174,16 +215,17 @@ Public Class BooleanSwitch
             鼠标状态 = MouseStateEnum.Normal
             动画助手.StopAnimation()
         End If
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
         MyBase.OnFontChanged(e)
-        D2DHelperV2.RefreshFontDependentRendering(Me)
+        D3D_RenderCore.InvalidateExistingTextResources(Me)
+        请求V3渲染()
     End Sub
 #End Region
 
@@ -191,19 +233,28 @@ Public Class BooleanSwitch
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End If
     End Sub
 
-    Private ReadOnly 动画助手 As New AnimationHelperV2(Me)
+    Private ReadOnly 动画助手 As New V3_AnimationHelper(Me)
 
-    Private Sub 开关动画脏区(helper As AnimationHelperV2, owner As Control, sink As AnimationHelperV2.InvalidateRegionSink)
+    Private Sub 开关动画脏区(helper As V3_AnimationHelper, owner As Control, sink As V3_AnimationHelper.InvalidateRegionSink)
         sink.Add(计算动画脏区())
     End Sub
 
     Private Function DpiScale() As Single
-        Return D2DGlobals.GetCurrentDpiScale(Me)
+        Return V3_DpiContext.FromControl(Me).Scale
     End Function
+
+    Private Sub 请求V3渲染(Optional immediate As Boolean = False)
+        请求V3渲染(New Rectangle(Point.Empty, Me.Size), immediate)
+    End Sub
+
+    Private Sub 请求V3渲染(dirtyRect As Rectangle, Optional immediate As Boolean = False)
+        If Me.IsDisposed Then Return
+        V3_InvalidationRouter.RequestRender(Me, dirtyRect)
+    End Sub
 
     Private Function 计算动画脏区() As Rectangle
         If Me.Width <= 0 OrElse Me.Height <= 0 Then Return Rectangle.Empty
@@ -309,7 +360,7 @@ Public Class BooleanSwitch
 
     Private _backgroundSource As Control = Nothing
     <Category("LakeUI"),
-     Description("背景采样源（V2 透明背景穿透）。设置后将跨越任意层级直接采样此控件的绘制内容作为透明背景。"),
+     Description("背景采样源（V3 背景图）。设置后将跨越任意层级直接采样此控件的绘制内容作为透明背景。"),
      DefaultValue(GetType(Control), Nothing), Browsable(True)>
     Public Property BackgroundSource As Control
         Get
@@ -318,15 +369,14 @@ Public Class BooleanSwitch
         Set(value As Control)
             If _backgroundSource IsNot value Then
                 解除背景穿透消费者()
-                _backgroundSource = BackgroundPenetrationV2.SetConsumerSource(Me, _backgroundSource, value)
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                _backgroundSource = D3D_BackgroundPenetration.SetBackgroundSource(Me, _backgroundSource, value)
+                请求V3渲染()
             End If
         End Set
     End Property
 
     Private Sub 解除背景穿透消费者()
-        If _backgroundSource Is Nothing Then Return
-        Try : BackgroundPenetrationV2.UnregisterConsumer(Me, _backgroundSource) : Catch : End Try
+        Try : D3D_RenderCore.UnregisterBackgroundConsumer(Me, recursive:=True) : Catch : End Try
     End Sub
 
     Private 禁用时遮罩颜色 As Color = Color.FromArgb(120, 0, 0, 0)

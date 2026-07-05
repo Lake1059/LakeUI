@@ -2,6 +2,17 @@
 Public Class Form_ModernTextBox
     Private Sub Form_ModernTextBox_Load(sender As Object, e As EventArgs) Handles MyBase.Load
         Me.ModernTextBox2.SyntaxHighlighter = New VbKeywordHighlighter()
+        Me.ModernTextBox2.Text = String.Join(vbCrLf, New String() {
+            "Imports System",
+            "",
+            "Public Class DemoSyntax",
+            "    Public Function FormatCount(value As Integer) As String",
+            "        If value <= 0 Then",
+            "            Return ""empty""",
+            "        End If",
+            "        Return $""count = {value}"" ' highlighted comment",
+            "    End Function",
+            "End Class"})
     End Sub
 End Class
 

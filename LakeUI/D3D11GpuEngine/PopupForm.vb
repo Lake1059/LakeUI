@@ -9,7 +9,7 @@ Imports System.ComponentModel
 ''' 调用原则：
 ''' • 派生类应自行处理绘制和大小，不要依赖父控件布局系统。
 ''' • 显示前设置 Location/Size；本类只保证不激活、不进任务栏、不抢焦点。
-''' • 如果弹出层需要毛玻璃，使用 <see cref="PopupBackdropRenderer"/>，不要复用宿主窗口的 PaintScope。
+''' • 如果弹出层需要毛玻璃，使用 <see cref="D3D_PopupBackdropRenderer"/>，不要复用宿主窗口的 PaintScope。
 '''
 ''' 坑点：
 ''' • WS_EX_TOPMOST 会让 popup 压在普通窗口之上；派生类关闭/隐藏时必须及时释放或 Hide。

@@ -11,14 +11,14 @@ Imports Vortice.Direct2D1
 ''' 调用契约：
 ''' • 每次绘制前先调用 ComputeLayout / ComputeHorizontalLayout；不要把旧布局拿到 resize 后继续用。
 ''' • 鼠标命中和拖拽都基于最近一次布局产生的 ThumbRect / TrackRect，外层控件负责在滚动偏移变化后重绘。
-''' • Draw_D2D 的 rt 应来自当前 PaintScopeV2.GraphicsLayer；如果开启 SSAA，滚动条也会和其他图形一起回采。
+''' • Draw_D2D 的 rt 应来自当前 D3D_PaintScope.GraphicsLayer；如果开启 SSAA，滚动条也会和其他图形一起回采。
 '''
 ''' 缓存与坑点：
 ''' • 调用方已经有 scope.Compositor.BrushCache 时应传入它，让窗口级缓存统一管理。
-''' • 本类不再持有 D2D 画刷，ReleaseEverything 不需要额外扫描 ScrollBarRenderer 实例。
+''' • 本类不再持有 D2D 画刷，ReleaseEverything 不需要额外扫描 V3_ScrollBarRenderer 实例。
 ''' • 本类只管理滚动条交互状态，不持有内容滚动偏移；真实 offset 必须由宿主控件保存。
 ''' </remarks>
-Public Class ScrollBarRenderer
+Public Class V3_ScrollBarRenderer
     ''' <summary>当前帧滑块（thumb）在容器坐标系下的矩形。</summary>
     Public ThumbRect As Rectangle = Rectangle.Empty
     ''' <summary>当前帧轨道（track）在容器坐标系下的矩形，覆盖了 Margin 命中区。</summary>
@@ -246,12 +246,12 @@ Public Class ScrollBarRenderer
     End Sub
 
     Private Shared Function RentBrush(rt As ID2D1RenderTarget, color As Color,
-                                      brushCache As D2DGlobals.SolidColorBrushCache,
+                                      brushCache As D3D_D2DInterop.SolidColorBrushCache,
                                       ByRef ownsBrush As Boolean) As ID2D1SolidColorBrush
         ownsBrush = False
         If brushCache IsNot Nothing Then Return brushCache.Get(rt, color)
         ownsBrush = True
-        Return rt.CreateSolidColorBrush(D2DGlobals.ToColor4(color))
+        Return rt.CreateSolidColorBrush(D3D_D2DInterop.ToColor4(color))
     End Function
 
     ''' <summary>
@@ -270,8 +270,8 @@ Public Class ScrollBarRenderer
             Dim half As Single = borderWidth / 2.0F
             clipRect.Inflate(-half, -half)
         End If
-        clipGeo = RectangleRenderer.创建圆角矩形几何(clipRect, borderRadius)
-        D2DGlobals.PushGeometryClip(rt, clipGeo, New RectangleF(0, 0, containerW, containerH))
+        clipGeo = D3D_RectangleRenderer.创建圆角矩形几何(clipRect, borderRadius)
+        D3D_D2DInterop.PushGeometryClip(rt, clipGeo, New RectangleF(0, 0, containerW, containerH))
         clipPushed = True
     End Sub
 
@@ -281,7 +281,7 @@ Public Class ScrollBarRenderer
                          borderWidth As Integer, borderRadius As Integer,
                          scrollBarWidth As Integer,
                          trackColor As Color, thumbColor As Color, thumbHoverColor As Color,
-                         Optional brushCache As D2DGlobals.SolidColorBrushCache = Nothing)
+                         Optional brushCache As D3D_D2DInterop.SolidColorBrushCache = Nothing)
         If TrackRect.IsEmpty Then Return
         If TrackRect.Width < 1 OrElse TrackRect.Height < 1 OrElse scrollBarWidth < 1 Then Return
 
@@ -299,7 +299,7 @@ Public Class ScrollBarRenderer
                 Dim trackRadius As Integer = Math.Min(scrollBarWidth \ 2, sbH \ 2)
                 Dim trackArea As New RectangleF(VisualLeft, TrackRect.Y, scrollBarWidth, sbH)
                 trackBrush = RentBrush(rt, trackColor, brushCache, ownsTrackBrush)
-                Using geo = RectangleRenderer.创建圆角矩形几何(trackArea, trackRadius)
+                Using geo = D3D_RectangleRenderer.创建圆角矩形几何(trackArea, trackRadius)
                     rt.FillGeometry(geo, trackBrush)
                 End Using
             End If
@@ -310,7 +310,7 @@ Public Class ScrollBarRenderer
             Dim thumbH As Integer = ThumbRect.Height
             Dim thumbRadius As Integer = Math.Min(scrollBarWidth \ 2, thumbH \ 2)
             Dim thumbArea As New RectangleF(VisualLeft, ThumbRect.Y, scrollBarWidth, thumbH)
-            Using geo = RectangleRenderer.创建圆角矩形几何(thumbArea, thumbRadius)
+            Using geo = D3D_RectangleRenderer.创建圆角矩形几何(thumbArea, thumbRadius)
                 rt.FillGeometry(geo, thumbBrush)
             End Using
         Finally
@@ -329,7 +329,7 @@ Public Class ScrollBarRenderer
                                    borderWidth As Integer, borderRadius As Integer,
                                    scrollBarHeight As Integer,
                                    trackColor As Color, thumbColor As Color, thumbHoverColor As Color,
-                                   Optional brushCache As D2DGlobals.SolidColorBrushCache = Nothing)
+                                   Optional brushCache As D3D_D2DInterop.SolidColorBrushCache = Nothing)
         If TrackRect.IsEmpty Then Return
         If TrackRect.Width < 1 OrElse TrackRect.Height < 1 OrElse scrollBarHeight < 1 Then Return
 
@@ -346,7 +346,7 @@ Public Class ScrollBarRenderer
                 Dim trackRadius As Integer = Math.Min(scrollBarHeight \ 2, sbW \ 2)
                 Dim trackArea As New RectangleF(TrackRect.X, VisualTop, sbW, scrollBarHeight)
                 trackBrush = RentBrush(rt, trackColor, brushCache, ownsTrackBrush)
-                Using geo = RectangleRenderer.创建圆角矩形几何(trackArea, trackRadius)
+                Using geo = D3D_RectangleRenderer.创建圆角矩形几何(trackArea, trackRadius)
                     rt.FillGeometry(geo, trackBrush)
                 End Using
             End If
@@ -356,7 +356,7 @@ Public Class ScrollBarRenderer
             Dim thumbW As Integer = ThumbRect.Width
             Dim thumbRadius As Integer = Math.Min(scrollBarHeight \ 2, thumbW \ 2)
             Dim thumbArea As New RectangleF(ThumbRect.X, VisualTop, thumbW, scrollBarHeight)
-            Using geo = RectangleRenderer.创建圆角矩形几何(thumbArea, thumbRadius)
+            Using geo = D3D_RectangleRenderer.创建圆角矩形几何(thumbArea, thumbRadius)
                 rt.FillGeometry(geo, thumbBrush)
             End Using
         Finally

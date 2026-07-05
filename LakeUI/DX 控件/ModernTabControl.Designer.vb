@@ -9,7 +9,7 @@ Partial Class ModernTabControl
             If disposing Then
                 停止动画驱动()
                 停用鼠标过滤器()
-                _动画计时器?.Dispose()
+                _动画助手.Dispose()
                 If _上一个父级 IsNot Nothing Then
                     RemoveHandler _上一个父级.Resize, AddressOf 父级几何变更
                     If _内容面板 IsNot Nothing AndAlso _内容面板.Parent Is _上一个父级 Then

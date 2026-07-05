@@ -6,8 +6,10 @@ Imports Vortice.Direct2D1
 
 <DefaultEvent("TextChanged")>
 Public Class ModernTextBox
-#Region "D2D 资源（V2 占位）"
-    ' V2：D2D 资源由 WindowCompositor 按顶层 Form 共享管理，本控件不再持有 _dcRT / _ssaaCache。
+    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource
+
+#Region "D3D 资源"
+    ' V3：窗口级 D3D compositor 统一持有图形资源，本控件不再持有 _dcRT / _ssaaCache。
 #End Region
     Public Shadows Event TextChanged As EventHandler
     Public Event LinkClicked As EventHandler(Of LinkClickedEventArgs)
@@ -105,7 +107,7 @@ Public Class ModernTextBox
     Private _scrollLineOffset As Integer = 0
     Private _scrollPixelOffset As Single = 0.0F
     Private _scrollTargetPixelOffset As Single = 0.0F
-    Private ReadOnly _scrollAnimationHelper As New AnimationHelperV2(Me)
+    Private ReadOnly _scrollAnimationHelper As New V3_AnimationHelper(Me)
     Private _scrollAnimationRunning As Boolean = False
     Private _scrollAnimationLastTicks As Long = 0
     Private _scrollAnimationLastPaintOffset As Single = Single.NaN
@@ -113,7 +115,7 @@ Public Class ModernTextBox
     Private _allowSmoothScroll As Boolean = False
     Private _scrollXOffset As Integer = 0
     Private _scrollBarVisible As Boolean = False
-    Private _scrollBar As New ScrollBarRenderer()
+    Private _scrollBar As New V3_ScrollBarRenderer()
     Private _mouseDownSelecting As Boolean = False
     Private _imeComposing As Boolean = False
     Private _visualLines As New List(Of VisualLineInfo)
@@ -181,7 +183,7 @@ Public Class ModernTextBox
                 SetScrollPixelOffset(savedScrollY)
                 _scrollXOffset = savedScrollX
                 UpdateScrollBar()
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                请求V3渲染()
             End If
         End Set
     End Property
@@ -224,7 +226,7 @@ Public Class ModernTextBox
             行高 = Math.Max(10, value)
             UpdateDpiCache()
             RefreshVisualLayout(True)
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -237,7 +239,7 @@ Public Class ModernTextBox
         Set(value As Integer)
             光标线宽 = Math.Max(1, value)
             UpdateDpiCache()
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -296,7 +298,7 @@ Public Class ModernTextBox
                 边框宽度 = value
                 UpdateDpiCache()
                 RefreshVisualLayout(True)
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                请求V3渲染()
             End If
         End Set
     End Property
@@ -322,7 +324,7 @@ Public Class ModernTextBox
             If 启用多行 <> value Then
                 启用多行 = value
                 RefreshVisualLayout(True)
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                请求V3渲染()
             End If
         End Set
     End Property
@@ -391,7 +393,7 @@ Public Class ModernTextBox
         End Get
         Set(value As Integer)
             滚动条宽度 = Math.Max(2, value)
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -465,7 +467,7 @@ Public Class ModernTextBox
             If 启用链接识别 <> value Then
                 启用链接识别 = value
                 RebuildAllLinks()
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                请求V3渲染()
             End If
         End Set
     End Property
@@ -507,7 +509,7 @@ Public Class ModernTextBox
                     RefreshVisualLayout(True)
                 End If
             End If
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -525,7 +527,7 @@ Public Class ModernTextBox
                 Else
                     ClearAllFormats()
                 End If
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                请求V3渲染()
             End If
         End Set
     End Property
@@ -539,7 +541,7 @@ Public Class ModernTextBox
             If _showLineNumbers <> value Then
                 _showLineNumbers = value
                 RefreshVisualLayout(True)
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                请求V3渲染()
             End If
         End Set
     End Property
@@ -576,7 +578,7 @@ Public Class ModernTextBox
             If _showLineNumbers Then
                 RefreshVisualLayout(True)
             End If
-            D2DHelperV2.RefreshFontDependentRendering(Me)
+            请求V3渲染()
         End Set
     End Property
     Private Function ShouldSerializeLineNumberFont() As Boolean
@@ -596,7 +598,7 @@ Public Class ModernTextBox
             UpdateDpiCache()
             If _showLineNumbers Then
                 RefreshVisualLayout(True)
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                请求V3渲染()
             End If
         End Set
     End Property
@@ -611,7 +613,7 @@ Public Class ModernTextBox
             UpdateDpiCache()
             If _showLineNumbers Then
                 RefreshVisualLayout(True)
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                请求V3渲染()
             End If
         End Set
     End Property
@@ -714,7 +716,7 @@ Public Class ModernTextBox
             If _wordWrap <> value Then
                 _wordWrap = value
                 RefreshVisualLayout(True)
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                请求V3渲染()
             End If
         End Set
     End Property
@@ -741,7 +743,7 @@ Public Class ModernTextBox
             _passwordChar = value
             InvalidateMeasureCache()
             RefreshVisualLayout(True)
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -756,7 +758,7 @@ Public Class ModernTextBox
             _caretCol = pos.X
             ClearSelection()
             EnsureCaretVisible()
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -776,7 +778,7 @@ Public Class ModernTextBox
             _caretLine = pos.Y
             _caretCol = pos.X
             _hasSelection = value <> 0
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -811,8 +813,8 @@ Public Class ModernTextBox
         End Get
         Set(value As Control)
             If _backgroundSource IsNot value Then
-                _backgroundSource = BackgroundPenetrationV2.SetConsumerSource(Me, _backgroundSource, value)
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                _backgroundSource = D3D_BackgroundPenetration.SetBackgroundSource(Me, _backgroundSource, value)
+                请求V3渲染()
             End If
         End Set
     End Property
@@ -910,7 +912,7 @@ Public Class ModernTextBox
             SetScrollPixelOffset(MaxScrollPixelOffset())
         End If
 
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
         RaiseEvent TextChanged(Me, EventArgs.Empty)
     End Sub
     Public Shadows Sub [Select](start As Integer, length As Integer)
@@ -922,27 +924,27 @@ Public Class ModernTextBox
         _caretCol = endPos.X
         _hasSelection = length <> 0
         EnsureCaretVisible()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
     Public Sub DeselectAll()
         ClearSelection()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
     Public Sub ScrollToCaret()
         EnsureCaretVisible()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
     Public Sub ScrollToBottom()
         If Not 启用多行 Then Return
         SetScrollPixelOffset(MaxScrollPixelOffset())
         UpdateScrollBar()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
     Public Sub ScrollToTop()
         SetScrollPixelOffset(0)
         _scrollXOffset = 0
         UpdateScrollBar()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
     Public Sub ScrollToLine(lineIndex As Integer)
         If Not 启用多行 Then Return
@@ -952,7 +954,7 @@ Public Class ModernTextBox
             Math.Max(0, _visualLines.Count - 1))
         SetScrollPixelOffset(targetVi * _scaledLineHeight)
         UpdateScrollBar()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
     Public Sub SetFormat(startPos As Integer, length As Integer,
                          Optional foreColor As Color = Nothing, Optional runFont As Font = Nothing)
@@ -974,7 +976,7 @@ Public Class ModernTextBox
         End While
         InvalidateMeasureCache()
         RefreshVisualLayout(True)
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
     Public Sub SetLineFormat(lineIndex As Integer, startCol As Integer, length As Integer,
                               Optional foreColor As Color = Nothing, Optional runFont As Font = Nothing)
@@ -986,7 +988,7 @@ Public Class ModernTextBox
         ApplyFormatToLine(lineIndex, startCol, length, foreColor, runFont)
         InvalidateMeasureCache()
         RefreshVisualLayout(True)
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
     Public Sub ClearFormat(startPos As Integer, length As Integer)
         SetFormat(startPos, length, Color.Empty, Nothing)
@@ -997,7 +999,7 @@ Public Class ModernTextBox
         Next
         InvalidateMeasureCache()
         RefreshVisualLayout(True)
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 #End Region
 
@@ -1017,12 +1019,12 @@ Public Class ModernTextBox
                                                   _caretBlinkTimer.Stop()
                                                   If _caretVisible Then
                                                       _caretVisible = False
-                                                      OuterToInnerRefreshScheduler.RequestFull(Me)
+                                                      请求V3渲染()
                                                   End If
                                                   Return
                                               End If
                                               _caretVisible = Not _caretVisible
-                                              OuterToInnerRefreshScheduler.RequestFull(Me)
+                                              请求V3渲染()
                                           End Sub
         AddHandler _autoScrollTimer.Tick, AddressOf AutoScrollTick
         _scrollAnimationHelper.DirtyProvider = AddressOf 滚动动画脏区
@@ -1051,22 +1053,21 @@ Public Class ModernTextBox
 
 #Region "绘制"
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
-        ' V2 契约（与 ModernButton 一致）：
-        '   • BackgroundSource 已设置 → 跳过基类填底，背景由 OnPaint 内 BackgroundPenetrationV2 绘制；
-        '   • 否则一律走 .NET 自身透明逻辑（半透明 BackColor 由基类合成父级背景到 HDC，
-        '     不透明色由基类填底）。BindDC 之后 DC RT 初始像素即为正确底图，
-        '     不再依赖手工 Clear，因此不会出现"HDC 残留导致乱照父窗体其它区域"的问题。
         If _backgroundSource IsNot Nothing Then Return
         MyBase.OnPaintBackground(e)
     End Sub
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
+        If Not D3D_PaintBridge.PaintRenderable(e, Me, Me, 1) Then MyBase.OnPaint(e)
+    End Sub
+
+    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
         EnsureDpiCacheCurrent()
         Dim w As Integer = ClientRectangle.Width
         Dim h As Integer = ClientRectangle.Height
         If w <= 0 OrElse h <= 0 Then Return
         Dim hasRadius As Boolean = 边框圆角半径 > 0
-        Dim fillRect As New RectangleF(0, 0, w, h)
+        Dim sourceRect As New RectangleF(0, 0, w, h)
         Dim boundsRect As New RectangleF(0, 0, w, h)
         Dim s As Single = DpiScale()
         If 边框宽度 > 0 Then
@@ -1074,71 +1075,131 @@ Public Class ModernTextBox
             boundsRect.Inflate(-half, -half)
         End If
         Dim bc As Color = If(Focused, 有焦点时边框颜色, 边框颜色)
-        Dim ssaa As Integer = 计算当前绘制超采样倍率()
 
-        Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
-            If scope Is Nothing Then Return
-            ' 背景层：
-            '   • BackgroundSource 已设置 → 显式穿透到指定源；
-            '   • 否则 OnPaintBackground 中 MyBase 已把基类 BackColor / 父级透明背景合成进 HDC，
-            '     DC RT 初始像素即正确底图，这里不再手工 Clear。
-            '     旧版的"ClearType 累积"是把 Parent.BackColor 当不透明底强 Clear 的副作用，
-            '     现在每帧都由基类重画底图，不会累积。
-            If _backgroundSource IsNot Nothing Then
-                BackgroundPenetrationV2.PaintBackground(Me, scope, _backgroundSource)
-            End If
+        绘制背景_GPU(context, hasRadius, sourceRect, boundsRect)
+        DrawTextContent_GPU(context, w, h)
+        绘制边框_GPU(context, hasRadius, boundsRect, bc)
+        DrawScrollBar_GPU(context, w, h)
+    End Sub
 
-            Dim gRT As ID2D1RenderTarget = scope.GraphicsLayer
-            Dim brushCache = scope.Compositor.BrushCache
-            绘制背景_D2D(gRT, hasRadius, fillRect, brushCache)
-            scope.FlushGraphics()
+    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+        Return New Rectangle(Point.Empty, Me.Size)
+    End Function
 
-            Dim dcRT As ID2D1DCRenderTarget = scope.DCRenderTarget
-            DrawTextContent_D2D(dcRT, w, h, scope.Compositor)
-            绘制边框_D2D(dcRT, hasRadius, boundsRect, bc, brushCache)
-            DrawScrollBar_D2D(dcRT, brushCache, w, h)
+    Private Sub 请求V3渲染(Optional immediate As Boolean = False)
+        请求V3渲染(New Rectangle(Point.Empty, Me.Size), immediate)
+    End Sub
+
+    Private Sub 请求V3渲染(dirtyRect As Rectangle, Optional immediate As Boolean = False)
+        If Me.IsDisposed Then Return
+        V3_InvalidationRouter.RequestRender(Me, dirtyRect)
+    End Sub
+
+    Private Sub 绘制背景_GPU(context As D3D_PaintContext, hasRadius As Boolean, sourceRect As RectangleF, fillRect As RectangleF)
+        Dim backColorMask As Color = MyBase.BackColor
+        Dim radius As Single = If(hasRadius, 边框圆角半径 * DpiScale(), 0.0F)
+        If _backgroundSource IsNot Nothing Then
+            context.DrawBackgroundSource(Me, _backgroundSource, sourceRect)
+        End If
+        If backColorMask.A > 0 AndAlso backColorMask.A < 255 Then
+            填充圆角矩形_GPU(context, fillRect, radius, backColorMask)
+        End If
+        If 背景颜色.A > 0 Then
+            填充圆角矩形_GPU(context, fillRect, radius, 背景颜色)
+        End If
+    End Sub
+
+    Private Sub 绘制边框_GPU(context As D3D_PaintContext, hasRadius As Boolean, boundsRect As RectangleF, borderClr As Color)
+        If 边框宽度 <= 0 OrElse borderClr.A = 0 Then Return
+        Dim s As Single = DpiScale()
+        绘制圆角边框_GPU(context, boundsRect, If(hasRadius, 边框圆角半径 * s, 0.0F), borderClr, 边框宽度 * s)
+    End Sub
+
+    Private Sub DrawScrollBar_GPU(context As D3D_PaintContext, w As Integer, h As Integer)
+        If Not _scrollBarVisible Then Return
+        Dim s As Single = DpiScale()
+        Dim scaledBorder As Integer = CInt(Math.Round(边框宽度 * s))
+        Dim scaledRadius As Integer = CInt(Math.Round(边框圆角半径 * s))
+        Dim scaledScrollW As Integer = CInt(Math.Round(滚动条宽度 * s))
+        Dim totalH As Integer = TotalContentPixelHeight()
+        Dim viewH As Integer = TextViewportHeight()
+        If totalH <= 0 OrElse viewH <= 0 Then Return
+
+        _scrollBar.ComputeLayout(w, h, scaledBorder, scaledRadius, 0, 0, scaledScrollW,
+            totalH, viewH, CInt(Math.Round(_scrollPixelOffset)))
+        If _scrollBar.TrackRect.IsEmpty Then Return
+
+        Dim width As Single = Math.Max(1.0F, scaledScrollW)
+        Dim trackArea As New RectangleF(_scrollBar.VisualLeft, _scrollBar.TrackRect.Y, width, _scrollBar.TrackRect.Height)
+        Dim thumbArea As New RectangleF(_scrollBar.VisualLeft, _scrollBar.ThumbRect.Y, width, _scrollBar.ThumbRect.Height)
+        填充圆角矩形_GPU(context, trackArea, Math.Min(width / 2.0F, trackArea.Height / 2.0F), 滚动条轨道颜色)
+        Dim thumbColor As Color = If(_scrollBar.IsDragging OrElse _scrollBar.IsHover, 滚动条悬停颜色, 滚动条颜色)
+        填充圆角矩形_GPU(context, thumbArea, Math.Min(width / 2.0F, thumbArea.Height / 2.0F), thumbColor)
+    End Sub
+
+    Private Sub 填充圆角矩形_GPU(context As D3D_PaintContext, rect As RectangleF, radius As Single, color As Color)
+        If color.A = 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
+        If radius <= 0 Then
+            context.DeviceContext.FillRectangle(D3D_PaintContext.ToRawRect(rect), brush)
+            Return
+        End If
+        Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New RoundedRectangle(rect, radius, radius))
+            context.DeviceContext.FillGeometry(geo, brush)
+        End Using
+    End Sub
+
+    Private Sub 绘制圆角边框_GPU(context As D3D_PaintContext, rect As RectangleF, radius As Single, color As Color, strokeWidth As Single)
+        If color.A = 0 OrElse strokeWidth <= 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
+        If radius <= 0 Then
+            context.DeviceContext.DrawRectangle(D3D_PaintContext.ToRawRect(rect), brush, strokeWidth)
+            Return
+        End If
+        Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New RoundedRectangle(rect, radius, radius))
+            context.DeviceContext.DrawGeometry(geo, brush, strokeWidth)
         End Using
     End Sub
 
     Private Function 计算当前绘制超采样倍率() As Integer
-        Return D2DHelperV2.GetEffectiveSsaaScale(超采样倍率)
+        Return GlobalOptions.GetEffectiveSsaaScale(超采样倍率)
     End Function
 
-    Private Sub 绘制背景_D2D(rt As ID2D1RenderTarget, hasRadius As Boolean, fillRect As RectangleF, brushCache As D2DGlobals.SolidColorBrushCache)
+    Private Sub 绘制背景_D2D(rt As ID2D1RenderTarget, hasRadius As Boolean, fillRect As RectangleF, brushCache As D3D_D2DInterop.SolidColorBrushCache)
         ' BackColor 半透明遮罩层：位于采样底图之上、BackColor1（=背景颜色）之下。A=255 不走本路径。
         Dim backColorMask As Color = MyBase.BackColor
         Dim s As Single = DpiScale()
         If hasRadius Then
-            Using geo = RectangleRenderer.创建圆角矩形几何(fillRect, 边框圆角半径 * s)
+            Using geo = D3D_RectangleRenderer.创建圆角矩形几何(fillRect, 边框圆角半径 * s)
                 If backColorMask.A > 0 AndAlso backColorMask.A < 255 Then
-                    RectangleRenderer.绘制圆角背景_D2D(rt, geo, fillRect, backColorMask, Color.Empty, System.Windows.Forms.Orientation.Horizontal, brushCache)
+                    D3D_RectangleRenderer.绘制圆角背景_D2D(rt, geo, fillRect, backColorMask, Color.Empty, System.Windows.Forms.Orientation.Horizontal, brushCache)
                 End If
                 If 背景颜色.A > 0 Then
-                    RectangleRenderer.绘制圆角背景_D2D(rt, geo, fillRect, 背景颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal, brushCache)
+                    D3D_RectangleRenderer.绘制圆角背景_D2D(rt, geo, fillRect, 背景颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal, brushCache)
                 End If
             End Using
         Else
             If backColorMask.A > 0 AndAlso backColorMask.A < 255 Then
-                RectangleRenderer.绘制矩形背景_D2D(rt, fillRect, backColorMask, Color.Empty, System.Windows.Forms.Orientation.Horizontal, brushCache)
+                D3D_RectangleRenderer.绘制矩形背景_D2D(rt, fillRect, backColorMask, Color.Empty, System.Windows.Forms.Orientation.Horizontal, brushCache)
             End If
             If 背景颜色.A > 0 Then
-                RectangleRenderer.绘制矩形背景_D2D(rt, fillRect, 背景颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal, brushCache)
+                D3D_RectangleRenderer.绘制矩形背景_D2D(rt, fillRect, 背景颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal, brushCache)
             End If
         End If
     End Sub
 
-    Private Sub 绘制边框_D2D(rt As ID2D1RenderTarget, hasRadius As Boolean, boundsRect As RectangleF, borderClr As Color, brushCache As D2DGlobals.SolidColorBrushCache)
+    Private Sub 绘制边框_D2D(rt As ID2D1RenderTarget, hasRadius As Boolean, boundsRect As RectangleF, borderClr As Color, brushCache As D3D_D2DInterop.SolidColorBrushCache)
         If 边框宽度 <= 0 OrElse borderClr.A = 0 Then Return
         Dim s As Single = DpiScale()
         If hasRadius Then
-            RectangleRenderer.绘制圆角边框_D2D(rt, boundsRect, 边框圆角半径 * s, borderClr, 边框宽度 * s, brushCache)
+            D3D_RectangleRenderer.绘制圆角边框_D2D(rt, boundsRect, 边框圆角半径 * s, borderClr, 边框宽度 * s, brushCache)
         Else
-            RectangleRenderer.绘制矩形边框_D2D(rt, boundsRect, borderClr, 边框宽度 * s, brushCache)
+            D3D_RectangleRenderer.绘制矩形边框_D2D(rt, boundsRect, borderClr, 边框宽度 * s, brushCache)
         End If
     End Sub
 
     Private Sub DrawScrollBar_D2D(rt As ID2D1RenderTarget,
-                                  brushCache As D2DGlobals.SolidColorBrushCache,
+                                  brushCache As D3D_D2DInterop.SolidColorBrushCache,
                                   w As Integer, h As Integer)
         If Not _scrollBarVisible Then Return
         Dim s As Single = DpiScale()
@@ -1154,9 +1215,8 @@ Public Class ModernTextBox
             滚动条轨道颜色, 滚动条颜色, 滚动条悬停颜色, brushCache)
     End Sub
 
-    Private Sub DrawTextContent_D2D(rt As ID2D1DCRenderTarget, w As Integer, h As Integer, compositor As WindowCompositor)
-        Dim textFormatCache = compositor?.TextFormatCache
-        Dim brushCache = compositor?.BrushCache
+
+    Private Sub DrawTextContent_GPU(context As D3D_PaintContext, w As Integer, h As Integer)
         Dim bi As Integer = ScaledBorderWidth()
         Dim textTop As Integer = Math.Max(Padding.Top, bi)
         Dim textRight As Integer = Math.Max(Padding.Right, bi)
@@ -1169,7 +1229,8 @@ Public Class ModernTextBox
         Else
             textLeft = Math.Max(Padding.Left, bi)
         End If
-        Dim scrollW As Integer = If(_scrollBarVisible, CInt(Math.Round(滚动条宽度 * DpiScale())) + ScrollBarRenderer.Margin * 2, 0)
+
+        Dim scrollW As Integer = If(_scrollBarVisible, CInt(Math.Round(滚动条宽度 * DpiScale())) + V3_ScrollBarRenderer.Margin * 2, 0)
         Dim textWidth As Integer = Math.Max(0, w - textLeft - textRight - scrollW)
         Dim textHeight As Integer = Math.Max(0, h - textTop - textBottom)
         Dim isSingleLine As Boolean = Not 启用多行
@@ -1180,84 +1241,261 @@ Public Class ModernTextBox
         Dim visibleLines As Integer = If(isSingleLine, 1, CInt(Math.Ceiling((textHeight + scrollRemainder) / _scaledLineHeight)) + 1)
         Dim endVi As Integer = Math.Min(_visualLines.Count - 1, startVi + visibleLines - 1)
 
-        ' 绘制行号区域（紧贴上下边框内侧）
         If gutterW > 0 AndAlso textHeight > 0 Then
-            ' 绘制行号背景，兼容圆角边框
+            Dim gutterRect As New RectangleF(0, 0, bi + gutterW, h)
             If _lineNumBackColor <> Color.Empty Then
-                Dim s As Single = DpiScale()
-                Dim gutterRect As New RectangleF(0, 0, bi + gutterW, h)
                 If 边框圆角半径 > 0 Then
-                    Dim boundsRect As New RectangleF(0, 0, w, h)
+                    Dim clipRect As New RectangleF(0, 0, w, h)
                     If 边框宽度 > 0 Then
-                        Dim half As Single = 边框宽度 * s / 2.0F
-                        boundsRect.Inflate(-half, -half)
+                        Dim half As Single = 边框宽度 * DpiScale() / 2.0F
+                        clipRect.Inflate(-half, -half)
                     End If
-                    Using geo = RectangleRenderer.创建圆角矩形几何(boundsRect, 边框圆角半径 * s)
-                        D2DGlobals.PushGeometryClip(rt, geo, boundsRect)
-                        FillRectangle_D2D(rt, gutterRect, _lineNumBackColor, brushCache)
-                        rt.PopLayer()
-                    End Using
+
+                    If clipRect.Width > 0 AndAlso clipRect.Height > 0 Then
+                        Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(
+                            New RoundedRectangle(clipRect, 边框圆角半径 * DpiScale(), 边框圆角半径 * DpiScale()))
+                            D3D_D2DInterop.PushGeometryClip(context.DeviceContext, geo, clipRect)
+                            Try
+                                context.FillRectangle(gutterRect, _lineNumBackColor)
+                            Finally
+                                context.DeviceContext.PopLayer()
+                            End Try
+                        End Using
+                    Else
+                        context.FillRectangle(gutterRect, _lineNumBackColor)
+                    End If
                 Else
-                    FillRectangle_D2D(rt, gutterRect, _lineNumBackColor, brushCache)
+                    context.FillRectangle(gutterRect, _lineNumBackColor)
                 End If
             End If
-            PushClip(rt, New RectangleF(gutterLeft, textTop, gutterW, textHeight))
-            Dim useNumFont As Font = If(_lineNumFont, Font)
-            Dim contentW As Integer = gutterW - _scaledLineNumPadL - _scaledLineNumPadR
-            Dim lastDrawnLogical As Integer = -1
-            For vi As Integer = startVi To endVi
-                Dim vl = _visualLines(vi)
-                Dim lineY As Single = textTop + (vi - startVi) * _scaledLineHeight - scrollRemainder
-                If vl.LogicalLine <> lastDrawnLogical Then
-                    lastDrawnLogical = vl.LogicalLine
-                    Dim numStr As String = (vl.LogicalLine + 1).ToString()
-                    Dim numW As Integer = CInt(Math.Ceiling(MeasureTextWidth_D2D(numStr, useNumFont, textFormatCache)))
-                    Dim numX As Integer
-                    Select Case _lineNumAlign
-                        Case TextAlignMode.Left
-                            numX = gutterLeft + _scaledLineNumPadL
-                        Case TextAlignMode.Center
-                            numX = gutterLeft + _scaledLineNumPadL + (contentW - numW) \ 2
-                        Case Else ' Right
-                            numX = gutterLeft + _scaledLineNumPadL + contentW - numW
-                    End Select
-                    DrawTextSegment_D2D(rt, numStr, useNumFont, _lineNumForeColor, numX, lineY, numW, _scaledLineHeight, False, textFormatCache, brushCache)
-                End If
-            Next
-            rt.PopAxisAlignedClip()
+
+            Using context.PushClip(New RectangleF(gutterLeft, textTop, gutterW, textHeight))
+                Dim useNumFont As Font = If(_lineNumFont, Font)
+                Dim contentW As Integer = gutterW - _scaledLineNumPadL - _scaledLineNumPadR
+                Dim lastDrawnLogical As Integer = -1
+                For vi As Integer = startVi To endVi
+                    Dim vl = _visualLines(vi)
+                    Dim lineY As Single = textTop + (vi - startVi) * _scaledLineHeight - scrollRemainder
+                    If vl.LogicalLine <> lastDrawnLogical Then
+                        lastDrawnLogical = vl.LogicalLine
+                        Dim numStr As String = (vl.LogicalLine + 1).ToString()
+                        Dim numW As Integer = CInt(Math.Ceiling(MeasureTextWidth_D2D(numStr, useNumFont, Nothing)))
+                        Dim numX As Integer
+                        Select Case _lineNumAlign
+                            Case TextAlignMode.Left
+                                numX = gutterLeft + _scaledLineNumPadL
+                            Case TextAlignMode.Center
+                                numX = gutterLeft + _scaledLineNumPadL + (contentW - numW) \ 2
+                            Case Else
+                                numX = gutterLeft + _scaledLineNumPadL + contentW - numW
+                        End Select
+                        DrawTextSegment_GPU(context, numStr, useNumFont, _lineNumForeColor, numX, lineY, numW, _scaledLineHeight, False)
+                    End If
+                Next
+            End Using
         End If
 
-        ' 绘制文本内容
         If textWidth <= 0 OrElse textHeight <= 0 Then Return
-        PushClip(rt, New RectangleF(textLeft, textTop, textWidth, textHeight))
-        Dim isEmpty As Boolean = (_lines.Count = 1 AndAlso _lines(0).Length = 0)
-        If isEmpty AndAlso Not String.IsNullOrEmpty(水印文本) Then
-            DrawWaterText_D2D(rt, textLeft, textTop, textWidth, textHeight, singleLineY, textFormatCache, brushCache)
-        End If
-        Dim wrapActive As Boolean = IsWordWrapActive()
-        Dim minL As Integer = 0, minC As Integer = 0, maxL As Integer = 0, maxC As Integer = 0
-        If _hasSelection Then
-            GetOrderedSelection(minL, minC, maxL, maxC)
-        End If
-        For vi As Integer = startVi To endVi
-            Dim vl = _visualLines(vi)
-            Dim lineY As Single = If(isSingleLine, singleLineY,
-                textTop + (vi - startVi) * _scaledLineHeight - scrollRemainder)
-            Dim alignOff As Integer = If(wrapActive, 0, GetAlignOffsetXForLine(vl.LogicalLine, textWidth))
-            Dim scrollX As Integer = If(wrapActive, 0, _scrollXOffset)
-            If _hasSelection Then
-                DrawVisualLineSelection_D2D(rt, vl, lineY, textLeft, alignOff, scrollX, minL, minC, maxL, maxC, brushCache)
+        Using context.PushClip(New RectangleF(textLeft, textTop, textWidth, textHeight))
+            Dim isEmpty As Boolean = (_lines.Count = 1 AndAlso _lines(0).Length = 0)
+            If isEmpty AndAlso Not String.IsNullOrEmpty(水印文本) Then
+                DrawWaterText_GPU(context, textLeft, textTop, textWidth, textHeight, singleLineY)
             End If
-            If vl.Length > 0 Then
-                DrawLineRuns_D2D(rt, vl.LogicalLine, vl.StartCol, vl.Length,
-                    textLeft + alignOff - scrollX, lineY, textFormatCache, brushCache)
+
+            Dim wrapActive As Boolean = IsWordWrapActive()
+            Dim minL As Integer = 0, minC As Integer = 0, maxL As Integer = 0, maxC As Integer = 0
+            If _hasSelection Then
+                GetOrderedSelection(minL, minC, maxL, maxC)
+            End If
+
+            For vi As Integer = startVi To endVi
+                Dim vl = _visualLines(vi)
+                Dim lineY As Single = If(isSingleLine, singleLineY,
+                    textTop + (vi - startVi) * _scaledLineHeight - scrollRemainder)
+                Dim alignOff As Integer = If(wrapActive, 0, GetAlignOffsetXForLine(vl.LogicalLine, textWidth))
+                Dim scrollX As Integer = If(wrapActive, 0, _scrollXOffset)
+                If _hasSelection Then
+                    DrawVisualLineSelection_GPU(context, vl, lineY, textLeft, alignOff, scrollX, minL, minC, maxL, maxC)
+                End If
+                If vl.Length > 0 Then
+                    DrawLineRuns_GPU(context, vl.LogicalLine, vl.StartCol, vl.Length,
+                        textLeft + alignOff - scrollX, lineY)
+                End If
+            Next
+
+            If Focused AndAlso _caretVisible Then
+                DrawCaret_GPU(context, textLeft, textTop)
+            End If
+        End Using
+    End Sub
+
+    Private Sub DrawWaterText_GPU(context As D3D_PaintContext,
+                                  textLeft As Integer,
+                                  textTop As Integer,
+                                  textWidth As Integer,
+                                  textHeight As Integer,
+                                  singleLineY As Single)
+        If context Is Nothing OrElse String.IsNullOrEmpty(水印文本) OrElse 水印颜色.A = 0 Then Return
+        If textWidth <= 0 OrElse textHeight <= 0 Then Return
+
+        If Not IsWordWrapActive() Then
+            Dim waterLineY As Single = If(启用多行, CSng(textTop), singleLineY)
+            Dim waterAlignOff As Integer = If(启用多行 OrElse 文本对齐 = TextAlignMode.Left, 0,
+                ComputeAlignOffset(MeasureWidth(水印文本), textWidth))
+            DrawTextSegment_GPU(context, 水印文本, Font, 水印颜色, textLeft + waterAlignOff, waterLineY,
+                textWidth, _scaledLineHeight, False)
+            Return
+        End If
+
+        Dim waterLines = BuildWaterTextVisualLines(水印文本, textWidth)
+        Dim visibleLines As Integer = Math.Min(waterLines.Count, Math.Max(1, CInt(Math.Ceiling(textHeight / CDbl(_scaledLineHeight)))))
+        For i As Integer = 0 To visibleLines - 1
+            Dim lineText As String = waterLines(i)
+            If lineText.Length = 0 Then Continue For
+            DrawTextSegment_GPU(context, lineText, Font, 水印颜色, textLeft,
+                textTop + i * _scaledLineHeight, textWidth, _scaledLineHeight, False)
+        Next
+    End Sub
+
+    Private Sub DrawVisualLineSelection_GPU(context As D3D_PaintContext, vl As VisualLineInfo, lineY As Single, textLeft As Integer,
+                                            alignOff As Integer, scrollX As Integer,
+                                            minL As Integer, minC As Integer, maxL As Integer, maxC As Integer)
+        Dim li As Integer = vl.LogicalLine
+        If li < minL OrElse li > maxL Then Return
+        Dim selStart As Integer = If(li = minL, minC, 0)
+        Dim selEnd As Integer = If(li = maxL, maxC, _lines(li).Length)
+        Dim vlEnd As Integer = vl.StartCol + vl.Length
+        Dim drawStart As Integer = Math.Max(selStart, vl.StartCol)
+        Dim drawEnd As Integer = Math.Min(selEnd, vlEnd)
+        If drawStart > drawEnd Then Return
+        If drawStart = drawEnd AndAlso Not (selEnd > vlEnd OrElse li < maxL) Then Return
+
+        Dim x1 As Single = textLeft + alignOff + MeasureLineWidth(li, vl.StartCol, drawStart - vl.StartCol) - scrollX
+        Dim x2 As Single
+        If selEnd > vlEnd OrElse li < maxL Then
+            x2 = textLeft + alignOff + MeasureLineWidth(li, vl.StartCol, vl.Length) + 6 - scrollX
+        Else
+            x2 = textLeft + alignOff + MeasureLineWidth(li, vl.StartCol, drawEnd - vl.StartCol) - scrollX
+        End If
+        If x2 <= x1 Then Return
+        context.FillRectangle(New RectangleF(x1, lineY, x2 - x1, _scaledLineHeight), 选区背景色)
+    End Sub
+
+    Private Sub DrawCaret_GPU(context As D3D_PaintContext, textLeft As Integer, textTop As Integer)
+        Dim vi As Integer = GetVisualLineIndex(_caretLine, _caretCol)
+        Dim viewH As Integer = TextViewportHeight()
+        Dim caretTop As Integer = vi * _scaledLineHeight
+        Dim caretBottom As Integer = caretTop + _scaledLineHeight
+        If 启用多行 AndAlso (caretBottom < _scrollPixelOffset OrElse caretTop > _scrollPixelOffset + viewH) Then
+            Return
+        End If
+
+        Dim vl = _visualLines(vi)
+        Dim wrapActive As Boolean = IsWordWrapActive()
+        Dim alignOff As Integer = If(wrapActive, 0, GetAlignOffsetXForLine(_caretLine, TextAreaWidth()))
+        Dim scrollX As Integer = If(wrapActive, 0, _scrollXOffset)
+        Dim cx As Integer = textLeft + alignOff + MeasureLineWidth(_caretLine, vl.StartCol, _caretCol - vl.StartCol) - scrollX
+        Dim lineY As Single
+        If Not 启用多行 Then
+            Dim bi2 As Integer = ScaledBorderWidth()
+            Dim textHeight As Integer = ClientRectangle.Height - Math.Max(Padding.Top, bi2) - Math.Max(Padding.Bottom, bi2)
+            lineY = textTop + (textHeight - _scaledLineHeight) / 2.0F
+        Else
+            lineY = textTop + vi * _scaledLineHeight - _scrollPixelOffset
+        End If
+        Dim caretH As Integer = _scaledLineHeight - 2
+        Dim caretY As Single = lineY + (_scaledLineHeight - caretH) / 2.0F
+        context.FillRectangle(New RectangleF(cx, caretY, _scaledCaretWidth, caretH), 光标颜色)
+    End Sub
+
+    Private Sub DrawLineRuns_GPU(context As D3D_PaintContext, lineIndex As Integer, vlStartCol As Integer,
+                                 vlLength As Integer, x As Single, lineY As Single)
+        Dim runs = _lineRuns(lineIndex)
+        Dim lineStr = _lines(lineIndex)
+        Dim vlEnd = vlStartCol + vlLength
+        Dim links = If(lineIndex < _lineLinks.Count, _lineLinks(lineIndex), Nothing)
+        Dim hasLinks As Boolean = links IsNot Nothing AndAlso links.Count > 0 AndAlso (_passwordChar = vbNullChar OrElse 启用多行)
+        If runs Is Nothing OrElse runs.Count = 0 Then
+            If Not hasLinks Then
+                Dim text = GetDisplayText(lineStr.Substring(vlStartCol, vlLength))
+                DrawTextSegment_GPU(context, text, Font, ForeColor, x, lineY, Short.MaxValue, _scaledLineHeight, False)
+            Else
+                DrawSegmentsWithLinks_GPU(context, lineStr, vlStartCol, vlEnd, x, lineY, ForeColor, Font, links)
+            End If
+            Return
+        End If
+
+        Dim drawX = x
+        For Each r In runs
+            Dim rEnd = r.StartCol + r.Length
+            Dim segStart = Math.Max(r.StartCol, vlStartCol)
+            Dim segEnd = Math.Min(rEnd, vlEnd)
+            If segStart >= segEnd Then Continue For
+            Dim useFore = If(r.ForeColor = Color.Empty, ForeColor, r.ForeColor)
+            Dim useFont = If(r.RunFont, Font)
+            If Not hasLinks Then
+                Dim segText = GetDisplayText(lineStr.Substring(segStart, segEnd - segStart))
+                drawX += DrawTextSegment_GPU(context, segText, useFont, useFore, drawX, lineY, Short.MaxValue, _scaledLineHeight, False)
+            Else
+                drawX = DrawSegmentsWithLinks_GPU(context, lineStr, segStart, segEnd, drawX, lineY, useFore, useFont, links)
             End If
         Next
-        If Focused AndAlso _caretVisible Then
-            DrawCaret_D2D(rt, textLeft, textTop, brushCache)
-        End If
-        rt.PopAxisAlignedClip()
     End Sub
+
+    Private Function DrawSegmentsWithLinks_GPU(context As D3D_PaintContext, lineStr As String, startCol As Integer, endCol As Integer,
+                                               x As Single, lineY As Single, baseFore As Color, baseFont As Font,
+                                               links As List(Of LinkRange)) As Single
+        Dim pos = startCol
+        Dim drawX = x
+        For Each link In links
+            Dim linkEnd = link.StartCol + link.Length
+            If link.StartCol >= endCol OrElse linkEnd <= pos Then Continue For
+            If pos < link.StartCol AndAlso pos < endCol Then
+                Dim nonLinkEnd = Math.Min(link.StartCol, endCol)
+                Dim segText = GetDisplayText(lineStr.Substring(pos, nonLinkEnd - pos))
+                drawX += DrawTextSegment_GPU(context, segText, baseFont, baseFore, drawX, lineY, Short.MaxValue, _scaledLineHeight, False)
+                pos = nonLinkEnd
+            End If
+
+            Dim overlapStart = Math.Max(pos, link.StartCol)
+            Dim overlapEnd = Math.Min(endCol, linkEnd)
+            If overlapStart < overlapEnd Then
+                Dim linkText = GetDisplayText(lineStr.Substring(overlapStart, overlapEnd - overlapStart))
+                drawX += DrawTextSegment_GPU(context, linkText, baseFont, 链接颜色, drawX, lineY, Short.MaxValue, _scaledLineHeight, 链接下划线)
+                pos = overlapEnd
+            End If
+        Next
+
+        If pos < endCol Then
+            Dim segText = GetDisplayText(lineStr.Substring(pos, endCol - pos))
+            drawX += DrawTextSegment_GPU(context, segText, baseFont, baseFore, drawX, lineY, Short.MaxValue, _scaledLineHeight, False)
+        End If
+        Return drawX
+    End Function
+
+    Private Function DrawTextSegment_GPU(context As D3D_PaintContext, text As String, font As Font, foreColor As Color,
+                                         x As Single, y As Single, width As Single, height As Single, underline As Boolean) As Single
+        If String.IsNullOrEmpty(text) OrElse foreColor.A = 0 OrElse font Is Nothing Then Return 0.0F
+        Dim measuredWidth As Single = MeasureTextWidth_D2D(text, font, Nothing)
+        Dim layoutWidth As Single = Math.Max(1.0F, width)
+        Dim layoutHeight As Single = Math.Max(1.0F, height)
+        context.DrawText(text, font, foreColor, New RectangleF(x, y, layoutWidth, layoutHeight),
+                         Vortice.DirectWrite.TextAlignment.Leading,
+                         Vortice.DirectWrite.ParagraphAlignment.Center)
+
+        If underline AndAlso measuredWidth > 0.0F Then
+            Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, foreColor, context.DeviceGeneration)
+            If brush IsNot Nothing Then
+                Dim drawWidth As Single = If(width >= Short.MaxValue, measuredWidth, Math.Min(measuredWidth, width))
+                Dim underlineY As Single = y + Math.Max(1.0F, height - 3.0F)
+                context.DeviceContext.DrawLine(New System.Numerics.Vector2(x, underlineY),
+                                               New System.Numerics.Vector2(x + drawWidth, underlineY),
+                                               brush,
+                                               Math.Max(1.0F, DpiScale()))
+            End If
+        End If
+        Return measuredWidth
+    End Function
 
     Private Sub DrawWaterText_D2D(rt As ID2D1RenderTarget,
                                   textLeft As Integer,
@@ -1265,8 +1503,8 @@ Public Class ModernTextBox
                                   textWidth As Integer,
                                   textHeight As Integer,
                                   singleLineY As Single,
-                                  textFormatCache As D2DGlobals.TextFormatCache,
-                                  brushCache As D2DGlobals.SolidColorBrushCache)
+                                  textFormatCache As D3D_D2DInterop.TextFormatCache,
+                                  brushCache As D3D_D2DInterop.SolidColorBrushCache)
         If rt Is Nothing OrElse String.IsNullOrEmpty(水印文本) OrElse 水印颜色.A = 0 Then Return
         If textWidth <= 0 OrElse textHeight <= 0 Then Return
 
@@ -1297,7 +1535,7 @@ Public Class ModernTextBox
     Private Sub DrawVisualLineSelection_D2D(rt As ID2D1RenderTarget, vl As VisualLineInfo, lineY As Single, textLeft As Integer,
                                          alignOff As Integer, scrollX As Integer,
                                          minL As Integer, minC As Integer, maxL As Integer, maxC As Integer,
-                                         brushCache As D2DGlobals.SolidColorBrushCache)
+                                         brushCache As D3D_D2DInterop.SolidColorBrushCache)
         Dim li As Integer = vl.LogicalLine
         If li < minL OrElse li > maxL Then Return
         Dim selStart As Integer = If(li = minL, minC, 0)
@@ -1319,7 +1557,7 @@ Public Class ModernTextBox
     End Sub
 
     Private Sub DrawCaret_D2D(rt As ID2D1RenderTarget, textLeft As Integer, textTop As Integer,
-                              brushCache As D2DGlobals.SolidColorBrushCache)
+                              brushCache As D3D_D2DInterop.SolidColorBrushCache)
         Dim vi As Integer = GetVisualLineIndex(_caretLine, _caretCol)
         Dim viewH As Integer = TextViewportHeight()
         Dim caretTop As Integer = vi * _scaledLineHeight
@@ -1347,8 +1585,8 @@ Public Class ModernTextBox
 
     Private Sub DrawLineRuns_D2D(rt As ID2D1RenderTarget, lineIndex As Integer, vlStartCol As Integer,
                                   vlLength As Integer, x As Single, lineY As Single,
-                                  textFormatCache As D2DGlobals.TextFormatCache,
-                                  brushCache As D2DGlobals.SolidColorBrushCache)
+                                  textFormatCache As D3D_D2DInterop.TextFormatCache,
+                                  brushCache As D3D_D2DInterop.SolidColorBrushCache)
         Dim runs = _lineRuns(lineIndex)
         Dim lineStr = _lines(lineIndex)
         Dim vlEnd = vlStartCol + vlLength
@@ -1383,8 +1621,8 @@ Public Class ModernTextBox
     Private Function DrawSegmentsWithLinks_D2D(rt As ID2D1RenderTarget, lineStr As String, startCol As Integer, endCol As Integer,
                                                 x As Single, lineY As Single, baseFore As Color, baseFont As Font,
                                                 links As List(Of LinkRange),
-                                                textFormatCache As D2DGlobals.TextFormatCache,
-                                                brushCache As D2DGlobals.SolidColorBrushCache) As Single
+                                                textFormatCache As D3D_D2DInterop.TextFormatCache,
+                                                brushCache As D3D_D2DInterop.SolidColorBrushCache) As Single
         Dim pos = startCol
         Dim drawX = x
         For Each link In links
@@ -1413,8 +1651,8 @@ Public Class ModernTextBox
 
     Private Function DrawTextSegment_D2D(rt As ID2D1RenderTarget, text As String, font As Font, foreColor As Color,
                                          x As Single, y As Single, width As Single, height As Single, underline As Boolean,
-                                         textFormatCache As D2DGlobals.TextFormatCache,
-                                         brushCache As D2DGlobals.SolidColorBrushCache) As Single
+                                         textFormatCache As D3D_D2DInterop.TextFormatCache,
+                                         brushCache As D3D_D2DInterop.SolidColorBrushCache) As Single
         If rt Is Nothing OrElse String.IsNullOrEmpty(text) OrElse foreColor.A = 0 Then Return 0.0F
         Dim ownsFormat As Boolean = False
         Dim fmt = AcquireTextFormat_D2D(font, textFormatCache, ownsFormat)
@@ -1422,7 +1660,7 @@ Public Class ModernTextBox
         Try
             Dim layoutWidth As Single = Math.Max(1.0F, width)
             Dim layoutHeight As Single = Math.Max(1.0F, height)
-            Using layout = D2DGlobals.GetDWriteFactory().CreateTextLayout(text, fmt, layoutWidth, layoutHeight)
+            Using layout = D3D_D2DInterop.GetDWriteFactory().CreateTextLayout(text, fmt, layoutWidth, layoutHeight)
                 Dim measuredWidth As Single = CSng(Math.Ceiling(layout.Metrics.WidthIncludingTrailingWhitespace))
                 If underline Then
                     layout.SetUnderline(True, New Vortice.DirectWrite.TextRange(0, CUInt(text.Length)))
@@ -1446,12 +1684,12 @@ Public Class ModernTextBox
         End Try
     End Function
 
-    Private Function AcquireTextFormat_D2D(font As Font, textFormatCache As D2DGlobals.TextFormatCache,
+    Private Function AcquireTextFormat_D2D(font As Font, textFormatCache As D3D_D2DInterop.TextFormatCache,
                                            ByRef ownsFormat As Boolean) As Vortice.DirectWrite.IDWriteTextFormat
         Dim useFont As Font = If(font, Me.Font)
         If useFont Is Nothing Then Return Nothing
         Dim s As Single = DpiScale()
-        Dim sizePx As Single = D2DGlobals.GetDWriteFontSizePx(useFont, s)
+        Dim sizePx As Single = D3D_D2DInterop.GetDWriteFontSizePx(useFont, s)
         ownsFormat = (textFormatCache Is Nothing)
         If textFormatCache IsNot Nothing Then
             Return textFormatCache.[Get](
@@ -1463,20 +1701,20 @@ Public Class ModernTextBox
                 False)
         End If
 
-        Dim fmt = TextRenderHelper.CreateDWriteTextFormat(useFont, s)
+        Dim fmt = D3D_TextMeasureHelper.CreateDWriteTextFormat(useFont, s)
         fmt.WordWrapping = Vortice.DirectWrite.WordWrapping.NoWrap
         fmt.ParagraphAlignment = Vortice.DirectWrite.ParagraphAlignment.Center
         Return fmt
     End Function
 
     Private Function MeasureTextWidth_D2D(text As String, font As Font,
-                                          textFormatCache As D2DGlobals.TextFormatCache) As Single
+                                          textFormatCache As D3D_D2DInterop.TextFormatCache) As Single
         If String.IsNullOrEmpty(text) Then Return 0.0F
         Dim ownsFormat As Boolean = False
         Dim fmt = AcquireTextFormat_D2D(font, textFormatCache, ownsFormat)
         If fmt Is Nothing Then Return 0.0F
         Try
-            Using layout = D2DGlobals.GetDWriteFactory().CreateTextLayout(text, fmt, Single.MaxValue, Single.MaxValue)
+            Using layout = D3D_D2DInterop.GetDWriteFactory().CreateTextLayout(text, fmt, Single.MaxValue, Single.MaxValue)
                 Return layout.Metrics.WidthIncludingTrailingWhitespace
             End Using
         Finally
@@ -1487,22 +1725,22 @@ Public Class ModernTextBox
     End Function
 
     Private Function GetSolidBrush_D2D(rt As ID2D1RenderTarget, color As Color,
-                                       brushCache As D2DGlobals.SolidColorBrushCache,
+                                       brushCache As D3D_D2DInterop.SolidColorBrushCache,
                                        ByRef ownsBrush As Boolean) As ID2D1Brush
         If rt Is Nothing OrElse color.A = 0 Then Return Nothing
         ownsBrush = (brushCache Is Nothing)
         If brushCache IsNot Nothing Then Return brushCache.[Get](rt, color)
-        Return rt.CreateSolidColorBrush(D2DGlobals.ToColor4(color))
+        Return rt.CreateSolidColorBrush(D3D_D2DInterop.ToColor4(color))
     End Function
 
     Private Sub FillRectangle_D2D(rt As ID2D1RenderTarget, rect As RectangleF, color As Color,
-                                  brushCache As D2DGlobals.SolidColorBrushCache)
+                                  brushCache As D3D_D2DInterop.SolidColorBrushCache)
         If rect.Width <= 0 OrElse rect.Height <= 0 OrElse color.A = 0 Then Return
         Dim brush As ID2D1Brush = Nothing
         Dim ownsBrush As Boolean = False
         Try
             brush = GetSolidBrush_D2D(rt, color, brushCache, ownsBrush)
-            If brush IsNot Nothing Then rt.FillRectangle(D2DGlobals.ToD2DRect(rect), brush)
+            If brush IsNot Nothing Then rt.FillRectangle(D3D_D2DInterop.ToD2DRect(rect), brush)
         Finally
             If ownsBrush AndAlso brush IsNot Nothing Then
                 Try : brush.Dispose() : Catch : End Try
@@ -1640,7 +1878,7 @@ Public Class ModernTextBox
                 If newOff <> CInt(Math.Round(_scrollPixelOffset)) Then
                     SetScrollPixelOffset(newOff)
                     UpdateScrollBar()
-                    OuterToInnerRefreshScheduler.RequestFull(Me)
+                    请求V3渲染()
                     Return
                 End If
             End If
@@ -1653,18 +1891,18 @@ Public Class ModernTextBox
             _selAnchorCol = _caretCol
             _hasSelection = False
             ResetCaretBlink()
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End If
     End Sub
     Protected Overrides Sub OnMouseMove(e As MouseEventArgs)
         MyBase.OnMouseMove(e)
         If _scrollBar.IsDragging Then
             SetScrollPixelOffset(_scrollBar.DragMove(e.Y, TotalContentPixelHeight(), TextViewportHeight()))
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
             Return
         End If
         If _scrollBarVisible Then
-            If _scrollBar.UpdateHover(e.Location) Then OuterToInnerRefreshScheduler.RequestFull(Me)
+            If _scrollBar.UpdateHover(e.Location) Then 请求V3渲染()
             If _scrollBar.TrackRect.Contains(e.Location) Then
                 Cursor = Cursors.Default
             Else
@@ -1685,7 +1923,7 @@ Public Class ModernTextBox
             Else
                 _autoScrollTimer.Stop()
             End If
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End If
     End Sub
     Protected Overrides Sub OnMouseUp(e As MouseEventArgs)
@@ -1731,7 +1969,7 @@ Public Class ModernTextBox
         _caretCol = right
         _hasSelection = left <> right
         ResetCaretBlink()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
     Private Function HitTest(x As Integer, y As Integer) As Point
         EnsureDpiCacheCurrent()
@@ -1754,7 +1992,7 @@ Public Class ModernTextBox
         Return New Point(col, vl.LogicalLine)
     End Function
     Private Function FindColFromX(lineStr As String, x As Integer) As Integer
-        Return TextRenderHelper.FindColFromX_D2D(GetDisplayText(lineStr), x, Font, DpiScale(), GetTextFormatCacheForMeasure())
+        Return D3D_TextMeasureHelper.FindColFromX_D2D(GetDisplayText(lineStr), x, Font, DpiScale(), GetTextFormatCacheForMeasure())
     End Function
     Private Sub UpdateCursorForLink(x As Integer, y As Integer)
         Dim hitPos As Point = HitTest(x, y)
@@ -1774,7 +2012,7 @@ Public Class ModernTextBox
             End If
             ClearSelection()
             EnsureCaretVisible()
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
             Return
         End If
         If Not extend Then
@@ -1816,7 +2054,7 @@ Public Class ModernTextBox
         End If
         UpdateSelectionFromAnchor(extend)
         EnsureCaretVisible()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
     Private Sub MoveCaretHome(extend As Boolean, ctrl As Boolean)
         If Not extend Then
@@ -1827,7 +2065,7 @@ Public Class ModernTextBox
         _caretCol = 0
         UpdateSelectionFromAnchor(extend)
         EnsureCaretVisible()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
     Private Sub MoveCaretEnd(extend As Boolean, ctrl As Boolean)
         If Not extend Then
@@ -1838,7 +2076,7 @@ Public Class ModernTextBox
         _caretCol = _lines(_caretLine).Length
         UpdateSelectionFromAnchor(extend)
         EnsureCaretVisible()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
     Private Sub MoveCaretWordLeft(extend As Boolean)
         If Not extend Then
@@ -1863,7 +2101,7 @@ Public Class ModernTextBox
         End If
         UpdateSelectionFromAnchor(extend)
         EnsureCaretVisible()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
     Private Sub MoveCaretWordRight(extend As Boolean)
         If Not extend Then
@@ -1888,7 +2126,7 @@ Public Class ModernTextBox
         End If
         UpdateSelectionFromAnchor(extend)
         EnsureCaretVisible()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
     Private Sub UpdateSelectionFromAnchor(extend As Boolean)
         If extend Then
@@ -2116,7 +2354,7 @@ Public Class ModernTextBox
         _caretLine = _lines.Count - 1
         _caretCol = _lines(_caretLine).Length
         _hasSelection = True
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
     Private Sub ClearSelection()
         _hasSelection = False
@@ -2290,7 +2528,7 @@ Public Class ModernTextBox
 
         SyncScrollLineOffset()
         UpdateScrollBar()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
     Private Sub ClampScrollPixelOffsets()
         Dim maxOffset As Single = MaxScrollPixelOffset()
@@ -2348,7 +2586,7 @@ Public Class ModernTextBox
         _scrollAnimationFrameNeedsInvalidate = 应重绘滚动动画帧(stopAfterThisTick)
         If stopAfterThisTick Then StopScrollAnimation()
     End Sub
-    Private Sub 滚动动画脏区(helper As AnimationHelperV2, owner As Control, sink As AnimationHelperV2.InvalidateRegionSink)
+    Private Sub 滚动动画脏区(helper As V3_AnimationHelper, owner As Control, sink As V3_AnimationHelper.InvalidateRegionSink)
         If _scrollAnimationFrameNeedsInvalidate Then
             Dim dirty = 滚动动画失效区域()
             If dirty.Width > 0 AndAlso dirty.Height > 0 Then
@@ -2414,7 +2652,7 @@ Public Class ModernTextBox
         Dim displayText = GetDisplayText(text)
         Dim cached As Integer = 0
         If _textWidthCache.TryGetValue(displayText, cached) Then Return cached
-        cached = CInt(Math.Ceiling(TextRenderHelper.MeasureTextWidth_D2D(displayText, Font, DpiScale(), GetTextFormatCacheForMeasure())))
+        cached = CInt(Math.Ceiling(D3D_TextMeasureHelper.MeasureTextWidth_D2D(displayText, Font, DpiScale(), GetTextFormatCacheForMeasure())))
         If _textWidthCache.Count >= MaxTextWidthCacheEntries Then _textWidthCache.Clear()
         _textWidthCache(displayText) = cached
         Return cached
@@ -2450,7 +2688,7 @@ Public Class ModernTextBox
                 If segStart >= segEnd Then Continue For
                 Dim useFont = If(r.RunFont, Font)
                 Dim segText = GetDisplayText(lineStr.Substring(segStart, segEnd - segStart))
-                totalWidth += CInt(Math.Ceiling(TextRenderHelper.MeasureTextWidth_D2D(segText, useFont, DpiScale(), GetTextFormatCacheForMeasure())))
+                totalWidth += CInt(Math.Ceiling(D3D_TextMeasureHelper.MeasureTextWidth_D2D(segText, useFont, DpiScale(), GetTextFormatCacheForMeasure())))
             Next
         End If
         If _lineWidthCache.Count >= MaxLineWidthCacheEntries Then _lineWidthCache.Clear()
@@ -2510,7 +2748,7 @@ Public Class ModernTextBox
             Dim segText = GetDisplayText(lineStr.Substring(segStart, segEnd - segStart))
             Dim segWidth = MeasureLineWidth(lineIndex, segStart, segEnd - segStart)
             If accWidth + segWidth > x Then
-                Dim localCol = TextRenderHelper.FindColFromX_D2D(segText, x - accWidth, useFont, DpiScale(), GetTextFormatCacheForMeasure())
+                Dim localCol = D3D_TextMeasureHelper.FindColFromX_D2D(segText, x - accWidth, useFont, DpiScale(), GetTextFormatCacheForMeasure())
                 Return segStart + localCol
             End If
             accWidth += segWidth
@@ -2538,7 +2776,7 @@ Public Class ModernTextBox
     End Function
     Private Function TextAreaWidth() As Integer
         Dim bi As Integer = ScaledBorderWidth()
-        Dim scrollW As Integer = If(_scrollBarVisible, CInt(Math.Round(滚动条宽度 * DpiScale())) + ScrollBarRenderer.Margin * 2, 0)
+        Dim scrollW As Integer = If(_scrollBarVisible, CInt(Math.Round(滚动条宽度 * DpiScale())) + V3_ScrollBarRenderer.Margin * 2, 0)
         Dim gutterW As Integer = LineNumberGutterWidth()
         Dim leftUsed As Integer = If(gutterW > 0, bi + gutterW + Padding.Left, Math.Max(Padding.Left, bi))
         Return Math.Max(0, ClientRectangle.Width - leftUsed - Math.Max(Padding.Right, bi) - scrollW)
@@ -2553,7 +2791,7 @@ Public Class ModernTextBox
         Dim numW As Integer = 0
         For Each digit As Char In "089"
             Dim probe As String = New String(digit, digitCount)
-            Dim probeW As Integer = CInt(Math.Ceiling(TextRenderHelper.MeasureTextWidth_D2D(probe, useFont, DpiScale(), GetTextFormatCacheForMeasure())))
+            Dim probeW As Integer = CInt(Math.Ceiling(D3D_TextMeasureHelper.MeasureTextWidth_D2D(probe, useFont, DpiScale(), GetTextFormatCacheForMeasure())))
             If probeW > numW Then numW = probeW
         Next
         _lineNumberGutterDigitCount = digitCount
@@ -2561,8 +2799,8 @@ Public Class ModernTextBox
         Return _lineNumberGutterWidthCache
     End Function
 
-    Private Function GetTextFormatCacheForMeasure() As D2DGlobals.TextFormatCache
-        Return D2DHelperV2.GetCompositor(Me)?.TextFormatCache
+    Private Function GetTextFormatCacheForMeasure() As D3D_D2DInterop.TextFormatCache
+        Return Nothing
     End Function
     Private Sub InvalidateLineNumberGutterCache()
         _lineNumberGutterWidthCache = -1
@@ -3010,7 +3248,7 @@ Public Class ModernTextBox
     Private Sub FinalizeTextChanged()
         InvalidateMeasureCache()
         RefreshVisualLayout(True)
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
         OnTextChanged(EventArgs.Empty)
         RaiseEvent TextChanged(Me, EventArgs.Empty)
     End Sub
@@ -3021,12 +3259,12 @@ Public Class ModernTextBox
         If Me.Focused Then
             _caretBlinkTimer.Start()
         End If
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End If
     End Sub
     Private Function DpiScale() As Single
@@ -3043,7 +3281,7 @@ Public Class ModernTextBox
         Return total
     End Function
     Private Sub UpdateDpiCache()
-        _cachedDpiScale = D2DGlobals.GetCurrentDpiScale(Me)
+        _cachedDpiScale = V3_DpiContext.FromControl(Me).Scale
         _cachedBorderInset = CInt(Math.Round(边框宽度 * _cachedDpiScale))
         _scaledLineHeight = CInt(Math.Round(行高 * _cachedDpiScale))
         _scaledCaretWidth = CInt(Math.Round(光标线宽 * _cachedDpiScale))
@@ -3054,7 +3292,7 @@ Public Class ModernTextBox
     End Sub
 
     Private Sub EnsureDpiCacheCurrent()
-        Dim currentScale As Single = D2DGlobals.GetCurrentDpiScale(Me)
+        Dim currentScale As Single = V3_DpiContext.FromControl(Me).Scale
         If Math.Abs(currentScale - _cachedDpiScale) < 0.0001F Then Return
         UpdateDpiCache()
         RefreshVisualLayout(True)
@@ -3085,7 +3323,7 @@ Public Class ModernTextBox
         _caretLine = pos.Y
         _caretCol = pos.X
         _hasSelection = (_caretLine <> _selAnchorLine OrElse _caretCol <> _selAnchorCol)
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
     Private Function GetDisplayText(text As String) As String
         If _passwordChar = vbNullChar OrElse 启用多行 Then Return text
@@ -3119,23 +3357,23 @@ Public Class ModernTextBox
         End If
         _caretVisible = True
         _caretBlinkTimer.Start()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
     Protected Overrides Sub OnLostFocus(e As EventArgs)
         MyBase.OnLostFocus(e)
         _caretBlinkTimer.Stop()
         _caretVisible = False
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
     Protected Overrides Sub OnSizeChanged(e As EventArgs)
         MyBase.OnSizeChanged(e)
         RefreshVisualLayout(True)
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
     Protected Overrides Sub OnPaddingChanged(e As EventArgs)
         MyBase.OnPaddingChanged(e)
         RefreshVisualLayout(True)
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
     Protected Overrides Sub OnFontChanged(e As EventArgs)
         _underlineFontCache?.Dispose()
@@ -3145,21 +3383,21 @@ Public Class ModernTextBox
         InvalidateMeasureCache()
         MyBase.OnFontChanged(e)
         RefreshVisualLayout(True)
-        D2DHelperV2.RefreshFontDependentRendering(Me)
+        请求V3渲染()
     End Sub
     Protected Overrides Sub OnBackColorChanged(e As EventArgs)
         MyBase.OnBackColorChanged(e)
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
     Protected Overrides Sub OnForeColorChanged(e As EventArgs)
         MyBase.OnForeColorChanged(e)
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
         UpdateDpiCache()
         RefreshVisualLayout(True)
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 #End Region
 

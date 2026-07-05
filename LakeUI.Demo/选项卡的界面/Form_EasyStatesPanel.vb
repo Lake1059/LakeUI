@@ -11,9 +11,9 @@ Public Class Form_EasyStatesPanel
         Try
             EasyStatesPanel1.Items.Clear()
             EasyStatesPanel1.Items.Add("构建", "net10.0-windows / Debug")
-            EasyStatesPanel1.Items.Add("渲染", "Direct2D 已就绪")
+            EasyStatesPanel1.Items.Add("渲染", "V3 GPU 已就绪")
             EasyStatesPanel1.Items.Add("动画", "60 FPS 平滑滚动")
-            EasyStatesPanel1.Items.Add("主题", "透明背景穿透")
+            EasyStatesPanel1.Items.Add("主题", "窗口级 GPU 合成")
             EasyStatesPanel1.Items.Add("缓存", "文本格式缓存命中")
             EasyStatesPanel1.Items.Add("输入", "鼠标滚轮可滚动")
             EasyStatesPanel1.Items.Add("资源", "按需创建与释放")

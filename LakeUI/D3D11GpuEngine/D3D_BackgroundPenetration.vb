@@ -3,10 +3,10 @@ Imports System.Buffers
 Imports Vortice.Direct2D1
 
 ''' <summary>
-''' V2 透明背景穿透实现。第一代的精简继任者。
+''' V3 背景穿透兼容实现。第一代的精简继任者。
 '''
 ''' === 与 V1 (<see cref="TransparentBackgroundCache"/>) 的差异 ===
-''' • V2 必须显式指定背景源（child 控件的 <c>BackgroundSource</c> 属性）。未指定 → 不采样、不绘制，
+''' • V3 必须显式指定背景源（child 控件的 <c>BackgroundSource</c> 属性）。未指定 → 不采样、不绘制，
 '''   完全不画背景层。不再自动回退到 child.Parent，避免无意识的递归与采样链。
 ''' • 每个 source 在窗口内共享一份 GDI Bitmap 作权威，按 source 的
 '''   <see cref="Control.Invalidated"/> / <see cref="Control.Resize"/> / <see cref="Control.Disposed"/> 失效。
@@ -15,7 +15,7 @@ Imports Vortice.Direct2D1
 '''   从共享图中取样，避免大量控件各自持有一份裁剪上传副本。
 ''' • 不区分 GDI / D2D 消费者：GDI Bitmap 负责重采与 dirty rect 合并，ID2D1Bitmap 只作为当前 RT 的上传缓存。
 '''
-''' === BackColor 与背景穿透的优先级（V2 强约束） ===
+''' === BackColor 与背景穿透的优先级（V3 强约束） ===
 '''   1) 指定了 BackgroundSource → 跳过 BackColor，直接调本类画穿透层。
 '''   2) 未指定 BackgroundSource 且 BackColor.A &gt; 0 → 直接以 BackColor 填底，本类不参与。
 '''   3) 未指定 BackgroundSource 且 BackColor.A = 0 → 不画背景层（由 WinForms 默认透明逻辑处理）。
@@ -23,7 +23,7 @@ Imports Vortice.Direct2D1
 ''' === 用法 ===
 '''   ' 在 OnPaint 内、画图形层之前：
 '''   If _backgroundSource IsNot Nothing Then
-'''       BackgroundPenetrationV2.PaintBackground(Me, scope, _backgroundSource)
+'''       D3D_BackgroundPenetration.PaintBackground(Me, scope, _backgroundSource)
 '''   End If
 '''
 ''' === 注意 ===
@@ -44,7 +44,7 @@ Imports Vortice.Direct2D1
 ''' === 线程要求 ===
 ''' UI 线程。对 _cache 字典有锁，但 GDI / D2D 调用本身仍假定在 UI 线程。
 ''' </summary>
-Public Module BackgroundPenetrationV2
+Public Module D3D_BackgroundPenetration
 
     Private Class Entry
         Public Class SharedUploadEntry
@@ -100,19 +100,20 @@ Public Module BackgroundPenetrationV2
     Private ReadOnly _cache As New Dictionary(Of Control, Entry)
     Private ReadOnly _ancestorSubscriptionRefs As New Dictionary(Of Control, Integer)
     Private ReadOnly _topologySubscriptionRefs As New Dictionary(Of Control, Integer)
+    Private ReadOnly _consumerLifecycleSubscriptions As New HashSet(Of Control)
     Private _sourceBitmapBytes As Long
     Private _sharedUploadBytes As Long
     Private ReadOnly _cpuOwner As New CpuBudgetOwner()
     Private ReadOnly _gpuOwner As New GpuBudgetOwner()
 
     Private NotInheritable Class CpuBudgetOwner
-        Implements IRenderCacheOwner
+        Implements D3D_IRenderCacheOwner
 
         Public Sub New()
-            CpuCache.Register(Me)
+            D3D_CpuCache.Register(Me)
         End Sub
 
-        Public ReadOnly Property CacheBytes As Long Implements IRenderCacheOwner.CacheBytes
+        Public ReadOnly Property CacheBytes As Long Implements D3D_IRenderCacheOwner.CacheBytes
             Get
                 SyncLock _cache
                     Return _sourceBitmapBytes
@@ -120,7 +121,7 @@ Public Module BackgroundPenetrationV2
             End Get
         End Property
 
-        Public ReadOnly Property OldestUseTick As Long Implements IRenderCacheOwner.OldestUseTick
+        Public ReadOnly Property OldestUseTick As Long Implements D3D_IRenderCacheOwner.OldestUseTick
             Get
                 SyncLock _cache
                     Return GetOldestSourceBitmapTick()
@@ -128,13 +129,13 @@ Public Module BackgroundPenetrationV2
             End Get
         End Property
 
-        Public Function TrimOldest() As Boolean Implements IRenderCacheOwner.TrimOldest
+        Public Function TrimOldest() As Boolean Implements D3D_IRenderCacheOwner.TrimOldest
             SyncLock _cache
                 Return TrimOldestSourceBitmap(Nothing)
             End SyncLock
         End Function
 
-        Public Sub ReleaseAll() Implements IRenderCacheOwner.ReleaseAll
+        Public Sub ReleaseAll() Implements D3D_IRenderCacheOwner.ReleaseAll
             SyncLock _cache
                 For Each entry In _cache.Values
                     ReleaseSourceBitmap(entry)
@@ -145,13 +146,13 @@ Public Module BackgroundPenetrationV2
     End Class
 
     Private NotInheritable Class GpuBudgetOwner
-        Implements IRenderCacheOwner
+        Implements D3D_IRenderCacheOwner
 
         Public Sub New()
-            GpuCache.Register(Me)
+            D3D_GpuCache.Register(Me)
         End Sub
 
-        Public ReadOnly Property CacheBytes As Long Implements IRenderCacheOwner.CacheBytes
+        Public ReadOnly Property CacheBytes As Long Implements D3D_IRenderCacheOwner.CacheBytes
             Get
                 SyncLock _cache
                     Return _sharedUploadBytes
@@ -159,7 +160,7 @@ Public Module BackgroundPenetrationV2
             End Get
         End Property
 
-        Public ReadOnly Property OldestUseTick As Long Implements IRenderCacheOwner.OldestUseTick
+        Public ReadOnly Property OldestUseTick As Long Implements D3D_IRenderCacheOwner.OldestUseTick
             Get
                 SyncLock _cache
                     Return GetOldestSharedUploadTick()
@@ -167,13 +168,13 @@ Public Module BackgroundPenetrationV2
             End Get
         End Property
 
-        Public Function TrimOldest() As Boolean Implements IRenderCacheOwner.TrimOldest
+        Public Function TrimOldest() As Boolean Implements D3D_IRenderCacheOwner.TrimOldest
             SyncLock _cache
                 Return TrimOldestSharedUpload(Nothing)
             End SyncLock
         End Function
 
-        Public Sub ReleaseAll() Implements IRenderCacheOwner.ReleaseAll
+        Public Sub ReleaseAll() Implements D3D_IRenderCacheOwner.ReleaseAll
             SyncLock _cache
                 For Each entry In _cache.Values
                     InvalidateSharedUploads(entry, Nothing)
@@ -189,13 +190,59 @@ Public Module BackgroundPenetrationV2
     ''' <c>scope.BackgroundLayer</c>。
     ''' </summary>
     ''' <param name="child">透明控件本人。决定采样目标矩形（child.Width × child.Height）。</param>
-    ''' <param name="scope">当前 V2 绘制作用域，背景层来自 <see cref="PaintScopeV2.BackgroundLayer"/>。</param>
+    ''' <param name="scope">当前兼容绘制作用域，背景层来自 <see cref="D3D_PaintScope.BackgroundLayer"/>。</param>
     ''' <param name="source">
     ''' 显式背景源。<c>Nothing</c> 或已 Dispose 时本方法直接返回，背景层将保持上一次状态（通常是清空）。
-    ''' V2 不再隐式回退到 <c>child.Parent</c>。
+    ''' V3 不再隐式回退到 <c>child.Parent</c>。
     ''' </param>
-    Public Sub PaintBackground(child As Control, scope As PaintScopeV2, source As Control)
-        If child Is Nothing OrElse scope Is Nothing Then Return
+    Public Sub PaintBackground(child As Control, scope As D3D_PaintScope, source As Control)
+        If scope Is Nothing Then Return
+        PaintBackgroundCore(
+            child,
+            source,
+            scope.ClipRectangle,
+            scope.BackgroundLayer,
+            Sub(rt, destRect, solidColor)
+                Dim brushCache = scope.Compositor?.BrushCache
+                If brushCache IsNot Nothing Then
+                    rt.FillRectangle(D3D_D2DInterop.ToD2DRect(destRect), brushCache.Get(rt, solidColor))
+                Else
+                    Using b = rt.CreateSolidColorBrush(D3D_D2DInterop.ToColor4(solidColor))
+                        rt.FillRectangle(D3D_D2DInterop.ToD2DRect(destRect), b)
+                    End Using
+                End If
+            End Sub)
+    End Sub
+
+    Public Sub PaintBackground(child As Control,
+                               context As D3D_PaintContext,
+                               source As Control,
+                               destination As RectangleF)
+        If context Is Nothing Then Return
+        Dim clipRect = Rectangle.Round(destination)
+        If clipRect.Width <= 0 OrElse clipRect.Height <= 0 Then
+            clipRect = New Rectangle(Point.Empty, If(child IsNot Nothing, child.Size, Size.Empty))
+        End If
+
+        PaintBackgroundCore(
+            child,
+            source,
+            clipRect,
+            context.DeviceContext,
+            Sub(rt, destRect, solidColor)
+                Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, solidColor, context.DeviceGeneration)
+                context.DeviceContext.FillRectangle(D3D_PaintContext.ToRawRect(destRect), brush)
+            End Sub)
+    End Sub
+
+    Private Delegate Sub SolidBackgroundPainter(rt As ID2D1RenderTarget, destRect As Rectangle, solidColor As Color)
+
+    Private Sub PaintBackgroundCore(child As Control,
+                                    source As Control,
+                                    clipRect As Rectangle,
+                                    rt As ID2D1RenderTarget,
+                                    paintSolid As SolidBackgroundPainter)
+        If child Is Nothing OrElse rt Is Nothing Then Return
         If source Is Nothing OrElse source.IsDisposed Then Return
         Dim sw As Integer = source.Width, sh As Integer = source.Height
         If sw <= 0 OrElse sh <= 0 Then Return
@@ -205,7 +252,7 @@ Public Module BackgroundPenetrationV2
         End If
 
         Dim childBounds As New Rectangle(0, 0, child.Width, child.Height)
-        Dim destRect As Rectangle = Rectangle.Intersect(childBounds, scope.ClipRectangle)
+        Dim destRect As Rectangle = Rectangle.Intersect(childBounds, clipRect)
         If destRect.Width <= 0 OrElse destRect.Height <= 0 Then Return
 
         Dim sourceForSampling As Control = source
@@ -216,8 +263,8 @@ Public Module BackgroundPenetrationV2
         sw = sourceForSampling.Width
         sh = sourceForSampling.Height
         Dim srcRect As New Rectangle(offset.X + destRect.X, offset.Y + destRect.Y, destRect.Width, destRect.Height)
+        If srcRect.Width <= 0 OrElse srcRect.Height <= 0 Then Return
 
-        Dim rt = scope.BackgroundLayer
         Dim isSolid As Boolean
         Dim solidColor As Color = Color.Empty
         Dim acquired As New BitmapAcquireResult()
@@ -227,14 +274,7 @@ Public Module BackgroundPenetrationV2
         Try
             RegisterConsumerMappings(child, sourceMappings, childBounds, topologyNodes)
             If isSolid Then
-                Dim brushCache = scope.Compositor?.BrushCache
-                If brushCache IsNot Nothing Then
-                    rt.FillRectangle(D2DGlobals.ToD2DRect(destRect), brushCache.Get(rt, solidColor))
-                Else
-                    Using b = rt.CreateSolidColorBrush(D2DGlobals.ToColor4(solidColor))
-                        rt.FillRectangle(D2DGlobals.ToD2DRect(destRect), b)
-                    End Using
-                End If
+                paintSolid(rt, destRect, solidColor)
                 Return
             End If
             If acquired.Bitmap Is Nothing Then Return
@@ -248,10 +288,10 @@ Public Module BackgroundPenetrationV2
             End If
             If drawDestRect.Width <= 0 OrElse drawDestRect.Height <= 0 Then Return
             rt.DrawBitmap(acquired.Bitmap,
-                D2DGlobals.ToD2DRect(drawDestRect),
+                D3D_D2DInterop.ToD2DRect(drawDestRect),
                 1.0F,
                 BitmapInterpolationMode.Linear,
-                D2DGlobals.ToD2DRect(acquired.SourceRect))
+                D3D_D2DInterop.ToD2DRect(acquired.SourceRect))
         Finally
             If acquired.DisposeAfterDraw AndAlso acquired.Bitmap IsNot Nothing Then
                 Try : acquired.Bitmap.Dispose() : Catch : End Try
@@ -307,13 +347,21 @@ Public Module BackgroundPenetrationV2
         FlushConsumerInvalidations(invalidations)
     End Sub
 
+    Public Sub InvalidateForwarderTopology(forwarder As Control)
+        If forwarder Is Nothing Then Return
+        OnForwarderTopologyChanged(forwarder, EventArgs.Empty)
+    End Sub
+
     ''' <summary>
     ''' 为控件切换背景源时移除旧 source 订阅并返回新值，避免已切换控件继续响应旧 source 的失效传播。
     ''' </summary>
     Public Function SetBackgroundSource(owner As Control, oldSource As Control, newSource As Control) As Control
         If owner IsNot Nothing Then
             DetachConsumerLifecycle(owner)
-            If oldSource IsNot Nothing AndAlso oldSource IsNot newSource Then UnregisterSingleConsumer(owner, Nothing)
+            If oldSource IsNot newSource Then
+                UnregisterSingleConsumer(owner, Nothing)
+                OuterToInnerRefreshScheduler.RequestFull(owner)
+            End If
             If newSource IsNot Nothing Then AttachConsumerLifecycle(owner)
         End If
         Return newSource
@@ -352,6 +400,10 @@ Public Module BackgroundPenetrationV2
 
     Private Sub AttachConsumerLifecycle(owner As Control)
         If owner Is Nothing Then Return
+        SyncLock _cache
+            If _consumerLifecycleSubscriptions.Contains(owner) Then Return
+            _consumerLifecycleSubscriptions.Add(owner)
+        End SyncLock
         Try : AddHandler owner.HandleDestroyed, AddressOf OnConsumerHandleDestroyed : Catch : End Try
         Try : AddHandler owner.Disposed, AddressOf OnConsumerDisposed : Catch : End Try
         Try : AddHandler owner.VisibleChanged, AddressOf OnConsumerVisibleChanged : Catch : End Try
@@ -360,6 +412,9 @@ Public Module BackgroundPenetrationV2
 
     Private Sub DetachConsumerLifecycle(owner As Control)
         If owner Is Nothing Then Return
+        SyncLock _cache
+            If Not _consumerLifecycleSubscriptions.Remove(owner) Then Return
+        End SyncLock
         Try : RemoveHandler owner.HandleDestroyed, AddressOf OnConsumerHandleDestroyed : Catch : End Try
         Try : RemoveHandler owner.Disposed, AddressOf OnConsumerDisposed : Catch : End Try
         Try : RemoveHandler owner.VisibleChanged, AddressOf OnConsumerVisibleChanged : Catch : End Try
@@ -391,24 +446,24 @@ Public Module BackgroundPenetrationV2
         UnregisterBackgroundConsumer(owner)
     End Sub
 
-    Friend Sub CleanupD2DResources(level As D2DCacheCleanupLevel, Optional owner As Control = Nothing)
+    Friend Sub CleanupD2DResources(level As D3DCacheCleanupLevel, Optional owner As Control = Nothing)
         Dim targetForm As Form = ResolveCleanupForm(owner)
         SyncLock _cache
             Select Case level
-                Case D2DCacheCleanupLevel.TrimToBudget
-                    CpuCache.TrimToBudget()
-                    GpuCache.TrimToBudget()
+                Case D3DCacheCleanupLevel.TrimToBudget
+                    D3D_CpuCache.TrimToBudget()
+                    D3D_GpuCache.TrimToBudget()
 
-                Case D2DCacheCleanupLevel.ReleaseVolatileCaches
+                Case D3DCacheCleanupLevel.ReleaseVolatileCaches
                     For Each kv In _cache.ToArray()
                         If ShouldCleanupSource(kv.Key, targetForm) Then
                             InvalidateSharedUploads(kv.Value, Nothing)
                         End If
                     Next
 
-                Case D2DCacheCleanupLevel.ReleaseAllCaches,
-                     D2DCacheCleanupLevel.ReleaseRenderTargets,
-                     D2DCacheCleanupLevel.RecreateDevice
+                Case D3DCacheCleanupLevel.ReleaseAllCaches,
+                     D3DCacheCleanupLevel.ReleaseRenderTargets,
+                     D3DCacheCleanupLevel.RecreateDevice
                     For Each kv In _cache.ToArray()
                         If ShouldCleanupSource(kv.Key, targetForm) Then
                             ReleaseEntryCache(kv.Value)
@@ -464,6 +519,7 @@ Public Module BackgroundPenetrationV2
                                   topologyNodes As List(Of Control))
         If child Is Nothing OrElse mappings Is Nothing OrElse mappings.Count = 0 Then Return
         If Not IsRenderableControl(child) Then Return
+        AttachConsumerLifecycle(child)
 
         SyncLock _cache
             ' 一个 child 同一时刻只注册到 canonical source。透明转发面板只作为 topology 节点，
@@ -553,7 +609,7 @@ Public Module BackgroundPenetrationV2
         Dim reuseExistingBitmapWhilePainting As Boolean
         SyncLock _cache
             entry = EnsureEntryNoLock(source)
-            entry.LastUsed = CpuCache.NextTick()
+            entry.LastUsed = D3D_CpuCache.NextTick()
             ' Pure-color entries intentionally drop Bmp to save RAM; the cached SolidArgb is still valid
             ' while the source size matches and no invalidation has marked it dirty.
             Dim sizeOk As Boolean = ((entry.Bmp IsNot Nothing OrElse entry.IsSolidColor) AndAlso entry.Width = sw AndAlso entry.Height = sh)
@@ -586,7 +642,7 @@ Public Module BackgroundPenetrationV2
             Finally
                 SyncLock _cache
                     entry.Painting = False
-                    entry.LastUsed = CpuCache.NextTick()
+                    entry.LastUsed = D3D_CpuCache.NextTick()
                     TrimSourceBitmaps(entry)
                 End SyncLock
             End Try
@@ -650,7 +706,6 @@ Public Module BackgroundPenetrationV2
                                                    mappings As List(Of KeyValuePair(Of Control, Rectangle)),
                                                    topologyNodes As List(Of Control)) As Boolean
         If sourceForSampling Is Nothing OrElse mappings Is Nothing Then Return False
-
         Dim visited As New HashSet(Of Control)()
         Do
             If sourceForSampling Is Nothing OrElse sourceForSampling.IsDisposed Then Return False
@@ -662,6 +717,8 @@ Public Module BackgroundPenetrationV2
             If visited.Contains(sourceForSampling) Then Return False
             visited.Add(sourceForSampling)
 
+            ' V2 compatibility: transparent ModernPanel sources are forwarding nodes.
+            ' The actual self-light guard is in PaintSourceRect, which repaints only the source itself.
             Dim forwardedSource As Control = Nothing
             If Not TryForwardTransparentSource(sourceForSampling, forwardedSource) Then
                 mappings.Add(New KeyValuePair(Of Control, Rectangle)(sourceForSampling, New Rectangle(offset, childBounds.Size)))
@@ -688,7 +745,7 @@ Public Module BackgroundPenetrationV2
         Dim oldBmp As Bitmap = Nothing
         Dim replacedEntryBitmap As Boolean
         Try
-            Using D2DHelperV2.EnterBackgroundSamplingPaint()
+            Using D3D_PaintBridge.EnterBackgroundSamplingPaint()
                 If fullRebuild OrElse entry.Bmp Is Nothing Then
                     workingBmp = New Bitmap(sw, sh, PixelFormat.Format32bppPArgb)
                     PaintSourceRectsToBitmap(source, workingBmp, repaintRects)
@@ -819,8 +876,8 @@ Public Module BackgroundPenetrationV2
             For Each upload In entry.SharedUploads
                 Dim ownerAlive As Boolean = upload.D2DOwnerRT IsNot Nothing AndAlso ReferenceEquals(upload.D2DOwnerRT.Target, rt)
                 If ownerAlive AndAlso upload.Width = uploadWidth AndAlso upload.Height = uploadHeight AndAlso upload.Version = entry.Version Then
-                    upload.LastUsed = GpuCache.NextTick()
-                    GpuCache.TrimToBudget(_gpuOwner)
+                    upload.LastUsed = D3D_GpuCache.NextTick()
+                    D3D_GpuCache.TrimToBudget(_gpuOwner)
                     Return New BitmapAcquireResult With {.Bitmap = upload.D2DBmp, .SourceRect = sourceRect}
                 End If
             Next
@@ -830,10 +887,10 @@ Public Module BackgroundPenetrationV2
             .Width = uploadWidth,
             .Height = uploadHeight,
             .Bytes = uploadBytes,
-            .D2DBmp = D2DGlobals.CreateBitmapFromGdi(rt, entry.Bmp),
+            .D2DBmp = D3D_D2DInterop.CreateBitmapFromGdi(rt, entry.Bmp),
             .D2DOwnerRT = New WeakReference(rt),
             .Version = entry.Version,
-            .LastUsed = GpuCache.NextTick()
+            .LastUsed = D3D_GpuCache.NextTick()
         }
         If newUpload.D2DBmp Is Nothing Then Return Nothing
         If Not cacheEnabled Then
@@ -841,7 +898,7 @@ Public Module BackgroundPenetrationV2
         End If
         _sharedUploadBytes += newUpload.Bytes
         entry.SharedUploads.Add(newUpload)
-        GpuCache.TrimToBudget(_gpuOwner)
+        D3D_GpuCache.TrimToBudget(_gpuOwner)
         Return New BitmapAcquireResult With {.Bitmap = newUpload.D2DBmp, .SourceRect = sourceRect}
     End Function
 
@@ -874,7 +931,7 @@ Public Module BackgroundPenetrationV2
                                            srcIntersection.Width, srcIntersection.Height)
             ForceOpaqueAlpha(bmp, {validRect})
             acquired = New BitmapAcquireResult With {
-                .Bitmap = D2DGlobals.CreateBitmapFromGdi(rt, bmp),
+                .Bitmap = D3D_D2DInterop.CreateBitmapFromGdi(rt, bmp),
                 .SourceRect = New Rectangle(0, 0, sourceRect.Width, sourceRect.Height),
                 .DrawDestRect = destRect,
                 .DisposeAfterDraw = True

@@ -1,7 +1,7 @@
 ''' <summary>
-''' D3D_RenderCore 是新 GPU 核心入口，替代旧 D2DHelperV2 的职责但不兼容旧 API。
+''' D3D_RenderCore 是新 GPU 核心入口，替代旧 D3D_PaintBridge 的职责但不兼容旧 API。
 ''' 它管理进程级 D3D_DeviceManager、为顶层 Form 创建 D3D_WindowCompositor、路由 RequestRender，并处理冷启动级重置。
-''' 它不迁移控件、不调用 Demo、不兼容 PaintScopeV2，也不向后提供 HDC/D2D DC RenderTarget 回退。
+''' 它不迁移控件、不调用 Demo、不兼容 D3D_PaintScope，也不向后提供 HDC/D2D DC RenderTarget 回退。
 ''' <para>
 ''' 后续迁移控件不要再直接使用 Graphics.GetHdc，不要自己创建 D3D device，只能通过窗口 compositor 获取 D3D_PaintContext。
 ''' 设备资源跟随 generation；跨 generation 缓存必须丢弃。
@@ -46,25 +46,110 @@ Public NotInheritable Class D3D_RenderCore
 
     Public Shared Function GetWindowCompositor(control As Control) As D3D_WindowCompositor
         If control Is Nothing OrElse control.IsDisposed Then Return Nothing
-        Dim form = If(TypeOf control Is Form, DirectCast(control, Form), control.FindForm())
+        Dim form = ResolveCompositorForm(control)
         Return GetWindowCompositor(form)
     End Function
 
+    Friend Shared Function ResolveCompositorForm(control As Control) As Form
+        If control Is Nothing OrElse control.IsDisposed Then Return Nothing
+
+        Dim form As Form = Nothing
+        Try
+            form = If(TypeOf control Is Form, DirectCast(control, Form), control.FindForm())
+        Catch
+            form = Nothing
+        End Try
+        If form Is Nothing OrElse form.IsDisposed Then Return Nothing
+
+        Dim visited As New HashSet(Of Form)()
+        Do While form IsNot Nothing AndAlso Not form.IsDisposed AndAlso Not form.TopLevel AndAlso form.Parent IsNot Nothing
+            If visited.Contains(form) Then Exit Do
+            visited.Add(form)
+
+            Dim host As Form = Nothing
+            Try
+                host = form.Parent.FindForm()
+            Catch
+                host = Nothing
+            End Try
+            If host Is Nothing OrElse host Is form OrElse host.IsDisposed Then Exit Do
+            form = host
+        Loop
+
+        Return form
+    End Function
+
     ''' <summary>
-    ''' 后续控件迁移的核心失效入口。Invalidate 只记录 dirty region 并请求下一帧，不等于立刻绘制。
+    ''' 控件迁移的核心失效入口。阶段 1 之后只让目标控件自己的 OnPaint 重新执行，
+    ''' 不再创建或调度窗口级 compositor。
     ''' </summary>
     Public Shared Sub RequestRender(control As Control, dirtyRect As Rectangle)
-        Dim compositor = GetWindowCompositor(control)
+        If control Is Nothing OrElse control.IsDisposed Then Return
+
+        Dim bounds = dirtyRect
+        If bounds.Width <= 0 OrElse bounds.Height <= 0 Then bounds = New Rectangle(Point.Empty, control.Size)
+        bounds = Rectangle.Intersect(New Rectangle(Point.Empty, control.Size), bounds)
+        If bounds.Width <= 0 OrElse bounds.Height <= 0 Then bounds = New Rectangle(Point.Empty, control.Size)
+
+        Try
+            If control.IsHandleCreated Then
+                control.Invalidate(bounds)
+            Else
+                control.Invalidate()
+            End If
+        Catch
+        End Try
+
+        NotifyControlInvalidated(control, bounds)
+    End Sub
+
+    Friend Shared Sub NotifyControlInvalidated(control As Control, dirtyRect As Rectangle)
+        If control Is Nothing OrElse control.IsDisposed Then Return
+
+        Try : D3D_BackgroundPenetration.Invalidate(control, dirtyRect) : Catch : End Try
+    End Sub
+
+    Public Shared Sub InvalidateExistingTextResources(control As Control)
+        Dim compositor = TryGetExistingWindowCompositor(control)
         If compositor Is Nothing Then Return
 
-        Dim windowDirty = dirtyRect
-        If control IsNot Nothing AndAlso Not control.IsDisposed AndAlso control.FindForm() IsNot Nothing AndAlso Not TypeOf control Is Form Then
-            Dim screenPoint = control.PointToScreen(dirtyRect.Location)
-            Dim formPoint = control.FindForm().PointToClient(screenPoint)
-            windowDirty = New Rectangle(formPoint, dirtyRect.Size)
-        End If
+        Try : compositor.TextRenderer.Invalidate() : Catch : End Try
+    End Sub
 
-        compositor.RequestRender(windowDirty)
+    Private Shared Function TryGetExistingWindowCompositor(control As Control) As D3D_WindowCompositor
+        Dim form = ResolveCompositorForm(control)
+        If form Is Nothing Then Return Nothing
+
+        SyncLock _compositorsLock
+            Dim compositor As D3D_WindowCompositor = Nothing
+            If Not _compositors.TryGetValue(form, compositor) Then Return Nothing
+            If compositor Is Nothing OrElse compositor.IsDisposed Then
+                _compositors.Remove(form)
+                Return Nothing
+            End If
+            Return compositor
+        End SyncLock
+    End Function
+
+    Public Shared Sub UnregisterBackgroundConsumer(control As Control, Optional recursive As Boolean = False)
+        If control Is Nothing Then Return
+        If recursive Then
+            D3D_BackgroundPenetration.UnregisterBackgroundConsumer(control)
+        Else
+            D3D_BackgroundPenetration.UnregisterConsumer(control)
+        End If
+    End Sub
+
+    Public Shared Sub InvalidateBackgroundSource(source As Control)
+        D3D_BackgroundPenetration.Invalidate(source)
+    End Sub
+
+    Public Shared Sub InvalidateBackgroundSource(source As Control, dirtyRect As Rectangle)
+        D3D_BackgroundPenetration.Invalidate(source, dirtyRect)
+    End Sub
+
+    Friend Shared Sub InvalidateBackgroundSnapshots(control As Control)
+        D3D_BackgroundPenetration.Invalidate(control)
     End Sub
 
     ''' <summary>
@@ -105,7 +190,8 @@ Public NotInheritable Class D3D_RenderCore
 
             Dim presented = compositor.RenderFrame(
                 Sub(context)
-                    Dim bounds As New RectangleF(0, 0, Math.Max(1, form.ClientSize.Width), Math.Max(1, form.ClientSize.Height))
+                    Dim renderSize = compositor.RenderTargetSize
+                    Dim bounds As New RectangleF(0, 0, Math.Max(1, renderSize.Width), Math.Max(1, renderSize.Height))
                     context.FillRectangle(bounds, form.BackColor)
                     context.FillRectangle(New RectangleF(8, 8, 160, 48), System.Drawing.Color.FromArgb(220, 40, 120, 220))
                     context.DrawText("LakeUI D3D11 GPU", form.Font, System.Drawing.Color.White, New RectangleF(16, 18, 220, 32))

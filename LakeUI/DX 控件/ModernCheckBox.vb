@@ -4,6 +4,7 @@ Imports Vortice.Direct2D1
 
 <DefaultEvent("CheckedChanged")>
 Public Class ModernCheckBox
+    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource
 
     Public Sub New()
         InitializeComponent()
@@ -28,42 +29,199 @@ Public Class ModernCheckBox
 
 #Region "绘制"
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
-        ' V2 契约（与 ModernButton 一致）：
-        '   • BackgroundSource 已设置 → 跳过基类填底，背景由 OnPaint 内显式穿透绘制；
-        '   • 否则一律走 .NET 自身透明逻辑——半透明 BackColor 由基类把父级背景合成到 HDC，
-        '     不透明色由基类填底。BindDC 之后 DC RT 初始像素即正确底图，
-        '     避免"HDC 残留 → 乱照父窗体其它区域"的故障。
         If _backgroundSource IsNot Nothing Then Return
         MyBase.OnPaintBackground(e)
     End Sub
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
-        Dim ssaa As Integer = D2DHelperV2.GetEffectiveSsaaScale(超采样倍率)
-
-        Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
-            If scope Is Nothing Then Return  ' 设计期 / 无 Form
-            Dim compositor = scope.Compositor
-            Dim gRT As ID2D1RenderTarget = scope.GraphicsLayer
-            Dim dcRT As ID2D1DCRenderTarget = scope.DCRenderTarget
-
-            ' 1) 背景层（V2 显式透明穿透）
-            If _backgroundSource IsNot Nothing Then
-                BackgroundPenetrationV2.PaintBackground(Me, scope, _backgroundSource)
-            End If
-
-            ' 2) 图形层（享受 SSAA）
-            绘制图形内容_D2D(gRT, compositor.BrushCache)
-
-            ' 3) 文字层（DC RT 子像素抗锯齿）
-            scope.FlushGraphics()
-            绘制文本_D2D(dcRT, compositor)
-
-            ' 4) 禁用遮罩
-            绘制禁用遮罩_D2D(dcRT, compositor.BrushCache)
-        End Using
+        If Not D3D_PaintBridge.PaintRenderable(e, Me, Me, 1) Then MyBase.OnPaint(e)
     End Sub
 
-    Private Sub 绘制图形内容_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache)
+    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+        If context Is Nothing OrElse Me.Width <= 0 OrElse Me.Height <= 0 Then Return
+
+        If _backgroundSource IsNot Nothing Then
+            context.DrawBackgroundSource(Me, _backgroundSource, New RectangleF(0, 0, Me.Width, Me.Height))
+        ElseIf MyBase.BackColor.A > 0 Then
+            context.FillRectangle(New RectangleF(0, 0, Me.Width, Me.Height), MyBase.BackColor)
+        End If
+
+        绘制图形内容_GPU(context)
+        绘制文本_GPU(context)
+        绘制禁用遮罩_GPU(context)
+    End Sub
+
+    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+        Return New Rectangle(Point.Empty, Me.Size)
+    End Function
+
+    Private Sub 绘制图形内容_GPU(context As D3D_PaintContext)
+        Dim s As Single = DpiScale()
+        Dim 当前框边框宽度 As Single = 框边框宽度 * s
+        Dim 框区域 As RectangleF = 计算框区域(s)
+
+        Dim 当前框背景色 As Color = 获取当前框背景颜色()
+        Dim 当前框边框色 As Color = 获取鼠标状态颜色(框边框颜色值, 鼠标移上时框边框颜色, 鼠标按下时框边框颜色)
+
+        If 当前模式 = CheckModeEnum.CheckBox Then
+            绘制方框_GPU(context, 框区域, 当前框背景色, 当前框边框色, 当前框边框宽度, s)
+        Else
+            绘制圆框_GPU(context, 框区域, 当前框背景色, 当前框边框色, 当前框边框宽度, s)
+        End If
+    End Sub
+
+    Private Sub 绘制禁用遮罩_GPU(context As D3D_PaintContext)
+        If Enabled OrElse 禁用时遮罩颜色.A <= 0 Then Return
+
+        Dim s As Single = DpiScale()
+        Dim 边框偏移 As Single = 框边框宽度 * s / 2.0F
+        Dim 遮罩区域 As RectangleF = 计算框外缘区域(s)
+        If 当前模式 = CheckModeEnum.CheckBox Then
+            Dim 圆角 As Single = 框圆角半径 * s + 边框偏移
+            填充圆角矩形_GPU(context, 遮罩区域, 圆角, 禁用时遮罩颜色)
+        Else
+            填充椭圆_GPU(context, 遮罩区域, 禁用时遮罩颜色)
+        End If
+    End Sub
+
+    Private Sub 绘制方框_GPU(context As D3D_PaintContext, 框区域 As RectangleF, 背景色 As Color, 边框色 As Color, 边框宽 As Single, s As Single)
+        Dim 圆角 As Single = 框圆角半径 * s
+        填充圆角矩形_GPU(context, 框区域, 圆角, 背景色)
+        绘制圆角边框_GPU(context, 框区域, 圆角, 边框色, 边框宽)
+
+        Dim progress As Single = 动画助手.Progress
+        If progress > 0.001F Then 绘制勾号_GPU(context, 框区域, progress, s)
+    End Sub
+
+    Private Sub 绘制勾号_GPU(context As D3D_PaintContext, 框区域 As RectangleF, progress As Single, s As Single)
+        Dim 当前勾号色 As Color = 获取鼠标状态颜色(勾号颜色值, 鼠标移上时勾号颜色, 鼠标按下时勾号颜色)
+        If 当前勾号色.A <= 0 Then Return
+
+        Dim 内边距 As Single = 框内边距 * s + 框边框宽度 * s / 2.0F
+        Dim x1 As Single = 框区域.X + 内边距
+        Dim y1 As Single = 框区域.Y + 框区域.Height * 0.5F
+        Dim x2 As Single = 框区域.X + 框区域.Width * 0.4F
+        Dim y2 As Single = 框区域.Bottom - 内边距
+        Dim x3 As Single = 框区域.Right - 内边距
+        Dim y3 As Single = 框区域.Y + 内边距
+        Dim 段1长 As Single = CSng(Math.Sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1)))
+        Dim 段2长 As Single = CSng(Math.Sqrt((x3 - x2) * (x3 - x2) + (y3 - y2) * (y3 - y2)))
+        Dim 总长度 As Single = 段1长 + 段2长
+        If 总长度 < 0.01F Then Return
+
+        Dim path As ID2D1PathGeometry = D3D_RenderCore.DeviceManager.D2DFactory.CreatePathGeometry()
+        Dim sink As ID2D1GeometrySink = path.Open()
+        Try
+            Dim 可见长度 As Single = 总长度 * progress
+            sink.BeginFigure(New Vector2(x1, y1), FigureBegin.Hollow)
+            If 可见长度 <= 段1长 Then
+                Dim t As Single = If(段1长 > 0, 可见长度 / 段1长, 0F)
+                sink.AddLine(New Vector2(x1 + (x2 - x1) * t, y1 + (y2 - y1) * t))
+            Else
+                sink.AddLine(New Vector2(x2, y2))
+                Dim 剩余 As Single = 可见长度 - 段1长
+                Dim t As Single = If(段2长 > 0, 剩余 / 段2长, 0F)
+                sink.AddLine(New Vector2(x2 + (x3 - x2) * t, y2 + (y3 - y2) * t))
+            End If
+            sink.EndFigure(FigureEnd.Open)
+            sink.Close()
+        Finally
+            sink.Dispose()
+        End Try
+
+        Try
+            Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, 当前勾号色, context.DeviceGeneration)
+            context.DeviceContext.DrawGeometry(path, brush, 勾号线宽 * s, D3D_D2DInterop.GetRoundStrokeStyle())
+        Finally
+            path.Dispose()
+        End Try
+    End Sub
+
+    Private Sub 绘制圆框_GPU(context As D3D_PaintContext, 框区域 As RectangleF, 背景色 As Color, 边框色 As Color, 边框宽 As Single, s As Single)
+        填充椭圆_GPU(context, 框区域, 背景色)
+        绘制椭圆边框_GPU(context, 框区域, 边框色, 边框宽)
+
+        Dim progress As Single = 动画助手.Progress
+        If progress > 0.001F Then
+            Dim 当前勾号色 As Color = 获取鼠标状态颜色(勾号颜色值, 鼠标移上时勾号颜色, 鼠标按下时勾号颜色)
+            Dim 最大半径 As Single = (框区域.Width / 2.0F) - 框内边距 * s - 框边框宽度 * s / 2.0F
+            If 最大半径 < 1 Then 最大半径 = 1
+            Dim 当前半径 As Single = 最大半径 * progress
+            Dim cx As Single = 框区域.X + 框区域.Width / 2.0F
+            Dim cy As Single = 框区域.Y + 框区域.Height / 2.0F
+            Dim inner As New RectangleF(cx - 当前半径, cy - 当前半径, 当前半径 * 2, 当前半径 * 2)
+            填充椭圆_GPU(context, inner, 当前勾号色)
+        End If
+    End Sub
+
+    Private Sub 绘制文本_GPU(context As D3D_PaintContext)
+        Dim s As Single = DpiScale()
+        Dim 框尺寸 As Single = 操作框尺寸 * s
+        Dim 间距 As Single = 框文本间距 * s
+        Dim 边框偏移 As Single = 框边框宽度 * s / 2.0F
+        Dim 文本X As Single = Me.Padding.Left + 边框偏移 + 框尺寸 + 间距
+        Dim 文本可用宽度 As Single = Me.Width - 文本X - Me.Padding.Right
+        If 文本可用宽度 <= 0 Then Return
+
+        Dim mainText As String = If(MyBase.Text, "")
+        If String.IsNullOrEmpty(mainText) AndAlso String.IsNullOrEmpty(次要文本) Then Return
+
+        Dim 框区域 As RectangleF = 计算框区域(s)
+        Dim 框中心Y As Single = 框区域.Y + 框区域.Height / 2.0F
+
+        If Not String.IsNullOrEmpty(次要文本) Then
+            Dim mainH As Single = 获取主文本行高()
+            Dim subH As Single = 获取次文本行高()
+            Dim gap As Single = 主次文本间距 * s
+            Dim totalH As Single = mainH + gap + subH
+            Dim startY As Single = 框中心Y - totalH / 2.0F
+            context.DrawText(mainText, Me.Font, 文本颜色, New RectangleF(文本X, startY, 文本可用宽度, mainH), Vortice.DirectWrite.TextAlignment.Leading, Vortice.DirectWrite.ParagraphAlignment.Near)
+            Using subFont As New Font(Me.Font.FontFamily, 次要文本字号, FontStyle.Regular)
+                context.DrawText(次要文本, subFont, 次要文本颜色, New RectangleF(文本X, startY + mainH + gap, 文本可用宽度, subH), Vortice.DirectWrite.TextAlignment.Leading, Vortice.DirectWrite.ParagraphAlignment.Near)
+            End Using
+        Else
+            context.DrawText(mainText, Me.Font, 文本颜色, New RectangleF(文本X, Me.Padding.Top, 文本可用宽度, Math.Max(1, Me.Height - Me.Padding.Vertical)), Vortice.DirectWrite.TextAlignment.Leading, Vortice.DirectWrite.ParagraphAlignment.Center)
+        End If
+    End Sub
+
+    Private Sub 填充圆角矩形_GPU(context As D3D_PaintContext, bounds As RectangleF, radius As Single, color As Color)
+        If color.A <= 0 OrElse bounds.Width <= 0 OrElse bounds.Height <= 0 Then Return
+        Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
+        If radius > 0 Then
+            Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New RoundedRectangle(bounds, radius, radius))
+                context.DeviceContext.FillGeometry(geo, brush)
+            End Using
+        Else
+            context.DeviceContext.FillRectangle(D3D_PaintContext.ToRawRect(bounds), brush)
+        End If
+    End Sub
+
+    Private Sub 绘制圆角边框_GPU(context As D3D_PaintContext, bounds As RectangleF, radius As Single, color As Color, strokeWidth As Single)
+        If color.A <= 0 OrElse strokeWidth <= 0 OrElse bounds.Width <= 0 OrElse bounds.Height <= 0 Then Return
+        Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
+        If radius > 0 Then
+            Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New RoundedRectangle(bounds, radius, radius))
+                context.DeviceContext.DrawGeometry(geo, brush, strokeWidth)
+            End Using
+        Else
+            context.DeviceContext.DrawRectangle(D3D_PaintContext.ToRawRect(bounds), brush, strokeWidth)
+        End If
+    End Sub
+
+    Private Sub 填充椭圆_GPU(context As D3D_PaintContext, bounds As RectangleF, color As Color)
+        If color.A <= 0 OrElse bounds.Width <= 0 OrElse bounds.Height <= 0 Then Return
+        Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
+        context.DeviceContext.FillEllipse(New Ellipse(New Vector2(bounds.X + bounds.Width / 2.0F, bounds.Y + bounds.Height / 2.0F), bounds.Width / 2.0F, bounds.Height / 2.0F), brush)
+    End Sub
+
+    Private Sub 绘制椭圆边框_GPU(context As D3D_PaintContext, bounds As RectangleF, color As Color, strokeWidth As Single)
+        If color.A <= 0 OrElse strokeWidth <= 0 OrElse bounds.Width <= 0 OrElse bounds.Height <= 0 Then Return
+        Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
+        context.DeviceContext.DrawEllipse(New Ellipse(New Vector2(bounds.X + bounds.Width / 2.0F, bounds.Y + bounds.Height / 2.0F), bounds.Width / 2.0F, bounds.Height / 2.0F), brush, strokeWidth)
+    End Sub
+
+
+    Private Sub 绘制图形内容_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache)
         Dim s As Single = DpiScale()
         Dim 当前框边框宽度 As Single = 框边框宽度 * s
         Dim 框区域 As RectangleF = 计算框区域(s)
@@ -110,7 +268,7 @@ Public Class ModernCheckBox
             框区域.Height + 框边框宽度 * s)
     End Function
 
-    Private Sub 绘制禁用遮罩_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache)
+    Private Sub 绘制禁用遮罩_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache)
         If Enabled OrElse 禁用时遮罩颜色.A <= 0 Then Return
 
         Dim s As Single = DpiScale()
@@ -119,11 +277,11 @@ Public Class ModernCheckBox
         If 当前模式 = CheckModeEnum.CheckBox Then
             Dim 圆角 As Single = 框圆角半径 * s + 边框偏移
             If 圆角 > 0 Then
-                Using geo = RectangleRenderer.创建圆角矩形几何(遮罩区域, 圆角)
-                    RectangleRenderer.绘制圆角背景_D2D(rt, geo, 遮罩区域, 禁用时遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Vertical, brushCache)
+                Using geo = D3D_RectangleRenderer.创建圆角矩形几何(遮罩区域, 圆角)
+                    D3D_RectangleRenderer.绘制圆角背景_D2D(rt, geo, 遮罩区域, 禁用时遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Vertical, brushCache)
                 End Using
             Else
-                RectangleRenderer.绘制矩形背景_D2D(rt, 遮罩区域, 禁用时遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Vertical, brushCache)
+                D3D_RectangleRenderer.绘制矩形背景_D2D(rt, 遮罩区域, 禁用时遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Vertical, brushCache)
             End If
         Else
             Dim brush = brushCache.Get(rt, 禁用时遮罩颜色)
@@ -137,10 +295,10 @@ Public Class ModernCheckBox
         End If
     End Sub
 
-    Private Sub 绘制方框_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache, 框区域 As RectangleF, 背景色 As Color, 边框色 As Color, 边框宽 As Single, s As Single)
+    Private Sub 绘制方框_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache, 框区域 As RectangleF, 背景色 As Color, 边框色 As Color, 边框宽 As Single, s As Single)
         Dim 圆角 As Single = 框圆角半径 * s
         If 圆角 > 0 Then
-            Using geo = RectangleRenderer.创建圆角矩形几何(框区域, 圆角)
+            Using geo = D3D_RectangleRenderer.创建圆角矩形几何(框区域, 圆角)
                 If 背景色.A > 0 Then
                     Dim brush = brushCache.Get(rt, 背景色)
                     If brush IsNot Nothing Then rt.FillGeometry(geo, brush)
@@ -153,11 +311,11 @@ Public Class ModernCheckBox
         Else
             If 背景色.A > 0 Then
                 Dim brush = brushCache.Get(rt, 背景色)
-                If brush IsNot Nothing Then rt.FillRectangle(D2DGlobals.ToD2DRect(框区域), brush)
+                If brush IsNot Nothing Then rt.FillRectangle(D3D_D2DInterop.ToD2DRect(框区域), brush)
             End If
             If 边框宽 > 0 AndAlso 边框色.A > 0 Then
                 Dim brush = brushCache.Get(rt, 边框色)
-                If brush IsNot Nothing Then rt.DrawRectangle(D2DGlobals.ToD2DRect(框区域), brush, 边框宽)
+                If brush IsNot Nothing Then rt.DrawRectangle(D3D_D2DInterop.ToD2DRect(框区域), brush, 边框宽)
             End If
         End If
         ' 绘制勾号笔迹动画
@@ -167,7 +325,7 @@ Public Class ModernCheckBox
         End If
     End Sub
 
-    Private Sub 绘制勾号_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache, 框区域 As RectangleF, progress As Single, s As Single)
+    Private Sub 绘制勾号_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache, 框区域 As RectangleF, progress As Single, s As Single)
         Dim 当前勾号色 As Color = 获取鼠标状态颜色(勾号颜色值, 鼠标移上时勾号颜色, 鼠标按下时勾号颜色)
         Dim 内边距 As Single = 框内边距 * s + 框边框宽度 * s / 2.0F
         Dim x1 As Single = 框区域.X + 内边距
@@ -184,7 +342,7 @@ Public Class ModernCheckBox
         Dim 可见长度 As Single = 总长度 * progress
 
         ' 用进度截断的两段折线（动画效果同 GDI 版本）
-        Dim path As ID2D1PathGeometry = D2DGlobals.GetD2DFactory().CreatePathGeometry()
+        Dim path As ID2D1PathGeometry = D3D_D2DInterop.GetD2DFactory().CreatePathGeometry()
         Dim sink As ID2D1GeometrySink = path.Open()
         Try
             sink.BeginFigure(New Vector2(x1, y1), FigureBegin.Hollow)
@@ -209,13 +367,13 @@ Public Class ModernCheckBox
         Try
             Dim brush = brushCache.Get(rt, 当前勾号色)
             If brush Is Nothing Then Return
-            rt.DrawGeometry(path, brush, 笔宽, D2DGlobals.GetRoundStrokeStyle())
+            rt.DrawGeometry(path, brush, 笔宽, D3D_D2DInterop.GetRoundStrokeStyle())
         Finally
             path.Dispose()
         End Try
     End Sub
 
-    Private Sub 绘制圆框_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache, 框区域 As RectangleF, 背景色 As Color, 边框色 As Color, 边框宽 As Single, s As Single)
+    Private Sub 绘制圆框_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache, 框区域 As RectangleF, 背景色 As Color, 边框色 As Color, 边框宽 As Single, s As Single)
         Dim cx As Single = 框区域.X + 框区域.Width / 2.0F
         Dim cy As Single = 框区域.Y + 框区域.Height / 2.0F
         Dim rx As Single = 框区域.Width / 2.0F
@@ -244,60 +402,6 @@ Public Class ModernCheckBox
         End If
     End Sub
 
-    Private Sub 绘制文本_D2D(rt As ID2D1DCRenderTarget, compositor As WindowCompositor)
-        Dim s As Single = DpiScale()
-        Dim 框尺寸 As Single = 操作框尺寸 * s
-        Dim 间距 As Single = 框文本间距 * s
-        Dim 边框偏移 As Single = 框边框宽度 * s / 2.0F
-        Dim 文本X As Single = Me.Padding.Left + 边框偏移 + 框尺寸 + 间距
-        Dim 文本可用宽度 As Single = Me.Width - 文本X - Me.Padding.Right
-        If 文本可用宽度 <= 0 Then Return
-        Dim mainText As String = If(MyBase.Text, "")
-
-        Dim familyName As String = Me.Font.FontFamily.Name
-        ' 控件 Font 可能已被 WinForms AutoScale 修改，DirectWrite 字号统一交给 D2DGlobals 推断基准 DPI。
-        Dim mainSizePx As Single = D2DGlobals.GetDWriteFontSizePx(Me.Font, s)
-
-        Dim dw = D2DGlobals.GetDWriteFactory()
-        Dim textFormatCache = compositor.TextFormatCache
-        Dim brushCache = compositor.BrushCache
-        Dim 框区域 As RectangleF = 计算框区域(s)
-        Dim 框中心Y As Single = 框区域.Y + 框区域.Height / 2.0F
-
-        Dim mainWeight As Vortice.DirectWrite.FontWeight = If(Me.Font.Bold, Vortice.DirectWrite.FontWeight.Bold, Vortice.DirectWrite.FontWeight.Normal)
-        Dim mainStyle As Vortice.DirectWrite.FontStyle = If(Me.Font.Italic, Vortice.DirectWrite.FontStyle.Italic, Vortice.DirectWrite.FontStyle.Normal)
-        Dim mainFmt = textFormatCache.Get(familyName, mainWeight, mainStyle, mainSizePx,
-                                          Vortice.DirectWrite.TextAlignment.Leading,
-                                          Vortice.DirectWrite.ParagraphAlignment.Near,
-                                          True)
-
-        If Not String.IsNullOrEmpty(次要文本) Then
-            Dim subSizePx As Single = 次要文本字号 * (96.0F / 72.0F) * s
-            Dim subFmt = textFormatCache.Get(familyName, Vortice.DirectWrite.FontWeight.Normal,
-                                             Vortice.DirectWrite.FontStyle.Normal, subSizePx,
-                                             Vortice.DirectWrite.TextAlignment.Leading,
-                                             Vortice.DirectWrite.ParagraphAlignment.Near,
-                                             True)
-            Using mainLayout = dw.CreateTextLayout(mainText, mainFmt, 文本可用宽度, Me.Height)
-                Using subLayout = dw.CreateTextLayout(次要文本, subFmt, 文本可用宽度, Me.Height)
-                    Dim mainMetrics = mainLayout.Metrics
-                    Dim _主次间距 As Single = 主次文本间距 * s
-                    Dim 主文本Y As Single = 框中心Y - mainMetrics.Height / 2.0F
-                    Dim fb1 = brushCache.Get(rt, 文本颜色)
-                    If fb1 IsNot Nothing Then rt.DrawTextLayout(New Vector2(文本X, 主文本Y), mainLayout, fb1)
-                    Dim fb2 = brushCache.Get(rt, 次要文本颜色)
-                    If fb2 IsNot Nothing Then rt.DrawTextLayout(New Vector2(文本X, 主文本Y + mainMetrics.Height + _主次间距), subLayout, fb2)
-                End Using
-            End Using
-        Else
-            Using mainLayout = dw.CreateTextLayout(mainText, mainFmt, 文本可用宽度, Me.Height)
-                Dim mainMetrics = mainLayout.Metrics
-                Dim 主文本Y As Single = 框中心Y - mainMetrics.Height / 2.0F
-                Dim fb = brushCache.Get(rt, 文本颜色)
-                If fb IsNot Nothing Then rt.DrawTextLayout(New Vector2(文本X, 主文本Y), mainLayout, fb)
-            End Using
-        End If
-    End Sub
 #End Region
 
 #Region "颜色计算"
@@ -356,19 +460,19 @@ Public Class ModernCheckBox
         MyBase.OnMouseEnter(e)
         If Not Enabled Then Return
         鼠标状态 = MouseStateEnum.Hover
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
     Protected Overrides Sub OnMouseLeave(e As EventArgs)
         MyBase.OnMouseLeave(e)
         If Not Enabled Then Return
         鼠标状态 = MouseStateEnum.Normal
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
     Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
         MyBase.OnMouseDown(e)
         If Not Enabled Then Return
         鼠标状态 = MouseStateEnum.Pressed
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
     Protected Overrides Sub OnMouseUp(e As MouseEventArgs)
         MyBase.OnMouseUp(e)
@@ -384,7 +488,7 @@ Public Class ModernCheckBox
                 Checked = Not Checked
             End If
         End If
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
     Private Function 点击命中操作框(位置 As Point) As Boolean
         If 允许任意区域点击 Then Return True
@@ -400,13 +504,13 @@ Public Class ModernCheckBox
             鼠标状态 = MouseStateEnum.Normal
             动画助手.StopAnimation()
         End If
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
         重置文本行高缓存()
         更新自动尺寸()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 #End Region
 
@@ -428,19 +532,28 @@ Public Class ModernCheckBox
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
             更新自动尺寸()
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End If
     End Sub
 
-    Private ReadOnly 动画助手 As New AnimationHelperV2(Me)
+    Private ReadOnly 动画助手 As New V3_AnimationHelper(Me)
 
-    Private Sub 勾选动画脏区(helper As AnimationHelperV2, owner As Control, sink As AnimationHelperV2.InvalidateRegionSink)
+    Private Sub 勾选动画脏区(helper As V3_AnimationHelper, owner As Control, sink As V3_AnimationHelper.InvalidateRegionSink)
         sink.InvalidateAll()
     End Sub
 
     Private Function DpiScale() As Single
-        Return D2DGlobals.GetCurrentDpiScale(Me)
+        Return V3_DpiContext.FromControl(Me).Scale
     End Function
+
+    Private Sub 请求V3渲染(Optional immediate As Boolean = False)
+        请求V3渲染(New Rectangle(Point.Empty, Me.Size), immediate)
+    End Sub
+
+    Private Sub 请求V3渲染(dirtyRect As Rectangle, Optional immediate As Boolean = False)
+        If Me.IsDisposed Then Return
+        V3_InvalidationRouter.RequestRender(Me, dirtyRect)
+    End Sub
 
     Private _缓存主文本行高 As Integer = -1
     Private _缓存次文本行高 As Integer = -1
@@ -499,7 +612,7 @@ Public Class ModernCheckBox
 
     Private _backgroundSource As Control = Nothing
     <Category("LakeUI"),
-     Description("背景采样源（超容器背景映射）。设置后将跨越任意层级直接采样此控件的绘制内容作为透明背景；为空时自动选择首个不透明祖先。"),
+     Description("背景采样源。设置后记录关联源控件；V3 渲染由窗口合成器统一调度。"),
      DefaultValue(GetType(Control), Nothing), Browsable(True)>
     Public Property BackgroundSource As Control
         Get
@@ -507,8 +620,8 @@ Public Class ModernCheckBox
         End Get
         Set(value As Control)
             If _backgroundSource IsNot value Then
-                _backgroundSource = BackgroundPenetrationV2.SetConsumerSource(Me, _backgroundSource, value)
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                _backgroundSource = D3D_BackgroundPenetration.SetBackgroundSource(Me, _backgroundSource, value)
+                请求V3渲染()
             End If
         End Set
     End Property
@@ -684,7 +797,7 @@ Public Class ModernCheckBox
             If MyBase.Text <> value Then
                 MyBase.Text = value
                 更新自动尺寸()
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                请求V3渲染()
             End If
         End Set
     End Property
@@ -872,7 +985,7 @@ Public Class ModernCheckBox
                         Me.Size = 自动尺寸前的大小
                     End If
                 End If
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                请求V3渲染()
             End If
         End Set
     End Property
@@ -923,13 +1036,13 @@ Public Class ModernCheckBox
         MyBase.OnFontChanged(e)
         重置文本行高缓存()
         更新自动尺寸()
-        D2DHelperV2.RefreshFontDependentRendering(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnPaddingChanged(e As EventArgs)
         MyBase.OnPaddingChanged(e)
         更新自动尺寸()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Private 正在更新尺寸 As Boolean = False

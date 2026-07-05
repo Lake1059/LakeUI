@@ -282,19 +282,14 @@ Friend Module ExOverlayMsgBoxTextMetrics
 
     Friend Function MeasureDialogText(owner As Control, text As String, font As Font, proposedSize As Size, dpiScale As Single) As Size
         Dim safeSize As New Size(Math.Max(1, proposedSize.Width), Math.Max(1, proposedSize.Height))
-        Return D2DTextRenderer.MeasureText(If(text, ""), font, safeSize, 对话框文本标志, dpiScale, GetTextFormatCache(owner))
+        Return TextRenderer.MeasureText(If(text, ""), font, safeSize, 对话框文本标志)
     End Function
 
     Friend Function MeasureButtonWidth(owner As Control, text As String, font As Font, minimumWidth As Integer, dpiScale As Single) As Integer
         Dim displayText = GetModernButtonDisplayText(If(text, ""))
-        Dim textSize = D2DTextRenderer.MeasureText(displayText, font, New Size(Integer.MaxValue, Integer.MaxValue),
-                                                   按钮文本标志, dpiScale, GetTextFormatCache(owner))
+        Dim textSize = TextRenderer.MeasureText(displayText, font, New Size(Integer.MaxValue, Integer.MaxValue), 按钮文本标志)
         Dim measuredWidth = CInt(Math.Ceiling(textSize.Width + 按钮水平留白 * dpiScale))
         Return Math.Max(minimumWidth, measuredWidth)
-    End Function
-
-    Private Function GetTextFormatCache(owner As Control) As D2DGlobals.TextFormatCache
-        Return D2DHelperV2.GetCompositor(owner)?.TextFormatCache
     End Function
 
     Private Function GetModernButtonDisplayText(text As String) As String
@@ -330,6 +325,7 @@ End Module
 ''' </summary>
 Friend Class ExOverlayBackdropForm
     Inherits Form
+    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource
 
     <DllImport("dwmapi.dll")>
     Private Shared Function DwmSetWindowAttribute(hwnd As IntPtr, attr As Integer, ByRef attrValue As Integer, attrSize As Integer) As Integer
@@ -358,7 +354,7 @@ Friend Class ExOverlayBackdropForm
     Private Const WDA_NONE As Integer = &H0
     Private Const WDA_EXCLUDEFROMCAPTURE As Integer = &H11
 
-    Private 淡入计时器 As Timer
+    Private 淡入计时器 As PrecisionTimer
     Private ReadOnly 目标不透明度 As Double
     Private ReadOnly 跟踪目标 As Control
 
@@ -415,9 +411,35 @@ Friend Class ExOverlayBackdropForm
 
     Protected Overrides Sub OnShown(e As EventArgs)
         MyBase.OnShown(e)
-        淡入计时器 = New Timer() With {.Interval = 10}
-        AddHandler 淡入计时器.Tick, AddressOf 淡入动画帧
+        RequestV3Render()
+        淡入计时器 = 创建淡入计时器()
         淡入计时器.Start()
+    End Sub
+
+    Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
+        ' V3-only: overlay pixels are emitted by RenderGpu.
+    End Sub
+
+    Protected Overrides Sub OnPaint(e As PaintEventArgs)
+        If Not D3D_PaintBridge.PaintRenderable(e, Me, Me, 1) Then MyBase.OnPaint(e)
+    End Sub
+
+    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+        If context Is Nothing OrElse ClientSize.Width <= 0 OrElse ClientSize.Height <= 0 Then Return
+        context.FillRectangle(New RectangleF(0, 0, ClientSize.Width, ClientSize.Height), Color.FromArgb(255, Me.BackColor))
+    End Sub
+
+    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+        Return New Rectangle(Point.Empty, Me.Size)
+    End Function
+
+    Private Sub RequestV3Render()
+        RequestV3Render(New Rectangle(Point.Empty, Me.Size))
+    End Sub
+
+    Private Sub RequestV3Render(dirtyRect As Rectangle)
+        If IsDisposed Then Return
+        V3_InvalidationRouter.RequestRender(Me, dirtyRect)
     End Sub
 
     Private Sub 淡入动画帧(sender As Object, e As EventArgs)
@@ -429,6 +451,23 @@ Friend Class ExOverlayBackdropForm
             淡入计时器 = Nothing
         End If
     End Sub
+
+    Private Shared Function FrameIntervalMilliseconds(fps As Integer) As Integer
+        fps = Math.Max(1, fps)
+        Return Math.Max(1, CInt(Math.Ceiling(1000.0R / fps)))
+    End Function
+
+    Private Function 创建淡入计时器() As PrecisionTimer
+        Dim timer As New PrecisionTimer() With {
+            .Interval = FrameIntervalMilliseconds(60),
+            .DispatchMode = PrecisionTimer.DispatchModeEnum.NonBlocking,
+            .OverrunPolicy = PrecisionTimer.OverrunPolicyEnum.Drop,
+            .WorkerThreadCount = 1,
+            .SynchronizingObject = Me
+        }
+        AddHandler timer.Tick, AddressOf 淡入动画帧
+        Return timer
+    End Function
 
     Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
         MyBase.OnMouseDown(e)
@@ -486,6 +525,7 @@ End Class
 
 Friend Class ExOverlayMsgBoxHostForm
     Inherits Form
+    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource
 
 #Region "Win32"
 
@@ -572,7 +612,7 @@ Friend Class ExOverlayMsgBoxHostForm
     Private 拥有者 As IWin32Window
     Private 拥有者控件 As Control
     Private 毛玻璃 As MessageDialogBackdropController
-    Private 淡入计时器 As Timer
+    Private 淡入计时器 As PrecisionTimer
     Private 目标不透明度 As Double
     Private 返回值字段 As MsgBoxResult = MsgBoxResult.Cancel
     Private 自定义返回索引 As Integer = -1
@@ -666,7 +706,7 @@ Friend Class ExOverlayMsgBoxHostForm
         目标不透明度 = Math.Max(0, Math.Min(255, 主题.OverlayOpacity)) / 255.0
         Opacity = 0
 
-        SC = D2DGlobals.GetCurrentDpiScale(Me)
+        SC = V3_DpiContext.FromControl(Me).Scale
         缩放常量()
         Dim fontName = MessageDialogRendering.ResolveDialogFontName(owner, Me)
         标题字体 = New Font(fontName, 13.0F, FontStyle.Bold)
@@ -860,46 +900,54 @@ Friend Class ExOverlayMsgBoxHostForm
     Protected Overrides Sub OnShown(e As EventArgs)
         MyBase.OnShown(e)
         准备卡片毛玻璃()
-        淡入计时器 = New Timer() With {.Interval = 10}
-        AddHandler 淡入计时器.Tick, AddressOf 淡入动画帧
+        淡入计时器 = 创建淡入计时器()
         淡入计时器.Start()
     End Sub
 
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
+        ' V3-only: overlay/card pixels are emitted by RenderGpu.
     End Sub
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
-        Using overlayBrush As New SolidBrush(Color.FromArgb(255, 主题.OverlayBackColor))
-            e.Graphics.FillRectangle(overlayBrush, ClientRectangle)
-        End Using
-        毛玻璃.Draw(e.Graphics, 卡片区域)
-
-        Using scope = D2DHelperV2.BeginPaint(e, Me, 1)
-            If scope Is Nothing Then Return
-            Dim rt = scope.GraphicsLayer
-            Dim compositor = scope.Compositor
-            Dim brushCache = compositor.BrushCache
-            Dim cardRect As RectangleF = 卡片区域
-
-            If Not 毛玻璃.HasFrame Then
-                RectangleRenderer.绘制矩形背景_D2D(rt, cardRect, 主题.CardBackColor, Color.Empty, Orientation.Vertical, brushCache)
-            End If
-            If Not 毛玻璃.HasFrame Then
-                RectangleRenderer.绘制矩形背景_D2D(rt, 按钮区域, 主题.ButtonAreaBackColor, Color.Empty, Orientation.Vertical, brushCache)
-            End If
-            MessageDialogRendering.DrawText(rt, compositor, 标题文本, 标题字体, 标题区域, 主题.TitleForeColor,
-                TextFormatFlags.WordBreak Or TextFormatFlags.Left Or TextFormatFlags.Top Or TextFormatFlags.NoPadding, SC)
-            MessageDialogRendering.DrawText(rt, compositor, 消息文本, 消息字体, 消息区域, 主题.MessageForeColor,
-                TextFormatFlags.WordBreak Or TextFormatFlags.Left Or TextFormatFlags.Top Or TextFormatFlags.NoPadding, SC)
-            MessageDialogRendering.DrawImage(rt, compositor, 消息图标位图, 图标区域)
-            RectangleRenderer.绘制矩形边框_D2D(rt, cardRect, 主题.CardBorderColor, 1.0F, brushCache)
-        End Using
+        If Not D3D_PaintBridge.PaintRenderable(e, Me, Me, 1) Then MyBase.OnPaint(e)
     End Sub
 
     Private Sub 准备卡片毛玻璃()
-        If Not 毛玻璃.Enabled Then Return
-        Dim screenRect = RectangleToScreen(卡片区域)
-        毛玻璃.Prepare(screenRect)
+        If IsDisposed Then Return
+        RequestV3Render(卡片区域)
+    End Sub
+
+    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+        If context Is Nothing OrElse ClientSize.Width <= 0 OrElse ClientSize.Height <= 0 Then Return
+
+        context.FillRectangle(New RectangleF(0, 0, ClientSize.Width, ClientSize.Height), Color.FromArgb(255, 主题.OverlayBackColor))
+
+        Dim cardRect As RectangleF = 卡片区域
+        Dim glass = MessageDialogRendering.DrawBackdrop(context, cardRect)
+        If Not glass Then
+            MessageDialogRendering.FillRectangle(context, cardRect, 主题.CardBackColor)
+            MessageDialogRendering.FillRectangle(context, 按钮区域, 主题.ButtonAreaBackColor)
+        End If
+
+        MessageDialogRendering.DrawText(context, 标题文本, 标题字体, 标题区域, 主题.TitleForeColor,
+            TextFormatFlags.WordBreak Or TextFormatFlags.Left Or TextFormatFlags.Top Or TextFormatFlags.NoPadding, SC)
+        MessageDialogRendering.DrawText(context, 消息文本, 消息字体, 消息区域, 主题.MessageForeColor,
+            TextFormatFlags.WordBreak Or TextFormatFlags.Left Or TextFormatFlags.Top Or TextFormatFlags.NoPadding, SC)
+        MessageDialogRendering.DrawImage(context, 消息图标位图, 图标区域)
+        MessageDialogRendering.DrawRectangle(context, cardRect, 主题.CardBorderColor, 1.0F)
+    End Sub
+
+    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+        Return New Rectangle(Point.Empty, Me.Size)
+    End Function
+
+    Private Sub RequestV3Render()
+        RequestV3Render(New Rectangle(Point.Empty, Me.Size))
+    End Sub
+
+    Private Sub RequestV3Render(dirtyRect As Rectangle)
+        If IsDisposed Then Return
+        V3_InvalidationRouter.RequestRender(Me, dirtyRect)
     End Sub
 
     Private Sub 淡入动画帧(sender As Object, e As EventArgs)
@@ -911,6 +959,23 @@ Friend Class ExOverlayMsgBoxHostForm
             淡入计时器 = Nothing
         End If
     End Sub
+
+    Private Shared Function FrameIntervalMilliseconds(fps As Integer) As Integer
+        fps = Math.Max(1, fps)
+        Return Math.Max(1, CInt(Math.Ceiling(1000.0R / fps)))
+    End Function
+
+    Private Function 创建淡入计时器() As PrecisionTimer
+        Dim timer As New PrecisionTimer() With {
+            .Interval = FrameIntervalMilliseconds(60),
+            .DispatchMode = PrecisionTimer.DispatchModeEnum.NonBlocking,
+            .OverrunPolicy = PrecisionTimer.OverrunPolicyEnum.Drop,
+            .WorkerThreadCount = 1,
+            .SynchronizingObject = Me
+        }
+        AddHandler timer.Tick, AddressOf 淡入动画帧
+        Return timer
+    End Function
 
 #End Region
 
@@ -931,7 +996,7 @@ Friend Class ExOverlayMsgBoxHostForm
         更新遮罩范围()
         计算布局()
         准备卡片毛玻璃()
-        Invalidate()
+        RequestV3Render()
         Activate()
     End Sub
 
@@ -971,7 +1036,7 @@ Friend Class ExOverlayMsgBoxHostForm
         更新遮罩范围()
         计算布局()
         准备卡片毛玻璃()
-        Invalidate()
+        RequestV3Render()
     End Sub
 
 #End Region
@@ -1040,6 +1105,7 @@ End Class
 ''' </summary>
 Friend Class ExOverlayMsgBoxForm
     Inherits Form
+    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource
 
 #Region "Win32"
 
@@ -1259,7 +1325,7 @@ Friend Class ExOverlayMsgBoxForm
             居中区域 = Screen.PrimaryScreen.WorkingArea
         End If
 
-        SC = D2DGlobals.GetCurrentDpiScale(Me)
+        SC = V3_DpiContext.FromControl(Me).Scale
         缩放常量()
 
         Dim fontName = MessageDialogRendering.ResolveDialogFontName(ownerCtrl, Me)
@@ -1533,49 +1599,48 @@ Friend Class ExOverlayMsgBoxForm
 #Region "绘制"
 
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
-        If Not 毛玻璃.Enabled Then MyBase.OnPaintBackground(e)
+        ' V3-only: card pixels are emitted by RenderGpu.
     End Sub
 
     Public Sub 准备毛玻璃()
-        If Not 毛玻璃.Enabled Then Return
-        Dim prepareAction As Action =
-            Sub()
-                毛玻璃.Prepare()
-                毛玻璃.WaitForFrame()
-            End Sub
-        If 遮罩窗体 IsNot Nothing AndAlso Not 遮罩窗体.IsDisposed AndAlso 遮罩窗体.IsHandleCreated Then
-            遮罩窗体.执行排除捕获(prepareAction)
-        Else
-            prepareAction()
-        End If
+        RequestV3Render()
     End Sub
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
-        毛玻璃.Draw(e.Graphics)
+        If Not D3D_PaintBridge.PaintRenderable(e, Me, Me, 1) Then MyBase.OnPaint(e)
+    End Sub
 
-        Using scope = D2DHelperV2.BeginPaint(e, Me, 1)
-            If scope Is Nothing Then Return
-            Dim rt = scope.GraphicsLayer
-            Dim compositor = scope.Compositor
-            Dim brushCache = compositor.BrushCache
-            Dim glass = 毛玻璃.HasFrame
-            Dim cardRect As New RectangleF(0, 0, ClientSize.Width, ClientSize.Height)
+    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+        If context Is Nothing OrElse ClientSize.Width <= 0 OrElse ClientSize.Height <= 0 Then Return
 
-            If Not glass Then
-                RectangleRenderer.绘制矩形背景_D2D(rt, cardRect, 主题.CardBackColor, Color.Empty, Orientation.Vertical, brushCache)
-            End If
-            If Not glass Then
-                RectangleRenderer.绘制矩形背景_D2D(rt, 按钮区域, 主题.ButtonAreaBackColor, Color.Empty, Orientation.Vertical, brushCache)
-            End If
-            MessageDialogRendering.DrawText(rt, compositor, 标题标签.Text, 标题字体, 标题区域, 主题.TitleForeColor,
-                TextFormatFlags.WordBreak Or TextFormatFlags.Left Or TextFormatFlags.Top Or TextFormatFlags.NoPadding, SC)
-            MessageDialogRendering.DrawText(rt, compositor, 消息标签.Text, 消息字体, 消息区域, 主题.MessageForeColor,
-                TextFormatFlags.WordBreak Or TextFormatFlags.Left Or TextFormatFlags.Top Or TextFormatFlags.NoPadding, SC)
-            MessageDialogRendering.DrawImage(rt, compositor, 消息图标位图, 图标区域)
-            RectangleRenderer.绘制矩形边框_D2D(rt,
-                New RectangleF(0.5F, 0.5F, Math.Max(0, ClientSize.Width - 1), Math.Max(0, ClientSize.Height - 1)),
-                主题.CardBorderColor, 1.0F, brushCache)
-        End Using
+        Dim cardRect As New RectangleF(0, 0, ClientSize.Width, ClientSize.Height)
+        Dim glass = MessageDialogRendering.DrawBackdrop(context, cardRect)
+        If Not glass Then
+            MessageDialogRendering.FillRectangle(context, cardRect, 主题.CardBackColor)
+            MessageDialogRendering.FillRectangle(context, 按钮区域, 主题.ButtonAreaBackColor)
+        End If
+
+        MessageDialogRendering.DrawText(context, 标题标签.Text, 标题字体, 标题区域, 主题.TitleForeColor,
+            TextFormatFlags.WordBreak Or TextFormatFlags.Left Or TextFormatFlags.Top Or TextFormatFlags.NoPadding, SC)
+        MessageDialogRendering.DrawText(context, 消息标签.Text, 消息字体, 消息区域, 主题.MessageForeColor,
+            TextFormatFlags.WordBreak Or TextFormatFlags.Left Or TextFormatFlags.Top Or TextFormatFlags.NoPadding, SC)
+        MessageDialogRendering.DrawImage(context, 消息图标位图, 图标区域)
+        MessageDialogRendering.DrawRectangle(context,
+            New RectangleF(0.5F, 0.5F, Math.Max(0, ClientSize.Width - 1), Math.Max(0, ClientSize.Height - 1)),
+            主题.CardBorderColor, 1.0F)
+    End Sub
+
+    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+        Return New Rectangle(Point.Empty, Me.Size)
+    End Function
+
+    Private Sub RequestV3Render()
+        RequestV3Render(New Rectangle(Point.Empty, Me.Size))
+    End Sub
+
+    Private Sub RequestV3Render(dirtyRect As Rectangle)
+        If IsDisposed Then Return
+        V3_InvalidationRouter.RequestRender(Me, dirtyRect)
     End Sub
 
 #End Region
@@ -1599,7 +1664,7 @@ Friend Class ExOverlayMsgBoxForm
         ' SendMessage 在拖拽结束后才返回
         EnableWindow(hWnd, False)
         准备毛玻璃()
-        Invalidate()
+        RequestV3Render()
         Me.Activate()
     End Sub
 
@@ -1685,7 +1750,7 @@ Friend Class ExOverlayMsgBoxForm
             居中区域.Left + (居中区域.Width - Me.Width) \ 2,
             居中区域.Top + (居中区域.Height - Me.Height) \ 2)
         准备毛玻璃()
-        Invalidate()
+        RequestV3Render()
     End Sub
 
     Protected Overrides Sub Dispose(disposing As Boolean)

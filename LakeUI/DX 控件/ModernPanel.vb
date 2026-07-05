@@ -1,6 +1,7 @@
 Imports System.ComponentModel
 Imports System.Diagnostics
 Imports System.Drawing.Imaging
+Imports System.Numerics
 Imports Vortice.Direct2D1
 
 ''' <summary>
@@ -10,6 +11,7 @@ Imports Vortice.Direct2D1
 <Docking(DockingBehavior.Ask)>
 <DefaultEvent("Scroll")>
 Public Class ModernPanel
+    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource
 
     ''' <summary>
     ''' 滚动策略枚举。
@@ -81,12 +83,25 @@ Public Class ModernPanel
             _contentSizeDirty = True
             更新滚动区域()
             Me.PerformLayout()
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End If
     End Sub
 
+    Private Sub 请求V3渲染(Optional immediate As Boolean = False)
+        请求V3渲染(New Rectangle(Point.Empty, Me.Size), immediate)
+    End Sub
+
+    Private Sub 请求V3渲染(dirtyRect As Rectangle, Optional immediate As Boolean = False)
+        If Me.IsDisposed Then Return
+        V3_InvalidationRouter.RequestRender(Me, dirtyRect)
+    End Sub
+
+    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+        Return New Rectangle(Point.Empty, Me.Size)
+    End Function
+
     Private Function DpiScale() As Single
-        Return D2DGlobals.GetCurrentDpiScale(Me)
+        Return V3_DpiContext.FromControl(Me).Scale
     End Function
 
     Private Function 获取边框内边距() As Integer
@@ -112,7 +127,7 @@ Public Class ModernPanel
     Public Overrides ReadOnly Property DisplayRectangle As Rectangle
         Get
             Dim ep As Padding = 获取有效内边距()
-            Dim sbReserve As Integer = CInt(Math.Round(滚动条宽度 * DpiScale())) + ScrollBarRenderer.Margin
+            Dim sbReserve As Integer = CInt(Math.Round(滚动条宽度 * DpiScale())) + V3_ScrollBarRenderer.Margin
             Return New Rectangle(
                 ep.Left,
                 ep.Top,
@@ -149,7 +164,7 @@ Public Class ModernPanel
     ''' <summary>获取扣除滚动条保留区域后的有效视口大小。</summary>
     Private Function 获取有效视口大小() As Size
         Dim ep As Padding = 获取有效内边距()
-        Dim sbReserve As Integer = CInt(Math.Round(滚动条宽度 * DpiScale())) + ScrollBarRenderer.Margin
+        Dim sbReserve As Integer = CInt(Math.Round(滚动条宽度 * DpiScale())) + V3_ScrollBarRenderer.Margin
         Dim w As Integer = Me.Width - ep.Horizontal - If(_showVScroll, sbReserve, 0)
         Dim h As Integer = Me.Height - ep.Vertical - If(_showHScroll, sbReserve, 0)
         Return New Size(Math.Max(0, w), Math.Max(0, h))
@@ -243,13 +258,11 @@ Public Class ModernPanel
         End Get
         Set(value As Image)
             If _image Is value Then Return
-            Dim oldImage = _image
             停止图片动画()
             _image = value
             清除图片缓存()
-            D2DHelperV2.ReleaseImageD2DCache(oldImage, Me)
             启动图片动画()
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -476,7 +489,7 @@ Public Class ModernPanel
         Catch
             停止图片动画计时器(True)
         End Try
-        OuterToInnerRefreshScheduler.Request(Me, 获取背景图片刷新区域())
+        请求V3渲染(获取背景图片刷新区域())
     End Sub
 
     Private Sub 停止图片动画计时器(disposeTimer As Boolean)
@@ -531,7 +544,7 @@ Public Class ModernPanel
 
         If frameChanged Then
             失效背景图片上传缓存()
-            OuterToInnerRefreshScheduler.Request(Me, 获取背景图片刷新区域())
+            请求V3渲染(获取背景图片刷新区域())
         End If
     End Sub
 
@@ -663,15 +676,6 @@ Public Class ModernPanel
         _animationFrameD2DRenderTarget = Nothing
     End Sub
 
-    Private Function 获取背景图片位图_D2D(rt As ID2D1RenderTarget, compositor As WindowCompositor,
-                                       ByRef shouldDispose As Boolean) As ID2D1Bitmap
-        shouldDispose = False
-        If _image Is Nothing OrElse rt Is Nothing Then Return Nothing
-
-        If compositor Is Nothing Then Return Nothing
-        Dim cache = compositor.GetBitmapCache(_image)
-        Return If(cache Is Nothing, Nothing, cache.GetBitmap(rt, _image))
-    End Function
 
     Private Function 获取动画帧位图_D2D(rt As ID2D1RenderTarget, sourceRect As Rectangle, frameSize As Size) As ID2D1Bitmap
         If _image Is Nothing OrElse rt Is Nothing Then Return Nothing
@@ -695,7 +699,7 @@ Public Class ModernPanel
         End If
         _animationFrameD2DRenderTarget = Nothing
 
-        _animationFrameD2DBitmap = D2DGlobals.CreateBitmapFromGdi(rt, frameImage)
+        _animationFrameD2DBitmap = D3D_D2DInterop.CreateBitmapFromGdi(rt, frameImage)
         If _animationFrameD2DBitmap Is Nothing Then Return Nothing
         _animationFrameD2DRenderTarget = rt
         Return _animationFrameD2DBitmap
@@ -820,7 +824,7 @@ Public Class ModernPanel
         Dim uploadedBitmap As ID2D1Bitmap = Nothing
         Try
             scaledBitmap = 创建高质量缩放位图(img, sourceRect, scaledSize)
-            uploadedBitmap = D2DGlobals.CreateBitmapFromGdi(rt, scaledBitmap)
+            uploadedBitmap = D3D_D2DInterop.CreateBitmapFromGdi(rt, scaledBitmap)
             If uploadedBitmap Is Nothing Then Return Nothing
 
             _scaledImageBitmap = uploadedBitmap
@@ -896,7 +900,7 @@ Public Class ModernPanel
             If _imageFillMode <> value Then
                 _imageFillMode = value
                 清除图片缓存()
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                请求V3渲染()
             End If
         End Set
     End Property
@@ -957,16 +961,15 @@ Public Class ModernPanel
         End Get
         Set(value As Control)
             If _backgroundSource IsNot value Then
-                解除背景穿透消费者()
-                _backgroundSource = BackgroundPenetrationV2.SetConsumerSource(Me, _backgroundSource, value)
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                _backgroundSource = D3D_BackgroundPenetration.SetBackgroundSource(Me, _backgroundSource, value)
+                D3D_BackgroundPenetration.InvalidateForwarderTopology(Me)
+                请求V3渲染()
             End If
         End Set
     End Property
 
     Private Sub 解除背景穿透消费者()
-        If _backgroundSource Is Nothing Then Return
-        Try : BackgroundPenetrationV2.UnregisterConsumer(Me, _backgroundSource) : Catch : End Try
+        Try : D3D_RenderCore.UnregisterBackgroundConsumer(Me, recursive:=True) : Catch : End Try
     End Sub
 
     Friend Function TryGetTransparentBackgroundForward(ByRef source As Control) As Boolean
@@ -1120,7 +1123,7 @@ Public Class ModernPanel
                 _childLayouts.Clear()
                 _contentSizeDirty = True
                 Me.PerformLayout()
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                请求V3渲染()
             End If
         End Set
     End Property
@@ -1136,7 +1139,7 @@ Public Class ModernPanel
                 _flowDirection = value
                 _contentSizeDirty = True
                 Me.PerformLayout()
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                请求V3渲染()
             End If
         End Set
     End Property
@@ -1152,7 +1155,7 @@ Public Class ModernPanel
                 _wrapContents = value
                 _contentSizeDirty = True
                 Me.PerformLayout()
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                请求V3渲染()
             End If
         End Set
     End Property
@@ -1162,10 +1165,10 @@ Public Class ModernPanel
 #Region "内部状态"
 
     Private _vScrollOffset As Integer = 0
-    Private ReadOnly _vScrollBar As New ScrollBarRenderer()
+    Private ReadOnly _vScrollBar As New V3_ScrollBarRenderer()
 
     Private _hScrollOffset As Integer = 0
-    Private ReadOnly _hScrollBar As New ScrollBarRenderer()
+    Private ReadOnly _hScrollBar As New V3_ScrollBarRenderer()
 
     Private _contentSize As Size = Size.Empty
     Private _contentSizeDirty As Boolean = True
@@ -1180,9 +1183,9 @@ Public Class ModernPanel
     Private _lastDeviceDpi As Integer = 96
     Private _inDpiChange As Boolean = False
 
-    ' V2：D2D 资源全部移到 WindowCompositor（Form 级共享），控件本身不再持有任何 D2D 字段。
+    ' V3：窗口级 D3D compositor 统一持有图形资源，控件本身不持有长期 D2D 字段。
 
-    ''' <summary>清理控件级动图帧上传缓存；静态背景图缓存仍由 WindowCompositor 共享管理。</summary>
+    ''' <summary>清理控件级动图帧上传缓存；静态背景图缓存由窗口级 D3D compositor 共享管理。</summary>
     Private Sub 清除图片缓存()
         清除动画帧图片缓存()
         清除缩放图片缓存()
@@ -1221,7 +1224,7 @@ Public Class ModernPanel
             Dim scaledScrollBarWidth As Integer = CInt(Math.Round(滚动条宽度 * s))
             Dim inset As Integer = 获取边框内边距()
             Dim ep As Padding = 获取有效内边距()
-            Dim sbReserve As Integer = scaledScrollBarWidth + ScrollBarRenderer.Margin
+            Dim sbReserve As Integer = scaledScrollBarWidth + V3_ScrollBarRenderer.Margin
             Dim viewW As Integer = Math.Max(0, Me.Width - ep.Horizontal - If(_showVScroll, sbReserve, 0))
             Dim viewH As Integer = Math.Max(0, Me.Height - ep.Vertical - If(_showHScroll, sbReserve, 0))
 
@@ -1261,7 +1264,7 @@ Public Class ModernPanel
 
         Dim inset As Integer = 获取边框内边距()
         Dim ep As Padding = 获取有效内边距()
-        Dim sbReserve As Integer = scaledScrollBarWidth + ScrollBarRenderer.Margin
+        Dim sbReserve As Integer = scaledScrollBarWidth + V3_ScrollBarRenderer.Margin
 
         ' 不含滚动条的完整视口
         Dim fullW As Integer = Me.Width - ep.Horizontal
@@ -1359,8 +1362,260 @@ Public Class ModernPanel
 
 #Region "绘制"
 
+    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+        If context Is Nothing OrElse Me.Width < 1 OrElse Me.Height < 1 Then Return
+
+        更新滚动区域()
+        绘制背景与边框_GPU(context)
+        绘制垂直滚动条_GPU(context)
+        绘制水平滚动条_GPU(context)
+    End Sub
+
+    Private Sub 绘制背景与边框_GPU(context As D3D_PaintContext)
+        Dim scale As Single = Math.Max(0.01F, context.DpiScale)
+        Dim boundsRect As New RectangleF(0, 0, Me.Width, Me.Height)
+        If 边框宽度 > 0 Then
+            Dim half As Single = 边框宽度 * scale / 2.0F
+            boundsRect.Inflate(-half, -half)
+        End If
+        If boundsRect.Width <= 0 OrElse boundsRect.Height <= 0 Then Return
+
+        Dim scaledRadius As Single = 边框圆角半径 * scale
+        Dim hasRoundedCorners As Boolean = 边框圆角半径 > 0 AndAlso Not 圆角位置.IsNone
+        Dim backColorMask As Color = MyBase.BackColor
+
+        Dim geo As ID2D1Geometry = Nothing
+        If hasRoundedCorners Then
+            geo = 获取圆角几何_GPU(context, boundsRect, scaledRadius, 圆角位置)
+        End If
+
+        绘制背景源_GPU(context, boundsRect)
+
+        If backColorMask.A > 0 AndAlso backColorMask.A < 255 Then
+            填充形状_GPU(context, boundsRect, geo, backColorMask)
+        End If
+        If 背景颜色.A > 0 Then
+            填充形状_GPU(context, boundsRect, geo, 背景颜色)
+        End If
+
+        绘制背景图片_GPU(context, boundsRect, geo)
+
+        If 遮罩颜色.A > 0 Then
+            填充形状_GPU(context, boundsRect, geo, 遮罩颜色)
+        End If
+        If 边框颜色.A > 0 AndAlso 边框宽度 > 0 Then
+            描边形状_GPU(context, boundsRect, geo, 边框颜色, 边框宽度 * scale)
+        End If
+    End Sub
+
+    Private Sub 绘制背景源_GPU(context As D3D_PaintContext, area As RectangleF)
+        If _backgroundSource Is Nothing Then Return
+        If context Is Nothing OrElse area.Width <= 0 OrElse area.Height <= 0 Then Return
+        context.DrawBackgroundSource(Me, _backgroundSource, area)
+    End Sub
+
+    Private Sub 填充形状_GPU(context As D3D_PaintContext, rect As RectangleF, geo As ID2D1Geometry, color As Color)
+        If color.A = 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
+        If geo IsNot Nothing Then
+            context.DeviceContext.FillGeometry(geo, brush)
+        Else
+            context.DeviceContext.FillRectangle(D3D_PaintContext.ToRawRect(rect), brush)
+        End If
+    End Sub
+
+    Private Sub 描边形状_GPU(context As D3D_PaintContext, rect As RectangleF, geo As ID2D1Geometry, color As Color, strokeWidth As Single)
+        If color.A = 0 OrElse strokeWidth <= 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
+        If geo IsNot Nothing Then
+            context.DeviceContext.DrawGeometry(geo, brush, strokeWidth)
+        Else
+            context.DeviceContext.DrawRectangle(D3D_PaintContext.ToRawRect(rect), brush, strokeWidth)
+        End If
+    End Sub
+
+    Private Sub 绘制背景图片_GPU(context As D3D_PaintContext, area As RectangleF, clipGeo As ID2D1Geometry)
+        If _image Is Nothing Then Return
+        Dim srcW As Integer = _image.Width
+        Dim srcH As Integer = _image.Height
+        If srcW <= 0 OrElse srcH <= 0 OrElse area.Width <= 0 OrElse area.Height <= 0 Then Return
+
+        Dim destRect As RectangleF = 计算背景图片目标矩形(area, srcW, srcH, _imageFillMode)
+        If destRect.Width <= 0 OrElse destRect.Height <= 0 Then Return
+
+        Dim visibleDest As RectangleF = RectangleF.Intersect(destRect, area)
+        If visibleDest.Width <= 0 OrElse visibleDest.Height <= 0 Then Return
+
+        Dim ratio As Single = destRect.Width / srcW
+        Dim sourceRect As Rectangle = 计算可见源矩形(destRect, visibleDest, ratio, srcW, srcH)
+        If sourceRect.IsEmpty Then Return
+
+        Dim imageToDraw As Image = _image
+        Dim frameIndex As Integer = 0
+        If _animatedImage IsNot Nothing AndAlso _animationFrameDimension IsNot Nothing AndAlso _animationFrameCount > 1 Then
+            SyncLock _animatedImage
+                Try
+                    _animatedImage.SelectActiveFrame(_animationFrameDimension, _animationFrameIndex)
+                    imageToDraw = _animatedImage
+                    frameIndex = _animationFrameIndex
+                Catch
+                    imageToDraw = _image
+                    frameIndex = 0
+                End Try
+            End SyncLock
+        End If
+
+        If clipGeo IsNot Nothing Then
+            PushGeometryClip_GPU(context, clipGeo, area)
+            Try
+                context.DrawImage(imageToDraw, destRect, New RectangleF(sourceRect.X, sourceRect.Y, sourceRect.Width, sourceRect.Height), 1.0F, frameIndex)
+            Finally
+                context.DeviceContext.PopLayer()
+            End Try
+        Else
+            Using context.PushClip(area)
+                context.DrawImage(imageToDraw, destRect, New RectangleF(sourceRect.X, sourceRect.Y, sourceRect.Width, sourceRect.Height), 1.0F, frameIndex)
+            End Using
+        End If
+    End Sub
+
+    Private Sub 绘制垂直滚动条_GPU(context As D3D_PaintContext)
+        If _vScrollBar.TrackRect.IsEmpty Then Return
+        Dim scale As Single = Math.Max(0.01F, context.DpiScale)
+        Dim scrollBarWidth As Single = Math.Max(1.0F, 滚动条宽度 * scale)
+        Dim trackArea As New RectangleF(_vScrollBar.VisualLeft, _vScrollBar.TrackRect.Y, scrollBarWidth, _vScrollBar.TrackRect.Height)
+        Dim thumbArea As New RectangleF(_vScrollBar.VisualLeft, _vScrollBar.ThumbRect.Y, scrollBarWidth, _vScrollBar.ThumbRect.Height)
+
+        If 滚动条轨道颜色.A > 0 Then
+            填充圆角矩形_GPU(context, trackArea, Math.Min(scrollBarWidth / 2.0F, trackArea.Height / 2.0F), 滚动条轨道颜色)
+        End If
+
+        Dim thumbColor = If(_vScrollBar.IsDragging OrElse _vScrollBar.IsHover, 滚动条悬停颜色, 滚动条滑块颜色)
+        填充圆角矩形_GPU(context, thumbArea, Math.Min(scrollBarWidth / 2.0F, thumbArea.Height / 2.0F), thumbColor)
+    End Sub
+
+    Private Sub 绘制水平滚动条_GPU(context As D3D_PaintContext)
+        If _hScrollBar.TrackRect.IsEmpty Then Return
+        Dim scale As Single = Math.Max(0.01F, context.DpiScale)
+        Dim scrollBarHeight As Single = Math.Max(1.0F, 滚动条宽度 * scale)
+        Dim trackArea As New RectangleF(_hScrollBar.TrackRect.X, _hScrollBar.VisualTop, _hScrollBar.TrackRect.Width, scrollBarHeight)
+        Dim thumbArea As New RectangleF(_hScrollBar.ThumbRect.X, _hScrollBar.VisualTop, _hScrollBar.ThumbRect.Width, scrollBarHeight)
+
+        If 滚动条轨道颜色.A > 0 Then
+            填充圆角矩形_GPU(context, trackArea, Math.Min(scrollBarHeight / 2.0F, trackArea.Width / 2.0F), 滚动条轨道颜色)
+        End If
+
+        Dim thumbColor = If(_hScrollBar.IsDragging OrElse _hScrollBar.IsHover, 滚动条悬停颜色, 滚动条滑块颜色)
+        填充圆角矩形_GPU(context, thumbArea, Math.Min(scrollBarHeight / 2.0F, thumbArea.Width / 2.0F), thumbColor)
+    End Sub
+
+    Private Sub 填充圆角矩形_GPU(context As D3D_PaintContext, rect As RectangleF, radius As Single, color As Color)
+        If color.A = 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
+        If radius <= 0 Then
+            context.DeviceContext.FillRectangle(D3D_PaintContext.ToRawRect(rect), brush)
+            Return
+        End If
+
+        Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New RoundedRectangle(rect, radius, radius))
+            context.DeviceContext.FillGeometry(geo, brush)
+        End Using
+    End Sub
+
+    Private Function 获取圆角几何_GPU(context As D3D_PaintContext, rect As RectangleF, radius As Single, corners As RoundCorners) As ID2D1Geometry
+        radius = Math.Min(Math.Max(0.0F, radius), Math.Min(rect.Width / 2.0F, rect.Height / 2.0F))
+        If radius <= 0 OrElse corners.IsNone Then Return Nothing
+
+        Dim key = String.Join(":"c,
+                              "modern-panel",
+                              CInt(Math.Round(rect.X)),
+                              CInt(Math.Round(rect.Y)),
+                              CInt(Math.Round(rect.Width)),
+                              CInt(Math.Round(rect.Height)),
+                              CInt(Math.Round(radius)),
+                              corners.GetHashCode())
+        Return context.Compositor.GeometryCache.GetOrCreateGeometry(
+            key,
+            Function() 创建圆角几何_GPU(rect, radius, corners))
+    End Function
+
+    Private Shared Function 创建圆角几何_GPU(rect As RectangleF, radius As Single, corners As RoundCorners) As ID2D1Geometry
+        If corners.IsAll Then
+            Return D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New RoundedRectangle(rect, radius, radius))
+        End If
+
+        Dim path = D3D_RenderCore.DeviceManager.D2DFactory.CreatePathGeometry()
+        Dim sink = path.Open()
+        Try
+            Dim left As Single = rect.X
+            Dim top As Single = rect.Y
+            Dim right As Single = rect.Right
+            Dim bottom As Single = rect.Bottom
+
+            sink.BeginFigure(New Vector2(left + If(corners.TopLeft, radius, 0.0F), top), FigureBegin.Filled)
+            sink.AddLine(New Vector2(right - If(corners.TopRight, radius, 0.0F), top))
+            If corners.TopRight Then
+                sink.AddArc(New ArcSegment With {
+                    .Point = New Vector2(right, top + radius),
+                    .Size = New Vortice.Mathematics.Size(radius, radius),
+                    .RotationAngle = 0,
+                    .SweepDirection = SweepDirection.Clockwise,
+                    .ArcSize = ArcSize.Small})
+            End If
+
+            sink.AddLine(New Vector2(right, bottom - If(corners.BottomRight, radius, 0.0F)))
+            If corners.BottomRight Then
+                sink.AddArc(New ArcSegment With {
+                    .Point = New Vector2(right - radius, bottom),
+                    .Size = New Vortice.Mathematics.Size(radius, radius),
+                    .RotationAngle = 0,
+                    .SweepDirection = SweepDirection.Clockwise,
+                    .ArcSize = ArcSize.Small})
+            End If
+
+            sink.AddLine(New Vector2(left + If(corners.BottomLeft, radius, 0.0F), bottom))
+            If corners.BottomLeft Then
+                sink.AddArc(New ArcSegment With {
+                    .Point = New Vector2(left, bottom - radius),
+                    .Size = New Vortice.Mathematics.Size(radius, radius),
+                    .RotationAngle = 0,
+                    .SweepDirection = SweepDirection.Clockwise,
+                    .ArcSize = ArcSize.Small})
+            End If
+
+            sink.AddLine(New Vector2(left, top + If(corners.TopLeft, radius, 0.0F)))
+            If corners.TopLeft Then
+                sink.AddArc(New ArcSegment With {
+                    .Point = New Vector2(left + radius, top),
+                    .Size = New Vortice.Mathematics.Size(radius, radius),
+                    .RotationAngle = 0,
+                    .SweepDirection = SweepDirection.Clockwise,
+                    .ArcSize = ArcSize.Small})
+            End If
+
+            sink.EndFigure(FigureEnd.Closed)
+            sink.Close()
+        Finally
+            sink.Dispose()
+        End Try
+        Return path
+    End Function
+
+    Private Shared Sub PushGeometryClip_GPU(context As D3D_PaintContext, geo As ID2D1Geometry, bounds As RectangleF)
+        Dim parameters As New LayerParameters With {
+            .ContentBounds = New Vortice.RawRectF(bounds.X, bounds.Y, bounds.Right, bounds.Bottom),
+            .GeometricMask = geo,
+            .MaskAntialiasMode = AntialiasMode.PerPrimitive,
+            .MaskTransform = Matrix3x2.Identity,
+            .Opacity = 1.0F,
+            .OpacityBrush = Nothing,
+            .LayerOptions = LayerOptions.None
+        }
+        context.DeviceContext.PushLayer(parameters, Nothing)
+    End Sub
+
     Private Function 需要自绘背景() As Boolean
-        ' V2 契约：以下任一为真都不能交给基类绘制背景：
+        ' V3 契约：以下任一为真都不能交给基类绘制背景：
         '   1) 圆角 > 0（圆角外空白要透出底色 / 背景源）
         '   2) BackColor1 (背景颜色) 半透明 → 自身实色填充层有 alpha
         '   3) MyBase.BackColor 半透明 → 走 .NET 自身透明逻辑（OnPaintBackground 仍交回基类）
@@ -1382,172 +1637,32 @@ Public Class ModernPanel
     End Function
 
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
-        ' V2 契约：
-        '   • BackgroundSource 已设置 → 跳过 BackColor 整个逻辑，背景由 OnPaint 内 BackgroundPenetrationV2 绘制；
-        '   • 否则一律走 .NET 自身透明逻辑（基类负责合成父级背景或填充不透明 BackColor）。
-        '     半透明 BackColor 的"颜色覆盖"会在 OnPaint 的背景层上再叠加一次。
         If _backgroundSource IsNot Nothing Then Return
         MyBase.OnPaintBackground(e)
     End Sub
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
-        If Me.Width < 1 OrElse Me.Height < 1 Then Return
-
-        If Not 需要D2D绘制() Then
-            MyBase.OnPaint(e)
-            Return
-        End If
-
-        Dim ssaa As Integer = D2DHelperV2.GetEffectiveSsaaScale(超采样倍率)
-
-        Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
-            If scope Is Nothing Then Return  ' 设计期或无 Form 上下文，直接跳过自绘
-
-            ' 1) 背景层（1× 直绘）：
-            '    • 若设置 BackgroundSource → 直接画穿透底图（BackColor 被跳过，OnPaintBackground 也已 Return）；
-            '    • 否则若 MyBase.BackColor 半透明 → 基类 OnPaintBackground 已把父级背景画到 DC RT 上，
-            '      这里再叠一层 BackColor 作为半透明遮罩（"颜色覆盖在上面"）。
-            If _backgroundSource IsNot Nothing Then
-                BackgroundPenetrationV2.PaintBackground(Me, scope, _backgroundSource)
-            ElseIf MyBase.BackColor.A > 0 AndAlso MyBase.BackColor.A < 255 Then
-                Dim bgLayer = scope.BackgroundLayer
-                Dim brush = scope.Compositor.BrushCache.[Get](bgLayer, MyBase.BackColor)
-                If brush IsNot Nothing Then
-                    bgLayer.FillRectangle(D2DGlobals.ToD2DRect(New RectangleF(0, 0, Me.Width, Me.Height)), brush)
-                End If
-            End If
-
-            ' 2) 图形层（SSAA）：背景颜色 / 图片 / 遮罩 / 边框 / 滚动条
-            Dim gRT As ID2D1RenderTarget = scope.GraphicsLayer
-            绘制背景与边框_D2D(gRT, scope.Compositor, scope.SsaaScale)
-            绘制垂直滚动条_D2D(gRT, scope.Compositor.BrushCache)
-            绘制水平滚动条_D2D(gRT, scope.Compositor.BrushCache)
-
-            scope.FlushGraphics()
-        End Using
+        If Not D3D_PaintBridge.PaintRenderable(e, Me, Me, 1) Then MyBase.OnPaint(e)
     End Sub
 
     ''' <summary>
-    ''' （已废弃）透明背景贴底图的 GDI 路径。V2 不再使用，保留方法占位避免外部引用编译失败。
+    ''' （已废弃）透明背景贴底图的 GDI 路径。V3 不再使用，保留方法占位避免外部引用编译失败。
     ''' </summary>
     Private Sub 绘制父容器背景(g As Graphics)
         ' no-op
     End Sub
 
-    Private Sub 绘制背景与边框_D2D(rt As ID2D1RenderTarget, compositor As WindowCompositor, renderScale As Integer)
-        Dim s As Single = DpiScale()
-        Dim brushCache = compositor?.BrushCache
-        Dim boundsRect As New RectangleF(0, 0, Me.Width, Me.Height)
-        If 边框宽度 > 0 Then
-            Dim half As Single = 边框宽度 * s / 2.0F
-            boundsRect.Inflate(-half, -half)
-        End If
-
-        Dim scaledRadius As Single = 边框圆角半径 * s
-        Dim 是否有圆角 As Boolean = 边框圆角半径 > 0
-        ' 控件本体的 BackColor 在新契约下作为"带颜色的半透明遮罩"层，叠加在采样底图之上、
-        ' BackColor1（=背景颜色）之下；A=0 时退化为不绘制。详见 TransparentBackgroundCache 顶部契约。
-        Dim backColorMask As Color = MyBase.BackColor
-
-        If 是否有圆角 Then
-            Using geo As ID2D1Geometry = RectangleRenderer.创建圆角矩形几何(boundsRect, scaledRadius, 圆角位置)
-                If backColorMask.A > 0 AndAlso backColorMask.A < 255 Then
-                    RectangleRenderer.绘制圆角背景_D2D(rt, geo, boundsRect, backColorMask, Color.Empty, System.Windows.Forms.Orientation.Horizontal, brushCache)
-                End If
-                If 背景颜色.A > 0 Then
-                    RectangleRenderer.绘制圆角背景_D2D(rt, geo, boundsRect, 背景颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal, brushCache)
-                End If
-                绘制背景图片_D2D(rt, compositor, boundsRect, geo, renderScale)
-                If 遮罩颜色.A > 0 Then
-                    RectangleRenderer.绘制圆角背景_D2D(rt, geo, boundsRect, 遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal, brushCache)
-                End If
-                If 边框颜色.A > 0 AndAlso 边框宽度 > 0 Then
-                    RectangleRenderer.绘制圆角边框_D2D(rt, geo, 边框颜色, 边框宽度 * s, brushCache)
-                End If
-            End Using
-        Else
-            If backColorMask.A > 0 AndAlso backColorMask.A < 255 Then
-                RectangleRenderer.绘制矩形背景_D2D(rt, boundsRect, backColorMask, Color.Empty, System.Windows.Forms.Orientation.Horizontal, brushCache)
-            End If
-            If 背景颜色.A > 0 Then
-                RectangleRenderer.绘制矩形背景_D2D(rt, boundsRect, 背景颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal, brushCache)
-            End If
-            绘制背景图片_D2D(rt, compositor, boundsRect, Nothing, renderScale)
-            If 遮罩颜色.A > 0 Then
-                RectangleRenderer.绘制矩形背景_D2D(rt, boundsRect, 遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal, brushCache)
-            End If
-            If 边框颜色.A > 0 AndAlso 边框宽度 > 0 Then
-                RectangleRenderer.绘制矩形边框_D2D(rt, boundsRect, 边框颜色, 边框宽度 * s, brushCache)
-            End If
-        End If
-    End Sub
 
     ''' <summary>D2D 绘制背景图片：按 ImageMode 计算目标矩形，圆角下用几何裁切。</summary>
-    Private Sub 绘制背景图片_D2D(rt As ID2D1RenderTarget, compositor As WindowCompositor, area As RectangleF, geo As ID2D1Geometry, renderScale As Integer)
-        If _image Is Nothing Then Return
-        Dim srcW As Integer = _image.Width
-        Dim srcH As Integer = _image.Height
-        If srcW <= 0 OrElse srcH <= 0 OrElse area.Width <= 0 OrElse area.Height <= 0 Then Return
 
-        Dim destRect As RectangleF = 计算背景图片目标矩形(area, srcW, srcH, _imageFillMode)
-        If destRect.Width <= 0 OrElse destRect.Height <= 0 Then Return
-
-        Dim visibleDest As RectangleF = RectangleF.Intersect(destRect, area)
-        If visibleDest.Width <= 0 OrElse visibleDest.Height <= 0 Then Return
-
-        Dim ratio As Single = destRect.Width / srcW
-        Dim sourceRect As Rectangle = 计算可见源矩形(destRect, visibleDest, ratio, srcW, srcH)
-        If sourceRect.IsEmpty Then Return
-        Dim drawBitmap As ID2D1Bitmap = Nothing
-        Dim drawDestRect As RectangleF = destRect
-        Dim drawSourceRect As RectangleF = New RectangleF(0, 0, srcW, srcH)
-        Dim shouldDisposeBitmap As Boolean = False
-
-        Try
-            If _animatedImage IsNot Nothing AndAlso _animationFrameDimension IsNot Nothing AndAlso _animationFrameCount > 1 Then
-                Dim frameSize As Size = 计算缩放位图尺寸(visibleDest, renderScale)
-                drawBitmap = 获取动画帧位图_D2D(rt, sourceRect, frameSize)
-                If drawBitmap IsNot Nothing Then
-                    drawDestRect = visibleDest
-                    drawSourceRect = New RectangleF(0, 0, frameSize.Width, frameSize.Height)
-                End If
-                If drawBitmap Is Nothing Then Return
-            ElseIf ratio < 0.999F Then
-                Dim scaledSize As Size = 计算缩放位图尺寸(visibleDest, renderScale)
-                drawBitmap = 获取高质量缩放背景位图_D2D(rt, _image, sourceRect, scaledSize)
-                If drawBitmap IsNot Nothing Then
-                    drawDestRect = visibleDest
-                    drawSourceRect = New RectangleF(0, 0, scaledSize.Width, scaledSize.Height)
-                End If
-            End If
-
-            If drawBitmap Is Nothing Then
-                drawBitmap = 获取背景图片位图_D2D(rt, compositor, shouldDisposeBitmap)
-                If drawBitmap Is Nothing Then Return
-            End If
-
-            Dim hasMask As Boolean = geo IsNot Nothing
-            If hasMask Then D2DGlobals.PushGeometryClip(rt, geo, area)
-            Try
-                rt.DrawBitmap(drawBitmap, D2DGlobals.ToD2DRect(drawDestRect), 1.0F, BitmapInterpolationMode.Linear, D2DGlobals.ToD2DRect(drawSourceRect))
-            Finally
-                If hasMask Then rt.PopLayer()
-            End Try
-        Finally
-            If shouldDisposeBitmap Then
-                Try : drawBitmap.Dispose() : Catch : End Try
-            End If
-        End Try
-    End Sub
-
-    Private Sub 绘制垂直滚动条_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache)
+    Private Sub 绘制垂直滚动条_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache)
         If _vScrollBar.TrackRect.IsEmpty Then Return
         Dim s As Single = DpiScale()
         _vScrollBar.Draw_D2D(rt, Me.Width, Me.Height, CInt(Math.Round(边框宽度 * s)), CInt(Math.Round(边框圆角半径 * s)),
             CInt(Math.Round(滚动条宽度 * s)), 滚动条轨道颜色, 滚动条滑块颜色, 滚动条悬停颜色, brushCache)
     End Sub
 
-    Private Sub 绘制水平滚动条_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache)
+    Private Sub 绘制水平滚动条_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache)
         If _hScrollBar.TrackRect.IsEmpty Then Return
         Dim s As Single = DpiScale()
         _hScrollBar.DrawHorizontal_D2D(rt, Me.Width, Me.Height, CInt(Math.Round(边框宽度 * s)), CInt(Math.Round(边框圆角半径 * s)),
@@ -1567,7 +1682,7 @@ Public Class ModernPanel
             If newOff <> _vScrollOffset Then
                 _vScrollOffset = newOff
                 快速滚动更新()
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                请求V3渲染()
             End If
             Return
         End If
@@ -1578,7 +1693,7 @@ Public Class ModernPanel
             If newOff <> _hScrollOffset Then
                 _hScrollOffset = newOff
                 快速滚动更新()
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                请求V3渲染()
             End If
             Return
         End If
@@ -1586,7 +1701,7 @@ Public Class ModernPanel
         Dim needInvalidate As Boolean = False
         If _vScrollBar.UpdateHover(e.Location) Then needInvalidate = True
         If _hScrollBar.UpdateHover(e.Location) Then needInvalidate = True
-        If needInvalidate Then OuterToInnerRefreshScheduler.RequestFull(Me)
+        If needInvalidate Then 请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
@@ -1600,7 +1715,7 @@ Public Class ModernPanel
             If newOff <> _vScrollOffset Then
                 _vScrollOffset = newOff
                 快速滚动更新()
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                请求V3渲染()
                 Return
             End If
         End If
@@ -1611,7 +1726,7 @@ Public Class ModernPanel
             If newHOff <> _hScrollOffset Then
                 _hScrollOffset = newHOff
                 快速滚动更新()
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                请求V3渲染()
                 Return
             End If
         End If
@@ -1628,7 +1743,7 @@ Public Class ModernPanel
         Dim needInvalidate As Boolean = False
         If _vScrollBar.ResetHover() Then needInvalidate = True
         If _hScrollBar.ResetHover() Then needInvalidate = True
-        If needInvalidate Then OuterToInnerRefreshScheduler.RequestFull(Me)
+        If needInvalidate Then 请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnMouseWheel(e As MouseEventArgs)
@@ -1638,22 +1753,22 @@ Public Class ModernPanel
 
         If (Control.ModifierKeys And Keys.Shift) = Keys.Shift Then
             If _showHScroll Then
-                Dim newHOff = ScrollBarRenderer.HandleHorizontalWheel(e.Delta, _hScrollOffset, _contentSize.Width, viewport.Width, 水平滚动步长)
+                Dim newHOff = V3_ScrollBarRenderer.HandleHorizontalWheel(e.Delta, _hScrollOffset, _contentSize.Width, viewport.Width, 水平滚动步长)
                 If newHOff <> _hScrollOffset Then
                     _hScrollOffset = newHOff
                     快速滚动更新()
-                    OuterToInnerRefreshScheduler.RequestFull(Me)
+                    请求V3渲染()
                 End If
             End If
             Return
         End If
 
         If _showVScroll Then
-            Dim newOff = ScrollBarRenderer.HandleHorizontalWheel(e.Delta, _vScrollOffset, _contentSize.Height, viewport.Height, 垂直滚动步长)
+            Dim newOff = V3_ScrollBarRenderer.HandleHorizontalWheel(e.Delta, _vScrollOffset, _contentSize.Height, viewport.Height, 垂直滚动步长)
             If newOff <> _vScrollOffset Then
                 _vScrollOffset = newOff
                 快速滚动更新()
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                请求V3渲染()
             End If
         End If
     End Sub
@@ -1700,7 +1815,7 @@ Public Class ModernPanel
         清除图片缓存()
         _contentSizeDirty = True
         更新滚动区域()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnDpiChangedBeforeParent(e As EventArgs)
@@ -1731,7 +1846,7 @@ Public Class ModernPanel
         _inDpiChange = False
         更新滚动区域()
         Me.PerformLayout()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染(True)
     End Sub
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
@@ -1739,7 +1854,8 @@ Public Class ModernPanel
         _contentSizeDirty = True
         更新滚动区域()
         Me.PerformLayout()
-        D2DHelperV2.RefreshFontDependentRendering(Me)
+        D3D_RenderCore.InvalidateExistingTextResources(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnControlAdded(e As ControlEventArgs)
@@ -1756,7 +1872,7 @@ Public Class ModernPanel
         AddHandler e.Control.LocationChanged, AddressOf 子控件位置变更
         _contentSizeDirty = True
         更新滚动区域()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnControlRemoved(e As ControlEventArgs)
@@ -1766,7 +1882,7 @@ Public Class ModernPanel
         RemoveHandler e.Control.LocationChanged, AddressOf 子控件位置变更
         _contentSizeDirty = True
         更新滚动区域()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Private _suppressLocationSync As Boolean = False
@@ -1778,7 +1894,7 @@ Public Class ModernPanel
         _contentSizeDirty = True
         If _inScrollUpdate Then Return
         更新滚动区域()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Private Sub 子控件位置变更(sender As Object, e As EventArgs)
@@ -1843,7 +1959,7 @@ Public Class ModernPanel
     Private Sub 执行流式排布()
         Dim s As Single = DpiScale()
         Dim scaledScrollBarWidth As Integer = CInt(Math.Round(滚动条宽度 * s))
-        Dim sbReserve As Integer = scaledScrollBarWidth + ScrollBarRenderer.Margin
+        Dim sbReserve As Integer = scaledScrollBarWidth + V3_ScrollBarRenderer.Margin
         Dim ep As Padding = 获取有效内边距()
 
         ' 稳定的换行/换列边界：使用可能显示滚动条后的视口尺寸，避免布局-滚动条反馈环。
@@ -1941,7 +2057,7 @@ Public Class ModernPanel
         _hScrollOffset = Math.Max(0, horizontalOffset)
         _vScrollOffset = Math.Max(0, verticalOffset)
         更新滚动区域()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     ''' <summary>获取当前垂直滚动偏移。</summary>

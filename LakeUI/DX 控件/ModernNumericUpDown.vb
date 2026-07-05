@@ -5,6 +5,8 @@ Imports Vortice.Direct2D1
 
 <DefaultEvent("ValueChanged")>
 Public Class ModernNumericUpDown
+    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource
+
     Public Event ValueChanged As EventHandler
     Public Shadows Event TextChanged As EventHandler
     Public Event UpButtonClick As EventHandler
@@ -82,7 +84,7 @@ Public Class ModernNumericUpDown
             最小值 = value
             If 最大值 < 最小值 Then 最大值 = 最小值
             SetValueCore(当前值, True, True)
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -97,7 +99,7 @@ Public Class ModernNumericUpDown
             最大值 = value
             If 最小值 > 最大值 Then 最小值 = 最大值
             SetValueCore(当前值, True, True)
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -155,7 +157,7 @@ Public Class ModernNumericUpDown
             If 小数位数 = value Then Return
             小数位数 = value
             SetValueCore(当前值, True, True)
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -168,7 +170,7 @@ Public Class ModernNumericUpDown
             If _textRenderer.Editable = value Then Return
             _textRenderer.Editable = value
             Cursor = Cursors.Default
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -234,7 +236,7 @@ Public Class ModernNumericUpDown
         Set(value As Color)
             If _textRenderer.ForeColor = value Then Return
             _textRenderer.ForeColor = value
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -245,7 +247,7 @@ Public Class ModernNumericUpDown
         End Get
         Set(value As Integer)
             _textRenderer.LineHeight = Math.Max(10, value)
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -256,7 +258,7 @@ Public Class ModernNumericUpDown
         End Get
         Set(value As Integer)
             _textRenderer.CaretWidth = Math.Max(1, value)
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -268,7 +270,7 @@ Public Class ModernNumericUpDown
         Set(value As Color)
             If _textRenderer.CaretColor = value Then Return
             _textRenderer.CaretColor = value
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -280,7 +282,7 @@ Public Class ModernNumericUpDown
         Set(value As Color)
             If _textRenderer.SelectionColor = value Then Return
             _textRenderer.SelectionColor = value
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -315,7 +317,7 @@ Public Class ModernNumericUpDown
         Set(value As Integer)
             边框宽度 = Math.Max(0, value)
             SyncTextRendererLayout()
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -327,7 +329,7 @@ Public Class ModernNumericUpDown
         End Get
         Set(value As Integer)
             边框圆角半径 = Math.Max(0, value)
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -345,7 +347,7 @@ Public Class ModernNumericUpDown
         Set(value As TextAlignMode)
             If CType(_textRenderer.TextAlign, TextAlignMode) = value Then Return
             _textRenderer.TextAlign = CType(value, SingleLineTextBoxRenderer.TextAlignMode)
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -356,7 +358,7 @@ Public Class ModernNumericUpDown
         End Get
         Set(value As String)
             _textRenderer.WaterText = If(value, "")
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -368,7 +370,7 @@ Public Class ModernNumericUpDown
         Set(value As Color)
             If _textRenderer.WaterTextForeColor = value Then Return
             _textRenderer.WaterTextForeColor = value
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -471,7 +473,7 @@ Public Class ModernNumericUpDown
         Set(value As Integer)
             按钮区域宽度 = Math.Max(1, value)
             SyncTextRendererLayout()
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -582,7 +584,7 @@ Public Class ModernNumericUpDown
         End Get
         Set(value As Integer)
             箭头大小 = Math.Max(4, value)
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -605,12 +607,12 @@ Public Class ModernNumericUpDown
         End Get
         Set(value As Integer)
             分隔线宽度 = Math.Max(0, value)
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 #End Region
 
-#Region "V2 透明背景穿透"
+#Region "V3 背景穿透"
     Private _backgroundSource As Control = Nothing
     <Category("LakeUI"),
      Description("背景采样源（超容器背景映射）。设置后将跨越任意层级直接采样此控件的绘制内容作为透明背景；为空时不进行背景采样。"),
@@ -621,8 +623,8 @@ Public Class ModernNumericUpDown
         End Get
         Set(value As Control)
             If _backgroundSource IsNot value Then
-                _backgroundSource = BackgroundPenetrationV2.SetConsumerSource(Me, _backgroundSource, value)
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                _backgroundSource = D3D_BackgroundPenetration.SetBackgroundSource(Me, _backgroundSource, value)
+                请求V3渲染()
             End If
         End Set
     End Property
@@ -635,6 +637,10 @@ Public Class ModernNumericUpDown
     End Sub
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
+        If Not D3D_PaintBridge.PaintRenderable(e, Me, Me, 1) Then MyBase.OnPaint(e)
+    End Sub
+
+    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
         Dim w As Integer = ClientRectangle.Width
         Dim h As Integer = ClientRectangle.Height
         If w <= 0 OrElse h <= 0 Then Return
@@ -660,39 +666,187 @@ Public Class ModernNumericUpDown
                 If 鼠标按下时边框颜色 <> Color.Empty Then bc = 鼠标按下时边框颜色
         End Select
 
-        Dim ssaa As Integer = D2DHelperV2.GetEffectiveSsaaScale(超采样倍率)
+        绘制背景_GPU(context, hasRadius, boundsRect, effBg, effBg2)
+        SyncTextRendererLayout()
+        _textRenderer.DrawGpu(context)
+        绘制按钮_GPU(context, w, h)
+        绘制边框_GPU(context, hasRadius, boundsRect, bc)
 
-        Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
-            If scope Is Nothing Then Return
-            Dim brushCache = scope.Compositor.BrushCache
-            If _backgroundSource IsNot Nothing Then
-                BackgroundPenetrationV2.PaintBackground(Me, scope, _backgroundSource)
+        If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
+            Dim overlayRect As New RectangleF(boundsRect.X, boundsRect.Y, boundsRect.Width + 1, boundsRect.Height + 1)
+            填充圆角矩形_GPU(context, overlayRect, If(hasRadius, 边框圆角半径 * DpiScale(), 0.0F), 禁用时遮罩颜色)
+        End If
+    End Sub
+
+    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+        Return New Rectangle(Point.Empty, Me.Size)
+    End Function
+
+    Private Sub 绘制背景_GPU(context As D3D_PaintContext, hasRadius As Boolean, boundsRect As RectangleF, bgClr As Color, bgClr2 As Color)
+        Dim backColorMask As Color = MyBase.BackColor
+        Dim hasMask As Boolean = backColorMask.A > 0 AndAlso backColorMask.A < 255
+        Dim fillColor As Color = If(bgClr.A > 0, bgClr, bgClr2)
+        Dim hasFill As Boolean = fillColor.A > 0
+        Dim hasBackgroundSource As Boolean = _backgroundSource IsNot Nothing
+        If Not hasBackgroundSource AndAlso Not hasMask AndAlso Not hasFill Then Return
+        Dim s As Single = DpiScale()
+        Dim fillRect As New RectangleF(boundsRect.X, boundsRect.Y, boundsRect.Width + 1, boundsRect.Height + 1)
+        Dim radius As Single = If(hasRadius, 边框圆角半径 * s, 0.0F)
+        If hasBackgroundSource Then context.DrawBackgroundSource(Me, _backgroundSource, fillRect)
+        If hasMask Then 填充圆角矩形_GPU(context, fillRect, radius, backColorMask)
+        If hasFill Then 填充圆角矩形_GPU(context, fillRect, radius, fillColor)
+    End Sub
+
+    Private Sub 绘制边框_GPU(context As D3D_PaintContext, hasRadius As Boolean, boundsRect As RectangleF, borderClr As Color)
+        If 边框宽度 <= 0 OrElse borderClr.A = 0 Then Return
+        Dim s As Single = DpiScale()
+        绘制圆角边框_GPU(context, boundsRect, If(hasRadius, 边框圆角半径 * s, 0.0F), borderClr, 边框宽度 * s)
+    End Sub
+
+    Private Sub 绘制按钮_GPU(context As D3D_PaintContext, w As Integer, h As Integer)
+        Dim s As Single = DpiScale()
+        Dim aaw As Integer = ActualButtonAreaWidth
+        If aaw <= 0 Then Return
+        Dim bi As Integer = CInt(边框宽度 * s)
+        Dim sepX As Single = w - aaw - If(bi > 0, bi / 2.0F, 0)
+        Dim topInset As Integer = Math.Max(Padding.Top, bi)
+        Dim bottomInset As Integer = Math.Max(Padding.Bottom, bi)
+        Dim rightInset As Integer = bi
+        Dim buttonLeft As Single = sepX + If(bi > 0, bi / 2.0F, 0)
+        Dim buttonWidth As Single = w - buttonLeft - rightInset
+        Dim buttonHeight As Single = h - topInset - bottomInset
+        If buttonWidth <= 0 OrElse buttonHeight <= 0 Then Return
+
+        Dim upRect As New RectangleF(buttonLeft, topInset, buttonWidth, buttonHeight / 2.0F)
+        Dim downRect As New RectangleF(buttonLeft, topInset + buttonHeight / 2.0F, buttonWidth, buttonHeight / 2.0F)
+        绘制按钮背景_GPU(context, upRect, SpinButtonPart.Up)
+        绘制按钮背景_GPU(context, downRect, SpinButtonPart.Down)
+
+        If 分隔线宽度 > 0 AndAlso 分隔线颜色.A > 0 Then
+            Dim br = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, 分隔线颜色, context.DeviceGeneration)
+            If br IsNot Nothing Then
+                Dim lineWidth As Single = 分隔线宽度 * s
+                context.DeviceContext.DrawLine(New Vector2(sepX, topInset), New Vector2(sepX, h - bottomInset), br, lineWidth)
+                Dim midY As Single = topInset + buttonHeight / 2.0F
+                context.DeviceContext.DrawLine(New Vector2(buttonLeft, midY), New Vector2(w - rightInset, midY), br, lineWidth)
             End If
+        End If
 
-            Dim gRT As ID2D1RenderTarget = scope.GraphicsLayer
-            绘制背景_D2D(gRT, brushCache, hasRadius, boundsRect, effBg, effBg2)
-            scope.FlushGraphics()
+        Dim upArrowColor As Color = 获取箭头颜色(SpinButtonPart.Up)
+        Dim downArrowColor As Color = 获取箭头颜色(SpinButtonPart.Down)
+        Dim centerX As Single = buttonLeft + buttonWidth / 2.0F
+        If upArrowColor.A > 0 Then
+            绘制圆角三角形_GPU(context, New PointF(centerX, upRect.Y + upRect.Height / 2.0F), True, upArrowColor)
+        End If
+        If downArrowColor.A > 0 Then
+            绘制圆角三角形_GPU(context, New PointF(centerX, downRect.Y + downRect.Height / 2.0F), False, downArrowColor)
+        End If
+    End Sub
 
-            Dim dcRT As ID2D1DCRenderTarget = scope.DCRenderTarget
-            SyncTextRendererLayout()
-            _textRenderer.Draw(dcRT, scope.Compositor.TextFormatCache, brushCache)
-            绘制按钮_D2D(dcRT, brushCache, w, h)
-            绘制边框_D2D(dcRT, brushCache, hasRadius, boundsRect, bc)
+    Private Sub 绘制按钮背景_GPU(context As D3D_PaintContext, rect As RectangleF, part As SpinButtonPart)
+        Dim c1 As Color = 按钮背景颜色
+        Dim c2 As Color = 按钮背景渐变颜色
+        If _pressedButton = part AndAlso 鼠标状态 = MouseStateEnum.Pressed Then
+            If 鼠标按下时按钮背景颜色 <> Color.Empty Then c1 = 鼠标按下时按钮背景颜色
+            If 鼠标按下时按钮渐变颜色 <> Color.Empty Then c2 = 鼠标按下时按钮渐变颜色
+        ElseIf _hoverButton = part AndAlso 鼠标状态 = MouseStateEnum.Hover Then
+            If 鼠标移上时按钮背景颜色 <> Color.Empty Then c1 = 鼠标移上时按钮背景颜色
+            If 鼠标移上时按钮渐变颜色 <> Color.Empty Then c2 = 鼠标移上时按钮渐变颜色
+        End If
+        Dim fillColor As Color = If(c1.A > 0, c1, c2)
+        If fillColor = Color.Empty OrElse fillColor.A = 0 Then Return
+        context.FillRectangle(rect, fillColor)
+    End Sub
 
-            If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
-                Dim overlayRect As New RectangleF(boundsRect.X, boundsRect.Y, boundsRect.Width + 1, boundsRect.Height + 1)
-                If hasRadius Then
-                    Using geo = RectangleRenderer.创建圆角矩形几何(overlayRect, 边框圆角半径 * DpiScale())
-                        RectangleRenderer.绘制圆角背景_D2D(dcRT, geo, overlayRect, 禁用时遮罩颜色, Color.Empty, 渐变方向, brushCache)
-                    End Using
+    Private Sub 绘制圆角三角形_GPU(context As D3D_PaintContext, center As PointF, up As Boolean, color As Color)
+        Dim path = 创建圆角三角形几何(center, up)
+        If path Is Nothing Then Return
+        Try
+            Dim br = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
+            If br IsNot Nothing Then context.DeviceContext.FillGeometry(path, br)
+        Finally
+            path.Dispose()
+        End Try
+    End Sub
+
+    Private Function 创建圆角三角形几何(center As PointF, up As Boolean) As ID2D1PathGeometry
+        Dim scaledArrow As Single = 箭头大小 * DpiScale()
+        Dim arrW As Single = scaledArrow
+        Dim arrH As Single = CSng(scaledArrow * Math.Sqrt(3.0) / 2.0)
+        Dim verts() As PointF
+        If up Then
+            verts = {
+                New PointF(center.X, center.Y - arrH / 2.0F),
+                New PointF(center.X + arrW / 2.0F, center.Y + arrH / 2.0F),
+                New PointF(center.X - arrW / 2.0F, center.Y + arrH / 2.0F)
+            }
+        Else
+            verts = {
+                New PointF(center.X - arrW / 2.0F, center.Y - arrH / 2.0F),
+                New PointF(center.X + arrW / 2.0F, center.Y - arrH / 2.0F),
+                New PointF(center.X, center.Y + arrH / 2.0F)
+            }
+        End If
+        Dim cr As Single = Math.Max(scaledArrow * 0.2F, 1.0F)
+
+        Dim path As ID2D1PathGeometry = D3D_RenderCore.DeviceManager.D2DFactory.CreatePathGeometry()
+        Dim sink As ID2D1GeometrySink = path.Open()
+        Try
+            For i As Integer = 0 To 2
+                Dim curr As PointF = verts(i)
+                Dim prv As PointF = verts((i + 2) Mod 3)
+                Dim nxt As PointF = verts((i + 1) Mod 3)
+                Dim d1x As Single = prv.X - curr.X
+                Dim d1y As Single = prv.Y - curr.Y
+                Dim d2x As Single = nxt.X - curr.X
+                Dim d2y As Single = nxt.Y - curr.Y
+                Dim l1 As Single = CSng(Math.Sqrt(d1x * d1x + d1y * d1y))
+                Dim l2 As Single = CSng(Math.Sqrt(d2x * d2x + d2y * d2y))
+                Dim a As New Vector2(curr.X + cr * d1x / l1, curr.Y + cr * d1y / l1)
+                Dim b As New Vector2(curr.X + cr * d2x / l2, curr.Y + cr * d2y / l2)
+                Dim cp1 As New Vector2(a.X + 2.0F / 3.0F * (curr.X - a.X), a.Y + 2.0F / 3.0F * (curr.Y - a.Y))
+                Dim cp2 As New Vector2(b.X + 2.0F / 3.0F * (curr.X - b.X), b.Y + 2.0F / 3.0F * (curr.Y - b.Y))
+                If i = 0 Then
+                    sink.BeginFigure(a, FigureBegin.Filled)
                 Else
-                    RectangleRenderer.绘制矩形背景_D2D(dcRT, overlayRect, 禁用时遮罩颜色, Color.Empty, 渐变方向, brushCache)
+                    sink.AddLine(a)
                 End If
-            End If
+                sink.AddBezier(New BezierSegment With {.Point1 = cp1, .Point2 = cp2, .Point3 = b})
+            Next
+            sink.EndFigure(FigureEnd.Closed)
+            sink.Close()
+        Finally
+            sink.Dispose()
+        End Try
+        Return path
+    End Function
+
+    Private Sub 填充圆角矩形_GPU(context As D3D_PaintContext, rect As RectangleF, radius As Single, color As Color)
+        If color.A = 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
+        If radius <= 0 Then
+            context.DeviceContext.FillRectangle(D3D_PaintContext.ToRawRect(rect), brush)
+            Return
+        End If
+        Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New RoundedRectangle(rect, radius, radius))
+            context.DeviceContext.FillGeometry(geo, brush)
         End Using
     End Sub
 
-    Private Sub 绘制背景_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache, hasRadius As Boolean, boundsRect As RectangleF, bgClr As Color, bgClr2 As Color)
+    Private Sub 绘制圆角边框_GPU(context As D3D_PaintContext, rect As RectangleF, radius As Single, color As Color, strokeWidth As Single)
+        If color.A = 0 OrElse strokeWidth <= 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
+        If radius <= 0 Then
+            context.DeviceContext.DrawRectangle(D3D_PaintContext.ToRawRect(rect), brush, strokeWidth)
+            Return
+        End If
+        Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New RoundedRectangle(rect, radius, radius))
+            context.DeviceContext.DrawGeometry(geo, brush, strokeWidth)
+        End Using
+    End Sub
+
+
+    Private Sub 绘制背景_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache, hasRadius As Boolean, boundsRect As RectangleF, bgClr As Color, bgClr2 As Color)
         Dim backColorMask As Color = MyBase.BackColor
         Dim hasMask As Boolean = backColorMask.A > 0 AndAlso backColorMask.A < 255
         Dim hasFill As Boolean = bgClr.A > 0 OrElse (bgClr2 <> Color.Empty AndAlso bgClr2.A > 0)
@@ -700,27 +854,27 @@ Public Class ModernNumericUpDown
         Dim s As Single = DpiScale()
         Dim fillRect As New RectangleF(boundsRect.X, boundsRect.Y, boundsRect.Width + 1, boundsRect.Height + 1)
         If hasRadius Then
-            Using geo = RectangleRenderer.创建圆角矩形几何(fillRect, 边框圆角半径 * s)
-                If hasMask Then RectangleRenderer.绘制圆角背景_D2D(rt, geo, fillRect, backColorMask, Color.Empty, 渐变方向, brushCache)
-                If hasFill Then RectangleRenderer.绘制圆角背景_D2D(rt, geo, fillRect, bgClr, bgClr2, 渐变方向, brushCache)
+            Using geo = D3D_RectangleRenderer.创建圆角矩形几何(fillRect, 边框圆角半径 * s)
+                If hasMask Then D3D_RectangleRenderer.绘制圆角背景_D2D(rt, geo, fillRect, backColorMask, Color.Empty, 渐变方向, brushCache)
+                If hasFill Then D3D_RectangleRenderer.绘制圆角背景_D2D(rt, geo, fillRect, bgClr, bgClr2, 渐变方向, brushCache)
             End Using
         Else
-            If hasMask Then RectangleRenderer.绘制矩形背景_D2D(rt, fillRect, backColorMask, Color.Empty, 渐变方向, brushCache)
-            If hasFill Then RectangleRenderer.绘制矩形背景_D2D(rt, fillRect, bgClr, bgClr2, 渐变方向, brushCache)
+            If hasMask Then D3D_RectangleRenderer.绘制矩形背景_D2D(rt, fillRect, backColorMask, Color.Empty, 渐变方向, brushCache)
+            If hasFill Then D3D_RectangleRenderer.绘制矩形背景_D2D(rt, fillRect, bgClr, bgClr2, 渐变方向, brushCache)
         End If
     End Sub
 
-    Private Sub 绘制边框_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache, hasRadius As Boolean, boundsRect As RectangleF, borderClr As Color)
+    Private Sub 绘制边框_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache, hasRadius As Boolean, boundsRect As RectangleF, borderClr As Color)
         If 边框宽度 <= 0 OrElse borderClr.A = 0 Then Return
         Dim s As Single = DpiScale()
         If hasRadius Then
-            RectangleRenderer.绘制圆角边框_D2D(rt, boundsRect, 边框圆角半径 * s, borderClr, 边框宽度 * s, brushCache)
+            D3D_RectangleRenderer.绘制圆角边框_D2D(rt, boundsRect, 边框圆角半径 * s, borderClr, 边框宽度 * s, brushCache)
         Else
-            RectangleRenderer.绘制矩形边框_D2D(rt, boundsRect, borderClr, 边框宽度 * s, brushCache)
+            D3D_RectangleRenderer.绘制矩形边框_D2D(rt, boundsRect, borderClr, 边框宽度 * s, brushCache)
         End If
     End Sub
 
-    Private Sub 绘制按钮_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache, w As Integer, h As Integer)
+    Private Sub 绘制按钮_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache, w As Integer, h As Integer)
         Dim s As Single = DpiScale()
         Dim aaw As Integer = ActualButtonAreaWidth
         If aaw <= 0 Then Return
@@ -760,7 +914,7 @@ Public Class ModernNumericUpDown
         End If
     End Sub
 
-    Private Sub 绘制按钮背景_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache, rect As RectangleF, part As SpinButtonPart)
+    Private Sub 绘制按钮背景_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache, rect As RectangleF, part As SpinButtonPart)
         Dim c1 As Color = 按钮背景颜色
         Dim c2 As Color = 按钮背景渐变颜色
         If _pressedButton = part AndAlso 鼠标状态 = MouseStateEnum.Pressed Then
@@ -771,7 +925,7 @@ Public Class ModernNumericUpDown
             If 鼠标移上时按钮渐变颜色 <> Color.Empty Then c2 = 鼠标移上时按钮渐变颜色
         End If
         If c1 = Color.Empty AndAlso c2 = Color.Empty Then Return
-        RectangleRenderer.绘制矩形背景_D2D(rt, rect, c1, c2, 渐变方向, brushCache)
+        D3D_RectangleRenderer.绘制矩形背景_D2D(rt, rect, c1, c2, 渐变方向, brushCache)
     End Sub
 
     Private Function 获取箭头颜色(part As SpinButtonPart) As Color
@@ -784,7 +938,7 @@ Public Class ModernNumericUpDown
         Return result
     End Function
 
-    Private Sub 绘制圆角三角形_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache, center As PointF, up As Boolean, color As Color)
+    Private Sub 绘制圆角三角形_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache, center As PointF, up As Boolean, color As Color)
         Dim scaledArrow As Single = 箭头大小 * DpiScale()
         Dim arrW As Single = scaledArrow
         Dim arrH As Single = CSng(scaledArrow * Math.Sqrt(3.0) / 2.0)
@@ -804,7 +958,7 @@ Public Class ModernNumericUpDown
         End If
         Dim cr As Single = Math.Max(scaledArrow * 0.2F, 1.0F)
 
-        Dim path As ID2D1PathGeometry = D2DGlobals.GetD2DFactory().CreatePathGeometry()
+        Dim path As ID2D1PathGeometry = D3D_RenderCore.DeviceManager.D2DFactory.CreatePathGeometry()
         Dim sink As ID2D1GeometrySink = path.Open()
         Try
             For i As Integer = 0 To 2
@@ -950,7 +1104,7 @@ Public Class ModernNumericUpDown
     Protected Overrides Sub OnMouseEnter(e As EventArgs)
         MyBase.OnMouseEnter(e)
         鼠标状态 = MouseStateEnum.Hover
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnMouseLeave(e As EventArgs)
@@ -958,7 +1112,7 @@ Public Class ModernNumericUpDown
         鼠标状态 = MouseStateEnum.Normal
         _hoverButton = SpinButtonPart.None
         If _pressedButton = SpinButtonPart.None Then Cursor = Cursors.Default
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
@@ -973,14 +1127,14 @@ Public Class ModernNumericUpDown
                 _pressedButton = part
                 StepByButton(part)
                 StartRepeatTimer()
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                请求V3渲染()
                 Return
             End If
             If Editable Then
                 _mouseDownSelecting = True
                 _textRenderer.BeginMouseSelection(e.X)
             End If
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End If
     End Sub
 
@@ -993,7 +1147,7 @@ Public Class ModernNumericUpDown
         If _mouseDownSelecting AndAlso e.Button = MouseButtons.Left AndAlso Editable Then
             _textRenderer.UpdateMouseSelection(e.X)
         ElseIf prevHover <> _hoverButton Then
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End If
     End Sub
 
@@ -1004,7 +1158,7 @@ Public Class ModernNumericUpDown
         StopRepeatTimer()
         鼠标状态 = If(ClientRectangle.Contains(e.Location), MouseStateEnum.Hover, MouseStateEnum.Normal)
         _hoverButton = HitTestButton(e.Location)
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnMouseWheel(e As MouseEventArgs)
@@ -1056,7 +1210,7 @@ Public Class ModernNumericUpDown
             nextValue = 当前值 + delta
         End Try
         SetValueCore(nextValue, True, False)
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Private Sub SetValueCore(value As Double, updateText As Boolean, forceTextUpdate As Boolean)
@@ -1211,8 +1365,17 @@ Public Class ModernNumericUpDown
     End Property
 
     Private Function DpiScale() As Single
-        Return D2DGlobals.GetCurrentDpiScale(Me)
+        Return V3_DpiContext.FromControl(Me).Scale
     End Function
+
+    Private Sub 请求V3渲染(Optional immediate As Boolean = False)
+        请求V3渲染(New Rectangle(Point.Empty, Me.Size), immediate)
+    End Sub
+
+    Private Sub 请求V3渲染(dirtyRect As Rectangle, Optional immediate As Boolean = False)
+        If Me.IsDisposed Then Return
+        V3_InvalidationRouter.RequestRender(Me, dirtyRect)
+    End Sub
 
     Private Sub SyncTextRendererLayout()
         _textRenderer.BorderSize = 边框宽度
@@ -1222,7 +1385,7 @@ Public Class ModernNumericUpDown
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End If
     End Sub
 #End Region
@@ -1240,21 +1403,21 @@ Public Class ModernNumericUpDown
         _mouseDownSelecting = False
         _pressedButton = SpinButtonPart.None
         StopRepeatTimer()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnSizeChanged(e As EventArgs)
         MyBase.OnSizeChanged(e)
         SyncTextRendererLayout()
         _textRenderer.EnsureCaretVisible()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
         MyBase.OnFontChanged(e)
         SyncTextRendererLayout()
         _textRenderer.EnsureCaretVisible()
-        D2DHelperV2.RefreshFontDependentRendering(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnEnabledChanged(e As EventArgs)
@@ -1266,12 +1429,12 @@ Public Class ModernNumericUpDown
             _pressedButton = SpinButtonPart.None
             StopRepeatTimer()
         End If
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 #End Region
 

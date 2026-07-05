@@ -9,6 +9,8 @@ Public NotInheritable Class D3D_TextureCache
     Private ReadOnly _entries As New Dictionary(Of String, D3D_TextureCacheEntry)(StringComparer.Ordinal)
     Private _clock As Long
     Private _totalGpuBytes As Long
+    Private _frameUseDepth As Integer
+    Private _trimPending As Boolean
     Private _disposed As Boolean
 
     Public Property BudgetBytes As Long = 256L * 1024L * 1024L
@@ -18,6 +20,15 @@ Public NotInheritable Class D3D_TextureCache
             Return _totalGpuBytes
         End Get
     End Property
+
+    Friend Function ContainsTexture(Of T As IDisposable)(key As String, generation As Integer) As Boolean
+        If _disposed OrElse String.IsNullOrEmpty(key) Then Return False
+        Dim entry As D3D_TextureCacheEntry = Nothing
+        Return _entries.TryGetValue(key, entry) AndAlso
+               entry IsNot Nothing AndAlso
+               entry.Generation = generation AndAlso
+               TypeOf entry.Resource Is T
+    End Function
 
     ''' <summary>
     ''' 获取或创建 GPU texture-like 资源。factory 只能创建当前 device generation 的资源；旧 generation 命中会被释放并重建。
@@ -46,9 +57,31 @@ Public NotInheritable Class D3D_TextureCache
         entry = New D3D_TextureCacheEntry(key, resource, generation, Math.Max(0, gpuBytes), NextClock())
         _entries(key) = entry
         _totalGpuBytes += entry.GpuBytes
-        TrimToBudget(force:=False, protectedKey:=key)
+        RequestBudgetTrim(protectedKey:=key)
         Return resource
     End Function
+
+    Friend Sub BeginFrameUse()
+        If _disposed Then Return
+        _frameUseDepth += 1
+    End Sub
+
+    Friend Sub EndFrameUse()
+        If _frameUseDepth > 0 Then _frameUseDepth -= 1
+        If _frameUseDepth > 0 OrElse Not _trimPending Then Return
+
+        _trimPending = False
+        TrimToBudget(force:=False)
+    End Sub
+
+    Private Sub RequestBudgetTrim(Optional protectedKey As String = Nothing)
+        If _frameUseDepth > 0 Then
+            _trimPending = True
+            Return
+        End If
+
+        TrimToBudget(force:=False, protectedKey:=protectedKey)
+    End Sub
 
     ''' <summary>
     ''' 释放指定 key 的缓存资源。Release 不能在资源作为当前帧 target 时调用。
@@ -103,6 +136,7 @@ Public NotInheritable Class D3D_TextureCache
         Next
         _entries.Clear()
         _totalGpuBytes = 0
+        _trimPending = False
     End Sub
 
     Private Function NextClock() As Long

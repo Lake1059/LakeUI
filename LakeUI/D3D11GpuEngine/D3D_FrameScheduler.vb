@@ -7,15 +7,21 @@ Public NotInheritable Class D3D_FrameScheduler
     Implements IDisposable
 
     Private ReadOnly _owner As D3D_WindowCompositor
-    Private ReadOnly _timer As New Timer()
+    Private ReadOnly _timer As New PrecisionTimer()
     Private ReadOnly _clock As New Stopwatch()
     Private _pending As Boolean
     Private _disposed As Boolean
-    Private _minimumFrameIntervalMs As Integer = 16
+    Private _minimumFrameIntervalMs As Integer = 1
 
     Public Sub New(owner As D3D_WindowCompositor)
         _owner = owner
         _timer.Interval = _minimumFrameIntervalMs
+        _timer.DispatchMode = PrecisionTimer.DispatchModeEnum.NonBlocking
+        _timer.OverrunPolicy = PrecisionTimer.OverrunPolicyEnum.Drop
+        _timer.WorkerThreadCount = 1
+        If owner IsNot Nothing AndAlso owner.Form IsNot Nothing AndAlso Not owner.Form.IsDisposed Then
+            _timer.SynchronizingObject = owner.Form
+        End If
         AddHandler _timer.Tick, AddressOf OnTick
         _clock.Start()
     End Sub
@@ -26,6 +32,7 @@ Public NotInheritable Class D3D_FrameScheduler
         End Get
         Set(value As Integer)
             _minimumFrameIntervalMs = Math.Max(1, value)
+            _timer.Interval = _minimumFrameIntervalMs
         End Set
     End Property
 
@@ -38,23 +45,33 @@ Public NotInheritable Class D3D_FrameScheduler
 
         Dim elapsed = CInt(Math.Min(Integer.MaxValue, _clock.ElapsedMilliseconds))
         _timer.Interval = Math.Max(1, _minimumFrameIntervalMs - elapsed)
-        If Not _timer.Enabled Then _timer.Start()
+        If Not _timer.IsRunning Then _timer.Start()
     End Sub
 
     Private Sub OnTick(sender As Object, e As EventArgs)
         If _disposed Then Return
-        _timer.Stop()
-        If Not _pending Then Return
+        If Not _pending Then
+            _timer.Stop()
+            Return
+        End If
 
         _pending = False
         _clock.Restart()
-        _owner.RenderScheduledFrame()
+        _timer.Interval = _minimumFrameIntervalMs
+        Try
+            _owner.RenderScheduledFrame()
+        Catch ex As Exception
+            _owner.HandleScheduledFrameException(ex)
+        End Try
+
+        If Not _pending Then _timer.Stop()
     End Sub
 
     Public Sub Dispose() Implements IDisposable.Dispose
         If _disposed Then Return
         _disposed = True
         RemoveHandler _timer.Tick, AddressOf OnTick
+        _timer.Stop()
         _timer.Dispose()
         GC.SuppressFinalize(Me)
     End Sub

@@ -1,7 +1,7 @@
 ''' <summary>
-''' D3D_FrameGraph 表达一帧中的核心渲染依赖：窗口背景、Backdrop、背景源 snapshot、GPU 控件内容入口、文字层、普通 WinForms 边界。
-''' 背景映射不能重入绘制；source texture 必须先于 consumer 生成；环形依赖使用上一帧 snapshot 或断开，不允许递归调用控件绘制。
-''' 它只保存依赖拓扑，不持有 GPU 对象。
+''' D3D_FrameGraph 表达一帧中的核心渲染依赖。
+''' 当前运行时由 WinForms per-control OnPaint 驱动，D3D_PaintBridge 为单个控件创建 paint scope。
+''' 本类只保存设计约束与依赖拓扑，不持有 GPU 对象，也不是独立调度器。
 ''' </summary>
 Public NotInheritable Class D3D_FrameGraph
     Private ReadOnly _nodes As New Dictionary(Of String, D3D_FrameGraphNode)(StringComparer.Ordinal)

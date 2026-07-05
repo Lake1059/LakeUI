@@ -1,7 +1,7 @@
 ''' <summary>
 ''' D2D 显存 / 缓存清理力度。级别越高，释放越彻底，下一帧需要重建的资源也越多。
 ''' </summary>
-Public Enum D2DCacheCleanupLevel
+Public Enum D3DCacheCleanupLevel
     ''' <summary>只强制执行进程级 GPU/CPU 总预算。适合周期性内存压力检查，视觉影响最小。</summary>
     TrimToBudget = 0
     ''' <summary>释放容易重建的临时缓存，例如 SSAA 离屏 RT、背景上传和画刷缓存。</summary>
@@ -17,33 +17,33 @@ Public Enum D2DCacheCleanupLevel
 End Enum
 
 ''' <summary>
-''' D2D 渲染管线 V2 入口（路线 E：窗口级共享 + 控件级临时 SSAA）。
+''' D2D 兼容渲染入口（路线 E：窗口级共享 + 控件级临时 SSAA）。
 '''
 ''' === 设计目标 ===
 ''' • 控件数 × SSAA 倍率不再线性堆显存：DC RT、文字 / 笔刷 / 位图缓存、SSAA BitmapRT 统统按
-'''   "顶层 Form 一份" 集中到 <see cref="WindowCompositor"/>。
-''' • 透明背景穿透改为显式 source（<see cref="BackgroundPenetrationV2"/>），杜绝隐式递归采样。
+'''   "顶层 Form 一份" 集中到 <see cref="D3D_SurfaceCompositor"/>。
+''' • 透明背景穿透改为显式 source（<see cref="D3D_BackgroundPenetration"/>），杜绝隐式递归采样。
 ''' • 控件类自身不再持有 D2D 资源字段（_dcRT / _ssaaCache / _backImageCache 等），迁移时全部删除。
 '''
 ''' === 设计理念 ===
 ''' • 共享 DC RT + SSAA 池化 → GPU 资源生命周期与 Form 对齐，PaintScope 只绑定一次 HDC。
-''' • D2DGlobals（D2DGlobals.vb）仅保留无 Form 上下文的全局工厂/缓存/质量策略。
+''' • D3D_D2DInterop（D3D_D2DInterop.vb）仅保留无 Form 上下文的全局工厂/缓存/质量策略。
 '''
-''' === 控件接入清单（迁移到 V2 必做） ===
+''' === 控件接入清单（接入兼容绘制路径必做） ===
 ''' 1. 删除自身字段：_dcRT / _ssaaCache / _brushCache / _textFormatCache / _backImageCache。
 ''' 2. 删除 OnHandleDestroyed 内对上述字段的 Dispose（compositor 自管）。
-''' 3. <c>OnPaintBackground</c> 留空（V2 自己负责画底）。
+''' 3. <c>OnPaintBackground</c> 留空（兼容绘制路径自己负责画底）。
 ''' 4. <c>OnPaint</c> 改用下方 BeginPaint 模板：
 '''      Protected Overrides Sub OnPaint(e As PaintEventArgs)
-'''          Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa:=2)
+'''          Using scope = D3D_PaintBridge.BeginPaint(e, Me, ssaa:=2)
 '''              If scope Is Nothing Then  ' 设计期 / Parent=Nothing：可选回退到 V1 或直接退出
 '''                  MyBase.OnPaint(e) : Return
 '''              End If
 '''              ' (a) 背景层：BackColor 与背景穿透二选一（见下方"BackColor 协议"）
 '''              If _backgroundSource IsNot Nothing Then
-'''                  BackgroundPenetrationV2.PaintBackground(Me, scope, _backgroundSource)
+'''                  D3D_BackgroundPenetration.PaintBackground(Me, scope, _backgroundSource)
 '''              ElseIf BackColor.A > 0 Then
-'''                  scope.BackgroundLayer.Clear(D2DGlobals.ToD2DColor(BackColor))
+'''                  scope.BackgroundLayer.Clear(D3D_D2DInterop.ToD2DColor(BackColor))
 '''              End If
 '''              ' (b) 图形层（SSAA RT，回采时按 SsaaScale 缩小）
 '''              绘制图形_D2D(scope.GraphicsLayer, scope.Compositor)
@@ -55,33 +55,33 @@ End Enum
 ''' 5. 笔刷 / TextFormat 取自 <c>scope.Compositor.BrushCache</c> / <c>TextFormatCache</c>，
 '''    切勿在控件内再建 cache 实例。
 '''
-''' === BackColor 协议（V2 强约束） ===
+''' === BackColor 协议（V3 强约束） ===
 ''' • 指定 BackgroundSource → 跳过 BackColor，直接画穿透层。
 ''' • 未指定 BackgroundSource：BackColor.A=255 直接 Clear；A 介于 (0,255) 用半透明覆盖；A=0 不画。
-''' • 控件不要再覆盖 SetStyle(SupportsTransparentBackColor)：V2 的透明语义由 BackgroundSource 决定。
+''' • 控件不要再覆盖 SetStyle(SupportsTransparentBackColor)：兼容路径的透明语义由 BackgroundSource 决定。
 '''
 ''' === 生命周期 ===
-''' • compositor 由 Form 拥有，<c>Form.HandleDestroyed</c> 触发 <see cref="WindowCompositor.Dispose"/>
+''' • compositor 由 Form 拥有，<c>Form.HandleDestroyed</c> 触发 <see cref="D3D_SurfaceCompositor.Dispose"/>
 '''   并自动从注册表注销。
-''' • 控件除常规清理外不需要释放任何 V2 对象；持有 PaintScopeV2 必须在同一 OnPaint 内 Using 释放。
+''' • 控件除常规清理外不需要释放任何兼容绘制对象；持有 D3D_PaintScope 必须在同一 OnPaint 内 Using 释放。
 '''
 ''' === 线程要求 ===
 ''' • 所有方法必须在 UI 线程调用（D2D / GDI HDC 强制要求）。
 ''' • compositor 注册表本身有锁，但 RT / cache 的访问不加锁。
 ''' </summary>
-Public Module D2DHelperV2
+Public Module D3D_PaintBridge
 
     <ThreadStatic>
     Private _backgroundSamplingPaintDepth As Integer
     <ThreadStatic>
-    Private _backgroundSamplingScratch As Stack(Of WindowCompositor)
+    Private _backgroundSamplingScratch As Stack(Of D3D_SurfaceCompositor)
     <ThreadStatic>
-    Private _backgroundSamplingRetained As List(Of WindowCompositor)
+    Private _backgroundSamplingRetained As List(Of D3D_SurfaceCompositor)
     <ThreadStatic>
     Private _deferredFontRefreshDepth As Integer
 
-    ' 背景穿透在重采 source 时可能会调用 D2DHelperV2.BeginPaint 去把 source 自身画进一张 GDI Bitmap。
-    ' 如果此时同一 Form 已经处在正常 V2 PaintScope 内，共享 DC RT 不能再次 BindDC。
+    ' 背景穿透在重采 source 时可能会调用 D3D_PaintBridge.BeginPaint 去把 source 自身画进一张 GDI Bitmap。
+    ' 如果此时同一 Form 已经处在正常兼容 PaintScope 内，共享 DC RT 不能再次 BindDC。
     ' 这组 ThreadStatic 状态只在 UI 线程当前调用栈内生效：进入背景采样后允许租一份临时 compositor，
     ' 离开采样作用域时统一 Dispose，避免把临时 RT/Brush/Bitmap 缓存带到常规窗口生命周期里。
     Friend ReadOnly Property IsBackgroundSamplingPaint As Boolean
@@ -95,7 +95,7 @@ Public Module D2DHelperV2
         Return New BackgroundSamplingPaintScope()
     End Function
 
-    Private Function RentBackgroundSamplingCompositor(form As Form) As WindowCompositor
+    Private Function RentBackgroundSamplingCompositor(form As Form) As D3D_SurfaceCompositor
         If form Is Nothing OrElse form.IsDisposed Then Return Nothing
         If _backgroundSamplingScratch IsNot Nothing Then
             While _backgroundSamplingScratch.Count > 0
@@ -105,22 +105,22 @@ Public Module D2DHelperV2
                 Try : comp.Dispose() : Catch : End Try
             End While
         End If
-        Return New WindowCompositor(form, unregisterOnDispose:=False)
+        Return New D3D_SurfaceCompositor(form, unregisterOnDispose:=False)
     End Function
 
-    Private Function RentTransientReentrantCompositor(form As Form) As WindowCompositor
+    Private Function RentTransientReentrantCompositor(form As Form) As D3D_SurfaceCompositor
         If form Is Nothing OrElse form.IsDisposed Then Return Nothing
-        Return New WindowCompositor(form, unregisterOnDispose:=False)
+        Return New D3D_SurfaceCompositor(form, unregisterOnDispose:=False)
     End Function
 
-    Friend Sub ReturnBackgroundSamplingCompositor(comp As WindowCompositor)
+    Friend Sub ReturnBackgroundSamplingCompositor(comp As D3D_SurfaceCompositor)
         If comp Is Nothing Then Return
         If _backgroundSamplingPaintDepth <= 0 OrElse comp.IsDisposed Then
             Try : comp.Dispose() : Catch : End Try
             Return
         End If
-        If _backgroundSamplingScratch Is Nothing Then _backgroundSamplingScratch = New Stack(Of WindowCompositor)()
-        If _backgroundSamplingRetained Is Nothing Then _backgroundSamplingRetained = New List(Of WindowCompositor)()
+        If _backgroundSamplingScratch Is Nothing Then _backgroundSamplingScratch = New Stack(Of D3D_SurfaceCompositor)()
+        If _backgroundSamplingRetained Is Nothing Then _backgroundSamplingRetained = New List(Of D3D_SurfaceCompositor)()
         _backgroundSamplingScratch.Push(comp)
         If Not _backgroundSamplingRetained.Contains(comp) Then _backgroundSamplingRetained.Add(comp)
     End Sub
@@ -166,32 +166,32 @@ Public Module D2DHelperV2
         End Sub
     End Class
 
-#Region "WindowCompositor 注册表"
+#Region "D3D_SurfaceCompositor 注册表"
 
-    Private ReadOnly _compositors As New Dictionary(Of Form, WindowCompositor)
+    Private ReadOnly _compositors As New Dictionary(Of Form, D3D_SurfaceCompositor)
     Private ReadOnly _compositorsLock As New Object()
 
     ''' <summary>
-    ''' 取得控件所属顶层 Form 的 <see cref="WindowCompositor"/>，按需创建。
+    ''' 取得控件所属顶层 Form 的 <see cref="D3D_SurfaceCompositor"/>，按需创建。
     ''' </summary>
     ''' <param name="ctrl">任一隶属于目标 Form 的控件，可以是被绘控件本人。</param>
     ''' <returns>
     ''' 设计期、控件已 Dispose、控件尚未挂载到 Form、Form 已 Dispose 时返回 <c>Nothing</c>。
-    ''' 调用方应在 <c>Nothing</c> 情形下回退到 V1 路径或直接跳过 V2 自绘。
+    ''' 调用方应在 <c>Nothing</c> 情形下直接跳过本次兼容自绘。
     ''' </returns>
     ''' <remarks>
     ''' 注册表对 Form 引用是强引用，但 compositor 自身订阅 <c>Form.HandleDestroyed</c> 触发自销毁
     ''' 并调用 <see cref="UnregisterCompositor"/>，因此 Form 释放后注册表不会泄漏。
     ''' </remarks>
-    Public Function GetCompositor(ctrl As Control) As WindowCompositor
+    Public Function GetCompositor(ctrl As Control) As D3D_SurfaceCompositor
         If ctrl Is Nothing Then Return Nothing
         If ctrl.IsDisposed Then Return Nothing
-        Dim form As Form = ctrl.FindForm()
+        Dim form As Form = If(TypeOf ctrl Is Form, DirectCast(ctrl, Form), ctrl.FindForm())
         If form Is Nothing Then Return Nothing
         If form.IsDisposed Then Return Nothing
 
         SyncLock _compositorsLock
-            Dim comp As WindowCompositor = Nothing
+            Dim comp As D3D_SurfaceCompositor = Nothing
             If _compositors.TryGetValue(form, comp) Then
                 If comp.IsDisposed Then
                     _compositors.Remove(form)
@@ -199,7 +199,7 @@ Public Module D2DHelperV2
                     Return comp
                 End If
             End If
-            comp = New WindowCompositor(form)
+            comp = New D3D_SurfaceCompositor(form)
             _compositors(form) = comp
             Return comp
         End SyncLock
@@ -219,7 +219,7 @@ Public Module D2DHelperV2
         If form Is Nothing OrElse form.IsDisposed Then Return
 
         SyncLock _compositorsLock
-            Dim comp As WindowCompositor = Nothing
+            Dim comp As D3D_SurfaceCompositor = Nothing
             If _compositors.TryGetValue(form, comp) Then
                 If comp Is Nothing OrElse comp.IsDisposed Then
                     _compositors.Remove(form)
@@ -251,16 +251,16 @@ Public Module D2DHelperV2
 
         Try
             For Each affected In affectedForms
-                CleanupD2DResources(D2DCacheCleanupLevel.ReleaseRenderTargets, affected, invalidateAfterCleanup:=False)
+                CleanupD2DResources(D3DCacheCleanupLevel.ReleaseRenderTargets, affected, invalidateAfterCleanup:=False)
             Next
         Catch
         End Try
 
         Try
-            OuterToInnerRefreshScheduler.RequestFull(form, invalidateChildren:=True, immediate:=True)
+            OuterToInnerRefreshScheduler.RequestFull(form, invalidateChildren:=True, immediate:=False)
             For Each affected In affectedForms
                 If affected IsNot form Then
-                    OuterToInnerRefreshScheduler.RequestFull(affected, invalidateChildren:=True, immediate:=True)
+                    OuterToInnerRefreshScheduler.RequestFull(affected, invalidateChildren:=True, immediate:=False)
                 End If
             Next
         Catch
@@ -296,14 +296,14 @@ Public Module D2DHelperV2
         Dim effectiveDpi As Integer = newDpi
         If effectiveDpi <= 0 Then
             Try
-                Dim currentDpi = D2DGlobals.GetCurrentDpi(form)
+                Dim currentDpi = D3D_D2DInterop.GetCurrentDpi(form)
                 If currentDpi > 0 Then effectiveDpi = currentDpi
             Catch
             End Try
         End If
 
         If effectiveDpi > 0 Then
-            If form.IsHandleCreated Then D2DGlobals.SetWindowDpi(form.Handle, effectiveDpi)
+            If form.IsHandleCreated Then D3D_D2DInterop.SetWindowDpi(form.Handle, effectiveDpi)
             SynchronizeCompositorDpi(form, effectiveDpi)
         End If
 
@@ -314,7 +314,7 @@ Public Module D2DHelperV2
         If form Is Nothing OrElse form.IsDisposed OrElse dpi <= 0 Then Return
 
         SyncLock _compositorsLock
-            Dim comp As WindowCompositor = Nothing
+            Dim comp As D3D_SurfaceCompositor = Nothing
             If _compositors.TryGetValue(form, comp) Then
                 If comp Is Nothing OrElse comp.IsDisposed Then
                     _compositors.Remove(form)
@@ -336,7 +336,7 @@ Public Module D2DHelperV2
         If form Is Nothing OrElse form.IsDisposed Then Return False
 
         SyncLock _compositorsLock
-            Dim comp As WindowCompositor = Nothing
+            Dim comp As D3D_SurfaceCompositor = Nothing
             If Not _compositors.TryGetValue(form, comp) Then Return False
             If comp Is Nothing OrElse comp.IsDisposed Then
                 _compositors.Remove(form)
@@ -359,23 +359,23 @@ Public Module D2DHelperV2
     ''' <remarks>
     ''' 清理顺序很重要：
     ''' 1. 先清窗口 compositor，因为它拥有 DC RT、SSAA 池、Image 上传索引与 TextFormat cache。
-    ''' 2. 再清背景穿透与 BackdropRenderer，这两者维护的是跨控件的采样/模糊中间缓存。
-    ''' 3. RecreateDevice 及以上才失效 D3D11Globals；否则只是释放当前 RT/缓存，不动进程级设备。
+    ''' 2. 再清背景穿透与 D3D_BackdropSurfaceRenderer，这两者维护的是跨控件的采样/模糊中间缓存。
+    ''' 3. RecreateDevice 及以上才失效 D3D_DeviceGlobals；否则只是释放当前 RT/缓存，不动进程级设备。
     '''
     ''' 如果任一目标 compositor 正在 Paint，跨模块清理会被跳过，避免在 BindDC/BeginDraw 中释放 RT。
     ''' invalidateAfterCleanup 只排队重绘，不同步重建资源；下一帧按需创建。
     ''' </remarks>
-    Public Function CleanupD2DResources(level As D2DCacheCleanupLevel,
+    Public Function CleanupD2DResources(level As D3DCacheCleanupLevel,
                                         Optional owner As Control = Nothing,
                                         Optional invalidateAfterCleanup As Boolean = True) As Integer
         Dim targetForm As Form = ResolveCleanupForm(owner)
-        If level = D2DCacheCleanupLevel.ReleaseEverything Then targetForm = Nothing
-        Dim comps As New List(Of WindowCompositor)()
+        If level = D3DCacheCleanupLevel.ReleaseEverything Then targetForm = Nothing
+        Dim comps As New List(Of D3D_SurfaceCompositor)()
         Dim hasActivePaint As Boolean = False
 
         SyncLock _compositorsLock
             If targetForm IsNot Nothing Then
-                Dim comp As WindowCompositor = Nothing
+                Dim comp As D3D_SurfaceCompositor = Nothing
                 If _compositors.TryGetValue(targetForm, comp) AndAlso comp IsNot Nothing AndAlso Not comp.IsDisposed Then
                     comps.Add(comp)
                     hasActivePaint = hasActivePaint OrElse comp.IsPainting
@@ -402,31 +402,32 @@ Public Module D2DHelperV2
 
         If Not hasActivePaint Then
             If targetForm IsNot Nothing Then
-                BackgroundPenetrationV2.CleanupD2DResources(level, targetForm)
-                BackdropRenderer.CleanupAllD2DResources(level, targetForm)
+                D3D_BackgroundPenetration.CleanupD2DResources(level, targetForm)
+                D3D_BackdropSurfaceRenderer.CleanupAllD2DResources(level, targetForm)
                 MarkdownViewerCore.CleanupAllD2DResources(level, targetForm)
             Else
-                BackgroundPenetrationV2.CleanupD2DResources(level)
-                BackdropRenderer.CleanupAllD2DResources(level)
+                D3D_BackgroundPenetration.CleanupD2DResources(level)
+                D3D_BackdropSurfaceRenderer.CleanupAllD2DResources(level)
                 MarkdownViewerCore.CleanupAllD2DResources(level)
             End If
 
-            If level = D2DCacheCleanupLevel.TrimToBudget Then
-                CpuCache.TrimToBudget()
-                GpuCache.TrimToBudget()
+            If level = D3DCacheCleanupLevel.TrimToBudget Then
+                D3D_CpuCache.TrimToBudget()
+                D3D_GpuCache.TrimToBudget()
             End If
 
-            If level = D2DCacheCleanupLevel.ReleaseEverything Then
-                CpuCache.ReleaseAll()
-                GpuCache.ReleaseAll()
+            If level = D3DCacheCleanupLevel.ReleaseEverything Then
+                D3D_CpuCache.ReleaseAll()
+                D3D_GpuCache.ReleaseAll()
             End If
 
-            If level >= D2DCacheCleanupLevel.RecreateDevice Then
-                D3D11Globals.InvalidateDevice()
+            If level >= D3DCacheCleanupLevel.RecreateDevice Then
+                D3D_DeviceGlobals.InvalidateDevice()
+                D3D_RenderCore.DeviceManager.InvalidateDevice()
             End If
 
             If targetForm Is Nothing Then
-                D2DGlobals.CleanupD2DResources(level)
+                D3D_D2DInterop.CleanupD2DResources(level)
             End If
         End If
 
@@ -450,7 +451,7 @@ Public Module D2DHelperV2
     ''' </summary>
     Public Function ResetRenderCore(Optional owner As Control = Nothing,
                                     Optional invalidateAfterCleanup As Boolean = True) As Integer
-        Return CleanupD2DResources(D2DCacheCleanupLevel.ReleaseEverything, owner, invalidateAfterCleanup)
+        Return CleanupD2DResources(D3DCacheCleanupLevel.ReleaseEverything, owner, invalidateAfterCleanup)
     End Function
 
     ''' <summary>
@@ -462,11 +463,11 @@ Public Module D2DHelperV2
                                          Optional invalidateAfterCleanup As Boolean = False) As Integer
         If image Is Nothing Then Return 0
         Dim targetForm As Form = ResolveCleanupForm(owner)
-        Dim comps As New List(Of WindowCompositor)()
+        Dim comps As New List(Of D3D_SurfaceCompositor)()
 
         SyncLock _compositorsLock
             If targetForm IsNot Nothing Then
-                Dim comp As WindowCompositor = Nothing
+                Dim comp As D3D_SurfaceCompositor = Nothing
                 If _compositors.TryGetValue(targetForm, comp) AndAlso comp IsNot Nothing AndAlso Not comp.IsDisposed Then
                     comps.Add(comp)
                 End If
@@ -515,7 +516,7 @@ Public Module D2DHelperV2
 #Region "SSAA 倍率"
 
     ''' <summary>
-    ''' 计算控件实际使用的 V2 图形层 SSAA 倍率。
+    ''' 计算控件实际使用的 SSAA 倍率。
     ''' </summary>
     ''' <remarks>
     ''' OFF 不强制全局倍率；x2/x3/x4 与控件自身设置取较高值。这里不做额外上限裁剪，
@@ -523,16 +524,12 @@ Public Module D2DHelperV2
     ''' 仍可保持不参与全局 SSAA。
     ''' </remarks>
     Public Function GetEffectiveSsaaScale(controlScale As Integer) As Integer
-        Dim ssaa As Integer = Math.Max(1, controlScale)
-        If GlobalOptions.GlobalSSAA <> GlobalOptions.SuperSamplingScaleEnum.OFF Then
-            ssaa = Math.Max(ssaa, CInt(GlobalOptions.GlobalSSAA))
-        End If
-        Return ssaa
+        Return GlobalOptions.GetEffectiveSsaaScale(controlScale)
     End Function
 
-    ''' <summary>计算控件实际使用的 V2 图形层 SSAA 倍率。</summary>
+    ''' <summary>计算控件实际使用的 SSAA 倍率。</summary>
     Public Function GetEffectiveSsaaScale(controlScale As GlobalOptions.SuperSamplingScaleEnum) As Integer
-        Return GetEffectiveSsaaScale(CInt(controlScale))
+        Return GlobalOptions.GetEffectiveSsaaScale(controlScale)
     End Function
 
 #End Region
@@ -540,21 +537,21 @@ Public Module D2DHelperV2
 #Region "BeginPaint 入口"
 
     ''' <summary>
-    ''' 启动一次 V2 绘制作用域。返回的 <see cref="PaintScopeV2"/> 必须在同一 <c>OnPaint</c> 内 Using 释放，
+    ''' 启动一次兼容绘制作用域。返回的 <see cref="D3D_PaintScope"/> 必须在同一 <c>OnPaint</c> 内 Using 释放，
     ''' 跨方法保存会导致 HDC 泄漏与下一帧 BindDC 失败。
     ''' </summary>
     ''' <param name="e">控件 OnPaint 收到的事件参数。</param>
     ''' <param name="control">被绘控件，用来定位 compositor 与传入 Width / Height。</param>
     ''' <param name="ssaaScale">
     ''' 图形层 SSAA 倍率：&lt;=1 表示禁用（图形层即 DC RT）；建议常用 2 或 3，&gt;4 已无收益。
-    ''' SSAA 仅作用于 <see cref="PaintScopeV2.GraphicsLayer"/>，背景层与文字层始终为 1×。
+    ''' SSAA 仅作用于 <see cref="D3D_PaintScope.GraphicsLayer"/>，背景层与文字层始终为 1×。
     ''' </param>
     ''' <returns>
     ''' 设计期、无 Form 或 compositor 创建失败时返回 <c>Nothing</c>；
-    ''' 同一 Form 内正在进行 V2 绘制重入时，会临时租用一份隔离 compositor，避免共享 DC RT 二次 BindDC。
-    ''' 调用方应在 <c>Nothing</c> 时回退到 V1、base.OnPaint，或跳过本次 V2 自绘。
+    ''' 同一 Form 内正在进行兼容绘制重入时，会临时租用一份隔离 compositor，避免共享 DC RT 二次 BindDC。
+    ''' 调用方应在 <c>Nothing</c> 时base.OnPaint，或跳过本次兼容自绘。
     ''' </returns>
-    Public Function BeginPaint(e As PaintEventArgs, control As Control, ssaaScale As Integer) As PaintScopeV2
+    Public Function BeginPaint(e As PaintEventArgs, control As Control, ssaaScale As Integer) As D3D_PaintScope
         If e Is Nothing OrElse control Is Nothing Then Return Nothing
         Dim comp = GetCompositor(control)
         If comp Is Nothing Then Return Nothing
@@ -589,6 +586,80 @@ Public Module D2DHelperV2
 
         ReturnBackgroundSamplingCompositor(tempComp)
         Return Nothing
+    End Function
+
+    ''' <summary>
+    ''' 标准 V3 控件 OnPaint 入口：在当前控件 HWND 的 Paint HDC 上创建一次 scope，
+    ''' 让控件通过 RenderGpu 绘制自身并由 scope 统一合成回当前 HDC。
+    ''' </summary>
+    Friend Function BeginGpuPaint(e As PaintEventArgs, control As Control) As D3D_PaintScope
+        If e Is Nothing OrElse control Is Nothing Then Return Nothing
+        Dim comp = GetCompositor(control)
+        If comp Is Nothing Then Return Nothing
+        Dim scope = comp.BeginGpuPaint(e, control)
+        If scope IsNot Nothing Then Return scope
+
+        Dim form As Form = control.FindForm()
+        If form Is Nothing OrElse form.IsDisposed Then Return Nothing
+
+        If _backgroundSamplingPaintDepth <= 0 Then
+            Dim transientComp = RentTransientReentrantCompositor(form)
+            If transientComp Is Nothing Then Return Nothing
+            Try
+                Dim transientScope = transientComp.BeginGpuPaint(e, control, disposeCompositorWithScope:=True)
+                If transientScope IsNot Nothing Then Return transientScope
+            Catch
+                Try : transientComp.Dispose() : Catch : End Try
+                Throw
+            End Try
+            Try : transientComp.Dispose() : Catch : End Try
+            Return Nothing
+        End If
+
+        Dim tempComp = RentBackgroundSamplingCompositor(form)
+        If tempComp Is Nothing Then Return Nothing
+        Try
+            Dim tempScope = tempComp.BeginGpuPaint(e, control, returnCompositorToBackgroundSamplingPool:=True)
+            If tempScope IsNot Nothing Then Return tempScope
+        Catch
+            Try : tempComp.Dispose() : Catch : End Try
+            Throw
+        End Try
+
+        ReturnBackgroundSamplingCompositor(tempComp)
+        Return Nothing
+    End Function
+
+    Public Function PaintRenderable(e As PaintEventArgs,
+                                    control As Control,
+                                    renderable As V3_IGpuRenderable,
+                                    ssaaScale As Integer) As Boolean
+        If e Is Nothing OrElse control Is Nothing OrElse renderable Is Nothing Then Return False
+        If control.IsDisposed OrElse control.Width <= 0 OrElse control.Height <= 0 Then Return False
+
+        Try
+            Using scope = BeginGpuPaint(e, control)
+                If scope Is Nothing Then Return False
+                Using context = scope.CreateContext(control)
+                    If context Is Nothing Then Return False
+                    renderable.RenderGpu(context)
+                End Using
+            End Using
+            Return True
+        Catch ex As Exception
+            If D3D_RenderCore.DeviceManager.HandleDeviceLost(ex) Then
+                Try : control.Invalidate() : Catch : End Try
+                Return False
+            End If
+            Throw
+        End Try
+    End Function
+
+    Public Function PaintRenderable(e As PaintEventArgs,
+                                    control As Control,
+                                    renderable As V3_IGpuRenderable,
+                                    ssaaScale As GlobalOptions.SuperSamplingScaleEnum) As Boolean
+        Return PaintRenderable(e, control, renderable, GetEffectiveSsaaScale(ssaaScale))
     End Function
 
 #End Region

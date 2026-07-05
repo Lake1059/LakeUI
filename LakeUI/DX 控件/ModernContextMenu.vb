@@ -1,5 +1,6 @@
 Imports System.ComponentModel
 Imports System.ComponentModel.Design
+Imports System.Numerics
 Imports Vortice.Direct2D1
 
 <ToolboxItem(True)>
@@ -568,7 +569,7 @@ Public Class ModernContextMenu
 
     Friend Class MenuPopupForm
         Inherits PopupForm
-        Implements IMessageFilter
+        Implements IMessageFilter, V3_IGpuRenderable, V3_IGpuInvalidationSource
 
         Private ReadOnly 菜单 As ModernContextMenu
         Private ReadOnly 父弹窗 As MenuPopupForm
@@ -582,8 +583,7 @@ Public Class ModernContextMenu
 
         ' 悬停动画相关
         Private ReadOnly 动画秒表 As New Stopwatch()
-        Private 动画计时器 As System.Windows.Forms.Timer
-        Private 悬停用Idle As Boolean = False
+        Private 动画计时器 As PrecisionTimer
         Private 动画起始Y As Single = -1
         Private 动画目标Y As Single = -1
         Private 动画当前Y As Single = -1
@@ -595,14 +595,12 @@ Public Class ModernContextMenu
 
         ' 展开关闭动画相关
         Private ReadOnly 展开关闭秒表 As New Stopwatch()
-        Private 展开关闭计时器 As System.Windows.Forms.Timer
-        Private 展开关闭用Idle As Boolean = False
+        Private 展开关闭计时器 As PrecisionTimer
         Private 展开关闭动画中 As Boolean = False
         Private 正在关闭动画 As Boolean = False
         Private 最终高度 As Integer
 
-        Private _当前合成器 As WindowCompositor
-        Private _backdrop As PopupBackdropRenderer
+        Private _backdrop As D3D_PopupBackdropRenderer
 
         Private Sub 释放D2D资源()
             If _backdrop IsNot Nothing Then
@@ -639,21 +637,28 @@ Public Class ModernContextMenu
             BackColor = menu.BackColor1
             SetStyle(ControlStyles.AllPaintingInWmPaint Or ControlStyles.UserPaint Or ControlStyles.OptimizedDoubleBuffer, True)
 
-            悬停用Idle = (menu.悬停动画帧率 <= 0)
-            If Not 悬停用Idle Then
-                Dim interval As Integer = Math.Max(1, 1000 \ menu.悬停动画帧率)
-                动画计时器 = New System.Windows.Forms.Timer() With {.Interval = interval}
-            End If
-
-            展开关闭用Idle = (menu.展开关闭动画帧率 <= 0)
-            If Not 展开关闭用Idle Then
-                Dim interval As Integer = Math.Max(1, 1000 \ menu.展开关闭动画帧率)
-                展开关闭计时器 = New System.Windows.Forms.Timer() With {.Interval = interval}
-            End If
+            动画计时器 = 创建动画计时器(menu.悬停动画帧率)
+            展开关闭计时器 = 创建动画计时器(menu.展开关闭动画帧率)
         End Sub
 
+        Private Shared Function FrameIntervalMilliseconds(fps As Integer) As Integer
+            If fps <= 0 Then Return 1
+            fps = Math.Max(1, fps)
+            Return Math.Max(1, CInt(Math.Ceiling(1000.0R / fps)))
+        End Function
+
+        Private Function 创建动画计时器(fps As Integer) As PrecisionTimer
+            Return New PrecisionTimer() With {
+                .Interval = FrameIntervalMilliseconds(fps),
+                .DispatchMode = PrecisionTimer.DispatchModeEnum.NonBlocking,
+                .OverrunPolicy = PrecisionTimer.OverrunPolicyEnum.Drop,
+                .WorkerThreadCount = 1,
+                .SynchronizingObject = Me
+            }
+        End Function
+
         Private Function DpiScale() As Single
-            Return D2DGlobals.GetCurrentDpiScale(Me)
+            Return V3_DpiContext.FromControl(Me).Scale
         End Function
 
         Friend Sub ShowAt(x As Integer, y As Integer)
@@ -717,7 +722,8 @@ Public Class ModernContextMenu
             If 子菜单弹窗 IsNot Nothing AndAlso Not 子菜单弹窗.IsDisposed Then
                 子菜单弹窗.RefreshFontResources()
             End If
-            D2DHelperV2.RefreshFontDependentRendering(Me)
+            InvalidateV3TextResources()
+            RequestV3Render()
         End Sub
 
         Private Shared Function ToPopupBackdropMode(mode As BackdropModeEnum) As PopupBackdropMode
@@ -736,7 +742,7 @@ Public Class ModernContextMenu
         End Function
 
         Private Sub 准备毛玻璃背景()
-            If _backdrop Is Nothing Then _backdrop = New PopupBackdropRenderer(Me)
+            If _backdrop Is Nothing Then _backdrop = New D3D_PopupBackdropRenderer(Me)
             _backdrop.TransientExcludeOnCapture = False
             _backdrop.Configure(ToPopupBackdropMode(菜单.毛玻璃模式),
                                 菜单.毛玻璃图片,
@@ -800,87 +806,101 @@ Public Class ModernContextMenu
 #Region "绘制"
 
         Protected Overrides Sub OnPaint(e As PaintEventArgs)
-            Dim ssaa As Integer = D2DHelperV2.GetEffectiveSsaaScale(菜单.超采样倍率)
-
-            绘制毛玻璃背景(e.Graphics)
-
-            Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
-                If scope Is Nothing Then Return
-                _当前合成器 = scope.Compositor
-                Try
-                    Dim gRT As ID2D1RenderTarget = scope.GraphicsLayer
-                    Dim dcRT As ID2D1DCRenderTarget = scope.DCRenderTarget
-
-                    绘制图形内容_D2D(gRT)
-                    scope.FlushGraphics()
-                    绘制全部文本_D2D(dcRT)
-                Finally
-                    _当前合成器 = Nothing
-                End Try
-            End Using
+            If Not D3D_PaintBridge.PaintRenderable(e, Me, Me, 1) Then MyBase.OnPaint(e)
         End Sub
 
-        Private Sub 绘制毛玻璃背景(g As Graphics)
-            If Not HasBackdropFrame() Then Return
-            Dim target As New Rectangle(0, 0, ClientSize.Width, ClientSize.Height)
-            _backdrop.Draw(g, target)
+        Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+            If ClientSize.Width <= 0 OrElse ClientSize.Height <= 0 Then Return
+
+            DrawBackdrop_GPU(context)
+            DrawGraphicsContent_GPU(context)
+            DrawAllText_GPU(context)
         End Sub
 
-        Private Sub 绘制图形内容_D2D(rt As ID2D1RenderTarget)
-            If Not HasBackdropFrame() Then
-                Dim bg = _当前合成器.BrushCache.Get(rt, 菜单.背景颜色)
-                rt.FillRectangle(D2DGlobals.ToD2DRect(ClientRectangle), bg)
+        Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+            Return New Rectangle(Point.Empty, Me.Size)
+        End Function
+
+        Private Sub RequestV3Render(Optional immediate As Boolean = False)
+            RequestV3Render(New Rectangle(Point.Empty, Me.Size), immediate)
+        End Sub
+
+        Private Sub RequestV3Render(dirtyRect As Rectangle, Optional immediate As Boolean = False)
+            If IsDisposed OrElse Disposing Then Return
+            V3_InvalidationRouter.RequestRender(Me, dirtyRect)
+        End Sub
+
+        Private Sub InvalidateV3TextResources()
+            D3D_RenderCore.InvalidateExistingTextResources(Me)
+        End Sub
+
+        Private Sub DrawBackdrop_GPU(context As D3D_PaintContext)
+            If 菜单.毛玻璃模式 = BackdropModeEnum.Image AndAlso 菜单.毛玻璃图片 IsNot Nothing Then
+                Dim renderer = context.Compositor.D3D_BackdropSurfaceRenderer
+                renderer.SetImage(菜单.毛玻璃图片)
+                renderer.ApplyParameters(菜单.毛玻璃模糊半径,
+                                         菜单.毛玻璃模糊次数,
+                                         菜单.毛玻璃下采样,
+                                         菜单.毛玻璃噪点缩放)
+                renderer.TintColor = 菜单.毛玻璃Tint颜色
+                renderer.NoiseOpacity = 菜单.毛玻璃噪点不透明度
+                renderer.DrawImageBackdrop(context, New RectangleF(0, 0, ClientSize.Width, ClientSize.Height))
+            End If
+        End Sub
+
+        Private Sub DrawGraphicsContent_GPU(context As D3D_PaintContext)
+            If Not (菜单.毛玻璃模式 = BackdropModeEnum.Image AndAlso 菜单.毛玻璃图片 IsNot Nothing) Then
+                context.FillRectangle(New RectangleF(0, 0, ClientSize.Width, ClientSize.Height), 菜单.背景颜色)
+            ElseIf 菜单.背景颜色.A > 0 AndAlso 菜单.背景颜色.A < 255 Then
+                context.FillRectangle(New RectangleF(0, 0, ClientSize.Width, ClientSize.Height), 菜单.背景颜色)
             End If
 
             If 菜单.边框宽度 > 0 Then
                 Dim bw As Single = Math.Max(1.0F, 菜单.边框宽度 * DpiScale())
                 Dim cw As Single = ClientSize.Width - 1
                 Dim ch As Single = ClientSize.Height - 1
-                Dim b = _当前合成器.BrushCache.Get(rt, 菜单.边框颜色)
-                rt.FillRectangle(New Vortice.Mathematics.Rect(0, 0, cw, bw), b)
-                rt.FillRectangle(New Vortice.Mathematics.Rect(0, ch - bw, cw, bw), b)
-                rt.FillRectangle(New Vortice.Mathematics.Rect(0, bw, bw, ch - bw * 2), b)
-                rt.FillRectangle(New Vortice.Mathematics.Rect(cw - bw, bw, bw, ch - bw * 2), b)
+                context.FillRectangle(New RectangleF(0, 0, cw, bw), 菜单.边框颜色)
+                context.FillRectangle(New RectangleF(0, ch - bw, cw, bw), 菜单.边框颜色)
+                context.FillRectangle(New RectangleF(0, bw, bw, ch - bw * 2), 菜单.边框颜色)
+                context.FillRectangle(New RectangleF(cw - bw, bw, bw, ch - bw * 2), 菜单.边框颜色)
             End If
 
-            绘制悬停高亮_D2D(rt)
+            DrawHoverHighlight_GPU(context)
 
             For i = 0 To 菜单.项目列表.Count - 1
                 If i >= 项目区域列表.Count Then Exit For
                 Dim item = 菜单.项目列表(i)
                 Dim rect = 项目区域列表(i)
                 If item.IsSeparator Then
-                    绘制分割线_D2D(rt, rect)
+                    DrawSeparator_GPU(context, rect)
                 ElseIf Not item.IsDescription Then
-                    绘制项目图形_D2D(rt, item, rect)
+                    DrawItemGraphics_GPU(context, item, rect)
                 End If
             Next
         End Sub
 
-        Private Sub 绘制分割线_D2D(rt As ID2D1RenderTarget, rect As Rectangle)
+        Private Sub DrawSeparator_GPU(context As D3D_PaintContext, rect As Rectangle)
             Dim lineY As Single = rect.Y + (rect.Height - 1) / 2.0F
-            Dim b = _当前合成器.BrushCache.Get(rt, 菜单.分割线颜色)
-            rt.FillRectangle(New Vortice.Mathematics.Rect(rect.X, lineY, rect.Width, 1.0F), b)
+            context.FillRectangle(New RectangleF(rect.X, lineY, rect.Width, 1.0F), 菜单.分割线颜色)
         End Sub
 
-        Private Sub 绘制悬停高亮_D2D(rt As ID2D1RenderTarget)
+        Private Sub DrawHoverHighlight_GPU(context As D3D_PaintContext)
             If Not 动画显示高亮 OrElse 项目区域列表.Count = 0 Then Return
             Dim highlightRect As New RectangleF(
                 项目区域列表(0).X, 动画当前Y,
                 项目区域列表(0).Width, 动画当前高度)
             Dim highlightColor As Color = If(鼠标按下, 菜单.按下背景颜色, 菜单.悬停背景颜色)
-            Dim b = _当前合成器.BrushCache.Get(rt, highlightColor)
+            If highlightColor.A = 0 Then Return
+
             If 菜单.悬停圆角半径 > 0 Then
                 Dim radius As Single = Math.Min(菜单.悬停圆角半径 * DpiScale(), highlightRect.Height / 2.0F)
-                Using geo = RectangleRenderer.创建圆角矩形几何(highlightRect, radius)
-                    rt.FillGeometry(geo, b)
-                End Using
+                FillRoundedRect_GPU(context, highlightRect, radius, highlightColor)
             Else
-                rt.FillRectangle(D2DGlobals.ToD2DRect(highlightRect), b)
+                context.FillRectangle(highlightRect, highlightColor)
             End If
         End Sub
 
-        Private Sub 绘制项目图形_D2D(rt As ID2D1RenderTarget, item As ModernMenuItem, rect As Rectangle)
+        Private Sub DrawItemGraphics_GPU(context As D3D_PaintContext, item As ModernMenuItem, rect As Rectangle)
             Dim s As Single = DpiScale()
             Dim ipL As Integer = CInt(菜单.项目内边距.Left * s)
             Dim iconCol As Integer = CInt(菜单.有效图标列宽度 * s)
@@ -890,24 +910,17 @@ Public Class ModernContextMenu
                 Dim iconY As Integer = rect.Y + (rect.Height - iconCol) \ 2
                 Dim iconRect As New RectangleF(iconX, iconY, iconCol, iconCol)
 
-                If item.Checked Then 绘制勾选标记_D2D(rt, iconRect)
-
-                If item.Icon IsNot Nothing Then
-                    Dim bmp = _当前合成器.GetBitmapCache(item.Icon).GetBitmap(rt, item.Icon)
-                    If bmp IsNot Nothing Then
-                        Dim srcRect As New RectangleF(0, 0, item.Icon.Width, item.Icon.Height)
-                        rt.DrawBitmap(bmp, D2DGlobals.ToD2DRect(iconRect), 1.0F, BitmapInterpolationMode.Linear, D2DGlobals.ToD2DRect(srcRect))
-                    End If
-                End If
+                If item.Checked Then DrawCheckMark_GPU(context, iconRect)
+                If item.Icon IsNot Nothing Then context.DrawImage(item.Icon, iconRect)
             End If
 
             If item.SubMenu IsNot Nothing Then
                 Dim arrowW As Integer = CInt(16 * s)
-                绘制箭头_D2D(rt, New Rectangle(rect.Right - arrowW, rect.Y, arrowW, rect.Height))
+                DrawArrow_GPU(context, New Rectangle(rect.Right - arrowW, rect.Y, arrowW, rect.Height))
             End If
         End Sub
 
-        Private Sub 绘制全部文本_D2D(rt As ID2D1DCRenderTarget)
+        Private Sub DrawAllText_GPU(context As D3D_PaintContext)
             Dim s As Single = DpiScale()
             Dim iconCol As Integer = CInt(菜单.有效图标列宽度 * s)
             Dim ipL As Integer = CInt(菜单.项目内边距.Left * s)
@@ -915,9 +928,6 @@ Public Class ModernContextMenu
             Dim ipT As Integer = CInt(菜单.项目内边距.Top * s)
             Dim ipB As Integer = CInt(菜单.项目内边距.Bottom * s)
             Dim iconTextGap As Integer = If(iconCol > 0, CInt(菜单.图标文字间距 * s), 0)
-            Dim dpi As Single = DpiScale()
-            Dim tfc = _当前合成器.TextFormatCache
-            Dim brushCache = _当前合成器.BrushCache
 
             For i = 0 To 菜单.项目列表.Count - 1
                 If i >= 项目区域列表.Count Then Exit For
@@ -937,43 +947,61 @@ Public Class ModernContextMenu
                 If font Is Nothing OrElse foreColor.A = 0 Then Continue For
 
                 Dim arrowSpace As Integer = If(Not item.IsDescription AndAlso item.SubMenu IsNot Nothing, CInt(20 * s), 0)
-                Dim textRect As New Rectangle(x, rect.Y + ipT, rect.Width - ipL - iconCol - iconTextGap - ipR - arrowSpace, rect.Height - ipT - ipB)
+                Dim textRect As New RectangleF(x, rect.Y + ipT, rect.Width - ipL - iconCol - iconTextGap - ipR - arrowSpace, rect.Height - ipT - ipB)
                 If textRect.Width <= 0 OrElse textRect.Height <= 0 Then Continue For
 
-                D2DTextRenderer.DrawText(rt, If(item.Text, ""), font, textRect, foreColor,
-                    TextFormatFlags.Left Or TextFormatFlags.VerticalCenter Or TextFormatFlags.EndEllipsis Or TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine,
-                    dpi, tfc, brushCache)
+                context.DrawText(If(item.Text, ""), font, foreColor, textRect,
+                                 Vortice.DirectWrite.TextAlignment.Leading,
+                                 Vortice.DirectWrite.ParagraphAlignment.Center)
             Next
         End Sub
 
-        Private Sub 绘制勾选标记_D2D(rt As ID2D1RenderTarget, rect As RectangleF)
+        Private Sub DrawCheckMark_GPU(context As D3D_PaintContext, rect As RectangleF)
             Dim cx As Single = rect.X + rect.Width / 2.0F
             Dim cy As Single = rect.Y + rect.Height / 2.0F
             Dim s As Single = rect.Height * 0.18F
             Dim pw As Single = Math.Max(1.6F, rect.Height * 0.08F)
-            Dim b = _当前合成器.BrushCache.Get(rt, 菜单.勾选颜色)
-            rt.DrawLine(New System.Numerics.Vector2(cx - s, cy), New System.Numerics.Vector2(cx - s * 0.35F, cy + s * 0.85F), b, pw)
-            rt.DrawLine(New System.Numerics.Vector2(cx - s * 0.35F, cy + s * 0.85F), New System.Numerics.Vector2(cx + s, cy - s), b, pw)
+            Dim b = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, 菜单.勾选颜色, context.DeviceGeneration)
+            context.DeviceContext.DrawLine(New Vector2(cx - s, cy), New Vector2(cx - s * 0.35F, cy + s * 0.85F), b, pw)
+            context.DeviceContext.DrawLine(New Vector2(cx - s * 0.35F, cy + s * 0.85F), New Vector2(cx + s, cy - s), b, pw)
         End Sub
 
-        Private Sub 绘制箭头_D2D(rt As ID2D1RenderTarget, rect As Rectangle)
+        Private Sub DrawArrow_GPU(context As D3D_PaintContext, rect As Rectangle)
             Dim cx As Single = rect.X + rect.Width / 2.0F
             Dim cy As Single = rect.Y + rect.Height / 2.0F
             Dim arrSize As Single = 菜单.箭头大小 * DpiScale()
             Dim arrH As Single = arrSize
             Dim arrW As Single = CSng(arrSize * Math.Sqrt(3.0) / 2.0)
-            Dim b = _当前合成器.BrushCache.Get(rt, 菜单.箭头颜色)
+            Dim b = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, 菜单.箭头颜色, context.DeviceGeneration)
 
-            Using geo = D2DGlobals.GetD2DFactory().CreatePathGeometry()
+            Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreatePathGeometry()
                 Using sink = geo.Open()
-                    sink.BeginFigure(New System.Numerics.Vector2(cx - arrW / 2.0F, cy - arrH / 2.0F), Vortice.Direct2D1.FigureBegin.Filled)
-                    sink.AddLine(New System.Numerics.Vector2(cx - arrW / 2.0F, cy + arrH / 2.0F))
-                    sink.AddLine(New System.Numerics.Vector2(cx + arrW / 2.0F, cy))
-                    sink.EndFigure(Vortice.Direct2D1.FigureEnd.Closed)
+                    sink.BeginFigure(New Vector2(cx - arrW / 2.0F, cy - arrH / 2.0F), FigureBegin.Filled)
+                    sink.AddLine(New Vector2(cx - arrW / 2.0F, cy + arrH / 2.0F))
+                    sink.AddLine(New Vector2(cx + arrW / 2.0F, cy))
+                    sink.EndFigure(FigureEnd.Closed)
                     sink.Close()
                 End Using
-                rt.FillGeometry(geo, b)
+                context.DeviceContext.FillGeometry(geo, b)
             End Using
+        End Sub
+
+        Private Sub FillRoundedRect_GPU(context As D3D_PaintContext, rect As RectangleF, radius As Single, color As Color)
+            If color.A = 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+            Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
+            If radius <= 0 Then
+                context.DeviceContext.FillRectangle(D3D_PaintContext.ToRawRect(rect), brush)
+                Return
+            End If
+            Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New RoundedRectangle(rect, radius, radius))
+                context.DeviceContext.FillGeometry(geo, brush)
+            End Using
+        End Sub
+
+        Private Sub 绘制毛玻璃背景(g As Graphics)
+            If Not HasBackdropFrame() Then Return
+            Dim target As New Rectangle(0, 0, ClientSize.Width, ClientSize.Height)
+            _backdrop.Draw(g, target)
         End Sub
 
 
@@ -987,7 +1015,7 @@ Public Class ModernContextMenu
             If newIndex <> 悬停索引 Then
                 悬停索引 = newIndex
                 更新悬停动画()
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                RequestV3Render()
                 处理子菜单悬停()
             End If
         End Sub
@@ -996,14 +1024,14 @@ Public Class ModernContextMenu
             MyBase.OnMouseDown(e)
             If e.Button = MouseButtons.Left OrElse e.Button = MouseButtons.Right Then
                 鼠标按下 = True
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                RequestV3Render()
             End If
         End Sub
 
         Protected Overrides Sub OnMouseUp(e As MouseEventArgs)
             MyBase.OnMouseUp(e)
             鼠标按下 = False
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            RequestV3Render()
         End Sub
 
         Protected Overrides Sub OnMouseClick(e As MouseEventArgs)
@@ -1019,7 +1047,7 @@ Public Class ModernContextMenu
                 关闭全部()
             Else
                 item.PerformClick()
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                RequestV3Render()
             End If
         End Sub
 
@@ -1028,7 +1056,7 @@ Public Class ModernContextMenu
             If 子菜单弹窗 Is Nothing OrElse 子菜单弹窗.IsDisposed Then
                 悬停索引 = -1
                 更新悬停动画()
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                RequestV3Render()
             End If
         End Sub
 
@@ -1141,7 +1169,7 @@ Public Class ModernContextMenu
                 动画当前Y = 动画目标Y
                 动画当前高度 = 动画目标高度
                 停止动画()
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                RequestV3Render()
                 Return
             End If
 
@@ -1157,7 +1185,7 @@ Public Class ModernContextMenu
                 动画当前高度 = 动画目标高度
                 停止动画()
             End If
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            RequestV3Render()
         End Sub
 
         Private Sub 停止动画()
@@ -1196,7 +1224,7 @@ Public Class ModernContextMenu
                 Dim newH As Integer = Math.Max(1, CInt(最终高度 * eased))
                 Me.Size = New Size(Me.Width, newH)
             End If
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            RequestV3Render()
 
             If t >= 1.0F Then
                 停止展开关闭驱动()
@@ -1205,7 +1233,7 @@ Public Class ModernContextMenu
                     完成关闭()
                 Else
                     Me.Size = New Size(Me.Width, 最终高度)
-                    OuterToInnerRefreshScheduler.RequestFull(Me)
+                    RequestV3Render()
                 End If
             End If
         End Sub
@@ -1229,39 +1257,27 @@ Public Class ModernContextMenu
 #Region "动画驱动"
 
         Private Sub 启动悬停驱动()
-            If 悬停用Idle Then
-                AddHandler Application.Idle, AddressOf 动画更新帧
-            Else
-                AddHandler 动画计时器.Tick, AddressOf 动画更新帧
-                动画计时器.Start()
-            End If
+            If 动画计时器 Is Nothing Then Return
+            AddHandler 动画计时器.Tick, AddressOf 动画更新帧
+            动画计时器.Start()
         End Sub
 
         Private Sub 停止悬停驱动()
-            If 悬停用Idle Then
-                RemoveHandler Application.Idle, AddressOf 动画更新帧
-            Else
-                动画计时器.Stop()
-                RemoveHandler 动画计时器.Tick, AddressOf 动画更新帧
-            End If
+            If 动画计时器 Is Nothing Then Return
+            动画计时器.Stop()
+            RemoveHandler 动画计时器.Tick, AddressOf 动画更新帧
         End Sub
 
         Private Sub 启动展开关闭驱动()
-            If 展开关闭用Idle Then
-                AddHandler Application.Idle, AddressOf 展开关闭帧更新
-            Else
-                AddHandler 展开关闭计时器.Tick, AddressOf 展开关闭帧更新
-                展开关闭计时器.Start()
-            End If
+            If 展开关闭计时器 Is Nothing Then Return
+            AddHandler 展开关闭计时器.Tick, AddressOf 展开关闭帧更新
+            展开关闭计时器.Start()
         End Sub
 
         Private Sub 停止展开关闭驱动()
-            If 展开关闭用Idle Then
-                RemoveHandler Application.Idle, AddressOf 展开关闭帧更新
-            Else
-                展开关闭计时器.Stop()
-                RemoveHandler 展开关闭计时器.Tick, AddressOf 展开关闭帧更新
-            End If
+            If 展开关闭计时器 Is Nothing Then Return
+            展开关闭计时器.Stop()
+            RemoveHandler 展开关闭计时器.Tick, AddressOf 展开关闭帧更新
         End Sub
 
 #End Region

@@ -12,7 +12,7 @@ Imports Vortice.DirectWrite
 ''' </summary>
 <DefaultEvent("SelectedIndexChanged")>
 Public Class ModernTabControl
-    Implements IOuterToInnerRefreshFilter
+    Implements IOuterToInnerRefreshFilter, V3_IGpuRenderable, V3_IGpuInvalidationSource
 
 #Region "内部类型"
     ''' <summary>
@@ -25,7 +25,7 @@ Public Class ModernTabControl
         Friend Property Owner As ModernTabControl
 
         Private Sub 通知父级重绘()
-            OuterToInnerRefreshScheduler.RequestFull(Owner)
+            Owner?.请求V3渲染()
         End Sub
 
         Private _text As String = "ModernTab"
@@ -220,9 +220,10 @@ Public Class ModernTabControl
     ''' </summary>
     Private Class 透明内容面板
         Inherits Panel
-        Implements IOuterToInnerRefreshFilter
+        Implements IOuterToInnerRefreshFilter, V3_IGpuRenderable, V3_IGpuInvalidationSource
 
         Private _ownerControl As ModernTabControl
+        Private _backgroundSource As Control
 
         Public Sub New()
             SetStyle(ControlStyles.SupportsTransparentBackColor Or
@@ -237,32 +238,50 @@ Public Class ModernTabControl
             _ownerControl = value
         End Sub
 
+        <Browsable(False),
+         EditorBrowsable(EditorBrowsableState.Never),
+         DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+        Public Property BackgroundSource As Control
+            Get
+                Return _backgroundSource
+            End Get
+            Set(value As Control)
+                If _backgroundSource Is value Then Return
+                _backgroundSource = D3D_BackgroundPenetration.SetBackgroundSource(Me, _backgroundSource, value)
+                请求V3渲染()
+            End Set
+        End Property
+
         Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
-            If BackColor.A < 255 Then
-                Dim tabCtrl As ModernTabControl = If(_ownerControl, TryCast(Me.Parent, ModernTabControl))
-                Dim source As Control = Nothing
-                If tabCtrl IsNot Nothing Then
-                    source = tabCtrl
-                End If
-                If source IsNot Nothing Then
-                    Using scope = D2DHelperV2.BeginPaint(e, Me, 1)
-                        If scope IsNot Nothing Then
-                            BackgroundPenetrationV2.PaintBackground(Me, scope, source)
-                        End If
-                    End Using
-                End If
-                If BackColor.A > 0 Then
-                    Using brush As New SolidBrush(BackColor)
-                        e.Graphics.FillRectangle(brush, Me.ClientRectangle)
-                    End Using
-                End If
-            Else
-                MyBase.OnPaintBackground(e)
+            ' V3-only: pixels are emitted by RenderGpu.
+        End Sub
+
+        Protected Overrides Sub OnPaint(e As PaintEventArgs)
+            If Not D3D_PaintBridge.PaintRenderable(e, Me, Me, 1) Then MyBase.OnPaint(e)
+        End Sub
+
+        Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+            If Width <= 0 OrElse Height <= 0 Then Return
+            Dim source As Control = _backgroundSource
+            If source IsNot Nothing Then
+                context.DrawBackgroundSource(Me, source, New RectangleF(0, 0, Width, Height))
+            ElseIf BackColor.A > 0 Then
+                context.FillRectangle(New RectangleF(0, 0, Width, Height), BackColor)
             End If
         End Sub
 
+        Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+            Return New Rectangle(Point.Empty, Me.Size)
+        End Function
+
+        Private Sub 请求V3渲染(Optional dirtyRect As Rectangle = Nothing)
+            If IsDisposed Then Return
+            Dim rect As Rectangle = If(dirtyRect.IsEmpty, New Rectangle(Point.Empty, Me.Size), dirtyRect)
+            V3_InvalidationRouter.RequestRender(Me, rect)
+        End Sub
+
         Private Sub 解除背景穿透消费者()
-            Try : BackgroundPenetrationV2.UnregisterConsumer(Me) : Catch : End Try
+            Try : D3D_BackgroundPenetration.UnregisterConsumer(Me) : Catch : End Try
         End Sub
 
         Protected Overrides Sub OnHandleDestroyed(e As EventArgs)
@@ -294,8 +313,7 @@ Public Class ModernTabControl
 #Region "构造"
     Private ReadOnly _标签页动画 As New Dictionary(Of Integer, TabAnimState)
     Private _悬停索引 As Integer = -1
-    Private _动画计时器 As Timer
-    Private _动画用Idle As Boolean = False
+    Private ReadOnly _动画助手 As New V3_AnimationHelper(Me)
     Private _动画中 As Boolean = False
     Private ReadOnly _内容面板 As New 透明内容面板()
     Private ReadOnly 项目列表 As New List(Of ModernTab)
@@ -318,8 +336,7 @@ Public Class ModernTabControl
     Private _浮层显示 As Boolean = False
     Private _鼠标过滤器 As RibbonMouseFilter = Nothing
 
-    ' V2 渲染：每次 OnPaint 内由 D2DHelperV2 提供共享 WindowCompositor。
-    Private _当前合成器 As WindowCompositor
+    ' V3 渲染：每次 OnPaint 只请求窗口级 D3D compositor 刷新。
     Private ReadOnly _绑定页状态 As New Dictionary(Of Control, BoundPageState)()
     Private _背景刷新版本 As Integer = 0
     Private _背景源已订阅 As Control = Nothing
@@ -368,17 +385,10 @@ Public Class ModernTabControl
         _内容面板.BackColor = 获取内容面板有效背景色()
         Me.Controls.Add(_内容面板)
 
-        _动画用Idle = (动画帧率值 <= 0)
-        If Not _动画用Idle Then
-            _动画计时器 = New Timer() With {.Interval = Math.Max(1, CInt(1000.0 / 动画帧率值))}
-        End If
+        _动画助手.DirtyProvider = AddressOf 动画驱动脏区
+        _动画助手.FPS = 动画帧率值
         同步内容面板布局()
     End Sub
-
-    Private Function 获取图标缓存(img As Image) As D2DGlobals.D2DBitmapCache
-        If img Is Nothing OrElse _当前合成器 Is Nothing Then Return Nothing
-        Return _当前合成器.GetBitmapCache(img)
-    End Function
 
     Protected Overrides Sub OnHandleCreated(e As EventArgs)
         MyBase.OnHandleCreated(e)
@@ -387,7 +397,7 @@ Public Class ModernTabControl
 
     Protected Overrides Sub OnHandleDestroyed(e As EventArgs)
         解除背景穿透消费者()
-        Try : BackgroundPenetrationV2.UnregisterConsumer(_内容面板) : Catch : End Try
+        Try : D3D_BackgroundPenetration.UnregisterConsumer(_内容面板) : Catch : End Try
         释放所有切页刷新抑制状态()
         停止动画驱动()
         停用鼠标过滤器()
@@ -414,7 +424,7 @@ Public Class ModernTabControl
         _悬停索引 = -1
         限制滚动范围()
         切换绑定控件()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Private Sub 确保Owner()
@@ -474,7 +484,7 @@ Public Class ModernTabControl
         If item IsNot Nothing AndAlso 项目列表.IndexOf(item) = _selectedIndex Then
             切换绑定控件()
         End If
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Private Function 获取索引绑定控件(index As Integer) As Control
@@ -688,7 +698,7 @@ Public Class ModernTabControl
 
     Private Sub 解除绑定页背景穿透消费者(root As Control)
         If root Is Nothing Then Return
-        Try : BackgroundPenetrationV2.UnregisterConsumer(root) : Catch : End Try
+        Try : D3D_BackgroundPenetration.UnregisterConsumer(root) : Catch : End Try
         Try
             For Each child As Control In root.Controls
                 解除绑定页背景穿透消费者(child)
@@ -697,10 +707,31 @@ Public Class ModernTabControl
         End Try
     End Sub
 
+    Private Sub 准备绑定页渲染边界(ctrl As Control)
+        If ctrl Is Nothing OrElse ctrl.IsDisposed Then Return
+        Try : _内容面板.PerformLayout() : Catch : End Try
+        Try : ctrl.PerformLayout() : Catch : End Try
+        Try : _内容面板.CreateControl() : Catch : End Try
+        Try : ctrl.CreateControl() : Catch : End Try
+    End Sub
+
+    Private Sub 提交绑定页切换首帧()
+        If Me.IsDisposed Then Return
+        请求V3渲染()
+        If _内容面板 IsNot Nothing AndAlso Not _内容面板.IsDisposed AndAlso _内容面板.Width > 0 AndAlso _内容面板.Height > 0 Then
+            V3_InvalidationRouter.RequestRender(_内容面板, New Rectangle(Point.Empty, _内容面板.Size))
+        End If
+        If _当前绑定控件 IsNot Nothing AndAlso Not _当前绑定控件.IsDisposed Then
+            请求绑定页V3渲染(_当前绑定控件)
+        End If
+    End Sub
+
     Private Sub 显示绑定控件(ctrl As Control)
         If ctrl Is Nothing Then Return
         Dim frm = TryCast(ctrl, Form)
-        If frm IsNot Nothing Then 准备窗体绑定(frm)
+        If frm IsNot Nothing Then
+            准备窗体绑定(frm)
+        End If
         _当前绑定控件 = ctrl
 
         Dim parentChanged As Boolean = ctrl.Parent IsNot _内容面板
@@ -710,12 +741,17 @@ Public Class ModernTabControl
         Dim dockChanged As Boolean = ctrl.Dock <> DockStyle.Fill
         If dockChanged Then ctrl.Dock = DockStyle.Fill
         Dim state = 获取绑定页状态(ctrl)
+        Dim formFirstShow As Boolean = frm IsNot Nothing AndAlso (state Is Nothing OrElse Not state.HasBeenShown)
+        If formFirstShow AndAlso ctrl.Visible Then
+            Try : ctrl.Visible = False : Catch : End Try
+        End If
 
         Dim panelWasVisible As Boolean = _内容面板.Visible
         Dim desiredPanelVisible As Boolean = 内容面板应显示()
         ctrl.Visible = True
         If _内容面板.Visible <> desiredPanelVisible Then _内容面板.Visible = desiredPanelVisible
         If desiredPanelVisible AndAlso _内容面板.Controls.GetChildIndex(ctrl) <> 0 Then ctrl.BringToFront()
+        If desiredPanelVisible Then 准备绑定页渲染边界(ctrl)
 
         Dim backgroundChanged As Boolean = state Is Nothing OrElse
                                            Not state.HasBeenShown OrElse
@@ -731,11 +767,10 @@ Public Class ModernTabControl
                                        Not panelWasVisible OrElse
                                        backgroundChanged OrElse
                                        panelChanged OrElse
-                                       sizeChanged)
+                                      sizeChanged)
         If state IsNot Nothing Then state.ForceRefreshDuringSwitch = needsRefresh AndAlso 正在切页刷新过滤期()
-        If needsRefresh Then
-            OuterToInnerRefreshScheduler.RequestFull(ctrl, invalidateChildren:=True)
-        End If
+        If desiredPanelVisible Then 请求绑定页V3渲染(ctrl)
+        If desiredPanelVisible Then 提交绑定页切换首帧()
         If state IsNot Nothing AndAlso desiredPanelVisible Then
             state.HasBeenShown = True
             state.LastShownSize = ctrl.ClientSize
@@ -772,7 +807,7 @@ Public Class ModernTabControl
                     切换绑定控件()
                 End Using
                 If _滚动偏移 <> oldScroll Then
-                    OuterToInnerRefreshScheduler.Request(Me, 获取标签栏矩形())
+                    请求V3渲染(获取标签栏矩形())
                 Else
                     请求选中项切换重绘(oldIndex, _selectedIndex)
                 End If
@@ -902,16 +937,14 @@ Public Class ModernTabControl
         If dirty.IsEmpty Then dirty = stripRect
         dirty = Rectangle.Intersect(stripRect, dirty)
         If dirty.Width > 0 AndAlso dirty.Height > 0 Then
-            OuterToInnerRefreshScheduler.Request(Me, dirty)
+            请求V3渲染(dirty)
         End If
     End Sub
 #End Region
 
 #Region "绘制"
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
-        ' 透明背景由 OnPaint 内的 BackgroundPenetrationV2 统一映射，避免 WinForms 默认透明逻辑重放父级 Paint。
-        If MyBase.BackColor.A < 255 Then Return
-        MyBase.OnPaintBackground(e)
+        ' V3-only: pixels are emitted by RenderGpu.
     End Sub
 
     Private Function 获取控件背景源() As Control
@@ -926,81 +959,77 @@ Public Class ModernTabControl
     End Function
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
+        If Not D3D_PaintBridge.PaintRenderable(e, Me, Me, 1) Then MyBase.OnPaint(e)
+    End Sub
+
+    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
         确保Owner()
         If Me.Width <= 0 OrElse Me.Height <= 0 Then Return
 
-        Dim ssaa As Integer = D2DHelperV2.GetEffectiveSsaaScale(超采样倍率)
+        Dim backgroundSource = If(_backgroundSource, 获取控件背景源())
+        If backgroundSource IsNot Nothing Then
+            context.DrawBackgroundSource(Me, backgroundSource, New RectangleF(0, 0, Me.Width, Me.Height))
+        ElseIf MyBase.BackColor.A > 0 Then
+            context.FillRectangle(New RectangleF(0, 0, Me.Width, Me.Height), MyBase.BackColor)
+        End If
 
-        Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
-            If scope Is Nothing Then Return  ' 设计期 / 无 Form
-            _当前合成器 = scope.Compositor
-            Try
-                Dim compositor = scope.Compositor
-                Dim gRT As ID2D1RenderTarget = scope.GraphicsLayer
-
-                Dim backgroundSource As Control = 获取控件背景源()
-                If backgroundSource IsNot Nothing Then
-                    BackgroundPenetrationV2.PaintBackground(Me, scope, backgroundSource)
-                End If
-
-                ' 半透明 BackColor 是叠在映射背景上的遮罩。
-                If MyBase.BackColor.A > 0 AndAlso MyBase.BackColor.A < 255 Then
-                    Dim bgLayer = scope.BackgroundLayer
-                    Dim brush = compositor.BrushCache.[Get](bgLayer, MyBase.BackColor)
-                    If brush IsNot Nothing Then
-                        bgLayer.FillRectangle(D2DGlobals.ToD2DRect(New RectangleF(0, 0, Me.Width, Me.Height)), brush)
-                    End If
-                End If
-
-                绘制图形内容_D2D(gRT)
-                scope.FlushGraphics()
-
-                Dim dcRT As ID2D1RenderTarget = scope.DCRenderTarget
-                绘制文本内容_D2D(dcRT)
-            Finally
-                _当前合成器 = Nothing
-            End Try
-        End Using
+        绘制图形内容_GPU(context)
+        绘制文本内容_GPU(context)
     End Sub
 
-    Private Sub 绘制图形内容_D2D(rt As ID2D1RenderTarget)
+    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+        Return New Rectangle(Point.Empty, Me.Size)
+    End Function
+
+    Friend Sub 请求V3渲染(Optional immediate As Boolean = False)
+        请求V3渲染(New Rectangle(Point.Empty, Me.Size), immediate)
+    End Sub
+
+    Friend Sub 请求V3渲染(dirtyRect As Rectangle, Optional immediate As Boolean = False)
+        If Me.IsDisposed Then Return
+        V3_InvalidationRouter.RequestRender(Me, dirtyRect)
+    End Sub
+
+    Private Sub 请求绑定页V3渲染(ctrl As Control)
+        If ctrl Is Nothing OrElse ctrl.IsDisposed Then Return
+        V3_InvalidationRouter.RequestRender(ctrl, New Rectangle(Point.Empty, ctrl.Size))
+    End Sub
+
+    Private Sub 绘制图形内容_GPU(context As D3D_PaintContext)
         Dim contentRect = 获取内容区域矩形()
         Dim stripRect = 获取标签栏矩形()
 
         If Not contentRect.IsEmpty AndAlso 内容区域背景颜色.A = 255 Then
-            rt.FillRectangle(D2DGlobals.ToD2DRect(contentRect), _当前合成器.BrushCache.Get(rt, 内容区域背景颜色))
+            context.FillRectangle(contentRect, 内容区域背景颜色)
         End If
         If 标签栏背景颜色.A > 0 Then
-            rt.FillRectangle(D2DGlobals.ToD2DRect(stripRect), _当前合成器.BrushCache.Get(rt, 标签栏背景颜色))
+            context.FillRectangle(stripRect, 标签栏背景颜色)
         End If
 
-        绘制标签栏背景图片_D2D(rt, stripRect)
+        绘制标签栏背景图片_GPU(context, stripRect)
 
         If 标签栏遮罩颜色.A > 0 Then
-            rt.FillRectangle(D2DGlobals.ToD2DRect(stripRect), _当前合成器.BrushCache.Get(rt, 标签栏遮罩颜色))
+            context.FillRectangle(stripRect, 标签栏遮罩颜色)
         End If
 
-        rt.PushAxisAlignedClip(New Vortice.RawRectF(stripRect.Left, stripRect.Top, stripRect.Right, stripRect.Bottom), AntialiasMode.PerPrimitive)
-        Try
+        Using context.PushClip(stripRect)
             For i As Integer = 0 To 项目列表.Count - 1
                 Dim item = 项目列表(i)
                 If item.IsSeparator Then
-                    绘制分割线_D2D(rt, i)
+                    绘制分割线_GPU(context, i)
                 Else
-                    绘制标签页项图形_D2D(rt, i)
+                    绘制标签页项图形_GPU(context, i)
                 End If
             Next
 
             If Ribbon模式值 Then
-                绘制折叠按钮图形_D2D(rt)
+                绘制折叠按钮图形_GPU(context)
             End If
-        Finally
-            rt.PopAxisAlignedClip()
-        End Try
+        End Using
 
         更新滚动条布局()
         If Not _滚动条TrackRect.IsEmpty Then
-            绘制横向滚动条_D2D(rt)
+            绘制横向滚动条_GPU(context)
         End If
 
         If 内容区域边框宽度 > 0 AndAlso Not contentRect.IsEmpty Then
@@ -1008,20 +1037,16 @@ Public Class ModernTabControl
             Dim borderRect As RectangleF = contentRect
             borderRect.Width -= 1
             borderRect.Height -= 1
-            RectangleRenderer.绘制矩形边框_D2D(rt, borderRect, 内容区域边框颜色, 内容区域边框宽度 * s, _当前合成器.BrushCache)
+            绘制圆角边框_GPU(context, borderRect, 0.0F, 内容区域边框颜色, 内容区域边框宽度 * s)
         End If
     End Sub
 
-    Private Sub 绘制标签栏背景图片_D2D(rt As ID2D1RenderTarget, tabStripRect As Rectangle)
+    Private Sub 绘制标签栏背景图片_GPU(context As D3D_PaintContext, tabStripRect As Rectangle)
         If 标签栏背景图片 Is Nothing Then Return
         Dim img As Image = 标签栏背景图片
         Dim cw As Integer = tabStripRect.Width
         Dim ch As Integer = tabStripRect.Height
         If cw < 1 OrElse ch < 1 Then Return
-
-        Dim bmpCache = _当前合成器?.GetBitmapCache(img)
-        Dim bmp = bmpCache?.GetBitmap(rt, img)
-        If bmp Is Nothing Then Return
 
         Dim ratioW As Single = CSng(cw) / img.Width
         Dim ratioH As Single = CSng(ch) / img.Height
@@ -1031,22 +1056,19 @@ Public Class ModernTabControl
         Dim dx As Single = tabStripRect.X + (cw - drawW) / 2.0F
         Dim dy As Single = tabStripRect.Y + (ch - drawH) / 2.0F
 
-        rt.PushAxisAlignedClip(New Vortice.RawRectF(tabStripRect.Left, tabStripRect.Top, tabStripRect.Right, tabStripRect.Bottom), AntialiasMode.Aliased)
-        Try
-            rt.DrawBitmap(bmp, New Vortice.Mathematics.Rect(dx, dy, drawW, drawH), 1.0F, BitmapInterpolationMode.Linear, Nothing)
-        Finally
-            rt.PopAxisAlignedClip()
-        End Try
+        Using context.PushClip(tabStripRect)
+            context.DrawImage(img, New RectangleF(dx, dy, drawW, drawH))
+        End Using
     End Sub
 
-    Private Sub 绘制分割线_D2D(rt As ID2D1RenderTarget, index As Integer)
+    Private Sub 绘制分割线_GPU(context As D3D_PaintContext, index As Integer)
         Dim bounds = 获取标签页项矩形(index)
         If bounds.Width <= 0 OrElse bounds.Height <= 0 Then Return
         Dim lineX As Single = bounds.X + (bounds.Width - 1) / 2.0F
-        rt.FillRectangle(D2DGlobals.ToD2DRect(New RectangleF(lineX, bounds.Y, 1, bounds.Height)), _当前合成器.BrushCache.Get(rt, 分割线颜色值))
+        context.FillRectangle(New RectangleF(lineX, bounds.Y, 1, bounds.Height), 分割线颜色值)
     End Sub
 
-    Private Sub 绘制标签页项图形_D2D(rt As ID2D1RenderTarget, index As Integer)
+    Private Sub 绘制标签页项图形_GPU(context As D3D_PaintContext, index As Integer)
         Dim s As Single = DpiScale()
         Dim bounds As RectangleF = 获取标签页项矩形(index)
         If bounds.Width <= 0 OrElse bounds.Height <= 0 Then Return
@@ -1061,7 +1083,7 @@ Public Class ModernTabControl
         End If
         Dim radius As Single = 标签页圆角半径 * s
         If isSelected OrElse hoverProgress > 0.001F Then
-            填充圆角或矩形_D2D(rt, bounds, radius, bgColor)
+            填充圆角或矩形_GPU(context, bounds, radius, bgColor)
         End If
 
         If isSelected AndAlso 选中指示条高度 > 0 Then
@@ -1075,7 +1097,7 @@ Public Class ModernTabControl
                 indicatorRect = New RectangleF(bounds.X + indicatorPad, bounds.Y, bounds.Width - indicatorPad * 2, indicatorH)
             End If
             If indicatorRect.Width > 0 AndAlso indicatorRect.Height > 0 Then
-                填充圆角或矩形_D2D(rt, indicatorRect, indicatorRadius, 选中指示条颜色)
+                填充圆角或矩形_GPU(context, indicatorRect, indicatorRadius, 选中指示条颜色)
             End If
         End If
 
@@ -1083,60 +1105,65 @@ Public Class ModernTabControl
             Dim focusBounds = bounds
             focusBounds.Inflate(-1 * s, -1 * s)
             If focusBounds.Width > 0 AndAlso focusBounds.Height > 0 Then
-                If radius > 0 Then
-                    RectangleRenderer.绘制圆角边框_D2D(rt, focusBounds, Math.Max(1, radius - 1 * s), 焦点边框颜色, 1.0F * s, _当前合成器.BrushCache)
-                Else
-                    RectangleRenderer.绘制矩形边框_D2D(rt, focusBounds, 焦点边框颜色, 1.0F * s, _当前合成器.BrushCache)
-                End If
+                绘制圆角边框_GPU(context, focusBounds, If(radius > 0, Math.Max(1, radius - 1 * s), 0.0F), 焦点边框颜色, 1.0F * s)
             End If
         End If
 
-        绘制标签页图标_D2D(rt, index, bounds)
+        绘制标签页图标_GPU(context, index, bounds)
     End Sub
 
-    Private Sub 填充圆角或矩形_D2D(rt As ID2D1RenderTarget, rect As RectangleF, radius As Single, color As Color)
+    Private Sub 填充圆角或矩形_GPU(context As D3D_PaintContext, rect As RectangleF, radius As Single, color As Color)
         If color.A = 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
-        If radius > 0 Then
-            Using geo = RectangleRenderer.创建圆角矩形几何(rect, radius)
-                rt.FillGeometry(geo, _当前合成器.BrushCache.Get(rt, color))
-            End Using
-        Else
-            rt.FillRectangle(D2DGlobals.ToD2DRect(rect), _当前合成器.BrushCache.Get(rt, color))
+        Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
+        If radius <= 0 Then
+            context.DeviceContext.FillRectangle(D3D_PaintContext.ToRawRect(rect), brush)
+            Return
         End If
+        Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New RoundedRectangle(rect, radius, radius))
+            context.DeviceContext.FillGeometry(geo, brush)
+        End Using
     End Sub
 
-    Private Sub 绘制标签页图标_D2D(rt As ID2D1RenderTarget, index As Integer, bounds As RectangleF)
+    Private Sub 绘制圆角边框_GPU(context As D3D_PaintContext, rect As RectangleF, radius As Single, color As Color, strokeWidth As Single)
+        If color.A = 0 OrElse strokeWidth <= 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
+        If radius <= 0 Then
+            context.DeviceContext.DrawRectangle(D3D_PaintContext.ToRawRect(rect), brush, strokeWidth)
+            Return
+        End If
+        Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New RoundedRectangle(rect, radius, radius))
+            context.DeviceContext.DrawGeometry(geo, brush, strokeWidth)
+        End Using
+    End Sub
+
+    Private Sub 绘制标签页图标_GPU(context As D3D_PaintContext, index As Integer, bounds As RectangleF)
         If index >= 项目列表.Count Then Return
         Dim item = 项目列表(index)
-        绘制图标_D2D(rt, item.TabIcon, bounds)
+        绘制图标_GPU(context, item.TabIcon, bounds)
     End Sub
 
-    Private Sub 绘制图标_D2D(rt As ID2D1RenderTarget, img As Image, bounds As RectangleF)
+    Private Sub 绘制图标_GPU(context As D3D_PaintContext, img As Image, bounds As RectangleF)
         If img Is Nothing Then Return
-        Dim cache = 获取图标缓存(img)
-        Dim bmp = cache?.GetBitmap(rt, img)
-        If bmp Is Nothing Then Return
         Dim s As Single = DpiScale()
         Dim iconSize As Single = 图标尺寸 * s
         Dim pad As Single = 标签页文本内边距 * s
         Dim iconRect As New RectangleF(bounds.X + pad, bounds.Y + (bounds.Height - iconSize) / 2.0F, iconSize, iconSize)
-        rt.DrawBitmap(bmp, D2DGlobals.ToD2DRect(iconRect), 1.0F, BitmapInterpolationMode.Linear,
-            New Vortice.Mathematics.Rect(0, 0, img.Width, img.Height))
+        context.DrawImage(img, iconRect, New RectangleF(0, 0, img.Width, img.Height))
     End Sub
 
-    Private Sub 绘制折叠按钮图形_D2D(rt As ID2D1RenderTarget)
+    Private Sub 绘制折叠按钮图形_GPU(context As D3D_PaintContext)
         Dim bounds = 获取折叠按钮矩形()
         If bounds.IsEmpty Then Return
         _折叠按钮缓存矩形 = bounds
         Dim s As Single = DpiScale()
         Dim bgColor As Color = 颜色插值(Color.FromArgb(0, 悬停标签页背景颜色), 悬停标签页背景颜色, _折叠按钮动画.当前值)
         If _折叠按钮动画.当前值 > 0.001F Then
-            填充圆角或矩形_D2D(rt, bounds, 标签页圆角半径 * s, bgColor)
+            填充圆角或矩形_GPU(context, bounds, 标签页圆角半径 * s, bgColor)
         End If
-        绘制图标_D2D(rt, 折叠按钮图标值, bounds)
+        绘制图标_GPU(context, 折叠按钮图标值, bounds)
     End Sub
 
-    Private Sub 绘制横向滚动条_D2D(rt As ID2D1RenderTarget)
+    Private Sub 绘制横向滚动条_GPU(context As D3D_PaintContext)
         If _滚动条TrackRect.IsEmpty Then Return
         Dim s As Single = DpiScale()
         Dim barH As Integer = CInt(滚动条高度 * s)
@@ -1145,31 +1172,28 @@ Public Class ModernTabControl
         Dim trackY As Integer = _滚动条TrackRect.Y + (_滚动条TrackRect.Height - barH) \ 2
         If 滚动条轨道颜色.A > 0 Then
             Dim trackRadius As Integer = Math.Min(barH \ 2, _滚动条TrackRect.Width \ 2)
-            填充圆角或矩形_D2D(rt, New RectangleF(_滚动条TrackRect.X, trackY, _滚动条TrackRect.Width, barH), trackRadius, 滚动条轨道颜色)
+            填充圆角或矩形_GPU(context, New RectangleF(_滚动条TrackRect.X, trackY, _滚动条TrackRect.Width, barH), trackRadius, 滚动条轨道颜色)
         End If
 
         Dim activeColor As Color = If(_滚动条IsDragging OrElse _滚动条IsHover, 滚动条悬停颜色, 滚动条滑块颜色)
         Dim thumbY As Integer = _滚动条ThumbRect.Y + (_滚动条ThumbRect.Height - barH) \ 2
         Dim thumbRadius As Integer = Math.Min(barH \ 2, _滚动条ThumbRect.Width \ 2)
-        填充圆角或矩形_D2D(rt, New RectangleF(_滚动条ThumbRect.X, thumbY, _滚动条ThumbRect.Width, barH), thumbRadius, activeColor)
+        填充圆角或矩形_GPU(context, New RectangleF(_滚动条ThumbRect.X, thumbY, _滚动条ThumbRect.Width, barH), thumbRadius, activeColor)
     End Sub
 
-    Private Sub 绘制文本内容_D2D(rt As ID2D1RenderTarget)
+    Private Sub 绘制文本内容_GPU(context As D3D_PaintContext)
         Dim stripRect = 获取标签栏矩形()
-        rt.PushAxisAlignedClip(New Vortice.RawRectF(stripRect.Left, stripRect.Top, stripRect.Right, stripRect.Bottom), AntialiasMode.PerPrimitive)
-        Try
+        Using context.PushClip(stripRect)
             For i As Integer = 0 To 项目列表.Count - 1
-                绘制标签页文本_D2D(rt, i)
+                绘制标签页文本_GPU(context, i)
             Next
             If Ribbon模式值 Then
-                绘制折叠按钮文本_D2D(rt)
+                绘制折叠按钮文本_GPU(context)
             End If
-        Finally
-            rt.PopAxisAlignedClip()
-        End Try
+        End Using
     End Sub
 
-    Private Sub 绘制标签页文本_D2D(rt As ID2D1RenderTarget, index As Integer)
+    Private Sub 绘制标签页文本_GPU(context As D3D_PaintContext, index As Integer)
         If index >= 项目列表.Count Then Return
         Dim bounds As RectangleF = 获取标签页项矩形(index)
         Dim item = 项目列表(index)
@@ -1184,10 +1208,10 @@ Public Class ModernTabControl
         Dim pad As Single = 标签页文本内边距 * s
         Dim iconOffset As Single = If(item.TabIcon IsNot Nothing, 图标尺寸 * s + 图标与文本间距 * s, 0)
         Dim textRect As New RectangleF(bounds.X + pad + iconOffset, bounds.Y, bounds.Width - pad * 2 - iconOffset, bounds.Height)
-        绘制单行居中文本_D2D(rt, item.Text, textFont, textRect, textColor)
+        绘制单行居中文本_GPU(context, item.Text, textFont, textRect, textColor)
     End Sub
 
-    Private Sub 绘制折叠按钮文本_D2D(rt As ID2D1RenderTarget)
+    Private Sub 绘制折叠按钮文本_GPU(context As D3D_PaintContext)
         Dim bounds As RectangleF = 获取折叠按钮矩形()
         If bounds.Width <= 0 OrElse bounds.Height <= 0 Then Return
         Dim caption As String = If(已折叠值, 折叠按钮展开文本值, 折叠按钮折叠文本值)
@@ -1201,16 +1225,12 @@ Public Class ModernTabControl
         Dim pad As Single = 标签页文本内边距 * s
         Dim iconOffset As Single = If(折叠按钮图标值 IsNot Nothing, 图标尺寸 * s + 图标与文本间距 * s, 0)
         Dim textRect As New RectangleF(bounds.X + pad + iconOffset, bounds.Y, bounds.Width - pad * 2 - iconOffset, bounds.Height)
-        绘制单行居中文本_D2D(rt, caption, textFont, textRect, textColor)
+        绘制单行居中文本_GPU(context, caption, textFont, textRect, textColor)
     End Sub
 
-    Private Sub 绘制单行居中文本_D2D(rt As ID2D1RenderTarget, text As String, font As Font, rect As RectangleF, color As Color)
+    Private Sub 绘制单行居中文本_GPU(context As D3D_PaintContext, text As String, font As Font, rect As RectangleF, color As Color)
         If String.IsNullOrEmpty(text) OrElse rect.Width <= 0 OrElse rect.Height <= 0 OrElse color.A = 0 Then Return
-        Dim weight As Vortice.DirectWrite.FontWeight = If(font.Bold, Vortice.DirectWrite.FontWeight.Bold, Vortice.DirectWrite.FontWeight.Normal)
-        Dim style As Vortice.DirectWrite.FontStyle = If(font.Italic, Vortice.DirectWrite.FontStyle.Italic, Vortice.DirectWrite.FontStyle.Normal)
-        Dim sizePx As Single = D2DGlobals.GetDWriteFontSizePx(font, DpiScale())
-        Dim fmt = _当前合成器.TextFormatCache.Get(font.FontFamily.Name, weight, style, sizePx, TextAlignment.Center, ParagraphAlignment.Center, True)
-        rt.DrawText(text, fmt, D2DGlobals.ToD2DRect(rect), _当前合成器.BrushCache.Get(rt, color), DrawTextOptions.Clip)
+        context.DrawText(text, font, color, rect, TextAlignment.Center, ParagraphAlignment.Center)
     End Sub
 
 #End Region
@@ -1480,7 +1500,7 @@ Public Class ModernTabControl
             同步内容面板布局()
             切换绑定控件()
         End Using
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Private Sub 限制滚动范围()
@@ -1555,13 +1575,13 @@ Public Class ModernTabControl
         MyBase.OnResize(e)
         同步内容面板布局()
         限制滚动范围()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnLayout(e As LayoutEventArgs)
         MyBase.OnLayout(e)
         同步内容面板布局()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Friend Sub InvalidateLayoutCache()
@@ -1574,7 +1594,7 @@ Public Class ModernTabControl
         MyBase.OnParentChanged(e)
         同步切页背景源订阅()
         解除背景穿透消费者()
-        Try : BackgroundPenetrationV2.UnregisterConsumer(_内容面板) : Catch : End Try
+        Try : D3D_BackgroundPenetration.UnregisterConsumer(_内容面板) : Catch : End Try
         If _上一个父级 IsNot Nothing Then
             RemoveHandler _上一个父级.Resize, AddressOf 父级几何变更
             If _内容面板.Parent Is _上一个父级 Then
@@ -1603,7 +1623,7 @@ Public Class ModernTabControl
         If Not Me.Visible Then
             _内容面板.Visible = False
             解除背景穿透消费者()
-            Try : BackgroundPenetrationV2.UnregisterConsumer(_内容面板) : Catch : End Try
+            Try : D3D_BackgroundPenetration.UnregisterConsumer(_内容面板) : Catch : End Try
         Else
             Using 进入切页刷新过滤()
                 同步内容面板布局()
@@ -1738,29 +1758,23 @@ Public Class ModernTabControl
         If Not 有活跃动画 Then
             停止动画驱动()
         End If
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
+    End Sub
+
+    Private Sub 动画驱动脏区(helper As V3_AnimationHelper, owner As Control, sink As V3_AnimationHelper.InvalidateRegionSink)
+        sink.SuppressInvalidate()
     End Sub
 
     Private Sub 启动动画驱动()
         If _动画中 Then Return
         _动画中 = True
-        If _动画用Idle Then
-            AddHandler Application.Idle, AddressOf 动画帧更新
-        Else
-            AddHandler _动画计时器.Tick, AddressOf 动画帧更新
-            _动画计时器.Start()
-        End If
+        _动画助手.StartFrameLoop(AddressOf 动画帧更新)
     End Sub
 
     Friend Sub 停止动画驱动()
         If Not _动画中 Then Return
         _动画中 = False
-        If _动画用Idle Then
-            RemoveHandler Application.Idle, AddressOf 动画帧更新
-        Else
-            _动画计时器?.Stop()
-            RemoveHandler _动画计时器.Tick, AddressOf 动画帧更新
-        End If
+        _动画助手.StopFrameLoop()
     End Sub
 
     Private Function HitTestTab(clientPoint As Point) As Integer
@@ -1781,7 +1795,7 @@ Public Class ModernTabControl
             Dim totalW = CInt(获取标签页总宽度())
             _滚动偏移 = 滚动条DragMove(e.X, totalW, Me.Width)
             限制滚动范围()
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
             Return
         End If
 
@@ -1817,7 +1831,7 @@ Public Class ModernTabControl
             End If
             needInvalidate = True
         End If
-        If needInvalidate Then OuterToInnerRefreshScheduler.RequestFull(Me)
+        If needInvalidate Then 请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnMouseLeave(e As EventArgs)
@@ -1838,7 +1852,7 @@ Public Class ModernTabControl
             _滚动条IsHover = False
             needInvalidate = True
         End If
-        If needInvalidate Then OuterToInnerRefreshScheduler.RequestFull(Me)
+        If needInvalidate Then 请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
@@ -1868,7 +1882,7 @@ Public Class ModernTabControl
                     _滚动偏移 = Math.Min(maxOff, _滚动偏移 + Me.Width)
                 End If
                 限制滚动范围()
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                请求V3渲染()
                 Return
             End If
             Dim hit = HitTestTab(e.Location)
@@ -1901,7 +1915,7 @@ Public Class ModernTabControl
         MyBase.OnMouseUp(e)
         If _滚动条IsDragging Then
             _滚动条IsDragging = False
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End If
     End Sub
 
@@ -1915,7 +1929,7 @@ Public Class ModernTabControl
         Dim scrollAmount As Integer = Math.Max(1, SystemInformation.MouseWheelScrollLines * 30)
         _滚动偏移 -= Math.Sign(e.Delta) * scrollAmount
         限制滚动范围()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Private Function 滚动条UpdateHover(mouseLocation As Point) As Boolean
@@ -2000,12 +2014,12 @@ Public Class ModernTabControl
 
     Protected Overrides Sub OnGotFocus(e As EventArgs)
         MyBase.OnGotFocus(e)
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnLostFocus(e As EventArgs)
         MyBase.OnLostFocus(e)
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 #End Region
 
@@ -2013,33 +2027,33 @@ Public Class ModernTabControl
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End If
     End Sub
 
     Private Function DpiScale() As Single
-        Return D2DGlobals.GetCurrentDpiScale(Me)
+        Return V3_DpiContext.FromControl(Me).Scale
     End Function
 
     Friend Sub InvalidateFontResources()
-        D2DHelperV2.InvalidateTextFormatCache(Me)
+        D3D_RenderCore.InvalidateExistingTextResources(Me)
         InvalidateLayoutCache()
     End Sub
 
     Friend Sub RefreshFontDependentRenderingNow()
-        D2DHelperV2.RefreshFontDependentRendering(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
         InvalidateFontResources()
         MyBase.OnFontChanged(e)
-        D2DHelperV2.RefreshFontDependentRendering(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
         InvalidateLayoutCache()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Private 超采样倍率 As Integer = 1
@@ -2063,12 +2077,15 @@ Public Class ModernTabControl
             Return _backgroundSource
         End Get
         Set(value As Control)
-            _backgroundSource = value
+            If _backgroundSource Is value Then Return
+            _backgroundSource = D3D_BackgroundPenetration.SetBackgroundSource(Me, _backgroundSource, value)
+            _内容面板.BackgroundSource = value
+            请求V3渲染()
         End Set
     End Property
 
     Private Sub 解除背景穿透消费者()
-        Try : BackgroundPenetrationV2.UnregisterConsumer(Me) : Catch : End Try
+        Try : D3D_BackgroundPenetration.UnregisterConsumer(Me) : Catch : End Try
     End Sub
 
     <Category("LakeUI"), Description("切换绑定页面时保留已访问页面；仅在首次显示、尺寸、内容面板位置或背景穿透源变化时主动递归刷新。控件自身的正常刷新不受影响。"), DefaultValue(True), Browsable(True)>
@@ -2103,20 +2120,8 @@ Public Class ModernTabControl
         Set(value As Integer)
             value = Math.Max(0, value)
             If 动画帧率值 = value Then Return
-            Dim wasRunning = _动画中
-            If wasRunning Then 停止动画驱动()
             动画帧率值 = value
-            _动画用Idle = (动画帧率值 <= 0)
-            If _动画用Idle Then
-                _动画计时器?.Dispose()
-                _动画计时器 = Nothing
-            Else
-                If _动画计时器 Is Nothing Then
-                    _动画计时器 = New Timer()
-                End If
-                _动画计时器.Interval = Math.Max(1, CInt(1000.0 / 动画帧率值))
-            End If
-            If wasRunning Then 启动动画驱动()
+            _动画助手.FPS = 动画帧率值
         End Set
     End Property
 #End Region
@@ -2132,7 +2137,7 @@ Public Class ModernTabControl
             If 标签页位置 <> value Then
                 标签页位置 = value
                 同步内容面板布局()
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                请求V3渲染()
             End If
         End Set
     End Property
@@ -2149,7 +2154,7 @@ Public Class ModernTabControl
                 InvalidateLayoutCache()
                 _滚动偏移 = 0
                 限制滚动范围()
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                请求V3渲染()
             End If
         End Set
     End Property
@@ -2163,7 +2168,7 @@ Public Class ModernTabControl
         Set(value As TabAlignmentEnum)
             If 标签页对齐方式 <> value Then
                 标签页对齐方式 = value
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                请求V3渲染()
             End If
         End Set
     End Property
@@ -2178,7 +2183,7 @@ Public Class ModernTabControl
             If 标签栏高度 <> value Then
                 标签栏高度 = Math.Max(16, value)
                 同步内容面板布局()
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                请求V3渲染()
             End If
         End Set
     End Property
@@ -2207,7 +2212,7 @@ Public Class ModernTabControl
         End Get
         Set(value As Image)
             标签栏背景图片 = value
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -2237,7 +2242,7 @@ Public Class ModernTabControl
             If 标签栏内边距.Equals(value) Then Return
             标签栏内边距 = value
             InvalidateLayoutCache()
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 #End Region
@@ -2253,7 +2258,7 @@ Public Class ModernTabControl
             If 标签页最小宽度 <> value Then
                 标签页最小宽度 = Math.Max(16, value)
                 InvalidateLayoutCache()
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                请求V3渲染()
             End If
         End Set
     End Property
@@ -2268,7 +2273,7 @@ Public Class ModernTabControl
             If 标签页项间距 = value Then Return
             标签页项间距 = value
             InvalidateLayoutCache()
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -2348,7 +2353,7 @@ Public Class ModernTabControl
             If 标签页文本内边距 = value Then Return
             标签页文本内边距 = value
             InvalidateLayoutCache()
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 #End Region
@@ -2364,7 +2369,7 @@ Public Class ModernTabControl
             If 图标尺寸 = value Then Return
             图标尺寸 = value
             InvalidateLayoutCache()
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -2378,7 +2383,7 @@ Public Class ModernTabControl
             If 图标与文本间距 = value Then Return
             图标与文本间距 = value
             InvalidateLayoutCache()
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 #End Region
@@ -2561,7 +2566,7 @@ Public Class ModernTabControl
             If 分割线宽度值 = value Then Return
             分割线宽度值 = value
             InvalidateLayoutCache()
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 #End Region
@@ -2580,7 +2585,7 @@ Public Class ModernTabControl
                 _浮层显示 = False
                 同步内容面板布局()
                 限制滚动范围()
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                请求V3渲染()
             End If
         End Set
     End Property
@@ -2596,7 +2601,7 @@ Public Class ModernTabControl
             If Ribbon内容高度值 <> value Then
                 Ribbon内容高度值 = value
                 If Ribbon模式值 Then 同步内容面板布局()
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                请求V3渲染()
             End If
         End Set
     End Property
@@ -2613,7 +2618,7 @@ Public Class ModernTabControl
                 ' 状态切换时清空浮层显示标记
                 _浮层显示 = False
                 If Ribbon模式值 Then 同步内容面板布局()
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                请求V3渲染()
                 RaiseEvent CollapsedChanged(Me, EventArgs.Empty)
             End If
         End Set
@@ -2630,7 +2635,7 @@ Public Class ModernTabControl
         Set(value As CollapseButtonAlignmentEnum)
             If 折叠按钮对齐值 <> value Then
                 折叠按钮对齐值 = value
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                请求V3渲染()
             End If
         End Set
     End Property
@@ -2646,7 +2651,7 @@ Public Class ModernTabControl
             If String.Equals(折叠按钮折叠文本值, value, StringComparison.Ordinal) Then Return
             折叠按钮折叠文本值 = value
             InvalidateLayoutCache()
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -2661,7 +2666,7 @@ Public Class ModernTabControl
             If String.Equals(折叠按钮展开文本值, value, StringComparison.Ordinal) Then Return
             折叠按钮展开文本值 = value
             InvalidateLayoutCache()
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -2675,8 +2680,8 @@ Public Class ModernTabControl
             If Object.ReferenceEquals(折叠按钮字体值, value) Then Return
             折叠按钮字体值 = value
             InvalidateFontResources()
-            OuterToInnerRefreshScheduler.RequestFull(Me)
-            D2DHelperV2.RefreshFontDependentRendering(Me)
+            请求V3渲染()
+            请求V3渲染()
         End Set
     End Property
     Private Function ShouldSerializeCollapseButtonFont() As Boolean
@@ -2715,7 +2720,7 @@ Public Class ModernTabControl
             If Object.ReferenceEquals(折叠按钮图标值, value) Then Return
             折叠按钮图标值 = value
             InvalidateLayoutCache()
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 #End Region

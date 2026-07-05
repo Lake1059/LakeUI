@@ -1,5 +1,6 @@
-﻿Imports System.ComponentModel
+Imports System.ComponentModel
 Imports System.Net.Http
+Imports System.Numerics
 Imports System.Runtime.InteropServices
 Imports System.Text
 Imports System.Text.RegularExpressions
@@ -11,7 +12,7 @@ Imports Vortice.Direct2D1
 <DefaultEvent("LinkClicked")>
 Public Class MarkdownViewerCore
     Inherits UserControl
-    Implements IRenderCacheOwner
+    Implements D3D_IRenderCacheOwner, V3_IGpuRenderable, V3_IGpuInvalidationSource
 
     Public Event LinkClicked As EventHandler(Of LinkClickedEventArgs)
 
@@ -684,7 +685,7 @@ Public Class MarkdownViewerCore
     ' 滚动
     Private _scrollY As Integer = 0
     Private _scrollBarVisible As Boolean = False
-    Private _scrollBar As New ScrollBarRenderer()
+    Private _scrollBar As New V3_ScrollBarRenderer()
 
     ' 流式追加
     Private _streamBuffer As New StringBuilder()
@@ -730,15 +731,15 @@ Public Class MarkdownViewerCore
     Private _imageLoadVersion As Integer
     Private Shared ReadOnly _httpClient As New HttpClient() With {.Timeout = TimeSpan.FromSeconds(30)}
 
-    ' V2 渲染资源（共享 DC RT / brush / textformat / SSAA 来自 WindowCompositor，仅图片缓存按 URL 本地持有）
-    Private _当前合成器 As WindowCompositor
-    Private ReadOnly _d2dImageCaches As New Dictionary(Of String, D2DGlobals.D2DBitmapCache)
+    ' 兼容渲染资源（共享 DC RT / brush / textformat / SSAA 来自 D3D_SurfaceCompositor，仅图片缓存按 URL 本地持有）
+    Private _当前合成器 As D3D_SurfaceCompositor
+    Private ReadOnly _d2dImageCaches As New Dictionary(Of String, D3D_D2DInterop.D2DBitmapCache)
     Private _backgroundSource As Control = Nothing
     Private _embeddedContentMode As Boolean = False
     Private _embeddedHostDpi As Integer = 0
     Private _embeddedInvalidationTarget As Control = Nothing
 
-    Friend Shared Sub CleanupAllD2DResources(level As D2DCacheCleanupLevel, Optional owner As Control = Nothing)
+    Friend Shared Sub CleanupAllD2DResources(level As D3DCacheCleanupLevel, Optional owner As Control = Nothing)
         Dim targetForm As Form = ResolveCleanupForm(owner)
         Dim viewers As New List(Of MarkdownViewerCore)()
 
@@ -804,7 +805,7 @@ Public Class MarkdownViewerCore
                     _scrollBarVisible = False
                 End If
                 RebuildLayout()
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                RequestV3Render()
             End If
         End Set
     End Property
@@ -853,7 +854,7 @@ Public Class MarkdownViewerCore
     Friend Event EmbeddedContentApplied As EventHandler
 
     <Category("LakeUI"),
-     Description("背景采样源（V2 透明背景穿透）。设置后将跨越任意层级直接采样此控件的绘制内容作为透明背景。"),
+     Description("背景采样源（V3 背景图）。设置后将跨越任意层级直接采样此控件的绘制内容作为透明背景。"),
      DefaultValue(GetType(Control), Nothing), Browsable(True)>
     Public Property BackgroundSource As Control
         Get
@@ -861,8 +862,8 @@ Public Class MarkdownViewerCore
         End Get
         Set(value As Control)
             If _backgroundSource IsNot value Then
-                _backgroundSource = BackgroundPenetrationV2.SetConsumerSource(Me, _backgroundSource, value)
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                _backgroundSource = D3D_BackgroundPenetration.SetBackgroundSource(Me, _backgroundSource, value)
+                RequestV3Render()
             End If
         End Set
     End Property
@@ -982,7 +983,7 @@ Public Class MarkdownViewerCore
                 行内代码背景颜色 = value
                 代码块背景颜色 = value
                 RebuildLayout()
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                RequestV3Render()
             End If
         End Set
     End Property
@@ -1456,7 +1457,8 @@ Public Class MarkdownViewerCore
             代码字体 = value
             DisposeFontCache()
             RebuildLayout()
-            D2DHelperV2.RefreshFontDependentRendering(Me)
+            InvalidateV3TextResources()
+            RequestEmbeddedOrSelfRefresh()
         End Set
     End Property
 
@@ -1509,7 +1511,7 @@ Public Class MarkdownViewerCore
         End Get
         Set(value As Integer)
             滚动条宽度 = Math.Max(2, value)
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            RequestV3Render()
         End Set
     End Property
 
@@ -1586,7 +1588,7 @@ Public Class MarkdownViewerCore
         Set(value As Integer)
             段落行距 = Math.Max(0, value)
             RebuildLayout()
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            RequestV3Render()
         End Set
     End Property
 
@@ -1599,7 +1601,7 @@ Public Class MarkdownViewerCore
         Set(value As Integer)
             行内行距 = Math.Max(0, value)
             RebuildLayout()
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            RequestV3Render()
         End Set
     End Property
 
@@ -1658,7 +1660,7 @@ Public Class MarkdownViewerCore
                 基础路径 = value
                 DisposeImageCache()
                 RebuildLayout()
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                RequestV3Render()
             End If
         End Set
     End Property
@@ -1669,7 +1671,7 @@ Public Class MarkdownViewerCore
 
     Public Sub New()
         RegisterInstance(Me)
-        CpuCache.Register(Me)
+        D3D_CpuCache.Register(Me)
         SetStyle(ControlStyles.OptimizedDoubleBuffer Or
                  ControlStyles.AllPaintingInWmPaint Or
                  ControlStyles.UserPaint Or
@@ -1727,7 +1729,7 @@ Public Class MarkdownViewerCore
         MyBase.OnSizeChanged(e)
         RebuildLayout()
         ClampScroll()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        RequestV3Render()
     End Sub
 
 #End Region
@@ -1775,13 +1777,13 @@ Public Class MarkdownViewerCore
     ''' <summary>滚动到顶部。</summary>
     Public Sub ScrollToTop()
         _scrollY = 0
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        RequestV3Render()
     End Sub
 
     ''' <summary>滚动到底部。</summary>
     Public Sub ScrollToBottom()
         _scrollY = MaxScrollY()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        RequestV3Render()
     End Sub
 
     ''' <summary>获取选中的纯文本。</summary>
@@ -2649,78 +2651,398 @@ Public Class MarkdownViewerCore
 #Region "绘制"
 
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
-        If _embeddedContentMode Then Return
+        If _embeddedContentMode OrElse _backgroundSource IsNot Nothing Then Return
         MyBase.OnPaintBackground(e)
     End Sub
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
+        If Not D3D_PaintBridge.PaintRenderable(e, Me, Me, 1) Then MyBase.OnPaint(e)
+    End Sub
+
+    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
         Dim w As Integer = ClientRectangle.Width
         Dim h As Integer = ClientRectangle.Height
         If w <= 0 OrElse h <= 0 Then Return
         EnsureLayoutDpiCurrent()
         Dim s As Single = DpiScale()
 
-        Dim ssaa As Integer = D2DHelperV2.GetEffectiveSsaaScale(1)
-        Dim trimImageCachesAfterPaint As Boolean = False
+        Dim boundsRect As New RectangleF(0, 0, w - 1, h - 1)
+        If 边框宽度 > 0 Then boundsRect.Inflate(-边框宽度 * s / 2.0F, -边框宽度 * s / 2.0F)
 
-        Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
-            If scope Is Nothing Then Return  ' 设计期 / 无 Form
-            _当前合成器 = scope.Compositor
-            Try
-                If _backgroundSource IsNot Nothing AndAlso Not _embeddedContentMode Then
-                    BackgroundPenetrationV2.PaintBackground(Me, scope, _backgroundSource)
-                End If
-                Dim rt As ID2D1RenderTarget = scope.GraphicsLayer
+        If _embeddedContentMode Then
+            If 背景颜色.A > 0 Then context.FillRectangle(New RectangleF(0, 0, w, h), 背景颜色)
+        Else
+            If _backgroundSource IsNot Nothing Then
+                context.DrawBackgroundSource(Me, _backgroundSource, New RectangleF(0, 0, w, h))
+            End If
+            DrawBackground_GPU(context, boundsRect, s)
+        End If
 
-                ' 背景与边框
-                Dim boundsRect As New RectangleF(0, 0, w - 1, h - 1)
-                If 边框宽度 > 0 Then boundsRect.Inflate(-边框宽度 * s / 2.0F, -边框宽度 * s / 2.0F)
-                If _embeddedContentMode Then
-                    DrawEmbeddedBackground_D2D(rt, w, h)
-                Else
-                    DrawBackground_D2D(rt, boundsRect, s)
-                End If
+        DrawMarkdownContent_GPU(context, Point.Empty, New Size(w, h), _scrollY, drawBackground:=False)
+        If Not _embeddedContentMode Then DrawScrollBar_GPU(context, w, h, s)
+    End Sub
 
-                ' 内容裁剪区
-                Dim ci = GetContentInsets()
-                Dim scrollW As Integer = If(_scrollBarVisible, CInt(Math.Round(滚动条宽度 * s)) + ScrollBarRenderer.Margin * 2, 0)
-                Dim clipW As Integer = w - ci.Left - Math.Max(ci.Right, scrollW)
-                Dim clipH As Integer = h - ci.Top - ci.Bottom
+    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+        Return New Rectangle(Point.Empty, Me.Size)
+    End Function
 
-                If clipW > 0 AndAlso clipH > 0 Then
-                    rt.PushAxisAlignedClip(New Vortice.RawRectF(ci.Left, ci.Top, ci.Left + clipW, ci.Top + clipH), AntialiasMode.PerPrimitive)
-                    Try
-                        ' 选中排序
-                        Dim selStart, selEnd As SelectionPos
-                        If _hasSelection Then GetOrderedSelection(selStart, selEnd)
+    Private Sub RequestV3Render(Optional immediate As Boolean = False)
+        RequestV3Render(New Rectangle(Point.Empty, Me.Size), immediate)
+    End Sub
 
-                        ' 绘制可见行
-                        For vli As Integer = GetFirstVisibleVisualLine(_scrollY) To _visualLines.Count - 1
-                            Dim vl = _visualLines(vli)
-                            Dim drawY As Integer = vl.Y - _scrollY + ci.Top
-                            If drawY + vl.Height < ci.Top Then Continue For
-                            If drawY > ci.Top + clipH Then Exit For
+    Private Sub RequestV3Render(dirtyRect As Rectangle, Optional immediate As Boolean = False)
+        Dim target = GetEmbeddedInvalidationTarget()
+        If target IsNot Nothing Then
+            RequestV3Render(target)
+            Return
+        End If
 
-                            Dim block = _document.Blocks(vl.BlockIndex)
-                            DrawBlockDecoration_D2D(rt, block, vl, vli, ci.Left, drawY, clipW, s)
-                            trimImageCachesAfterPaint = DrawFragments_D2D(rt, vl, vli, ci.Left, drawY, block.Kind, s, selStart, selEnd) OrElse trimImageCachesAfterPaint
-                        Next
-                    Finally
-                        rt.PopAxisAlignedClip()
-                    End Try
-                End If
+        If Me.IsDisposed Then Return
+        V3_InvalidationRouter.RequestRender(Me, dirtyRect)
+    End Sub
 
-                If Not _embeddedContentMode Then DrawScrollBar_D2D(rt, w, h, s)
-                scope.FlushGraphics()
-            Finally
-                _当前合成器 = Nothing
-            End Try
+    Private Sub RequestV3Render(target As Control)
+        If target Is Nothing OrElse target.IsDisposed Then Return
+        V3_InvalidationRouter.RequestRender(target, New Rectangle(Point.Empty, target.Size))
+    End Sub
+
+    Friend Sub DrawEmbeddedContent_GPU(context As D3D_PaintContext,
+                                       origin As Point,
+                                       clipSize As Size,
+                                       Optional drawBackground As Boolean = False,
+                                       Optional visibleLocalTop As Integer = -1,
+                                       Optional visibleLocalBottom As Integer = -1)
+        If context Is Nothing OrElse clipSize.Width <= 0 OrElse clipSize.Height <= 0 Then Return
+        EnsureLayoutDpiCurrent()
+        DrawMarkdownContent_GPU(context, origin, clipSize, _scrollY, drawBackground, visibleLocalTop, visibleLocalBottom)
+    End Sub
+
+    Private Sub DrawMarkdownContent_GPU(context As D3D_PaintContext,
+                                        origin As Point,
+                                        clipSize As Size,
+                                        scrollY As Integer,
+                                        Optional drawBackground As Boolean = False,
+                                        Optional visibleLocalTop As Integer = -1,
+                                        Optional visibleLocalBottom As Integer = -1)
+        If clipSize.Width <= 0 OrElse clipSize.Height <= 0 Then Return
+
+        If drawBackground AndAlso 背景颜色.A > 0 Then
+            context.FillRectangle(New RectangleF(origin.X, origin.Y, clipSize.Width, clipSize.Height), 背景颜色)
+        End If
+
+        Dim s As Single = DpiScale()
+        Dim ci = GetContentInsets()
+        Dim scrollW As Integer = If(_scrollBarVisible AndAlso Not _embeddedContentMode, CInt(Math.Round(滚动条宽度 * s)) + V3_ScrollBarRenderer.Margin * 2, 0)
+        Dim clipW As Integer = Math.Max(0, Math.Min(TextAreaWidth(), clipSize.Width - ci.Left - Math.Max(ci.Right, scrollW)))
+        Dim clipH As Integer = Math.Max(0, clipSize.Height - ci.Top - ci.Bottom)
+        If clipW <= 0 OrElse clipH <= 0 Then Return
+
+        Dim localClipTop As Integer = ci.Top
+        Dim localClipBottom As Integer = ci.Top + clipH
+        If visibleLocalTop >= 0 Then localClipTop = Math.Max(localClipTop, visibleLocalTop)
+        If visibleLocalBottom >= 0 Then localClipBottom = Math.Min(localClipBottom, visibleLocalBottom)
+        If localClipBottom <= localClipTop Then Return
+
+        Dim clipLeft As Single = origin.X + ci.Left
+        Dim clipTop As Single = origin.Y + localClipTop
+        Dim clipBottom As Single = origin.Y + localClipBottom
+
+        Using context.PushClip(New RectangleF(clipLeft, clipTop, clipW, clipBottom - clipTop))
+            Dim selStart, selEnd As SelectionPos
+            If _hasSelection Then GetOrderedSelection(selStart, selEnd)
+
+            Dim visibleTop As Integer = Math.Max(0, scrollY + localClipTop - ci.Top)
+            For vli As Integer = GetFirstVisibleVisualLine(visibleTop) To _visualLines.Count - 1
+                Dim vl = _visualLines(vli)
+                Dim drawY As Integer = origin.Y + vl.Y - scrollY + ci.Top
+                If drawY + vl.Height < clipTop Then Continue For
+                If drawY > clipBottom Then Exit For
+
+                Dim block = _document.Blocks(vl.BlockIndex)
+                DrawBlockDecoration_GPU(context, block, vl, vli, CInt(clipLeft), drawY, clipW, s)
+                DrawFragments_GPU(context, vl, vli, CInt(clipLeft), drawY, block.Kind, s, selStart, selEnd)
+            Next
         End Using
-        If trimImageCachesAfterPaint Then TrimD2DImageCachesToCurrentBudget()
+    End Sub
+
+    Private Sub DrawBackground_GPU(context As D3D_PaintContext, boundsRect As RectangleF, s As Single)
+        If 背景颜色.A > 0 Then FillRoundedRect_GPU(context, boundsRect, 边框圆角半径 * s, 背景颜色)
+        If 边框宽度 > 0 AndAlso 边框颜色.A > 0 Then DrawRoundedBorder_GPU(context, boundsRect, 边框圆角半径 * s, 边框颜色, 边框宽度 * s)
+    End Sub
+
+    Private Sub DrawBlockDecoration_GPU(context As D3D_PaintContext,
+                                        block As MarkdownBlock,
+                                        vl As VisualLine,
+                                        vli As Integer,
+                                        textLeft As Integer,
+                                        drawY As Integer,
+                                        clipW As Integer,
+                                        s As Single)
+        Select Case block.Kind
+            Case BlockKind.HorizontalRule
+                Dim ruleThick As Integer = Math.Max(1, CInt(分隔线粗细 * s))
+                Dim ruleY As Integer = drawY + (vl.Height - ruleThick) \ 2
+                Dim ruleInset As Integer = CInt(分隔线水平缩进 * s)
+                context.FillRectangle(New RectangleF(textLeft + ruleInset, ruleY, Math.Max(0, clipW - ruleInset * 2), ruleThick), 分隔线颜色)
+
+            Case BlockKind.BlockQuote
+                Dim barH As Integer = vl.Height
+                If vli + 1 < _visualLines.Count Then
+                    Dim nextVl = _visualLines(vli + 1)
+                    Dim nextBlock = _document.Blocks(nextVl.BlockIndex)
+                    If nextBlock.Kind = BlockKind.BlockQuote Then barH = nextVl.Y - vl.Y
+                End If
+                Dim barColor As Color = If(block.AlertKind <> AlertKind.None, GetAlertColor(block.AlertKind), 引用条颜色)
+                context.FillRectangle(New RectangleF(textLeft + CInt(引用条偏移 * s), drawY, Math.Max(1, CInt(引用条宽度 * s)), barH), barColor)
+
+            Case BlockKind.CodeBlock
+                Dim padT As Integer = CInt(代码块内边距.Top * s)
+                Dim padB As Integer = CInt(代码块内边距.Bottom * s)
+                Dim isFirstCodeLine = (vli = 0 OrElse _visualLines(vli - 1).BlockIndex <> vl.BlockIndex)
+                Dim isLastCodeLine = (vli = _visualLines.Count - 1 OrElse _visualLines(vli + 1).BlockIndex <> vl.BlockIndex)
+                Dim bgY = drawY - If(isFirstCodeLine, padT, 0)
+                Dim bgH = vl.Height + If(isFirstCodeLine, padT, 0) + If(isLastCodeLine, padB, 0)
+                context.FillRectangle(New RectangleF(textLeft, bgY, clipW, bgH), 代码块背景颜色)
+
+            Case BlockKind.UnorderedListItem
+                If vli > 0 AndAlso _visualLines(vli - 1).BlockIndex = vl.BlockIndex Then Return
+                Dim unorderedMarkerIndent As Integer = GetListMarkerIndent(block, s)
+                Dim bulletR As Integer = Math.Max(1, CInt(列表圆点半径 * s))
+                Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, 文本颜色, context.DeviceGeneration)
+                context.DeviceContext.FillEllipse(
+                    New Ellipse(New Vector2(textLeft + unorderedMarkerIndent + CInt(列表圆点偏移X * s) + bulletR,
+                                            drawY + vl.Height \ 2 + CInt(列表圆点偏移Y * s) + bulletR),
+                                bulletR, bulletR),
+                    brush)
+
+            Case BlockKind.OrderedListItem
+                If vli > 0 AndAlso _visualLines(vli - 1).BlockIndex = vl.BlockIndex Then Return
+                Dim orderedMarkerIndent As Integer = GetListMarkerIndent(block, s)
+                DrawText_GPU(context, block.OrderIndex.ToString() & ".", GetBlockFont(block.Kind), 文本颜色,
+                    New RectangleF(textLeft + orderedMarkerIndent, drawY, Math.Max(1, CInt(有序列表标记宽度 * s)), vl.Height), D2DTextAlign.Right, True)
+
+            Case BlockKind.Table
+                DrawTableDecoration_GPU(context, block, vl, vli, textLeft, drawY, s)
+
+            Case BlockKind.Heading1, BlockKind.Heading2
+                If 标题分隔线粗细 > 0 Then
+                    Dim isLastLineOfBlock As Boolean =
+                        (vli + 1 >= _visualLines.Count OrElse _visualLines(vli + 1).BlockIndex <> vl.BlockIndex)
+                    If isLastLineOfBlock Then
+                        Dim sepThick As Integer = Math.Max(1, CInt(标题分隔线粗细 * s))
+                        Dim sepGap As Integer = CInt(标题分隔线间距 * s)
+                        Dim sepY As Integer = drawY + vl.Height + sepGap
+                        context.FillRectangle(New RectangleF(textLeft, sepY, clipW, sepThick), 标题分隔线颜色)
+                    End If
+                End If
+        End Select
+    End Sub
+
+    Private Sub DrawTableDecoration_GPU(context As D3D_PaintContext,
+                                        block As MarkdownBlock,
+                                        vl As VisualLine,
+                                        vli As Integer,
+                                        textLeft As Integer,
+                                        drawY As Integer,
+                                        s As Single)
+        If vl.TableSubLine <> 0 Then Return
+        Dim colWidths As Integer() = Nothing
+        If Not _tableColumnWidths.TryGetValue(vl.BlockIndex, colWidths) Then Return
+        Dim colCount As Integer = colWidths.Length
+        Dim totalW As Integer = colWidths.Sum()
+
+        Dim cellPadding As Integer = CInt(表格单元格内边距 * s)
+        Dim logicalRowH As Integer = vl.Height
+        Dim look As Integer = vli + 1
+        While look < _visualLines.Count
+            Dim nextVl = _visualLines(look)
+            If nextVl.BlockIndex <> vl.BlockIndex OrElse nextVl.TableRowIndex <> vl.TableRowIndex Then Exit While
+            logicalRowH += nextVl.Height
+            look += 1
+        End While
+        logicalRowH += cellPadding
+
+        Dim topPad As Integer = cellPadding \ 2
+        Dim rowTop As Integer = drawY - topPad
+
+        If vl.TableRowIndex = 0 AndAlso block.HasHeader Then
+            context.FillRectangle(New RectangleF(textLeft, rowTop, totalW, logicalRowH), 表头背景颜色)
+        End If
+
+        Dim lineBrush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, 表格边框颜色, context.DeviceGeneration)
+        Dim stroke As Single = Math.Max(1.0F, 表格边框粗细 * s)
+        context.DeviceContext.DrawLine(New Vector2(textLeft, rowTop), New Vector2(textLeft + totalW, rowTop), lineBrush, stroke)
+        context.DeviceContext.DrawLine(New Vector2(textLeft, rowTop + logicalRowH), New Vector2(textLeft + totalW, rowTop + logicalRowH), lineBrush, stroke)
+        Dim x As Integer = textLeft
+        For ci As Integer = 0 To colCount
+            context.DeviceContext.DrawLine(New Vector2(x, rowTop), New Vector2(x, rowTop + logicalRowH), lineBrush, stroke)
+            If ci < colCount Then x += colWidths(ci)
+        Next
+    End Sub
+
+    Private Sub DrawFragments_GPU(context As D3D_PaintContext,
+                                  vl As VisualLine,
+                                  vli As Integer,
+                                  textLeft As Integer,
+                                  drawY As Integer,
+                                  blockKind As BlockKind,
+                                  s As Single,
+                                  selStart As SelectionPos,
+                                  selEnd As SelectionPos)
+        For fi As Integer = 0 To vl.Fragments.Count - 1
+            Dim frag = vl.Fragments(fi)
+            Dim fragX As Integer = textLeft + frag.X
+            Dim fragW As Integer = frag.Width
+
+            If frag.Kind = InlineKind.Image Then
+                If _hasSelection Then DrawFragmentSelection_GPU(context, vli, fi, frag, fragX, drawY, vl.Height, selStart, selEnd)
+                Dim imgH As Integer = If(frag.FragmentHeight > 0, frag.FragmentHeight, vl.Height)
+                Dim imgRect As New RectangleF(fragX, drawY, frag.Width, imgH)
+                If frag.ImageObj IsNot Nothing Then
+                    context.DrawImage(frag.ImageObj, imgRect)
+                Else
+                    context.DrawRectangle(imgRect, 图片占位边框颜色, Math.Max(1.0F, s))
+                    If Not String.IsNullOrEmpty(frag.Text) Then
+                        DrawText_GPU(context, frag.Text, frag.UseFont, 图片占位文字颜色, imgRect, D2DTextAlign.Center, True)
+                    End If
+                End If
+                Continue For
+            End If
+
+            If frag.BackColor <> Color.Empty AndAlso blockKind <> BlockKind.CodeBlock Then
+                Dim padL As Integer = CInt(行内代码内边距.Left * s)
+                Dim padR As Integer = CInt(行内代码内边距.Right * s)
+                FillRoundedRect_GPU(context, New RectangleF(fragX - padL, drawY, fragW + padL + padR, vl.Height), CInt(行内代码圆角 * s), frag.BackColor)
+            End If
+
+            If _hasSelection Then DrawFragmentSelection_GPU(context, vli, fi, frag, fragX, drawY, vl.Height, selStart, selEnd)
+
+            If Not String.IsNullOrEmpty(frag.Text) Then
+                If blockKind = BlockKind.Table AndAlso frag.TableColIndex >= 0 Then
+                    Dim block = _document.Blocks(vl.BlockIndex)
+                    Dim colWidths As Integer() = Nothing
+                    Dim cellW As Integer = frag.Width
+                    If _tableColumnWidths.TryGetValue(vl.BlockIndex, colWidths) AndAlso frag.TableColIndex < colWidths.Length Then
+                        Dim cellPadding As Integer = CInt(表格单元格内边距 * s)
+                        cellW = colWidths(frag.TableColIndex) - cellPadding * 2
+                    End If
+                    Dim align As D2DTextAlign = D2DTextAlign.Left
+                    If block.ColumnAlignments IsNot Nothing AndAlso frag.TableColIndex < block.ColumnAlignments.Count Then
+                        Select Case block.ColumnAlignments(frag.TableColIndex)
+                            Case TableAlignment.Center : align = D2DTextAlign.Center
+                            Case TableAlignment.Right : align = D2DTextAlign.Right
+                        End Select
+                    End If
+                    DrawText_GPU(context, frag.Text, frag.UseFont, frag.ForeColor, New RectangleF(fragX, drawY, cellW, vl.Height), align, True)
+                Else
+                    DrawText_GPU(context, frag.Text, frag.UseFont, frag.ForeColor, New RectangleF(fragX, drawY, Short.MaxValue, vl.Height), D2DTextAlign.Left, True)
+                End If
+            End If
+
+            If fragW > 0 Then
+                Dim lineBrush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, frag.ForeColor, context.DeviceGeneration)
+                If frag.Kind = InlineKind.Strikethrough Then
+                    context.DeviceContext.DrawLine(New Vector2(fragX, drawY + vl.Height \ 2), New Vector2(fragX + fragW, drawY + vl.Height \ 2), lineBrush, Math.Max(1.0F, 删除线粗细 * s))
+                ElseIf frag.Kind = InlineKind.Link Then
+                    Dim y As Integer = drawY + vl.Height - CInt(链接下划线偏移 * s)
+                    context.DeviceContext.DrawLine(New Vector2(fragX, y), New Vector2(fragX + fragW, y), lineBrush, Math.Max(1.0F, 链接下划线粗细 * s))
+                End If
+            End If
+        Next
+    End Sub
+
+    Private Sub DrawFragmentSelection_GPU(context As D3D_PaintContext,
+                                          vli As Integer,
+                                          fi As Integer,
+                                          frag As VisualFragment,
+                                          fragX As Integer,
+                                          drawY As Integer,
+                                          lineH As Integer,
+                                          selStart As SelectionPos,
+                                          selEnd As SelectionPos)
+        If vli < selStart.VisualLine OrElse vli > selEnd.VisualLine Then Return
+        Dim sChar As Integer = 0
+        Dim eChar As Integer = frag.CharLength
+        If vli = selStart.VisualLine Then
+            If fi < selStart.FragmentIndex Then Return
+            If fi = selStart.FragmentIndex Then sChar = selStart.CharOffset
+        End If
+        If vli = selEnd.VisualLine Then
+            If fi > selEnd.FragmentIndex Then Return
+            If fi = selEnd.FragmentIndex Then eChar = selEnd.CharOffset
+        End If
+        If eChar <= sChar OrElse frag.Text Is Nothing Then Return
+        Dim safeS = Math.Min(sChar, frag.Text.Length)
+        Dim safeE = Math.Min(eChar, frag.Text.Length)
+        Dim x1 As Integer = fragX + If(safeS > 0, MeasureTextWidthCached(frag.Text.Substring(0, safeS), frag.UseFont, lineH), 0)
+        Dim x2 As Integer = fragX + MeasureTextWidthCached(frag.Text.Substring(0, safeE), frag.UseFont, lineH)
+        If x2 > x1 Then context.FillRectangle(New RectangleF(x1, drawY, x2 - x1, lineH), 选中背景颜色)
+    End Sub
+
+    Private Sub DrawText_GPU(context As D3D_PaintContext,
+                             text As String,
+                             font As Font,
+                             color As Color,
+                             rect As RectangleF,
+                             align As D2DTextAlign,
+                             verticalCenter As Boolean)
+        If String.IsNullOrEmpty(text) OrElse font Is Nothing OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+
+        Dim textAlign As Vortice.DirectWrite.TextAlignment
+        Select Case align
+            Case D2DTextAlign.Center : textAlign = Vortice.DirectWrite.TextAlignment.Center
+            Case D2DTextAlign.Right : textAlign = Vortice.DirectWrite.TextAlignment.Trailing
+            Case Else : textAlign = Vortice.DirectWrite.TextAlignment.Leading
+        End Select
+        Dim paraAlign As Vortice.DirectWrite.ParagraphAlignment = If(verticalCenter, Vortice.DirectWrite.ParagraphAlignment.Center, Vortice.DirectWrite.ParagraphAlignment.Near)
+        context.DrawText(text, font, color, rect, textAlign, paraAlign)
+    End Sub
+
+    Private Sub DrawScrollBar_GPU(context As D3D_PaintContext, w As Integer, h As Integer, s As Single)
+        If _embeddedContentMode OrElse Not _scrollBarVisible Then Return
+        Dim scaledBorder As Integer = CInt(Math.Round(边框宽度 * s))
+        Dim scaledRadius As Integer = CInt(Math.Round(边框圆角半径 * s))
+        Dim scaledScrollW As Integer = CInt(Math.Round(滚动条宽度 * s))
+        Dim viewH As Integer = ViewportHeight()
+        If _totalContentHeight <= 0 OrElse viewH <= 0 OrElse scaledScrollW <= 0 Then Return
+
+        _scrollBar.ComputeLayout(w, h, scaledBorder, scaledRadius, 0, 0, scaledScrollW, _totalContentHeight, viewH, _scrollY)
+        If _scrollBar.TrackRect.IsEmpty Then Return
+
+        Dim width As Single = Math.Max(1.0F, scaledScrollW)
+        Dim trackArea As New RectangleF(_scrollBar.VisualLeft, _scrollBar.TrackRect.Y, width, _scrollBar.TrackRect.Height)
+        Dim thumbArea As New RectangleF(_scrollBar.VisualLeft, _scrollBar.ThumbRect.Y, width, _scrollBar.ThumbRect.Height)
+        FillRoundedRect_GPU(context, trackArea, Math.Min(width / 2.0F, trackArea.Height / 2.0F), 滚动条轨道颜色)
+        Dim thumbColor = If(_scrollBar.IsDragging OrElse _scrollBar.IsHover, 滚动条悬停颜色, 滚动条颜色)
+        FillRoundedRect_GPU(context, thumbArea, Math.Min(width / 2.0F, thumbArea.Height / 2.0F), thumbColor)
+    End Sub
+
+    Private Sub FillRoundedRect_GPU(context As D3D_PaintContext, rect As RectangleF, radius As Single, color As Color)
+        If color.A = 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
+        If radius <= 0 Then
+            context.DeviceContext.FillRectangle(D3D_PaintContext.ToRawRect(rect), brush)
+            Return
+        End If
+        Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New RoundedRectangle(rect, radius, radius))
+            context.DeviceContext.FillGeometry(geo, brush)
+        End Using
+    End Sub
+
+    Private Sub DrawRoundedBorder_GPU(context As D3D_PaintContext, rect As RectangleF, radius As Single, color As Color, strokeWidth As Single)
+        If color.A = 0 OrElse strokeWidth <= 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
+        If radius <= 0 Then
+            context.DeviceContext.DrawRectangle(D3D_PaintContext.ToRawRect(rect), brush, strokeWidth)
+            Return
+        End If
+        Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New RoundedRectangle(rect, radius, radius))
+            context.DeviceContext.DrawGeometry(geo, brush, strokeWidth)
+        End Using
     End Sub
 
     Friend Sub DrawEmbeddedContent_D2D(rt As ID2D1RenderTarget,
-                                       compositor As WindowCompositor,
+                                       compositor As D3D_SurfaceCompositor,
                                        origin As Point,
                                        clipSize As Size,
                                        Optional drawBackground As Boolean = False,
@@ -2737,7 +3059,7 @@ Public Class MarkdownViewerCore
             Dim s As Single = DpiScale()
             If drawBackground AndAlso 背景颜色.A > 0 Then
                 rt.FillRectangle(
-                    D2DGlobals.ToD2DRect(New RectangleF(origin.X, origin.Y, clipSize.Width, clipSize.Height)),
+                    D3D_D2DInterop.ToD2DRect(New RectangleF(origin.X, origin.Y, clipSize.Width, clipSize.Height)),
                     compositor.BrushCache.Get(rt, 背景颜色))
             End If
 
@@ -2786,11 +3108,11 @@ Public Class MarkdownViewerCore
         Dim brushCache = _当前合成器?.BrushCache
         Dim br = brushCache?.Get(rt, 背景颜色)
         If br IsNot Nothing Then
-            rt.FillRectangle(D2DGlobals.ToD2DRect(New RectangleF(0, 0, w, h)), br)
+            rt.FillRectangle(D3D_D2DInterop.ToD2DRect(New RectangleF(0, 0, w, h)), br)
             Return
         End If
-        Using fallback = rt.CreateSolidColorBrush(D2DGlobals.ToColor4(背景颜色))
-            rt.FillRectangle(D2DGlobals.ToD2DRect(New RectangleF(0, 0, w, h)), fallback)
+        Using fallback = rt.CreateSolidColorBrush(D3D_D2DInterop.ToColor4(背景颜色))
+            rt.FillRectangle(D3D_D2DInterop.ToD2DRect(New RectangleF(0, 0, w, h)), fallback)
         End Using
     End Sub
 
@@ -2798,13 +3120,13 @@ Public Class MarkdownViewerCore
     Private Sub DrawBackground_D2D(rt As ID2D1RenderTarget, boundsRect As RectangleF, s As Single)
         Dim brushCache = _当前合成器?.BrushCache
         If 边框圆角半径 > 0 Then
-            Using geo = RectangleRenderer.创建圆角矩形几何(boundsRect, 边框圆角半径 * s)
-                RectangleRenderer.绘制圆角背景_D2D(rt, geo, boundsRect, 背景颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal, brushCache)
-                RectangleRenderer.绘制圆角边框_D2D(rt, geo, 边框颜色, 边框宽度 * s, brushCache)
+            Using geo = D3D_RectangleRenderer.创建圆角矩形几何(boundsRect, 边框圆角半径 * s)
+                D3D_RectangleRenderer.绘制圆角背景_D2D(rt, geo, boundsRect, 背景颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal, brushCache)
+                D3D_RectangleRenderer.绘制圆角边框_D2D(rt, geo, 边框颜色, 边框宽度 * s, brushCache)
             End Using
         Else
-            RectangleRenderer.绘制矩形背景_D2D(rt, boundsRect, 背景颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal, brushCache)
-            RectangleRenderer.绘制矩形边框_D2D(rt, boundsRect, 边框颜色, 边框宽度 * s, brushCache)
+            D3D_RectangleRenderer.绘制矩形背景_D2D(rt, boundsRect, 背景颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal, brushCache)
+            D3D_RectangleRenderer.绘制矩形边框_D2D(rt, boundsRect, 边框颜色, 边框宽度 * s, brushCache)
         End If
     End Sub
 
@@ -2817,7 +3139,7 @@ Public Class MarkdownViewerCore
                 Dim ruleThick As Integer = Math.Max(1, CInt(分隔线粗细 * s))
                 Dim ruleY As Integer = drawY + (vl.Height - ruleThick) \ 2
                 Dim ruleInset As Integer = CInt(分隔线水平缩进 * s)
-                rt.FillRectangle(D2DGlobals.ToD2DRect(New RectangleF(textLeft + ruleInset, ruleY, Math.Max(0, clipW - ruleInset * 2), ruleThick)), _当前合成器.BrushCache.Get(rt, 分隔线颜色))
+                rt.FillRectangle(D3D_D2DInterop.ToD2DRect(New RectangleF(textLeft + ruleInset, ruleY, Math.Max(0, clipW - ruleInset * 2), ruleThick)), _当前合成器.BrushCache.Get(rt, 分隔线颜色))
 
             Case BlockKind.BlockQuote
                 Dim barH As Integer = vl.Height
@@ -2829,7 +3151,7 @@ Public Class MarkdownViewerCore
                     End If
                 End If
                 Dim barColor As Color = If(block.AlertKind <> AlertKind.None, GetAlertColor(block.AlertKind), 引用条颜色)
-                rt.FillRectangle(D2DGlobals.ToD2DRect(New RectangleF(textLeft + CInt(引用条偏移 * s), drawY, Math.Max(1, CInt(引用条宽度 * s)), barH)), _当前合成器.BrushCache.Get(rt, barColor))
+                rt.FillRectangle(D3D_D2DInterop.ToD2DRect(New RectangleF(textLeft + CInt(引用条偏移 * s), drawY, Math.Max(1, CInt(引用条宽度 * s)), barH)), _当前合成器.BrushCache.Get(rt, barColor))
 
             Case BlockKind.CodeBlock
                 Dim padT As Integer = CInt(代码块内边距.Top * s)
@@ -2838,13 +3160,13 @@ Public Class MarkdownViewerCore
                 Dim isLastCodeLine = (vli = _visualLines.Count - 1 OrElse _visualLines(vli + 1).BlockIndex <> vl.BlockIndex)
                 Dim bgY = drawY - If(isFirstCodeLine, padT, 0)
                 Dim bgH = vl.Height + If(isFirstCodeLine, padT, 0) + If(isLastCodeLine, padB, 0)
-                rt.FillRectangle(D2DGlobals.ToD2DRect(New RectangleF(textLeft, bgY, clipW, bgH)), _当前合成器.BrushCache.Get(rt, 代码块背景颜色))
+                rt.FillRectangle(D3D_D2DInterop.ToD2DRect(New RectangleF(textLeft, bgY, clipW, bgH)), _当前合成器.BrushCache.Get(rt, 代码块背景颜色))
 
             Case BlockKind.UnorderedListItem
                 If vli > 0 AndAlso _visualLines(vli - 1).BlockIndex = vl.BlockIndex Then Return
                 Dim unorderedMarkerIndent As Integer = GetListMarkerIndent(block, s)
                 Dim bulletR As Integer = Math.Max(1, CInt(列表圆点半径 * s))
-                Using geo = D2DGlobals.GetD2DFactory().CreateEllipseGeometry(New Ellipse(New System.Numerics.Vector2(textLeft + unorderedMarkerIndent + CInt(列表圆点偏移X * s) + bulletR, drawY + vl.Height \ 2 + CInt(列表圆点偏移Y * s) + bulletR), bulletR, bulletR))
+                Using geo = D3D_D2DInterop.GetD2DFactory().CreateEllipseGeometry(New Ellipse(New System.Numerics.Vector2(textLeft + unorderedMarkerIndent + CInt(列表圆点偏移X * s) + bulletR, drawY + vl.Height \ 2 + CInt(列表圆点偏移Y * s) + bulletR), bulletR, bulletR))
                     rt.FillGeometry(geo, _当前合成器.BrushCache.Get(rt, 文本颜色))
                 End Using
 
@@ -2865,7 +3187,7 @@ Public Class MarkdownViewerCore
                         Dim sepThick As Integer = Math.Max(1, CInt(标题分隔线粗细 * s))
                         Dim sepGap As Integer = CInt(标题分隔线间距 * s)
                         Dim sepY As Integer = drawY + vl.Height + sepGap
-                        rt.FillRectangle(D2DGlobals.ToD2DRect(New RectangleF(textLeft, sepY, clipW, sepThick)), _当前合成器.BrushCache.Get(rt, 标题分隔线颜色))
+                        rt.FillRectangle(D3D_D2DInterop.ToD2DRect(New RectangleF(textLeft, sepY, clipW, sepThick)), _当前合成器.BrushCache.Get(rt, 标题分隔线颜色))
                     End If
                 End If
         End Select
@@ -2894,7 +3216,7 @@ Public Class MarkdownViewerCore
         Dim rowTop As Integer = drawY - topPad
 
         If vl.TableRowIndex = 0 AndAlso block.HasHeader Then
-            rt.FillRectangle(D2DGlobals.ToD2DRect(New RectangleF(textLeft, rowTop, totalW, logicalRowH)), _当前合成器.BrushCache.Get(rt, 表头背景颜色))
+            rt.FillRectangle(D3D_D2DInterop.ToD2DRect(New RectangleF(textLeft, rowTop, totalW, logicalRowH)), _当前合成器.BrushCache.Get(rt, 表头背景颜色))
         End If
 
         Dim lineBrush = _当前合成器.BrushCache.Get(rt, 表格边框颜色)
@@ -2933,12 +3255,12 @@ Public Class MarkdownViewerCore
                     Dim cache = GetD2DImageCache(frag.Url)
                     Dim bmp = cache?.GetBitmap(rt, frag.ImageObj)
                     If bmp IsNot Nothing Then
-                        rt.DrawBitmap(bmp, D2DGlobals.ToD2DRect(imgRect), 1.0F, BitmapInterpolationMode.Linear,
+                        rt.DrawBitmap(bmp, D3D_D2DInterop.ToD2DRect(imgRect), 1.0F, BitmapInterpolationMode.Linear,
                             New Vortice.Mathematics.Rect(0, 0, bmp.Size.Width, bmp.Size.Height))
                         drewImage = True
                     End If
                 Else
-                    rt.DrawRectangle(D2DGlobals.ToD2DRect(imgRect), _当前合成器.BrushCache.Get(rt, 图片占位边框颜色), Math.Max(1.0F, s))
+                    rt.DrawRectangle(D3D_D2DInterop.ToD2DRect(imgRect), _当前合成器.BrushCache.Get(rt, 图片占位边框颜色), Math.Max(1.0F, s))
                     If Not String.IsNullOrEmpty(frag.Text) Then
                         DrawText_D2D(rt, frag.Text, frag.UseFont, 图片占位文字颜色, imgRect, D2DTextAlign.Center, True)
                     End If
@@ -2949,7 +3271,7 @@ Public Class MarkdownViewerCore
             If frag.BackColor <> Color.Empty AndAlso blockKind <> BlockKind.CodeBlock Then
                 Dim padL As Integer = CInt(行内代码内边距.Left * s)
                 Dim padR As Integer = CInt(行内代码内边距.Right * s)
-                Using geo = RectangleRenderer.创建圆角矩形几何(New RectangleF(fragX - padL, drawY, fragW + padL + padR, vl.Height), CInt(行内代码圆角 * s))
+                Using geo = D3D_RectangleRenderer.创建圆角矩形几何(New RectangleF(fragX - padL, drawY, fragW + padL + padR, vl.Height), CInt(行内代码圆角 * s))
                     rt.FillGeometry(geo, _当前合成器.BrushCache.Get(rt, frag.BackColor))
                 End Using
             End If
@@ -3011,7 +3333,7 @@ Public Class MarkdownViewerCore
         Dim x1 As Integer = fragX + If(safeS > 0, MeasureTextWidthCached(frag.Text.Substring(0, safeS), frag.UseFont, lineH), 0)
         Dim x2 As Integer = fragX + MeasureTextWidthCached(frag.Text.Substring(0, safeE), frag.UseFont, lineH)
         If x2 > x1 Then
-            rt.FillRectangle(D2DGlobals.ToD2DRect(New RectangleF(x1, drawY, x2 - x1, lineH)), _当前合成器.BrushCache.Get(rt, 选中背景颜色))
+            rt.FillRectangle(D3D_D2DInterop.ToD2DRect(New RectangleF(x1, drawY, x2 - x1, lineH)), _当前合成器.BrushCache.Get(rt, 选中背景颜色))
         End If
     End Sub
 
@@ -3027,9 +3349,9 @@ Public Class MarkdownViewerCore
             Case Else : textAlign = Vortice.DirectWrite.TextAlignment.Leading
         End Select
         Dim paraAlign As Vortice.DirectWrite.ParagraphAlignment = If(verticalCenter, Vortice.DirectWrite.ParagraphAlignment.Center, Vortice.DirectWrite.ParagraphAlignment.Near)
-        Dim sizePx As Single = D2DGlobals.GetDWriteFontSizePx(font, DpiScale())
+        Dim sizePx As Single = D3D_D2DInterop.GetDWriteFontSizePx(font, DpiScale())
         Dim fmt = _当前合成器.TextFormatCache.Get(font.FontFamily.Name, weight, style, sizePx, textAlign, paraAlign, True)
-        rt.DrawText(text, fmt, D2DGlobals.ToD2DRect(rect), _当前合成器.BrushCache.Get(rt, color))
+        rt.DrawText(text, fmt, D3D_D2DInterop.ToD2DRect(rect), _当前合成器.BrushCache.Get(rt, color))
     End Sub
 
 
@@ -3062,7 +3384,7 @@ Public Class MarkdownViewerCore
             If newOff <> _scrollY Then
                 _scrollY = newOff
                 ClampScroll()
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                RequestV3Render()
                 Return
             End If
         End If
@@ -3073,7 +3395,7 @@ Public Class MarkdownViewerCore
         _selCurrent = pos
         _hasSelection = False
         _mouseDownLinkUrl = HitTestLink(e.X, e.Y)
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        RequestV3Render()
     End Sub
 
     Protected Overrides Sub OnMouseMove(e As MouseEventArgs)
@@ -3081,12 +3403,12 @@ Public Class MarkdownViewerCore
         If _scrollBar.IsDragging Then
             _scrollY = _scrollBar.DragMove(e.Y, _totalContentHeight, ViewportHeight())
             ClampScroll()
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            RequestV3Render()
             Return
         End If
 
         If _scrollBarVisible AndAlso _scrollBar.TrackRect.Contains(e.Location) Then
-            If _scrollBar.UpdateHover(e.Location) Then OuterToInnerRefreshScheduler.RequestFull(Me)
+            If _scrollBar.UpdateHover(e.Location) Then RequestV3Render()
             Cursor = Cursors.Default
         Else
             Cursor = If(HitTestLink(e.X, e.Y) IsNot Nothing, Cursors.Hand, Cursors.IBeam)
@@ -3102,7 +3424,7 @@ Public Class MarkdownViewerCore
             Else
                 _autoScrollTimer.Stop()
             End If
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            RequestV3Render()
         End If
     End Sub
 
@@ -3146,7 +3468,7 @@ Public Class MarkdownViewerCore
         ScrollBy(scrollDelta)
         _selCurrent = HitTestPos(_lastMousePos.X, _lastMousePos.Y)
         _hasSelection = CompareSelectionPos(_selAnchor, _selCurrent) <> 0
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        RequestV3Render()
     End Sub
 
 #End Region
@@ -3191,7 +3513,7 @@ Public Class MarkdownViewerCore
         _selCurrent = New SelectionPos(_visualLines.Count - 1, lastFi,
             If(lastVl.Fragments.Count > 0, lastVl.Fragments(lastFi).CharLength, 0))
         _hasSelection = True
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        RequestV3Render()
     End Sub
 
     Private Sub ClearSelection()
@@ -3245,7 +3567,7 @@ Public Class MarkdownViewerCore
             If hit.hitX < frag.X + frag.Width OrElse fi = vl.Fragments.Count - 1 Then
                 Dim charOff As Integer = 0
                 If frag.Text IsNot Nothing AndAlso frag.Text.Length > 0 Then
-                    charOff = TextRenderHelper.FindColFromX_D2D(frag.Text, hit.hitX - frag.X, frag.UseFont, DpiScale(), GetTextFormatCacheForMeasure())
+                    charOff = D3D_TextMeasureHelper.FindColFromX_D2D(frag.Text, hit.hitX - frag.X, frag.UseFont, DpiScale(), GetTextFormatCacheForMeasure())
                 End If
                 Return New SelectionPos(hit.vli, fi, charOff)
             End If
@@ -3299,7 +3621,7 @@ Public Class MarkdownViewerCore
     Private Sub ScrollBy(delta As Integer)
         _scrollY += delta
         ClampScroll()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        RequestV3Render()
     End Sub
 
     Private Function ViewportHeight() As Integer
@@ -3328,7 +3650,7 @@ Public Class MarkdownViewerCore
 
     Private Function TextAreaWidth() As Integer
         Dim ci = GetContentInsets()
-        Dim scrollW As Integer = If(_scrollBarVisible AndAlso Not _embeddedContentMode, CInt(Math.Round(滚动条宽度 * DpiScale())) + ScrollBarRenderer.Margin * 2, 0)
+        Dim scrollW As Integer = If(_scrollBarVisible AndAlso Not _embeddedContentMode, CInt(Math.Round(滚动条宽度 * DpiScale())) + V3_ScrollBarRenderer.Margin * 2, 0)
         Return ClientRectangle.Width - ci.Left - Math.Max(ci.Right, scrollW)
     End Function
 
@@ -3458,7 +3780,8 @@ Public Class MarkdownViewerCore
         MyBase.OnFontChanged(e)
         InvalidateFontCache()
         RebuildLayout()
-        D2DHelperV2.RefreshFontDependentRendering(Me)
+        InvalidateV3TextResources()
+        RequestEmbeddedOrSelfRefresh()
     End Sub
 
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
@@ -3466,7 +3789,7 @@ Public Class MarkdownViewerCore
         InvalidateFontCache()
         RebuildLayout()
         ClampScroll()
-        D2DHelperV2.RefreshFontDependentRendering(Me)
+        InvalidateV3TextResources()
         RequestEmbeddedOrSelfRefresh()
     End Sub
 
@@ -3588,7 +3911,7 @@ Public Class MarkdownViewerCore
                                     StoreImageCacheEntry(url, img)
                                     _imageLoadingUrls.Remove(url)
                                     RebuildLayout()
-                                    OuterToInnerRefreshScheduler.RequestFull(Me)
+                                    RequestV3Render()
                                 Else
                                     img?.Dispose()
                                 End If
@@ -3606,7 +3929,7 @@ Public Class MarkdownViewerCore
                                            _imageLoadingUrls.Remove(url)
                                            RebuildLayout()
                                            If _embeddedInvalidationTarget IsNot Nothing AndAlso Not _embeddedInvalidationTarget.IsDisposed Then
-                                               OuterToInnerRefreshScheduler.RequestFull(_embeddedInvalidationTarget)
+                                               RequestV3Render(_embeddedInvalidationTarget)
                                            End If
                                        Else
                                            img?.Dispose()
@@ -3667,7 +3990,7 @@ Public Class MarkdownViewerCore
     End Sub
 
     Private Function NextImageCacheClock() As Long
-        Return CpuCache.NextTick()
+        Return D3D_CpuCache.NextTick()
     End Function
 
     Private Shared Function EstimateImageBytes(img As Image) As Long
@@ -3686,7 +4009,7 @@ Public Class MarkdownViewerCore
         Else
             _imageLastUsed.Remove(url)
         End If
-        CpuCache.TrimToBudget(Me)
+        D3D_CpuCache.TrimToBudget(Me)
     End Sub
 
     Private Function GetActiveImageUrls() As HashSet(Of String)
@@ -3731,7 +4054,7 @@ Public Class MarkdownViewerCore
         If _imageCache.TryGetValue(url, img) Then img?.Dispose()
         _imageCache.Remove(url)
         _imageLastUsed.Remove(url)
-        Dim d2dCache As D2DGlobals.D2DBitmapCache = Nothing
+        Dim d2dCache As D3D_D2DInterop.D2DBitmapCache = Nothing
         If _d2dImageCaches.TryGetValue(url, d2dCache) Then
             d2dCache.Dispose()
             _d2dImageCaches.Remove(url)
@@ -3753,22 +4076,22 @@ Public Class MarkdownViewerCore
     Public Sub ClearImageCache()
         DisposeImageCache()
         RebuildLayout()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        RequestV3Render()
     End Sub
 
 #End Region
 
 #Region "D2D 资源管理"
 
-    Private Sub CleanupRenderCaches(level As D2DCacheCleanupLevel)
+    Private Sub CleanupRenderCaches(level As D3DCacheCleanupLevel)
         Select Case level
-            Case D2DCacheCleanupLevel.TrimToBudget
-                CpuCache.TrimToBudget()
+            Case D3DCacheCleanupLevel.TrimToBudget
+                D3D_CpuCache.TrimToBudget()
                 For Each cache In _d2dImageCaches.Values
                     Try : cache.TrimToCurrentBudget() : Catch : End Try
                 Next
 
-            Case D2DCacheCleanupLevel.ReleaseVolatileCaches
+            Case D3DCacheCleanupLevel.ReleaseVolatileCaches
                 DisposeD2DImageCache()
 
             Case Else
@@ -3787,11 +4110,11 @@ Public Class MarkdownViewerCore
         _d2dImageCaches.Clear()
     End Sub
 
-    Private Function GetD2DImageCache(url As String) As D2DGlobals.D2DBitmapCache
+    Private Function GetD2DImageCache(url As String) As D3D_D2DInterop.D2DBitmapCache
         If String.IsNullOrEmpty(url) Then Return Nothing
-        Dim cache As D2DGlobals.D2DBitmapCache = Nothing
+        Dim cache As D3D_D2DInterop.D2DBitmapCache = Nothing
         If Not _d2dImageCaches.TryGetValue(url, cache) Then
-            cache = New D2DGlobals.D2DBitmapCache()
+            cache = New D3D_D2DInterop.D2DBitmapCache()
             _d2dImageCaches(url) = cache
         End If
         Return cache
@@ -3803,7 +4126,7 @@ Public Class MarkdownViewerCore
         Next
     End Sub
 
-    Public ReadOnly Property CacheBytes As Long Implements IRenderCacheOwner.CacheBytes
+    Public ReadOnly Property CacheBytes As Long Implements D3D_IRenderCacheOwner.CacheBytes
         Get
             Dim total As Long = 0
             For Each img In _imageCache.Values
@@ -3813,7 +4136,7 @@ Public Class MarkdownViewerCore
         End Get
     End Property
 
-    Public ReadOnly Property OldestUseTick As Long Implements IRenderCacheOwner.OldestUseTick
+    Public ReadOnly Property OldestUseTick As Long Implements D3D_IRenderCacheOwner.OldestUseTick
         Get
             Dim oldest As Long = Long.MaxValue
             For Each kvp In _imageCache
@@ -3826,11 +4149,11 @@ Public Class MarkdownViewerCore
         End Get
     End Property
 
-    Public Function TrimOldest() As Boolean Implements IRenderCacheOwner.TrimOldest
+    Public Function TrimOldest() As Boolean Implements D3D_IRenderCacheOwner.TrimOldest
         Return TrimOldestImage(Nothing)
     End Function
 
-    Public Sub ReleaseAll() Implements IRenderCacheOwner.ReleaseAll
+    Public Sub ReleaseAll() Implements D3D_IRenderCacheOwner.ReleaseAll
         DisposeImageCache()
     End Sub
 
@@ -3859,19 +4182,18 @@ Public Class MarkdownViewerCore
         Dim cached As Integer = 0
         If _textWidthCache.TryGetValue(key, cached) Then Return cached
 
-        cached = CInt(Math.Ceiling(TextRenderHelper.MeasureTextWidth_D2D(text, font, DpiScale(), GetTextFormatCacheForMeasure())))
+        cached = CInt(Math.Ceiling(D3D_TextMeasureHelper.MeasureTextWidth_D2D(text, font, DpiScale(), GetTextFormatCacheForMeasure())))
         If _textWidthCache.Count >= MaxTextWidthCacheEntries Then _textWidthCache.Clear()
         _textWidthCache(key) = cached
         Return cached
     End Function
 
     Private Function GetLayoutLineHeight(font As Font) As Integer
-        Return CInt(Math.Ceiling(D2DGlobals.GetDWriteLineHeightPx(font, DpiScale())))
+        Return CInt(Math.Ceiling(D3D_D2DInterop.GetDWriteLineHeightPx(font, DpiScale())))
     End Function
 
-    Private Function GetTextFormatCacheForMeasure() As D2DGlobals.TextFormatCache
-        Dim comp = If(_当前合成器, D2DHelperV2.GetCompositor(Me))
-        Return comp?.TextFormatCache
+    Private Function GetTextFormatCacheForMeasure() As D3D_D2DInterop.TextFormatCache
+        Return Nothing
     End Function
 
     Private Function GetAlertColor(kind As AlertKind) As Color
@@ -3889,17 +4211,22 @@ Public Class MarkdownViewerCore
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
             RebuildLayout()
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            RequestV3Render()
         End If
     End Sub
 
     Private Sub RequestEmbeddedOrSelfRefresh()
         Dim target = GetEmbeddedInvalidationTarget()
         If target IsNot Nothing Then
-            OuterToInnerRefreshScheduler.RequestFull(target)
+            RequestV3Render(target)
         Else
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            RequestV3Render()
         End If
+    End Sub
+
+    Private Sub InvalidateV3TextResources()
+        Dim target = If(GetEmbeddedInvalidationTarget(), DirectCast(Me, Control))
+        D3D_RenderCore.InvalidateExistingTextResources(target)
     End Sub
 
     Private Function DpiScale() As Single
@@ -3908,7 +4235,7 @@ Public Class MarkdownViewerCore
 
     Private Function EffectiveDeviceDpi() As Integer
         If _embeddedContentMode AndAlso _embeddedHostDpi > 0 Then Return _embeddedHostDpi
-        Return D2DGlobals.GetCurrentDpi(Me)
+        Return V3_DpiContext.FromControl(Me).Dpi
     End Function
 
     Private Function GetContentInsets() As ContentInsets

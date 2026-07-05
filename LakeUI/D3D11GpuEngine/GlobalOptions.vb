@@ -27,7 +27,7 @@ Public Class GlobalOptions
         x4 = 4
     End Enum
 
-    Public Const 超采样抗锯齿描述词 As String = "使用 SSAA 超采样抗锯齿显著改善控件自己绘制的 D2D 图形边缘，例如线条、圆角、弧线、路径、边框和填充形状；x2/x3/x4 的离屏像素量约为 4/9/16 倍，因此会按平方级增加显存、填充率和回采开销。该设置只作用于 V2 图形层，不是 Image 图片解码倍率，也不改变图标、背景图片、Markdown 图片等 Image 图片缓存；文字层和背景穿透层保持 1x，以避免 ClearType/DirectWrite 与第三方文字渲染兼容问题。"
+    Public Const 超采样抗锯齿描述词 As String = "使用 SSAA 超采样抗锯齿显著改善控件自己绘制的 D2D 图形边缘，例如线条、圆角、弧线、路径、边框和填充形状；x2/x3/x4 的离屏像素量约为 4/9/16 倍，因此会按平方级增加显存、填充率和回采开销。该设置只作用于控件图形层，不是 Image 图片解码倍率，也不改变图标、背景图片、Markdown 图片等 Image 图片缓存；文字层和背景穿透层保持 1x，以避免 ClearType/DirectWrite 与第三方文字渲染兼容问题。"
 
     ''' <summary>
     ''' 全局 SSAA 倍率。
@@ -35,17 +35,31 @@ Public Class GlobalOptions
     ''' <remarks>
     ''' <para>默认值：OFF。</para>
     ''' <para>范围：OFF、x2、x3、x4。OFF 表示不强制全局倍率；x2/x3/x4 会在下一次控件重绘时作为全局 SSAA 设置参与计算。</para>
-    ''' <para>影响范围：使用 D2DHelperV2.BeginPaint 的控件图形层，主要是代码绘制出来的圆角、边框、路径、线条、填充、阴影等 D2D 图形。多数控件会取控件自身 SuperSamplingScale 与 GlobalSSAA 中较高的倍率；少数特化控件可能只读取全局值或明确不参与全局 SSAA。</para>
+    ''' <para>影响范围：控件自己绘制的图形层，主要是代码绘制出来的圆角、边框、路径、线条、填充、阴影等 D2D 图形。多数控件会取控件自身 SuperSamplingScale 与 GlobalSSAA 中较高的倍率；少数特化控件可能只读取全局值或明确不参与全局 SSAA。</para>
     ''' <para>不影响范围：不改变 System.Drawing.Image / Bitmap 的原始尺寸、解码方式、RAM 常驻，也不改变 Image -&gt; D2D Bitmap 上传缓存预算；图片只是作为内容被绘制到当前图形层中。</para>
     ''' <para>性能影响：x2/x3/x4 的图形层离屏像素数约为 4/9/16 倍。</para>
     ''' </remarks>
     Public Shared Property GlobalSSAA As SuperSamplingScaleEnum = SuperSamplingScaleEnum.OFF
 
+    ''' <summary>计算控件实际使用的 SSAA 倍率。</summary>
+    Public Shared Function GetEffectiveSsaaScale(controlScale As Integer) As Integer
+        Dim ssaa As Integer = Math.Max(1, controlScale)
+        If GlobalSSAA <> SuperSamplingScaleEnum.OFF Then
+            ssaa = Math.Max(ssaa, CInt(GlobalSSAA))
+        End If
+        Return ssaa
+    End Function
+
+    ''' <summary>计算控件实际使用的 SSAA 倍率。</summary>
+    Public Shared Function GetEffectiveSsaaScale(controlScale As SuperSamplingScaleEnum) As Integer
+        Return GetEffectiveSsaaScale(CInt(controlScale))
+    End Function
+
     ''' <summary>
     ''' D2D / DirectWrite 文本渲染质量模式。
     ''' </summary>
     ''' <remarks>
-    ''' <para>该枚举只影响 D2DGlobals.ApplyGlobalQuality 设置到 RenderTarget 上的文字抗锯齿策略，不改变 SSAA 图形层倍率。</para>
+    ''' <para>该枚举只影响 D3D_D2DInterop.ApplyGlobalQuality 设置到 RenderTarget 上的文字抗锯齿策略，不改变 SSAA 图形层倍率。</para>
     ''' <para>ClearType 最锐利，适合普通 WinForms 文本；Grayscale 更稳定，适合透明/半透明背景；Aliased 仅适合像素风或极小字号；Outline 会完全跳过 TrueType hinting，统一走几何轮廓渲染。</para>
     ''' </remarks>
     Public Enum TextQualityMode
@@ -64,7 +78,7 @@ Public Class GlobalOptions
     ''' </summary>
     ''' <remarks>
     ''' <para>默认值：PerPrimitive。</para>
-    ''' <para>影响范围：所有通过 D2DGlobals.ApplyGlobalQuality 初始化的 D2D RenderTarget，包括共享 DC RT 与 SSAA BitmapRT。</para>
+    ''' <para>影响范围：所有通过 D3D_D2DInterop.ApplyGlobalQuality 初始化的 D2D RenderTarget，包括共享 DC RT 与 SSAA BitmapRT。</para>
     ''' <para>该设置只影响控件代码绘制的几何图形、线条、矩形、路径等 D2D 图形边缘，不影响 DirectWrite 文字质量；文字由 GlobalTextQuality 控制。</para>
     ''' <para>它也不影响 Image 图片的像素内容或缩放采样质量：图标、背景图、Markdown 图片等位图仍按对应图片绘制逻辑处理。</para>
     ''' <para>PerPrimitive 会对单个图元做抗锯齿，视觉质量较好；Aliased 可减少少量边缘计算但会明显增加锯齿，通常只适合像素级绘制。</para>
@@ -76,7 +90,7 @@ Public Class GlobalOptions
     ''' </summary>
     ''' <remarks>
     ''' <para>默认值：ClearType。</para>
-    ''' <para>影响范围：所有通过 D2DGlobals.ApplyGlobalQuality 初始化的 D2D RenderTarget 上的 DirectWrite 文本绘制。</para>
+    ''' <para>影响范围：所有通过 D3D_D2DInterop.ApplyGlobalQuality 初始化的 D2D RenderTarget 上的 DirectWrite 文本绘制。</para>
     ''' <para>ClearType 适合不透明背景和常规 UI；Grayscale 适合半透明背景、截图输出和避免彩边；Aliased 适合像素风；Outline 适合希望忽略字体 hinting、让小字号也强制走几何轮廓的场景。</para>
     ''' <para>性能影响通常小于 SSAA。Outline 会启用自定义 RenderingParams，文字边缘更统一，但极小字号可能更虚，且不会获得 ClearType 子像素锐度。</para>
     ''' </remarks>
@@ -97,7 +111,7 @@ Public Class GlobalOptions
     ''' </summary>
     ''' <remarks>
     ''' <para>默认值：Gamma=1.4、EnhancedContrast=0.5、GrayscaleEnhancedContrast=1.0、ClearTypeLevel=0、PixelGeometry=Rgb、RenderingMode=Outline、GridFitMode=Disabled。</para>
-    ''' <para>这些参数只在 GlobalTextQuality = Outline 时生效。修改字段后请调用 GlobalOptions.InvalidateOutlineRenderingParams，让 D2DGlobals 在下一帧重建 DirectWrite RenderingParams。</para>
+    ''' <para>这些参数只在 GlobalTextQuality = Outline 时生效。修改字段后请调用 GlobalOptions.InvalidateOutlineRenderingParams，让 D3D_D2DInterop 在下一帧重建 DirectWrite RenderingParams。</para>
     ''' <para>Gamma 越高边缘过渡越重；EnhancedContrast / GrayscaleEnhancedContrast 越高笔画边缘越硬；ClearTypeLevel 在 Outline 模式通常保持 0，因为 Outline 采用灰度覆盖而不是子像素 ClearType。</para>
     ''' <para>GridFitMode.Disabled 会避免 TrueType 贴格带来的小字号硬折线，使几何轮廓更一致；如果需要更贴近系统默认小字号，可改为 Enabled 后刷新 RenderingParams。</para>
     ''' </remarks>
@@ -120,7 +134,7 @@ Public Class GlobalOptions
     ''' 丢弃 Outline 文本质量模式已缓存的 DirectWrite RenderingParams，让下一次绘制按当前 OutlineText 参数重建。
     ''' </summary>
     Public Shared Sub InvalidateOutlineRenderingParams()
-        D2DGlobals.InvalidateOutlineRenderingParams()
+        D3D_D2DInterop.InvalidateOutlineRenderingParams()
     End Sub
 
     ''' <summary>SSAA 离屏 RenderTarget 池的像素分桶粒度。</summary>

@@ -13,7 +13,7 @@
 '''   <see cref="RequestFull(Control, Boolean, Boolean)"/> 且传 <c>invalidateChildren:=True</c>。
 ''' • 标题栏按钮 hover、标题文字、光标闪烁等局部 UI 反馈不应通过本调度器扩散到客户区；
 '''   这些场景保持控件自己的 <c>Invalidate(rect, False)</c> 更可控。
-''' • <c>immediate:=True</c> 会在 flush 后调用 <c>Update()</c>，只适合字体切换、同步截图等必须
+''' • immediate 标记会在 flush 后调用 <c>Update()</c>，只适合字体切换、同步截图等必须
 '''   立刻得到新画面的路径；动画和 resize 热路径不要滥用。
 '''
 ''' 坑点：
@@ -319,8 +319,8 @@ Public Module OuterToInnerRefreshScheduler
 
     Private Function CanUpdateImmediately(control As Control) As Boolean
         If control Is Nothing OrElse control.IsDisposed Then Return False
-        If D2DHelperV2.IsBackgroundSamplingPaint Then Return False
-        If D2DHelperV2.IsPainting(control) Then Return False
+        If D3D_PaintBridge.IsBackgroundSamplingPaint Then Return False
+        If D3D_PaintBridge.IsPainting(control) Then Return False
         Return True
     End Function
 

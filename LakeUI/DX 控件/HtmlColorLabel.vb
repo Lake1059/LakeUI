@@ -11,6 +11,7 @@ Imports Vortice.Direct2D1
 ''' 性能说明：当 Text 不包含 '&lt;' 与 '&amp;' 字符时自动走纯文本快速渲染路径，与原生 Label 等同；含标记时再走完整 HTML 解析与排版流程。解析、布局、字体均带缓存，仅在依赖项变化时失效。
 ''' </summary>
 Public Class HtmlColorLabel
+    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource
 
 #Region "构造"
 
@@ -375,21 +376,19 @@ Public Class HtmlColorLabel
 #Region "绘制"
 
     ''' <summary>当前 OnPaint 内的窗口合成器。仅在 Using scope 期间有效。</summary>
-    Private _当前合成器 As WindowCompositor
 
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
-        ' V2 契约（与 ModernButton 一致）：
-        '   • BackgroundSource 已设置 → 跳过基类填底，背景由 OnPaint 内显式穿透绘制；
-        '   • 否则一律走 .NET 自身透明逻辑——半透明 BackColor 由基类把父级背景合成到 HDC，
-        '     不透明色由基类填底。BindDC 之后 DC RT 初始像素即正确底图，
-        '     避免"HDC 残留 → 乱照父窗体其它区域"的故障。
-        '   • 圆角 + 不透明 BackColor 时角落会露出方形底色，
-        '     使用方应把 BackColor 设为透明（与 ModernButton 同约定）。
         If _backgroundSource IsNot Nothing Then Return
         MyBase.OnPaintBackground(e)
     End Sub
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
+        If Not D3D_PaintBridge.PaintRenderable(e, Me, Me, 1) Then MyBase.OnPaint(e)
+    End Sub
+
+    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+        If context Is Nothing OrElse Me.Width <= 0 OrElse Me.Height <= 0 Then Return
+
         Dim 是否有圆角 As Boolean = 边框圆角半径 > 0
         Dim 极限矩形区域 As New RectangleF(0, 0, Me.Width, Me.Height)
         If 边框宽度 > 0 Then
@@ -401,76 +400,176 @@ Public Class HtmlColorLabel
             极限矩形区域.Y + Me.Padding.Top,
             极限矩形区域.Width - Me.Padding.Horizontal,
             极限矩形区域.Height - Me.Padding.Vertical)
-        Dim _ssaa As Integer = D2DHelperV2.GetEffectiveSsaaScale(超采样倍率)
 
-        Using scope = D2DHelperV2.BeginPaint(e, Me, _ssaa)
-            If scope Is Nothing Then Return
-            _当前合成器 = scope.Compositor
-            Try
-                Dim gRT As ID2D1RenderTarget = scope.GraphicsLayer
-                Dim dcRT As ID2D1DCRenderTarget = scope.DCRenderTarget
+        绘制图形内容_GPU(context, 是否有圆角, 极限矩形区域)
+        绘制文本内容_GPU(context, 内容矩形区域)
 
-                ' 0) 背景层：V2 显式穿透
-                If _backgroundSource IsNot Nothing Then
-                    BackgroundPenetrationV2.PaintBackground(Me, scope, _backgroundSource)
+        If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
+            填充圆角矩形_GPU(context, 极限矩形区域, If(是否有圆角, 边框圆角半径 * DpiScale(), 0.0F), 禁用时遮罩颜色)
+        End If
+    End Sub
+
+    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+        Return New Rectangle(Point.Empty, Me.Size)
+    End Function
+
+    Private Sub 绘制图形内容_GPU(context As D3D_PaintContext, 是否有圆角 As Boolean, 极限矩形区域 As RectangleF)
+        Dim s As Single = DpiScale()
+        Dim r As Single = If(是否有圆角, 边框圆角半径 * s, 0.0F)
+        If _backgroundSource IsNot Nothing Then
+            context.DrawBackgroundSource(Me, _backgroundSource, 极限矩形区域)
+        ElseIf MyBase.BackColor.A > 0 Then
+            填充圆角矩形_GPU(context, 极限矩形区域, r, MyBase.BackColor)
+        End If
+        If 边框颜色.A > 0 AndAlso 边框宽度 > 0 Then
+            绘制圆角边框_GPU(context, 极限矩形区域, r, 边框颜色, 边框宽度 * s)
+        End If
+    End Sub
+
+    Private Sub 绘制文本内容_GPU(context As D3D_PaintContext, 内容矩形区域 As RectangleF)
+        _infoIconBounds = Rectangle.Empty
+        Dim 内容区域 As Rectangle = Rectangle.Round(内容矩形区域)
+        Dim 原始文本 = MyBase.Text
+        If Not ShouldShowInfoIcon() AndAlso Not String.IsNullOrEmpty(原始文本) AndAlso 是否纯文本(原始文本) Then
+            绘制纯文本_GPU(context, 原始文本, 内容区域)
+            Return
+        End If
+
+        Dim 行列表 = 计算文本布局(内容区域.Width)
+        If 行列表.Count = 0 Then Return
+        Dim 总高度 As Integer = 0
+        For Each 行 In 行列表
+            总高度 += 行.行高
+        Next
+        If 行列表.Count > 1 Then 总高度 += 行距 * (行列表.Count - 1)
+
+        Dim 起始Y As Integer
+        Select Case 文字对齐方位
+            Case TextAlignEnum.BottomLeft, TextAlignEnum.BottomRight
+                起始Y = 内容区域.Y + 内容区域.Height - 总高度
+            Case TextAlignEnum.Center, TextAlignEnum.MiddleLeft, TextAlignEnum.MiddleRight
+                起始Y = 内容区域.Y + (内容区域.Height - 总高度) \ 2
+            Case Else
+                起始Y = 内容区域.Y
+        End Select
+
+        Dim 当前Y As Integer = 起始Y
+        For Each 行 In 行列表
+            Dim 对齐偏移 As Integer
+            Select Case 文字对齐方位
+                Case TextAlignEnum.Center
+                    对齐偏移 = (内容区域.Width - 行.行宽) \ 2
+                Case TextAlignEnum.TopRight, TextAlignEnum.BottomRight, TextAlignEnum.MiddleRight
+                    对齐偏移 = 内容区域.Width - 行.行宽
+                Case Else
+                    对齐偏移 = 0
+            End Select
+
+            For Each 单元 In 行.单元列表
+                If 单元.类型 = 渲染单元类型.水平间距 Then Continue For
+                Dim yOffset As Integer
+                If 单元.类型 = 渲染单元类型.信息图标 Then
+                    yOffset = (行.行高 - 单元.高度) \ 2
+                Else
+                    yOffset = If(行内垂直对齐方式 = InlineAlignEnum.Center, (行.行高 - 单元.高度) \ 2, 行.行高 - 单元.高度)
                 End If
 
-                ' 1) 图形层（享受 SSAA）
-                绘制图形内容_D2D(gRT, 是否有圆角, 极限矩形区域)
+                Dim drawPoint As New PointF(内容区域.X + 对齐偏移 + 单元.X偏移, 当前Y + yOffset)
+                Select Case 单元.类型
+                    Case 渲染单元类型.信息图标
+                        Dim iconRect As New RectangleF(drawPoint.X, drawPoint.Y, 单元.宽度, 单元.高度)
+                        绘制信息图标_GPU(context, iconRect)
+                        _infoIconBounds = Rectangle.Ceiling(iconRect)
+                    Case Else
+                        Dim unitFont = 获取缓存字体(单元.字号, 单元.字体名称, 单元.字体样式)
+                        绘制单元_GPU(context, 单元.文本, unitFont, 单元.颜色, drawPoint, 单元.宽度, 单元.高度)
+                End Select
+            Next
+            当前Y += 行.行高 + 行距
+        Next
+    End Sub
 
-                ' 2) 把图形层回采到 DC，然后在 DC 上画文字（DirectWrite ClearType 子像素）
-                scope.FlushGraphics()
-                绘制文本内容_D2D(dcRT, 内容矩形区域)
+    Private Sub 绘制纯文本_GPU(context As D3D_PaintContext, text As String, 内容区域 As Rectangle)
+        Dim ta As Vortice.DirectWrite.TextAlignment
+        Dim pa As Vortice.DirectWrite.ParagraphAlignment
+        Select Case 文字对齐方位
+            Case TextAlignEnum.TopLeft : ta = Vortice.DirectWrite.TextAlignment.Leading : pa = Vortice.DirectWrite.ParagraphAlignment.Near
+            Case TextAlignEnum.TopRight : ta = Vortice.DirectWrite.TextAlignment.Trailing : pa = Vortice.DirectWrite.ParagraphAlignment.Near
+            Case TextAlignEnum.Center : ta = Vortice.DirectWrite.TextAlignment.Center : pa = Vortice.DirectWrite.ParagraphAlignment.Center
+            Case TextAlignEnum.BottomLeft : ta = Vortice.DirectWrite.TextAlignment.Leading : pa = Vortice.DirectWrite.ParagraphAlignment.Far
+            Case TextAlignEnum.BottomRight : ta = Vortice.DirectWrite.TextAlignment.Trailing : pa = Vortice.DirectWrite.ParagraphAlignment.Far
+            Case TextAlignEnum.MiddleLeft : ta = Vortice.DirectWrite.TextAlignment.Leading : pa = Vortice.DirectWrite.ParagraphAlignment.Center
+            Case TextAlignEnum.MiddleRight : ta = Vortice.DirectWrite.TextAlignment.Trailing : pa = Vortice.DirectWrite.ParagraphAlignment.Center
+            Case Else : ta = Vortice.DirectWrite.TextAlignment.Leading : pa = Vortice.DirectWrite.ParagraphAlignment.Near
+        End Select
+        context.DrawText(text, Me.Font, 文本颜色, 内容区域, ta, pa)
+    End Sub
 
-                ' 3) 禁用遮罩
-                If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
-                    If 是否有圆角 Then
-                        Using geo = RectangleRenderer.创建圆角矩形几何(极限矩形区域, 边框圆角半径 * DpiScale())
-                            RectangleRenderer.绘制圆角背景_D2D(dcRT, geo, 极限矩形区域, 禁用时遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Vertical, _当前合成器.BrushCache)
-                        End Using
-                    Else
-                        RectangleRenderer.绘制矩形背景_D2D(dcRT, 极限矩形区域, 禁用时遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Vertical, _当前合成器.BrushCache)
-                    End If
-                End If
-            Finally
-                _当前合成器 = Nothing
-            End Try
+    Private Sub 绘制单元_GPU(context As D3D_PaintContext, text As String, font As Font, color As Color,
+                           pt As PointF, w As Integer, h As Integer)
+        If String.IsNullOrEmpty(text) Then Return
+        context.DrawText(text, font, color, New RectangleF(pt.X, pt.Y, Math.Max(1, w + 2), Math.Max(1, h + 2)),
+                         Vortice.DirectWrite.TextAlignment.Leading,
+                         Vortice.DirectWrite.ParagraphAlignment.Near)
+    End Sub
+
+    Private Sub 绘制信息图标_GPU(context As D3D_PaintContext, rect As RectangleF)
+        If rect.Width <= 0 OrElse rect.Height <= 0 OrElse 信息图标颜色.A = 0 Then Return
+
+        Dim lineWidth As Single = Math.Max(0.5F, 信息图标线条粗细 * DpiScale())
+        Dim inset As Single = lineWidth / 2.0F
+        Dim circleRect As New RectangleF(rect.X + inset, rect.Y + inset,
+                                         Math.Max(1.0F, rect.Width - lineWidth),
+                                         Math.Max(1.0F, rect.Height - lineWidth))
+        Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, 信息图标颜色, context.DeviceGeneration)
+        context.DeviceContext.DrawEllipse(New Ellipse(New Vector2(circleRect.X + circleRect.Width / 2.0F, circleRect.Y + circleRect.Height / 2.0F),
+                                                      circleRect.Width / 2.0F,
+                                                      circleRect.Height / 2.0F),
+                                          brush,
+                                          lineWidth)
+
+        Dim cx As Single = rect.X + rect.Width / 2.0F
+        Dim glyphWidth As Single = Math.Max(lineWidth, rect.Width * 0.15F)
+        Dim topDotR As Single = glyphWidth / 2.0F
+        Dim glyphTop As Single = rect.Y + rect.Height * 0.27F
+        Dim glyphBottom As Single = rect.Y + rect.Height * 0.74F
+        Dim gap As Single = Math.Max(glyphWidth * 0.65F, rect.Height * 0.055F)
+        Dim dotCenterY As Single = glyphTop + topDotR
+        context.DeviceContext.FillEllipse(New Ellipse(New Vector2(cx, dotCenterY), topDotR, topDotR), brush)
+
+        Dim stemTop As Single = dotCenterY + topDotR + gap
+        Dim stemHeight As Single = Math.Max(glyphWidth, glyphBottom - stemTop)
+        context.FillRectangle(New RectangleF(cx - glyphWidth / 2.0F, stemTop, glyphWidth, stemHeight), 信息图标颜色)
+    End Sub
+
+    Private Sub 填充圆角矩形_GPU(context As D3D_PaintContext, rect As RectangleF, radius As Single, color As Color)
+        If color.A = 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
+        If radius <= 0 Then
+            context.DeviceContext.FillRectangle(D3D_PaintContext.ToRawRect(rect), brush)
+            Return
+        End If
+        Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New RoundedRectangle(rect, radius, radius))
+            context.DeviceContext.FillGeometry(geo, brush)
         End Using
     End Sub
 
-    ''' <summary>（已废弃 GDI 透明背景路径，V2 不再使用）</summary>
-    Private Sub 绘制父容器背景(g As Graphics)
-        ' no-op
-    End Sub
-
-    Private Sub 绘制图形内容_D2D(rt As ID2D1RenderTarget, 是否有圆角 As Boolean, 极限矩形区域 As RectangleF)
-        Dim s As Single = DpiScale()
-        Dim r As Single = 边框圆角半径 * s
-        If MyBase.BackColor.A = 0 Then
-            If 是否有圆角 Then
-                RectangleRenderer.绘制圆角边框_D2D(rt, 极限矩形区域, r, 边框颜色, 边框宽度 * s, _当前合成器.BrushCache)
-            Else
-                RectangleRenderer.绘制矩形边框_D2D(rt, 极限矩形区域, 边框颜色, 边框宽度 * s, _当前合成器.BrushCache)
-            End If
+    Private Sub 绘制圆角边框_GPU(context As D3D_PaintContext, rect As RectangleF, radius As Single, color As Color, strokeWidth As Single)
+        If color.A = 0 OrElse strokeWidth <= 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
+        If radius <= 0 Then
+            context.DeviceContext.DrawRectangle(D3D_PaintContext.ToRawRect(rect), brush, strokeWidth)
             Return
         End If
-        If 是否有圆角 Then
-            Using geo = RectangleRenderer.创建圆角矩形几何(极限矩形区域, r)
-                If MyBase.BackColor.A > 0 Then
-                    RectangleRenderer.绘制圆角背景_D2D(rt, geo, 极限矩形区域, MyBase.BackColor, Color.Empty, System.Windows.Forms.Orientation.Vertical, _当前合成器.BrushCache)
-                End If
-                If 边框颜色.A > 0 AndAlso 边框宽度 > 0 Then
-                    RectangleRenderer.绘制圆角边框_D2D(rt, geo, 边框颜色, 边框宽度 * s, _当前合成器.BrushCache)
-                End If
-            End Using
-        Else
-            If MyBase.BackColor.A > 0 Then
-                RectangleRenderer.绘制矩形背景_D2D(rt, 极限矩形区域, MyBase.BackColor, Color.Empty, System.Windows.Forms.Orientation.Vertical, _当前合成器.BrushCache)
-            End If
-            If 边框颜色.A > 0 AndAlso 边框宽度 > 0 Then
-                RectangleRenderer.绘制矩形边框_D2D(rt, 极限矩形区域, 边框颜色, 边框宽度 * s, _当前合成器.BrushCache)
-            End If
-        End If
+        Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New RoundedRectangle(rect, radius, radius))
+            context.DeviceContext.DrawGeometry(geo, brush, strokeWidth)
+        End Using
+    End Sub
+
+
+    ''' <summary>（已废弃 GDI 透明背景路径，V3 不再使用）</summary>
+    Private Sub 绘制父容器背景(g As Graphics)
+        ' no-op
     End Sub
 
     Private Structure 渲染单元
@@ -718,154 +817,6 @@ Public Class HtmlColorLabel
         行.行宽 += delta
     End Sub
 
-    Private Sub 绘制文本内容_D2D(rt As ID2D1DCRenderTarget, 内容矩形区域 As RectangleF)
-        _infoIconBounds = Rectangle.Empty
-        Dim 内容区域 As Rectangle = Rectangle.Round(内容矩形区域)
-        Dim 原始文本 = MyBase.Text
-        ' 纯文本快速路径：无 HTML 标记时直接 DirectWrite 绘制。
-        If Not ShouldShowInfoIcon() AndAlso Not String.IsNullOrEmpty(原始文本) AndAlso 是否纯文本(原始文本) Then
-            绘制纯文本_D2D(rt, 原始文本, 内容区域)
-            Return
-        End If
-        Dim 行列表 = 计算文本布局(内容区域.Width)
-        If 行列表.Count = 0 Then Return
-        Dim 总高度 As Integer = 0
-        For Each 行 In 行列表
-            总高度 += 行.行高
-        Next
-        If 行列表.Count > 1 Then 总高度 += 行距 * (行列表.Count - 1)
-        Dim 起始Y As Integer
-        Select Case 文字对齐方位
-            Case TextAlignEnum.BottomLeft, TextAlignEnum.BottomRight
-                起始Y = 内容区域.Y + 内容区域.Height - 总高度
-            Case TextAlignEnum.Center, TextAlignEnum.MiddleLeft, TextAlignEnum.MiddleRight
-                起始Y = 内容区域.Y + (内容区域.Height - 总高度) \ 2
-            Case Else
-                起始Y = 内容区域.Y
-        End Select
-        Dim 当前Y As Integer = 起始Y
-        For Each 行 In 行列表
-            Dim 对齐偏移 As Integer
-            Select Case 文字对齐方位
-                Case TextAlignEnum.Center
-                    对齐偏移 = (内容区域.Width - 行.行宽) \ 2
-                Case TextAlignEnum.TopRight, TextAlignEnum.BottomRight, TextAlignEnum.MiddleRight
-                    对齐偏移 = 内容区域.Width - 行.行宽
-                Case Else
-                    对齐偏移 = 0
-            End Select
-            For Each 单元 In 行.单元列表
-                If 单元.类型 = 渲染单元类型.水平间距 Then Continue For
-                Dim Y偏移 As Integer
-                If 单元.类型 = 渲染单元类型.信息图标 Then
-                    Y偏移 = (行.行高 - 单元.高度) \ 2
-                Else
-                    Select Case 行内垂直对齐方式
-                        Case InlineAlignEnum.Center
-                            Y偏移 = (行.行高 - 单元.高度) \ 2
-                        Case Else
-                            Y偏移 = 行.行高 - 单元.高度
-                    End Select
-                End If
-                Dim 绘制位置 As New PointF(内容区域.X + 对齐偏移 + 单元.X偏移, 当前Y + Y偏移)
-                Select Case 单元.类型
-                    Case 渲染单元类型.信息图标
-                        Dim iconRect As New RectangleF(绘制位置.X, 绘制位置.Y, 单元.宽度, 单元.高度)
-                        绘制信息图标_D2D(rt, iconRect)
-                        _infoIconBounds = Rectangle.Ceiling(iconRect)
-                    Case Else
-                        Dim 单元字体 = 获取缓存字体(单元.字号, 单元.字体名称, 单元.字体样式)
-                        绘制单元_D2D(rt, 单元.文本, 单元字体, 单元.颜色, 绘制位置, 单元.宽度, 单元.高度)
-                End Select
-            Next
-            当前Y += 行.行高 + 行距
-        Next
-    End Sub
-
-    Private Sub 绘制纯文本_D2D(rt As ID2D1DCRenderTarget, text As String, 内容区域 As Rectangle)
-        Dim sizePx As Single = D2DGlobals.GetDWriteFontSizePx(Me.Font, DpiScale())
-        Dim weight As Vortice.DirectWrite.FontWeight = If(Me.Font.Bold, Vortice.DirectWrite.FontWeight.Bold, Vortice.DirectWrite.FontWeight.Normal)
-        Dim style As Vortice.DirectWrite.FontStyle = If(Me.Font.Italic, Vortice.DirectWrite.FontStyle.Italic, Vortice.DirectWrite.FontStyle.Normal)
-
-        Dim ta As Vortice.DirectWrite.TextAlignment
-        Dim pa As Vortice.DirectWrite.ParagraphAlignment
-        Select Case 文字对齐方位
-            Case TextAlignEnum.TopLeft : ta = Vortice.DirectWrite.TextAlignment.Leading : pa = Vortice.DirectWrite.ParagraphAlignment.Near
-            Case TextAlignEnum.TopRight : ta = Vortice.DirectWrite.TextAlignment.Trailing : pa = Vortice.DirectWrite.ParagraphAlignment.Near
-            Case TextAlignEnum.Center : ta = Vortice.DirectWrite.TextAlignment.Center : pa = Vortice.DirectWrite.ParagraphAlignment.Center
-            Case TextAlignEnum.BottomLeft : ta = Vortice.DirectWrite.TextAlignment.Leading : pa = Vortice.DirectWrite.ParagraphAlignment.Far
-            Case TextAlignEnum.BottomRight : ta = Vortice.DirectWrite.TextAlignment.Trailing : pa = Vortice.DirectWrite.ParagraphAlignment.Far
-            Case TextAlignEnum.MiddleLeft : ta = Vortice.DirectWrite.TextAlignment.Leading : pa = Vortice.DirectWrite.ParagraphAlignment.Center
-            Case TextAlignEnum.MiddleRight : ta = Vortice.DirectWrite.TextAlignment.Trailing : pa = Vortice.DirectWrite.ParagraphAlignment.Center
-            Case Else : ta = Vortice.DirectWrite.TextAlignment.Leading : pa = Vortice.DirectWrite.ParagraphAlignment.Near
-        End Select
-
-        Dim fmt = _当前合成器.TextFormatCache.Get(Me.Font.FontFamily.Name, weight, style, sizePx, ta, pa, False, True)
-        Dim brush = _当前合成器.BrushCache.Get(rt, 文本颜色)
-        rt.DrawText(text, fmt,
-                    New Vortice.Mathematics.Rect(内容区域.X, 内容区域.Y, 内容区域.Width, 内容区域.Height),
-                    brush, DrawTextOptions.None, Vortice.DCommon.MeasuringMode.GdiClassic)
-    End Sub
-
-    Private Sub 绘制单元_D2D(rt As ID2D1DCRenderTarget, text As String, font As Font, color As Color,
-                           pt As PointF, w As Integer, h As Integer)
-        If String.IsNullOrEmpty(text) Then Return
-        Dim sizePx As Single = D2DGlobals.GetDWriteFontSizePx(font, DpiScale())
-        Dim weight As Vortice.DirectWrite.FontWeight = If((font.Style And FontStyle.Bold) <> 0, Vortice.DirectWrite.FontWeight.Bold, Vortice.DirectWrite.FontWeight.Normal)
-        Dim style As Vortice.DirectWrite.FontStyle = If((font.Style And FontStyle.Italic) <> 0, Vortice.DirectWrite.FontStyle.Italic, Vortice.DirectWrite.FontStyle.Normal)
-        Dim fmt = _当前合成器.TextFormatCache.Get(font.FontFamily.Name, weight, style, sizePx,
-                                       Vortice.DirectWrite.TextAlignment.Leading,
-                                       Vortice.DirectWrite.ParagraphAlignment.Near, False)
-        Dim brush = _当前合成器.BrushCache.Get(rt, color)
-        ' 使用 GDI 经典度量以贴近 TextRenderer.MeasureText 的布局结果
-        Dim layoutRect As New Vortice.Mathematics.Rect(pt.X, pt.Y, Math.Max(1, w + 2), Math.Max(1, h + 2))
-
-        ' 下划线 / 删除线：DirectWrite 通过 TextLayout SetUnderline/SetStrikethrough 实现
-        Dim needsLayout As Boolean = (font.Style And (FontStyle.Underline Or FontStyle.Strikeout)) <> 0
-        If needsLayout Then
-            Using layout = D2DGlobals.GetDWriteFactory().CreateTextLayout(text, fmt, layoutRect.Right - layoutRect.Left, layoutRect.Bottom - layoutRect.Top)
-                Dim range As New Vortice.DirectWrite.TextRange(0, text.Length)
-                If (font.Style And FontStyle.Underline) <> 0 Then layout.SetUnderline(True, range)
-                If (font.Style And FontStyle.Strikeout) <> 0 Then layout.SetStrikethrough(True, range)
-                rt.DrawTextLayout(New Vector2(pt.X, pt.Y), layout, brush, DrawTextOptions.None)
-            End Using
-        Else
-            rt.DrawText(text, fmt, layoutRect, brush, DrawTextOptions.None, Vortice.DCommon.MeasuringMode.GdiClassic)
-        End If
-    End Sub
-
-    Private Sub 绘制信息图标_D2D(rt As ID2D1DCRenderTarget, rect As RectangleF)
-        If rect.Width <= 0 OrElse rect.Height <= 0 OrElse 信息图标颜色.A = 0 Then Return
-
-        Dim lineWidth As Single = Math.Max(0.5F, 信息图标线条粗细 * DpiScale())
-        Dim inset As Single = lineWidth / 2.0F
-        Dim circleRect As New RectangleF(rect.X + inset, rect.Y + inset,
-                                         Math.Max(1.0F, rect.Width - lineWidth),
-                                         Math.Max(1.0F, rect.Height - lineWidth))
-        RectangleRenderer.描边椭圆_D2D(rt, circleRect, 信息图标颜色, lineWidth, _当前合成器.BrushCache)
-
-        Dim cx As Single = rect.X + rect.Width / 2.0F
-        Dim glyphWidth As Single = Math.Max(lineWidth, rect.Width * 0.15F)
-        Dim topDotR As Single = glyphWidth / 2.0F
-        Dim glyphTop As Single = rect.Y + rect.Height * 0.27F
-        Dim glyphBottom As Single = rect.Y + rect.Height * 0.74F
-        Dim gap As Single = Math.Max(glyphWidth * 0.65F, rect.Height * 0.055F)
-        Dim dotCenterY As Single = glyphTop + topDotR
-        RectangleRenderer.填充椭圆_D2D(rt,
-                                      New RectangleF(cx - topDotR, dotCenterY - topDotR, topDotR * 2.0F, topDotR * 2.0F),
-                                      信息图标颜色, _当前合成器.BrushCache)
-
-        Dim stemTop As Single = dotCenterY + topDotR + gap
-        Dim stemHeight As Single = Math.Max(glyphWidth, glyphBottom - stemTop)
-        RectangleRenderer.绘制矩形背景_D2D(
-            rt,
-            New RectangleF(cx - glyphWidth / 2.0F, stemTop, glyphWidth, stemHeight),
-            信息图标颜色,
-            Color.Empty,
-            System.Windows.Forms.Orientation.Vertical,
-            _当前合成器.BrushCache)
-    End Sub
-
     Private Function 计算信息图标尺寸(lineHeight As Integer) As Integer
         Dim ratio As Single = Math.Max(0.05F, 信息图标尺寸比例)
         Return Math.Max(1, CInt(Math.Round(Math.Max(1, lineHeight) * ratio)))
@@ -956,7 +907,7 @@ Public Class HtmlColorLabel
         字体变化已响应 = True
         使缓存失效(True)
         更新自动尺寸()
-        D2DHelperV2.RefreshFontDependentRendering(Me, invalidateChildren:=False, immediate:=True)
+        请求V3渲染()
     End Sub
 
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
@@ -964,13 +915,22 @@ Public Class HtmlColorLabel
             field = value
             使缓存失效(False)
             更新自动尺寸()
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End If
     End Sub
 
     Private Function DpiScale() As Single
-        Return D2DGlobals.GetCurrentDpiScale(Me)
+        Return V3_DpiContext.FromControl(Me).Scale
     End Function
+
+    Private Sub 请求V3渲染(Optional immediate As Boolean = False)
+        请求V3渲染(New Rectangle(Point.Empty, Me.Size), immediate)
+    End Sub
+
+    Private Sub 请求V3渲染(dirtyRect As Rectangle, Optional immediate As Boolean = False)
+        If Me.IsDisposed Then Return
+        V3_InvalidationRouter.RequestRender(Me, dirtyRect)
+    End Sub
 
     Private 超采样倍率 As Integer = 1
     ''' <summary>超采样抗锯齿倍率；仅影响控件背景与边框绘制。</summary>
@@ -986,12 +946,10 @@ Public Class HtmlColorLabel
 
     Private _backgroundSource As Control = Nothing
     ''' <summary>
-    ''' 背景采样源（超容器背景映射）。透明背景模式下，控件会调用此控件的绘制流程取像素作为底图，
-    ''' 从而实现跨越任意层级的"穿透显示"效果。
-    ''' 为 Nothing 时自动沿祖先链查找首个不透明祖先（默认行为）。
+    ''' 背景采样源。V3 渲染保留该关系，具体背景图由窗口级合成器统一调度。
     ''' </summary>
     <Category("LakeUI"),
-     Description("背景采样源（超容器背景映射）。设置后将跨越任意层级直接采样此控件的绘制内容作为透明背景；为空时自动选择首个不透明祖先。"),
+     Description("背景采样源。设置后记录关联源控件；V3 渲染由窗口合成器统一调度。"),
      DefaultValue(GetType(Control), Nothing), Browsable(True)>
     Public Property BackgroundSource As Control
         Get
@@ -999,8 +957,8 @@ Public Class HtmlColorLabel
         End Get
         Set(value As Control)
             If _backgroundSource IsNot value Then
-                _backgroundSource = BackgroundPenetrationV2.SetConsumerSource(Me, _backgroundSource, value)
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                _backgroundSource = D3D_BackgroundPenetration.SetBackgroundSource(Me, _backgroundSource, value)
+                请求V3渲染()
             End If
         End Set
     End Property
@@ -1024,7 +982,7 @@ Public Class HtmlColorLabel
                         Me.Size = 自动尺寸前的大小
                     End If
                 End If
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                请求V3渲染()
             End If
         End Set
     End Property
@@ -1089,7 +1047,7 @@ Public Class HtmlColorLabel
     Protected Overrides Sub OnPaddingChanged(e As EventArgs)
         MyBase.OnPaddingChanged(e)
         更新自动尺寸()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
@@ -1097,7 +1055,7 @@ Public Class HtmlColorLabel
         使缓存失效(False)
         更新自动尺寸()
         关闭信息图标提示()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnMouseMove(e As MouseEventArgs)
@@ -1213,7 +1171,7 @@ Public Class HtmlColorLabel
                 MyBase.Text = value
                 使缓存失效(False)
                 更新自动尺寸()
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                请求V3渲染()
             End If
         End Set
     End Property
@@ -1328,7 +1286,7 @@ Public Class HtmlColorLabel
                 更新自动尺寸()
             End If
             If Not ShouldShowInfoIcon() Then 关闭信息图标提示()
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -1351,7 +1309,7 @@ Public Class HtmlColorLabel
         End Get
         Set(value As Single)
             信息图标线条粗细 = Math.Max(0.1F, value)
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -1364,7 +1322,7 @@ Public Class HtmlColorLabel
         Set(value As Color)
             If 信息图标颜色 = value Then Return
             信息图标颜色 = value
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 

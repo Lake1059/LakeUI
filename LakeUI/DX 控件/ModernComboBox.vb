@@ -4,6 +4,8 @@ Imports Vortice.Direct2D1
 
 <DefaultEvent("SelectedIndexChanged")>
 Public Class ModernComboBox
+    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource
+
     Public Event SelectedIndexChanged As EventHandler
     Public Shadows Event TextChanged As EventHandler
     Public Event DropDownOpened As EventHandler
@@ -19,7 +21,7 @@ Public Class ModernComboBox
         End Sub
 
         Private Sub InvalidateOwner()
-            If _owner._updateCount <= 0 Then OuterToInnerRefreshScheduler.RequestFull(_owner)
+            If _owner._updateCount <= 0 Then _owner.请求V3渲染()
         End Sub
 
         Public Overloads Sub AddRange(collection As IEnumerable(Of String))
@@ -207,7 +209,7 @@ Public Class ModernComboBox
     Private _mouseOverArrow As Boolean = False
     Private _itemToolTips As ToolTipEntryCollection
 
-    ' V2：D2D 资源由 WindowCompositor 按顶层 Form 共享管理，本控件不再持有 _dcRT / _ssaaCache。
+    ' V3：窗口级 D3D compositor 统一持有图形资源，本控件不再持有 _dcRT / _ssaaCache。
 #End Region
 
 #Region "单行文本内核适配"
@@ -240,7 +242,7 @@ Public Class ModernComboBox
                 _textRenderer.SetText(v, 0, True, False)
             End If
             _selectedIndex = matchIndex
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
             If textChanged Then RaiseEvent textChanged(Me, EventArgs.Empty)
             If selectedIndexChanged Then RaiseEvent selectedIndexChanged(Me, EventArgs.Empty)
         End Set
@@ -347,7 +349,7 @@ Public Class ModernComboBox
         End Get
         Set(value As Integer)
             行高 = Math.Max(10, value)
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -359,7 +361,7 @@ Public Class ModernComboBox
         End Get
         Set(value As Integer)
             光标线宽 = Math.Max(1, value)
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -449,7 +451,7 @@ Public Class ModernComboBox
             If 启用编辑 = value Then Return
             启用编辑 = value
             _textRenderer.Editable = value
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -521,7 +523,7 @@ Public Class ModernComboBox
         End Get
         Set(value As Integer)
             箭头大小 = Math.Max(4, value)
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -1124,8 +1126,8 @@ Public Class ModernComboBox
         End Get
         Set(value As Control)
             If _backgroundSource IsNot value Then
-                _backgroundSource = BackgroundPenetrationV2.SetConsumerSource(Me, _backgroundSource, value)
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                _backgroundSource = D3D_BackgroundPenetration.SetBackgroundSource(Me, _backgroundSource, value)
+                请求V3渲染()
             End If
         End Set
     End Property
@@ -1164,25 +1166,25 @@ Public Class ModernComboBox
 
 #Region "绘制"
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
-        ' V2 契约（与 ModernButton 一致）：
-        '   • BackgroundSource 已设置 → 跳过基类填底，背景由 OnPaint 内显式穿透绘制；
-        '   • 否则一律走 .NET 自身透明逻辑——半透明 BackColor 由基类把父级背景合成到 HDC，
-        '     不透明色由基类填底。BindDC 之后 DC RT 初始像素即正确底图，
-        '     避免"HDC 残留 → 乱照父窗体其它区域"的故障。
-        '   • 圆角 + 不透明 BackColor 时角落会露出方形底色，
-        '     使用方应把 BackColor 设为透明（与 ModernButton 同约定）。
         If _backgroundSource IsNot Nothing Then Return
         MyBase.OnPaintBackground(e)
     End Sub
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
+        If Not D3D_PaintBridge.PaintRenderable(e, Me, Me, 1) Then MyBase.OnPaint(e)
+    End Sub
+
+    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+        If context Is Nothing Then Return
         Dim w As Integer = ClientRectangle.Width
         Dim h As Integer = ClientRectangle.Height
         If w <= 0 OrElse h <= 0 Then Return
         Dim hasRadius As Boolean = 边框圆角半径 > 0
-        Dim boundsRect As New RectangleF(0, 0, w - 1, h - 1)
+        Dim sourceRect As New RectangleF(0, 0, w, h)
+        Dim boundsRect As New RectangleF(0, 0, w, h)
+        Dim s As Single = DpiScale()
         If 边框宽度 > 0 Then
-            Dim half As Single = 边框宽度 * DpiScale() / 2.0F
+            Dim half As Single = 边框宽度 * s / 2.0F
             boundsRect.Inflate(-half, -half)
         End If
         Dim bc As Color = If(Focused, 有焦点时边框颜色, 边框颜色)
@@ -1201,43 +1203,206 @@ Public Class ModernComboBox
                     If 鼠标按下时边框颜色 <> Color.Empty Then bc = 鼠标按下时边框颜色
             End Select
         End If
-        If hasRadius OrElse MyBase.BackColor.A < 255 Then
-            ' 透明背景采样统一走 D2D 路径（在下方第 1 个 scope 内贴底图），
-            ' 避免 dcRT.EndDraw 把圆角外像素覆盖为黑。
+
+        绘制背景_GPU(context, hasRadius, sourceRect, boundsRect, effBg, effBg2)
+        SyncTextRenderer()
+        _textRenderer.DrawGpu(context)
+        绘制分隔线与箭头_GPU(context, w, h, bc)
+        绘制边框_GPU(context, hasRadius, GetBorderRenderRect(boundsRect), bc)
+        If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
+            填充圆角矩形_GPU(context, boundsRect, If(hasRadius, 边框圆角半径 * s, 0.0F), 禁用时遮罩颜色)
+        End If
+    End Sub
+
+    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+        Return New Rectangle(Point.Empty, Me.Size)
+    End Function
+
+    Friend Sub 请求V3渲染(Optional immediate As Boolean = False)
+        请求V3渲染(New Rectangle(Point.Empty, Me.Size), immediate)
+    End Sub
+
+    Friend Sub 请求V3渲染(dirtyRect As Rectangle, Optional immediate As Boolean = False)
+        If Me.IsDisposed Then Return
+        V3_InvalidationRouter.RequestRender(Me, dirtyRect)
+    End Sub
+
+    Private Sub 绘制背景_GPU(context As D3D_PaintContext, hasRadius As Boolean, sourceRect As RectangleF, boundsRect As RectangleF, bgClr As Color, bgClr2 As Color)
+        Dim backColorMask As Color = MyBase.BackColor
+        Dim hasMask As Boolean = backColorMask.A > 0 AndAlso backColorMask.A < 255
+        Dim hasFill As Boolean = bgClr.A > 0 OrElse (bgClr2 <> Color.Empty AndAlso bgClr2.A > 0)
+        Dim hasBackgroundSource As Boolean = _backgroundSource IsNot Nothing
+        Dim arrowBgClr As Color = Color.Empty
+        Dim arrowBgClr2 As Color = Color.Empty
+        Dim hasArrowFill As Boolean = 获取箭头区域背景颜色(arrowBgClr, arrowBgClr2)
+        If Not hasBackgroundSource AndAlso Not hasMask AndAlso Not hasFill AndAlso Not hasArrowFill Then Return
+
+        Dim s As Single = DpiScale()
+        Dim fillRect As RectangleF = boundsRect
+        Dim radius As Single = If(hasRadius, 边框圆角半径 * s, 0.0F)
+        If hasBackgroundSource Then context.DrawBackgroundSource(Me, _backgroundSource, sourceRect)
+        If hasMask Then 填充圆角矩形_GPU(context, fillRect, radius, backColorMask)
+        If hasFill Then 填充圆角矩形_GPU(context, fillRect, radius, bgClr, bgClr2, 渐变方向)
+
+        If hasArrowFill Then
+            Using context.PushClip(获取箭头区域背景矩形(fillRect))
+                填充圆角矩形_GPU(context, fillRect, radius, arrowBgClr, arrowBgClr2, 渐变方向)
+            End Using
+        End If
+    End Sub
+
+    Private Sub 绘制边框_GPU(context As D3D_PaintContext, hasRadius As Boolean, boundsRect As RectangleF, borderClr As Color)
+        If 边框宽度 <= 0 OrElse borderClr.A = 0 Then Return
+        Dim s As Single = DpiScale()
+        绘制圆角边框_GPU(context, boundsRect, If(hasRadius, 边框圆角半径 * s, 0.0F), borderClr, 边框宽度 * s)
+    End Sub
+
+    Private Sub 绘制分隔线与箭头_GPU(context As D3D_PaintContext, w As Integer, h As Integer, borderClr As Color)
+        Dim s As Single = DpiScale()
+        Dim aaw As Integer = ArrowAreaWidth
+        Dim bi As Integer = CInt(边框宽度 * s)
+        Dim sepX As Single = w - aaw - If(bi > 0, bi / 2.0F, 0)
+        Dim topInset As Integer = Math.Max(Padding.Top, bi)
+        Dim bottomInset As Integer = Math.Max(Padding.Bottom, bi)
+
+        If 显示分隔线 AndAlso 边框宽度 > 0 Then
+            Dim br = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, borderClr, context.DeviceGeneration)
+            If br IsNot Nothing Then context.DeviceContext.DrawLine(New Vector2(sepX, topInset), New Vector2(sepX, h - bottomInset), br, 边框宽度 * s)
         End If
 
-        Dim ssaa As Integer = D2DHelperV2.GetEffectiveSsaaScale(超采样倍率)
+        Dim effArrowClr As Color = 箭头颜色
+        Dim isArrowActive As Boolean = Not 启用编辑 OrElse _mouseOverArrow
+        If isArrowActive Then
+            Select Case 鼠标状态
+                Case MouseStateEnum.Hover
+                    If 鼠标移上时箭头颜色 <> Color.Empty Then effArrowClr = 鼠标移上时箭头颜色
+                Case MouseStateEnum.Pressed
+                    If 鼠标按下时箭头颜色 <> Color.Empty Then effArrowClr = 鼠标按下时箭头颜色
+            End Select
+        End If
+        If effArrowClr.A = 0 Then Return
 
-        Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
-            If scope Is Nothing Then Return
-            If _backgroundSource IsNot Nothing Then
-                BackgroundPenetrationV2.PaintBackground(Me, scope, _backgroundSource)
-            End If
-
-            Dim gRT As ID2D1RenderTarget = scope.GraphicsLayer
-            Dim brushCache = scope.Compositor.BrushCache
-            绘制背景_D2D(gRT, brushCache, hasRadius, boundsRect, effBg, effBg2)
-            scope.FlushGraphics()
-
-            Dim dcRT As ID2D1DCRenderTarget = scope.DCRenderTarget
-            DrawTextContent_D2D(dcRT, w, h, scope.Compositor)
-            绘制分隔线与箭头_D2D(dcRT, brushCache, w, h, bc)
-            绘制边框_D2D(dcRT, brushCache, hasRadius, GetBorderRenderRect(boundsRect), bc)
-            If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
-                ' 与 绘制背景_D2D 中 fillRect / 半径 保持一致，保证遮罩圆角曲线与背景圆角完全重合。
-                Dim overlayRect As New RectangleF(boundsRect.X, boundsRect.Y, boundsRect.Width + 1, boundsRect.Height + 1)
-                If hasRadius Then
-                    Using geo = RectangleRenderer.创建圆角矩形几何(overlayRect, 边框圆角半径 * DpiScale())
-                        RectangleRenderer.绘制圆角背景_D2D(dcRT, geo, overlayRect, 禁用时遮罩颜色, Color.Empty, 渐变方向, brushCache)
-                    End Using
-                Else
-                    RectangleRenderer.绘制矩形背景_D2D(dcRT, overlayRect, 禁用时遮罩颜色, Color.Empty, 渐变方向, brushCache)
-                End If
-            End If
+        Dim squareLeft As Single = w - aaw
+        Dim centerX As Single = squareLeft + aaw / 2.0F
+        Dim centerY As Single = h / 2.0F
+        Using path = 创建箭头几何(New PointF(centerX, centerY))
+            Dim br = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, effArrowClr, context.DeviceGeneration)
+            If br IsNot Nothing Then context.DeviceContext.FillGeometry(path, br)
         End Using
     End Sub
 
-    Private Sub 绘制背景_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache, hasRadius As Boolean, boundsRect As RectangleF, bgClr As Color, bgClr2 As Color)
+    Private Function 创建箭头几何(center As PointF) As ID2D1PathGeometry
+        Dim s As Single = DpiScale()
+        Dim scaledArrow As Single = 箭头大小 * s
+        Dim arrW As Single = scaledArrow
+        Dim arrH As Single = CSng(scaledArrow * Math.Sqrt(3.0) / 2.0)
+        Dim verts() As PointF = {
+            New PointF(center.X - arrW / 2.0F, center.Y - arrH / 2.0F),
+            New PointF(center.X + arrW / 2.0F, center.Y - arrH / 2.0F),
+            New PointF(center.X, center.Y + arrH / 2.0F)
+        }
+        Dim cr As Single = Math.Max(scaledArrow * 0.2F, 1.0F)
+        Dim path As ID2D1PathGeometry = D3D_RenderCore.DeviceManager.D2DFactory.CreatePathGeometry()
+        Dim sink As ID2D1GeometrySink = path.Open()
+        Try
+            For i As Integer = 0 To 2
+                Dim curr As PointF = verts(i)
+                Dim prv As PointF = verts((i + 2) Mod 3)
+                Dim nxt As PointF = verts((i + 1) Mod 3)
+                Dim d1x As Single = prv.X - curr.X, d1y As Single = prv.Y - curr.Y
+                Dim d2x As Single = nxt.X - curr.X, d2y As Single = nxt.Y - curr.Y
+                Dim l1 As Single = CSng(Math.Sqrt(d1x * d1x + d1y * d1y))
+                Dim l2 As Single = CSng(Math.Sqrt(d2x * d2x + d2y * d2y))
+                Dim a As New Vector2(curr.X + cr * d1x / l1, curr.Y + cr * d1y / l1)
+                Dim b As New Vector2(curr.X + cr * d2x / l2, curr.Y + cr * d2y / l2)
+                Dim cp1 As New Vector2(a.X + 2.0F / 3.0F * (curr.X - a.X), a.Y + 2.0F / 3.0F * (curr.Y - a.Y))
+                Dim cp2 As New Vector2(b.X + 2.0F / 3.0F * (curr.X - b.X), b.Y + 2.0F / 3.0F * (curr.Y - b.Y))
+                If i = 0 Then
+                    sink.BeginFigure(a, FigureBegin.Filled)
+                Else
+                    sink.AddLine(a)
+                End If
+                sink.AddBezier(New BezierSegment With {.Point1 = cp1, .Point2 = cp2, .Point3 = b})
+            Next
+            sink.EndFigure(FigureEnd.Closed)
+            sink.Close()
+        Finally
+            sink.Dispose()
+        End Try
+        Return path
+    End Function
+
+    Private Sub 填充圆角矩形_GPU(context As D3D_PaintContext,
+                         rect As RectangleF,
+                         radius As Single,
+                         color As Color,
+                         Optional gradientColor As Color = Nothing,
+                         Optional gradientDirection As System.Windows.Forms.Orientation = System.Windows.Forms.Orientation.Horizontal)
+        If rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        If color.A = 0 AndAlso (gradientColor = Color.Empty OrElse gradientColor.A = 0) Then Return
+
+        Dim brush As ID2D1Brush = Nothing
+        Dim ownsBrush As Boolean
+        If gradientColor <> Color.Empty AndAlso gradientColor.A > 0 Then
+            brush = 创建线性渐变画刷_GPU(context, rect, color, gradientColor, gradientDirection)
+            ownsBrush = True
+        Else
+            brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
+        End If
+
+        Try
+            If radius <= 0 Then
+                context.DeviceContext.FillRectangle(D3D_PaintContext.ToRawRect(rect), brush)
+                Return
+            End If
+            Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New RoundedRectangle(rect, radius, radius))
+                context.DeviceContext.FillGeometry(geo, brush)
+            End Using
+        Finally
+            If ownsBrush Then brush.Dispose()
+        End Try
+    End Sub
+
+    Private Shared Function 创建线性渐变画刷_GPU(context As D3D_PaintContext,
+                                             bounds As RectangleF,
+                                             baseColor As Color,
+                                             gradColor As Color,
+                                             gradDir As System.Windows.Forms.Orientation) As ID2D1LinearGradientBrush
+        Dim startPt As Vector2
+        Dim endPt As Vector2
+        If gradDir = System.Windows.Forms.Orientation.Vertical Then
+            startPt = New Vector2(bounds.X, bounds.Y)
+            endPt = New Vector2(bounds.X, bounds.Bottom)
+        Else
+            startPt = New Vector2(bounds.X, bounds.Y)
+            endPt = New Vector2(bounds.Right, bounds.Y)
+        End If
+
+        Dim stops() As GradientStop = {
+            New GradientStop With {.Position = 0.0F, .Color = D3D_PaintContext.ToColor4(baseColor)},
+            New GradientStop With {.Position = 1.0F, .Color = D3D_PaintContext.ToColor4(gradColor)}}
+        Dim stopCollection = context.DeviceContext.CreateGradientStopCollection(stops)
+        Try
+            Return context.DeviceContext.CreateLinearGradientBrush(New LinearGradientBrushProperties(startPt, endPt), stopCollection)
+        Finally
+            stopCollection.Dispose()
+        End Try
+    End Function
+
+    Private Sub 绘制圆角边框_GPU(context As D3D_PaintContext, rect As RectangleF, radius As Single, color As Color, strokeWidth As Single)
+        If color.A = 0 OrElse strokeWidth <= 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
+        If radius <= 0 Then
+            context.DeviceContext.DrawRectangle(D3D_PaintContext.ToRawRect(rect), brush, strokeWidth)
+            Return
+        End If
+        Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New RoundedRectangle(rect, radius, radius))
+            context.DeviceContext.DrawGeometry(geo, brush, strokeWidth)
+        End Using
+    End Sub
+
+
+    Private Sub 绘制背景_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache, hasRadius As Boolean, boundsRect As RectangleF, bgClr As Color, bgClr2 As Color)
         ' BackColor 半透明遮罩层：位于背景层之上、状态填充色之下。
         Dim backColorMask As Color = MyBase.BackColor
         Dim hasMask As Boolean = backColorMask.A > 0 AndAlso backColorMask.A < 255
@@ -1255,20 +1420,20 @@ Public Class ModernComboBox
         End If
 
         If hasRadius Then
-            Using geo = RectangleRenderer.创建圆角矩形几何(fillRect, 边框圆角半径 * s)
+            Using geo = D3D_RectangleRenderer.创建圆角矩形几何(fillRect, 边框圆角半径 * s)
                 If hasMask Then
-                    RectangleRenderer.绘制圆角背景_D2D(rt, geo, fillRect, backColorMask, Color.Empty, 渐变方向, brushCache)
+                    D3D_RectangleRenderer.绘制圆角背景_D2D(rt, geo, fillRect, backColorMask, Color.Empty, 渐变方向, brushCache)
                 End If
                 If hasFill Then
-                    RectangleRenderer.绘制圆角背景_D2D(rt, geo, fillRect, bgClr, bgClr2, 渐变方向, brushCache)
+                    D3D_RectangleRenderer.绘制圆角背景_D2D(rt, geo, fillRect, bgClr, bgClr2, 渐变方向, brushCache)
                 End If
             End Using
         Else
             If hasMask Then
-                RectangleRenderer.绘制矩形背景_D2D(rt, fillRect, backColorMask, Color.Empty, 渐变方向, brushCache)
+                D3D_RectangleRenderer.绘制矩形背景_D2D(rt, fillRect, backColorMask, Color.Empty, 渐变方向, brushCache)
             End If
             If hasFill Then
-                RectangleRenderer.绘制矩形背景_D2D(rt, fillRect, bgClr, bgClr2, 渐变方向, brushCache)
+                D3D_RectangleRenderer.绘制矩形背景_D2D(rt, fillRect, bgClr, bgClr2, 渐变方向, brushCache)
             End If
         End If
     End Sub
@@ -1290,7 +1455,7 @@ Public Class ModernComboBox
         Return bgClr.A > 0 OrElse (bgClr2 <> Color.Empty AndAlso bgClr2.A > 0)
     End Function
 
-    Private Sub 绘制分区背景_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache, hasRadius As Boolean, fillRect As RectangleF, s As Single,
+    Private Sub 绘制分区背景_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache, hasRadius As Boolean, fillRect As RectangleF, s As Single,
                                hasMask As Boolean, backColorMask As Color,
                                hasBodyFill As Boolean, bodyBgClr As Color, bodyBgClr2 As Color,
                                arrowBgClr As Color, arrowBgClr2 As Color)
@@ -1300,9 +1465,9 @@ Public Class ModernComboBox
                                        fillRect.Height)
 
         If hasRadius Then
-            Using geo = RectangleRenderer.创建圆角矩形几何(fillRect, 边框圆角半径 * s)
+            Using geo = D3D_RectangleRenderer.创建圆角矩形几何(fillRect, 边框圆角半径 * s)
                 If hasMask Then
-                    RectangleRenderer.绘制圆角背景_D2D(rt, geo, fillRect, backColorMask, Color.Empty, 渐变方向, brushCache)
+                    D3D_RectangleRenderer.绘制圆角背景_D2D(rt, geo, fillRect, backColorMask, Color.Empty, 渐变方向, brushCache)
                 End If
                 If hasBodyFill Then
                     绘制裁剪背景_D2D(rt, brushCache, bodyRect, geo, fillRect, bodyBgClr, bodyBgClr2)
@@ -1311,7 +1476,7 @@ Public Class ModernComboBox
             End Using
         Else
             If hasMask Then
-                RectangleRenderer.绘制矩形背景_D2D(rt, fillRect, backColorMask, Color.Empty, 渐变方向, brushCache)
+                D3D_RectangleRenderer.绘制矩形背景_D2D(rt, fillRect, backColorMask, Color.Empty, 渐变方向, brushCache)
             End If
             If hasBodyFill Then
                 绘制裁剪背景_D2D(rt, brushCache, bodyRect, Nothing, fillRect, bodyBgClr, bodyBgClr2)
@@ -1326,7 +1491,7 @@ Public Class ModernComboBox
         Return New RectangleF(arrowX, fillRect.Y, Math.Max(0, arrowRight - arrowX), fillRect.Height)
     End Function
 
-    Private Sub 绘制裁剪背景_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache, clipRect As RectangleF, geo As ID2D1Geometry,
+    Private Sub 绘制裁剪背景_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache, clipRect As RectangleF, geo As ID2D1Geometry,
                               brushBounds As RectangleF, bgClr As Color, bgClr2 As Color)
         If clipRect.Width <= 0 OrElse clipRect.Height <= 0 Then Return
         If bgClr.A = 0 AndAlso (bgClr2 = Color.Empty OrElse bgClr2.A = 0) Then Return
@@ -1334,36 +1499,31 @@ Public Class ModernComboBox
         rt.PushAxisAlignedClip(New Vortice.RawRectF(clipRect.X, clipRect.Y, clipRect.Right, clipRect.Bottom), AntialiasMode.PerPrimitive)
         Try
             If geo IsNot Nothing Then
-                RectangleRenderer.绘制圆角背景_D2D(rt, geo, brushBounds, bgClr, bgClr2, 渐变方向, brushCache)
+                D3D_RectangleRenderer.绘制圆角背景_D2D(rt, geo, brushBounds, bgClr, bgClr2, 渐变方向, brushCache)
             Else
-                RectangleRenderer.绘制矩形背景_D2D(rt, brushBounds, bgClr, bgClr2, 渐变方向, brushCache)
+                D3D_RectangleRenderer.绘制矩形背景_D2D(rt, brushBounds, bgClr, bgClr2, 渐变方向, brushCache)
             End If
         Finally
             rt.PopAxisAlignedClip()
         End Try
     End Sub
 
-    Private Sub 绘制边框_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache, hasRadius As Boolean, boundsRect As RectangleF, borderClr As Color)
+    Private Sub 绘制边框_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache, hasRadius As Boolean, boundsRect As RectangleF, borderClr As Color)
         If 边框宽度 <= 0 OrElse borderClr.A = 0 Then Return
         Dim s As Single = DpiScale()
         If hasRadius Then
-            RectangleRenderer.绘制圆角边框_D2D(rt, boundsRect, 边框圆角半径 * s, borderClr, 边框宽度 * s, brushCache)
+            D3D_RectangleRenderer.绘制圆角边框_D2D(rt, boundsRect, 边框圆角半径 * s, borderClr, 边框宽度 * s, brushCache)
         Else
-            RectangleRenderer.绘制矩形边框_D2D(rt, boundsRect, borderClr, 边框宽度 * s, brushCache)
+            D3D_RectangleRenderer.绘制矩形边框_D2D(rt, boundsRect, borderClr, 边框宽度 * s, brushCache)
         End If
     End Sub
 
     Private Function GetBorderRenderRect(boundsRect As RectangleF) As RectangleF
-        If Not Focused Then Return boundsRect
-        Return New RectangleF(boundsRect.X, boundsRect.Y, boundsRect.Width + 1.0F, boundsRect.Height)
+        Return boundsRect
     End Function
 
-    Private Sub DrawTextContent_D2D(rt As ID2D1DCRenderTarget, w As Integer, h As Integer, compositor As WindowCompositor)
-        SyncTextRenderer()
-        _textRenderer.Draw(rt, compositor?.TextFormatCache, compositor?.BrushCache)
-    End Sub
 
-    Private Sub 绘制分隔线与箭头_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache, w As Integer, h As Integer, borderClr As Color)
+    Private Sub 绘制分隔线与箭头_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache, w As Integer, h As Integer, borderClr As Color)
         Dim s As Single = DpiScale()
         Dim aaw As Integer = ArrowAreaWidth
         Dim bi As Integer = CInt(边框宽度 * s)
@@ -1404,7 +1564,7 @@ Public Class ModernComboBox
         }
         Dim cr As Single = Math.Max(scaledArrow * 0.2F, 1.0F)
 
-        Dim path As ID2D1PathGeometry = D2DGlobals.GetD2DFactory().CreatePathGeometry()
+        Dim path As ID2D1PathGeometry = D3D_RenderCore.DeviceManager.D2DFactory.CreatePathGeometry()
         Dim sink As ID2D1GeometrySink = path.Open()
         Try
             Dim firstA As Vector2 = Nothing
@@ -1606,14 +1766,14 @@ Public Class ModernComboBox
     Protected Overrides Sub OnMouseEnter(e As EventArgs)
         MyBase.OnMouseEnter(e)
         鼠标状态 = MouseStateEnum.Hover
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnMouseLeave(e As EventArgs)
         MyBase.OnMouseLeave(e)
         鼠标状态 = MouseStateEnum.Normal
         _mouseOverArrow = False
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
@@ -1630,14 +1790,14 @@ Public Class ModernComboBox
                 Else
                     OpenDropDown()
                 End If
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                请求V3渲染()
                 Return
             End If
             _mouseDownSelecting = True
             SyncTextRenderer()
             _textRenderer.BeginMouseSelection(e.X)
             ResetCaretBlink()
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End If
     End Sub
 
@@ -1656,7 +1816,7 @@ Public Class ModernComboBox
             SyncTextRenderer()
             _textRenderer.UpdateMouseSelection(e.X)
         ElseIf _mouseOverArrow <> prevOverArrow Then
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End If
     End Sub
 
@@ -1664,7 +1824,7 @@ Public Class ModernComboBox
         MyBase.OnMouseUp(e)
         _mouseDownSelecting = False
         鼠标状态 = If(ClientRectangle.Contains(e.Location), MouseStateEnum.Hover, MouseStateEnum.Normal)
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Private Function HitTestCol(x As Integer) As Integer
@@ -1818,14 +1978,14 @@ Public Class ModernComboBox
         Else
             _droppedDown = False
         End If
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
         RaisePendingSelectedIndexChanged()
     End Sub
 
     Friend Sub OnDropDownClosed()
         _droppedDown = False
         _dropDownForm = Nothing
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
         RaiseEvent DropDownClosed(Me, EventArgs.Empty)
         RaisePendingSelectedIndexChanged()
     End Sub
@@ -1839,18 +1999,17 @@ Public Class ModernComboBox
 
     Private Class DropDownListForm
         Inherits PopupForm
-        Implements IMessageFilter
+        Implements IMessageFilter, V3_IGpuRenderable, V3_IGpuInvalidationSource
 
         Private _owner As ModernComboBox
         Private _hoverIndex As Integer = -1
         Private _pressedIndex As Integer = -1
         Private _scrollOffset As Integer = 0
         Private _scrollBarVisible As Boolean = False
-        Private _scrollBar As New ScrollBarRenderer()
+        Private _scrollBar As New V3_ScrollBarRenderer()
 
         Private _finalHeight As Integer
         Private _originPt As Point
-        Private _useIdle As Boolean = False
         Private _suppressBoundsRender As Boolean = False
 
         ' Overlay 模式
@@ -1873,7 +2032,7 @@ Public Class ModernComboBox
         Private 悬停动画中 As Boolean = False
         Private 悬停动画显示 As Boolean = False
 
-        Private _backdrop As PopupBackdropRenderer
+        Private _backdrop As D3D_PopupBackdropRenderer
 
         Private Structure DropDownLayout
             Public ReadOnly Bw, Inset, RightCorr, ScrollW, ItemH, VisCount, HlL, HlR As Integer
@@ -1931,11 +2090,8 @@ Public Class ModernComboBox
             UpdateStyles()
             Me.AutoScaleMode = AutoScaleMode.Dpi
 
-            _useIdle = (owner.下拉动画帧率 <= 0)
-            If Not _useIdle Then
-                展开关闭计时器 = CreateFrameTimer(owner.下拉动画帧率)
-                悬停计时器 = CreateFrameTimer(owner.下拉动画帧率)
-            End If
+            展开关闭计时器 = CreateFrameTimer(owner.下拉动画帧率)
+            悬停计时器 = CreateFrameTimer(owner.下拉动画帧率)
 
             Dim visCount As Integer = Math.Min(owner._items.Count, owner.最大下拉项数)
             Dim s As Single = owner.DpiScale()
@@ -1986,12 +2142,18 @@ Public Class ModernComboBox
         End Sub
 
         Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
-            ' 顶层下拉窗体由 OnPaint 里的 D2D 绘制全权接管底色。
+            ' V3-only: pixels are emitted by RenderGpu.
         End Sub
+
+        Private Shared Function FrameIntervalMilliseconds(fps As Integer) As Integer
+            If fps <= 0 Then Return 1
+            fps = Math.Max(1, fps)
+            Return Math.Max(1, CInt(Math.Ceiling(1000.0R / fps)))
+        End Function
 
         Private Function CreateFrameTimer(fps As Integer) As PrecisionTimer
             Return New PrecisionTimer() With {
-                .Interval = Math.Max(1, CInt(Math.Round(1000.0R / Math.Max(1, fps)))),
+                .Interval = FrameIntervalMilliseconds(fps),
                 .DispatchMode = PrecisionTimer.DispatchModeEnum.NonBlocking,
                 .OverrunPolicy = PrecisionTimer.OverrunPolicyEnum.Drop,
                 .WorkerThreadCount = 1,
@@ -2013,11 +2175,11 @@ Public Class ModernComboBox
         End Function
 
         Private Function ShouldCaptureTransparentBackground() As Boolean
-            Return _owner.下拉毛玻璃模式 = PopupBackdropMode.None AndAlso _owner.下拉背景颜色.A < 255
+            Return False
         End Function
 
         Private Function HasBackdropFrame() As Boolean
-            Return _backdrop IsNot Nothing AndAlso _backdrop.HasFrame
+            Return _owner.下拉毛玻璃模式 = PopupBackdropMode.Image AndAlso _owner.下拉毛玻璃图片 IsNot Nothing
         End Function
 
         Private Function DropDownFillColor() As Color
@@ -2031,43 +2193,11 @@ Public Class ModernComboBox
         End Sub
 
         Private Sub 准备毛玻璃背景()
-            If _backdrop Is Nothing Then _backdrop = New PopupBackdropRenderer(Me)
-            _backdrop.TransientExcludeOnCapture = False
-
-            If _owner.下拉毛玻璃模式 <> PopupBackdropMode.None Then
-                _backdrop.Configure(_owner.下拉毛玻璃模式,
-                                    _owner.下拉毛玻璃图片,
-                                    _owner.下拉毛玻璃Tint颜色,
-                                    _owner.下拉毛玻璃模糊半径,
-                                    _owner.下拉毛玻璃模糊次数,
-                                    _owner.下拉毛玻璃下采样,
-                                    _owner.下拉毛玻璃噪点不透明度,
-                                    _owner.下拉毛玻璃噪点缩放)
-            ElseIf ShouldCaptureTransparentBackground() Then
-                _backdrop.Configure(PopupBackdropMode.Auto,
-                                    Nothing,
-                                    _owner.下拉背景颜色,
-                                    1,
-                                    0,
-                                    1,
-                                    0,
-                                    1.0F)
-            Else
-                _backdrop.Configure(PopupBackdropMode.None,
-                                    Nothing,
-                                    Color.Transparent,
-                                    1,
-                                    0,
-                                    1,
-                                    0,
-                                    1.0F)
-            End If
-            _backdrop.Prepare(New Rectangle(_originPt, New Size(Me.Width, _finalHeight)), True)
+            ' V3-only: dropdown backdrop is drawn from Image mode inside RenderGpu.
         End Sub
 
         Private Sub 绘制毛玻璃背景(g As Graphics)
-            If Not HasBackdropFrame() Then Return
-            _backdrop.Draw(g, New Rectangle(0, 0, ClientSize.Width, ClientSize.Height))
+            ' V3-only: pixels are emitted by RenderGpu.
         End Sub
 
         Protected Overrides Sub WndProc(ByRef m As Message)
@@ -2136,14 +2266,7 @@ Public Class ModernComboBox
         End Sub
 
         Private Sub 设置动画驱动(timer As PrecisionTimer, handler As EventHandler, enabled As Boolean)
-            If _useIdle Then
-                If enabled Then
-                    AddHandler Application.Idle, handler
-                Else
-                    RemoveHandler Application.Idle, handler
-                End If
-                Return
-            End If
+            If timer Is Nothing Then Return
             If enabled Then
                 AddHandler timer.Tick, handler
                 timer.Start()
@@ -2261,9 +2384,16 @@ Public Class ModernComboBox
         End Function
 
         Protected Overrides Sub OnPaint(e As PaintEventArgs)
-            绘制毛玻璃背景(e.Graphics)
-            RenderDropDown(e)
+            If Not D3D_PaintBridge.PaintRenderable(e, Me, Me, 1) Then MyBase.OnPaint(e)
         End Sub
+
+        Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+            RenderDropDown_GPU(context)
+        End Sub
+
+        Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+            Return New Rectangle(Point.Empty, Me.Size)
+        End Function
 
         Protected Overrides Sub OnSizeChanged(e As EventArgs)
             MyBase.OnSizeChanged(e)
@@ -2277,11 +2407,19 @@ Public Class ModernComboBox
 
         Private Sub 请求重绘(Optional immediate As Boolean = False)
             If IsDisposed OrElse Disposing Then Return
-            OuterToInnerRefreshScheduler.RequestFull(Me)
-            If immediate AndAlso IsHandleCreated Then Update()
+            请求V3渲染(immediate)
         End Sub
 
-        Private Sub RenderDropDown(e As PaintEventArgs)
+        Private Sub 请求V3渲染(Optional immediate As Boolean = False)
+            请求V3渲染(New Rectangle(Point.Empty, Me.Size), immediate)
+        End Sub
+
+        Private Sub 请求V3渲染(dirtyRect As Rectangle, Optional immediate As Boolean = False)
+            If IsDisposed OrElse Disposing Then Return
+            V3_InvalidationRouter.RequestRender(Me, dirtyRect)
+        End Sub
+
+        Private Sub RenderDropDown_GPU(context As D3D_PaintContext)
             Dim w As Integer = ClientSize.Width
             Dim h As Integer = ClientSize.Height
             If w <= 0 OrElse h <= 0 Then Return
@@ -2296,19 +2434,85 @@ Public Class ModernComboBox
                     _owner._items.Count, Math.Min(_owner._items.Count, _owner.最大下拉项数), _scrollOffset)
             End If
 
-            Using scope = D2DHelperV2.BeginPaint(e, Me, 1)
-                If scope Is Nothing Then Return
-                Dim rt As ID2D1RenderTarget = scope.GraphicsLayer
-                Dim brushCache = scope.Compositor.BrushCache
-                D2DGlobals.ApplyGlobalQuality(rt)
-                rt.Transform = Matrix3x2.Identity
-                DrawDropDownBackground_D2D(rt, brushCache, DropDownFillColor(), bw, w, h, Not HasBackdropFrame())
-                DrawDropDownItems_D2D(rt, brushCache, scope.Compositor.TextFormatCache, w, h, New DropDownLayout(Me, w))
-                DrawDropDownScrollBar_D2D(rt, brushCache, w, h, bw)
+            Dim hasBackdrop = DrawDropDownBackdrop_GPU(context, w, h)
+            DrawDropDownBackground_GPU(context, DropDownFillColor(), bw, w, h, Not hasBackdrop)
+            DrawDropDownItems_GPU(context, w, h, New DropDownLayout(Me, w))
+            DrawDropDownScrollBar_GPU(context, w, h, bw)
+        End Sub
+
+        Private Function DrawDropDownBackdrop_GPU(context As D3D_PaintContext, w As Integer, h As Integer) As Boolean
+            If Not HasBackdropFrame() OrElse w <= 0 OrElse h <= 0 Then Return False
+            context.Compositor.D3D_BackdropSurfaceRenderer.SetImage(_owner.下拉毛玻璃图片)
+            context.Compositor.D3D_BackdropSurfaceRenderer.ApplyParameters(_owner.下拉毛玻璃模糊半径,
+                                                                           _owner.下拉毛玻璃模糊次数,
+                                                                           _owner.下拉毛玻璃下采样,
+                                                                           _owner.下拉毛玻璃噪点缩放)
+            context.Compositor.D3D_BackdropSurfaceRenderer.TintColor = _owner.下拉毛玻璃Tint颜色
+            context.Compositor.D3D_BackdropSurfaceRenderer.NoiseOpacity = _owner.下拉毛玻璃噪点不透明度
+            context.Compositor.D3D_BackdropSurfaceRenderer.DrawImageBackdrop(context, New RectangleF(0, 0, w, h))
+            Return True
+        End Function
+
+        Private Sub DrawDropDownBackground_GPU(context As D3D_PaintContext, backColor As Color, bw As Integer, w As Integer, h As Integer, fillBackground As Boolean)
+            If fillBackground Then context.FillRectangle(New RectangleF(0, 0, w, h), backColor)
+            If bw > 0 AndAlso _owner.下拉边框颜色.A > 0 Then DrawDropDownBorder_GPU(context, w, h, bw)
+        End Sub
+
+        Private Sub DrawDropDownBorder_GPU(context As D3D_PaintContext, w As Integer, h As Integer, bw As Integer)
+            Dim border As Integer = Math.Min(bw, Math.Min(w, h))
+            If border <= 0 Then Return
+            context.FillRectangle(New RectangleF(0, 0, w, border), _owner.下拉边框颜色)
+            If h > border Then context.FillRectangle(New RectangleF(0, h - border, w, border), _owner.下拉边框颜色)
+            Dim middleHeight As Integer = h - border * 2
+            If middleHeight > 0 Then
+                context.FillRectangle(New RectangleF(0, border, border, middleHeight), _owner.下拉边框颜色)
+                If w > border Then context.FillRectangle(New RectangleF(w - border, border, border, middleHeight), _owner.下拉边框颜色)
+            End If
+        End Sub
+
+        Private Sub DrawDropDownItems_GPU(context As D3D_PaintContext, w As Integer, h As Integer, layout As DropDownLayout)
+            Dim clipRect As RectangleF = layout.ClipRect(w, h)
+            If clipRect.Width <= 0 OrElse clipRect.Height <= 0 Then Return
+            Dim shouldDrawHover As Boolean = _hoverIndex <> _owner._selectedIndex
+            Using context.PushClip(clipRect)
+                If shouldDrawHover AndAlso 悬停动画显示 AndAlso _owner.下拉悬停颜色.A > 0 Then
+                    Dim highlightRect As New RectangleF(layout.HlL, 悬停动画当前Y, w - layout.HlL - layout.HlR - layout.ScrollW, 悬停动画当前高度)
+                    context.FillRectangle(highlightRect, _owner.下拉悬停颜色)
+                End If
+
+                For i As Integer = 0 To layout.VisCount - 1
+                    Dim idx As Integer = i + _scrollOffset
+                    If idx >= _owner._items.Count Then Exit For
+                    Dim itemRect As RectangleF = layout.ItemRect(w, i)
+
+                    If idx = _owner._selectedIndex AndAlso _owner.下拉选中颜色.A > 0 Then
+                        context.FillRectangle(itemRect, _owner.下拉选中颜色)
+                    ElseIf shouldDrawHover AndAlso idx = _hoverIndex AndAlso Not 悬停动画显示 AndAlso _owner.下拉悬停颜色.A > 0 Then
+                        context.FillRectangle(itemRect, _owner.下拉悬停颜色)
+                    End If
+
+                    Dim textColor As Color = If(idx = _owner._selectedIndex AndAlso _owner.下拉选中文字颜色 <> Color.Empty,
+                        _owner.下拉选中文字颜色,
+                        _owner.ForeColor)
+                    context.DrawText(_owner._items(idx), _owner.Font, textColor, layout.TextRect(itemRect),
+                                     Vortice.DirectWrite.TextAlignment.Leading,
+                                     Vortice.DirectWrite.ParagraphAlignment.Center)
+                Next
             End Using
         End Sub
 
-        Private Sub DrawDropDownBackground_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache, backColor As Color, bw As Integer, w As Integer, h As Integer, fillBackground As Boolean)
+        Private Sub DrawDropDownScrollBar_GPU(context As D3D_PaintContext, w As Integer, h As Integer, bw As Integer)
+            If Not _scrollBarVisible OrElse _scrollBar.TrackRect.IsEmpty Then Return
+            Dim width As Single = Math.Max(1.0F, _owner.下拉滚动条宽度)
+            Dim trackArea As New RectangleF(_scrollBar.VisualLeft, _scrollBar.TrackRect.Y, width, _scrollBar.TrackRect.Height)
+            Dim thumbArea As New RectangleF(_scrollBar.VisualLeft, _scrollBar.ThumbRect.Y, width, _scrollBar.ThumbRect.Height)
+            _owner.填充圆角矩形_GPU(context, trackArea, Math.Min(width / 2.0F, trackArea.Height / 2.0F), _owner.下拉滚动条轨道颜色)
+            Dim thumbColor = If(_scrollBar.IsDragging OrElse _scrollBar.IsHover, _owner.下拉滚动条悬停颜色, _owner.下拉滚动条颜色)
+            _owner.填充圆角矩形_GPU(context, thumbArea, Math.Min(width / 2.0F, thumbArea.Height / 2.0F), thumbColor)
+        End Sub
+
+
+        Private Sub DrawDropDownBackground_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache, backColor As Color, bw As Integer, w As Integer, h As Integer, fillBackground As Boolean)
             If fillBackground Then
                 Dim br = brushCache.Get(rt, backColor)
                 rt.FillRectangle(New Vortice.Mathematics.Rect(0, 0, w, h), br)
@@ -2319,7 +2523,7 @@ Public Class ModernComboBox
             End If
         End Sub
 
-        Private Sub DrawDropDownBorder_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache, w As Integer, h As Integer, bw As Integer)
+        Private Sub DrawDropDownBorder_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache, w As Integer, h As Integer, bw As Integer)
             Dim border As Integer = Math.Min(bw, Math.Min(w, h))
             If border <= 0 Then Return
 
@@ -2334,8 +2538,8 @@ Public Class ModernComboBox
             End If
         End Sub
 
-        Private Sub DrawDropDownItems_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache,
-                                          textFormatCache As D2DGlobals.TextFormatCache,
+        Private Sub DrawDropDownItems_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache,
+                                          textFormatCache As D3D_D2DInterop.TextFormatCache,
                                           w As Integer, h As Integer, layout As DropDownLayout)
             Dim s As Single = _owner.DpiScale()
             Dim clipRect As RectangleF = layout.ClipRect(w, h)
@@ -2347,7 +2551,7 @@ Public Class ModernComboBox
             Try
                 If shouldDrawHover AndAlso 悬停动画显示 AndAlso hoverBrush IsNot Nothing Then
                     Dim highlightRect As New RectangleF(layout.HlL, 悬停动画当前Y, w - layout.HlL - layout.HlR - layout.ScrollW, 悬停动画当前高度)
-                    rt.FillRectangle(D2DGlobals.ToD2DRect(highlightRect), hoverBrush)
+                    rt.FillRectangle(D3D_D2DInterop.ToD2DRect(highlightRect), hoverBrush)
                 End If
 
                 For i As Integer = 0 To layout.VisCount - 1
@@ -2356,9 +2560,9 @@ Public Class ModernComboBox
                     Dim itemRect As RectangleF = layout.ItemRect(w, i)
 
                     If idx = _owner._selectedIndex AndAlso selectedBrush IsNot Nothing Then
-                        rt.FillRectangle(D2DGlobals.ToD2DRect(itemRect), selectedBrush)
+                        rt.FillRectangle(D3D_D2DInterop.ToD2DRect(itemRect), selectedBrush)
                     ElseIf shouldDrawHover AndAlso idx = _hoverIndex AndAlso Not 悬停动画显示 AndAlso hoverBrush IsNot Nothing Then
-                        rt.FillRectangle(D2DGlobals.ToD2DRect(itemRect), hoverBrush)
+                        rt.FillRectangle(D3D_D2DInterop.ToD2DRect(itemRect), hoverBrush)
                     End If
 
                     Dim textColor As Color = If(idx = _owner._selectedIndex AndAlso _owner.下拉选中文字颜色 <> Color.Empty,
@@ -2373,7 +2577,7 @@ Public Class ModernComboBox
         End Sub
 
         Private Sub DrawDropDownScrollBar_D2D(rt As ID2D1RenderTarget,
-                                              brushCache As D2DGlobals.SolidColorBrushCache,
+                                              brushCache As D3D_D2DInterop.SolidColorBrushCache,
                                               w As Integer, h As Integer, bw As Integer)
             If Not _scrollBarVisible OrElse _scrollBar.TrackRect.IsEmpty Then Return
             _scrollBar.Draw_D2D(rt, w, h, bw, 0, _owner.下拉滚动条宽度,
@@ -2529,7 +2733,7 @@ Public Class ModernComboBox
             If Not _scrollBarVisible Then Return
             Dim total As Integer = _owner._items.Count
             Dim vis As Integer = Math.Min(total, _owner.最大下拉项数)
-            _scrollOffset = ScrollBarRenderer.HandleWheel(e.Delta, _scrollOffset, total, vis)
+            _scrollOffset = V3_ScrollBarRenderer.HandleWheel(e.Delta, _scrollOffset, total, vis)
             关闭工具提示()
             请求重绘()
         End Sub
@@ -2610,7 +2814,7 @@ Public Class ModernComboBox
     End Property
 
     Private Function DpiScale() As Single
-        Return D2DGlobals.GetCurrentDpiScale(Me)
+        Return V3_DpiContext.FromControl(Me).Scale
     End Function
 
     Private Function ScaledToolTipGap() As Integer
@@ -2625,13 +2829,13 @@ Public Class ModernComboBox
         _updateCount -= 1
         If _updateCount > 0 Then Return
         _updateCount = 0
-        If invalidateAfter Then OuterToInnerRefreshScheduler.RequestFull(Me)
+        If invalidateAfter Then 请求V3渲染()
     End Sub
 
     Private Shared Sub DrawSingleLineText_D2D(rt As ID2D1RenderTarget, text As String, font As Font, foreColor As Color,
                                               rect As RectangleF, dpiScale As Single, endEllipsis As Boolean,
-                                              Optional textFormatCache As D2DGlobals.TextFormatCache = Nothing,
-                                              Optional brushCache As D2DGlobals.SolidColorBrushCache = Nothing)
+                                              Optional textFormatCache As D3D_D2DInterop.TextFormatCache = Nothing,
+                                              Optional brushCache As D3D_D2DInterop.SolidColorBrushCache = Nothing)
         SingleLineTextBoxRenderer.DrawSingleLineText_D2D(rt, text, font, foreColor, rect, dpiScale, endEllipsis, textFormatCache, brushCache)
     End Sub
 
@@ -2653,7 +2857,7 @@ Public Class ModernComboBox
         Dim selectedIndexChanged As Boolean = _selectedIndex <> matchIndex
         If selectedIndexChanged Then _selectedIndex = matchIndex
         EnsureCaretVisible()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
         RaiseEvent TextChanged(Me, EventArgs.Empty)
         If selectedIndexChanged Then RaiseEvent selectedIndexChanged(Me, EventArgs.Empty)
     End Sub
@@ -2671,7 +2875,7 @@ Public Class ModernComboBox
 
         _selectedIndex = value
         _textRenderer.SetText(newText, newText.Length, True, False)
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
         If textChanged Then RaiseEvent textChanged(Me, EventArgs.Empty)
         If selectedIndexChanged Then RaiseSelectedIndexChanged(deferSelectedIndexChanged)
     End Sub
@@ -2692,7 +2896,7 @@ Public Class ModernComboBox
     End Sub
 
     Friend Sub OnItemsTextChanged()
-        If _updateCount <= 0 Then OuterToInnerRefreshScheduler.RequestFull(Me)
+        If _updateCount <= 0 Then 请求V3渲染()
         RaiseEvent TextChanged(Me, EventArgs.Empty)
     End Sub
 
@@ -2707,7 +2911,7 @@ Public Class ModernComboBox
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
-            If _updateCount <= 0 Then OuterToInnerRefreshScheduler.RequestFull(Me)
+            If _updateCount <= 0 Then 请求V3渲染()
         End If
     End Sub
 #End Region
@@ -2730,7 +2934,7 @@ Public Class ModernComboBox
     Protected Overrides Sub OnSizeChanged(e As EventArgs)
         MyBase.OnSizeChanged(e)
         EnsureCaretVisible()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
@@ -2739,7 +2943,7 @@ Public Class ModernComboBox
         End If
         MyBase.OnFontChanged(e)
         EnsureCaretVisible()
-        D2DHelperV2.RefreshFontDependentRendering(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnMouseWheel(e As MouseEventArgs)
@@ -2760,12 +2964,12 @@ Public Class ModernComboBox
             _textRenderer.StopCaretBlink()
             鼠标状态 = MouseStateEnum.Normal
         End If
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 #End Region
 

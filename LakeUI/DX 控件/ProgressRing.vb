@@ -3,20 +3,24 @@ Imports System.Numerics
 Imports Vortice.Direct2D1
 
 Public Class ProgressRing
+    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource
 
     Public Sub New()
         InitializeComponent()
+        计时器.DispatchMode = PrecisionTimer.DispatchModeEnum.NonBlocking
+        计时器.OverrunPolicy = PrecisionTimer.OverrunPolicyEnum.Drop
+        计时器.WorkerThreadCount = 1
+        计时器.SynchronizingObject = Me
         AddHandler 计时器.Tick, AddressOf 动画帧回调
     End Sub
 
-#Region "V2 背景穿透"
+#Region "背景源"
     Private _backgroundSource As Control = Nothing
     ''' <summary>
-    ''' 背景采样源（超容器背景映射）。设置后会跨越任意层级直接采样此控件的绘制内容作为透明背景；
-    ''' 为 Nothing 时不进行背景采样，按 BackColor 协议处理。
+    ''' 背景采样源。V3 渲染保留该关系，具体背景图由窗口级合成器统一调度。
     ''' </summary>
     <Category("LakeUI"),
-     Description("背景采样源（超容器背景映射）。设置后将跨越任意层级直接采样此控件的绘制内容作为透明背景；为空时不进行背景采样。"),
+     Description("背景采样源。设置后记录关联源控件；V3 渲染由窗口合成器统一调度。"),
      DefaultValue(GetType(Control), Nothing), Browsable(True)>
     Public Property BackgroundSource As Control
         Get
@@ -24,8 +28,8 @@ Public Class ProgressRing
         End Get
         Set(value As Control)
             If _backgroundSource IsNot value Then
-                _backgroundSource = BackgroundPenetrationV2.SetConsumerSource(Me, _backgroundSource, value)
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                _backgroundSource = D3D_BackgroundPenetration.SetBackgroundSource(Me, _backgroundSource, value)
+                请求V3渲染()
             End If
         End Set
     End Property
@@ -38,46 +42,119 @@ Public Class ProgressRing
 
 #Region "绘制"
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
-        If Me.Width < 1 OrElse Me.Height < 1 Then Return
-        Dim ssaa As Integer = D2DHelperV2.GetEffectiveSsaaScale(超采样倍率)
+        If Not D3D_PaintBridge.PaintRenderable(e, Me, Me, 1) Then MyBase.OnPaint(e)
+    End Sub
 
-        Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
-            If scope Is Nothing Then
-                MyBase.OnPaint(e)
-                Return
-            End If
+    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+        If context Is Nothing OrElse Me.Width < 1 OrElse Me.Height < 1 Then Return
 
-            If _backgroundSource IsNot Nothing Then
-                BackgroundPenetrationV2.PaintBackground(Me, scope, _backgroundSource)
-            ElseIf MyBase.BackColor.A > 0 AndAlso MyBase.BackColor.A < 255 Then
-                Dim bgLayer = scope.BackgroundLayer
-                Dim brush = scope.Compositor.BrushCache.[Get](bgLayer, MyBase.BackColor)
-                If brush IsNot Nothing Then
-                    bgLayer.FillRectangle(D2DGlobals.ToD2DRect(New RectangleF(0, 0, Me.Width, Me.Height)), brush)
-                End If
-            End If
+        If _backgroundSource IsNot Nothing Then
+            context.DrawBackgroundSource(Me, _backgroundSource, New RectangleF(0, 0, Me.Width, Me.Height))
+        ElseIf MyBase.BackColor.A > 0 Then
+            context.FillRectangle(New RectangleF(0, 0, Me.Width, Me.Height), MyBase.BackColor)
+        End If
 
-            Dim gRT As ID2D1RenderTarget = scope.GraphicsLayer
-            Select Case 动画样式
-                Case StyleEnum.Win11
-                    绘制Win11样式_D2D(gRT, scope.Compositor.BrushCache)
-                Case StyleEnum.Win10
-                    绘制Win10样式_D2D(gRT, scope.Compositor.BrushCache)
-            End Select
+        Select Case 动画样式
+            Case StyleEnum.Win11
+                绘制Win11样式_GPU(context)
+            Case StyleEnum.Win10
+                绘制Win10样式_GPU(context)
+        End Select
 
-            scope.FlushGraphics()
+        If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
+            Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, 禁用时遮罩颜色, context.DeviceGeneration)
+            context.DeviceContext.FillEllipse(New Ellipse(New Vector2(Me.Width / 2.0F, Me.Height / 2.0F),
+                                                          Math.Max(0, (Me.Width - 1) / 2.0F),
+                                                          Math.Max(0, (Me.Height - 1) / 2.0F)),
+                                             brush)
+        End If
+    End Sub
 
-            If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
-                Dim dcRT = scope.DCRenderTarget
-                Dim maskBrush = scope.Compositor.BrushCache.[Get](dcRT, 禁用时遮罩颜色)
-                If maskBrush IsNot Nothing Then
-                    dcRT.FillEllipse(New Ellipse(New Vector2(Me.Width / 2.0F, Me.Height / 2.0F), Math.Max(0, (Me.Width - 1) / 2.0F), Math.Max(0, (Me.Height - 1) / 2.0F)), maskBrush)
-                End If
-            End If
+    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+        Return New Rectangle(Point.Empty, Me.Size)
+    End Function
+
+    Private Sub 绘制Win11样式_GPU(context As D3D_PaintContext)
+        Dim s As Single = DpiScale()
+        Dim 中心X As Single = Me.Width / 2.0F
+        Dim 中心Y As Single = Me.Height / 2.0F
+        Dim 半径 As Single = Math.Min(中心X, 中心Y) - 1
+        Dim 画笔宽度 As Single = 圆弧厚度值 * s
+        If 画笔宽度 >= 半径 Then 画笔宽度 = 半径 - 1
+        If 画笔宽度 < 0.5F Then Return
+        Dim 绘制半径 As Single = 半径 - 画笔宽度 / 2.0F
+        If 绘制半径 < 1 Then Return
+
+        Dim 绘制矩形 As New RectangleF(中心X - 绘制半径, 中心Y - 绘制半径, 绘制半径 * 2, 绘制半径 * 2)
+
+        Const minArc As Single = 15.0F
+        Const maxArc As Single = 260.0F
+        Const baseRotation As Single = 535.0F
+        Const sweepRange As Single = maxArc - minArc
+        Const totalPerCycle As Single = baseRotation + sweepRange
+
+        Dim n As Single
+        Dim t As Single
+        If DesignMode Then
+            n = 0 : t = 0.15F
+        ElseIf Not 动画运行中 Then
+            n = 0 : t = 0.0F
+        Else
+            Dim cycles As Double = 秒表.Elapsed.TotalMilliseconds / 动画周期时长
+            Dim reduced As Double = cycles Mod 6.0
+            n = CSng(Math.Floor(reduced))
+            t = CSng(reduced - Math.Floor(reduced))
+        End If
+
+        Dim sweepAngle As Single
+        Dim sweepOffset As Single = 0
+        If t < 0.5F Then
+            Dim p As Single = 缓动(t * 2.0F)
+            sweepAngle = minArc + sweepRange * p
+        Else
+            Dim p As Single = 缓动((t - 0.5F) * 2.0F)
+            sweepAngle = maxArc - sweepRange * p
+            sweepOffset = maxArc - sweepAngle
+        End If
+
+        Dim startAngle As Single = n * totalPerCycle + baseRotation * t + sweepOffset - 90.0F
+        If sweepAngle <= 0.05F Then Return
+
+        Using geo = 创建圆弧几何(绘制矩形, startAngle, sweepAngle)
+            Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, 圆弧颜色, context.DeviceGeneration)
+            context.DeviceContext.DrawGeometry(geo, brush, 画笔宽度, 获取圆头描边样式())
         End Using
     End Sub
 
-    Private Sub 绘制Win11样式_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache)
+    Private Sub 绘制Win10样式_GPU(context As D3D_PaintContext)
+        Dim s As Single = DpiScale()
+        Dim 中心X As Single = Me.Width / 2.0F
+        Dim 中心Y As Single = Me.Height / 2.0F
+        Dim 半径 As Single = Math.Min(中心X, 中心Y) - 1
+        Dim 点直径 As Single = 圆弧厚度值 * s
+        If 点直径 >= 半径 Then 点直径 = 半径 - 1
+        If 点直径 < 1 Then Return
+        Dim 轨道半径 As Single = 半径 - 点直径 / 2.0F
+        If 轨道半径 < 1 Then Return
+
+        Dim t As Double = 获取动画进度()
+        Const 点数量 As Integer = 5
+        Const 相位跨度 As Double = 0.25
+        Const A As Double = 0.75
+
+        Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, 圆弧颜色, context.DeviceGeneration)
+        Dim 点半径 As Single = 点直径 / 2.0F
+        For i As Integer = 0 To 点数量 - 1
+            Dim p As Double = (t + CDbl(i) / (点数量 - 1) * 相位跨度) Mod 1.0
+            Dim 角度 As Double = (720.0 * p - (180.0 * A / Math.PI) * Math.Sin(4.0 * Math.PI * p) - 90.0) * Math.PI / 180.0
+            Dim 点X As Single = 中心X + CSng(Math.Cos(角度)) * 轨道半径
+            Dim 点Y As Single = 中心Y + CSng(Math.Sin(角度)) * 轨道半径
+            context.DeviceContext.FillEllipse(New Ellipse(New Vector2(点X, 点Y), 点半径, 点半径), brush)
+        Next
+    End Sub
+
+
+    Private Sub 绘制Win11样式_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache)
         Dim s As Single = DpiScale()
         Dim 中心X As Single = Me.Width / 2.0F
         Dim 中心Y As Single = Me.Height / 2.0F
@@ -139,7 +216,7 @@ Public Class ProgressRing
         End Using
     End Sub
 
-    Private Sub 绘制Win10样式_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache)
+    Private Sub 绘制Win10样式_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache)
         Dim s As Single = DpiScale()
         Dim 中心X As Single = Me.Width / 2.0F
         Dim 中心Y As Single = Me.Height / 2.0F
@@ -180,7 +257,7 @@ Public Class ProgressRing
         Dim startPoint As New Vector2(cx + CSng(Math.Cos(startRad)) * rx, cy + CSng(Math.Sin(startRad)) * ry)
         Dim endPoint As New Vector2(cx + CSng(Math.Cos(endRad)) * rx, cy + CSng(Math.Sin(endRad)) * ry)
 
-        Dim path As ID2D1PathGeometry = D2DGlobals.GetD2DFactory().CreatePathGeometry()
+        Dim path As ID2D1PathGeometry = D3D_D2DInterop.GetD2DFactory().CreatePathGeometry()
         Dim sink As ID2D1GeometrySink = path.Open()
         Try
             sink.BeginFigure(startPoint, FigureBegin.Hollow)
@@ -218,19 +295,33 @@ Public Class ProgressRing
 
 #Region "通用"
     Private ReadOnly 秒表 As New Stopwatch()
-    Private ReadOnly 计时器 As New System.Windows.Forms.Timer()
+    Private ReadOnly 计时器 As New PrecisionTimer()
     Private 动画运行中 As Boolean = False
 
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End If
     End Sub
 
     Private Function DpiScale() As Single
-        Return D2DGlobals.GetCurrentDpiScale(Me)
+        Return V3_DpiContext.FromControl(Me).Scale
     End Function
+
+    Private Shared Function FrameIntervalMilliseconds(fps As Integer) As Integer
+        fps = Math.Max(1, fps)
+        Return Math.Max(1, CInt(Math.Ceiling(1000.0R / fps)))
+    End Function
+
+    Private Sub 请求V3渲染(Optional immediate As Boolean = False)
+        请求V3渲染(New Rectangle(Point.Empty, Me.Size), immediate)
+    End Sub
+
+    Private Sub 请求V3渲染(dirtyRect As Rectangle, Optional immediate As Boolean = False)
+        If Me.IsDisposed Then Return
+        V3_InvalidationRouter.RequestRender(Me, dirtyRect)
+    End Sub
 
     ''' <summary>开始播放动画</summary>
     Public Sub StartAnimation()
@@ -238,7 +329,7 @@ Public Class ProgressRing
             动画运行中 = True
             秒表.Restart()
         End If
-        计时器.Interval = Math.Max(1, CInt(1000.0 / 动画帧率值))
+        计时器.Interval = FrameIntervalMilliseconds(动画帧率值)
         更新动画计时器状态()
     End Sub
 
@@ -248,7 +339,7 @@ Public Class ProgressRing
         动画运行中 = False
         计时器.Stop()
         秒表.Stop()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     ''' <summary>当前动画是否正在播放</summary>
@@ -264,7 +355,7 @@ Public Class ProgressRing
             更新动画计时器状态()
             Return
         End If
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Private Function 应运行动画计时器() As Boolean
@@ -277,18 +368,18 @@ Public Class ProgressRing
 
     Private Sub 更新动画计时器状态()
         If 应运行动画计时器() Then
-            If Not 计时器.Enabled Then 计时器.Start()
-        ElseIf 计时器.Enabled Then
+            If Not 计时器.IsRunning Then 计时器.Start()
+        ElseIf 计时器.IsRunning Then
             计时器.Stop()
         End If
     End Sub
 
     Private Function 获取圆头描边样式() As ID2D1StrokeStyle
-        Return D2DGlobals.GetRoundStrokeStyle()
+        Return D3D_D2DInterop.GetRoundStrokeStyle()
     End Function
 
     Private Sub 释放描边样式()
-        ' StrokeStyle 现在由 D2DGlobals 进程级缓存持有；保留此方法以兼容 Designer Dispose 调用。
+        ' StrokeStyle 现在由 D3D_D2DInterop 进程级缓存持有；保留此方法以兼容 Designer Dispose 调用。
     End Sub
 
     Protected Overrides Sub OnHandleCreated(e As EventArgs)
@@ -322,17 +413,17 @@ Public Class ProgressRing
         Else
             更新动画计时器状态()
         End If
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
         MyBase.OnFontChanged(e)
-        D2DHelperV2.RefreshFontDependentRendering(Me)
+        请求V3渲染()
     End Sub
 #End Region
 
@@ -408,7 +499,7 @@ Public Class ProgressRing
         Set(value As Integer)
             动画帧率值 = Math.Max(1, value)
             If 动画运行中 Then
-                计时器.Interval = Math.Max(1, CInt(1000.0 / 动画帧率值))
+                计时器.Interval = FrameIntervalMilliseconds(动画帧率值)
             End If
         End Set
     End Property

@@ -133,6 +133,10 @@ Public Class ThisIsYourWindow
     Private Shared Function GetWindowRect(hWnd As IntPtr, ByRef lpRect As RECT) As <MarshalAs(UnmanagedType.Bool)> Boolean
     End Function
 
+    <DllImport("user32.dll")>
+    Private Shared Function GetClientRect(hWnd As IntPtr, ByRef lpRect As RECT) As <MarshalAs(UnmanagedType.Bool)> Boolean
+    End Function
+
     <StructLayout(LayoutKind.Sequential)>
     Private Structure OSVERSIONINFOEX
         Public dwOSVersionInfoSize As Integer
@@ -198,14 +202,13 @@ Public Class ThisIsYourWindow
         ' ── 布局缓存签名：仅当窗口宽度/按钮可见性/相关属性变化时重新计算按钮位置 ──
         Public LayoutSignature As Long = -1
         ' ── 毛玻璃 ──
-        Public Renderer As BackdropRenderer
-        Public BackdropTimer As Timer
-        ' ── D2D 资源（V2 占位）──
-        ' V2：DC RT / SSAA 池 / 笔刷缓存 / TextFormat 缓存 / 位图缓存 全部迁到 WindowCompositor（Form 级共享）。
-        ' 这里不再持有任何 D2D 字段；通过 D2DHelperV2.BeginPaint(...) → PaintScopeV2 拿到。
+        Public Renderer As D3D_BackdropSurfaceRenderer
+        Public BackdropTimer As PrecisionTimer
+        ' ── D3D 资源 ──
+        ' 窗口级 D3D compositor 统一持有图形资源；这里不再持有任何长期 D2D 字段。
         Public Sub New(form As Form)
             HostForm = form
-            If form IsNot Nothing Then LastClientSize = form.ClientSize
+            If form IsNot Nothing Then LastClientSize = ThisIsYourWindow.获取真实客户区尺寸(form)
         End Sub
     End Class
 
@@ -223,6 +226,56 @@ Public Class ThisIsYourWindow
         Dim s As PerFormState = Nothing
         If form IsNot Nothing AndAlso form.IsHandleCreated Then _forms.TryGetValue(form.Handle, s)
         Return s
+    End Function
+
+    Public Shared Function TryGetAttached(form As Form, ByRef owner As ThisIsYourWindow) As Boolean
+        owner = Nothing
+        If form Is Nothing Then Return False
+        SyncLock _attachedFormsLock
+            Return _attachedForms.TryGetValue(form, owner) AndAlso owner IsNot Nothing
+        End SyncLock
+    End Function
+
+    Friend Shared Sub NotifyV3FramePresented(form As Form)
+        If form Is Nothing Then Return
+        Dim owner As ThisIsYourWindow = Nothing
+        If Not TryGetAttached(form, owner) OrElse owner Is Nothing Then Return
+        owner.完成首帧还原(owner.查找状态(form))
+    End Sub
+
+    Friend Shared Sub NotifyV3FrameNotPresented(form As Form)
+        If form Is Nothing Then Return
+        Dim owner As ThisIsYourWindow = Nothing
+        If Not TryGetAttached(form, owner) OrElse owner Is Nothing Then Return
+        owner.取消首帧等待(owner.查找状态(form))
+    End Sub
+
+    Friend Shared Function TryRenderAttachedChrome(context As D3D_PaintContext, targetForm As Form) As Boolean
+        If context Is Nothing OrElse targetForm Is Nothing OrElse targetForm.IsDisposed Then Return False
+        Dim owner As ThisIsYourWindow = Nothing
+        If Not TryGetAttached(targetForm, owner) OrElse owner Is Nothing Then Return False
+        owner.RenderGpuWindow(context, targetForm)
+        owner.完成首帧还原(owner.查找状态(targetForm))
+        Return True
+    End Function
+
+    Friend Shared Function AttachedBackdropCoversClient(form As Form) As Boolean
+        If form Is Nothing OrElse form.IsDisposed Then Return False
+        Dim owner As ThisIsYourWindow = Nothing
+        If Not TryGetAttached(form, owner) OrElse owner Is Nothing Then Return False
+        Return owner.BackdropCoversClient(form)
+    End Function
+
+    Private Function BackdropCoversClient(form As Form) As Boolean
+        Dim s = 查找状态(form)
+        Select Case _毛玻璃模式
+            Case BackdropModeEnum.Image
+                Return _毛玻璃图片 IsNot Nothing
+            Case BackdropModeEnum.Auto
+                Return s IsNot Nothing AndAlso s.Renderer IsNot Nothing AndAlso s.Renderer.HasFrame
+            Case Else
+                Return False
+        End Select
     End Function
 
     Private Function 是首个附加窗体(form As Form) As Boolean
@@ -323,7 +376,7 @@ Public Class ThisIsYourWindow
 
     Private Shared Function 取Dpi缩放(control As Control) As Single
         If control IsNot Nothing AndAlso Not control.IsDisposed Then
-            Return D2DGlobals.GetCurrentDpiScale(control)
+            Return V3_DpiContext.FromControl(control).Scale
         End If
         Return 1.0F
     End Function
@@ -355,13 +408,37 @@ Public Class ThisIsYourWindow
         Return 取缩放边框厚度(control) + 取缩放标题栏高度(control)
     End Function
 
+    Private Shared Function 获取真实客户区尺寸(form As Form) As Size
+        If form Is Nothing OrElse form.IsDisposed Then Return Size.Empty
+
+        If form.IsHandleCreated Then
+            Dim rect As RECT
+            If GetClientRect(form.Handle, rect) Then
+                Return New Size(Math.Max(0, rect.Right - rect.Left), Math.Max(0, rect.Bottom - rect.Top))
+            End If
+        End If
+
+        Return form.ClientSize
+    End Function
+
+    Private Shared Function 获取真实客户区矩形(form As Form) As Rectangle
+        Dim size = 获取真实客户区尺寸(form)
+        If size.Width <= 0 OrElse size.Height <= 0 Then Return Rectangle.Empty
+        Return New Rectangle(Point.Empty, size)
+    End Function
+
     Private Sub 通知重绘(Optional immediate As Boolean = True)
         For Each s In _forms.Values
             Dim frm = s.HostForm
             If frm IsNot Nothing AndAlso Not frm.IsDisposed AndAlso frm.IsHandleCreated Then
-                OuterToInnerRefreshScheduler.RequestFull(frm, invalidateChildren:=True, immediate:=immediate)
+                请求V3渲染(frm, 获取真实客户区矩形(frm), immediate)
             End If
         Next
+    End Sub
+
+    Friend Shared Sub 请求V3渲染(control As Control, dirtyRect As Rectangle, Optional immediate As Boolean = False)
+        If control Is Nothing OrElse control.IsDisposed Then Return
+        V3_InvalidationRouter.RequestRender(control, dirtyRect)
     End Sub
 
     Private Sub 使布局失效(Optional recalculate As Boolean = True)
@@ -496,7 +573,7 @@ Public Class ThisIsYourWindow
         If requestBackdropFrame Then
             请求毛玻璃帧(s, True, forceImageMode:=sizeChanged)
         ElseIf sizeChanged Then
-            OuterToInnerRefreshScheduler.RequestFull(s.HostForm)
+            请求V3渲染(s.HostForm, 获取真实客户区矩形(s.HostForm))
         End If
         重置毛玻璃Tick(s)
     End Sub
@@ -522,16 +599,35 @@ Public Class ThisIsYourWindow
     Private Sub 宿主窗口_Paint(sender As Object, e As PaintEventArgs)
         Dim frm = TryCast(sender, Form)
         If frm Is Nothing Then Return
-        PaintWindow(e, frm)
         Dim s = 查找状态(frm)
-        If s IsNot Nothing AndAlso s.PendingFirstPaintRestore Then
-            s.PendingFirstPaintRestore = False
-            If s.AnimatingShow Then
-                开始渐入动画(s)
-            Else
-                Dim alphaByte As Byte = CByte(Math.Min(255, Math.Max(0, CInt(Math.Round(s.OriginalOpacity * 255)))))
-                SetLayeredWindowAttributes(frm.Handle, 0, alphaByte, LWA_ALPHA)
-            End If
+        If TryPaintWindowChrome(e, frm) Then
+            完成首帧还原(s)
+        ElseIf s IsNot Nothing AndAlso s.PendingFirstPaintRestore Then
+            取消首帧等待(s)
+        End If
+    End Sub
+
+    Friend Sub 完成首帧还原(s As PerFormState)
+        If s Is Nothing OrElse Not s.PendingFirstPaintRestore Then Return
+        s.PendingFirstPaintRestore = False
+        If s.AnimatingShow Then
+            开始渐入动画(s)
+        ElseIf s.HostForm IsNot Nothing AndAlso Not s.HostForm.IsDisposed AndAlso s.HostForm.IsHandleCreated Then
+            Dim alphaByte As Byte = CByte(Math.Min(255, Math.Max(0, CInt(Math.Round(s.OriginalOpacity * 255)))))
+            SetLayeredWindowAttributes(s.HostForm.Handle, 0, alphaByte, LWA_ALPHA)
+        End If
+    End Sub
+
+    Friend Sub 取消首帧等待(s As PerFormState)
+        If s Is Nothing OrElse Not s.PendingFirstPaintRestore Then Return
+        s.PendingFirstPaintRestore = False
+        s.AnimatingShow = False
+        If s.HostForm Is Nothing OrElse s.HostForm.IsDisposed OrElse Not s.HostForm.IsHandleCreated Then Return
+
+        Dim alphaByte As Byte = CByte(Math.Min(255, Math.Max(0, CInt(Math.Round(s.OriginalOpacity * 255)))))
+        SetLayeredWindowAttributes(s.HostForm.Handle, 0, alphaByte, LWA_ALPHA)
+        If _阴影模式 = ShadowModeEnum.Layer AndAlso s.ShadowForm IsNot Nothing Then
+            s.ShadowForm.SetGlobalAlpha(255)
         End If
     End Sub
 
@@ -542,7 +638,15 @@ Public Class ThisIsYourWindow
 
     Private Sub 宿主窗口_HandleDestroyed(sender As Object, e As EventArgs)
         Dim frm = TryCast(sender, Form)
-        If frm IsNot Nothing Then Detach(frm)
+        If frm Is Nothing Then Return
+
+        If frm.RecreatingHandle AndAlso Not frm.IsDisposed Then
+            释放当前句柄附加状态(frm, removeAttachedRegistration:=False, removePendingAttach:=False)
+            安排句柄创建后附加(frm)
+            Return
+        End If
+
+        Detach(frm)
     End Sub
 
     Private Sub 宿主窗口_VisibleChanged(sender As Object, e As EventArgs)
@@ -567,7 +671,7 @@ Public Class ThisIsYourWindow
         If frm Is Nothing Then Return
         Dim s = 查找状态(frm)
         If s Is Nothing Then Return
-        D2DHelperV2.InvalidateTextFormatCache(frm)
+        D3D_RenderCore.InvalidateExistingTextResources(frm)
         InvalidateTitleText(s, True)
     End Sub
 
@@ -586,8 +690,7 @@ Public Class ThisIsYourWindow
         Dim dirty As Rectangle = 合并脏区(s.LastTitleTextDirtyRect, newDirty)
         s.LastTitleTextDirtyRect = newDirty
         If dirty.Width > 0 AndAlso dirty.Height > 0 Then
-            s.HostForm.Invalidate(dirty, False)
-            If immediate Then s.HostForm.Update()
+            请求V3渲染(s.HostForm, dirty, immediate)
         End If
     End Sub
 
@@ -605,7 +708,7 @@ Public Class ThisIsYourWindow
 
     Private Sub 使标题字体资源失效()
         For Each s In _forms.Values
-            If s?.HostForm IsNot Nothing Then D2DHelperV2.InvalidateTextFormatCache(s.HostForm)
+            If s?.HostForm IsNot Nothing Then D3D_RenderCore.InvalidateExistingTextResources(s.HostForm)
         Next
     End Sub
 
@@ -625,10 +728,10 @@ Public Class ThisIsYourWindow
         s.LayoutSignature = -1
         RecalculateButtonBounds(s)
         更新窗口内边距(s)
-        D2DHelperV2.InvalidateTextFormatCache(s.HostForm)
+        D3D_RenderCore.InvalidateExistingTextResources(s.HostForm)
         If 毛玻璃当前启用(s) Then 请求毛玻璃帧(s, True, forceImageMode:=True)
         更新阴影(s)
-        OuterToInnerRefreshScheduler.RequestFull(s.HostForm, invalidateChildren:=True)
+        请求V3渲染(s.HostForm, 获取真实客户区矩形(s.HostForm), True)
     End Sub
 
     Friend Sub 开始渐入动画(s As PerFormState)
@@ -637,10 +740,10 @@ Public Class ThisIsYourWindow
         Dim targetAlpha As Integer = CInt(Math.Round(s.OriginalOpacity * 255))
         Dim syncShadow As Boolean = (_阴影模式 = ShadowModeEnum.Layer) AndAlso s.ShadowForm IsNot Nothing
         Dim duration As Integer = _动画持续时间
-        Dim t As New Timer() With {.Interval = 15}
-        Dim elapsed As Integer = 0
+        Dim t As PrecisionTimer = 创建UI精度计时器(frm, FrameIntervalMilliseconds(60))
+        Dim startTicks As Long = Stopwatch.GetTimestamp()
         AddHandler t.Tick, Sub(sender, ev)
-                               elapsed += 15
+                               Dim elapsed As Double = (Stopwatch.GetTimestamp() - startTicks) * 1000.0R / Stopwatch.Frequency
                                Dim ratio As Double = Math.Min(1.0, elapsed / CDbl(duration))
                                If Not s.AnimatingShow OrElse elapsed >= duration OrElse frm.IsDisposed Then
                                    t.Stop() : t.Dispose()
@@ -772,9 +875,7 @@ Public Class ThisIsYourWindow
         End Get
         Set(value As Image)
             If _标题栏背景图片 Is value Then Return
-            Dim oldImage = _标题栏背景图片
             _标题栏背景图片 = value
-            D2DHelperV2.ReleaseImageD2DCache(oldImage, _首个附加窗体)
             通知重绘()
         End Set
     End Property
@@ -921,9 +1022,7 @@ Public Class ThisIsYourWindow
         End Get
         Set(value As Image)
             If _自定义图标 Is value Then Return
-            Dim oldImage = _自定义图标
             _自定义图标 = value
-            D2DHelperV2.ReleaseImageD2DCache(oldImage, _首个附加窗体)
             通知重绘()
         End Set
     End Property
@@ -1279,7 +1378,7 @@ Public Class ThisIsYourWindow
                 SetWindowPos(hWnd, IntPtr.Zero, 0, 0, 0, 0,
                              SWP_FRAMECHANGED Or SWP_NOMOVE Or SWP_NOSIZE Or SWP_NOZORDER)
                 更新阴影(s)
-                OuterToInnerRefreshScheduler.RequestFull(s.HostForm, invalidateChildren:=True, immediate:=True)
+                请求V3渲染(s.HostForm, 获取真实客户区矩形(s.HostForm), True)
             Next
         End Set
     End Property
@@ -1524,7 +1623,7 @@ Public Class ThisIsYourWindow
             _毛玻璃图片 = value
             For Each s In _forms.Values
                 If s.Renderer IsNot Nothing AndAlso _毛玻璃模式 = BackdropModeEnum.Image Then
-                    s.Renderer.CleanupD2DResources(D2DCacheCleanupLevel.ReleaseAllCaches)
+                    s.Renderer.CleanupD2DResources(D3DCacheCleanupLevel.ReleaseAllCaches)
                     s.Renderer.SetSource(True, value)
                     s.Renderer.RequestFrame(s.HostForm.Bounds, True)
                 End If
@@ -1702,7 +1801,7 @@ Public Class ThisIsYourWindow
                 SetWindowDisplayAffinity(s.HostForm.Handle, WDA_NONE)
             End If
             If s.Renderer Is Nothing Then
-                s.Renderer = New BackdropRenderer(s.HostForm)
+                s.Renderer = New D3D_BackdropSurfaceRenderer(s.HostForm)
                 s.Renderer.ApplyParameters(_毛玻璃模糊半径, _毛玻璃模糊次数, _毛玻璃下采样,
                                             _毛玻璃噪点缩放)
                 AddHandler s.Renderer.AverageCommitted, Sub(sender2, ev2)
@@ -1713,7 +1812,7 @@ Public Class ThisIsYourWindow
                                                         End Sub
             End If
             ' 配置源。非 Image 模式必须清掉静态源图引用，避免切回桌面抓屏后旧 Image 仍被 Renderer 持有。
-            s.Renderer.CleanupD2DResources(D2DCacheCleanupLevel.ReleaseAllCaches)
+            s.Renderer.CleanupD2DResources(D3DCacheCleanupLevel.ReleaseAllCaches)
             s.Renderer.SetSource(mode = BackdropModeEnum.Image, If(mode = BackdropModeEnum.Image, _毛玻璃图片, Nothing))
             ' Auto / CaptionOnly 模式且未长期启用 WDA 时，让 Renderer 在每次 BitBlt 瞬间临时排除自身，
             ' 避免事件驱动抓屏抓到自己产生镜像反馈。
@@ -1761,16 +1860,31 @@ Public Class ThisIsYourWindow
             Return
         End If
 
-        Dim interval As Integer = Math.Max(16, 1000 \ _毛玻璃帧率)
+        Dim interval As Integer = Math.Max(16, FrameIntervalMilliseconds(_毛玻璃帧率))
         If s.BackdropTimer Is Nothing Then
-            s.BackdropTimer = New Timer() With {.Interval = interval}
+            s.BackdropTimer = 创建UI精度计时器(s.HostForm, interval)
             AddHandler s.BackdropTimer.Tick, Sub(sender, ev) 毛玻璃Tick(s)
             s.BackdropTimer.Start()
         Else
             s.BackdropTimer.Interval = interval
-            If Not s.BackdropTimer.Enabled Then s.BackdropTimer.Start()
+            If Not s.BackdropTimer.IsRunning Then s.BackdropTimer.Start()
         End If
     End Sub
+
+    Private Shared Function 创建UI精度计时器(owner As Control, interval As Integer) As PrecisionTimer
+        Return New PrecisionTimer() With {
+            .Interval = Math.Max(1, interval),
+            .DispatchMode = PrecisionTimer.DispatchModeEnum.NonBlocking,
+            .OverrunPolicy = PrecisionTimer.OverrunPolicyEnum.Drop,
+            .WorkerThreadCount = 1,
+            .SynchronizingObject = owner
+        }
+    End Function
+
+    Private Shared Function FrameIntervalMilliseconds(fps As Integer) As Integer
+        fps = Math.Max(1, fps)
+        Return Math.Max(1, CInt(Math.Ceiling(1000.0R / fps)))
+    End Function
 
     Private Sub 毛玻璃Tick(s As PerFormState)
         If s Is Nothing OrElse s.Renderer Is Nothing OrElse s.HostForm Is Nothing Then Return
@@ -1897,7 +2011,7 @@ Public Class ThisIsYourWindow
     Friend Sub RecalculateButtonBounds(s As PerFormState)
         If s Is Nothing Then Return
         Dim form = s.HostForm
-        Dim w As Integer = form.ClientSize.Width
+        Dim w As Integer = 获取真实客户区尺寸(form).Width
         Dim bdr As Integer = 取缩放边框厚度(form)
         Dim bw As Integer = Math.Max(缩放逻辑尺寸(form, 16), 缩放逻辑尺寸(form, _按钮宽度))
         Dim bh As Integer = 取缩放标题栏高度(form)
@@ -1910,7 +2024,7 @@ Public Class ThisIsYourWindow
         Dim iconNone As Boolean = (_图标来源 = IconSourceEnum.None)
 
         ' 布局签名：所有影响按钮/图标位置的输入生成哈希，避免手工 bit-pack 截断导致缓存误命中。
-        Dim sig As Long = HashCode.Combine(w, D2DGlobals.GetCurrentDpi(form), bdr, bw, bh, sp, iconSize, iconPadLeft)
+        Dim sig As Long = HashCode.Combine(w, V3_DpiContext.FromControl(form).Dpi, bdr, bw, bh, sp, iconSize, iconPadLeft)
         sig = HashCode.Combine(sig, hasMin)
         sig = HashCode.Combine(sig, hasMax, posRight, iconNone)
         If s.LayoutSignature = sig Then Return
@@ -1960,7 +2074,8 @@ Public Class ThisIsYourWindow
 
     Private Function 获取标题栏内容矩形(form As Form) As Rectangle
         If form Is Nothing Then Return Rectangle.Empty
-        Return 获取标题栏内容矩形(form, form.ClientSize.Width, form.ClientSize.Height)
+        Dim size = 获取真实客户区尺寸(form)
+        Return 获取标题栏内容矩形(form, size.Width, size.Height)
     End Function
 
     Private Function 获取标题栏内容矩形(form As Form, w As Integer, h As Integer) As Rectangle
@@ -1972,209 +2087,103 @@ Public Class ThisIsYourWindow
         Return New Rectangle(x, y, rw, rh)
     End Function
 
-    ''' <summary>
-    ''' 为指定窗体执行完整绘制。通常由内部 Paint 事件自动调用。
-    ''' <para>
-    ''' 绘制流程分三段：① GPU 合成毛玻璃背景层（结果一次性贴回 GDI HDC）；② D2D V2 scope（DC RT + DirectWrite）；
-    ''' ③ 自定义 <c>CaptionPaint</c> 事件（仍以 GDI <see cref="Graphics"/> 暴露）。
-    ''' </para>
-    ''' <para>
-    ''' <b>D3D11 接入</b>：进入 V2 scope 后会显式 touch <see cref="PaintScopeV2.DeviceContext"/>，
-    ''' 让当前 Form 的 D3D11 / D2D 1.1 设备真正实例化并完成 <see cref="D3D11Globals.DeviceLost"/> 事件订阅。
-    ''' 本控件的实际绘制仍走 DC RT 以保留 DirectWrite ClearType 子像素抗锯齿；
-    ''' DeviceContext 在这里只起到"激活设备 + 监听设备丢失"的角色。一旦 D3D 设备进入丢失态
-    ''' （TDR / 远程桌面切换 / 驱动崩溃），会被本函数捕获并触发 <see cref="WindowCompositor.NotifyDeviceContextException"/>，
-    ''' 下一帧自动用新设备恢复，且只影响本帧像素，不会让进程崩溃。
-    ''' </para>
-    ''' </summary>
-    Public Sub PaintWindow(e As PaintEventArgs, targetForm As Form)
+    Friend Sub RenderGpuWindow(context As D3D_PaintContext, targetForm As Form)
         Dim s = 查找状态(targetForm)
-        If s Is Nothing Then Return
+        If context Is Nothing OrElse s Is Nothing Then Return
         RecalculateButtonBounds(s)
 
-        Dim g As Graphics = e.Graphics
-        Dim w As Integer = s.HostForm.ClientSize.Width
-        Dim h As Integer = s.HostForm.ClientSize.Height
+        Dim w As Integer = Math.Max(1, CInt(Math.Ceiling(context.ClipBounds.Width)))
+        Dim h As Integer = Math.Max(1, CInt(Math.Ceiling(context.ClipBounds.Height)))
         If w <= 0 OrElse h <= 0 Then Return
+
         Dim active As Boolean = s.Activated
-
-        Dim useBackdrop As Boolean = 毛玻璃当前启用(s) AndAlso
-                                      s.Renderer.HasFrame
-        Dim captionOnly As Boolean = (_毛玻璃模式 = BackdropModeEnum.CaptionOnly)
-        Dim fullRect As New Rectangle(0, 0, w, h)
+        Dim fullRect As New RectangleF(0, 0, w, h)
         Dim captionRect As Rectangle = 获取标题栏内容矩形(s.HostForm, w, h)
-        Dim backdropRect As Rectangle = If(captionOnly,
-                                           New Rectangle(0, 0, w, Math.Min(h, 取缩放标题栏总高度(s.HostForm))),
-                                           fullRect)
+        Dim captionRectF As New RectangleF(captionRect.X, captionRect.Y, captionRect.Width, captionRect.Height)
+        Dim drewBackdrop As Boolean = 绘制毛玻璃背景_GPU(context, s, fullRect, captionRectF, active)
 
-        Const ssaa As Integer = 1
-        Dim deviceLost As Boolean = False
-        Try
-            ' ── 1) 毛玻璃背景层 ──
-            ' 必须在进入 D2D scope（=BeginPaint → e.Graphics.GetHdc + DCRT.BindDC + BeginDraw）之前完成：
-            ' • BeginPaint 一旦发生，e.Graphics 的 HDC 已被释放给 DC RT 独占，再在 e.Graphics 上画会跨越
-            '   D2D 的 BeginDraw/EndDraw，造成像素丢失或闪烁；
-            ' • 窗口显示与背景映射都由 BackdropRenderer 在自己的 GPU target 里一次性合成 backdrop/tint/noise 后回贴，
-            '   保证透明页采到的窗口级背景与主窗体真实背景完全同源。
-            If useBackdrop Then
-                g.SmoothingMode = SmoothingMode.Default
-                g.PixelOffsetMode = PixelOffsetMode.Default
-                Dim tint = If(active, _毛玻璃Tint颜色, _毛玻璃Tint失焦颜色)
-                s.Renderer.DrawTo(g, backdropRect, tint, _毛玻璃噪点不透明度)
-            End If
-
-            ' ── 2) D2D V2 scope：标题栏背景 / 图片 / 遮罩 / 图标 / 按钮 / 边框 / 标题文字 ──
-            ' ThisIsYourWindow 只画矩形 / 位图 / DirectWrite 文字（文字在 DC RT 走 ClearType），
-            ' 没有任何需要超采的几何（无圆角、无旋转、无抗锯齿曲线），
-            ' 因此强制 ssaa=1，省下每帧一次离屏 BitmapRT 申请 + Flush 回采的开销。
-            ' GlobalOptions.GlobalSSAA 仍然对其他控件（ModernButton 等）生效，这里只是本控件不参与。
-            Using scope = D2DHelperV2.BeginPaint(e, s.HostForm, ssaa)
-                If scope Is Nothing Then
-                    ' 设计期 / 无 compositor：仅触发外部自定义绘制事件即可。
-                    RaiseEvent CaptionPaint(Me, New CaptionPaintEventArgs(g, captionRect, active, s.HostForm))
-                    Return
-                End If
-                Dim compositor = scope.Compositor
-
-                ' ── 2.0 D3D11 设备激活 + 设备丢失订阅触发 ──
-                ' 主动 touch DeviceContext 让本 Form 的 D3D11 / D2D 1.1 设备完成实例化与
-                ' D3D11Globals.DeviceLost 事件订阅。LakeUI 不提供 GPU 不支持时的显示回退路线；
-                ' 只有运行时掉驱动会被本函数吞掉当前帧并请求下一帧重建。
-                ' 本控件实际绘制走 DC RT 以保留 ClearType；DeviceContext 仅作为"设备状态心跳"存在。
-                Dim ctx As ID2D1DeviceContext = compositor.DeviceContext
-
-                Dim gRT As ID2D1RenderTarget = scope.GraphicsLayer
-                Dim dcRT As ID2D1DCRenderTarget = scope.DCRenderTarget
-
-                ' 2.1 标题栏底色（仅在没有毛玻璃时绘制）
-                If Not useBackdrop AndAlso captionRect.Width > 0 AndAlso captionRect.Height > 0 Then
-                    Dim capColor As Color = If(active, _标题栏背景颜色, _标题栏失焦背景颜色)
-                    If capColor.A > 0 Then
-                        Dim b = compositor.BrushCache.[Get](gRT, capColor)
-                        gRT.FillRectangle(D2DGlobals.ToD2DRect(captionRect), b)
-                    End If
-                End If
-
-                ' 2.2 标题栏背景图片（cover 居中裁切）
-                If _标题栏背景图片 IsNot Nothing AndAlso captionRect.Width > 0 AndAlso captionRect.Height > 0 Then
-                    绘制标题栏背景图片_D2D(gRT, compositor, captionRect)
-                End If
-
-                ' 2.3 标题栏遮罩
-                If _标题栏遮罩颜色.A > 0 AndAlso captionRect.Width > 0 AndAlso captionRect.Height > 0 Then
-                    Dim b = compositor.BrushCache.[Get](gRT, _标题栏遮罩颜色)
-                    gRT.FillRectangle(D2DGlobals.ToD2DRect(captionRect), b)
-                End If
-
-                ' 2.4 图标
-                绘制图标_D2D(gRT, compositor, s)
-
-                ' 2.5 控制按钮（背景与符号）
-                绘制控制按钮_D2D(gRT, compositor, s, s.CloseRect, HTCLOSE)
-                If s.HostForm.MaximizeBox Then 绘制控制按钮_D2D(gRT, compositor, s, s.MaxRect, HTMAXBUTTON)
-                If s.HostForm.MinimizeBox Then 绘制控制按钮_D2D(gRT, compositor, s, s.MinRect, HTMINBUTTON)
-
-                ' 2.6 外边框
-                Dim scaledBorderSize As Integer = 取缩放边框厚度(s.HostForm)
-                If scaledBorderSize > 0 Then
-                    Dim bdrColor As Color
-                    If useBackdrop AndAlso _边框自动颜色 Then
-                        bdrColor = s.Renderer.DeriveBorderColor(active, If(active, _边框颜色, _边框失焦颜色))
-                    Else
-                        bdrColor = If(active, _边框颜色, _边框失焦颜色)
-                    End If
-                    If bdrColor.A > 0 Then
-                        Dim bdr As Integer = Math.Min(scaledBorderSize, Math.Max(0, Math.Min(w, h)))
-                        Dim b = compositor.BrushCache.[Get](gRT, bdrColor)
-                        If bdr > 0 Then
-                            gRT.FillRectangle(D2DGlobals.ToD2DRect(New RectangleF(0, 0, w, Math.Min(bdr, h))), b)
-                            If h > bdr Then gRT.FillRectangle(D2DGlobals.ToD2DRect(New RectangleF(0, h - bdr, w, bdr)), b)
-                            Dim sideH As Integer = h - bdr * 2
-                            If sideH > 0 Then
-                                gRT.FillRectangle(D2DGlobals.ToD2DRect(New RectangleF(0, bdr, Math.Min(bdr, w), sideH)), b)
-                                If w > bdr Then gRT.FillRectangle(D2DGlobals.ToD2DRect(New RectangleF(w - bdr, bdr, bdr, sideH)), b)
-                            End If
-                        End If
-                    End If
-                End If
-
-                ' 2.7 SSAA=1 时 FlushGraphics 是 no-op；保留调用以维持 scope 状态机一致性。
-                scope.FlushGraphics()
-
-                ' 2.8 标题文字（D2D / DirectWrite 路径，绘制在 DC RT 上以保留 ClearType 子像素抗锯齿）
-                绘制标题文字_D2D(dcRT, compositor, s)
-            End Using
-        Catch ex As Exception
-            ' D2D / D3D11 设备级错误：通知 compositor 失效相关资源 → 吞掉本帧异常 → 请求下一帧重绘。
-            ' 非设备级错误：原样抛出，让 WinForms 默认的 Paint 异常处理生效（调试时能看到堆栈）。
-            Dim comp = D2DHelperV2.GetCompositor(s.HostForm)
-            If comp IsNot Nothing AndAlso comp.NotifyDeviceContextException(ex) Then
-                deviceLost = True
-            ElseIf D3D11Globals.IsDeviceLostException(ex) Then
-                D3D11Globals.HandleDeviceLost(ex)
-                deviceLost = True
-            Else
-                Throw
-            End If
-        End Try
-
-        If deviceLost Then
-            ' 让外部 CaptionPaint 仍能在本帧拿到 GDI Graphics（事件契约一致），
-            ' 然后请求下一帧重绘 —— compositor / D3D11 设备会在下一次访问时自动重建。
-            Try
-                RaiseEvent CaptionPaint(Me, New CaptionPaintEventArgs(g, captionRect, active, s.HostForm))
-            Catch
-            End Try
-            Try : OuterToInnerRefreshScheduler.RequestFull(s.HostForm) : Catch : End Try
-            Return
+        If Not drewBackdrop AndAlso captionRect.Width > 0 AndAlso captionRect.Height > 0 Then
+            Dim capColor As Color = If(active, _标题栏背景颜色, _标题栏失焦背景颜色)
+            If capColor.A > 0 Then context.FillRectangle(captionRectF, capColor)
         End If
 
-        ' ── 3) 触发外部自定义绘制事件（仍以 GDI Graphics 暴露，保持兼容）──
-        RaiseEvent CaptionPaint(Me, New CaptionPaintEventArgs(g, captionRect, active, s.HostForm))
+        If _标题栏背景图片 IsNot Nothing AndAlso captionRect.Width > 0 AndAlso captionRect.Height > 0 Then
+            绘制Cover图片_GPU(context, _标题栏背景图片, captionRectF)
+        End If
+
+        If _标题栏遮罩颜色.A > 0 AndAlso captionRect.Width > 0 AndAlso captionRect.Height > 0 Then
+            context.FillRectangle(captionRectF, _标题栏遮罩颜色)
+        End If
+
+        绘制图标_GPU(context, s)
+        绘制控制按钮_GPU(context, s, s.CloseRect, HTCLOSE)
+        If s.HostForm.MaximizeBox Then 绘制控制按钮_GPU(context, s, s.MaxRect, HTMAXBUTTON)
+        If s.HostForm.MinimizeBox Then 绘制控制按钮_GPU(context, s, s.MinRect, HTMINBUTTON)
+        绘制窗口边框_GPU(context, s, w, h, active)
+        绘制标题文字_GPU(context, s)
     End Sub
 
-    Private Sub 绘制标题栏背景图片_D2D(rt As ID2D1RenderTarget, compositor As WindowCompositor, captionRect As Rectangle)
-        Dim img As Image = _标题栏背景图片
-        If img Is Nothing Then Return
-        Dim cw As Integer = captionRect.Width
-        Dim ch As Integer = captionRect.Height
-        If cw < 1 OrElse ch < 1 Then Return
+    Private Function 绘制毛玻璃背景_GPU(context As D3D_PaintContext,
+                                 s As PerFormState,
+                                 fullRect As RectangleF,
+                                 captionRect As RectangleF,
+                                 active As Boolean) As Boolean
+        If context Is Nothing OrElse s Is Nothing Then Return False
+        If _毛玻璃模式 = BackdropModeEnum.None Then Return False
 
-        Dim cache = compositor.GetBitmapCache(img)
-        Dim bmp = cache?.GetBitmap(rt, img)
-        If bmp Is Nothing Then Return
+        Dim tint = If(active, _毛玻璃Tint颜色, _毛玻璃Tint失焦颜色)
 
-        Dim ratioW As Single = CSng(cw) / img.Width
-        Dim ratioH As Single = CSng(ch) / img.Height
-        Dim ratio As Single = Math.Max(ratioW, ratioH)
-        Dim drawW As Single = img.Width * ratio
-        Dim drawH As Single = img.Height * ratio
-        Dim dx As Single = captionRect.X + (cw - drawW) / 2.0F
-        Dim dy As Single = captionRect.Y + (ch - drawH) / 2.0F
+        Select Case _毛玻璃模式
+            Case BackdropModeEnum.Image
+                If _毛玻璃图片 Is Nothing Then Return False
+                Dim renderer = context.Compositor.D3D_BackdropSurfaceRenderer
+                renderer.SetImage(_毛玻璃图片)
+                renderer.ApplyParameters(_毛玻璃模糊半径, _毛玻璃模糊次数, _毛玻璃下采样, _毛玻璃噪点缩放)
+                renderer.TintColor = tint
+                renderer.NoiseOpacity = _毛玻璃噪点不透明度
+                renderer.DrawImageBackdrop(context, fullRect)
+                Return True
 
-        ' 用 captionRect 做矩形几何裁剪，避免图像溢出标题栏。
-        Using clipGeo = D2DGlobals.GetD2DFactory().CreateRectangleGeometry(New RectangleF(captionRect.X, captionRect.Y, cw, ch))
-            D2DGlobals.PushGeometryClip(rt, clipGeo, New RectangleF(captionRect.X, captionRect.Y, cw, ch))
-            Try
-                rt.DrawBitmap(bmp,
-                              New Vortice.Mathematics.Rect(dx, dy, drawW, drawH),
-                              1.0F,
-                              BitmapInterpolationMode.Linear,
-                              Nothing)
-            Finally
-                rt.PopLayer()
-            End Try
+            Case BackdropModeEnum.Auto
+                If s.Renderer Is Nothing OrElse Not s.Renderer.HasFrame Then Return False
+                Return s.Renderer.DrawTo(context, fullRect, tint, _毛玻璃噪点不透明度)
+
+            Case BackdropModeEnum.CaptionOnly
+                If s.Renderer Is Nothing OrElse Not s.Renderer.HasFrame Then Return False
+                If captionRect.Width <= 0 OrElse captionRect.Height <= 0 Then Return False
+                Return s.Renderer.DrawTo(context, captionRect, tint, _毛玻璃噪点不透明度)
+        End Select
+
+        Return False
+    End Function
+
+    Private Sub 绘制Cover图片_GPU(context As D3D_PaintContext, image As Image, bounds As RectangleF)
+        If context Is Nothing OrElse image Is Nothing Then Return
+        If image.Width <= 0 OrElse image.Height <= 0 OrElse bounds.Width <= 0 OrElse bounds.Height <= 0 Then Return
+
+        Dim ratio As Single = Math.Max(bounds.Width / image.Width, bounds.Height / image.Height)
+        If ratio <= 0 Then Return
+        Dim drawW As Single = image.Width * ratio
+        Dim drawH As Single = image.Height * ratio
+        Dim dest As New RectangleF(
+            bounds.X + (bounds.Width - drawW) / 2.0F,
+            bounds.Y + (bounds.Height - drawH) / 2.0F,
+            drawW,
+            drawH)
+
+        Using context.PushClip(bounds)
+            context.DrawImage(image, dest)
         End Using
     End Sub
 
-    Private Sub 绘制图标_D2D(rt As ID2D1RenderTarget, compositor As WindowCompositor, s As PerFormState)
+    Private Sub 绘制图标_GPU(context As D3D_PaintContext, s As PerFormState)
         If _图标来源 = IconSourceEnum.None OrElse s.IconRect.IsEmpty Then Return
+
         Dim img As Image = Nothing
         If _图标来源 = IconSourceEnum.Custom Then
             img = _自定义图标
         ElseIf _图标来源 = IconSourceEnum.FormIcon AndAlso s.HostForm?.Icon IsNot Nothing Then
             If s.CachedIconSource IsNot s.HostForm.Icon Then
-                D2DHelperV2.ReleaseImageD2DCache(s.CachedIconBitmap, s.HostForm)
                 s.CachedIconBitmap?.Dispose()
                 s.CachedIconBitmap = s.HostForm.Icon.ToBitmap()
                 s.CachedIconSource = s.HostForm.Icon
@@ -2182,20 +2191,14 @@ Public Class ThisIsYourWindow
             img = s.CachedIconBitmap
         End If
         If img Is Nothing Then Return
-        Dim cache = compositor.GetBitmapCache(img)
-        Dim bmp = cache?.GetBitmap(rt, img)
-        If bmp Is Nothing Then Return
+
         Dim r = s.IconRect
-        Dim srcRect As New RectangleF(0, 0, img.Width, img.Height)
-        rt.DrawBitmap(bmp,
-                      New Vortice.Mathematics.Rect(r.X, r.Y, r.Width, r.Height),
-                      1.0F,
-                      BitmapInterpolationMode.Linear,
-                       D2DGlobals.ToD2DRect(srcRect))
+        context.DrawImage(img, New RectangleF(r.X, r.Y, r.Width, r.Height))
     End Sub
 
-    Private Sub 绘制控制按钮_D2D(rt As ID2D1RenderTarget, compositor As WindowCompositor, s As PerFormState, rect As Rectangle, htValue As Integer)
+    Private Sub 绘制控制按钮_GPU(context As D3D_PaintContext, s As PerFormState, rect As Rectangle, htValue As Integer)
         If rect.IsEmpty Then Return
+
         Dim isClose As Boolean = (htValue = HTCLOSE)
         Dim isHover As Boolean = (s.HoverHit = htValue)
         Dim isPressed As Boolean = (s.PressedHit = htValue)
@@ -2224,45 +2227,117 @@ Public Class ThisIsYourWindow
                                   rect.Width - buttonPadding.Horizontal, rect.Height - buttonPadding.Vertical)
         If vis.Width <= 0 OrElse vis.Height <= 0 Then Return
 
-        ' 背景
         If bgColor.A > 0 Then
             Dim r As Integer = Math.Min(Math.Max(0, 缩放逻辑尺寸(s.HostForm, _按钮圆角半径)), CInt(Math.Min(vis.Width, vis.Height)) \ 2)
-            Dim bgBrush = compositor.BrushCache.[Get](rt, bgColor)
+            Dim bgBrush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, bgColor, context.DeviceGeneration)
             If r > 0 Then
-                Using geo = RectangleRenderer.创建圆角矩形几何(vis, r)
-                    rt.FillGeometry(geo, bgBrush)
+                Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New RoundedRectangle(vis, r, r))
+                    context.DeviceContext.FillGeometry(geo, bgBrush)
                 End Using
             Else
-                rt.FillRectangle(D2DGlobals.ToD2DRect(vis), bgBrush)
+                context.DeviceContext.FillRectangle(D3D_PaintContext.ToRawRect(vis), bgBrush)
             End If
         End If
 
-        ' 符号
         If symColor.A = 0 Then Return
         Dim sz As Integer = Math.Max(缩放逻辑尺寸(s.HostForm, 4), 缩放逻辑尺寸(s.HostForm, _按钮符号大小))
         Dim cx As Single = vis.X + (vis.Width - sz) / 2.0F
         Dim cy As Single = vis.Y + (vis.Height - sz) / 2.0F
         Dim lw As Single = Math.Max(0.5F * 取Dpi缩放(s.HostForm), 缩放逻辑尺寸(s.HostForm, _按钮符号线宽))
-        Dim pen = compositor.BrushCache.[Get](rt, symColor)
-        If True Then
-            Select Case htValue
-                Case HTCLOSE
-                    rt.DrawLine(New Vector2(cx, cy), New Vector2(cx + sz, cy + sz), pen, lw)
-                    rt.DrawLine(New Vector2(cx + sz, cy), New Vector2(cx, cy + sz), pen, lw)
-                Case HTMAXBUTTON
-                    If s.HostForm.WindowState = FormWindowState.Maximized Then
-                        Dim off As Single = sz * 0.25F
-                        rt.DrawRectangle(New Vortice.Mathematics.Rect(cx + off, cy, sz - off, sz - off), pen, lw)
-                        rt.DrawRectangle(New Vortice.Mathematics.Rect(cx, cy + off, sz - off, sz - off), pen, lw)
-                    Else
-                        rt.DrawRectangle(New Vortice.Mathematics.Rect(cx, cy, sz, sz), pen, lw)
-                    End If
-                Case HTMINBUTTON
-                    Dim mid As Single = cy + sz / 2.0F
-                    rt.DrawLine(New Vector2(cx, mid), New Vector2(cx + sz, mid), pen, lw)
-            End Select
-        End If
+        Dim pen = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, symColor, context.DeviceGeneration)
+
+        Select Case htValue
+            Case HTCLOSE
+                context.DeviceContext.DrawLine(New Vector2(cx, cy), New Vector2(cx + sz, cy + sz), pen, lw)
+                context.DeviceContext.DrawLine(New Vector2(cx + sz, cy), New Vector2(cx, cy + sz), pen, lw)
+            Case HTMAXBUTTON
+                If s.HostForm.WindowState = FormWindowState.Maximized Then
+                    Dim off As Single = sz * 0.25F
+                    context.DeviceContext.DrawRectangle(New Vortice.Mathematics.Rect(cx + off, cy, sz - off, sz - off), pen, lw)
+                    context.DeviceContext.DrawRectangle(New Vortice.Mathematics.Rect(cx, cy + off, sz - off, sz - off), pen, lw)
+                Else
+                    context.DeviceContext.DrawRectangle(New Vortice.Mathematics.Rect(cx, cy, sz, sz), pen, lw)
+                End If
+            Case HTMINBUTTON
+                Dim mid As Single = cy + sz / 2.0F
+                context.DeviceContext.DrawLine(New Vector2(cx, mid), New Vector2(cx + sz, mid), pen, lw)
+        End Select
     End Sub
+
+    Private Sub 绘制窗口边框_GPU(context As D3D_PaintContext, s As PerFormState, w As Integer, h As Integer, active As Boolean)
+        Dim scaledBorderSize As Integer = 取缩放边框厚度(s.HostForm)
+        If scaledBorderSize <= 0 Then Return
+
+        Dim bdrColor As Color = If(active, _边框颜色, _边框失焦颜色)
+        If bdrColor.A = 0 Then Return
+
+        Dim bdr As Integer = Math.Min(scaledBorderSize, Math.Max(0, Math.Min(w, h)))
+        If bdr <= 0 Then Return
+
+        context.FillRectangle(New RectangleF(0, 0, w, Math.Min(bdr, h)), bdrColor)
+        If h > bdr Then context.FillRectangle(New RectangleF(0, h - bdr, w, bdr), bdrColor)
+
+        Dim sideH As Integer = h - bdr * 2
+        If sideH <= 0 Then Return
+        context.FillRectangle(New RectangleF(0, bdr, Math.Min(bdr, w), sideH), bdrColor)
+        If w > bdr Then context.FillRectangle(New RectangleF(w - bdr, bdr, bdr, sideH), bdrColor)
+    End Sub
+
+    Private Sub 绘制标题文字_GPU(context As D3D_PaintContext, s As PerFormState)
+        Dim text As String = 获取标题栏渲染文本(s.HostForm)
+        If String.IsNullOrEmpty(text) Then Return
+
+        Dim font As Font = If(_标题文字字体, s.HostForm.Font)
+        If font Is Nothing Then Return
+
+        Dim fgColor As Color = If(s.Activated, _标题文字颜色, _标题文字失焦颜色)
+        If fgColor.A = 0 Then Return
+
+        Dim textRect As RectangleF = 获取标题文字布局矩形(s)
+        If textRect.Width <= 0 OrElse textRect.Height <= 0 Then Return
+
+        Dim align As Vortice.DirectWrite.TextAlignment
+        Select Case _标题文字对齐
+            Case TitleAlignEnum.Center : align = Vortice.DirectWrite.TextAlignment.Center
+            Case TitleAlignEnum.Right : align = Vortice.DirectWrite.TextAlignment.Trailing
+            Case Else : align = Vortice.DirectWrite.TextAlignment.Leading
+        End Select
+
+        context.DrawText(text, font, fgColor, textRect, align, ParagraphAlignment.Center)
+    End Sub
+
+    ''' <summary>
+    ''' 兼容入口：在指定窗体当前 Paint HDC 上绘制标题栏与边框。
+    ''' </summary>
+    Public Sub PaintWindow(e As PaintEventArgs, targetForm As Form)
+        If targetForm Is Nothing OrElse targetForm.IsDisposed Then Return
+        TryPaintWindowChrome(e, targetForm)
+    End Sub
+
+    Private Function TryPaintWindowChrome(e As PaintEventArgs, targetForm As Form) As Boolean
+        If e Is Nothing OrElse targetForm Is Nothing OrElse targetForm.IsDisposed Then Return False
+        If targetForm.Width <= 0 OrElse targetForm.Height <= 0 Then Return False
+
+        Try
+            Using scope = D3D_PaintBridge.BeginGpuPaint(e, targetForm)
+                If scope Is Nothing Then Return False
+                Using context = scope.CreateContext(targetForm)
+                    If context Is Nothing Then Return False
+                    RenderGpuWindow(context, targetForm)
+                End Using
+            End Using
+            Return True
+        Catch ex As Exception
+            If D3D_RenderCore.DeviceManager.HandleDeviceLost(ex) Then
+                Try : targetForm.Invalidate() : Catch : End Try
+                Return False
+            End If
+            Throw
+        End Try
+    End Function
+
+
+
 
     Private Function 获取标题文字布局矩形(s As PerFormState) As RectangleF
         If s Is Nothing OrElse s.HostForm Is Nothing Then Return RectangleF.Empty
@@ -2299,7 +2374,7 @@ Public Class ThisIsYourWindow
         Dim dirty As Rectangle = Rectangle.Ceiling(textRect)
         Dim inflate As Integer = Math.Max(1, 缩放逻辑尺寸(s.HostForm, 2))
         dirty.Inflate(inflate, inflate)
-        Return Rectangle.Intersect(New Rectangle(Point.Empty, s.HostForm.ClientSize), dirty)
+        Return Rectangle.Intersect(获取真实客户区矩形(s.HostForm), dirty)
     End Function
 
     Private Function 获取标题栏渲染文本(form As Form) As String
@@ -2309,41 +2384,14 @@ Public Class ThisIsYourWindow
         Return _标题文字私有协议.Replace(TitleTextPrivateProtocolTitleToken, realTitle)
     End Function
 
-    Private Sub 绘制标题文字_D2D(rt As ID2D1DCRenderTarget, compositor As WindowCompositor, s As PerFormState)
-        Dim text As String = 获取标题栏渲染文本(s.HostForm)
-        If String.IsNullOrEmpty(text) Then Return
-        Dim font As Font = If(_标题文字字体, s.HostForm.Font)
-        If font Is Nothing Then Return
-        Dim fgColor As Color = If(s.Activated, _标题文字颜色, _标题文字失焦颜色)
-        If fgColor.A = 0 Then Return
-
-        Dim textRect As RectangleF = 获取标题文字布局矩形(s)
-        If textRect.Width <= 0 OrElse textRect.Height <= 0 Then Return
-
-        Dim align As Vortice.DirectWrite.TextAlignment
-        Select Case _标题文字对齐
-            Case TitleAlignEnum.Center : align = Vortice.DirectWrite.TextAlignment.Center
-            Case TitleAlignEnum.Right : align = Vortice.DirectWrite.TextAlignment.Trailing
-            Case Else : align = Vortice.DirectWrite.TextAlignment.Leading
-        End Select
-
-        Dim dpiScale As Single = D2DGlobals.GetCurrentDpiScale(s.HostForm)
-        ' 控件 Font 可能已被 WinForms AutoScale 修改，DirectWrite 字号统一交给 D2DGlobals 推断基准 DPI。
-        Dim sizePx As Single = D2DGlobals.GetDWriteFontSizePx(font, dpiScale)
-        Dim weight As Vortice.DirectWrite.FontWeight = If(font.Bold, Vortice.DirectWrite.FontWeight.Bold, Vortice.DirectWrite.FontWeight.Normal)
-        Dim style As Vortice.DirectWrite.FontStyle = If(font.Italic, Vortice.DirectWrite.FontStyle.Italic, Vortice.DirectWrite.FontStyle.Normal)
-
-        Dim fmt = compositor.TextFormatCache.[Get](font.FontFamily.Name, weight, style, sizePx, align, ParagraphAlignment.Center, True)
-        Dim brush = compositor.BrushCache.[Get](rt, fgColor)
-        rt.DrawText(text, fmt, D2DGlobals.ToD2DRect(textRect), brush,
-                    DrawTextOptions.Clip, Vortice.DCommon.MeasuringMode.Natural)
-    End Sub
 
     ''' <summary>请求指定窗体重绘标题栏区域。</summary>
     Public Sub InvalidateCaption(form As Form, Optional immediate As Boolean = False)
         If form IsNot Nothing AndAlso form.IsHandleCreated Then
-            form.Invalidate(New Rectangle(0, 0, form.ClientSize.Width, Math.Min(form.ClientSize.Height, 取缩放标题栏总高度(form))), False)
-            If immediate Then form.Update()
+            Dim size = 获取真实客户区尺寸(form)
+            请求V3渲染(form,
+                    New Rectangle(0, 0, size.Width, Math.Min(size.Height, 取缩放标题栏总高度(form))),
+                    immediate)
         End If
     End Sub
 
@@ -2359,15 +2407,7 @@ Public Class ThisIsYourWindow
         ArgumentNullException.ThrowIfNull(targetForm)
         If _首个附加窗体 Is Nothing Then _首个附加窗体 = targetForm
         If Not targetForm.IsHandleCreated Then
-            If _pendingAttachHandlers.ContainsKey(targetForm) Then Return
-            Dim handler As EventHandler = Nothing
-            handler = Sub(sender2, ev)
-                          RemoveHandler targetForm.HandleCreated, handler
-                          _pendingAttachHandlers.Remove(targetForm)
-                          Attach(targetForm)
-                      End Sub
-            _pendingAttachHandlers(targetForm) = handler
-            AddHandler targetForm.HandleCreated, handler
+            安排句柄创建后附加(targetForm)
             Return
         End If
         Dim pendingHandler As EventHandler = Nothing
@@ -2381,14 +2421,16 @@ Public Class ThisIsYourWindow
 
         Dim hWnd As IntPtr = targetForm.Handle
 
-        ' ── 第一步：标记与隐藏（通过 P/Invoke 直接操作分层窗口，绝不触碰 Form.Opacity） ──
+        ' ── 第一步：记录透明度。仅 Win32 渐入需要先隐藏窗口；None 不再把窗口压到 0 alpha。 ──
         ' Form.Opacity 会触发 AllowTransparency → UpdateStyles() →
         ' SetWindowLong(GWL_STYLE, CreateParams.Style) 把 WS_CAPTION 写回，
         ' 导致窗口以默认标题栏出现（白屏）。
-        ' 因此改用 SetLayeredWindowAttributes 直接设置 alpha=0。
+        ' 因此 Win32 渐入改用 SetLayeredWindowAttributes 直接设置 alpha=0。
         s.OriginalOpacity = targetForm.Opacity
-        If _显示动画模式 = WindowShowAnimationMode.Win32 Then s.AnimatingShow = True
-        If _显示动画模式 <> WindowShowAnimationMode.DWM Then
+        s.AnimatingShow = False
+        s.PendingFirstPaintRestore = False
+        If _显示动画模式 = WindowShowAnimationMode.Win32 Then
+            s.AnimatingShow = True
             Dim exStyle As Long = GetWindowLongPtr(hWnd, GWL_EXSTYLE).ToInt64()
             SetWindowLongPtr(hWnd, GWL_EXSTYLE, New IntPtr(exStyle Or WS_EX_LAYERED))
             SetLayeredWindowAttributes(hWnd, 0, 0, LWA_ALPHA)
@@ -2431,17 +2473,38 @@ Public Class ThisIsYourWindow
         AddHandler targetForm.TextChanged, AddressOf HostForm_TextChanged
         RecalculateButtonBounds(s)
         更新窗口内边距(s)
-        OuterToInnerRefreshScheduler.RequestFull(targetForm)
+        请求V3渲染(targetForm, 获取真实客户区矩形(targetForm), True)
         更新阴影(s)
         应用毛玻璃状态(s)
     End Sub
 
+    Private Sub 安排句柄创建后附加(targetForm As Form)
+        If targetForm Is Nothing OrElse targetForm.IsDisposed Then Return
+        If _pendingAttachHandlers.ContainsKey(targetForm) Then Return
+
+        Dim handler As EventHandler = Nothing
+        handler = Sub(sender2, ev)
+                      RemoveHandler targetForm.HandleCreated, handler
+                      _pendingAttachHandlers.Remove(targetForm)
+                      If targetForm.IsDisposed Then Return
+                      Attach(targetForm)
+                  End Sub
+        _pendingAttachHandlers(targetForm) = handler
+        AddHandler targetForm.HandleCreated, handler
+    End Sub
+
     ''' <summary>从指定窗体分离。</summary>
     Public Sub Detach(targetForm As Form)
+        释放当前句柄附加状态(targetForm, removeAttachedRegistration:=True, removePendingAttach:=True)
+    End Sub
+
+    Private Sub 释放当前句柄附加状态(targetForm As Form,
+                              removeAttachedRegistration As Boolean,
+                              removePendingAttach As Boolean)
         If targetForm Is Nothing Then Return
 
         Dim pendingHandler As EventHandler = Nothing
-        If _pendingAttachHandlers.TryGetValue(targetForm, pendingHandler) Then
+        If removePendingAttach AndAlso _pendingAttachHandlers.TryGetValue(targetForm, pendingHandler) Then
             RemoveHandler targetForm.HandleCreated, pendingHandler
             _pendingAttachHandlers.Remove(targetForm)
         End If
@@ -2461,18 +2524,15 @@ Public Class ThisIsYourWindow
                 End If
             Next
         End If
-        If s Is Nothing Then Return
+        If s Is Nothing Then
+            If removeAttachedRegistration Then 移除附加注册(targetForm)
+            Return
+        End If
         _forms.Remove(key)
-        SyncLock _attachedFormsLock
-            Dim owner As ThisIsYourWindow = Nothing
-            If _attachedForms.TryGetValue(targetForm, owner) AndAlso owner Is Me Then
-                _attachedForms.Remove(targetForm)
-            End If
-        End SyncLock
+        If removeAttachedRegistration Then 移除附加注册(targetForm)
 
         s.CachedIconBitmap?.Dispose()
-        ' V2：D2D 资源（DC RT / SSAA / 笔刷 / TextFormat / 位图缓存）全部由 WindowCompositor 管理，
-        '       会在 Form.HandleDestroyed 时自动释放，这里无需重复清理。
+        ' 窗口级 D3D compositor 会在 Form.HandleDestroyed 时释放图形资源，这里无需重复清理。
         s.Interceptor?.ReleaseHandle()
         销毁阴影(s)
         If s.BackdropTimer IsNot Nothing Then
@@ -2495,6 +2555,15 @@ Public Class ThisIsYourWindow
         RemoveHandler targetForm.FontChanged, AddressOf 宿主窗口_FontChanged
         RemoveHandler targetForm.TextChanged, AddressOf HostForm_TextChanged
         targetForm.Padding = s.OriginalPadding
+    End Sub
+
+    Private Sub 移除附加注册(targetForm As Form)
+        SyncLock _attachedFormsLock
+            Dim owner As ThisIsYourWindow = Nothing
+            If _attachedForms.TryGetValue(targetForm, owner) AndAlso owner Is Me Then
+                _attachedForms.Remove(targetForm)
+            End If
+        End SyncLock
     End Sub
 
     ''' <summary>分离所有已附加的窗体。</summary>
@@ -2551,7 +2620,7 @@ Public Class ThisIsYourWindow
         更新阴影(s)
 
         ' ── 强制重绘 ──
-        OuterToInnerRefreshScheduler.RequestFull(targetForm)
+        请求V3渲染(targetForm, 获取真实客户区矩形(targetForm), True)
     End Sub
 
     ''' <summary>
@@ -2569,8 +2638,9 @@ Public Class ThisIsYourWindow
 
     Friend Function 执行命中测试(s As PerFormState, clientPoint As Point) As Integer
         If s Is Nothing Then Return HTCLIENT
-        Dim w As Integer = s.HostForm.ClientSize.Width
-        Dim h As Integer = s.HostForm.ClientSize.Height
+        Dim clientSize = 获取真实客户区尺寸(s.HostForm)
+        Dim w As Integer = clientSize.Width
+        Dim h As Integer = clientSize.Height
         Dim bw As Integer = Math.Max(1, 缩放逻辑尺寸(s.HostForm, _调整边框宽度))
         Dim zoomed As Boolean = (s.HostForm.WindowState = FormWindowState.Maximized)
 
@@ -2705,7 +2775,7 @@ Public Class ThisIsYourWindow
                     End If
                     MyBase.WndProc(m)
                     If _owner._阴影模式 <> ShadowModeEnum.DWM Then _owner.切换动画样式(_state.HostForm.Handle, False)
-                    Dim currentClientSize As Size = _state.HostForm.ClientSize
+                    Dim currentClientSize As Size = ThisIsYourWindow.获取真实客户区尺寸(_state.HostForm)
                     Dim clientSizeChanged As Boolean = (currentClientSize <> _state.LastClientSize)
                     Dim minimizedNow As Boolean = (_state.HostForm IsNot Nothing AndAlso
                                                    _state.HostForm.WindowState = FormWindowState.Minimized)
@@ -2713,7 +2783,7 @@ Public Class ThisIsYourWindow
                     If minimizedNow Then
                         ' 最小化阶段没有可见客户区，避免把一次隐藏态 WM_SIZE 扩散成全量重绘。
                     ElseIf Not _owner.可跳过WMSize客户区刷新(_state, clientSizeChanged) Then
-                        OuterToInnerRefreshScheduler.RequestFull(_state.HostForm)
+                        请求V3渲染(_state.HostForm, ThisIsYourWindow.获取真实客户区矩形(_state.HostForm))
                     Else
                         _owner.InvalidateCaption(_state.HostForm)
                     End If
@@ -2736,7 +2806,7 @@ Public Class ThisIsYourWindow
                         _owner.InvalidateTitleText(_state, True)
                     End If
                     If Not _owner.毛玻璃当前启用(_state) Then
-                        OuterToInnerRefreshScheduler.RequestFull(_state.HostForm)
+                        请求V3渲染(_state.HostForm, ThisIsYourWindow.获取真实客户区矩形(_state.HostForm))
                     End If
                     If activated AndAlso Not _state.AnimatingClose Then _owner.更新阴影(_state)
                     Return
@@ -2750,13 +2820,22 @@ Public Class ThisIsYourWindow
                     _owner.更新阴影(_state)
                     Return
 
-                Case WM_PAINT, WM_ERASEBKGND
+                Case WM_ERASEBKGND
                     If _state.DeferredClientBoundsActive Then
-                        If m.Msg = WM_PAINT Then ValidateRect(_state.HostForm.Handle, IntPtr.Zero)
-                        m.Result = If(m.Msg = WM_ERASEBKGND, New IntPtr(1), IntPtr.Zero)
+                        m.Result = New IntPtr(1)
+                        Return
+                    End If
+                    m.Result = New IntPtr(1)
+                    Return
+
+                Case WM_PAINT
+                    If _state.DeferredClientBoundsActive Then
+                        ValidateRect(_state.HostForm.Handle, IntPtr.Zero)
+                        m.Result = IntPtr.Zero
                         Return
                     End If
                     MyBase.WndProc(m)
+                    If _state.PendingFirstPaintRestore Then _owner.取消首帧等待(_state)
                     Return
 
                 Case WM_ENTERSIZEMOVE
@@ -2885,6 +2964,9 @@ Public Class ThisIsYourWindow
                         End If
                     End If
                     MyBase.WndProc(m)
+                    If m.WParam <> IntPtr.Zero AndAlso _state.PendingFirstPaintRestore Then
+                        请求V3渲染(_state.HostForm, ThisIsYourWindow.获取真实客户区矩形(_state.HostForm), True)
+                    End If
                     If m.WParam <> IntPtr.Zero AndAlso _owner._显示动画模式 <> WindowShowAnimationMode.DWM Then
                         Try
                             Dim enable As Integer = 0
@@ -2919,11 +3001,11 @@ Public Class ThisIsYourWindow
                             SetWindowLongPtr(hWnd, GWL_EXSTYLE, New IntPtr(exStyle Or WS_EX_LAYERED))
                         End If
                         Dim syncShadow As Boolean = (_owner._阴影模式 = ShadowModeEnum.Layer) AndAlso _state.ShadowForm IsNot Nothing
-                        Dim t As New Timer() With {.Interval = 15}
-                        Dim elapsed As Integer = 0
+                        Dim t As PrecisionTimer = 创建UI精度计时器(frm, FrameIntervalMilliseconds(60))
+                        Dim startTicks As Long = Stopwatch.GetTimestamp()
                         Dim duration As Integer = _owner._动画持续时间
                         AddHandler t.Tick, Sub(s, ev)
-                                               elapsed += 15
+                                               Dim elapsed As Double = (Stopwatch.GetTimestamp() - startTicks) * 1000.0R / Stopwatch.Frequency
                                                If elapsed >= duration OrElse frm.IsDisposed Then
                                                    If Not frm.IsDisposed Then
                                                        SetLayeredWindowAttributes(hWnd, 0, 0, LWA_ALPHA)
@@ -2965,13 +3047,12 @@ Public Class ThisIsYourWindow
                     Return
 
                 Case WM_DPICHANGED
-                    Dim newDpi As Integer = D2DGlobals.ExtractDpiFromWParam(m.WParam)
+                    Dim newDpi As Integer = D3D_D2DInterop.ExtractDpiFromWParam(m.WParam)
                     If newDpi > 0 AndAlso _state.HostForm IsNot Nothing AndAlso
                        Not _state.HostForm.IsDisposed AndAlso _state.HostForm.IsHandleCreated Then
-                        D2DGlobals.SetWindowDpi(_state.HostForm.Handle, newDpi)
+                        D3D_D2DInterop.SetWindowDpi(_state.HostForm.Handle, newDpi)
                     End If
                     MyBase.WndProc(m)
-                    D2DHelperV2.NotifyDpiChanged(_state.HostForm, newDpi)
                     _owner.处理DpiChanged(_state)
                     Return
 

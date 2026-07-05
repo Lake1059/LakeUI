@@ -1,4 +1,5 @@
 Public Class Form1
+
     Private Sub Form1_Load(sender As Object, e As EventArgs) Handles MyBase.Load
         LakeUI.GlobalOptions.GlobalTextQuality = LakeUI.GlobalOptions.TextQualityMode.Outline
         Me.ThisIsYourWindow1.Attach(Me)
@@ -98,6 +99,7 @@ Public Class Form1
     End Sub
 
     Sub 绑定选项卡窗体背景透明(选项卡的根面板容器 As ModernPanel)
+        If 选项卡的根面板容器 Is Nothing Then Return
         选项卡的根面板容器.BackColor = Color.Transparent
         选项卡的根面板容器.BackColor1 = Color.Transparent
         选项卡的根面板容器.BackgroundSource = Me

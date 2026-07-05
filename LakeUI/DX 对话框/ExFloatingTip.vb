@@ -36,6 +36,8 @@ Public Class ExFloatingTipTheme
     Public Property CardBackColor As Color = Color.FromArgb(44, 44, 44)
     ''' <summary>卡片边框颜色。</summary>
     Public Property CardBorderColor As Color = Color.FromArgb(70, 70, 70)
+    ''' <summary>卡片边框宽度（像素，逻辑值，会自动适配 DPI）。</summary>
+    Public Property CardBorderSize As Integer = 1
 
     ' ── 内容区 ──
     ''' <summary>消息文本颜色。</summary>
@@ -135,7 +137,7 @@ End Module
 ''' </summary>
 Friend Class ExFloatingTipForm
     Inherits PopupForm
-    Implements IMessageFilter
+    Implements IMessageFilter, V3_IGpuRenderable, V3_IGpuInvalidationSource
 
 #Region "Win32"
 
@@ -190,7 +192,6 @@ Friend Class ExFloatingTipForm
 
     Private 主题 As ExFloatingTipTheme
     Private 锚点控件 As Control
-    Private ReadOnly 毛玻璃 As MessageDialogBackdropController
     Private 已关闭 As Boolean = False
 
     ' DPI 缩放系数
@@ -198,6 +199,7 @@ Friend Class ExFloatingTipForm
 
     ' 缩放后的尺寸
     Private 卡片内边距 As Integer
+    Private 卡片边框宽度 As Integer
     Private 卡片最大宽度 As Integer
 
     ' 文本
@@ -208,7 +210,7 @@ Friend Class ExFloatingTipForm
 
     ' 动画
     Private ReadOnly 动画秒表 As New Stopwatch()
-    Private 动画计时器 As Timer
+    Private 动画计时器 As PrecisionTimer
     Private 正在展开动画 As Boolean = False
     Private 正在关闭动画 As Boolean = False
     Private 最终位置 As Point
@@ -225,20 +227,20 @@ Friend Class ExFloatingTipForm
     Public Sub New(prompt As String, theme As ExFloatingTipTheme, anchor As Control, duration As Integer)
         主题 = If(theme, New ExFloatingTipTheme())
         锚点控件 = anchor
-        毛玻璃 = New MessageDialogBackdropController(Me)
         显示时长 = duration
 
         Me.DoubleBuffered = True
         Me.BackColor = 主题.CardBackColor
 
-        SC = D2DGlobals.GetCurrentDpiScale(Me)
-        卡片内边距 = CInt(主题.Padding * SC)
-        卡片最大宽度 = CInt(主题.MaxWidth * SC)
+        SC = ResolveDpiScale(anchor)
+        卡片内边距 = 缩放逻辑尺寸(主题.Padding)
+        卡片边框宽度 = 缩放逻辑尺寸(主题.CardBorderSize)
+        卡片最大宽度 = Math.Max(1, 缩放逻辑尺寸(主题.MaxWidth))
 
         消息字体 = New Font(MessageDialogRendering.ResolveDialogFontName(anchor, Me), 9.5F, FontStyle.Regular)
         消息文本 = prompt
 
-        滑动像素 = CInt(主题.SlideDistance * SC)
+        滑动像素 = 缩放逻辑尺寸(主题.SlideDistance)
 
         计算布局()
         定位卡片()
@@ -261,8 +263,7 @@ Friend Class ExFloatingTipForm
         ' 启动展开动画
         正在展开动画 = True
         动画秒表.Restart()
-        动画计时器 = New Timer() With {.Interval = 10}
-        AddHandler 动画计时器.Tick, AddressOf 动画帧更新
+        动画计时器 = 创建动画计时器()
         动画计时器.Start()
 
         Dim ownerForm As Form = Nothing
@@ -313,6 +314,23 @@ Friend Class ExFloatingTipForm
         动画秒表.Stop()
     End Sub
 
+    Private Shared Function FrameIntervalMilliseconds(fps As Integer) As Integer
+        fps = Math.Max(1, fps)
+        Return Math.Max(1, CInt(Math.Ceiling(1000.0R / fps)))
+    End Function
+
+    Private Function 创建动画计时器() As PrecisionTimer
+        Dim timer As New PrecisionTimer() With {
+            .Interval = FrameIntervalMilliseconds(60),
+            .DispatchMode = PrecisionTimer.DispatchModeEnum.NonBlocking,
+            .OverrunPolicy = PrecisionTimer.OverrunPolicyEnum.Drop,
+            .WorkerThreadCount = 1,
+            .SynchronizingObject = Me
+        }
+        AddHandler timer.Tick, AddressOf 动画帧更新
+        Return timer
+    End Function
+
     Private Sub 启动自动关闭()
         自动关闭计时器 = New Timer() With {.Interval = 显示时长}
         AddHandler 自动关闭计时器.Tick, AddressOf 自动关闭回调
@@ -349,31 +367,31 @@ Friend Class ExFloatingTipForm
 
     Private Sub 计算布局()
         ' 测量消息（约束宽度为实际可用文本宽度，即卡片最大宽度减去左右内边距）
-        Dim 最大文本宽 As Integer = 卡片最大宽度 - 卡片内边距 * 2
+        Dim 最大文本宽 As Integer = Math.Max(1, 卡片最大宽度 - 卡片内边距 * 2 - 卡片边框宽度 * 2)
         Dim 文本尺寸 = TextRenderer.MeasureText(
             消息文本, 消息字体,
             New Size(最大文本宽, Integer.MaxValue),
             文本标志)
 
         ' 卡片宽度 = 左右内边距 + 文本宽度（紧贴文本，无多余空白）
-        Dim 卡片宽度 As Integer = Math.Min(文本尺寸.Width + 卡片内边距 * 2, 卡片最大宽度)
+        Dim 卡片宽度 As Integer = Math.Min(文本尺寸.Width + 卡片内边距 * 2 + 卡片边框宽度 * 2, 卡片最大宽度)
 
         ' 用实际宽度重新测量
-        Dim 实际文本宽 As Integer = 卡片宽度 - 卡片内边距 * 2
+        Dim 实际文本宽 As Integer = Math.Max(1, 卡片宽度 - 卡片内边距 * 2 - 卡片边框宽度 * 2)
         文本尺寸 = TextRenderer.MeasureText(
             消息文本, 消息字体,
             New Size(实际文本宽, Integer.MaxValue),
             文本标志)
 
         ' 高度 = 上下内边距 + 文本高度
-        Dim 卡片高度 As Integer = 卡片内边距 * 2 + 文本尺寸.Height
+        Dim 卡片高度 As Integer = 卡片内边距 * 2 + 卡片边框宽度 * 2 + 文本尺寸.Height
 
-        Me.ClientSize = New Size(卡片宽度, 卡片高度)
+        Me.ClientSize = New Size(Math.Max(1, 卡片宽度), Math.Max(1, 卡片高度))
     End Sub
 
     Private Sub 定位卡片()
         Dim 屏幕区域 As Rectangle = Screen.FromPoint(Cursor.Position).WorkingArea
-        Dim gap As Integer = CInt(主题.AnchorGap * SC)
+        Dim gap As Integer = 缩放逻辑尺寸(主题.AnchorGap)
         Dim 锚点中心X As Integer
         Dim 锚点顶部Y As Integer
 
@@ -409,40 +427,66 @@ Friend Class ExFloatingTipForm
 #Region "绘制"
 
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
-        If Not 毛玻璃.Enabled Then MyBase.OnPaintBackground(e)
+        ' V3-only: tip pixels are emitted by RenderGpu.
     End Sub
 
     Protected Overrides Sub OnShown(e As EventArgs)
         MyBase.OnShown(e)
-        毛玻璃.Prepare()
-        Invalidate()
+        RequestV3Render()
     End Sub
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
-        毛玻璃.Draw(e.Graphics)
-
-        Using scope = D2DHelperV2.BeginPaint(e, Me, 1)
-            If scope Is Nothing Then Return
-            Dim rt = scope.GraphicsLayer
-            Dim compositor = scope.Compositor
-            Dim brushCache = compositor.BrushCache
-
-            If Not 毛玻璃.HasFrame Then
-                MessageDialogRendering.FillRectangle(rt, brushCache, New RectangleF(0, 0, ClientSize.Width, ClientSize.Height), 主题.CardBackColor)
-            End If
-
-            Dim textRect As New RectangleF(
-                卡片内边距, 卡片内边距,
-                Me.ClientSize.Width - 卡片内边距 * 2,
-                Me.ClientSize.Height - 卡片内边距 * 2)
-            MessageDialogRendering.DrawText(rt, compositor, 消息文本, 消息字体, textRect,
-                主题.MessageForeColor, 文本标志, SC)
-
-            MessageDialogRendering.DrawRectangle(rt, brushCache,
-                New RectangleF(0.5F, 0.5F, Math.Max(0, ClientSize.Width - 1), Math.Max(0, ClientSize.Height - 1)),
-                主题.CardBorderColor, 1.0F)
-        End Using
+        If Not D3D_PaintBridge.PaintRenderable(e, Me, Me, 1) Then MyBase.OnPaint(e)
     End Sub
+
+    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+        If context Is Nothing OrElse ClientSize.Width <= 0 OrElse ClientSize.Height <= 0 Then Return
+
+        Dim bounds As New RectangleF(0, 0, ClientSize.Width, ClientSize.Height)
+        Dim glass = MessageDialogRendering.DrawBackdrop(context, bounds)
+        If Not glass Then
+            MessageDialogRendering.FillRectangle(context, bounds, 主题.CardBackColor)
+        End If
+
+        Dim textRect As New RectangleF(
+            卡片边框宽度 + 卡片内边距,
+            卡片边框宽度 + 卡片内边距,
+            Me.ClientSize.Width - (卡片边框宽度 + 卡片内边距) * 2,
+            Me.ClientSize.Height - (卡片边框宽度 + 卡片内边距) * 2)
+        MessageDialogRendering.DrawText(context, 消息文本, 消息字体, textRect,
+            主题.MessageForeColor, 文本标志, SC)
+
+        If 卡片边框宽度 > 0 Then
+            MessageDialogRendering.DrawInsetRectangle(context,
+                New RectangleF(0, 0, ClientSize.Width, ClientSize.Height),
+                主题.CardBorderColor, 卡片边框宽度)
+        End If
+    End Sub
+
+    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+        Return New Rectangle(Point.Empty, Me.Size)
+    End Function
+
+    Private Sub RequestV3Render()
+        RequestV3Render(New Rectangle(Point.Empty, Me.Size))
+    End Sub
+
+    Private Sub RequestV3Render(dirtyRect As Rectangle)
+        If IsDisposed Then Return
+        V3_InvalidationRouter.RequestRender(Me, dirtyRect)
+    End Sub
+
+    Private Shared Function ResolveDpiScale(anchor As Control) As Single
+        ' Popup 构造时自身句柄通常还没创建；优先继承锚点或活动窗口 DPI。
+        If anchor IsNot Nothing AndAlso Not anchor.IsDisposed Then Return V3_DpiContext.FromControl(anchor).Scale
+        Dim active = Form.ActiveForm
+        If active IsNot Nothing AndAlso Not active.IsDisposed Then Return V3_DpiContext.FromControl(active).Scale
+        Return 1.0F
+    End Function
+
+    Private Function 缩放逻辑尺寸(value As Integer) As Integer
+        Return Math.Max(0, CInt(Math.Round(value * SC, MidpointRounding.AwayFromZero)))
+    End Function
 
 #End Region
 
@@ -456,8 +500,7 @@ Friend Class ExFloatingTipForm
         正在关闭动画 = True
         动画秒表.Restart()
         If 动画计时器 Is Nothing Then
-            动画计时器 = New Timer() With {.Interval = 10}
-            AddHandler 动画计时器.Tick, AddressOf 动画帧更新
+            动画计时器 = 创建动画计时器()
         End If
         动画计时器.Start()
     End Sub
@@ -480,7 +523,6 @@ Friend Class ExFloatingTipForm
             自动关闭计时器?.Stop()
             自动关闭计时器?.Dispose()
             消息字体?.Dispose()
-            毛玻璃?.Dispose()
         End If
         MyBase.Dispose(disposing)
     End Sub

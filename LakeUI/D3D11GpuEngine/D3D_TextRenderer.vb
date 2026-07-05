@@ -12,7 +12,7 @@ End Enum
 ''' D3D_TextRenderer 是新核心唯一的文字绘制入口。
 ''' 它集中管理 ClearType/MacType 兼容、Outline 高质量策略位、Grayscale 透明目标稳定路线，并允许 Auto 根据 target alpha 选择。
 ''' 当前基础实现先通过 DirectWrite/D2D 文本入口完成模式切换；后续如果需要真正几何描边或独立 text layer，必须扩展本类，不能让控件绕过核心自建文字管线。
-''' 后续迁移控件不要直接调用旧 D2DTextRenderer；文本测量可复用 DirectWrite 思路，但绘制入口必须通过本类。
+''' 后续迁移控件不要直接调用旧 D3D_TextInterop；文本测量可复用 DirectWrite 思路，但绘制入口必须通过本类。
 ''' ClearType 在透明 composition target 上可能不稳定，因此 text target 策略必须显式。
 ''' </summary>
 Public NotInheritable Class D3D_TextRenderer
@@ -51,12 +51,37 @@ Public NotInheritable Class D3D_TextRenderer
                         font As Font,
                         color As System.Drawing.Color,
                         layoutRect As RectangleF,
-                        Optional hAlign As TextAlignment = TextAlignment.Leading)
-        If String.IsNullOrEmpty(text) OrElse font Is Nothing Then Return
+                        Optional hAlign As TextAlignment = TextAlignment.Leading,
+                        Optional vAlign As ParagraphAlignment = ParagraphAlignment.Near,
+                        Optional wordWrap As Boolean = False)
+        If Not CanDrawText(context, text, font, color, layoutRect) Then Return
 
-        ConfigureDeviceContext(context.DeviceContext, context.TextQuality, targetHasAlpha:=False)
+        ConfigureDeviceContext(context.DeviceContext, context.TextQuality, context.TargetHasAlpha)
         Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
-        Dim format = GetTextFormat(font, context.DpiScale, hAlign)
+        Dim format = GetTextFormat(font, context.DpiScale, hAlign, vAlign, wordWrap, trimChar:=False)
+        If format Is Nothing OrElse brush Is Nothing Then Return
+        context.DeviceContext.DrawText(text, format, D3D_PaintContext.ToRawRect(layoutRect), brush, DrawTextOptions.Clip)
+    End Sub
+
+    Public Sub DrawText(context As D3D_PaintContext,
+                        text As String,
+                        font As Font,
+                        color As System.Drawing.Color,
+                        layoutRect As RectangleF,
+                        flags As TextFormatFlags)
+        If Not CanDrawText(context, text, font, color, layoutRect) Then Return
+
+        ConfigureDeviceContext(context.DeviceContext, context.TextQuality, context.TargetHasAlpha)
+        Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
+        Dim format = GetTextFormat(
+            font,
+            context.DpiScale,
+            MapTextAlignment(flags),
+            MapParagraphAlignment(flags),
+            ShouldWordWrap(flags),
+            trimChar:=(flags And TextFormatFlags.EndEllipsis) = TextFormatFlags.EndEllipsis)
+        If format Is Nothing OrElse brush Is Nothing Then Return
+
         context.DeviceContext.DrawText(text, format, D3D_PaintContext.ToRawRect(layoutRect), brush, DrawTextOptions.Clip)
     End Sub
 
@@ -67,18 +92,25 @@ Public NotInheritable Class D3D_TextRenderer
         _formats.Clear()
     End Sub
 
-    Private Function GetTextFormat(font As Font, dpiScale As Single, hAlign As TextAlignment) As IDWriteTextFormat
+    Private Function GetTextFormat(font As Font,
+                                   dpiScale As Single,
+                                   hAlign As TextAlignment,
+                                   vAlign As ParagraphAlignment,
+                                   wordWrap As Boolean,
+                                   trimChar As Boolean) As IDWriteTextFormat
         Dim generation = _manager.DeviceGeneration
-        Dim sizePx = Math.Max(1.0F, CSng(font.SizeInPoints * 96.0F / 72.0F * Math.Max(0.01F, dpiScale)))
-        Dim weight = If(font.Bold, Vortice.DirectWrite.FontWeight.Bold, Vortice.DirectWrite.FontWeight.Normal)
-        Dim style = If(font.Italic, Vortice.DirectWrite.FontStyle.Italic, Vortice.DirectWrite.FontStyle.Normal)
-        Dim family = If(font.FontFamily Is Nothing, "Segoe UI", font.FontFamily.Name)
+        Dim sizePx = D3D_D2DInterop.GetDWriteFontSizePx(font, dpiScale)
+        Dim resolved = D3D_D2DInterop.ResolveTextFont(font)
         Dim key = generation.ToString(Globalization.CultureInfo.InvariantCulture) & ":" &
-                  family & ":" &
-                  CInt(weight).ToString(Globalization.CultureInfo.InvariantCulture) & ":" &
-                  CInt(style).ToString(Globalization.CultureInfo.InvariantCulture) & ":" &
+                  resolved.Family & ":" &
+                  CInt(resolved.Weight).ToString(Globalization.CultureInfo.InvariantCulture) & ":" &
+                  CInt(resolved.Style).ToString(Globalization.CultureInfo.InvariantCulture) & ":" &
+                  CInt(resolved.Stretch).ToString(Globalization.CultureInfo.InvariantCulture) & ":" &
                   sizePx.ToString("R", Globalization.CultureInfo.InvariantCulture) & ":" &
-                  CInt(hAlign).ToString(Globalization.CultureInfo.InvariantCulture)
+                  CInt(hAlign).ToString(Globalization.CultureInfo.InvariantCulture) & ":" &
+                  CInt(vAlign).ToString(Globalization.CultureInfo.InvariantCulture) & ":" &
+                  If(wordWrap, "1", "0") & ":" &
+                  If(trimChar, "1", "0")
 
         Dim entry As D3D_TextFormatCacheEntry = Nothing
         If _formats.TryGetValue(key, entry) Then
@@ -86,14 +118,49 @@ Public NotInheritable Class D3D_TextRenderer
             Return entry.Format
         End If
 
-        Dim format = _manager.DWriteFactory.CreateTextFormat(family, Nothing, weight, style, FontStretch.Normal, sizePx)
+        Dim format = D3D_D2DInterop.CreateTextFormat(resolved, sizePx)
         format.TextAlignment = hAlign
-        format.ParagraphAlignment = ParagraphAlignment.Near
-        format.WordWrapping = WordWrapping.NoWrap
+        format.ParagraphAlignment = vAlign
+        format.WordWrapping = If(wordWrap, WordWrapping.Wrap, WordWrapping.NoWrap)
+        If trimChar Then
+            Try
+                format.SetTrimming(New Trimming With {.Granularity = TrimmingGranularity.Character}, Nothing)
+            Catch
+            End Try
+        End If
 
         _formats(key) = New D3D_TextFormatCacheEntry(format, generation, NextClock())
         TrimFormatCache()
         Return format
+    End Function
+
+    Private Shared Function CanDrawText(context As D3D_PaintContext,
+                                        text As String,
+                                        font As Font,
+                                        color As System.Drawing.Color,
+                                        layoutRect As RectangleF) As Boolean
+        If context Is Nothing OrElse context.DeviceContext Is Nothing Then Return False
+        If String.IsNullOrEmpty(text) OrElse font Is Nothing Then Return False
+        If color.A = 0 Then Return False
+        If layoutRect.Width <= 0.0F OrElse layoutRect.Height <= 0.0F Then Return False
+        Return True
+    End Function
+
+    Private Shared Function MapTextAlignment(flags As TextFormatFlags) As TextAlignment
+        If (flags And TextFormatFlags.HorizontalCenter) = TextFormatFlags.HorizontalCenter Then Return TextAlignment.Center
+        If (flags And TextFormatFlags.Right) = TextFormatFlags.Right Then Return TextAlignment.Trailing
+        Return TextAlignment.Leading
+    End Function
+
+    Private Shared Function MapParagraphAlignment(flags As TextFormatFlags) As ParagraphAlignment
+        If (flags And TextFormatFlags.VerticalCenter) = TextFormatFlags.VerticalCenter Then Return ParagraphAlignment.Center
+        If (flags And TextFormatFlags.Bottom) = TextFormatFlags.Bottom Then Return ParagraphAlignment.Far
+        Return ParagraphAlignment.Near
+    End Function
+
+    Private Shared Function ShouldWordWrap(flags As TextFormatFlags) As Boolean
+        Return (flags And TextFormatFlags.WordBreak) = TextFormatFlags.WordBreak AndAlso
+               (flags And TextFormatFlags.SingleLine) <> TextFormatFlags.SingleLine
     End Function
 
     Private Shared Function ResolveMode(mode As D3D_TextQualityMode, targetHasAlpha As Boolean) As D3D_TextQualityMode

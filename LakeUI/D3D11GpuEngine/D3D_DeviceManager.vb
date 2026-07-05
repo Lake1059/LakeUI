@@ -7,7 +7,7 @@ Imports Vortice.DXGI
 ''' <summary>
 ''' D3D_DeviceManager 是新 D3D11 GPU 核心的进程级设备所有者。
 ''' 它负责创建并持有同一条 GPU 路线上的 D3D11 device、DXGI device、D2D1 device、DWrite factory 和 DXGI factory。
-''' 它不负责窗口 swap chain、控件绘制、旧 V2 DC RenderTarget、HDC 输出或任何 WARP/CPU 回退。
+''' 它不负责窗口 swap chain、控件绘制、旧 DC RenderTarget、HDC 输出或任何 WARP/CPU 回退。
 ''' <para>
 ''' 资源生命周期：本类拥有进程级 device/factory；窗口级 target、bitmap、brush、geometry、text layer 由各自的 D3D_ 缓存或 D3D_WindowCompositor 持有。
 ''' 所有跨帧 GPU 资源都必须记录 <see cref="DeviceGeneration"/>，generation 改变后必须丢弃并重建。
@@ -178,8 +178,8 @@ Public NotInheritable Class D3D_DeviceManager
 
     Private Sub EnsureCreatedNoLock()
         Try
-            _d2dFactory = D2D1.D2D1CreateFactory(Of ID2D1Factory1)(Vortice.Direct2D1.FactoryType.SingleThreaded)
-            _dwriteFactory = DWrite.DWriteCreateFactory(Of IDWriteFactory)(Vortice.DirectWrite.FactoryType.Shared)
+            _d2dFactory = D3D_D2DInterop.GetD2DFactory1()
+            _dwriteFactory = D3D_D2DInterop.GetDWriteFactory()
             _dxgiFactory = Global.Vortice.DXGI.DXGI.CreateDXGIFactory2(Of IDXGIFactory2)(False)
 
             Dim flags As DeviceCreationFlags = DeviceCreationFlags.BgraSupport Or DeviceCreationFlags.Singlethreaded
@@ -209,9 +209,6 @@ Public NotInheritable Class D3D_DeviceManager
         SafeDispose(_dxgiDevice)
         SafeDispose(_d3dDevice)
         SafeDispose(_dxgiFactory)
-        SafeDispose(_dwriteFactory)
-        SafeDispose(_d2dFactory)
-
         _d2dDevice = Nothing
         _dxgiDevice = Nothing
         _d3dDevice = Nothing

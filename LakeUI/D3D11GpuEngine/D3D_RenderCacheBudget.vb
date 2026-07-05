@@ -2,16 +2,16 @@
 ''' 进程级渲染缓存预算协调器。GPU 与 CPU 缓存分别注册 owner，
 ''' 由 owner 自己负责释放最旧条目，协调器只做总量统计与全局 LRU 调度。
 ''' </summary>
-Friend Interface IRenderCacheOwner
+Friend Interface D3D_IRenderCacheOwner
     ReadOnly Property CacheBytes As Long
     ReadOnly Property OldestUseTick As Long
     Function TrimOldest() As Boolean
     Sub ReleaseAll()
 End Interface
 
-Friend Module GpuCache
+Friend Module D3D_GpuCache
     Private ReadOnly _lock As New Object()
-    Private ReadOnly _owners As New List(Of WeakReference(Of IRenderCacheOwner))()
+    Private ReadOnly _owners As New List(Of WeakReference(Of D3D_IRenderCacheOwner))()
     Private _tick As Long
 
     Friend Function NextTick() As Long
@@ -21,33 +21,33 @@ Friend Module GpuCache
         End SyncLock
     End Function
 
-    Friend Sub Register(owner As IRenderCacheOwner)
+    Friend Sub Register(owner As D3D_IRenderCacheOwner)
         If owner Is Nothing Then Return
         SyncLock _lock
             CompactNoLock()
             For Each wr In _owners
-                Dim existing As IRenderCacheOwner = Nothing
+                Dim existing As D3D_IRenderCacheOwner = Nothing
                 If wr.TryGetTarget(existing) AndAlso ReferenceEquals(existing, owner) Then Return
             Next
-            _owners.Add(New WeakReference(Of IRenderCacheOwner)(owner))
+            _owners.Add(New WeakReference(Of D3D_IRenderCacheOwner)(owner))
         End SyncLock
     End Sub
 
-    Friend Sub TrimToBudget(Optional protectedOwner As IRenderCacheOwner = Nothing)
+    Friend Sub TrimToBudget(Optional protectedOwner As D3D_IRenderCacheOwner = Nothing)
         TrimToBudget(Math.Max(0L, GlobalOptions.GpuCacheBudgetBytes), protectedOwner)
     End Sub
 
-    Private Sub TrimToBudget(budget As Long, protectedOwner As IRenderCacheOwner)
+    Private Sub TrimToBudget(budget As Long, protectedOwner As D3D_IRenderCacheOwner)
         Dim guard As Integer = 0
         Do
             Dim total As Long = 0
-            Dim oldest As IRenderCacheOwner = Nothing
+            Dim oldest As D3D_IRenderCacheOwner = Nothing
             Dim oldestTick As Long = Long.MaxValue
 
             SyncLock _lock
                 CompactNoLock()
                 For Each wr In _owners
-                    Dim owner As IRenderCacheOwner = Nothing
+                    Dim owner As D3D_IRenderCacheOwner = Nothing
                     If Not wr.TryGetTarget(owner) OrElse owner Is Nothing Then Continue For
                     Dim bytes As Long = Math.Max(0L, owner.CacheBytes)
                     total += bytes
@@ -67,18 +67,18 @@ Friend Module GpuCache
     End Sub
 
     Friend Sub ReleaseAll()
-        Dim owners As List(Of IRenderCacheOwner) = SnapshotOwners()
+        Dim owners As List(Of D3D_IRenderCacheOwner) = SnapshotOwners()
         For Each owner In owners
             Try : owner.ReleaseAll() : Catch : End Try
         Next
     End Sub
 
-    Private Function SnapshotOwners() As List(Of IRenderCacheOwner)
-        Dim result As New List(Of IRenderCacheOwner)()
+    Private Function SnapshotOwners() As List(Of D3D_IRenderCacheOwner)
+        Dim result As New List(Of D3D_IRenderCacheOwner)()
         SyncLock _lock
             CompactNoLock()
             For Each wr In _owners
-                Dim owner As IRenderCacheOwner = Nothing
+                Dim owner As D3D_IRenderCacheOwner = Nothing
                 If wr.TryGetTarget(owner) AndAlso owner IsNot Nothing Then result.Add(owner)
             Next
         End SyncLock
@@ -87,15 +87,15 @@ Friend Module GpuCache
 
     Private Sub CompactNoLock()
         For i As Integer = _owners.Count - 1 To 0 Step -1
-            Dim owner As IRenderCacheOwner = Nothing
+            Dim owner As D3D_IRenderCacheOwner = Nothing
             If Not _owners(i).TryGetTarget(owner) OrElse owner Is Nothing Then _owners.RemoveAt(i)
         Next
     End Sub
 End Module
 
-Friend Module CpuCache
+Friend Module D3D_CpuCache
     Private ReadOnly _lock As New Object()
-    Private ReadOnly _owners As New List(Of WeakReference(Of IRenderCacheOwner))()
+    Private ReadOnly _owners As New List(Of WeakReference(Of D3D_IRenderCacheOwner))()
     Private _tick As Long
 
     Friend Function NextTick() As Long
@@ -105,33 +105,33 @@ Friend Module CpuCache
         End SyncLock
     End Function
 
-    Friend Sub Register(owner As IRenderCacheOwner)
+    Friend Sub Register(owner As D3D_IRenderCacheOwner)
         If owner Is Nothing Then Return
         SyncLock _lock
             CompactNoLock()
             For Each wr In _owners
-                Dim existing As IRenderCacheOwner = Nothing
+                Dim existing As D3D_IRenderCacheOwner = Nothing
                 If wr.TryGetTarget(existing) AndAlso ReferenceEquals(existing, owner) Then Return
             Next
-            _owners.Add(New WeakReference(Of IRenderCacheOwner)(owner))
+            _owners.Add(New WeakReference(Of D3D_IRenderCacheOwner)(owner))
         End SyncLock
     End Sub
 
-    Friend Sub TrimToBudget(Optional protectedOwner As IRenderCacheOwner = Nothing)
+    Friend Sub TrimToBudget(Optional protectedOwner As D3D_IRenderCacheOwner = Nothing)
         TrimToBudget(Math.Max(0L, GlobalOptions.CpuCacheBudgetBytes), protectedOwner)
     End Sub
 
-    Private Sub TrimToBudget(budget As Long, protectedOwner As IRenderCacheOwner)
+    Private Sub TrimToBudget(budget As Long, protectedOwner As D3D_IRenderCacheOwner)
         Dim guard As Integer = 0
         Do
             Dim total As Long = 0
-            Dim oldest As IRenderCacheOwner = Nothing
+            Dim oldest As D3D_IRenderCacheOwner = Nothing
             Dim oldestTick As Long = Long.MaxValue
 
             SyncLock _lock
                 CompactNoLock()
                 For Each wr In _owners
-                    Dim owner As IRenderCacheOwner = Nothing
+                    Dim owner As D3D_IRenderCacheOwner = Nothing
                     If Not wr.TryGetTarget(owner) OrElse owner Is Nothing Then Continue For
                     Dim bytes As Long = Math.Max(0L, owner.CacheBytes)
                     total += bytes
@@ -151,18 +151,18 @@ Friend Module CpuCache
     End Sub
 
     Friend Sub ReleaseAll()
-        Dim owners As List(Of IRenderCacheOwner) = SnapshotOwners()
+        Dim owners As List(Of D3D_IRenderCacheOwner) = SnapshotOwners()
         For Each owner In owners
             Try : owner.ReleaseAll() : Catch : End Try
         Next
     End Sub
 
-    Private Function SnapshotOwners() As List(Of IRenderCacheOwner)
-        Dim result As New List(Of IRenderCacheOwner)()
+    Private Function SnapshotOwners() As List(Of D3D_IRenderCacheOwner)
+        Dim result As New List(Of D3D_IRenderCacheOwner)()
         SyncLock _lock
             CompactNoLock()
             For Each wr In _owners
-                Dim owner As IRenderCacheOwner = Nothing
+                Dim owner As D3D_IRenderCacheOwner = Nothing
                 If wr.TryGetTarget(owner) AndAlso owner IsNot Nothing Then result.Add(owner)
             Next
         End SyncLock
@@ -171,7 +171,7 @@ Friend Module CpuCache
 
     Private Sub CompactNoLock()
         For i As Integer = _owners.Count - 1 To 0 Step -1
-            Dim owner As IRenderCacheOwner = Nothing
+            Dim owner As D3D_IRenderCacheOwner = Nothing
             If Not _owners(i).TryGetTarget(owner) OrElse owner Is Nothing Then _owners.RemoveAt(i)
         Next
     End Sub

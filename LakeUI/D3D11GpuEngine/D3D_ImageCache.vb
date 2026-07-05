@@ -42,15 +42,17 @@ Public NotInheritable Class D3D_ImageCache
                          image As Image,
                          destination As RectangleF,
                          Optional source As RectangleF? = Nothing,
-                         Optional opacity As Single = 1.0F)
-        Dim bitmap = GetBitmap(context, image)
+                         Optional opacity As Single = 1.0F,
+                         Optional frameIndex As Integer = 0,
+                         Optional interpolation As InterpolationMode = InterpolationMode.Linear)
+        Dim bitmap = GetBitmap(context, image, frameIndex)
         If bitmap Is Nothing Then Return
 
         Dim dst As Vortice.RawRectF? = D3D_PaintContext.ToRawRect(destination)
         Dim src As Vortice.RawRectF? = Nothing
         If source.HasValue Then src = D3D_PaintContext.ToRawRect(source.Value)
 
-        context.DeviceContext.DrawBitmap(bitmap, dst, Math.Max(0.0F, Math.Min(1.0F, opacity)), InterpolationMode.Linear, src, Nothing)
+        context.DeviceContext.DrawBitmap(bitmap, dst, Math.Max(0.0F, Math.Min(1.0F, opacity)), interpolation, src, Nothing)
     End Sub
 
     Public Sub Invalidate()

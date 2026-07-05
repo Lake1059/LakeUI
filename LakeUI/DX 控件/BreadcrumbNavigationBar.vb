@@ -6,6 +6,7 @@ Imports Vortice.Direct2D1
 ''' </summary>
 <DefaultEvent("ItemClicked")>
 Public Class BreadcrumbNavigationBar
+    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource
 
 #Region "节点定义与集合"
     ''' <summary>
@@ -44,7 +45,7 @@ Public Class BreadcrumbNavigationBar
         End Property
 
         Private Sub InvalidateOwner()
-            OuterToInnerRefreshScheduler.RequestFull(_owner)
+            _owner?.请求V3渲染()
         End Sub
 
         <Category("LakeUI"), Description("节点文本"), DefaultValue(GetType(String), "")>
@@ -345,7 +346,7 @@ Public Class BreadcrumbNavigationBar
             Dim oldIdx As Integer = _selectedIndex
             _selectedIndex = v
             Dim newItem As BreadcrumbItem = If(v >= 0 AndAlso v < _items.Count, _items(v), Nothing)
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
             RaiseEvent SelectedIndexChanged(Me, New BreadcrumbSelectionChangedEventArgs(oldIdx, v, newItem))
         End Set
     End Property
@@ -402,7 +403,7 @@ Public Class BreadcrumbNavigationBar
             If 溢出根文本 = v Then Return
             溢出根文本 = v
             _overflowItem.Text = v
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -589,7 +590,7 @@ Public Class BreadcrumbNavigationBar
 
     Private _backgroundSource As Control = Nothing
     <Category("LakeUI"),
-     Description("背景采样源（V2 透明背景穿透）。设置后将跨越任意层级直接采样此控件的绘制内容作为透明背景；为空时按 BackColor 协议处理。"),
+     Description("背景采样源。设置后记录关联源控件；V3 渲染由窗口合成器统一调度。"),
      DefaultValue(GetType(Control), Nothing), Browsable(True)>
     Public Property BackgroundSource As Control
         Get
@@ -597,8 +598,8 @@ Public Class BreadcrumbNavigationBar
         End Get
         Set(value As Control)
             If _backgroundSource IsNot value Then
-                _backgroundSource = BackgroundPenetrationV2.SetConsumerSource(Me, _backgroundSource, value)
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                _backgroundSource = D3D_BackgroundPenetration.SetBackgroundSource(Me, _backgroundSource, value)
+                请求V3渲染()
             End If
         End Set
     End Property
@@ -638,14 +639,23 @@ Public Class BreadcrumbNavigationBar
         _pressedNodeIndex = -2
         If _selectedIndex >= _items.Count Then _selectedIndex = -1
         If _activeDropDownMenu IsNot Nothing Then CloseDropDown()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 #End Region
 
 #Region "布局"
     Private Function DpiScale() As Single
-        Return D2DGlobals.GetCurrentDpiScale(Me)
+        Return V3_DpiContext.FromControl(Me).Scale
     End Function
+
+    Private Sub 请求V3渲染(Optional immediate As Boolean = False)
+        请求V3渲染(New Rectangle(Point.Empty, Me.Size), immediate)
+    End Sub
+
+    Private Sub 请求V3渲染(dirtyRect As Rectangle, Optional immediate As Boolean = False)
+        If Me.IsDisposed Then Return
+        V3_InvalidationRouter.RequestRender(Me, dirtyRect)
+    End Sub
 
     Private Sub RebuildLayout()
         _layoutCache.Clear()
@@ -674,7 +684,7 @@ Public Class BreadcrumbNavigationBar
                 Continue For
             End If
             Dim showIcon As Boolean = item.Image IsNot Nothing
-            Dim textW As Integer = TextRenderHelper.MeasureTextWidth(item.Text, Font, contentHeight)
+            Dim textW As Integer = D3D_TextMeasureHelper.MeasureTextWidth(item.Text, Font, contentHeight)
             Dim nodeTextW As Integer = textW + padX * 2
             If showIcon Then nodeTextW += iconSize + iconSpacing
             Dim total As Integer = nodeTextW
@@ -694,7 +704,7 @@ Public Class BreadcrumbNavigationBar
         If 启用溢出折叠 AndAlso totalWidth > availableRight AndAlso _items.Count > 1 Then
             ' 始终保留最后一个节点（叶子）；从左侧开始折叠，直到能放下。
             ' 折叠根本身需要的宽度 = padX*2 + textW("…") + aaw（折叠根总有箭头）。
-            Dim overflowTextW As Integer = TextRenderHelper.MeasureTextWidth(溢出根文本, Font, contentHeight)
+            Dim overflowTextW As Integer = D3D_TextMeasureHelper.MeasureTextWidth(溢出根文本, Font, contentHeight)
             Dim overflowNodeW As Integer = overflowTextW + padX * 2 + aaw
 
             For cut As Integer = 1 To _items.Count - 1
@@ -718,7 +728,7 @@ Public Class BreadcrumbNavigationBar
 
         ' 添加溢出折叠根
         If overflowStart > 0 Then
-            Dim overflowTextW As Integer = TextRenderHelper.MeasureTextWidth(溢出根文本, Font, contentHeight)
+            Dim overflowTextW As Integer = D3D_TextMeasureHelper.MeasureTextWidth(溢出根文本, Font, contentHeight)
             Dim oNodeW As Integer = overflowTextW + padX * 2
             Dim oLayout As New NodeLayout With {
                 .Index = -1,
@@ -791,62 +801,160 @@ Public Class BreadcrumbNavigationBar
 
 #Region "绘制"
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
-        ' V2 契约（参考 ModernButton）：
-        '   • BackgroundSource 已设置 → 跳过 BackColor 整个逻辑，背景由 OnPaint 中 BackgroundPenetrationV2 绘制；
-        '   • 否则一律走 .NET 自身透明逻辑（半透明 BackColor 由基类合成父级背景，不透明色由基类填底）。
         If _backgroundSource IsNot Nothing Then Return
         MyBase.OnPaintBackground(e)
     End Sub
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
+        If Not D3D_PaintBridge.PaintRenderable(e, Me, Me, 1) Then MyBase.OnPaint(e)
+    End Sub
+
+    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
         RebuildLayout()
         Dim w As Integer = ClientRectangle.Width
         Dim h As Integer = ClientRectangle.Height
         If w < 1 OrElse h < 1 Then Return
 
-        Dim ssaa As Integer = D2DHelperV2.GetEffectiveSsaaScale(超采样倍率)
+        If _backgroundSource IsNot Nothing Then
+            context.DrawBackgroundSource(Me, _backgroundSource, New RectangleF(0, 0, w, h))
+        ElseIf MyBase.BackColor.A > 0 Then
+            context.FillRectangle(New RectangleF(0, 0, w, h), MyBase.BackColor)
+        End If
 
-        Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
-            If scope Is Nothing Then
-                MyBase.OnPaint(e)
-                Return
+        DrawNodesShapes_GPU(context)
+        If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
+            context.FillRectangle(New RectangleF(0, 0, w, h), 禁用时遮罩颜色)
+        End If
+        DrawNodesText_GPU(context)
+    End Sub
+
+    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+        Return New Rectangle(Point.Empty, Me.Size)
+    End Function
+
+    Private Sub DrawNodesShapes_GPU(context As D3D_PaintContext)
+        Dim s As Single = DpiScale()
+        Dim radius As Single = 节点圆角半径 * s
+
+        For Each l In _layoutCache
+            Dim isSelected As Boolean = (Not l.IsOverflow) AndAlso (l.Index = _selectedIndex) AndAlso l.Index >= 0
+
+            Dim textHover As Boolean = (_hoverNodeIndex = l.Index AndAlso Not _hoverIsArrow)
+            Dim textPressed As Boolean = (_pressedNodeIndex = l.Index AndAlso Not _pressedIsArrow)
+            Dim textHl As Color = Color.Empty
+            If textPressed Then
+                textHl = 节点按下背景
+            ElseIf textHover Then
+                textHl = 节点悬停背景
+            ElseIf isSelected Then
+                textHl = 选中节点背景
             End If
+            If textHl <> Color.Empty AndAlso textHl.A > 0 Then FillRoundedRect_GPU(context, l.TextRect, radius, textHl)
 
-            ' 背景层（参考 ModernButton）：
-            '   • 显式 BackgroundSource → 绘制穿透底图（跳过 BackColor）；
-            '   • 否则若 MyBase.BackColor 半透明 → 基类 OnPaintBackground 已把父级背景合成到 DC，
-            '     这里再叠加 BackColor 作为半透明遮罩；
-            '   • 不透明（A=255）已由基类 OnPaintBackground 填底，无需再画。
-            If _backgroundSource IsNot Nothing Then
-                BackgroundPenetrationV2.PaintBackground(Me, scope, _backgroundSource)
-            ElseIf MyBase.BackColor.A > 0 AndAlso MyBase.BackColor.A < 255 Then
-                Dim bgLayer = scope.BackgroundLayer
-                Dim bb = scope.Compositor.BrushCache.[Get](bgLayer, MyBase.BackColor)
-                If bb IsNot Nothing Then
-                    bgLayer.FillRectangle(D2DGlobals.ToD2DRect(New RectangleF(0, 0, w, h)), bb)
+            If l.HasArrow Then
+                Dim arrowHover As Boolean = (_hoverNodeIndex = l.Index AndAlso _hoverIsArrow)
+                Dim arrowPressed As Boolean = (_pressedNodeIndex = l.Index AndAlso _pressedIsArrow) OrElse (_dropDownArrowIndex = l.Index)
+                Dim arrHl As Color = Color.Empty
+                If arrowPressed Then
+                    arrHl = 节点按下背景
+                ElseIf arrowHover Then
+                    arrHl = 节点悬停背景
                 End If
+                If arrHl <> Color.Empty AndAlso arrHl.A > 0 Then FillRoundedRect_GPU(context, l.ArrowRect, radius, arrHl)
+
+                Dim arrowClr As Color = 箭头颜色
+                If (_hoverNodeIndex = l.Index AndAlso _hoverIsArrow) OrElse (_dropDownArrowIndex = l.Index) Then arrowClr = 箭头悬停颜色
+                DrawChevron_GPU(context, l.ArrowRect, arrowClr, _dropDownArrowIndex = l.Index)
+            End If
+        Next
+    End Sub
+
+    Private Sub DrawNodesText_GPU(context As D3D_PaintContext)
+        Dim s As Single = DpiScale()
+        Dim padX As Integer = CInt(节点文本左右内边距 * s)
+        Dim iconSize As Integer = CInt(图标大小 * s)
+        Dim iconSpacing As Integer = CInt(图标与文本间距 * s)
+        For Each l In _layoutCache
+            Dim item As BreadcrumbItem
+            If l.IsOverflow Then
+                item = _overflowItem
+            Else
+                If l.Index < 0 OrElse l.Index >= _items.Count Then Continue For
+                item = _items(l.Index)
+            End If
+            If item Is Nothing Then Continue For
+
+            Dim isSelected As Boolean = (Not l.IsOverflow) AndAlso (l.Index = _selectedIndex)
+            Dim textColor As Color = If(isSelected, 选中节点文本颜色, ForeColor)
+
+            If l.HasIcon AndAlso item.Image IsNot Nothing Then
+                context.DrawImage(item.Image, New RectangleF(l.IconRect.X, l.IconRect.Y, l.IconRect.Width, l.IconRect.Height))
             End If
 
-            ' 图形层：节点高亮 + 箭头
-            Dim gRT As ID2D1RenderTarget = scope.GraphicsLayer
-            Dim brushCache = scope.Compositor.BrushCache
-            DrawNodesShapes_D2D(gRT, brushCache)
-
-            scope.FlushGraphics()
-
-            ' 禁用遮罩
-            If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
-                Dim dcRT = scope.DCRenderTarget
-                Dim mb = brushCache.[Get](dcRT, 禁用时遮罩颜色)
-                If mb IsNot Nothing Then dcRT.FillRectangle(D2DGlobals.ToD2DRect(New RectangleF(0, 0, w, h)), mb)
+            Dim textRect As Rectangle = l.TextRect
+            Dim align As Vortice.DirectWrite.TextAlignment
+            If l.HasIcon Then
+                Dim shift As Integer = iconSize + iconSpacing
+                textRect = New Rectangle(textRect.X + padX + shift, textRect.Y, textRect.Width - padX - shift, textRect.Height)
+                align = Vortice.DirectWrite.TextAlignment.Leading
+            Else
+                align = Vortice.DirectWrite.TextAlignment.Center
             End If
+            If textRect.Width > 0 AndAlso textRect.Height > 0 Then
+                context.DrawText(item.Text, Font, textColor, New RectangleF(textRect.X, textRect.Y, textRect.Width, textRect.Height), align, Vortice.DirectWrite.ParagraphAlignment.Center)
+            End If
+        Next
+    End Sub
 
-            ' 文字层（DirectWrite）
-            DrawNodesText_D2D(scope.TextLayer, scope.Compositor, brushCache)
+    Private Sub FillRoundedRect_GPU(context As D3D_PaintContext, r As Rectangle, radius As Single, c As Color)
+        If r.Width <= 0 OrElse r.Height <= 0 OrElse c.A = 0 Then Return
+        Dim rect As New RectangleF(r.X, r.Y, r.Width, r.Height)
+        Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, c, context.DeviceGeneration)
+        If radius <= 0.5F Then
+            context.DeviceContext.FillRectangle(D3D_PaintContext.ToRawRect(rect), brush)
+            Return
+        End If
+        Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New RoundedRectangle(rect, radius, radius))
+            context.DeviceContext.FillGeometry(geo, brush)
         End Using
     End Sub
 
-    Private Sub DrawNodesShapes_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache)
+    Private Sub DrawChevron_GPU(context As D3D_PaintContext, area As Rectangle, c As Color, pointDown As Boolean)
+        If c.A = 0 Then Return
+        Dim s As Single = DpiScale()
+        Dim sz As Single = 箭头大小 * s
+        Dim cx As Single = area.X + area.Width / 2.0F
+        Dim cy As Single = area.Y + area.Height / 2.0F
+        Dim half As Single = sz / 2.0F
+        Dim hh As Single = half * 0.55F
+        Dim p1, p2, p3 As System.Numerics.Vector2
+        If pointDown Then
+            p1 = New System.Numerics.Vector2(cx - half, cy - hh)
+            p2 = New System.Numerics.Vector2(cx, cy + hh)
+            p3 = New System.Numerics.Vector2(cx + half, cy - hh)
+        Else
+            p1 = New System.Numerics.Vector2(cx - hh, cy - half)
+            p2 = New System.Numerics.Vector2(cx + hh, cy)
+            p3 = New System.Numerics.Vector2(cx - hh, cy + half)
+        End If
+        Dim path = D3D_RenderCore.DeviceManager.D2DFactory.CreatePathGeometry()
+        Try
+            Using sink = path.Open()
+                sink.BeginFigure(p1, FigureBegin.Hollow)
+                sink.AddLine(p2)
+                sink.AddLine(p3)
+                sink.EndFigure(FigureEnd.Open)
+                sink.Close()
+            End Using
+            Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, c, context.DeviceGeneration)
+            context.DeviceContext.DrawGeometry(path, brush, 箭头线宽 * s, D3D_D2DInterop.GetRoundStrokeStyle(roundDashCap:=True))
+        Finally
+            path.Dispose()
+        End Try
+    End Sub
+
+
+    Private Sub DrawNodesShapes_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache)
         Dim s As Single = DpiScale()
         Dim radius As Single = 节点圆角半径 * s
 
@@ -891,78 +999,23 @@ Public Class BreadcrumbNavigationBar
         Next
     End Sub
 
-    Private Sub DrawNodesText_D2D(rt As ID2D1RenderTarget,
-                                   compositor As WindowCompositor,
-                                   brushCache As D2DGlobals.SolidColorBrushCache)
-        Dim dpi As Single = DpiScale()
-        Dim s As Single = DpiScale()
-        Dim padX As Integer = CInt(节点文本左右内边距 * s)
-        Dim iconSize As Integer = CInt(图标大小 * s)
-        Dim iconSpacing As Integer = CInt(图标与文本间距 * s)
-        For Each l In _layoutCache
-            Dim item As BreadcrumbItem
-            If l.IsOverflow Then
-                item = _overflowItem
-            Else
-                If l.Index < 0 OrElse l.Index >= _items.Count Then Continue For
-                item = _items(l.Index)
-            End If
-            If item Is Nothing Then Continue For
 
-            ' 文本颜色（选中态优先）
-            Dim isSelected As Boolean = (Not l.IsOverflow) AndAlso (l.Index = _selectedIndex)
-            Dim textColor As Color = If(isSelected, 选中节点文本颜色, ForeColor)
 
-            ' 图标
-            If l.HasIcon AndAlso item.Image IsNot Nothing Then
-                DrawItemImage_D2D(rt, compositor, item.Image, l.IconRect)
-            End If
-
-            ' 文本区（避开图标）
-            Dim textRect As Rectangle = l.TextRect
-            If l.HasIcon Then
-                Dim shift As Integer = (iconSize + iconSpacing)
-                textRect = New Rectangle(textRect.X + padX + shift, textRect.Y, textRect.Width - padX - shift, textRect.Height)
-                D2DTextRenderer.DrawText(rt, item.Text, Font, textRect, textColor,
-                    TextFormatFlags.NoPadding Or TextFormatFlags.Left Or
-                    TextFormatFlags.VerticalCenter Or TextFormatFlags.SingleLine Or TextFormatFlags.EndEllipsis,
-                    dpi, compositor.TextFormatCache, brushCache)
-            Else
-                D2DTextRenderer.DrawText(rt, item.Text, Font, textRect, textColor,
-                    TextFormatFlags.NoPadding Or TextFormatFlags.HorizontalCenter Or
-                    TextFormatFlags.VerticalCenter Or TextFormatFlags.SingleLine Or TextFormatFlags.EndEllipsis,
-                    dpi, compositor.TextFormatCache, brushCache)
-            End If
-        Next
-    End Sub
-
-    Private Sub DrawItemImage_D2D(rt As ID2D1RenderTarget, compositor As WindowCompositor, img As Image, dest As Rectangle)
-        If img Is Nothing OrElse dest.Width <= 0 OrElse dest.Height <= 0 Then Return
-        Dim cache = compositor?.GetBitmapCache(img)
-        Dim bmp = cache?.GetBitmap(rt, img)
-        If bmp Is Nothing Then Return
-        rt.DrawBitmap(bmp,
-                      D2DGlobals.ToD2DRect(New RectangleF(dest.X, dest.Y, dest.Width, dest.Height)),
-                      1.0F,
-                      Vortice.Direct2D1.BitmapInterpolationMode.Linear,
-                      D2DGlobals.ToD2DRect(New RectangleF(0, 0, img.Width, img.Height)))
-    End Sub
-
-    Private Sub FillRoundedRect_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache,
+    Private Sub FillRoundedRect_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache,
                                     r As Rectangle, radius As Single, c As Color)
         If r.Width <= 0 OrElse r.Height <= 0 OrElse c.A = 0 Then Return
         Dim brush = brushCache.[Get](rt, c)
         If brush Is Nothing Then Return
         If radius <= 0.5F Then
-            rt.FillRectangle(D2DGlobals.ToD2DRect(New RectangleF(r.X, r.Y, r.Width, r.Height)), brush)
+            rt.FillRectangle(D3D_D2DInterop.ToD2DRect(New RectangleF(r.X, r.Y, r.Width, r.Height)), brush)
             Return
         End If
-        Using geo = RectangleRenderer.创建圆角矩形几何(New RectangleF(r.X, r.Y, r.Width, r.Height), radius)
+        Using geo = D3D_RectangleRenderer.创建圆角矩形几何(New RectangleF(r.X, r.Y, r.Width, r.Height), radius)
             rt.FillGeometry(geo, brush)
         End Using
     End Sub
 
-    Private Sub DrawChevron_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache,
+    Private Sub DrawChevron_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache,
                                 area As Rectangle, c As Color, pointDown As Boolean)
         Dim s As Single = DpiScale()
         Dim sz As Single = 箭头大小 * s
@@ -982,7 +1035,7 @@ Public Class BreadcrumbNavigationBar
         End If
         Dim brush = brushCache.[Get](rt, c)
         If brush Is Nothing Then Return
-        Dim factory = D2DGlobals.GetD2DFactory()
+        Dim factory = D3D_D2DInterop.GetD2DFactory()
         Dim path As ID2D1PathGeometry = factory.CreatePathGeometry()
         Try
             Using sink = path.Open()
@@ -992,7 +1045,7 @@ Public Class BreadcrumbNavigationBar
                 sink.EndFigure(FigureEnd.Open)
                 sink.Close()
             End Using
-            rt.DrawGeometry(path, brush, 箭头线宽 * s, D2DGlobals.GetRoundStrokeStyle(roundDashCap:=True))
+            rt.DrawGeometry(path, brush, 箭头线宽 * s, D3D_D2DInterop.GetRoundStrokeStyle(roundDashCap:=True))
         Finally
             path.Dispose()
         End Try
@@ -1011,7 +1064,7 @@ Public Class BreadcrumbNavigationBar
             _hoverNodeIndex = newHoverIdx
             _hoverIsArrow = isArrow
             Cursor = If(hit, Cursors.Hand, Cursors.Default)
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End If
 
         ' 更新 ToolTip
@@ -1041,7 +1094,7 @@ Public Class BreadcrumbNavigationBar
             _hoverNodeIndex = -2
             _hoverIsArrow = False
             Cursor = Cursors.Default
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End If
         If _toolTip IsNot Nothing Then
             _toolTip.SetToolTip(Me, String.Empty)
@@ -1058,7 +1111,7 @@ Public Class BreadcrumbNavigationBar
         If HitTest(e.Location, idx, isArrow, isOverflow) Then
             _pressedNodeIndex = idx
             _pressedIsArrow = isArrow
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End If
     End Sub
 
@@ -1073,7 +1126,7 @@ Public Class BreadcrumbNavigationBar
         Dim wasPressedArrow As Boolean = _pressedIsArrow
         _pressedNodeIndex = -2
         _pressedIsArrow = False
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
         If hit AndAlso idx = wasPressedIdx AndAlso isArrow = wasPressedArrow Then
             If isOverflow Then
                 ' 溢出根：无论点的是文本还是箭头，都展开折叠列表
@@ -1132,7 +1185,7 @@ Public Class BreadcrumbNavigationBar
         Dim anchorRect As Rectangle = GetDropDownAnchorRect(arrowIndex)
         Dim pt As Point = PointToScreen(New Point(anchorRect.Left, Height))
         _activeDropDownMenu.Show(pt.X, pt.Y)
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Private Function GetDropDownMenu(arrowIndex As Integer) As ModernContextMenu
@@ -1169,7 +1222,7 @@ Public Class BreadcrumbNavigationBar
             menu.Close()
         Catch
         End Try
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Private Sub DropDownMenu_MenuClosed(sender As Object, e As EventArgs)
@@ -1177,7 +1230,7 @@ Public Class BreadcrumbNavigationBar
         If menu IsNot Nothing Then RemoveHandler menu.MenuClosed, AddressOf DropDownMenu_MenuClosed
         _activeDropDownMenu = Nothing
         _dropDownArrowIndex = -2
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 #End Region
 
@@ -1185,30 +1238,30 @@ Public Class BreadcrumbNavigationBar
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End If
     End Sub
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
         MyBase.OnFontChanged(e)
-        D2DHelperV2.RefreshFontDependentRendering(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnSizeChanged(e As EventArgs)
         MyBase.OnSizeChanged(e)
         If _activeDropDownMenu IsNot Nothing Then CloseDropDown()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnEnabledChanged(e As EventArgs)
         MyBase.OnEnabledChanged(e)
         If Not Enabled AndAlso _activeDropDownMenu IsNot Nothing Then CloseDropDown()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 #End Region
 

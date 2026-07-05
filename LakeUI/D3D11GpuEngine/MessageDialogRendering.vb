@@ -29,32 +29,26 @@ End Class
 ''' </summary>
 ''' <remarks>
 ''' 每个消息窗 Form 一份实例；Prepare 负责抓取/生成当前背景帧，Draw 只消费已生成的帧。
-''' Dispose 会释放内部 PopupBackdropRenderer 与 BackdropRenderer。
+''' Dispose 会释放内部 D3D_PopupBackdropRenderer 与 D3D_BackdropSurfaceRenderer。
 ''' </remarks>
 Friend NotInheritable Class MessageDialogBackdropController
     Implements IDisposable
 
     Private ReadOnly _host As Form
-    Private ReadOnly _backdrop As PopupBackdropRenderer
 
     Public Sub New(host As Form)
         _host = host
-        ' 消息窗本身就是顶层浮窗。Auto 抓屏时临时排除自身，避免抓到自己的白底/阴影形成反馈。
-        _backdrop = New PopupBackdropRenderer(host) With {
-            .TransientExcludeOnCapture = True
-        }
     End Sub
 
     Public ReadOnly Property Enabled As Boolean
         Get
-            Return MessageDialogOptions.BackdropEnabled AndAlso
-                   MessageDialogOptions.BackdropMode <> PopupBackdropMode.None
+            Return MessageDialogRendering.IsGlassEnabled()
         End Get
     End Property
 
     Public ReadOnly Property HasFrame As Boolean
         Get
-            Return Enabled AndAlso _backdrop.HasFrame
+            Return Enabled
         End Get
     End Property
 
@@ -63,26 +57,11 @@ Friend NotInheritable Class MessageDialogBackdropController
     End Sub
 
     Public Sub Prepare(captureBounds As Rectangle)
-        If Not Enabled Then
-            _backdrop.Configure(PopupBackdropMode.None, Nothing, Color.Transparent, 1, 0, 1, 0, 1.0F)
-            _backdrop.Prepare(Rectangle.Empty)
-            Return
-        End If
-
-        _backdrop.Configure(MessageDialogOptions.BackdropMode,
-                            MessageDialogOptions.BackdropImage,
-                            MessageDialogOptions.BackdropTintColor,
-                            MessageDialogOptions.BackdropBlurRadius,
-                            MessageDialogOptions.BackdropBlurPasses,
-                            MessageDialogOptions.BackdropDownsampleFactor,
-                            MessageDialogOptions.BackdropNoiseOpacity,
-                            MessageDialogOptions.BackdropNoiseScale)
-        _backdrop.Prepare(captureBounds, True)
+        ' V3 消息窗只接入 GPU Image Backdrop；旧截图捕获路径不再执行。
     End Sub
 
     Public Function WaitForFrame(Optional timeoutMilliseconds As Integer = 500) As Boolean
-        If Not Enabled Then Return True
-        Return _backdrop.WaitForFrame(timeoutMilliseconds)
+        Return True
     End Function
 
     Public Sub Draw(g As Graphics)
@@ -90,32 +69,14 @@ Friend NotInheritable Class MessageDialogBackdropController
     End Sub
 
     Public Sub Draw(g As Graphics, target As Rectangle)
-        If Not HasFrame Then Return
-        _backdrop.Draw(g, target)
+        ' V3-only: pixels are emitted by RenderGpu.
     End Sub
 
     Public Sub DrawRounded(g As Graphics, target As Rectangle, radius As Single)
-        If Not HasFrame Then Return
-        If radius <= 0.0F Then
-            Draw(g, target)
-            Return
-        End If
-
-        Dim oldClip As Region = g.Clip?.Clone()
-        Using path = RectangleRenderer.创建圆角矩形路径(target, radius)
-            g.SetClip(path, Drawing2D.CombineMode.Replace)
-            _backdrop.Draw(g, target)
-        End Using
-        If oldClip IsNot Nothing Then
-            g.Clip = oldClip
-            oldClip.Dispose()
-        Else
-            g.ResetClip()
-        End If
+        ' V3-only: pixels are emitted by RenderGpu.
     End Sub
 
     Public Sub Dispose() Implements IDisposable.Dispose
-        _backdrop.Dispose()
     End Sub
 End Class
 
@@ -124,7 +85,7 @@ End Class
 ''' </summary>
 ''' <remarks>
 ''' 这里不保存 D2D 资源；真正的毛玻璃帧由 <see cref="MessageDialogBackdropController"/> /
-''' <see cref="PopupBackdropRenderer"/> 管理。
+''' <see cref="D3D_PopupBackdropRenderer"/> 管理。
 '''
 ''' 坑点：
 ''' • SHGetStockIconInfo 返回的 hIcon 必须 DestroyIcon；TryGetStockIcon 会 clone 一份托管 Icon 后释放原句柄。
@@ -171,7 +132,8 @@ Friend Module MessageDialogRendering
 
     Public Function IsGlassEnabled() As Boolean
         Return MessageDialogOptions.BackdropEnabled AndAlso
-               MessageDialogOptions.BackdropMode <> PopupBackdropMode.None
+               MessageDialogOptions.BackdropMode = PopupBackdropMode.Image AndAlso
+               MessageDialogOptions.BackdropImage IsNot Nothing
     End Function
 
     Public Function ResolveDialogFontName(owner As IWin32Window, Optional fallbackControl As Control = Nothing) As String
@@ -329,24 +291,24 @@ Friend Module MessageDialogRendering
     End Sub
 
     Public Sub FillRectangle(rt As ID2D1RenderTarget,
-                             brushCache As D2DGlobals.SolidColorBrushCache,
+                             brushCache As D3D_D2DInterop.SolidColorBrushCache,
                              rect As RectangleF,
                              color As Color)
         If rt Is Nothing OrElse brushCache Is Nothing OrElse color.A = 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
-        rt.FillRectangle(D2DGlobals.ToD2DRect(rect), brushCache.Get(rt, color))
+        rt.FillRectangle(D3D_D2DInterop.ToD2DRect(rect), brushCache.Get(rt, color))
     End Sub
 
     Public Sub DrawRectangle(rt As ID2D1RenderTarget,
-                             brushCache As D2DGlobals.SolidColorBrushCache,
+                             brushCache As D3D_D2DInterop.SolidColorBrushCache,
                              rect As RectangleF,
                              color As Color,
                              width As Single)
         If rt Is Nothing OrElse brushCache Is Nothing OrElse color.A = 0 OrElse width <= 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
-        rt.DrawRectangle(D2DGlobals.ToD2DRect(rect), brushCache.Get(rt, color), width)
+        rt.DrawRectangle(D3D_D2DInterop.ToD2DRect(rect), brushCache.Get(rt, color), width)
     End Sub
 
     Public Sub DrawText(rt As ID2D1RenderTarget,
-                        compositor As WindowCompositor,
+                        compositor As D3D_SurfaceCompositor,
                         text As String,
                         font As Font,
                         rect As RectangleF,
@@ -354,12 +316,12 @@ Friend Module MessageDialogRendering
                         flags As TextFormatFlags,
                         dpiScale As Single)
         If String.IsNullOrEmpty(text) OrElse font Is Nothing OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
-        D2DTextRenderer.DrawText(rt, text, font, rect, color, flags, dpiScale,
+        D3D_TextInterop.DrawText(rt, text, font, rect, color, flags, dpiScale,
                                  compositor.TextFormatCache, compositor.BrushCache)
     End Sub
 
     Public Sub DrawImage(rt As ID2D1RenderTarget,
-                         compositor As WindowCompositor,
+                         compositor As D3D_SurfaceCompositor,
                          image As Image,
                          rect As RectangleF)
         If rt Is Nothing OrElse compositor Is Nothing OrElse image Is Nothing OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
@@ -367,17 +329,17 @@ Friend Module MessageDialogRendering
         Dim cache = compositor.GetBitmapCache(image)
         Dim bitmap = cache?.GetBitmap(rt, image)
         If bitmap Is Nothing Then
-            Using directBitmap = D2DGlobals.CreateBitmapFromImage(rt, image)
+            Using directBitmap = D3D_D2DInterop.CreateBitmapFromImage(rt, image)
                 If directBitmap Is Nothing Then Return
-                rt.DrawBitmap(directBitmap, D2DGlobals.ToD2DRect(rect), 1.0F, BitmapInterpolationMode.Linear, sourceRect)
+                rt.DrawBitmap(directBitmap, D3D_D2DInterop.ToD2DRect(rect), 1.0F, BitmapInterpolationMode.Linear, sourceRect)
             End Using
             Return
         End If
-        rt.DrawBitmap(bitmap, D2DGlobals.ToD2DRect(rect), 1.0F, BitmapInterpolationMode.Linear, sourceRect)
+        rt.DrawBitmap(bitmap, D3D_D2DInterop.ToD2DRect(rect), 1.0F, BitmapInterpolationMode.Linear, sourceRect)
     End Sub
 
     Public Sub DrawCloseButton(rt As ID2D1RenderTarget,
-                               brushCache As D2DGlobals.SolidColorBrushCache,
+                               brushCache As D3D_D2DInterop.SolidColorBrushCache,
                                rect As RectangleF,
                                hovered As Boolean,
                                pressed As Boolean,
@@ -399,5 +361,147 @@ Friend Module MessageDialogRendering
         Dim brush = brushCache.Get(rt, glyphColor)
         rt.DrawLine(New Vector2(cx - half, cy - half), New Vector2(cx + half, cy + half), brush, width)
         rt.DrawLine(New Vector2(cx + half, cy - half), New Vector2(cx - half, cy + half), brush, width)
+    End Sub
+
+    Public Function DrawBackdrop(context As D3D_PaintContext, bounds As RectangleF) As Boolean
+        If context Is Nothing OrElse bounds.Width <= 0 OrElse bounds.Height <= 0 Then Return False
+        If Not IsGlassEnabled() Then Return False
+
+        context.Compositor.D3D_BackdropSurfaceRenderer.SetImage(MessageDialogOptions.BackdropImage)
+        context.Compositor.D3D_BackdropSurfaceRenderer.ApplyParameters(MessageDialogOptions.BackdropBlurRadius,
+                                                                       MessageDialogOptions.BackdropBlurPasses,
+                                                                       MessageDialogOptions.BackdropDownsampleFactor,
+                                                                       MessageDialogOptions.BackdropNoiseScale)
+        context.Compositor.D3D_BackdropSurfaceRenderer.TintColor = MessageDialogOptions.BackdropTintColor
+        context.Compositor.D3D_BackdropSurfaceRenderer.NoiseOpacity = MessageDialogOptions.BackdropNoiseOpacity
+        context.Compositor.D3D_BackdropSurfaceRenderer.DrawImageBackdrop(context, bounds)
+        Return True
+    End Function
+
+    Public Sub FillRectangle(context As D3D_PaintContext,
+                             rect As RectangleF,
+                             color As Color)
+        If context Is Nothing OrElse color.A = 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        context.FillRectangle(rect, color)
+    End Sub
+
+    Public Sub DrawRectangle(context As D3D_PaintContext,
+                             rect As RectangleF,
+                             color As Color,
+                             width As Single)
+        If context Is Nothing OrElse color.A = 0 OrElse width <= 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        context.DrawRectangle(rect, color, width)
+    End Sub
+
+    Public Sub DrawInsetRectangle(context As D3D_PaintContext,
+                                  bounds As RectangleF,
+                                  color As Color,
+                                  width As Single)
+        If context Is Nothing OrElse color.A = 0 OrElse width <= 0 OrElse bounds.Width <= 0 OrElse bounds.Height <= 0 Then Return
+        ' D2D DrawRectangle 的 stroke 以路径为中心线；外框绘制要先 inset，避免高 DPI 下半个 stroke 落到窗口外。
+        Dim half As Single = width / 2.0F
+        Dim rect As New RectangleF(bounds.X + half,
+                                   bounds.Y + half,
+                                   Math.Max(0.0F, bounds.Width - width),
+                                   Math.Max(0.0F, bounds.Height - width))
+        If rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        context.DrawRectangle(rect, color, width)
+    End Sub
+
+    Public Sub FillRoundedRectangle(context As D3D_PaintContext,
+                                    rect As RectangleF,
+                                    color As Color,
+                                    radius As Single)
+        If context Is Nothing OrElse color.A = 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        If radius <= 0.0F Then
+            context.FillRectangle(rect, color)
+            Return
+        End If
+
+        Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
+        Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New RoundedRectangle(rect, radius, radius))
+            context.DeviceContext.FillGeometry(geo, brush)
+        End Using
+    End Sub
+
+    Public Sub DrawRoundedRectangle(context As D3D_PaintContext,
+                                    rect As RectangleF,
+                                    color As Color,
+                                    width As Single,
+                                    radius As Single)
+        If context Is Nothing OrElse color.A = 0 OrElse width <= 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        Dim half = width / 2.0F
+        rect.Inflate(-half, -half)
+        If radius <= 0.0F Then
+            context.DrawRectangle(rect, color, width)
+            Return
+        End If
+
+        Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
+        Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New RoundedRectangle(rect, radius, radius))
+            context.DeviceContext.DrawGeometry(geo, brush, width)
+        End Using
+    End Sub
+
+    Public Sub DrawText(context As D3D_PaintContext,
+                        text As String,
+                        font As Font,
+                        rect As RectangleF,
+                        color As Color,
+                        flags As TextFormatFlags,
+                        dpiScale As Single)
+        If context Is Nothing OrElse String.IsNullOrEmpty(text) OrElse font Is Nothing OrElse color.A = 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+
+        Dim hAlign As Vortice.DirectWrite.TextAlignment = Vortice.DirectWrite.TextAlignment.Leading
+        If (flags And TextFormatFlags.HorizontalCenter) = TextFormatFlags.HorizontalCenter Then
+            hAlign = Vortice.DirectWrite.TextAlignment.Center
+        ElseIf (flags And TextFormatFlags.Right) = TextFormatFlags.Right Then
+            hAlign = Vortice.DirectWrite.TextAlignment.Trailing
+        End If
+
+        Dim vAlign As Vortice.DirectWrite.ParagraphAlignment = Vortice.DirectWrite.ParagraphAlignment.Near
+        If (flags And TextFormatFlags.VerticalCenter) = TextFormatFlags.VerticalCenter Then
+            vAlign = Vortice.DirectWrite.ParagraphAlignment.Center
+        ElseIf (flags And TextFormatFlags.Bottom) = TextFormatFlags.Bottom Then
+            vAlign = Vortice.DirectWrite.ParagraphAlignment.Far
+        End If
+
+        Dim wrap = (flags And TextFormatFlags.WordBreak) = TextFormatFlags.WordBreak
+        context.DrawText(text, font, color, rect, hAlign, vAlign, wrap)
+    End Sub
+
+    Public Sub DrawImage(context As D3D_PaintContext,
+                         image As Image,
+                         rect As RectangleF)
+        If context Is Nothing OrElse image Is Nothing OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        context.DrawImage(image, rect)
+    End Sub
+
+    Public Sub DrawCloseButton(context As D3D_PaintContext,
+                               rect As RectangleF,
+                               hovered As Boolean,
+                               pressed As Boolean,
+                               normalForeColor As Color,
+                               hoverForeColor As Color,
+                               hoverBackColor As Color,
+                               dpiScale As Single)
+        If context Is Nothing OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+
+        If pressed Then
+            FillRectangle(context, rect, Color.FromArgb(180, hoverBackColor))
+        ElseIf hovered Then
+            FillRectangle(context, rect, hoverBackColor)
+        End If
+
+        Dim glyphColor = If(hovered OrElse pressed, hoverForeColor, normalForeColor)
+        If glyphColor.A = 0 Then Return
+
+        Dim cx = rect.X + rect.Width / 2.0F
+        Dim cy = rect.Y + rect.Height / 2.0F
+        Dim half = 5.0F * dpiScale
+        Dim width = Math.Max(1.0F, 1.2F * dpiScale)
+        Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, glyphColor, context.DeviceGeneration)
+        context.DeviceContext.DrawLine(New Vector2(cx - half, cy - half), New Vector2(cx + half, cy + half), brush, width)
+        context.DeviceContext.DrawLine(New Vector2(cx + half, cy - half), New Vector2(cx - half, cy + half), brush, width)
     End Sub
 End Module

@@ -10,14 +10,14 @@ End Module
 ''' 控件不能自己提交 Present/Commit，不能持有跨帧 ID2D1Brush、ID2D1Bitmap 等 GPU 对象；跨帧资源必须交给 D3D_ 缓存类。
 ''' 控件可以持有纯业务状态，例如颜色、文本、滚动位置、动画进度。
 ''' </summary>
-Friend Interface V3_IGpuRenderable
+Public Interface V3_IGpuRenderable
     Sub RenderGpu(context As D3D_PaintContext)
 End Interface
 
-Friend Interface V3_IGpuInvalidationSource
+Public Interface V3_IGpuInvalidationSource
     Function GetRenderBounds() As Rectangle
 End Interface
 
-Friend Interface V3_IBackgroundSourceProvider
+Public Interface V3_IBackgroundSourceProvider
     Function TryGetBackgroundSource(ByRef source As Control) As Boolean
 End Interface

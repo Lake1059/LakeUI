@@ -5,6 +5,7 @@ Imports System.Globalization
 Imports System.Numerics
 Imports D2D = Vortice.Direct2D1
 Public Class ModernColorDialog
+    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource
 
 #Region "公共属性"
 
@@ -43,7 +44,7 @@ Public Class ModernColorDialog
 
     Private ReadOnly _chromaticityBitmapLock As New Object()
     Private _chromaticityBitmap As Bitmap
-    Private ReadOnly _chromaticityBitmapCache As New D2DGlobals.D2DBitmapCache()
+    Private ReadOnly _chromaticityBitmapCache As New D3D_D2DInterop.D2DBitmapCache()
     Private _markerX As Double = 0.3127
     Private _markerY As Double = 0.329
     Private _renderCts As CancellationTokenSource
@@ -948,44 +949,43 @@ Public Class ModernColorDialog
     End Sub
 
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
-        Return
+        ' V3-only: dialog pixels are emitted by RenderGpu.
     End Sub
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
         If _isClosing OrElse IsDisposed OrElse Disposing Then
-            MyBase.OnPaint(e)
             Return
         End If
         If _d2dInSizeMove Then
-            MyBase.OnPaint(e)
+            If Not D3D_PaintBridge.PaintRenderable(e, Me, Me, 1) Then MyBase.OnPaint(e)
             Return
         End If
 
         初始化D2D颜色对话框()
         确保D2D布局()
-        MyBase.OnPaint(e)
-
-        Dim ssaa As Integer = D2DHelperV2.GetEffectiveSsaaScale(2)
-
-        Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
-            If scope Is Nothing Then Return
-            Dim compositor = scope.Compositor
-            Dim gRT As D2D.ID2D1RenderTarget = scope.GraphicsLayer
-            Dim brushCache = compositor.BrushCache
-
-            If BackColor.A > 0 AndAlso Not 应保持窗口级背景透明() Then
-                Dim b = brushCache.[Get](scope.BackgroundLayer, BackColor)
-                If b IsNot Nothing Then
-                    scope.BackgroundLayer.FillRectangle(D2DGlobals.ToD2DRect(DisplayRectangle), b)
-                End If
-            End If
-
-            绘制D2D图形层(gRT, compositor)
-            scope.FlushGraphics()
-            绘制D2D文字层(scope.TextLayer, compositor)
-        End Using
-        _chromaticityBitmapCache.TrimToCurrentBudget()
+        If Not D3D_PaintBridge.PaintRenderable(e, Me, Me, 1) Then MyBase.OnPaint(e)
     End Sub
+
+    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+        If context Is Nothing OrElse _isClosing OrElse IsDisposed OrElse Disposing Then Return
+
+        初始化D2D颜色对话框()
+        确保D2D布局()
+
+        Dim keepWindowBackdropTransparent As Boolean = 应保持窗口级背景透明()
+        ThisIsYourWindow.TryRenderAttachedChrome(context, Me)
+
+        If BackColor.A > 0 AndAlso Not keepWindowBackdropTransparent Then
+            context.FillRectangle(DisplayRectangle, BackColor)
+        End If
+
+        绘制D2D图形层_GPU(context)
+        绘制D2D文字层_GPU(context)
+    End Sub
+
+    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+        Return New Rectangle(Point.Empty, Me.Size)
+    End Function
 
     Protected Overrides Sub OnResize(e As EventArgs)
         MyBase.OnResize(e)
@@ -1001,12 +1001,12 @@ Public Class ModernColorDialog
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
         MyBase.OnFontChanged(e)
-        D2DHelperV2.InvalidateTextFormatCache(Me)
+        D3D_RenderCore.InvalidateExistingTextResources(Me)
         For Each box In _d2dTextBoxOrder
             box.Renderer.LineHeight = 缩放值(24)
         Next
         _d2dLayoutDirty = True
-        Invalidate()
+        RequestV3Render()
     End Sub
 
     Private Sub 清理D2D颜色对话框()
@@ -1047,7 +1047,8 @@ Public Class ModernColorDialog
 
     Private Function 应保持窗口级背景透明() As Boolean
         If Not D2DKeepWindowBackdropTransparent Then Return False
-        Return Padding.Left > 0 OrElse Padding.Top > 0 OrElse Padding.Right > 0 OrElse Padding.Bottom > 0
+        If Not (Padding.Left > 0 OrElse Padding.Top > 0 OrElse Padding.Right > 0 OrElse Padding.Bottom > 0) Then Return False
+        Return ThisIsYourWindow.AttachedBackdropCoversClient(Me)
     End Function
 
 #End Region
@@ -1061,7 +1062,7 @@ Public Class ModernColorDialog
         _d2dLayoutDirty = False
 
         Dim s = 取D2D缩放()
-        Dim textFormatCache = D2DHelperV2.GetCompositor(Me)?.TextFormatCache
+        Dim textFormatCache As D3D_D2DInterop.TextFormatCache = Nothing
         Dim display = DisplayRectangle
         Dim pad As Single = 20.0F * s
         Dim gap As Single = 14.0F * s
@@ -1154,10 +1155,10 @@ Public Class ModernColorDialog
 
         Dim favoriteMainText As String = 取界面文本("FavoritesTitle", "收藏夹")
         Dim favoriteMainW As Single = Math.Max(1.0F, 测量界面文本宽度(favoriteMainText, Font, textFormatCache) + 6.0F * s)
-        Dim favoriteMainH As Single = Math.Max(1.0F, CSng(D2DTextRenderer.MeasureLineHeight(Font, s, textFormatCache)))
+        Dim favoriteMainH As Single = Math.Max(1.0F, CSng(D3D_TextInterop.MeasureLineHeight(Font, s, textFormatCache)))
         layout.FavoriteTitleMain = New RectangleF(favStartX, layout.Preview.Top, favoriteMainW, favoriteMainH)
         Using hintFont As New Font(Font.Name, Math.Max(1.0F, Font.Size - 1.2F), FontStyle.Regular, GraphicsUnit.Point)
-            Dim favoriteHintH As Single = Math.Max(1.0F, CSng(D2DTextRenderer.MeasureLineHeight(hintFont, s, textFormatCache)))
+            Dim favoriteHintH As Single = Math.Max(1.0F, CSng(D3D_TextInterop.MeasureLineHeight(hintFont, s, textFormatCache)))
             layout.FavoriteTitleHint = New RectangleF(layout.FavoriteTitleMain.Right + 2.0F * s,
                                                       layout.FavoriteTitleMain.Bottom - favoriteHintH,
                                                       Math.Max(1.0F, contentRight - layout.FavoriteTitleMain.Right - 2.0F * s),
@@ -1217,7 +1218,7 @@ Public Class ModernColorDialog
         Next
     End Sub
 
-    Private Function 计算数值标签宽度(textFormatCache As D2DGlobals.TextFormatCache) As Single
+    Private Function 计算数值标签宽度(textFormatCache As D3D_D2DInterop.TextFormatCache) As Single
         Dim s = 取D2D缩放()
         Dim w As Single = 0.0F
         For Each kind In {ColorDialogTextBoxKind.R, ColorDialogTextBoxKind.G, ColorDialogTextBoxKind.B,
@@ -1403,76 +1404,75 @@ Public Class ModernColorDialog
 
 #Region "D2D 绘制"
 
-    Private Sub 绘制D2D图形层(rt As D2D.ID2D1RenderTarget, compositor As WindowCompositor)
-        Dim brushCache = compositor.BrushCache
+
+
+    Private Sub 绘制D2D图形层_GPU(context As D3D_PaintContext)
         Dim l = _d2dLayout
         If l Is Nothing Then Return
 
-        填充圆角矩形(rt, l.ChromaticityFrame, D2DElementBackColor, l.Radius, brushCache)
-        绘制D2D色域位图(rt, compositor)
-        绘制D2D准心(rt, l.ChromaticityRect, brushCache)
+        MessageDialogRendering.FillRoundedRectangle(context, l.ChromaticityFrame, D2DElementBackColor, l.Radius)
+        绘制D2D色域位图_GPU(context)
+        绘制D2D准心_GPU(context, l.ChromaticityRect)
 
-        填充圆角矩形(rt, l.SearchBox, D2DElementBackColor, l.Radius, brushCache)
-        描绘圆角边框(rt, l.SearchBox, If(ReferenceEquals(_d2dActiveTextBox, _d2dTextBoxes(ColorDialogTextBoxKind.Search)), D2DElementBorderColor, Color.Transparent), 1.0F * 取D2D缩放(), l.Radius, brushCache)
-        填充圆角矩形(rt, l.HtmlList, D2DElementBackColor, l.Radius, brushCache)
-        绘制HTML列表图形(rt, brushCache)
+        MessageDialogRendering.FillRoundedRectangle(context, l.SearchBox, D2DElementBackColor, l.Radius)
+        MessageDialogRendering.DrawRoundedRectangle(context, l.SearchBox, If(ReferenceEquals(_d2dActiveTextBox, _d2dTextBoxes(ColorDialogTextBoxKind.Search)), D2DElementBorderColor, Color.Transparent), 1.0F * 取D2D缩放(), l.Radius)
+        MessageDialogRendering.FillRoundedRectangle(context, l.HtmlList, D2DElementBackColor, l.Radius)
+        绘制HTML列表图形_GPU(context)
 
         For Each box In _d2dTextBoxOrder
             If box.Kind = ColorDialogTextBoxKind.Search Then Continue For
-            填充圆角矩形(rt, box.Bounds, D2DElementBackColor, l.Radius, brushCache)
+            MessageDialogRendering.FillRoundedRectangle(context, box.Bounds, D2DElementBackColor, l.Radius)
             Dim border = If(ReferenceEquals(_d2dActiveTextBox, box), D2DElementBorderColor, Color.Transparent)
-            描绘圆角边框(rt, box.Bounds, border, 1.0F * 取D2D缩放(), l.Radius, brushCache)
+            MessageDialogRendering.DrawRoundedRectangle(context, box.Bounds, border, 1.0F * 取D2D缩放(), l.Radius)
         Next
 
-        绘制当前颜色预览(rt, brushCache)
-        绘制收藏夹(rt, brushCache)
-        绘制按钮(rt, l.ButtonEyeDropper, ColorDialogButtonKind.EyeDropper, brushCache)
-        绘制按钮(rt, l.ButtonTips, ColorDialogButtonKind.Tips, brushCache)
-        绘制按钮(rt, l.ButtonCopyArgb, ColorDialogButtonKind.CopyArgb, brushCache)
-        绘制按钮(rt, l.ButtonCopyHex, ColorDialogButtonKind.CopyHex, brushCache)
-        绘制按钮(rt, l.ButtonOK, ColorDialogButtonKind.OK, brushCache)
-        绘制按钮(rt, l.ButtonCancel, ColorDialogButtonKind.Cancel, brushCache)
+        绘制当前颜色预览_GPU(context)
+        绘制收藏夹_GPU(context)
+        绘制按钮_GPU(context, l.ButtonEyeDropper, ColorDialogButtonKind.EyeDropper)
+        绘制按钮_GPU(context, l.ButtonTips, ColorDialogButtonKind.Tips)
+        绘制按钮_GPU(context, l.ButtonCopyArgb, ColorDialogButtonKind.CopyArgb)
+        绘制按钮_GPU(context, l.ButtonCopyHex, ColorDialogButtonKind.CopyHex)
+        绘制按钮_GPU(context, l.ButtonOK, ColorDialogButtonKind.OK)
+        绘制按钮_GPU(context, l.ButtonCancel, ColorDialogButtonKind.Cancel)
     End Sub
 
-    Private Sub 绘制D2D文字层(rt As D2D.ID2D1RenderTarget, compositor As WindowCompositor)
+    Private Sub 绘制D2D文字层_GPU(context As D3D_PaintContext)
         Dim l = _d2dLayout
         If l Is Nothing Then Return
         Dim flagsLeft As TextFormatFlags = TextFormatFlags.Left Or TextFormatFlags.VerticalCenter Or TextFormatFlags.EndEllipsis Or TextFormatFlags.SingleLine
         Dim flagsRight As TextFormatFlags = TextFormatFlags.Right Or TextFormatFlags.VerticalCenter Or TextFormatFlags.EndEllipsis Or TextFormatFlags.SingleLine
         Dim flagsCenter As TextFormatFlags = TextFormatFlags.HorizontalCenter Or TextFormatFlags.VerticalCenter Or TextFormatFlags.EndEllipsis Or TextFormatFlags.SingleLine
         Dim s = 取D2D缩放()
-        Dim brushCache = compositor.BrushCache
-        Dim tfc = compositor.TextFormatCache
 
-        D2DTextRenderer.DrawText(rt, 取界面文本("Chromaticity", "色域图"), Font, l.ChromaticityTitle, ForeColor, flagsLeft, s, tfc, brushCache)
-        D2DTextRenderer.DrawText(rt, 取界面文本("HtmlColors", "HTML 颜色"), Font, l.HtmlTitle, ForeColor, flagsLeft, s, tfc, brushCache)
-        D2DTextRenderer.DrawText(rt, 取界面文本("Values", "数值"), Font, l.ValuesTitle, ForeColor, flagsRight, s, tfc, brushCache)
+        MessageDialogRendering.DrawText(context, 取界面文本("Chromaticity", "色域图"), Font, l.ChromaticityTitle, ForeColor, flagsLeft, s)
+        MessageDialogRendering.DrawText(context, 取界面文本("HtmlColors", "HTML 颜色"), Font, l.HtmlTitle, ForeColor, flagsLeft, s)
+        MessageDialogRendering.DrawText(context, 取界面文本("Values", "数值"), Font, l.ValuesTitle, ForeColor, flagsRight, s)
 
         _d2dTextBoxes(ColorDialogTextBoxKind.Search).Renderer.WaterText = 取界面文本("SearchWatermark", "搜索")
         For Each box In _d2dTextBoxOrder
             box.Renderer.ForeColor = ForeColor
             box.Renderer.SelectionColor = D2DElementBackColor
-            box.Renderer.Draw(rt, tfc, brushCache)
+            box.Renderer.DrawGpu(context)
         Next
 
-        绘制HTML列表文字(rt, compositor)
-        绘制数值标签(rt, compositor, flagsRight)
-        绘制收藏夹标题文字(rt, compositor)
+        绘制HTML列表文字_GPU(context)
+        绘制数值标签_GPU(context, flagsRight)
+        绘制收藏夹标题文字_GPU(context)
 
-        绘制按钮文字(rt, compositor, l.ButtonEyeDropper, If(_eyeDropperActive, 取界面文本("EyeDropperCancel", "按 Esc 取消"), 取界面文本("EyeDropper", "取色器")))
-        绘制按钮文字(rt, compositor, l.ButtonTips, 取界面文本("Tips", "使用技巧"))
-        绘制按钮文字(rt, compositor, l.ButtonCopyArgb, 取界面文本("CopyArgb", "复制 ARGB"))
-        绘制按钮文字(rt, compositor, l.ButtonCopyHex, 取界面文本("CopyHex", "复制 HEX"))
-        绘制按钮文字(rt, compositor, l.ButtonOK, 取界面文本("OK", "确定"))
-        绘制按钮文字(rt, compositor, l.ButtonCancel, 取界面文本("Cancel", "取消"))
+        绘制按钮文字_GPU(context, l.ButtonEyeDropper, If(_eyeDropperActive, 取界面文本("EyeDropperCancel", "按 Esc 取消"), 取界面文本("EyeDropper", "取色器")))
+        绘制按钮文字_GPU(context, l.ButtonTips, 取界面文本("Tips", "使用技巧"))
+        绘制按钮文字_GPU(context, l.ButtonCopyArgb, 取界面文本("CopyArgb", "复制 ARGB"))
+        绘制按钮文字_GPU(context, l.ButtonCopyHex, 取界面文本("CopyHex", "复制 HEX"))
+        绘制按钮文字_GPU(context, l.ButtonOK, 取界面文本("OK", "确定"))
+        绘制按钮文字_GPU(context, l.ButtonCancel, 取界面文本("Cancel", "取消"))
 
         For i = 0 To 9
             Dim textColor = If(_favoriteSet(i), 收藏夹文字颜色(_favoriteColors(i)), Color.Gray)
-            D2DTextRenderer.DrawText(rt, (i + 1).ToString(CultureInfo.InvariantCulture), Font, l.FavoriteRects(i), textColor, flagsCenter, s, tfc, brushCache)
+            MessageDialogRendering.DrawText(context, (i + 1).ToString(CultureInfo.InvariantCulture), Font, l.FavoriteRects(i), textColor, flagsCenter, s)
         Next
     End Sub
 
-    Private Sub 绘制D2D色域位图(rt As D2D.ID2D1RenderTarget, compositor As WindowCompositor)
+    Private Sub 绘制D2D色域位图_GPU(context As D3D_PaintContext)
         Dim l = _d2dLayout
         If l Is Nothing Then Return
         Dim clipRect = l.ChromaticityRect
@@ -1482,36 +1482,155 @@ Public Class ModernColorDialog
             Dim bmp = _chromaticityBitmap
             If bmp Is Nothing Then Return
 
-            Dim bmpW As Integer
-            Dim bmpH As Integer
             Try
-                bmpW = bmp.Width
-                bmpH = bmp.Height
+                If bmp.Width <= 0 OrElse bmp.Height <= 0 Then Return
+                context.DrawImage(bmp, clipRect, New RectangleF(0, 0, bmp.Width, bmp.Height))
             Catch ex As ArgumentException
-                _chromaticityBitmapCache.Invalidate()
+                Return
+            Catch ex As InvalidOperationException
                 Return
             End Try
-            If bmpW <= 0 OrElse bmpH <= 0 Then Return
-
-            Dim d2dBitmap As D2D.ID2D1Bitmap = Nothing
-            Try
-                d2dBitmap = _chromaticityBitmapCache.GetBitmap(rt, bmp)
-            Catch ex As ArgumentException
-                _chromaticityBitmapCache.Invalidate()
-                Return
-            End Try
-            If d2dBitmap IsNot Nothing Then
-                rt.DrawBitmap(
-                    d2dBitmap,
-                    D2DGlobals.ToD2DRect(clipRect),
-                    1.0F,
-                    D2D.BitmapInterpolationMode.Linear,
-                    D2DGlobals.ToD2DRect(New RectangleF(0, 0, bmpW, bmpH)))
-            End If
         End SyncLock
     End Sub
 
-    Private Sub 绘制D2D准心(rt As D2D.ID2D1RenderTarget, rect As RectangleF, brushCache As D2DGlobals.SolidColorBrushCache)
+    Private Sub 绘制D2D准心_GPU(context As D3D_PaintContext, rect As RectangleF)
+        If rect.Width < 10 OrElse rect.Height < 10 Then Return
+        Dim pt = 色度坐标转矩形像素(_markerX, _markerY, rect)
+        Dim lum = 0.299 * SelectedColor.R + 0.587 * SelectedColor.G + 0.114 * SelectedColor.B
+        Dim invColor As Color = If(lum > 128, Color.Black, Color.White)
+        Dim crossSize As Single = 12.0F * 取D2D缩放()
+        Dim gap As Single = 4.0F * 取D2D缩放()
+        Dim width As Single = 1.5F * 取D2D缩放()
+        Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, invColor, context.DeviceGeneration)
+        context.DeviceContext.DrawLine(New Vector2(pt.X - crossSize, pt.Y), New Vector2(pt.X - gap, pt.Y), brush, width)
+        context.DeviceContext.DrawLine(New Vector2(pt.X + gap, pt.Y), New Vector2(pt.X + crossSize, pt.Y), brush, width)
+        context.DeviceContext.DrawLine(New Vector2(pt.X, pt.Y - crossSize), New Vector2(pt.X, pt.Y - gap), brush, width)
+        context.DeviceContext.DrawLine(New Vector2(pt.X, pt.Y + gap), New Vector2(pt.X, pt.Y + crossSize), brush, width)
+
+        brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, Color.FromArgb(120, invColor), context.DeviceGeneration)
+        context.DeviceContext.DrawEllipse(New D2D.Ellipse(New Vector2(pt.X, pt.Y), crossSize, crossSize), brush, 1.0F * 取D2D缩放())
+    End Sub
+
+    Private Sub 绘制HTML列表图形_GPU(context As D3D_PaintContext)
+        Dim clip = 取HTML列表视口矩形()
+        If clip.Width > 0 AndAlso clip.Height > 0 Then
+            Using context.PushClip(clip)
+                Dim firstIndex = HTML首项索引()
+                For row = 0 To 可绘制HTML项数量() - 1
+                    Dim idx = firstIndex + row
+                    If idx < 0 OrElse idx >= _d2dFilteredHtmlColors.Count Then Exit For
+                    Dim itemRect = 取HTML列表项矩形(row)
+                    If idx = _d2dSelectedHtmlIndex Then
+                        MessageDialogRendering.FillRoundedRectangle(context, itemRect, D2DElementPressedBackColor, 6.0F * 取D2D缩放())
+                    ElseIf idx = _d2dHoverHtmlIndex Then
+                        MessageDialogRendering.FillRoundedRectangle(context, itemRect, D2DElementHoverBackColor, 6.0F * 取D2D缩放())
+                    End If
+                    Dim swatchSize As Single = 16.0F * 取D2D缩放()
+                    Dim swatchPadding As Single = Math.Max(0.0F, (itemRect.Height - swatchSize) / 2.0F)
+                    Dim swatchRect As New RectangleF(itemRect.X + swatchPadding,
+                                                     itemRect.Y + swatchPadding,
+                                                     swatchSize,
+                                                     swatchSize)
+                    Dim c = _d2dFilteredHtmlColors(idx).Value
+                    MessageDialogRendering.FillRoundedRectangle(context, swatchRect, c, 3.0F * 取D2D缩放())
+                Next
+            End Using
+        End If
+        绘制HTML滚动条_GPU(context)
+    End Sub
+
+    Private Sub 绘制HTML列表文字_GPU(context As D3D_PaintContext)
+        Dim flags As TextFormatFlags = TextFormatFlags.Left Or TextFormatFlags.VerticalCenter Or TextFormatFlags.EndEllipsis Or TextFormatFlags.SingleLine
+        Dim s = 取D2D缩放()
+        Dim clip = 取HTML列表视口矩形()
+        If clip.Width <= 0 OrElse clip.Height <= 0 Then Return
+        Using context.PushClip(clip)
+            Dim firstIndex = HTML首项索引()
+            For row = 0 To 可绘制HTML项数量() - 1
+                Dim idx = firstIndex + row
+                If idx < 0 OrElse idx >= _d2dFilteredHtmlColors.Count Then Exit For
+                Dim itemRect = 取HTML列表项矩形(row)
+                Dim swatchSize As Single = 16.0F * s
+                Dim swatchPadding As Single = Math.Max(0.0F, (itemRect.Height - swatchSize) / 2.0F)
+                Dim textX As Single = itemRect.X + swatchPadding + swatchSize + swatchPadding
+                Dim textRect As New RectangleF(textX, itemRect.Y, Math.Max(1.0F, itemRect.Right - textX - swatchPadding), itemRect.Height)
+                MessageDialogRendering.DrawText(context, _d2dFilteredHtmlColors(idx).Key, Font, textRect, ForeColor, flags, s)
+            Next
+        End Using
+    End Sub
+
+    Private Sub 绘制数值标签_GPU(context As D3D_PaintContext, flagsRight As TextFormatFlags)
+        For Each kind In {ColorDialogTextBoxKind.R, ColorDialogTextBoxKind.G, ColorDialogTextBoxKind.B,
+                          ColorDialogTextBoxKind.H, ColorDialogTextBoxKind.S, ColorDialogTextBoxKind.L,
+                          ColorDialogTextBoxKind.A, ColorDialogTextBoxKind.Hex}
+            Dim box = _d2dTextBoxes(kind)
+            MessageDialogRendering.DrawText(context, 取数值标签文本(kind), Font, box.LabelRect, ForeColor, flagsRight, 取D2D缩放())
+        Next
+    End Sub
+
+    Private Sub 绘制当前颜色预览_GPU(context As D3D_PaintContext)
+        Dim r = _d2dLayout.Preview
+        MessageDialogRendering.FillRoundedRectangle(context, r, SelectedColor, _d2dLayout.Radius)
+    End Sub
+
+    Private Sub 绘制收藏夹_GPU(context As D3D_PaintContext)
+        For i = 0 To 9
+            Dim r = _d2dLayout.FavoriteRects(i)
+            Dim fill = If(_favoriteSet(i), Color.FromArgb(_favoriteColors(i).R, _favoriteColors(i).G, _favoriteColors(i).B), D2DFavoriteSlotBackColor)
+            If i = _d2dPressedFavorite Then
+                fill = 混合颜色(fill, Color.White, 0.18F)
+            ElseIf i = _d2dHoverFavorite Then
+                fill = 混合颜色(fill, Color.White, 0.1F)
+            End If
+            MessageDialogRendering.FillRoundedRectangle(context, r, fill, _d2dLayout.Radius)
+        Next
+    End Sub
+
+    Private Sub 绘制收藏夹标题文字_GPU(context As D3D_PaintContext)
+        Dim l = _d2dLayout
+        If l Is Nothing Then Return
+        Dim s = 取D2D缩放()
+        Dim flagsMain As TextFormatFlags = TextFormatFlags.Left Or TextFormatFlags.Top Or TextFormatFlags.EndEllipsis Or TextFormatFlags.SingleLine
+        Dim flagsHint As TextFormatFlags = TextFormatFlags.Left Or TextFormatFlags.Bottom Or TextFormatFlags.EndEllipsis Or TextFormatFlags.SingleLine
+        MessageDialogRendering.DrawText(context, 取界面文本("FavoritesTitle", "收藏夹"), Font, l.FavoriteTitleMain, ForeColor, flagsMain, s)
+        Using hintFont As New Font(Font.Name, Math.Max(1.0F, Font.Size - 1.2F), FontStyle.Regular, GraphicsUnit.Point)
+            MessageDialogRendering.DrawText(context,
+                                            取界面文本("FavoritesHint", "左键读取，右键写入，中键清除，仅保留在当前应用程序运行周期内"),
+                                            hintFont,
+                                            l.FavoriteTitleHint,
+                                            Color.Gray,
+                                            flagsHint,
+                                            s)
+        End Using
+    End Sub
+
+    Private Sub 绘制HTML滚动条_GPU(context As D3D_PaintContext)
+        If Not 需要HTML滚动条() Then Return
+        Dim track = _d2dLayout.HtmlScrollBar
+        Dim thumb = 计算HTML滚动滑块()
+        If track.Width <= 0 OrElse track.Height <= 0 OrElse thumb.Width <= 0 OrElse thumb.Height <= 0 Then Return
+        Dim radius As Single = Math.Max(1.0F, track.Width / 2.0F)
+        MessageDialogRendering.FillRoundedRectangle(context, track, Color.FromArgb(30, 220, 220, 220), radius)
+        MessageDialogRendering.FillRoundedRectangle(context, thumb, Color.FromArgb(120, 220, 220, 220), radius)
+    End Sub
+
+    Private Sub 绘制按钮_GPU(context As D3D_PaintContext, rect As RectangleF, kind As ColorDialogButtonKind)
+        Dim fill = D2DElementBackColor
+        If _d2dPressedButton = kind Then
+            fill = D2DElementPressedBackColor
+        ElseIf _d2dHoverButton = kind Then
+            fill = D2DElementHoverBackColor
+        End If
+        MessageDialogRendering.FillRoundedRectangle(context, rect, fill, _d2dLayout.Radius)
+    End Sub
+
+    Private Sub 绘制按钮文字_GPU(context As D3D_PaintContext, rect As RectangleF, text As String)
+        Dim flags As TextFormatFlags = TextFormatFlags.HorizontalCenter Or TextFormatFlags.VerticalCenter Or TextFormatFlags.EndEllipsis Or TextFormatFlags.SingleLine
+        MessageDialogRendering.DrawText(context, text, Font, rect, ForeColor, flags, 取D2D缩放())
+    End Sub
+
+
+    Private Sub 绘制D2D准心(rt As D2D.ID2D1RenderTarget, rect As RectangleF, brushCache As D3D_D2DInterop.SolidColorBrushCache)
         If rect.Width < 10 OrElse rect.Height < 10 Then Return
         Dim pt = 色度坐标转矩形像素(_markerX, _markerY, rect)
         Dim lum = 0.299 * SelectedColor.R + 0.587 * SelectedColor.G + 0.114 * SelectedColor.B
@@ -1530,7 +1649,7 @@ Public Class ModernColorDialog
         rt.DrawEllipse(New D2D.Ellipse(New Vector2(pt.X, pt.Y), crossSize, crossSize), brush, 1.0F * 取D2D缩放())
     End Sub
 
-    Private Sub 绘制HTML列表图形(rt As D2D.ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache)
+    Private Sub 绘制HTML列表图形(rt As D2D.ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache)
         Dim clip = 取HTML列表视口矩形()
         If clip.Width > 0 AndAlso clip.Height > 0 Then
             rt.PushAxisAlignedClip(New Vortice.RawRectF(clip.Left, clip.Top, clip.Right, clip.Bottom), D2D.AntialiasMode.PerPrimitive)
@@ -1561,44 +1680,14 @@ Public Class ModernColorDialog
         绘制HTML滚动条(rt, brushCache)
     End Sub
 
-    Private Sub 绘制HTML列表文字(rt As D2D.ID2D1RenderTarget, compositor As WindowCompositor)
-        Dim flags As TextFormatFlags = TextFormatFlags.Left Or TextFormatFlags.VerticalCenter Or TextFormatFlags.EndEllipsis Or TextFormatFlags.SingleLine
-        Dim s = 取D2D缩放()
-        Dim clip = 取HTML列表视口矩形()
-        If clip.Width <= 0 OrElse clip.Height <= 0 Then Return
-        rt.PushAxisAlignedClip(New Vortice.RawRectF(clip.Left, clip.Top, clip.Right, clip.Bottom), D2D.AntialiasMode.PerPrimitive)
-        Try
-            Dim firstIndex = HTML首项索引()
-            For row = 0 To 可绘制HTML项数量() - 1
-                Dim idx = firstIndex + row
-                If idx < 0 OrElse idx >= _d2dFilteredHtmlColors.Count Then Exit For
-                Dim itemRect = 取HTML列表项矩形(row)
-                Dim swatchSize As Single = 16.0F * s
-                Dim swatchPadding As Single = Math.Max(0.0F, (itemRect.Height - swatchSize) / 2.0F)
-                Dim textX As Single = itemRect.X + swatchPadding + swatchSize + swatchPadding
-                Dim textRect As New RectangleF(textX, itemRect.Y, Math.Max(1.0F, itemRect.Right - textX - swatchPadding), itemRect.Height)
-                D2DTextRenderer.DrawText(rt, _d2dFilteredHtmlColors(idx).Key, Font, textRect, ForeColor, flags, s, compositor.TextFormatCache, compositor.BrushCache)
-            Next
-        Finally
-            rt.PopAxisAlignedClip()
-        End Try
-    End Sub
 
-    Private Sub 绘制数值标签(rt As D2D.ID2D1RenderTarget, compositor As WindowCompositor, flagsRight As TextFormatFlags)
-        For Each kind In {ColorDialogTextBoxKind.R, ColorDialogTextBoxKind.G, ColorDialogTextBoxKind.B,
-                          ColorDialogTextBoxKind.H, ColorDialogTextBoxKind.S, ColorDialogTextBoxKind.L,
-                          ColorDialogTextBoxKind.A, ColorDialogTextBoxKind.Hex}
-            Dim box = _d2dTextBoxes(kind)
-            D2DTextRenderer.DrawText(rt, 取数值标签文本(kind), Font, box.LabelRect, ForeColor, flagsRight, 取D2D缩放(), compositor.TextFormatCache, compositor.BrushCache)
-        Next
-    End Sub
 
-    Private Sub 绘制当前颜色预览(rt As D2D.ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache)
+    Private Sub 绘制当前颜色预览(rt As D2D.ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache)
         Dim r = _d2dLayout.Preview
         填充圆角矩形(rt, r, SelectedColor, _d2dLayout.Radius, brushCache)
     End Sub
 
-    Private Sub 绘制收藏夹(rt As D2D.ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache)
+    Private Sub 绘制收藏夹(rt As D2D.ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache)
         For i = 0 To 9
             Dim r = _d2dLayout.FavoriteRects(i)
             Dim fill = If(_favoriteSet(i), Color.FromArgb(_favoriteColors(i).R, _favoriteColors(i).G, _favoriteColors(i).B), D2DFavoriteSlotBackColor)
@@ -1611,27 +1700,8 @@ Public Class ModernColorDialog
         Next
     End Sub
 
-    Private Sub 绘制收藏夹标题文字(rt As D2D.ID2D1RenderTarget, compositor As WindowCompositor)
-        Dim l = _d2dLayout
-        If l Is Nothing Then Return
-        Dim s = 取D2D缩放()
-        Dim flagsMain As TextFormatFlags = TextFormatFlags.Left Or TextFormatFlags.Top Or TextFormatFlags.EndEllipsis Or TextFormatFlags.SingleLine
-        Dim flagsHint As TextFormatFlags = TextFormatFlags.Left Or TextFormatFlags.Bottom Or TextFormatFlags.EndEllipsis Or TextFormatFlags.SingleLine
-        D2DTextRenderer.DrawText(rt, 取界面文本("FavoritesTitle", "收藏夹"), Font, l.FavoriteTitleMain, ForeColor, flagsMain, s, compositor.TextFormatCache, compositor.BrushCache)
-        Using hintFont As New Font(Font.Name, Math.Max(1.0F, Font.Size - 1.2F), FontStyle.Regular, GraphicsUnit.Point)
-            D2DTextRenderer.DrawText(rt,
-                                     取界面文本("FavoritesHint", "左键读取，右键写入，中键清除，仅保留在当前应用程序运行周期内"),
-                                     hintFont,
-                                     l.FavoriteTitleHint,
-                                     Color.Gray,
-                                     flagsHint,
-                                     s,
-                                     compositor.TextFormatCache,
-                                     compositor.BrushCache)
-        End Using
-    End Sub
 
-    Private Sub 绘制HTML滚动条(rt As D2D.ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache)
+    Private Sub 绘制HTML滚动条(rt As D2D.ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache)
         If Not 需要HTML滚动条() Then Return
         Dim track = _d2dLayout.HtmlScrollBar
         Dim thumb = 计算HTML滚动滑块()
@@ -1641,7 +1711,7 @@ Public Class ModernColorDialog
         填充圆角矩形(rt, thumb, Color.FromArgb(120, 220, 220, 220), radius, brushCache)
     End Sub
 
-    Private Sub 绘制按钮(rt As D2D.ID2D1RenderTarget, rect As RectangleF, kind As ColorDialogButtonKind, brushCache As D2DGlobals.SolidColorBrushCache)
+    Private Sub 绘制按钮(rt As D2D.ID2D1RenderTarget, rect As RectangleF, kind As ColorDialogButtonKind, brushCache As D3D_D2DInterop.SolidColorBrushCache)
         Dim fill = D2DElementBackColor
         If _d2dPressedButton = kind Then
             fill = D2DElementPressedBackColor
@@ -1651,23 +1721,19 @@ Public Class ModernColorDialog
         填充圆角矩形(rt, rect, fill, _d2dLayout.Radius, brushCache)
     End Sub
 
-    Private Sub 绘制按钮文字(rt As D2D.ID2D1RenderTarget, compositor As WindowCompositor, rect As RectangleF, text As String)
-        Dim flags As TextFormatFlags = TextFormatFlags.HorizontalCenter Or TextFormatFlags.VerticalCenter Or TextFormatFlags.EndEllipsis Or TextFormatFlags.SingleLine
-        D2DTextRenderer.DrawText(rt, text, Font, rect, ForeColor, flags, 取D2D缩放(), compositor.TextFormatCache, compositor.BrushCache)
-    End Sub
 
-    Private Sub 填充圆角矩形(rt As D2D.ID2D1RenderTarget, rect As RectangleF, color As Color, radius As Single, brushCache As D2DGlobals.SolidColorBrushCache)
+    Private Sub 填充圆角矩形(rt As D2D.ID2D1RenderTarget, rect As RectangleF, color As Color, radius As Single, brushCache As D3D_D2DInterop.SolidColorBrushCache)
         If color.A = 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
-        Using geo = RectangleRenderer.创建圆角矩形几何(rect, radius)
-            RectangleRenderer.绘制圆角背景_D2D(rt, geo, rect, color, Color.Empty, Orientation.Horizontal, brushCache)
+        Using geo = D3D_RectangleRenderer.创建圆角矩形几何(rect, radius)
+            D3D_RectangleRenderer.绘制圆角背景_D2D(rt, geo, rect, color, Color.Empty, Orientation.Horizontal, brushCache)
         End Using
     End Sub
 
-    Private Sub 描绘圆角边框(rt As D2D.ID2D1RenderTarget, rect As RectangleF, color As Color, width As Single, radius As Single, brushCache As D2DGlobals.SolidColorBrushCache)
+    Private Sub 描绘圆角边框(rt As D2D.ID2D1RenderTarget, rect As RectangleF, color As Color, width As Single, radius As Single, brushCache As D3D_D2DInterop.SolidColorBrushCache)
         If color.A = 0 OrElse width <= 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
         Dim half = width / 2.0F
         rect.Inflate(-half, -half)
-        RectangleRenderer.绘制圆角边框_D2D(rt, rect, radius, color, width, brushCache)
+        D3D_RectangleRenderer.绘制圆角边框_D2D(rt, rect, radius, color, width, brushCache)
     End Sub
 
 #End Region
@@ -2420,17 +2486,26 @@ Public Class ModernColorDialog
     End Function
 
     Private Function 取D2D缩放() As Single
-        Return D2DGlobals.GetCurrentDpiScale(Me)
+        Return V3_DpiContext.FromControl(Me).Scale
     End Function
 
     Private Function 缩放值(value As Integer) As Integer
         Return CInt(Math.Round(value * 取D2D缩放()))
     End Function
 
+    Private Sub RequestV3Render()
+        RequestV3Render(New Rectangle(Point.Empty, Me.Size))
+    End Sub
+
+    Private Sub RequestV3Render(dirtyRect As Rectangle)
+        If IsDisposed Then Return
+        V3_InvalidationRouter.RequestRender(Me, dirtyRect)
+    End Sub
+
     Private Function 测量界面文本宽度(text As String, font As Font,
-                               Optional textFormatCache As D2DGlobals.TextFormatCache = Nothing) As Single
+                               Optional textFormatCache As D3D_D2DInterop.TextFormatCache = Nothing) As Single
         If String.IsNullOrEmpty(text) OrElse font Is Nothing Then Return 0.0F
-        Return CSng(D2DTextRenderer.MeasureWidth(text, font, 取D2D缩放(), textFormatCache))
+        Return CSng(D3D_TextInterop.MeasureWidth(text, font, 取D2D缩放(), textFormatCache))
     End Function
 
     Private Shared Function 混合颜色(a As Color, b As Color, t As Single) As Color
@@ -2462,4 +2537,3 @@ Public Class ModernColorDialog
 
 
 End Class
-

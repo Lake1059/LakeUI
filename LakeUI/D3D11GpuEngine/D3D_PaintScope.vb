@@ -1,8 +1,9 @@
 Imports System.Numerics
+Imports System.Runtime.InteropServices
 Imports Vortice.Direct2D1
 
 ''' <summary>
-''' V2 绘制作用域。生命周期 = 一次 <c>OnPaint</c> 调用，必须 <c>Using</c> 释放。
+''' 兼容绘制作用域。生命周期 = 一次 <c>OnPaint</c> 调用，必须 <c>Using</c> 释放。
 '''
 ''' === 三层绘制结构 ===
 ''' • <see cref="BackgroundLayer"/> = <see cref="DCRenderTarget"/>（1× 直接绘制）。
@@ -23,17 +24,17 @@ Imports Vortice.Direct2D1
 '''
 ''' === 与 V1 PaintScope 的差异 ===
 ''' • 不在控件上跨帧持有 BitmapRT：用完归还 compositor 池，没有 N 控件 × 1 张 SSAA 的显存堆积。
-''' • 不持有 DC RT：从 <see cref="WindowCompositor"/> 借用共享 DC RT，BindDC 一次即生效。
+''' • 不持有 DC RT：从 <see cref="D3D_SurfaceCompositor"/> 借用共享 DC RT，BindDC 一次即生效。
 ''' • Dispose 内自动 FlushGraphics 兜底，控件忘记调用 Flush 也不会泄漏 SSAA RT。
 ''' • Dispose 结束时通知 compositor 退出活动绘制状态，避免共享 DC RT 被嵌套 BindDC。
 '''
 ''' === 线程要求 ===
 ''' UI 线程（OnPaint 上下文）专用。
 ''' </summary>
-Public NotInheritable Class PaintScopeV2
+Public NotInheritable Class D3D_PaintScope
     Implements IDisposable
 
-    Private ReadOnly _compositor As WindowCompositor
+    Private ReadOnly _compositor As D3D_SurfaceCompositor
     Private ReadOnly _g As Graphics
     Private ReadOnly _hdc As IntPtr
     Private ReadOnly _w As Integer
@@ -48,13 +49,20 @@ Public NotInheritable Class PaintScopeV2
     Private _rentedPixelH As Integer
     Private _bitmapRT As ID2D1BitmapRenderTarget
     Private _graphicsLayer As ID2D1RenderTarget
+    Private _gpuCompositor As D3D_WindowCompositor
+    Private _gpuContext As ID2D1DeviceContext
+    Private _gpuTarget As ID2D1Bitmap1
+    Private _gpuInterop As ID2D1GdiInteropRenderTarget
+    Private _gpuDrawing As Boolean
+    Private _gpuClipPushed As Boolean
+    Private _gpuGeneration As Integer = -1
     Private _disposed As Boolean
     Private ReadOnly _disposeCompositorWithScope As Boolean
     Private ReadOnly _returnCompositorToBackgroundSamplingPool As Boolean
     Private _dcClipPushed As Boolean
 
     ''' <summary>所属窗口 compositor，可用来访问共享 brush / textformat / bitmap 缓存。</summary>
-    Public ReadOnly Property Compositor As WindowCompositor
+    Public ReadOnly Property Compositor As D3D_SurfaceCompositor
         Get
             Return _compositor
         End Get
@@ -73,6 +81,7 @@ Public NotInheritable Class PaintScopeV2
     ''' <summary>图形层：SSAA 启用时为高分辨率 BitmapRT，否则为 DC RT。FlushGraphics 之后访问会回到 DC RT。</summary>
     Public ReadOnly Property GraphicsLayer As ID2D1RenderTarget
         Get
+            EnsureLegacyGraphicsLayer()
             Return _graphicsLayer
         End Get
     End Property
@@ -94,7 +103,7 @@ Public NotInheritable Class PaintScopeV2
     ''' <para>
     ''' <b>其他控件未来接入指南（可选 / 完全自愿）</b>：
     ''' <list type="number">
-    '''   <item>在 <c>OnPaint</c> 中先按常规走 <see cref="D2DHelperV2.BeginPaint"/> 拿到 <see cref="PaintScopeV2"/>。</item>
+    '''   <item>在 <c>OnPaint</c> 中先按常规走 <see cref="D3D_PaintBridge.BeginPaint"/> 拿到 <see cref="D3D_PaintScope"/>。</item>
     '''   <item>访问本属性拿 <see cref="ID2D1DeviceContext"/>；调用方只需要处理运行时设备丢失。</item>
     '''   <item>把要画的内容渲染到自己创建的 <c>ID2D1Bitmap1</c>（带 <c>BitmapOptions.Target Or GdiCompatible</c>）：
     '''         <c>ctx.Target = bmp1 → ctx.BeginDraw → ... → ctx.EndDraw</c>。
@@ -103,10 +112,10 @@ Public NotInheritable Class PaintScopeV2
     '''         用 <c>BitBlt</c> 把结果合成到当前 <c>PaintEventArgs.Graphics</c>（参考 <c>ThisIsYourWindow</c> 的探测实现）；
     '''         <b>或</b>在阶段 B 完成后改为直接画到 DeviceContext 自带的目标位图（届时 DC RT 与 DeviceContext 资源互通）。</item>
     '''   <item>把所有 D2D 1.1 调用包在 Try 内；Catch 后调用
-    '''         <see cref="WindowCompositor.NotifyDeviceContextException"/>，<c>True</c> 返回值表示是设备丢失，
+    '''         <see cref="D3D_SurfaceCompositor.NotifyDeviceContextException"/>，<c>True</c> 返回值表示是设备丢失，
     '''         应吞掉本帧异常并 <c>Invalidate</c> 请求下一帧重画。</item>
-    '''   <item>不要长期缓存 DeviceContext 引用；它会随 <see cref="D3D11Globals.DeviceLost"/> 自动重建，
-    '''         每帧通过 <see cref="PaintScopeV2.DeviceContext"/> 重新取即可。</item>
+    '''   <item>不要长期缓存 DeviceContext 引用；它会随 <see cref="D3D_DeviceGlobals.DeviceLost"/> 自动重建，
+    '''         每帧通过 <see cref="D3D_PaintScope.DeviceContext"/> 重新取即可。</item>
     ''' </list>
     ''' </para>
     ''' <para>
@@ -148,7 +157,7 @@ Public NotInheritable Class PaintScopeV2
         End Get
     End Property
 
-    Friend Sub New(compositor As WindowCompositor, g As Graphics, hdc As IntPtr,
+    Friend Sub New(compositor As D3D_SurfaceCompositor, g As Graphics, hdc As IntPtr,
                    dcRT As ID2D1DCRenderTarget, w As Integer, h As Integer, ssaa As Integer,
                    clipRect As Rectangle,
                    Optional disposeCompositorWithScope As Boolean = False,
@@ -168,43 +177,25 @@ Public NotInheritable Class PaintScopeV2
         _returnCompositorToBackgroundSamplingPool = returnCompositorToBackgroundSamplingPool
         DCRenderTarget = dcRT
 
+        If dcRT Is Nothing Then
+            _graphicsLayer = Nothing
+            Return
+        End If
+
         dcRT.BindDC(hdc, New Vortice.RawRect(0, 0, w, h))
         dcRT.BeginDraw()
         ' 一旦 BeginDraw 成功，后续任何异常都必须在向外抛出前先 EndDraw，否则共享 DC RT
         ' 会卡在"已 BeginDraw 未 EndDraw"状态，下一次 BindDC 会 D2DERR_WRONG_STATE，
-        ' 整个 Form 的 V2 绘制就此失效。
+        ' 整个 Form 的兼容绘制就此失效。
         Try
-            D2DGlobals.ApplyGlobalQuality(dcRT)
+            D3D_D2DInterop.ApplyGlobalQuality(dcRT)
             dcRT.Transform = Matrix3x2.Identity
             dcRT.PushAxisAlignedClip(ToRawRectF(_clipRect), AntialiasMode.Aliased)
             _dcClipPushed = True
             ' 共享 brush 缓存：RT 引用即将作为绘图目标，确保和当前 RT 绑定一致。
             ' （SolidColorBrushCache 内部按 RT 自动失效，这里无需手动操作。）
 
-            If _ssaa > 1 Then
-                _bitmapRT = _compositor.RentSsaaRT(dcRT, _ssaaPixelW, _ssaaPixelH, _rentedPixelW, _rentedPixelH)
-                If _bitmapRT Is Nothing Then Throw New InvalidOperationException("SSAA render target allocation failed.")
-                Try
-                    D2DGlobals.ApplyGlobalQuality(_bitmapRT)
-                    _bitmapRT.BeginDraw()
-                    _bitmapRT.Clear(New Vortice.Mathematics.Color4(0F, 0F, 0F, 0F))
-                    _bitmapRT.PushAxisAlignedClip(
-                        New Vortice.RawRectF(0.0F, 0.0F, _ssaaPixelW, _ssaaPixelH),
-                        AntialiasMode.Aliased)
-                    _bitmapRT.Transform =
-                        Matrix3x2.CreateTranslation(-_clipRect.X, -_clipRect.Y) *
-                        Matrix3x2.CreateScale(_ssaa)
-                Catch
-                    ' SSAA RT 初始化失败：直接丢弃这块 RT（不归还池，避免污染），
-                    ' 然后把异常交给外层把 DC RT 也 EndDraw。
-                    Try : _bitmapRT.Dispose() : Catch : End Try
-                    _bitmapRT = Nothing
-                    Throw
-                End Try
-                _graphicsLayer = _bitmapRT
-            Else
-                _graphicsLayer = dcRT
-            End If
+            _graphicsLayer = dcRT
         Catch ex As Exception
             Try
                 If _dcClipPushed Then
@@ -218,6 +209,175 @@ Public NotInheritable Class PaintScopeV2
             Try : _compositor.NotifyDCRenderTargetException(ex) : Catch : End Try
             Throw
         End Try
+    End Sub
+
+    Private Sub EnsureLegacyGraphicsLayer()
+        If DCRenderTarget Is Nothing Then
+            Throw New InvalidOperationException("This D3D_PaintScope was created for GPU-only painting and has no legacy DC render target.")
+        End If
+        If _graphicsLayer IsNot Nothing AndAlso (Not ReferenceEquals(_graphicsLayer, DCRenderTarget) OrElse _ssaa <= 1) Then Return
+        If _ssaa <= 1 OrElse _bitmapRT IsNot Nothing Then Return
+
+        _bitmapRT = _compositor.RentSsaaRT(DCRenderTarget, _ssaaPixelW, _ssaaPixelH, _rentedPixelW, _rentedPixelH)
+        If _bitmapRT Is Nothing Then Throw New InvalidOperationException("SSAA render target allocation failed.")
+        Try
+            D3D_D2DInterop.ApplyGlobalQuality(_bitmapRT)
+            _bitmapRT.BeginDraw()
+            _bitmapRT.Clear(New Vortice.Mathematics.Color4(0F, 0F, 0F, 0F))
+            _bitmapRT.PushAxisAlignedClip(
+                New Vortice.RawRectF(0.0F, 0.0F, _ssaaPixelW, _ssaaPixelH),
+                AntialiasMode.Aliased)
+            _bitmapRT.Transform =
+                Matrix3x2.CreateTranslation(-_clipRect.X, -_clipRect.Y) *
+                Matrix3x2.CreateScale(_ssaa)
+            _graphicsLayer = _bitmapRT
+        Catch
+            Try : _bitmapRT.Dispose() : Catch : End Try
+            _bitmapRT = Nothing
+            _graphicsLayer = DCRenderTarget
+            Throw
+        End Try
+    End Sub
+
+    Public Sub ClearBackground(color As Color)
+        If color.A <= 0 Then Return
+        If DCRenderTarget Is Nothing Then
+            If _gpuContext IsNot Nothing Then _gpuContext.Clear(D3D_D2DInterop.ToColor4(color))
+            Return
+        End If
+        DCRenderTarget.Clear(D3D_D2DInterop.ToColor4(color))
+    End Sub
+
+    Public Function CreateContext(control As Control) As D3D_PaintContext
+        If _disposed Then Return Nothing
+        If control Is Nothing OrElse control.IsDisposed Then Return Nothing
+        If _gpuContext IsNot Nothing Then Throw New InvalidOperationException("D3D_PaintScope only supports one active GPU paint context.")
+
+        _gpuCompositor = D3D_RenderCore.GetWindowCompositor(control)
+        If _gpuCompositor Is Nothing Then Return Nothing
+
+        Dim manager = D3D_RenderCore.DeviceManager
+        _gpuContext = manager.CreateDeviceContext()
+        _gpuGeneration = manager.DeviceGeneration
+
+        Dim props As New BitmapProperties1(
+            New Vortice.DCommon.PixelFormat(Vortice.DXGI.Format.B8G8R8A8_UNorm, Vortice.DCommon.AlphaMode.Ignore),
+            96.0F,
+            96.0F,
+            BitmapOptions.Target Or BitmapOptions.GdiCompatible)
+
+        _gpuTarget = _gpuContext.CreateBitmap(New Vortice.Mathematics.SizeI(_w, _h), IntPtr.Zero, 0UI, props)
+        _gpuContext.Target = _gpuTarget
+        _gpuContext.Transform = Matrix3x2.Identity
+        _gpuContext.AntialiasMode = AntialiasMode.PerPrimitive
+        _gpuCompositor.TextRenderer.ConfigureDeviceContext(_gpuContext, _gpuCompositor.TextQuality, targetHasAlpha:=False)
+        _gpuContext.BeginDraw()
+        _gpuDrawing = True
+
+        CopyDestinationIntoGpuTarget()
+
+        _gpuContext.PushAxisAlignedClip(D3D_PaintContext.ToRawRect(_clipRect), AntialiasMode.Aliased)
+        _gpuClipPushed = True
+
+        Return New D3D_PaintContext(
+            _gpuCompositor,
+            _gpuContext,
+            Matrix3x2.Identity,
+            New RectangleF(0, 0, Math.Max(1, _w), Math.Max(1, _h)),
+            V3_DpiContext.FromControl(control).Scale,
+            _gpuCompositor.TextQuality,
+            targetHasAlpha:=False,
+            frameGeneration:=0,
+            deviceGeneration:=_gpuGeneration,
+            dirtyRegion:=New Rectangle() {_clipRect})
+    End Function
+
+    Private Sub CopyDestinationIntoGpuTarget()
+        If _gpuContext Is Nothing OrElse _hdc = IntPtr.Zero Then Return
+        Dim sourceHdc As IntPtr = IntPtr.Zero
+        Try
+            _gpuInterop = _gpuContext.QueryInterface(Of ID2D1GdiInteropRenderTarget)()
+            If _gpuInterop Is Nothing Then Return
+
+            sourceHdc = _gpuInterop.GetDC(DcInitializeMode.Copy)
+            If sourceHdc = IntPtr.Zero Then Return
+
+            BitBlt(sourceHdc, 0, 0, _w, _h, _hdc, 0, 0, SRCCOPY)
+        Finally
+            If _gpuInterop IsNot Nothing AndAlso sourceHdc <> IntPtr.Zero Then
+                Try : _gpuInterop.ReleaseDC(Nothing) : Catch : End Try
+            End If
+        End Try
+    End Sub
+
+    Private Sub FlushGpuContext()
+        If _gpuContext Is Nothing Then Return
+
+        Dim sourceHdc As IntPtr = IntPtr.Zero
+        Dim endDrawException As Exception = Nothing
+        Try
+            If _gpuClipPushed Then
+                _gpuContext.PopAxisAlignedClip()
+                _gpuClipPushed = False
+            End If
+
+            If _gpuInterop Is Nothing Then _gpuInterop = _gpuContext.QueryInterface(Of ID2D1GdiInteropRenderTarget)()
+            If _gpuInterop IsNot Nothing Then
+                sourceHdc = _gpuInterop.GetDC(DcInitializeMode.Copy)
+                If sourceHdc <> IntPtr.Zero Then
+                    If Not BitBlt(_hdc, _clipRect.X, _clipRect.Y, _clipRect.Width, _clipRect.Height,
+                                  sourceHdc, _clipRect.X, _clipRect.Y, SRCCOPY) Then
+                        Throw New InvalidOperationException("D3D paint scope BitBlt failed.")
+                    End If
+                End If
+            End If
+        Finally
+            If _gpuInterop IsNot Nothing AndAlso sourceHdc <> IntPtr.Zero Then
+                Try : _gpuInterop.ReleaseDC(Nothing) : Catch : End Try
+            End If
+
+            If _gpuDrawing Then
+                Try
+                    _gpuContext.EndDraw()
+                Catch ex As Exception
+                    If _gpuCompositor IsNot Nothing AndAlso D3D_RenderCore.DeviceManager.HandleDeviceLost(ex) Then
+                        Try : _gpuCompositor.HandleDeviceLost() : Catch : End Try
+                    End If
+                    endDrawException = ex
+                End Try
+                _gpuDrawing = False
+            End If
+        End Try
+
+        If endDrawException IsNot Nothing Then Throw endDrawException
+    End Sub
+
+    Private Sub ReleaseGpuContext()
+        If _gpuClipPushed AndAlso _gpuContext IsNot Nothing Then
+            Try : _gpuContext.PopAxisAlignedClip() : Catch : End Try
+            _gpuClipPushed = False
+        End If
+        If _gpuDrawing AndAlso _gpuContext IsNot Nothing Then
+            Try : _gpuContext.EndDraw() : Catch : End Try
+            _gpuDrawing = False
+        End If
+        If _gpuContext IsNot Nothing Then
+            Try : _gpuContext.Target = Nothing : Catch : End Try
+        End If
+        If _gpuInterop IsNot Nothing Then
+            Try : _gpuInterop.Dispose() : Catch : End Try
+            _gpuInterop = Nothing
+        End If
+        If _gpuTarget IsNot Nothing Then
+            Try : _gpuTarget.Dispose() : Catch : End Try
+            _gpuTarget = Nothing
+        End If
+        If _gpuContext IsNot Nothing Then
+            Try : _gpuContext.Dispose() : Catch : End Try
+            _gpuContext = Nothing
+        End If
+        _gpuCompositor = Nothing
+        _gpuGeneration = -1
     End Sub
 
     Private Shared Function NormalizeClipRect(rect As Rectangle, w As Integer, h As Integer) As Rectangle
@@ -264,7 +424,7 @@ Public NotInheritable Class PaintScopeV2
             Try : _compositor.NotifyDCRenderTargetException(ex) : Catch : End Try
         Finally
             If healthy Then
-                ' V2 改进：SSAA RT 归还 compositor 池复用，避免每帧 GPU 资源分配/释放的卡顿。
+                ' 兼容层改进：SSAA RT 归还 compositor 池复用，避免每帧 GPU 资源分配/释放的卡顿。
                 _compositor.ReturnSsaaRT(_bitmapRT, _rentedPixelW, _rentedPixelH)
             Else
                 Try : _bitmapRT.Dispose() : Catch : End Try
@@ -277,20 +437,30 @@ Public NotInheritable Class PaintScopeV2
     Public Sub Dispose() Implements IDisposable.Dispose
         If _disposed Then Return
         _disposed = True
+        Dim pendingException As Exception = Nothing
         Try
             Try
-                FlushGraphics()
-            Catch
-            End Try
-            Try
-                If _dcClipPushed Then
-                    DCRenderTarget.PopAxisAlignedClip()
-                    _dcClipPushed = False
-                End If
-                DCRenderTarget.EndDraw()
+                FlushGpuContext()
             Catch ex As Exception
-                Try : _compositor.NotifyDCRenderTargetException(ex) : Catch : End Try
+                pendingException = ex
+            Finally
+                ReleaseGpuContext()
             End Try
+            If DCRenderTarget IsNot Nothing Then
+                Try
+                    FlushGraphics()
+                Catch
+                End Try
+                Try
+                    If _dcClipPushed Then
+                        DCRenderTarget.PopAxisAlignedClip()
+                        _dcClipPushed = False
+                    End If
+                    DCRenderTarget.EndDraw()
+                Catch ex As Exception
+                    Try : _compositor.NotifyDCRenderTargetException(ex) : Catch : End Try
+                End Try
+            End If
             Try
                 _g.ReleaseHdc(_hdc)
             Catch
@@ -298,10 +468,26 @@ Public NotInheritable Class PaintScopeV2
         Finally
             _compositor.EndPaintScope()
             If _returnCompositorToBackgroundSamplingPool Then
-                Try : D2DHelperV2.ReturnBackgroundSamplingCompositor(_compositor) : Catch : End Try
+                Try : D3D_PaintBridge.ReturnBackgroundSamplingCompositor(_compositor) : Catch : End Try
             ElseIf _disposeCompositorWithScope Then
                 Try : _compositor.Dispose() : Catch : End Try
             End If
         End Try
+
+        If pendingException IsNot Nothing Then Throw pendingException
     End Sub
+
+    Private Const SRCCOPY As Integer = &HCC0020
+
+    <DllImport("gdi32.dll", SetLastError:=True)>
+    Private Shared Function BitBlt(hdcDest As IntPtr,
+                                   xDest As Integer,
+                                   yDest As Integer,
+                                   wDest As Integer,
+                                   hDest As Integer,
+                                   hdcSource As IntPtr,
+                                   xSrc As Integer,
+                                   ySrc As Integer,
+                                   rasterOp As Integer) As Boolean
+    End Function
 End Class

@@ -236,6 +236,7 @@ End Module
 
 Friend Class ExMsgBoxForm
     Inherits Form
+    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource
 
 #Region "Win32"
 
@@ -438,7 +439,7 @@ Friend Class ExMsgBoxForm
         Dim 默认样式 As Integer = buttons And &HF00
 
         ' DPI 缩放
-        SC = D2DGlobals.GetCurrentDpiScale(Me)
+        SC = V3_DpiContext.FromControl(Me).Scale
         缩放常量()
         ' 自定义按钮模式：允许更宽窗体以承载多行信息
         If 自定义按钮列表 IsNot Nothing Then 最大宽度 = CInt(900 * SC)
@@ -689,50 +690,61 @@ Friend Class ExMsgBoxForm
 #Region "绘制"
 
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
-        If Not 毛玻璃.Enabled Then MyBase.OnPaintBackground(e)
+        ' V3-only: dialog pixels are emitted by RenderGpu.
     End Sub
 
     Protected Overrides Sub OnShown(e As EventArgs)
         MyBase.OnShown(e)
         MessageDialogRendering.CenterOnOwner(Me, 拥有者)
-        毛玻璃.Prepare()
-        Invalidate()
+        RequestV3Render()
     End Sub
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
-        毛玻璃.Draw(e.Graphics)
+        If Not D3D_PaintBridge.PaintRenderable(e, Me, Me, 1) Then MyBase.OnPaint(e)
+    End Sub
 
-        Using scope = D2DHelperV2.BeginPaint(e, Me, 1)
-            If scope Is Nothing Then Return
-            Dim rt = scope.GraphicsLayer
-            Dim compositor = scope.Compositor
-            Dim brushCache = compositor.BrushCache
-            Dim glass = 毛玻璃.HasFrame
+    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+        If context Is Nothing OrElse ClientSize.Width <= 0 OrElse ClientSize.Height <= 0 Then Return
 
-            If Not glass Then
-                MessageDialogRendering.FillRectangle(rt, brushCache, 标题栏区域, 主题.TitleBarBackColor)
-                MessageDialogRendering.FillRectangle(rt, brushCache, 内容区域, 主题.ContentBackColor)
-                MessageDialogRendering.FillRectangle(rt, brushCache, 按钮区域, 主题.ButtonAreaBackColor)
-            End If
+        Dim bounds As New RectangleF(0, 0, ClientSize.Width, ClientSize.Height)
+        Dim glass = MessageDialogRendering.DrawBackdrop(context, bounds)
 
-            Dim 标题文字区域 As New RectangleF(标题左边距, 0, 标题栏区域.Width - 关闭按钮宽 - 标题左边距 * 2, 标题栏高度)
-            MessageDialogRendering.DrawText(rt, compositor, Me.Text, 标题字体, 标题文字区域, 主题.TitleForeColor,
-                TextFormatFlags.VerticalCenter Or TextFormatFlags.Left Or TextFormatFlags.EndEllipsis Or TextFormatFlags.NoPadding, SC)
+        If Not glass Then
+            MessageDialogRendering.FillRectangle(context, 标题栏区域, 主题.TitleBarBackColor)
+            MessageDialogRendering.FillRectangle(context, 内容区域, 主题.ContentBackColor)
+            MessageDialogRendering.FillRectangle(context, 按钮区域, 主题.ButtonAreaBackColor)
+        End If
 
-            If 允许关闭 Then
-                MessageDialogRendering.DrawCloseButton(rt, brushCache, 关闭按钮区域, 关闭悬停, 关闭按下,
-                                                       主题.CloseButtonForeColor, 主题.CloseButtonHoverForeColor,
-                                                       主题.CloseButtonHoverBackColor, SC)
-            End If
+        Dim 标题文字区域 As New RectangleF(标题左边距, 0, 标题栏区域.Width - 关闭按钮宽 - 标题左边距 * 2, 标题栏高度)
+        MessageDialogRendering.DrawText(context, Me.Text, 标题字体, 标题文字区域, 主题.TitleForeColor,
+            TextFormatFlags.VerticalCenter Or TextFormatFlags.Left Or TextFormatFlags.EndEllipsis Or TextFormatFlags.NoPadding, SC)
 
-            MessageDialogRendering.DrawImage(rt, compositor, 消息图标位图, 图标区域)
-            MessageDialogRendering.DrawText(rt, compositor, 消息标签.Text, 消息字体, 消息标签.Bounds,
-                主题.MessageForeColor, TextFormatFlags.WordBreak Or TextFormatFlags.Left Or TextFormatFlags.Top Or TextFormatFlags.NoPadding, SC)
+        If 允许关闭 Then
+            MessageDialogRendering.DrawCloseButton(context, 关闭按钮区域, 关闭悬停, 关闭按下,
+                                                   主题.CloseButtonForeColor, 主题.CloseButtonHoverForeColor,
+                                                   主题.CloseButtonHoverBackColor, SC)
+        End If
 
-            MessageDialogRendering.DrawRectangle(rt, brushCache,
-                New RectangleF(0.5F, 0.5F, Math.Max(0, ClientSize.Width - 1), Math.Max(0, ClientSize.Height - 1)),
-                主题.FormBorderColor, 1.0F)
-        End Using
+        MessageDialogRendering.DrawImage(context, 消息图标位图, 图标区域)
+        MessageDialogRendering.DrawText(context, 消息标签.Text, 消息字体, 消息标签.Bounds,
+            主题.MessageForeColor, TextFormatFlags.WordBreak Or TextFormatFlags.Left Or TextFormatFlags.Top Or TextFormatFlags.NoPadding, SC)
+
+        MessageDialogRendering.DrawRectangle(context,
+            New RectangleF(0.5F, 0.5F, Math.Max(0, ClientSize.Width - 1), Math.Max(0, ClientSize.Height - 1)),
+            主题.FormBorderColor, 1.0F)
+    End Sub
+
+    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+        Return New Rectangle(Point.Empty, Me.Size)
+    End Function
+
+    Private Sub RequestV3Render()
+        RequestV3Render(New Rectangle(Point.Empty, Me.Size))
+    End Sub
+
+    Private Sub RequestV3Render(dirtyRect As Rectangle)
+        If IsDisposed Then Return
+        V3_InvalidationRouter.RequestRender(Me, dirtyRect)
     End Sub
 
 #End Region
@@ -743,7 +755,7 @@ Friend Class ExMsgBoxForm
         MyBase.OnMouseDown(e)
         If 允许关闭 AndAlso 关闭按钮区域.Contains(e.Location) Then
             关闭按下 = True
-            Me.Invalidate(关闭按钮区域)
+            RequestV3Render(关闭按钮区域)
         ElseIf 标题栏区域.Contains(e.Location) AndAlso Not 关闭按钮区域.Contains(e.Location) Then
             ReleaseCapture()
             SendMessage(Me.Handle, WM_NCLBUTTONDOWN, New IntPtr(HT_CAPTION), IntPtr.Zero)
@@ -757,9 +769,8 @@ Friend Class ExMsgBoxForm
     End Sub
 
     Private Sub 刷新毛玻璃背景()
-        If Not 毛玻璃.Enabled OrElse IsDisposed OrElse Not IsHandleCreated Then Return
-        毛玻璃.Prepare()
-        Invalidate()
+        If IsDisposed OrElse Not IsHandleCreated Then Return
+        RequestV3Render()
     End Sub
 
     Protected Overrides Sub OnMouseUp(e As MouseEventArgs)
@@ -768,7 +779,7 @@ Friend Class ExMsgBoxForm
             执行关闭(关闭返回值)
         End If
         关闭按下 = False
-        Me.Invalidate(关闭按钮区域)
+        RequestV3Render(关闭按钮区域)
     End Sub
 
     Protected Overrides Sub OnMouseMove(e As MouseEventArgs)
@@ -776,7 +787,7 @@ Friend Class ExMsgBoxForm
         Dim hovered As Boolean = 允许关闭 AndAlso 关闭按钮区域.Contains(e.Location)
         If hovered <> 关闭悬停 Then
             关闭悬停 = hovered
-            Me.Invalidate(关闭按钮区域)
+            RequestV3Render(关闭按钮区域)
         End If
     End Sub
 
@@ -785,7 +796,7 @@ Friend Class ExMsgBoxForm
         If 关闭悬停 OrElse 关闭按下 Then
             关闭悬停 = False
             关闭按下 = False
-            Me.Invalidate(关闭按钮区域)
+            RequestV3Render(关闭按钮区域)
         End If
     End Sub
 

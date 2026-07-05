@@ -18,7 +18,10 @@ Public NotInheritable Class D3D_BrushCache
         If _disposed Then Throw New ObjectDisposedException(NameOf(D3D_BrushCache))
         If context Is Nothing Then Throw New ArgumentNullException(NameOf(context))
 
-        Dim key = generation.ToString(Globalization.CultureInfo.InvariantCulture) & ":" & color.ToArgb().ToString(Globalization.CultureInfo.InvariantCulture)
+        Dim contextKey = Runtime.CompilerServices.RuntimeHelpers.GetHashCode(context)
+        Dim key = generation.ToString(Globalization.CultureInfo.InvariantCulture) & ":" &
+                  contextKey.ToString(Globalization.CultureInfo.InvariantCulture) & ":" &
+                  color.ToArgb().ToString(Globalization.CultureInfo.InvariantCulture)
         Dim entry As D3D_BrushCacheEntry = Nothing
         If _solidBrushes.TryGetValue(key, entry) Then
             entry.LastUsed = NextClock()

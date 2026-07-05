@@ -11,7 +11,7 @@ Imports Vortice.DirectWrite
 '''
 ''' 调用契约：
 ''' • 每次显示前调用 <see cref="ShowTip"/>，该方法会重新测量文本、调整屏幕位置、准备毛玻璃帧并触发重绘。
-''' • 毛玻璃背景通过 <see cref="PopupBackdropRenderer"/> 独立抓屏，不复用主窗口 ThisIsYourWindow 的帧，
+''' • 毛玻璃背景通过 <see cref="D3D_PopupBackdropRenderer"/> 独立抓屏，不复用主窗口 ThisIsYourWindow 的帧，
 '''   因为 tooltip 是独立顶层窗口，捕获区域和排除截屏策略不同。
 ''' • <see cref="OnPaintBackground"/> 故意留空，底色由 OnPaint 内的 backdrop / D2D 背景接管。
 '''
@@ -32,7 +32,7 @@ Public NotInheritable Class FloatingToolTipForm
     Private ReadOnly _owner As Control
     Private _tipText As String = ""
     Private _style As New FloatingToolTipStyle()
-    Private _backdrop As PopupBackdropRenderer
+    Private _backdrop As D3D_PopupBackdropRenderer
     Private _lastMeasureKey As String = Nothing
     Private _lastMeasuredSize As Size = Size.Empty
     Private _selectionAnchor As Integer = 0
@@ -183,7 +183,7 @@ Public NotInheritable Class FloatingToolTipForm
 
         Dim bw As Integer = BorderWidth()
 
-        Using scope = D2DHelperV2.BeginPaint(e, Me, 1)
+        Using scope = D3D_PaintBridge.BeginPaint(e, Me, 1)
             If scope Is Nothing Then Return
             Dim rt As ID2D1RenderTarget = scope.GraphicsLayer
             Dim brushCache = scope.Compositor.BrushCache
@@ -193,7 +193,7 @@ Public NotInheritable Class FloatingToolTipForm
 
             Dim textRect As RectangleF = GetTextRectangle()
             DrawSelection_D2D(scope.DCRenderTarget, brushCache, textRect)
-            D2DTextRenderer.DrawText(scope.DCRenderTarget, _tipText, TipFont(), textRect, _style.ForeColor,
+            D3D_TextInterop.DrawText(scope.DCRenderTarget, _tipText, TipFont(), textRect, _style.ForeColor,
                                      TextFormatFlags.WordBreak Or TextFormatFlags.NoPadding Or TextFormatFlags.Left Or TextFormatFlags.Top,
                                      OwnerDpiScale(), scope.Compositor.TextFormatCache, brushCache)
         End Using
@@ -267,13 +267,13 @@ Public NotInheritable Class FloatingToolTipForm
 
     Private Function MeasureWrappedText(text As String, font As Font, contentW As Integer) As Size
         If String.IsNullOrEmpty(text) Then Return Size.Empty
-        Dim textFormatCache = D2DHelperV2.GetCompositor(_owner)?.TextFormatCache
-        Return D2DTextRenderer.MeasureText(text, font, New Size(contentW, Integer.MaxValue),
+        Dim textFormatCache = D3D_PaintBridge.GetCompositor(_owner)?.TextFormatCache
+        Return D3D_TextInterop.MeasureText(text, font, New Size(contentW, Integer.MaxValue),
                                            TextFormatFlags.WordBreak Or TextFormatFlags.NoPadding Or TextFormatFlags.Left Or TextFormatFlags.Top,
                                            OwnerDpiScale(), textFormatCache)
     End Function
 
-    Private Sub DrawSelection_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache, textRect As RectangleF)
+    Private Sub DrawSelection_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache, textRect As RectangleF)
         If Not IsSelectableCopyEnabled() Then Return
         Dim length As Integer = SelectionLength()
         If rt Is Nothing OrElse length <= 0 OrElse textRect.Width <= 0 OrElse textRect.Height <= 0 Then Return
@@ -281,7 +281,7 @@ Public NotInheritable Class FloatingToolTipForm
         Dim start As Integer = SelectionStart()
         Using fmt = CreateTipTextFormat()
             If fmt Is Nothing Then Return
-            Using layout = D2DGlobals.GetDWriteFactory().CreateTextLayout(_tipText, fmt,
+            Using layout = D3D_D2DInterop.GetDWriteFactory().CreateTextLayout(_tipText, fmt,
                                                                           Math.Max(1.0F, textRect.Width),
                                                                           Math.Max(1.0F, textRect.Height))
                 Dim metrics(Math.Max(1, length + 1) - 1) As HitTestMetrics
@@ -313,7 +313,7 @@ Public NotInheritable Class FloatingToolTipForm
 
         Using fmt = CreateTipTextFormat()
             If fmt Is Nothing Then Return 0
-            Using layout = D2DGlobals.GetDWriteFactory().CreateTextLayout(_tipText, fmt,
+            Using layout = D3D_D2DInterop.GetDWriteFactory().CreateTextLayout(_tipText, fmt,
                                                                           Math.Max(1.0F, textRect.Width),
                                                                           Math.Max(1.0F, textRect.Height))
                 Dim trailing As RawBool = False
@@ -332,8 +332,8 @@ Public NotInheritable Class FloatingToolTipForm
         Dim font As Font = TipFont()
         If font Is Nothing Then Return Nothing
 
-        Dim sizePx As Single = D2DGlobals.GetDWriteFontSizePx(font, OwnerDpiScale())
-        Dim fmt = D2DGlobals.CreateTextFormat(font, sizePx)
+        Dim sizePx As Single = D3D_D2DInterop.GetDWriteFontSizePx(font, OwnerDpiScale())
+        Dim fmt = D3D_D2DInterop.CreateTextFormat(font, sizePx)
         fmt.TextAlignment = TextAlignment.Leading
         fmt.ParagraphAlignment = ParagraphAlignment.Near
         fmt.WordWrapping = WordWrapping.Wrap
@@ -491,7 +491,7 @@ Public NotInheritable Class FloatingToolTipForm
         _messageFilterInstalled = False
     End Sub
 
-    Private Sub DrawBackground_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache,
+    Private Sub DrawBackground_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache,
                                    bw As Integer, w As Integer, h As Integer, fillBackground As Boolean)
         Dim radius As Single = BorderRadius()
         Dim fillColor As Color = ToolTipFillColor()
@@ -502,7 +502,7 @@ Public NotInheritable Class FloatingToolTipForm
                 Dim half As Single = bw / 2.0F
                 boundsRect.Inflate(-half, -half)
             End If
-            Using geo = RectangleRenderer.创建圆角矩形几何(boundsRect, radius)
+            Using geo = D3D_RectangleRenderer.创建圆角矩形几何(boundsRect, radius)
                 If fillBackground Then rt.FillGeometry(geo, brushCache.Get(rt, fillColor))
                 If bw > 0 AndAlso _style.BorderColor.A > 0 Then rt.DrawGeometry(geo, brushCache.Get(rt, _style.BorderColor), bw)
             End Using
@@ -515,7 +515,7 @@ Public NotInheritable Class FloatingToolTipForm
         If bw > 0 AndAlso _style.BorderColor.A > 0 Then DrawSquareBorder_D2D(rt, brushCache, w, h, bw)
     End Sub
 
-    Private Sub DrawSquareBorder_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache,
+    Private Sub DrawSquareBorder_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache,
                                      w As Integer, h As Integer, bw As Integer)
         Dim border As Integer = Math.Min(bw, Math.Min(w, h))
         If border <= 0 Then Return
@@ -543,7 +543,7 @@ Public NotInheritable Class FloatingToolTipForm
         If radius <= 0 OrElse Width <= 0 OrElse Height <= 0 Then
             Region = Nothing
         Else
-            Using path = RectangleRenderer.创建圆角矩形路径(New RectangleF(0, 0, Width, Height), radius)
+            Using path = D3D_RectangleRenderer.创建圆角矩形路径(New RectangleF(0, 0, Width, Height), radius)
                 Region = New Region(path)
             End Using
         End If
@@ -551,7 +551,7 @@ Public NotInheritable Class FloatingToolTipForm
     End Sub
 
     Private Sub 准备毛玻璃背景()
-        If _backdrop Is Nothing Then _backdrop = New PopupBackdropRenderer(Me)
+        If _backdrop Is Nothing Then _backdrop = New D3D_PopupBackdropRenderer(Me)
         _backdrop.TransientExcludeOnCapture = True
 
         If BackdropEnabled AndAlso BackdropMode <> PopupBackdropMode.None Then
@@ -642,8 +642,8 @@ Public NotInheritable Class FloatingToolTipForm
     End Function
 
     Private Function OwnerDpiScale() As Single
-        If _owner IsNot Nothing AndAlso Not _owner.IsDisposed Then Return D2DGlobals.GetCurrentDpiScale(_owner)
-        Return D2DGlobals.GetCurrentDpiScale(Me)
+        If _owner IsNot Nothing AndAlso Not _owner.IsDisposed Then Return D3D_D2DInterop.GetCurrentDpiScale(_owner)
+        Return D3D_D2DInterop.GetCurrentDpiScale(Me)
     End Function
 
     Private Shared Function NormalizePadding(value As Padding) As Padding

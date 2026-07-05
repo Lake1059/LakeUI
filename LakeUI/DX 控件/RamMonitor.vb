@@ -14,9 +14,9 @@ Imports Vortice.DirectWrite
 ''' </summary>
 <DefaultEvent("SampleUpdated")>
 Public Class RamMonitor
+    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource
 
-#Region "D2D 资源"
-    Private _当前合成器 As WindowCompositor
+#Region "D3D 渲染资源"
 #End Region
 
     Public Event SampleUpdated As EventHandler
@@ -497,7 +497,7 @@ Public Class RamMonitor
             End SyncLock
         End If
 
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
         RaiseEvent SampleUpdated(Me, EventArgs.Empty)
     End Sub
 
@@ -512,7 +512,7 @@ Public Class RamMonitor
         If 采样器实例 Is Nothing Then Return
         Try
             最近样本 = RamSampler.Sample()
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         Catch
         End Try
     End Sub
@@ -522,7 +522,7 @@ Public Class RamMonitor
         SyncLock 历史锁
             历史数据.Clear()
         End SyncLock
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     ''' <summary>当前采样的只读快照。</summary>
@@ -541,41 +541,31 @@ Public Class RamMonitor
     End Sub
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
-        If Me.Width <= 0 OrElse Me.Height <= 0 Then Return
-
-        Dim ssaa As Integer = D2DHelperV2.GetEffectiveSsaaScale(超采样倍率)
-
-        Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
-            If scope Is Nothing Then Return
-            _当前合成器 = scope.Compositor
-            Try
-                Dim gRT As ID2D1RenderTarget = scope.GraphicsLayer
-                Dim dcRT As ID2D1DCRenderTarget = scope.DCRenderTarget
-
-                If _backgroundSource IsNot Nothing Then
-                    BackgroundPenetrationV2.PaintBackground(Me, scope, _backgroundSource)
-                ElseIf MyBase.BackColor.A > 0 AndAlso MyBase.BackColor.A < 255 Then
-                    Dim bgLayer = scope.BackgroundLayer
-                    Dim b = _当前合成器.BrushCache.Get(bgLayer, MyBase.BackColor)
-                    If b IsNot Nothing Then
-                        bgLayer.FillRectangle(D2DGlobals.ToD2DRect(New RectangleF(0, 0, Me.Width, Me.Height)), b)
-                    End If
-                End If
-
-                绘制图形内容_D2D(gRT)
-                scope.FlushGraphics()
-                绘制文字内容_D2D(dcRT)
-
-                If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
-                    绘制禁用遮罩_D2D(dcRT)
-                End If
-            Finally
-                _当前合成器 = Nothing
-            End Try
-        End Using
+        If Not D3D_PaintBridge.PaintRenderable(e, Me, Me, 1) Then MyBase.OnPaint(e)
     End Sub
 
-    Private Sub 绘制图形内容_D2D(rt As ID2D1RenderTarget)
+    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+        If Me.Width <= 0 OrElse Me.Height <= 0 Then Return
+
+        If _backgroundSource IsNot Nothing Then
+            context.DrawBackgroundSource(Me, _backgroundSource, New RectangleF(0, 0, Me.Width, Me.Height))
+        ElseIf MyBase.BackColor.A > 0 Then
+            context.FillRectangle(New RectangleF(0, 0, Me.Width, Me.Height), MyBase.BackColor)
+        End If
+
+        绘制图形内容_GPU(context)
+        绘制文字内容_GPU(context)
+
+        If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
+            绘制禁用遮罩_GPU(context)
+        End If
+    End Sub
+
+    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+        Return New Rectangle(Point.Empty, Me.Size)
+    End Function
+
+    Private Sub 绘制图形内容_GPU(context As D3D_PaintContext)
         Dim s As Single = DpiScale()
         Dim pad As Padding = Me.Padding
         Dim rect As New RectangleF(pad.Left * s, pad.Top * s,
@@ -583,7 +573,7 @@ Public Class RamMonitor
                                    Math.Max(0, Me.Height - (pad.Top + pad.Bottom) * s))
         If rect.Width <= 0 OrElse rect.Height <= 0 Then Return
 
-        绘制背景与边框_D2D(rt, rect, s)
+        绘制背景与边框_GPU(context, rect, s)
 
         Dim innerPad As Single = 核心内边距值 * s
         Dim inner As New RectangleF(rect.X + innerPad, rect.Y + innerPad,
@@ -603,27 +593,14 @@ Public Class RamMonitor
                                         Math.Max(0, inner.Height - topStripH - bottomStripH))
 
         If graphRect.Height >= 2 AndAlso graphRect.Width >= 2 Then
-            Dim hasClip As Boolean = 圆角半径值 > 0
-            If hasClip Then
-                Using geo = RectangleRenderer.创建圆角矩形几何(rect, 圆角半径值 * s)
-                    D2DGlobals.PushGeometryClip(rt, geo, rect)
-                    Try
-                        绘制历史图表_D2D(rt, graphRect, s)
-                    Finally
-                        rt.PopLayer()
-                    End Try
-                End Using
-            Else
-                绘制历史图表_D2D(rt, graphRect, s)
-            End If
+            Using context.PushClip(rect)
+                绘制历史图表_GPU(context, graphRect, s)
+            End Using
         End If
     End Sub
 
-    Private Sub 绘制历史图表_D2D(rt As ID2D1RenderTarget, rect As RectangleF, s As Single)
-        If 图表背景颜色值.A > 0 Then
-            Dim b = _当前合成器.BrushCache.Get(rt, 图表背景颜色值)
-            If b IsNot Nothing Then rt.FillRectangle(D2DGlobals.ToD2DRect(rect), b)
-        End If
+    Private Sub 绘制历史图表_GPU(context As D3D_PaintContext, rect As RectangleF, s As Single)
+        If 图表背景颜色值.A > 0 Then context.FillRectangle(rect, 图表背景颜色值)
 
         Dim hist = 获取历史快照()
         Dim n As Integer = hist.Length
@@ -655,87 +632,51 @@ Public Class RamMonitor
             standbyTop(i) = New Vector2(x, rect.Bottom - (a + bm + c) * rect.Height)
         Next
 
-        填充堆叠区_D2D(rt, 备用填充颜色值, standbyTop, rect)
-        填充堆叠区_D2D(rt, 已修改填充颜色值, modTop, rect)
-        填充堆叠区_D2D(rt, 已用填充颜色值, inUseTop, rect)
+        填充堆叠区_GPU(context, 备用填充颜色值, standbyTop, rect)
+        填充堆叠区_GPU(context, 已修改填充颜色值, modTop, rect)
+        填充堆叠区_GPU(context, 已用填充颜色值, inUseTop, rect)
 
         If 图表线条颜色值.A > 0 AndAlso 图表线条粗细值 > 0 Then
-            Dim b = _当前合成器.BrushCache.Get(rt, 图表线条颜色值)
+            Dim b = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, 图表线条颜色值, context.DeviceGeneration)
             If b IsNot Nothing Then
                 Dim lineW As Single = 图表线条粗细值 * s
                 For i As Integer = 0 To standbyTop.Length - 2
-                    rt.DrawLine(standbyTop(i), standbyTop(i + 1), b, lineW)
+                    context.DeviceContext.DrawLine(standbyTop(i), standbyTop(i + 1), b, lineW)
                 Next
             End If
         End If
     End Sub
 
-    Private Sub 填充堆叠区_D2D(rt As ID2D1RenderTarget, color As Color, topPts As Vector2(), rect As RectangleF)
+    Private Sub 填充堆叠区_GPU(context As D3D_PaintContext, color As Color, topPts As Vector2(), rect As RectangleF)
         If color.A = 0 Then Return
         If topPts Is Nothing OrElse topPts.Length < 2 Then Return
         Using geo = 创建堆叠填充几何(rect, topPts)
-            Dim b = _当前合成器.BrushCache.Get(rt, color)
-            If b IsNot Nothing Then rt.FillGeometry(geo, b)
+            Dim b = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
+            If b IsNot Nothing Then context.DeviceContext.FillGeometry(geo, b)
         End Using
     End Sub
 
-    Private Shared Function 创建堆叠填充几何(rect As RectangleF, topPts As Vector2()) As ID2D1PathGeometry
-        Dim geo As ID2D1PathGeometry = D2DGlobals.GetD2DFactory().CreatePathGeometry()
-        Dim sink As ID2D1GeometrySink = geo.Open()
-        Try
-            sink.BeginFigure(topPts(0), FigureBegin.Filled)
-            For i As Integer = 1 To topPts.Length - 1
-                sink.AddLine(topPts(i))
-            Next
-            sink.AddLine(New Vector2(topPts(topPts.Length - 1).X, rect.Bottom))
-            sink.AddLine(New Vector2(topPts(0).X, rect.Bottom))
-            sink.EndFigure(FigureEnd.Closed)
-            sink.Close()
-        Finally
-            sink.Dispose()
-        End Try
-        Return geo
-    End Function
-
-    Private Sub 绘制背景与边框_D2D(rt As ID2D1RenderTarget, rect As RectangleF, s As Single)
+    Private Sub 绘制背景与边框_GPU(context As D3D_PaintContext, rect As RectangleF, s As Single)
         Dim r As Single = 圆角半径值 * s
-        If r > 0 Then
-            Using geo = RectangleRenderer.创建圆角矩形几何(rect, r)
-                If MyBase.BackColor.A > 0 AndAlso MyBase.BackColor.A < 255 Then
-                    RectangleRenderer.绘制圆角背景_D2D(rt, geo, rect, MyBase.BackColor, Color.Empty, System.Windows.Forms.Orientation.Vertical, _当前合成器.BrushCache)
-                End If
-                If 主体背景颜色值.A > 0 Then
-                    RectangleRenderer.绘制圆角背景_D2D(rt, geo, rect, 主体背景颜色值, Color.Empty, System.Windows.Forms.Orientation.Vertical, _当前合成器.BrushCache)
-                End If
-            End Using
-        Else
-            If MyBase.BackColor.A > 0 AndAlso MyBase.BackColor.A < 255 Then
-                RectangleRenderer.绘制矩形背景_D2D(rt, rect, MyBase.BackColor, Color.Empty, System.Windows.Forms.Orientation.Vertical, _当前合成器.BrushCache)
-            End If
-            If 主体背景颜色值.A > 0 Then
-                RectangleRenderer.绘制矩形背景_D2D(rt, rect, 主体背景颜色值, Color.Empty, System.Windows.Forms.Orientation.Vertical, _当前合成器.BrushCache)
-            End If
+        If MyBase.BackColor.A > 0 AndAlso MyBase.BackColor.A < 255 Then
+            填充圆角矩形_GPU(context, rect, r, MyBase.BackColor)
+        End If
+        If 主体背景颜色值.A > 0 Then
+            填充圆角矩形_GPU(context, rect, r, 主体背景颜色值)
         End If
     End Sub
 
-    Private Sub 绘制禁用遮罩_D2D(rt As ID2D1RenderTarget)
+    Private Sub 绘制禁用遮罩_GPU(context As D3D_PaintContext)
         Dim s As Single = DpiScale()
         Dim pad As Padding = Me.Padding
         Dim rect As New RectangleF(pad.Left * s, pad.Top * s,
                                    Math.Max(0, Me.Width - (pad.Left + pad.Right) * s),
                                    Math.Max(0, Me.Height - (pad.Top + pad.Bottom) * s))
         If rect.Width <= 0 OrElse rect.Height <= 0 Then Return
-        Dim r As Single = 圆角半径值 * s
-        If r > 0 Then
-            Using geo = RectangleRenderer.创建圆角矩形几何(rect, r)
-                RectangleRenderer.绘制圆角背景_D2D(rt, geo, rect, 禁用时遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Vertical, _当前合成器.BrushCache)
-            End Using
-        Else
-            RectangleRenderer.绘制矩形背景_D2D(rt, rect, 禁用时遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Vertical, _当前合成器.BrushCache)
-        End If
+        填充圆角矩形_GPU(context, rect, 圆角半径值 * s, 禁用时遮罩颜色)
     End Sub
 
-    Private Sub 绘制文字内容_D2D(rt As ID2D1RenderTarget)
+    Private Sub 绘制文字内容_GPU(context As D3D_PaintContext)
         Dim s As Single = DpiScale()
         Dim pad As Padding = Me.Padding
         Dim rect As New RectangleF(pad.Left * s, pad.Top * s,
@@ -761,33 +702,17 @@ Public Class RamMonitor
                                         Math.Max(0, inner.Height - topStripH - bottomStripH))
 
         If topStripH > 0 Then
-            绘制文字_D2D(rt, New RectangleF(inner.X, inner.Y, inner.Width, topStripH), topText, s, 顶部文字对齐值)
+            绘制文字_GPU(context, New RectangleF(inner.X, inner.Y, inner.Width, topStripH), topText, s, 顶部文字对齐值)
         End If
         If bottomStripH > 0 Then
-            绘制文字_D2D(rt, New RectangleF(inner.X, inner.Bottom - bottomStripH, inner.Width, bottomStripH), bottomText, s, 底部文字对齐值)
+            绘制文字_GPU(context, New RectangleF(inner.X, inner.Bottom - bottomStripH, inner.Width, bottomStripH), bottomText, s, 底部文字对齐值)
         End If
         If 启用悬停读数值 AndAlso _悬停有效 AndAlso graphRect.Height >= 2 AndAlso graphRect.Width >= 2 Then
-            绘制悬停读数_D2D(rt, graphRect, s)
+            绘制悬停读数_GPU(context, graphRect, s)
         End If
     End Sub
 
-    Private Function 文本像素高度(s As Single) As Single
-        Return D2DGlobals.GetDWriteFontSizePx(Me.Font, s)
-    End Function
-
-    Private Shared Function 转文本水平对齐(a As ContentAlignment) As TextAlignment
-        If a = ContentAlignment.TopLeft OrElse a = ContentAlignment.MiddleLeft OrElse a = ContentAlignment.BottomLeft Then Return TextAlignment.Leading
-        If a = ContentAlignment.TopRight OrElse a = ContentAlignment.MiddleRight OrElse a = ContentAlignment.BottomRight Then Return TextAlignment.Trailing
-        Return TextAlignment.Center
-    End Function
-
-    Private Shared Function 转文本垂直对齐(a As ContentAlignment) As ParagraphAlignment
-        If a = ContentAlignment.TopLeft OrElse a = ContentAlignment.TopCenter OrElse a = ContentAlignment.TopRight Then Return ParagraphAlignment.Near
-        If a = ContentAlignment.BottomLeft OrElse a = ContentAlignment.BottomCenter OrElse a = ContentAlignment.BottomRight Then Return ParagraphAlignment.Far
-        Return ParagraphAlignment.Center
-    End Function
-
-    Private Sub 绘制文字_D2D(rt As ID2D1RenderTarget, inner As RectangleF, text As String, s As Single, align As ContentAlignment)
+    Private Sub 绘制文字_GPU(context As D3D_PaintContext, inner As RectangleF, text As String, s As Single, align As ContentAlignment)
         If String.IsNullOrEmpty(text) Then Return
         Dim tp As Padding = 文字内边距值
         Dim textRect As New RectangleF(
@@ -797,17 +722,10 @@ Public Class RamMonitor
             Math.Max(0, inner.Height - (tp.Top + tp.Bottom) * s))
         If textRect.Width <= 0 OrElse textRect.Height <= 0 Then Return
 
-        Dim weight As FontWeight = If(Me.Font.Bold, FontWeight.Bold, FontWeight.Normal)
-        Dim style As FontStyle = If(Me.Font.Italic, FontStyle.Italic, FontStyle.Normal)
-        Dim fmt = _当前合成器.TextFormatCache.Get(Me.Font.FontFamily.Name, weight, style, 文本像素高度(s),
-                                       转文本水平对齐(align), 转文本垂直对齐(align), True)
-        Using layout = D2DGlobals.GetDWriteFactory().CreateTextLayout(If(text, ""), fmt, textRect.Width, textRect.Height)
-            Dim b = _当前合成器.BrushCache.Get(rt, Me.ForeColor)
-            If b IsNot Nothing Then rt.DrawTextLayout(New Vector2(textRect.X, textRect.Y), layout, b)
-        End Using
+        context.DrawText(If(text, ""), Me.Font, Me.ForeColor, textRect, 转文本水平对齐(align), 转文本垂直对齐(align))
     End Sub
 
-    Private Sub 绘制悬停读数_D2D(rt As ID2D1RenderTarget, graphRect As RectangleF, s As Single)
+    Private Sub 绘制悬停读数_GPU(context As D3D_PaintContext, graphRect As RectangleF, s As Single)
         Dim hist = 获取历史快照()
         Dim n As Integer = hist.Length
         If n < 1 Then Return
@@ -822,8 +740,8 @@ Public Class RamMonitor
         Dim xAtSample As Single = graphRect.Right - CSng(n - 1 - idx) * step_
 
         If 悬停线颜色值.A > 0 Then
-            Dim b = _当前合成器.BrushCache.Get(rt, 悬停线颜色值)
-            If b IsNot Nothing Then rt.DrawLine(New Vector2(xAtSample, graphRect.Top), New Vector2(xAtSample, graphRect.Bottom), b, Math.Max(1.0F, 悬停线粗细值 * s))
+            Dim b = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, 悬停线颜色值, context.DeviceGeneration)
+            If b IsNot Nothing Then context.DeviceContext.DrawLine(New Vector2(xAtSample, graphRect.Top), New Vector2(xAtSample, graphRect.Bottom), b, Math.Max(1.0F, 悬停线粗细值 * s))
         End If
 
         Dim lines As New List(Of (label As String, value As String)) From {
@@ -832,14 +750,11 @@ Public Class RamMonitor
             (RamMonitorStrings.Available, 格式化字节(hp.FreeBytes + hp.StandbyBytes))
         }
 
-        Dim weight As FontWeight = If(Me.Font.Bold, FontWeight.Bold, FontWeight.Normal)
-        Dim style As FontStyle = If(Me.Font.Italic, FontStyle.Italic, FontStyle.Normal)
-        Dim fmt = _当前合成器.TextFormatCache.Get(Me.Font.FontFamily.Name, weight, style, 文本像素高度(s), TextAlignment.Leading, ParagraphAlignment.Near, False)
-        Dim lineH As Single = 文本像素高度(s)
+        Dim lineH As Single = Math.Max(1.0F, System.Windows.Forms.TextRenderer.MeasureText("Ag", Me.Font).Height)
         Dim maxLabel As Single = 0, maxValue As Single = 0
         For i As Integer = 0 To lines.Count - 1
-            maxLabel = Math.Max(maxLabel, 测量单行文字宽度(fmt, lines(i).label))
-            maxValue = Math.Max(maxValue, 测量单行文字宽度(fmt, lines(i).value))
+            maxLabel = Math.Max(maxLabel, System.Windows.Forms.TextRenderer.MeasureText(lines(i).label, Me.Font, New Size(Integer.MaxValue, Integer.MaxValue), TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine).Width)
+            maxValue = Math.Max(maxValue, System.Windows.Forms.TextRenderer.MeasureText(lines(i).value, Me.Font, New Size(Integer.MaxValue, Integer.MaxValue), TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine).Width)
         Next
 
         Dim panelPad As Single = 6 * s
@@ -856,44 +771,79 @@ Public Class RamMonitor
         If panelY + panelH > graphRect.Bottom Then panelY = graphRect.Bottom - panelH
         Dim panelRect As New RectangleF(panelX, panelY, panelW, panelH)
 
-        If 悬停面板背景值.A > 0 Then
-            Dim b = _当前合成器.BrushCache.Get(rt, 悬停面板背景值)
-            If b IsNot Nothing Then rt.FillRectangle(D2DGlobals.ToD2DRect(panelRect), b)
-        End If
-        If 悬停面板边框值.A > 0 Then
-            Dim b = _当前合成器.BrushCache.Get(rt, 悬停面板边框值)
-            If b IsNot Nothing Then rt.DrawRectangle(D2DGlobals.ToD2DRect(panelRect), b, 1.0F)
-        End If
+        If 悬停面板背景值.A > 0 Then context.FillRectangle(panelRect, 悬停面板背景值)
+        If 悬停面板边框值.A > 0 Then context.DrawRectangle(panelRect, 悬停面板边框值, 1.0F)
 
         Dim fore As Color = If(悬停面板前景值.A > 0, 悬停面板前景值, Me.ForeColor)
-        Dim foreBrush = _当前合成器.BrushCache.Get(rt, fore)
-        If foreBrush IsNot Nothing Then
-            For i As Integer = 0 To lines.Count - 1
-                Dim rowY As Single = panelRect.Y + panelPad + i * lineH
-                If showOnLeft Then
-                    绘制悬停单行_D2D(rt, fmt, foreBrush, lines(i).value, panelRect.Right - panelPad - maxLabel - innerGap - maxValue, rowY, maxValue, lineH)
-                    绘制悬停单行_D2D(rt, fmt, foreBrush, lines(i).label, panelRect.Right - panelPad - maxLabel, rowY, maxLabel, lineH)
-                Else
-                    绘制悬停单行_D2D(rt, fmt, foreBrush, lines(i).label, panelRect.X + panelPad, rowY, maxLabel, lineH)
-                    绘制悬停单行_D2D(rt, fmt, foreBrush, lines(i).value, panelRect.X + panelPad + maxLabel + innerGap, rowY, maxValue, lineH)
-                End If
-            Next
-        End If
+        For i As Integer = 0 To lines.Count - 1
+            Dim rowY As Single = panelRect.Y + panelPad + i * lineH
+            If showOnLeft Then
+                绘制悬停单行_GPU(context, fore, lines(i).value, panelRect.Right - panelPad - maxLabel - innerGap - maxValue, rowY, maxValue, lineH)
+                绘制悬停单行_GPU(context, fore, lines(i).label, panelRect.Right - panelPad - maxLabel, rowY, maxLabel, lineH)
+            Else
+                绘制悬停单行_GPU(context, fore, lines(i).label, panelRect.X + panelPad, rowY, maxLabel, lineH)
+                绘制悬停单行_GPU(context, fore, lines(i).value, panelRect.X + panelPad + maxLabel + innerGap, rowY, maxValue, lineH)
+            End If
+        Next
     End Sub
 
+    Private Sub 绘制悬停单行_GPU(context As D3D_PaintContext, color As Color, text As String, x As Single, y As Single, w As Single, h As Single)
+        If w <= 0 OrElse h <= 0 Then Return
+        context.DrawText(If(text, ""), Me.Font, color, New RectangleF(x, y, w, h), TextAlignment.Leading, ParagraphAlignment.Near)
+    End Sub
+
+    Private Sub 填充圆角矩形_GPU(context As D3D_PaintContext, rect As RectangleF, radius As Single, color As Color)
+        If color.A = 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
+        If radius <= 0 Then
+            context.DeviceContext.FillRectangle(D3D_PaintContext.ToRawRect(rect), brush)
+            Return
+        End If
+
+        Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New RoundedRectangle(rect, radius, radius))
+            context.DeviceContext.FillGeometry(geo, brush)
+        End Using
+    End Sub
+
+    Private Shared Function 创建堆叠填充几何(rect As RectangleF, topPts As Vector2()) As ID2D1PathGeometry
+        Dim geo As ID2D1PathGeometry = D3D_RenderCore.DeviceManager.D2DFactory.CreatePathGeometry()
+        Dim sink As ID2D1GeometrySink = geo.Open()
+        Try
+            sink.BeginFigure(topPts(0), FigureBegin.Filled)
+            For i As Integer = 1 To topPts.Length - 1
+                sink.AddLine(topPts(i))
+            Next
+            sink.AddLine(New Vector2(topPts(topPts.Length - 1).X, rect.Bottom))
+            sink.AddLine(New Vector2(topPts(0).X, rect.Bottom))
+            sink.EndFigure(FigureEnd.Closed)
+            sink.Close()
+        Finally
+            sink.Dispose()
+        End Try
+        Return geo
+    End Function
+
+    Private Function 文本像素高度(s As Single) As Single
+        Return D3D_D2DInterop.GetDWriteFontSizePx(Me.Font, s)
+    End Function
+
+    Private Shared Function 转文本水平对齐(a As ContentAlignment) As TextAlignment
+        If a = ContentAlignment.TopLeft OrElse a = ContentAlignment.MiddleLeft OrElse a = ContentAlignment.BottomLeft Then Return TextAlignment.Leading
+        If a = ContentAlignment.TopRight OrElse a = ContentAlignment.MiddleRight OrElse a = ContentAlignment.BottomRight Then Return TextAlignment.Trailing
+        Return TextAlignment.Center
+    End Function
+
+    Private Shared Function 转文本垂直对齐(a As ContentAlignment) As ParagraphAlignment
+        If a = ContentAlignment.TopLeft OrElse a = ContentAlignment.TopCenter OrElse a = ContentAlignment.TopRight Then Return ParagraphAlignment.Near
+        If a = ContentAlignment.BottomLeft OrElse a = ContentAlignment.BottomCenter OrElse a = ContentAlignment.BottomRight Then Return ParagraphAlignment.Far
+        Return ParagraphAlignment.Center
+    End Function
+
     Private Shared Function 测量单行文字宽度(fmt As IDWriteTextFormat, text As String) As Single
-        Using layout = D2DGlobals.GetDWriteFactory().CreateTextLayout(If(text, ""), fmt, 10000.0F, 1000.0F)
+        Using layout = D3D_D2DInterop.GetDWriteFactory().CreateTextLayout(If(text, ""), fmt, 10000.0F, 1000.0F)
             Return CSng(Math.Ceiling(layout.Metrics.WidthIncludingTrailingWhitespace))
         End Using
     End Function
-
-    Private Shared Sub 绘制悬停单行_D2D(rt As ID2D1RenderTarget, fmt As IDWriteTextFormat, brush As ID2D1Brush,
-                                      text As String, x As Single, y As Single, w As Single, h As Single)
-        If w <= 0 OrElse h <= 0 Then Return
-        Using layout = D2DGlobals.GetDWriteFactory().CreateTextLayout(If(text, ""), fmt, w, h)
-            rt.DrawTextLayout(New Vector2(x, y), layout, brush)
-        End Using
-    End Sub
 
     Private Function 样本索引从X坐标(x As Single, rect As RectangleF) As Integer
         Dim cap As Integer = Math.Max(2, 记录长度值)
@@ -991,13 +941,22 @@ Public Class RamMonitor
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End If
     End Sub
 
     Private Function DpiScale() As Single
-        Return D2DGlobals.GetCurrentDpiScale(Me)
+        Return V3_DpiContext.FromControl(Me).Scale
     End Function
+
+    Private Sub 请求V3渲染(Optional immediate As Boolean = False)
+        请求V3渲染(New Rectangle(Point.Empty, Me.Size), immediate)
+    End Sub
+
+    Private Sub 请求V3渲染(dirtyRect As Rectangle, Optional immediate As Boolean = False)
+        If Me.IsDisposed Then Return
+        V3_InvalidationRouter.RequestRender(Me, dirtyRect)
+    End Sub
 
     Private Function 应执行采样刷新() As Boolean
         Return 正在运行 AndAlso
@@ -1033,7 +992,7 @@ Public Class RamMonitor
         Dim newIdx As Integer = If(_悬停有效, 样本索引从X坐标(_悬停X, _图表矩形), -1)
         _悬停样本索引 = newIdx
         ' 只在命中的样本索引变化或悬停有效性切换时才重绘，避免每像素移动都触发重绘
-        If _悬停有效 <> wasValid OrElse newIdx <> prevIdx Then OuterToInnerRefreshScheduler.RequestFull(Me)
+        If _悬停有效 <> wasValid OrElse newIdx <> prevIdx Then 请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnMouseLeave(e As EventArgs)
@@ -1041,7 +1000,7 @@ Public Class RamMonitor
         If _悬停有效 Then
             _悬停有效 = False
             _悬停样本索引 = -1
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End If
     End Sub
 
@@ -1071,27 +1030,27 @@ Public Class RamMonitor
 
     Protected Overrides Sub OnEnabledChanged(e As EventArgs)
         MyBase.OnEnabledChanged(e)
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnPaddingChanged(e As EventArgs)
         MyBase.OnPaddingChanged(e)
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
         MyBase.OnFontChanged(e)
-        D2DHelperV2.RefreshFontDependentRendering(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnForeColorChanged(e As EventArgs)
         MyBase.OnForeColorChanged(e)
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 #End Region
 
@@ -1112,7 +1071,7 @@ Public Class RamMonitor
             Else
                 采样定时器.Stop()
             End If
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -1142,7 +1101,7 @@ Public Class RamMonitor
                 Case RamMonitorLanguage.Chinese : RamMonitorStrings.ApplyChinese()
                 Case RamMonitorLanguage.English : RamMonitorStrings.ApplyEnglish()
             End Select
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -1198,14 +1157,14 @@ Public Class RamMonitor
         If cur.Position = value Then Return
         cur.Position = value
         字段配置(f) = cur
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
     Private Sub 设置字段顺序(f As RamTextField, value As Integer)
         Dim cur = 字段配置(f)
         If cur.Order = value Then Return
         cur.Order = value
         字段配置(f) = cur
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
     Private Function 取字段位置(f As RamTextField) As TextSlotPosition
         Return 字段配置(f).Position
@@ -1456,7 +1415,7 @@ Public Class RamMonitor
         End Get
         Set(value As Boolean)
             启用历史记录 = value
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -1474,7 +1433,7 @@ Public Class RamMonitor
                 Dim overflow As Integer = 历史数据.Count - value
                 If overflow > 0 Then 历史数据.RemoveRange(0, overflow)
             End SyncLock
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -1554,7 +1513,7 @@ Public Class RamMonitor
         Set(value As Boolean)
             启用悬停读数值 = value
             If Not value Then _悬停有效 = False
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -1638,8 +1597,8 @@ Public Class RamMonitor
         End Get
         Set(value As Control)
             If _backgroundSource IsNot value Then
-                _backgroundSource = BackgroundPenetrationV2.SetConsumerSource(Me, _backgroundSource, value)
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                _backgroundSource = D3D_BackgroundPenetration.SetBackgroundSource(Me, _backgroundSource, value)
+                请求V3渲染()
             End If
         End Set
     End Property

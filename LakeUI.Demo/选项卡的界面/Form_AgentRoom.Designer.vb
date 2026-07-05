@@ -60,6 +60,7 @@ Partial Class Form_AgentRoom
         AgentRoom1.AssistantBubbleForeColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
         AgentRoom1.BackColor = Color.Transparent
         AgentRoom1.BackColor1 = Color.FromArgb(CByte(80), CByte(0), CByte(0), CByte(0))
+        AgentRoom1.BackgroundSource = ModernPanel1
         AgentRoom1.BorderRadius = 10
         AgentRoom1.BorderSize = 1
         AgentRoom1.CardForeColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))

@@ -6,6 +6,7 @@ Imports Vortice.DirectWrite
 
 <DefaultEvent("SelectedIndexChanged")>
 Public Class ModernListBox
+    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource
 
     Public Event SelectedIndexChanged As EventHandler
     Public Event ItemClick As EventHandler(Of ItemEventArgs)
@@ -210,7 +211,7 @@ Public Class ModernListBox
         End Sub
 
         Private Sub InvalidateOwner()
-            If _owner._updateCount <= 0 Then OuterToInnerRefreshScheduler.RequestFull(_owner)
+            If _owner._updateCount <= 0 Then _owner.请求V3渲染()
         End Sub
 
         Public Overloads Sub AddRange(collection As IEnumerable(Of String))
@@ -277,11 +278,10 @@ Public Class ModernListBox
 #End Region
 
 #Region "字段"
-    Private _当前合成器 As WindowCompositor
     Private _backgroundSource As Control = Nothing
 
     <Category("LakeUI"),
-     Description("背景采样源（V2 透明背景穿透）。设置后将跨越任意层级直接采样此控件的绘制内容作为透明背景。"),
+     Description("背景采样源（V3 背景图）。设置后将跨越任意层级直接采样此控件的绘制内容作为透明背景。"),
      DefaultValue(GetType(Control), Nothing), Browsable(True)>
     Public Property BackgroundSource As Control
         Get
@@ -289,8 +289,8 @@ Public Class ModernListBox
         End Get
         Set(value As Control)
             If _backgroundSource IsNot value Then
-                _backgroundSource = BackgroundPenetrationV2.SetConsumerSource(Me, _backgroundSource, value)
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                _backgroundSource = D3D_BackgroundPenetration.SetBackgroundSource(Me, _backgroundSource, value)
+                请求V3渲染()
             End If
         End Set
     End Property
@@ -301,13 +301,13 @@ Public Class ModernListBox
     Private _selectedIndices As New HashSet(Of Integer)
     Private _selectionAnchor As Integer = -1
     Private _scrollOffset As Integer = 0
-    Private ReadOnly _scrollBar As New ScrollBarRenderer()
+    Private ReadOnly _scrollBar As New V3_ScrollBarRenderer()
     Private _hoverIndex As Integer = -1
     Private _itemToolTips As ToolTipEntryCollection
     Private _itemIcons As IconEntryCollection
 
     ' 悬停动画
-    Private ReadOnly _hoverAnim As New AnimationHelperV2(Me) With {.Duration = 0}
+    Private ReadOnly _hoverAnim As New V3_AnimationHelper(Me) With {.Duration = 0}
     Private _hoverAnimFromY As Single
     Private _hoverAnimFromH As Single
     Private _hoverAnimToY As Single
@@ -388,7 +388,7 @@ Public Class ModernListBox
             _selectedIndices.Clear()
             If _selectedIndex >= 0 Then _selectedIndices.Add(_selectedIndex)
             _selectionAnchor = _selectedIndex
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
             RaiseEvent SelectedIndexChanged(Me, EventArgs.Empty)
         End Set
     End Property
@@ -459,7 +459,7 @@ Public Class ModernListBox
     Public Sub SetCheckState(index As Integer, state As CheckStateEnum)
         If index < 0 OrElse index >= _items.Count Then Return
         设置复选状态(index, state)
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
         RaiseEvent ItemCheckStateChanged(Me, New ItemEventArgs(index))
     End Sub
 
@@ -616,7 +616,7 @@ Public Class ModernListBox
         Set(value As Integer)
             行高 = Math.Max(10, value)
             校正滚动偏移()
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -676,7 +676,7 @@ Public Class ModernListBox
         End Get
         Set(value As Integer)
             复选框大小 = Math.Max(8, value)
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -776,7 +776,7 @@ Public Class ModernListBox
         End Get
         Set(value As Integer)
             复选框标记线宽 = Math.Max(1, value)
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -818,7 +818,7 @@ Public Class ModernListBox
         End Get
         Set(value As Integer)
             滚动条宽度 = Math.Max(2, value)
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -1003,7 +1003,7 @@ Public Class ModernListBox
                 _selectedIndices.Clear()
                 _selectedIndices.Add(first)
                 _selectedIndex = first
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                请求V3渲染()
                 RaiseEvent SelectedIndexChanged(Me, EventArgs.Empty)
             End If
         End Set
@@ -1244,6 +1244,10 @@ Public Class ModernListBox
 #Region "绘制"
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
+        If Not D3D_PaintBridge.PaintRenderable(e, Me, Me, 1) Then MyBase.OnPaint(e)
+    End Sub
+
+    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
         If Width < 1 OrElse Height < 1 Then Return
 
         Dim w As Integer = ClientRectangle.Width
@@ -1261,60 +1265,225 @@ Public Class ModernListBox
 
         预计算滚动条布局()
 
-        Dim ssaa As Integer = D2DHelperV2.GetEffectiveSsaaScale(超采样倍率)
+        DrawBackground_GPU(context, hasRadius, boundsRect, bc, effBg)
 
-        Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
-            If scope Is Nothing Then Return
-            _当前合成器 = scope.Compositor
-            Try
-                If _backgroundSource IsNot Nothing Then
-                    BackgroundPenetrationV2.PaintBackground(Me, scope, _backgroundSource)
-                End If
+        Using context.PushClip(获取内容裁剪矩形())
+            绘制全部项背景与图标_GPU(context)
+            绘制拖选框_GPU(context)
+            绘制拖动排序指示线_GPU(context)
+            绘制滚动条_GPU(context)
+            绘制全部项文本_GPU(context)
+        End Using
 
-                Dim gRT As ID2D1RenderTarget = scope.GraphicsLayer
-                Dim dcRT As ID2D1DCRenderTarget = scope.DCRenderTarget
+        If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
+            填充圆角矩形_GPU(context, boundsRect, If(hasRadius, 边框圆角半径 * s, 0.0F), 禁用时遮罩颜色)
+        End If
+    End Sub
 
-            DrawBackground_D2D(gRT, hasRadius, boundsRect, bc, effBg)
+    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+        Return New Rectangle(Point.Empty, Me.Size)
+    End Function
 
-            Using clip = CreateContentClip_D2D(gRT, hasRadius, s)
-                绘制全部项背景与图标_D2D(gRT)
-                绘制拖选框_D2D(gRT)
-                绘制拖动排序指示线_D2D(gRT)
-                绘制滚动条_D2D(gRT)
-            End Using
+    Private Function 获取内容裁剪矩形() As RectangleF
+        Dim inset As Integer = 获取边框内边距()
+        Return New RectangleF(inset, inset, Width - inset * 2 - 1, Height - inset * 2 - 1)
+    End Function
 
-            scope.FlushGraphics()
+    Private Sub DrawBackground_GPU(context As D3D_PaintContext, hasRadius As Boolean, boundsRect As RectangleF, borderClr As Color, bgClr As Color)
+        Dim s As Single = DpiScale()
+        Dim radius As Single = If(hasRadius, 边框圆角半径 * s, 0.0F)
+        If _backgroundSource IsNot Nothing Then context.DrawBackgroundSource(Me, _backgroundSource, boundsRect)
+        填充圆角矩形_GPU(context, boundsRect, radius, bgClr)
+        绘制圆角边框_GPU(context, boundsRect, radius, borderClr, 边框宽度 * s)
+    End Sub
 
-            Using clip = CreateContentClip_D2D(dcRT, hasRadius, s)
-                绘制全部项文本_D2D(dcRT)
-            End Using
+    Private Sub 绘制滚动条_GPU(context As D3D_PaintContext)
+        If _scrollBar.TrackRect.IsEmpty Then Return
+        Dim s As Single = DpiScale()
+        Dim width As Single = Math.Max(1.0F, 滚动条宽度 * s)
+        Dim trackArea As New RectangleF(_scrollBar.VisualLeft, _scrollBar.TrackRect.Y, width, _scrollBar.TrackRect.Height)
+        Dim thumbArea As New RectangleF(_scrollBar.VisualLeft, _scrollBar.ThumbRect.Y, width, _scrollBar.ThumbRect.Height)
+        填充圆角矩形_GPU(context, trackArea, Math.Min(width / 2.0F, trackArea.Height / 2.0F), 滚动条轨道颜色)
+        Dim thumbColor = If(_scrollBar.IsDragging OrElse _scrollBar.IsHover, 滚动条悬停颜色, 滚动条颜色)
+        填充圆角矩形_GPU(context, thumbArea, Math.Min(width / 2.0F, thumbArea.Height / 2.0F), thumbColor)
+    End Sub
 
-            If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
-                If hasRadius Then
-                    Using geo = RectangleRenderer.创建圆角矩形几何(boundsRect, 边框圆角半径 * s)
-                        RectangleRenderer.绘制圆角背景_D2D(dcRT, geo, boundsRect, 禁用时遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Vertical, _当前合成器.BrushCache)
-                    End Using
-                Else
-                    RectangleRenderer.绘制矩形背景_D2D(dcRT, boundsRect, 禁用时遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Vertical, _当前合成器.BrushCache)
-                End If
+    Private Sub 绘制全部项背景与图标_GPU(context As D3D_PaintContext)
+        If _items.Count = 0 Then Return
+        Dim contentRect = 获取内容区域()
+        If contentRect.Height <= 0 OrElse contentRect.Width <= 0 Then Return
+
+        Dim s As Single = DpiScale()
+        Dim scaledH As Integer = CInt(Math.Round(行高 * s))
+        Dim scaledPadL As Integer = CInt(Math.Round(项左内边距 * s))
+        Dim scaledCbLeft As Integer = CInt(Math.Round(复选框左边距 * s))
+        Dim scaledIconW As Integer = CInt(Math.Round(图标尺寸.Width * s))
+        Dim scaledIconH As Integer = CInt(Math.Round(图标尺寸.Height * s))
+
+        Dim inset As Integer = 获取边框内边距()
+        Dim scrollW As Integer = If(Not _scrollBar.TrackRect.IsEmpty, Width - inset - _scrollBar.VisualLeft, 0)
+        Dim availW As Integer = contentRect.Width - scrollW
+
+        If _hoverAnimActive AndAlso _hoverIndex >= 0 AndAlso Not _selectedIndices.Contains(_hoverIndex) Then
+            Dim t As Single = _hoverAnim.Progress
+            Dim animY As Single = _hoverAnimFromY + (_hoverAnimToY - _hoverAnimFromY) * t
+            Dim animH As Single = _hoverAnimFromH + (_hoverAnimToH - _hoverAnimFromH) * t
+            context.FillRectangle(New RectangleF(contentRect.X, animY, availW, animH), 项悬停颜色)
+        End If
+
+        Dim visCount As Integer = 估算可见行数()
+        For i As Integer = 0 To visCount - 1
+            Dim idx As Integer = i + _scrollOffset
+            If idx >= _items.Count Then Exit For
+            Dim itemY As Integer = contentRect.Y + i * scaledH
+            If itemY + scaledH > contentRect.Bottom Then Exit For
+
+            Dim itemRect As New RectangleF(contentRect.X, itemY, availW, scaledH)
+            If _selectedIndices.Contains(idx) Then
+                context.FillRectangle(itemRect, 项选中颜色)
+            ElseIf idx = _hoverIndex AndAlso Not _hoverAnimActive Then
+                context.FillRectangle(itemRect, 项悬停颜色)
             End If
-            Finally
-                _当前合成器 = Nothing
-            End Try
+
+            Dim itemText As String = _items(idx)
+            Dim textX As Integer = contentRect.X + scaledPadL
+
+            If 显示复选框 Then
+                Dim cbX As Integer = contentRect.X + scaledCbLeft
+                Dim cbY As Integer = itemY + (scaledH - CInt(Math.Round(复选框大小 * s))) \ 2
+                绘制复选框_GPU(context, cbX, cbY, 获取复选状态(idx))
+                textX = contentRect.X + 获取复选框区域宽度()
+            End If
+
+            Dim icon As Image = Nothing
+            If _itemIcons.TryGetIcon(itemText, icon) AndAlso icon IsNot Nothing AndAlso scaledIconW > 0 AndAlso scaledIconH > 0 Then
+                Dim iconX As Integer = textX
+                Dim iconY As Integer = itemY + (scaledH - scaledIconH) \ 2
+                context.DrawImage(icon, New RectangleF(iconX, iconY, scaledIconW, scaledIconH))
+            End If
+        Next
+    End Sub
+
+    Private Sub 绘制全部项文本_GPU(context As D3D_PaintContext)
+        If _items.Count = 0 Then Return
+        Dim contentRect = 获取内容区域()
+        If contentRect.Height <= 0 OrElse contentRect.Width <= 0 Then Return
+
+        Dim s As Single = DpiScale()
+        Dim scaledH As Integer = CInt(Math.Round(行高 * s))
+        Dim scaledPadL As Integer = CInt(Math.Round(项左内边距 * s))
+        Dim scaledIconW As Integer = CInt(Math.Round(图标尺寸.Width * s))
+        Dim scaledIconMR As Integer = CInt(Math.Round(图标右边距 * s))
+        Dim inset As Integer = 获取边框内边距()
+        Dim scrollW As Integer = If(Not _scrollBar.TrackRect.IsEmpty, Width - inset - _scrollBar.VisualLeft, 0)
+        Dim availW As Integer = contentRect.Width - scrollW
+
+        Dim visCount As Integer = 估算可见行数()
+        For i As Integer = 0 To visCount - 1
+            Dim idx As Integer = i + _scrollOffset
+            If idx >= _items.Count Then Exit For
+            Dim itemY As Integer = contentRect.Y + i * scaledH
+            If itemY + scaledH > contentRect.Bottom Then Exit For
+
+            Dim itemText As String = _items(idx)
+            Dim textX As Integer = contentRect.X + scaledPadL
+            If 显示复选框 Then textX = contentRect.X + 获取复选框区域宽度()
+
+            Dim icon As Image = Nothing
+            If _itemIcons.TryGetIcon(itemText, icon) AndAlso icon IsNot Nothing Then
+                textX += scaledIconW + scaledIconMR
+            End If
+
+            Dim textRight As Integer = contentRect.X + availW - scaledPadL
+            Dim textWidth As Integer = textRight - textX
+            If textWidth > 0 Then
+                context.DrawText(itemText, Font, ForeColor, New RectangleF(textX, itemY, textWidth, scaledH), TextAlignment.Leading, ParagraphAlignment.Center)
+            End If
+        Next
+    End Sub
+
+    Private Sub 绘制复选框_GPU(context As D3D_PaintContext, x As Integer, y As Integer, state As CheckStateEnum)
+        Dim s As Single = DpiScale()
+        Dim scaledSize As Single = 复选框大小 * s
+        Dim scaledRadius As Single = 复选框圆角半径 * s
+        Dim scaledBW As Single = 复选框边框宽度 * s
+        Dim scaledMarkW As Single = 复选框标记线宽 * s
+        Dim rect As New RectangleF(x, y, scaledSize, scaledSize)
+
+        填充圆角矩形_GPU(context, rect, scaledRadius, 复选框背景颜色)
+        绘制圆角边框_GPU(context, rect, scaledRadius, 复选框边框颜色, scaledBW)
+
+        Dim inset As Single = scaledSize * 0.2F
+        Select Case state
+            Case CheckStateEnum.Checked
+                Dim br = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, 复选框勾选颜色, context.DeviceGeneration)
+                If br IsNot Nothing Then
+                    Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreatePathGeometry()
+                        Using sink = geo.Open()
+                            sink.BeginFigure(New Vector2(x + inset, y + scaledSize * 0.5F), FigureBegin.Hollow)
+                            sink.AddLine(New Vector2(x + scaledSize * 0.4F, y + scaledSize - inset))
+                            sink.AddLine(New Vector2(x + scaledSize - inset, y + inset))
+                            sink.EndFigure(FigureEnd.Open)
+                            sink.Close()
+                        End Using
+                        context.DeviceContext.DrawGeometry(geo, br, scaledMarkW)
+                    End Using
+                End If
+            Case CheckStateEnum.Crossed
+                Dim br = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, 复选框叉选颜色, context.DeviceGeneration)
+                If br IsNot Nothing Then
+                    context.DeviceContext.DrawLine(New Vector2(x + inset, y + inset), New Vector2(x + scaledSize - inset, y + scaledSize - inset), br, scaledMarkW)
+                    context.DeviceContext.DrawLine(New Vector2(x + scaledSize - inset, y + inset), New Vector2(x + inset, y + scaledSize - inset), br, scaledMarkW)
+                End If
+        End Select
+    End Sub
+
+    Private Sub 绘制拖选框_GPU(context As D3D_PaintContext)
+        If Not _isDragSelecting Then Return
+        Dim rect As Rectangle = 获取拖选矩形()
+        If rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        Dim rectF As New RectangleF(rect.X, rect.Y, rect.Width, rect.Height)
+        context.FillRectangle(rectF, 选框填充颜色)
+        context.DrawRectangle(rectF, 选框边框颜色, 1.0F)
+    End Sub
+
+    Private Sub 绘制拖动排序指示线_GPU(context As D3D_PaintContext)
+        If Not _isDragReordering OrElse _dragReorderInsertIndex < 0 Then Return
+        Dim contentRect = 获取内容区域()
+        Dim scaledH As Integer = CInt(Math.Round(行高 * DpiScale()))
+        Dim lineY As Integer
+        If _dragReorderInsertIndex >= _items.Count Then
+            lineY = contentRect.Y + Math.Min(_items.Count - _scrollOffset, 估算可见行数()) * scaledH
+        Else
+            lineY = 获取项Y坐标(_dragReorderInsertIndex)
+            If lineY < 0 Then Return
+        End If
+        Dim br = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, 拖动排序指示线颜色, context.DeviceGeneration)
+        If br IsNot Nothing Then context.DeviceContext.DrawLine(New Vector2(contentRect.X, lineY), New Vector2(contentRect.Right, lineY), br, 拖动排序指示线宽 * DpiScale())
+    End Sub
+
+    Private Sub 填充圆角矩形_GPU(context As D3D_PaintContext, rect As RectangleF, radius As Single, color As Color)
+        If color.A = 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
+        If radius <= 0 Then
+            context.DeviceContext.FillRectangle(D3D_PaintContext.ToRawRect(rect), brush)
+            Return
+        End If
+        Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New RoundedRectangle(rect, radius, radius))
+            context.DeviceContext.FillGeometry(geo, brush)
         End Using
     End Sub
 
-    Private Sub DrawBackground_D2D(rt As ID2D1RenderTarget, hasRadius As Boolean, boundsRect As RectangleF, borderClr As Color, bgClr As Color)
-        Dim s As Single = DpiScale()
-        If hasRadius Then
-            Using geo = RectangleRenderer.创建圆角矩形几何(boundsRect, 边框圆角半径 * s)
-                RectangleRenderer.绘制圆角背景_D2D(rt, geo, boundsRect, bgClr, Color.Empty, System.Windows.Forms.Orientation.Vertical, _当前合成器.BrushCache)
-                RectangleRenderer.绘制圆角边框_D2D(rt, geo, borderClr, 边框宽度 * s, _当前合成器.BrushCache)
-            End Using
-        Else
-            RectangleRenderer.绘制矩形背景_D2D(rt, boundsRect, bgClr, Color.Empty, System.Windows.Forms.Orientation.Vertical, _当前合成器.BrushCache)
-            RectangleRenderer.绘制矩形边框_D2D(rt, boundsRect, borderClr, 边框宽度 * s, _当前合成器.BrushCache)
+    Private Sub 绘制圆角边框_GPU(context As D3D_PaintContext, rect As RectangleF, radius As Single, color As Color, strokeWidth As Single)
+        If color.A = 0 OrElse strokeWidth <= 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
+        If radius <= 0 Then
+            context.DeviceContext.DrawRectangle(D3D_PaintContext.ToRawRect(rect), brush, strokeWidth)
+            Return
         End If
+        Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New RoundedRectangle(rect, radius, radius))
+            context.DeviceContext.DrawGeometry(geo, brush, strokeWidth)
+        End Using
     End Sub
 
     Private Function CreateContentClip_D2D(rt As ID2D1RenderTarget, hasRadius As Boolean, s As Single) As D2DContentClipScope
@@ -1336,8 +1505,8 @@ Public Class ModernListBox
             If rt Is Nothing OrElse clipRect.Width <= 0 OrElse clipRect.Height <= 0 Then Return
             _rt = rt
             If radius > 0 Then
-                _geo = RectangleRenderer.创建圆角矩形几何(clipRect, radius)
-                D2DGlobals.PushGeometryClip(rt, _geo, clipRect)
+                _geo = D3D_RectangleRenderer.创建圆角矩形几何(clipRect, radius)
+                D3D_D2DInterop.PushGeometryClip(rt, _geo, clipRect)
                 _usesLayer = True
             Else
                 rt.PushAxisAlignedClip(New Vortice.RawRectF(clipRect.X, clipRect.Y, clipRect.Right, clipRect.Bottom), AntialiasMode.PerPrimitive)
@@ -1379,205 +1548,13 @@ Public Class ModernListBox
         End If
     End Sub
 
-    Private Sub 绘制滚动条_D2D(rt As ID2D1RenderTarget)
-        If _scrollBar.TrackRect.IsEmpty Then Return
-        Dim s As Single = DpiScale()
-        _scrollBar.Draw_D2D(rt, Width, Height, CInt(Math.Round(边框宽度 * s)), CInt(Math.Round(边框圆角半径 * s)),
-            CInt(Math.Round(滚动条宽度 * s)), 滚动条轨道颜色, 滚动条颜色, 滚动条悬停颜色,
-            _当前合成器?.BrushCache)
-    End Sub
-
-    Private Sub 绘制全部项背景与图标_D2D(rt As ID2D1RenderTarget)
-        If _items.Count = 0 Then Return
-        Dim contentRect = 获取内容区域()
-        If contentRect.Height <= 0 OrElse contentRect.Width <= 0 Then Return
-
-        Dim s As Single = DpiScale()
-        Dim scaledH As Integer = CInt(Math.Round(行高 * s))
-        Dim scaledPadL As Integer = CInt(Math.Round(项左内边距 * s))
-        Dim scaledCbLeft As Integer = CInt(Math.Round(复选框左边距 * s))
-        Dim scaledIconW As Integer = CInt(Math.Round(图标尺寸.Width * s))
-        Dim scaledIconH As Integer = CInt(Math.Round(图标尺寸.Height * s))
-        Dim scaledIconMR As Integer = CInt(Math.Round(图标右边距 * s))
-
-        Dim inset As Integer = 获取边框内边距()
-        Dim scrollW As Integer = If(Not _scrollBar.TrackRect.IsEmpty, Width - inset - _scrollBar.VisualLeft, 0)
-        Dim availW As Integer = contentRect.Width - scrollW
-
-        If _hoverAnimActive AndAlso _hoverIndex >= 0 AndAlso Not _selectedIndices.Contains(_hoverIndex) Then
-            Dim t As Single = _hoverAnim.Progress
-            Dim animY As Single = _hoverAnimFromY + (_hoverAnimToY - _hoverAnimFromY) * t
-            Dim animH As Single = _hoverAnimFromH + (_hoverAnimToH - _hoverAnimFromH) * t
-            Dim br = _当前合成器.BrushCache.Get(rt, 项悬停颜色)
-            If br IsNot Nothing Then rt.FillRectangle(D2DGlobals.ToD2DRect(New RectangleF(contentRect.X, animY, availW, animH)), br)
-        End If
-
-        Dim visCount As Integer = 估算可见行数()
-        For i As Integer = 0 To visCount - 1
-            Dim idx As Integer = i + _scrollOffset
-            If idx >= _items.Count Then Exit For
-            Dim itemY As Integer = contentRect.Y + i * scaledH
-            If itemY + scaledH > contentRect.Bottom Then Exit For
-
-            Dim itemRect As New RectangleF(contentRect.X, itemY, availW, scaledH)
-            If _selectedIndices.Contains(idx) Then
-                Dim br = _当前合成器.BrushCache.Get(rt, 项选中颜色)
-                If br IsNot Nothing Then rt.FillRectangle(D2DGlobals.ToD2DRect(itemRect), br)
-            ElseIf idx = _hoverIndex AndAlso Not _hoverAnimActive Then
-                Dim br = _当前合成器.BrushCache.Get(rt, 项悬停颜色)
-                If br IsNot Nothing Then rt.FillRectangle(D2DGlobals.ToD2DRect(itemRect), br)
-            End If
-
-            Dim itemText As String = _items(idx)
-            Dim textX As Integer = contentRect.X + scaledPadL
-
-            If 显示复选框 Then
-                Dim cbX As Integer = contentRect.X + scaledCbLeft
-                Dim cbY As Integer = itemY + (scaledH - CInt(Math.Round(复选框大小 * s))) \ 2
-                绘制复选框_D2D(rt, cbX, cbY, 获取复选状态(idx))
-                textX = contentRect.X + 获取复选框区域宽度()
-            End If
-
-            Dim icon As Image = Nothing
-            If _itemIcons.TryGetIcon(itemText, icon) AndAlso icon IsNot Nothing AndAlso scaledIconW > 0 AndAlso scaledIconH > 0 Then
-                Dim iconX As Integer = textX
-                Dim iconY As Integer = itemY + (scaledH - scaledIconH) \ 2
-                Dim bmp = _当前合成器.GetBitmapCache(icon).GetBitmap(rt, icon)
-                If bmp IsNot Nothing Then
-                    rt.DrawBitmap(bmp,
-                        New Vortice.Mathematics.Rect(iconX, iconY, scaledIconW, scaledIconH),
-                        1.0F,
-                        BitmapInterpolationMode.Linear,
-                        New Vortice.Mathematics.Rect(0, 0, icon.Width, icon.Height))
-                End If
-            End If
-        Next
-    End Sub
-
-    Private Sub 绘制全部项文本_D2D(rt As ID2D1DCRenderTarget)
-        If _items.Count = 0 Then Return
-        Dim contentRect = 获取内容区域()
-        If contentRect.Height <= 0 OrElse contentRect.Width <= 0 Then Return
-
-        Dim s As Single = DpiScale()
-        Dim scaledH As Integer = CInt(Math.Round(行高 * s))
-        Dim scaledPadL As Integer = CInt(Math.Round(项左内边距 * s))
-        Dim scaledIconW As Integer = CInt(Math.Round(图标尺寸.Width * s))
-        Dim scaledIconMR As Integer = CInt(Math.Round(图标右边距 * s))
-        Dim inset As Integer = 获取边框内边距()
-        Dim scrollW As Integer = If(Not _scrollBar.TrackRect.IsEmpty, Width - inset - _scrollBar.VisualLeft, 0)
-        Dim availW As Integer = contentRect.Width - scrollW
-
-        Dim fontSizePx As Single = D2DGlobals.GetDWriteFontSizePx(Font, s)
-        Dim fontWeight As Vortice.DirectWrite.FontWeight = If(Font.Bold, Vortice.DirectWrite.FontWeight.Bold, Vortice.DirectWrite.FontWeight.Normal)
-        Dim fontStyle As Vortice.DirectWrite.FontStyle = If(Font.Italic, Vortice.DirectWrite.FontStyle.Italic, Vortice.DirectWrite.FontStyle.Normal)
-        Dim fmt = _当前合成器.TextFormatCache.Get(Font.FontFamily.Name, fontWeight, fontStyle, fontSizePx,
-            Vortice.DirectWrite.TextAlignment.Leading, ParagraphAlignment.Center, True)
-
-        Dim br = _当前合成器.BrushCache.Get(rt, ForeColor)
-        If br Is Nothing Then Return
-        Dim visCount As Integer = 估算可见行数()
-        For i As Integer = 0 To visCount - 1
-            Dim idx As Integer = i + _scrollOffset
-            If idx >= _items.Count Then Exit For
-            Dim itemY As Integer = contentRect.Y + i * scaledH
-            If itemY + scaledH > contentRect.Bottom Then Exit For
-
-            Dim itemText As String = _items(idx)
-            Dim textX As Integer = contentRect.X + scaledPadL
-            If 显示复选框 Then textX = contentRect.X + 获取复选框区域宽度()
-
-            Dim icon As Image = Nothing
-            If _itemIcons.TryGetIcon(itemText, icon) AndAlso icon IsNot Nothing Then
-                textX += scaledIconW + scaledIconMR
-            End If
-
-            Dim textRight As Integer = contentRect.X + availW - scaledPadL
-            Dim textWidth As Integer = textRight - textX
-            If textWidth > 0 Then
-                rt.DrawText(itemText, fmt, New Vortice.Mathematics.Rect(textX, itemY, textWidth, scaledH), br)
-            End If
-        Next
-    End Sub
-
-    Private Sub 绘制复选框_D2D(rt As ID2D1RenderTarget, x As Integer, y As Integer, state As CheckStateEnum)
-        Dim s As Single = DpiScale()
-        Dim scaledSize As Single = 复选框大小 * s
-        Dim scaledRadius As Single = 复选框圆角半径 * s
-        Dim scaledBW As Single = 复选框边框宽度 * s
-        Dim scaledMarkW As Single = 复选框标记线宽 * s
-        Dim rect As New RectangleF(x, y, scaledSize, scaledSize)
-
-        If scaledRadius > 0 Then
-            Using geo = RectangleRenderer.创建圆角矩形几何(rect, scaledRadius)
-                Dim br = _当前合成器.BrushCache.Get(rt, 复选框背景颜色)
-                If br IsNot Nothing Then rt.FillGeometry(geo, br)
-                RectangleRenderer.绘制圆角边框_D2D(rt, geo, 复选框边框颜色, scaledBW, _当前合成器.BrushCache)
-            End Using
-        Else
-            Dim br = _当前合成器.BrushCache.Get(rt, 复选框背景颜色)
-            If br IsNot Nothing Then rt.FillRectangle(D2DGlobals.ToD2DRect(rect), br)
-            RectangleRenderer.绘制矩形边框_D2D(rt, rect, 复选框边框颜色, scaledBW, _当前合成器.BrushCache)
-        End If
-
-        Dim inset As Single = scaledSize * 0.2F
-        Select Case state
-            Case CheckStateEnum.Checked
-                Dim br = _当前合成器.BrushCache.Get(rt, 复选框勾选颜色)
-                If br IsNot Nothing Then
-                    Using geo = D2DGlobals.GetD2DFactory().CreatePathGeometry()
-                        Using sink = geo.Open()
-                            sink.BeginFigure(New Vector2(x + inset, y + scaledSize * 0.5F), FigureBegin.Hollow)
-                            sink.AddLine(New Vector2(x + scaledSize * 0.4F, y + scaledSize - inset))
-                            sink.AddLine(New Vector2(x + scaledSize - inset, y + inset))
-                            sink.EndFigure(FigureEnd.Open)
-                            sink.Close()
-                        End Using
-                        rt.DrawGeometry(geo, br, scaledMarkW)
-                    End Using
-                End If
-            Case CheckStateEnum.Crossed
-                Dim br = _当前合成器.BrushCache.Get(rt, 复选框叉选颜色)
-                If br IsNot Nothing Then
-                    rt.DrawLine(New Vector2(x + inset, y + inset), New Vector2(x + scaledSize - inset, y + scaledSize - inset), br, scaledMarkW)
-                    rt.DrawLine(New Vector2(x + scaledSize - inset, y + inset), New Vector2(x + inset, y + scaledSize - inset), br, scaledMarkW)
-                End If
-        End Select
-    End Sub
-
-    Private Sub 绘制拖选框_D2D(rt As ID2D1RenderTarget)
-        If Not _isDragSelecting Then Return
-        Dim rect As Rectangle = 获取拖选矩形()
-        If rect.Width <= 0 OrElse rect.Height <= 0 Then Return
-        Dim rectF As New RectangleF(rect.X, rect.Y, rect.Width, rect.Height)
-        Dim fillBrush = _当前合成器.BrushCache.Get(rt, 选框填充颜色)
-        If fillBrush IsNot Nothing Then rt.FillRectangle(D2DGlobals.ToD2DRect(rectF), fillBrush)
-        Dim borderBrush = _当前合成器.BrushCache.Get(rt, 选框边框颜色)
-        If borderBrush IsNot Nothing Then rt.DrawRectangle(D2DGlobals.ToD2DRect(rectF), borderBrush, 1.0F)
-    End Sub
-
-    Private Sub 绘制拖动排序指示线_D2D(rt As ID2D1RenderTarget)
-        If Not _isDragReordering OrElse _dragReorderInsertIndex < 0 Then Return
-        Dim contentRect = 获取内容区域()
-        Dim scaledH As Integer = CInt(Math.Round(行高 * DpiScale()))
-        Dim lineY As Integer
-        If _dragReorderInsertIndex >= _items.Count Then
-            lineY = contentRect.Y + Math.Min(_items.Count - _scrollOffset, 估算可见行数()) * scaledH
-        Else
-            lineY = 获取项Y坐标(_dragReorderInsertIndex)
-            If lineY < 0 Then Return
-        End If
-        Dim br = _当前合成器.BrushCache.Get(rt, 拖动排序指示线颜色)
-        If br IsNot Nothing Then rt.DrawLine(New Vector2(contentRect.X, lineY), New Vector2(contentRect.Right, lineY), br, 拖动排序指示线宽 * DpiScale())
-    End Sub
-
 #End Region
 
 #Region "鼠标处理"
 
     Protected Overrides Sub OnMouseEnter(e As EventArgs)
         MyBase.OnMouseEnter(e)
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnMouseLeave(e As EventArgs)
@@ -1585,7 +1562,7 @@ Public Class ModernListBox
         更新悬停(-1)
         延迟关闭工具提示(True)
         _scrollBar.ResetHover()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
@@ -1601,7 +1578,7 @@ Public Class ModernListBox
                 Dim newOff = _scrollBar.TrackClick(e.Location, _scrollOffset, _items.Count, visCount)
                 If newOff <> _scrollOffset Then
                     _scrollOffset = newOff
-                    OuterToInnerRefreshScheduler.RequestFull(Me)
+                    请求V3渲染()
                     Return
                 End If
             End If
@@ -1650,7 +1627,7 @@ Public Class ModernListBox
                         RaiseEvent ItemCheckStateChanged(Me, New ItemEventArgs(hitIdx))
                     End If
                     _checkDragLastIndex = hitIdx
-                    OuterToInnerRefreshScheduler.RequestFull(Me)
+                    请求V3渲染()
                 End If
             End If
             Return
@@ -1662,7 +1639,7 @@ Public Class ModernListBox
             _scrollOffset = _scrollBar.DragMove(e.Y, _items.Count, visCount)
             Dim hitIdx = 命中测试(e.Y)
             更新悬停(hitIdx)
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
             Return
         End If
 
@@ -1671,7 +1648,7 @@ Public Class ModernListBox
             关闭工具提示()
             Dim insertIdx = 计算拖动排序插入位置(e.Y)
             _dragReorderInsertIndex = insertIdx
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
             Return
         End If
 
@@ -1690,7 +1667,7 @@ Public Class ModernListBox
                             _dragReorderSourceIndices = New List(Of Integer) From {_dragReorderSourceIndex}
                         End If
                         _dragReorderInsertIndex = _dragReorderSourceIndex
-                        OuterToInnerRefreshScheduler.RequestFull(Me)
+                        请求V3渲染()
                         Return
                     ElseIf 允许多选 Then
                         _isDragSelecting = True
@@ -1702,12 +1679,12 @@ Public Class ModernListBox
                 关闭工具提示()
                 _dragCurrent = e.Location
                 更新拖选(e)
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                请求V3渲染()
                 Return
             End If
         End If
 
-        If _scrollBar.UpdateHover(e.Location) Then OuterToInnerRefreshScheduler.RequestFull(Me)
+        If _scrollBar.UpdateHover(e.Location) Then 请求V3渲染()
 
         Dim hitRow As Integer = 命中测试(e.Y)
         更新悬停(hitRow)
@@ -1725,7 +1702,7 @@ Public Class ModernListBox
         If _isCheckDragging Then
             If Not _checkDragApplied AndAlso _checkDragSourceIndex >= 0 AndAlso _checkDragSourceIndex < _items.Count Then
                 设置复选状态(_checkDragSourceIndex, 下一个复选状态(_checkDragState))
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                请求V3渲染()
                 RaiseEvent ItemCheckStateChanged(Me, New ItemEventArgs(_checkDragSourceIndex))
             End If
             _isCheckDragging = False
@@ -1743,7 +1720,7 @@ Public Class ModernListBox
             _dragReorderSourceIndices.Clear()
             _dragReorderInsertIndex = -1
             _mouseDownInContent = False
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
             Return
         End If
 
@@ -1751,7 +1728,7 @@ Public Class ModernListBox
             _isDragSelecting = False
             _mouseDownInContent = False
             _scrollBar.EndDrag()
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
             Return
         End If
 
@@ -1762,7 +1739,7 @@ Public Class ModernListBox
         End If
 
         _scrollBar.EndDrag()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnMouseDoubleClick(e As MouseEventArgs)
@@ -1771,7 +1748,7 @@ Public Class ModernListBox
         If hitIdx >= 0 Then
             If 显示复选框 Then
                 设置复选状态(hitIdx, 下一个复选状态(获取复选状态(hitIdx)))
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                请求V3渲染()
                 RaiseEvent ItemCheckStateChanged(Me, New ItemEventArgs(hitIdx))
             End If
             RaiseEvent ItemDoubleClick(Me, New ItemEventArgs(hitIdx))
@@ -1783,12 +1760,12 @@ Public Class ModernListBox
         关闭工具提示()
         If _items.Count = 0 Then Return
         Dim visCount = 估算可见行数()
-        Dim newOff = ScrollBarRenderer.HandleWheel(e.Delta, _scrollOffset, _items.Count, visCount, 3)
+        Dim newOff = V3_ScrollBarRenderer.HandleWheel(e.Delta, _scrollOffset, _items.Count, visCount, 3)
         If newOff <> _scrollOffset Then
             _scrollOffset = newOff
             Dim hitIdx = 命中测试(e.Y)
             更新悬停(hitIdx)
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End If
     End Sub
 
@@ -1913,7 +1890,7 @@ Public Class ModernListBox
         If newSet.Count = _selectedIndices.Count AndAlso newSet.SetEquals(_selectedIndices) Then Return
         _selectedIndices = newSet
         _selectedIndex = If(_selectedIndices.Count > 0, _selectedIndices.Min(), -1)
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
         RaiseEvent SelectedIndexChanged(Me, EventArgs.Empty)
     End Sub
 
@@ -1974,20 +1951,20 @@ Public Class ModernListBox
 
         If 动画时长 <= 0 OrElse Not IsHandleCreated Then
             _hoverAnimActive = False
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
             Return
         End If
 
         If newIndex < 0 Then
             _hoverAnimActive = False
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
             Return
         End If
 
         Dim newY = 获取项Y坐标(newIndex)
         If newY < 0 Then
             _hoverAnimActive = False
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
             Return
         End If
 
@@ -2008,7 +1985,7 @@ Public Class ModernListBox
         _hoverAnim.AnimateTo(1)
     End Sub
 
-    Private Sub 悬停动画脏区(helper As AnimationHelperV2, owner As Control, sink As AnimationHelperV2.InvalidateRegionSink)
+    Private Sub 悬停动画脏区(helper As V3_AnimationHelper, owner As Control, sink As V3_AnimationHelper.InvalidateRegionSink)
         If Not _hoverAnimActive Then
             sink.SuppressInvalidate()
             Return
@@ -2069,7 +2046,7 @@ Public Class ModernListBox
             Case Keys.Space
                 If 显示复选框 AndAlso _selectedIndex >= 0 AndAlso _selectedIndex < _items.Count Then
                     设置复选状态(_selectedIndex, 下一个复选状态(获取复选状态(_selectedIndex)))
-                    OuterToInnerRefreshScheduler.RequestFull(Me)
+                    请求V3渲染()
                     RaiseEvent ItemCheckStateChanged(Me, New ItemEventArgs(_selectedIndex))
                     e.Handled = True
                 End If
@@ -2230,11 +2207,11 @@ Public Class ModernListBox
         Dim visCount = 估算可见行数()
         If index < _scrollOffset Then
             _scrollOffset = index
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         ElseIf index >= _scrollOffset + visCount Then
             _scrollOffset = index - visCount + 1
             校正滚动偏移()
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End If
     End Sub
 
@@ -2254,7 +2231,7 @@ Public Class ModernListBox
                 _checkStates(i) = state
             Next
         End If
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Public Function FindString(s As String) As Integer
@@ -2301,25 +2278,25 @@ Public Class ModernListBox
 
     Protected Overrides Sub OnGotFocus(e As EventArgs)
         MyBase.OnGotFocus(e)
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnLostFocus(e As EventArgs)
         MyBase.OnLostFocus(e)
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnSizeChanged(e As EventArgs)
         MyBase.OnSizeChanged(e)
         校正滚动偏移()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
         关闭工具提示()
         MyBase.OnFontChanged(e)
         校正滚动偏移()
-        D2DHelperV2.RefreshFontDependentRendering(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnEnabledChanged(e As EventArgs)
@@ -2327,19 +2304,19 @@ Public Class ModernListBox
         If Not Enabled Then
             关闭工具提示()
         End If
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnPaddingChanged(e As EventArgs)
         MyBase.OnPaddingChanged(e)
         校正滚动偏移()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
         校正滚动偏移()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
 #End Region
@@ -2347,8 +2324,17 @@ Public Class ModernListBox
 #Region "辅助"
 
     Private Function DpiScale() As Single
-        Return D2DGlobals.GetCurrentDpiScale(Me)
+        Return V3_DpiContext.FromControl(Me).Scale
     End Function
+
+    Private Sub 请求V3渲染(Optional immediate As Boolean = False)
+        请求V3渲染(New Rectangle(Point.Empty, Me.Size), immediate)
+    End Sub
+
+    Private Sub 请求V3渲染(dirtyRect As Rectangle, Optional immediate As Boolean = False)
+        If Me.IsDisposed Then Return
+        V3_InvalidationRouter.RequestRender(Me, dirtyRect)
+    End Sub
 
     Private Sub BeginInternalUpdate()
         _updateCount += 1
@@ -2363,13 +2349,13 @@ Public Class ModernListBox
             _pendingSelectionChanged = False
             RaiseEvent SelectedIndexChanged(Me, EventArgs.Empty)
         End If
-        If invalidateAfter Then OuterToInnerRefreshScheduler.RequestFull(Me)
+        If invalidateAfter Then 请求V3渲染()
     End Sub
 
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
-            If _updateCount <= 0 Then OuterToInnerRefreshScheduler.RequestFull(Me)
+            If _updateCount <= 0 Then 请求V3渲染()
         End If
     End Sub
 
@@ -2378,7 +2364,7 @@ Public Class ModernListBox
             _pendingSelectionChanged = True
             Return
         End If
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
         RaiseEvent SelectedIndexChanged(Me, EventArgs.Empty)
     End Sub
 

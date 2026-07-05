@@ -5,13 +5,13 @@ Imports DW = Vortice.DirectWrite
 
 <DefaultEvent("ValueChanged")>
 Public Class ExcellentTrackBar
+    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource
 
-#Region "V2 透明背景穿透"
-    Private _当前合成器 As WindowCompositor
+#Region "背景源"
     Private _backgroundSource As Control = Nothing
 
     <Category("LakeUI"),
-     Description("背景采样源（V2 透明背景穿透）。设置后将跨越任意层级直接采样此控件的绘制内容作为透明背景。"),
+     Description("背景采样源。设置后记录关联源控件；V3 渲染由窗口合成器统一调度。"),
      DefaultValue(GetType(Control), Nothing), Browsable(True)>
     Public Property BackgroundSource As Control
         Get
@@ -19,8 +19,8 @@ Public Class ExcellentTrackBar
         End Get
         Set(value As Control)
             If _backgroundSource IsNot value Then
-                _backgroundSource = BackgroundPenetrationV2.SetConsumerSource(Me, _backgroundSource, value)
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                _backgroundSource = D3D_BackgroundPenetration.SetBackgroundSource(Me, _backgroundSource, value)
+                请求V3渲染()
             End If
         End Set
     End Property
@@ -84,7 +84,7 @@ Public Class ExcellentTrackBar
         End Sub
 
         Private Sub InvalidateOwner()
-            OuterToInnerRefreshScheduler.RequestFull(_owner)
+            _owner?.请求V3渲染()
         End Sub
 
         Protected Overrides Sub InsertItem(index As Integer, item As TrackLabel)
@@ -124,7 +124,7 @@ Public Class ExcellentTrackBar
         End Sub
 
         Private Sub InvalidateOwner()
-            OuterToInnerRefreshScheduler.RequestFull(_owner)
+            _owner?.请求V3渲染()
         End Sub
 
         Protected Overrides Sub InsertItem(index As Integer, item As String)
@@ -156,19 +156,28 @@ Public Class ExcellentTrackBar
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End If
     End Sub
 
-    Private ReadOnly 动画助手 As New AnimationHelperV2(Me) With {.Duration = 0}
+    Private ReadOnly 动画助手 As New V3_AnimationHelper(Me) With {.Duration = 0}
 
-    Private Sub 滑块动画脏区(helper As AnimationHelperV2, owner As Control, sink As AnimationHelperV2.InvalidateRegionSink)
+    Private Sub 滑块动画脏区(helper As V3_AnimationHelper, owner As Control, sink As V3_AnimationHelper.InvalidateRegionSink)
         sink.InvalidateAll()
     End Sub
 
     Private Function DpiScale() As Single
-        Return D2DGlobals.GetCurrentDpiScale(Me)
+        Return V3_DpiContext.FromControl(Me).Scale
     End Function
+
+    Private Sub 请求V3渲染(Optional immediate As Boolean = False)
+        请求V3渲染(New Rectangle(Point.Empty, Me.Size), immediate)
+    End Sub
+
+    Private Sub 请求V3渲染(dirtyRect As Rectangle, Optional immediate As Boolean = False)
+        If Me.IsDisposed Then Return
+        V3_InvalidationRouter.RequestRender(Me, dirtyRect)
+    End Sub
 
     Private Function 计算值比例(val As Double) As Single
         Dim range As Double = 最大值 - 最小值
@@ -230,7 +239,7 @@ Public Class ExcellentTrackBar
             If 最大值 < 最小值 Then 最大值 = 最小值
             If 当前值 < 最小值 Then 当前值 = 最小值
             动画助手.SetImmediate(计算值比例(当前值))
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -246,7 +255,7 @@ Public Class ExcellentTrackBar
             If 最小值 > 最大值 Then 最小值 = 最大值
             If 当前值 > 最大值 Then 当前值 = 最大值
             动画助手.SetImmediate(计算值比例(当前值))
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -588,7 +597,7 @@ Public Class ExcellentTrackBar
             If 标签字号 <> value Then
                 标签字号 = value
                 释放标签字体缓存()
-                D2DHelperV2.RefreshFontDependentRendering(Me)
+                请求V3渲染()
             End If
         End Set
     End Property
@@ -787,62 +796,42 @@ Public Class ExcellentTrackBar
     End Sub
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
+        If Not D3D_PaintBridge.PaintRenderable(e, Me, Me, 1) Then MyBase.OnPaint(e)
+    End Sub
+
+    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+        If context Is Nothing OrElse Me.Width <= 0 OrElse Me.Height <= 0 Then Return
+        If _backgroundSource IsNot Nothing Then
+            context.DrawBackgroundSource(Me, _backgroundSource, New RectangleF(0, 0, Me.Width, Me.Height))
+        ElseIf MyBase.BackColor.A > 0 Then
+            context.FillRectangle(New RectangleF(0, 0, Me.Width, Me.Height), MyBase.BackColor)
+        End If
+
         Dim thumbRect As RectangleF = 计算滑块矩形()
-        Dim ssaa As Integer = D2DHelperV2.GetEffectiveSsaaScale(超采样倍率)
+        绘制轨道_GPU(context)
+        绘制标签连线_GPU(context)
+        绘制滑块_GPU(context, thumbRect)
+        绘制标签文字_GPU(context)
+        绘制滑块文字_GPU(context, thumbRect)
 
-        Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
-            If scope Is Nothing Then Return
-            _当前合成器 = scope.Compositor
-            Try
-                If _backgroundSource IsNot Nothing Then
-                    BackgroundPenetrationV2.PaintBackground(Me, scope, _backgroundSource)
-                End If
-
-                Dim gRT As D2D.ID2D1RenderTarget = scope.GraphicsLayer
-                Dim dcRT As D2D.ID2D1DCRenderTarget = scope.DCRenderTarget
-
-                绘制图形内容_D2D(gRT, thumbRect)
-                scope.FlushGraphics()
-                绘制标签文字_D2D(dcRT)
-                绘制滑块文字_D2D(dcRT, thumbRect)
-
-                If Not Enabled Then
-                    Dim brush = _当前合成器.BrushCache.Get(dcRT, Color.FromArgb(128, BackColor))
-                    If brush IsNot Nothing Then dcRT.FillRectangle(New Vortice.Mathematics.Rect(0, 0, Me.Width, Me.Height), brush)
-                End If
-            Finally
-                _当前合成器 = Nothing
-            End Try
-        End Using
+        If Not Enabled Then
+            context.FillRectangle(New RectangleF(0, 0, Me.Width, Me.Height), Color.FromArgb(128, BackColor))
+        End If
     End Sub
 
-    Private Sub 绘制图形内容_D2D(rt As D2D.ID2D1RenderTarget, thumbRect As RectangleF)
-        绘制轨道_D2D(rt)
-        绘制标签连线_D2D(rt)
-        绘制滑块_D2D(rt, thumbRect)
-    End Sub
+    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+        Return New Rectangle(Point.Empty, Me.Size)
+    End Function
 
-    Private Sub 绘制轨道_D2D(rt As D2D.ID2D1RenderTarget)
+    Private Sub 绘制轨道_GPU(context As D3D_PaintContext)
         Dim s As Single = DpiScale()
-        Dim _轨道圆角半径 As Single = 轨道圆角半径 * s
-        Dim _轨道边框宽度 As Single = 轨道边框宽度 * s
+        Dim radius As Single = 轨道圆角半径 * s
+        Dim borderWidth As Single = 轨道边框宽度 * s
         Dim trackRect As RectangleF = 计算轨道区域()
         If trackRect.Width <= 0 OrElse trackRect.Height <= 0 Then Return
-        Dim hasRadius As Boolean = 轨道圆角半径 > 0
 
-        If hasRadius Then
-            Using geo = RectangleRenderer.创建圆角矩形几何(trackRect, _轨道圆角半径)
-                RectangleRenderer.绘制圆角背景_D2D(rt, geo, trackRect, 轨道颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal, _当前合成器.BrushCache)
-                If 轨道边框宽度 > 0 AndAlso 轨道边框颜色 <> Color.Empty Then
-                    RectangleRenderer.绘制圆角边框_D2D(rt, geo, 轨道边框颜色, _轨道边框宽度, _当前合成器.BrushCache)
-                End If
-            End Using
-        Else
-            RectangleRenderer.绘制矩形背景_D2D(rt, trackRect, 轨道颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal, _当前合成器.BrushCache)
-            If 轨道边框宽度 > 0 AndAlso 轨道边框颜色 <> Color.Empty Then
-                RectangleRenderer.绘制矩形边框_D2D(rt, trackRect, 轨道边框颜色, _轨道边框宽度, _当前合成器.BrushCache)
-            End If
-        End If
+        填充圆角矩形_GPU(context, trackRect, radius, 轨道颜色)
+        绘制圆角边框_GPU(context, trackRect, radius, 轨道边框颜色, borderWidth)
 
         Dim center As Single = 计算滑块中心坐标()
         Dim fillRect As RectangleF
@@ -856,20 +845,171 @@ Public Class ExcellentTrackBar
             fillRect = New RectangleF(trackRect.X, center, trackRect.Width, fillH)
         End If
 
-        If hasRadius Then
-            Using geo = RectangleRenderer.创建圆角矩形几何(trackRect, _轨道圆角半径)
-                D2DGlobals.PushGeometryClip(rt, geo, trackRect)
+        If radius > 0 Then
+            Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New D2D.RoundedRectangle(trackRect, radius, radius))
+                PushGeometryClip_GPU(context, geo, trackRect)
                 Try
-                    Dim brush = _当前合成器.BrushCache.Get(rt, 轨道填充颜色)
-                    If brush IsNot Nothing Then rt.FillRectangle(D2DGlobals.ToD2DRect(fillRect), brush)
+                    context.FillRectangle(fillRect, 轨道填充颜色)
                 Finally
-                    rt.PopLayer()
+                    context.DeviceContext.PopLayer()
                 End Try
             End Using
         Else
-            Dim brush = _当前合成器.BrushCache.Get(rt, 轨道填充颜色)
-            If brush IsNot Nothing Then rt.FillRectangle(D2DGlobals.ToD2DRect(fillRect), brush)
+            context.FillRectangle(fillRect, 轨道填充颜色)
         End If
+    End Sub
+
+    Private Sub 绘制滑块_GPU(context As D3D_PaintContext, thumbRect As RectangleF)
+        Dim s As Single = DpiScale()
+        Dim radius As Single = 滑块圆角半径 * s
+        Dim borderWidth As Single = 滑块边框宽度 * s
+        填充圆角矩形_GPU(context, thumbRect, radius, 获取当前滑块颜色(), 滑块渐变颜色, System.Windows.Forms.Orientation.Vertical)
+        绘制圆角边框_GPU(context, thumbRect, radius, 获取当前滑块边框颜色(), borderWidth)
+    End Sub
+
+    Private Sub 绘制标签连线_GPU(context As D3D_PaintContext)
+        If 标签列表.Count = 0 OrElse 标签连线颜色.A = 0 Then Return
+        Dim lineLength As Single = 标签连线长度 * DpiScale()
+        Dim trackRect As RectangleF = 计算轨道区域()
+        Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, 标签连线颜色, context.DeviceGeneration)
+        For Each lbl In 标签列表
+            If lbl.Position < 最小值 OrElse lbl.Position > 最大值 Then Continue For
+            Dim coord As Single = 计算值对应轨道坐标(lbl.Position)
+            If 方向 = TrackOrientationEnum.Horizontal Then
+                If lbl.Side = LabelSideEnum.TopOrLeft Then
+                    context.DeviceContext.DrawLine(New System.Numerics.Vector2(coord, trackRect.Y - 2), New System.Numerics.Vector2(coord, trackRect.Y - 2 - lineLength), brush, 1.0F)
+                Else
+                    context.DeviceContext.DrawLine(New System.Numerics.Vector2(coord, trackRect.Bottom + 2), New System.Numerics.Vector2(coord, trackRect.Bottom + 2 + lineLength), brush, 1.0F)
+                End If
+            Else
+                If lbl.Side = LabelSideEnum.TopOrLeft Then
+                    context.DeviceContext.DrawLine(New System.Numerics.Vector2(trackRect.X - 2, coord), New System.Numerics.Vector2(trackRect.X - 2 - lineLength, coord), brush, 1.0F)
+                Else
+                    context.DeviceContext.DrawLine(New System.Numerics.Vector2(trackRect.Right + 2, coord), New System.Numerics.Vector2(trackRect.Right + 2 + lineLength, coord), brush, 1.0F)
+                End If
+            End If
+        Next
+    End Sub
+
+    Private Sub 绘制标签文字_GPU(context As D3D_PaintContext)
+        If 标签列表.Count = 0 Then Return
+        Dim lineLength As Single = 标签连线长度 * DpiScale()
+        Dim trackRect As RectangleF = 计算轨道区域()
+        Dim labelFont As Font = 获取标签字体()
+        For Each lbl In 标签列表
+            If lbl.Position < 最小值 OrElse lbl.Position > 最大值 Then Continue For
+            Dim displayText As String = 获取标签显示文字(lbl)
+            If String.IsNullOrEmpty(displayText) Then Continue For
+            Dim textSize As Size = TextRenderer.MeasureText(displayText, labelFont)
+            Dim coord As Single = 计算值对应轨道坐标(lbl.Position)
+            Dim textRect As RectangleF
+            If 方向 = TrackOrientationEnum.Horizontal Then
+                Dim textX As Single = coord - textSize.Width / 2.0F
+                If lbl.Side = LabelSideEnum.TopOrLeft Then
+                    textRect = New RectangleF(textX, trackRect.Y - 2 - lineLength - textSize.Height, textSize.Width, textSize.Height)
+                Else
+                    textRect = New RectangleF(textX, trackRect.Bottom + 2 + lineLength, textSize.Width, textSize.Height)
+                End If
+            Else
+                Dim textY As Single = coord - textSize.Height / 2.0F
+                If lbl.Side = LabelSideEnum.TopOrLeft Then
+                    textRect = New RectangleF(trackRect.X - 2 - lineLength - textSize.Width, textY, textSize.Width, textSize.Height)
+                Else
+                    textRect = New RectangleF(trackRect.Right + 2 + lineLength, textY, textSize.Width, textSize.Height)
+                End If
+            End If
+            If textRect.Width > 0 AndAlso textRect.Height > 0 Then
+                context.DrawText(displayText, labelFont, 标签颜色, textRect, DW.TextAlignment.Center, DW.ParagraphAlignment.Center)
+            End If
+        Next
+    End Sub
+
+    Private Sub 绘制滑块文字_GPU(context As D3D_PaintContext, thumbRect As RectangleF)
+        If 滑块文字模式 = ThumbTextModeEnum.None Then Return
+        Dim displayText As String = 获取滑块显示文字()
+        If String.IsNullOrEmpty(displayText) Then Return
+        context.DrawText(displayText, Me.Font, 滑块文字颜色, thumbRect, DW.TextAlignment.Center, DW.ParagraphAlignment.Center)
+    End Sub
+
+    Private Sub 填充圆角矩形_GPU(context As D3D_PaintContext,
+                           rect As RectangleF,
+                           radius As Single,
+                           color As Color,
+                           Optional gradientColor As Color = Nothing,
+                           Optional gradientDirection As System.Windows.Forms.Orientation = System.Windows.Forms.Orientation.Horizontal)
+        If rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        If color.A = 0 AndAlso (gradientColor = Color.Empty OrElse gradientColor.A = 0) Then Return
+
+        Dim brush As D2D.ID2D1Brush = Nothing
+        Dim ownsBrush As Boolean
+        If gradientColor <> Color.Empty AndAlso gradientColor.A > 0 Then
+            brush = 创建线性渐变画刷_GPU(context, rect, color, gradientColor, gradientDirection)
+            ownsBrush = True
+        Else
+            brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
+        End If
+
+        Try
+            If radius > 0 Then
+                Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New D2D.RoundedRectangle(rect, radius, radius))
+                    context.DeviceContext.FillGeometry(geo, brush)
+                End Using
+            Else
+                context.DeviceContext.FillRectangle(D3D_PaintContext.ToRawRect(rect), brush)
+            End If
+        Finally
+            If ownsBrush Then brush.Dispose()
+        End Try
+    End Sub
+
+    Private Sub 绘制圆角边框_GPU(context As D3D_PaintContext, rect As RectangleF, radius As Single, color As Color, strokeWidth As Single)
+        If color.A = 0 OrElse strokeWidth <= 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
+        If radius > 0 Then
+            Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New D2D.RoundedRectangle(rect, radius, radius))
+                context.DeviceContext.DrawGeometry(geo, brush, strokeWidth)
+            End Using
+        Else
+            context.DeviceContext.DrawRectangle(D3D_PaintContext.ToRawRect(rect), brush, strokeWidth)
+        End If
+    End Sub
+
+    Private Shared Function 创建线性渐变画刷_GPU(context As D3D_PaintContext,
+                                             bounds As RectangleF,
+                                             baseColor As Color,
+                                             gradColor As Color,
+                                             gradDir As System.Windows.Forms.Orientation) As D2D.ID2D1LinearGradientBrush
+        Dim startPt As System.Numerics.Vector2
+        Dim endPt As System.Numerics.Vector2
+        If gradDir = System.Windows.Forms.Orientation.Vertical Then
+            startPt = New System.Numerics.Vector2(bounds.X, bounds.Y)
+            endPt = New System.Numerics.Vector2(bounds.X, bounds.Bottom)
+        Else
+            startPt = New System.Numerics.Vector2(bounds.X, bounds.Y)
+            endPt = New System.Numerics.Vector2(bounds.Right, bounds.Y)
+        End If
+        Dim stops() As D2D.GradientStop = {
+            New D2D.GradientStop With {.Position = 0.0F, .Color = D3D_PaintContext.ToColor4(baseColor)},
+            New D2D.GradientStop With {.Position = 1.0F, .Color = D3D_PaintContext.ToColor4(gradColor)}}
+        Dim stopCollection = context.DeviceContext.CreateGradientStopCollection(stops)
+        Try
+            Return context.DeviceContext.CreateLinearGradientBrush(New D2D.LinearGradientBrushProperties(startPt, endPt), stopCollection)
+        Finally
+            stopCollection.Dispose()
+        End Try
+    End Function
+
+    Private Shared Sub PushGeometryClip_GPU(context As D3D_PaintContext, geo As D2D.ID2D1Geometry, bounds As RectangleF)
+        Dim parameters As New D2D.LayerParameters With {
+            .ContentBounds = New Vortice.RawRectF(bounds.X, bounds.Y, bounds.Right, bounds.Bottom),
+            .GeometricMask = geo,
+            .MaskAntialiasMode = D2D.AntialiasMode.PerPrimitive,
+            .MaskTransform = System.Numerics.Matrix3x2.Identity,
+            .Opacity = 1.0F,
+            .OpacityBrush = Nothing,
+            .LayerOptions = D2D.LayerOptions.None
+        }
+        context.DeviceContext.PushLayer(parameters, Nothing)
     End Sub
 
     Private Function 获取当前滑块颜色() As Color
@@ -891,92 +1031,6 @@ Public Class ExcellentTrackBar
         End Select
         Return 滑块边框颜色
     End Function
-
-    Private Sub 绘制滑块_D2D(rt As D2D.ID2D1RenderTarget, thumbRect As RectangleF)
-        Dim s As Single = DpiScale()
-        Dim _滑块圆角半径 As Single = 滑块圆角半径 * s
-        Dim _滑块边框宽度 As Single = 滑块边框宽度 * s
-        Dim currentColor As Color = 获取当前滑块颜色()
-        Dim currentBorderColor As Color = 获取当前滑块边框颜色()
-        If 滑块圆角半径 > 0 Then
-            Using geo = RectangleRenderer.创建圆角矩形几何(thumbRect, _滑块圆角半径)
-                RectangleRenderer.绘制圆角背景_D2D(rt, geo, thumbRect, currentColor, 滑块渐变颜色, System.Windows.Forms.Orientation.Vertical, _当前合成器.BrushCache)
-                RectangleRenderer.绘制圆角边框_D2D(rt, geo, currentBorderColor, _滑块边框宽度, _当前合成器.BrushCache)
-            End Using
-        Else
-            RectangleRenderer.绘制矩形背景_D2D(rt, thumbRect, currentColor, 滑块渐变颜色, System.Windows.Forms.Orientation.Vertical, _当前合成器.BrushCache)
-            RectangleRenderer.绘制矩形边框_D2D(rt, thumbRect, currentBorderColor, _滑块边框宽度, _当前合成器.BrushCache)
-        End If
-    End Sub
-
-    Private Sub 绘制标签连线_D2D(rt As D2D.ID2D1RenderTarget)
-        If 标签列表.Count = 0 Then Return
-        Dim _标签连线长度 As Single = 标签连线长度 * DpiScale()
-        Dim trackRect As RectangleF = 计算轨道区域()
-        Dim brush = _当前合成器.BrushCache.Get(rt, 标签连线颜色)
-        If brush Is Nothing Then Return
-        For Each lbl In 标签列表
-            If lbl.Position < 最小值 OrElse lbl.Position > 最大值 Then Continue For
-            Dim coord As Single = 计算值对应轨道坐标(lbl.Position)
-            If 方向 = TrackOrientationEnum.Horizontal Then
-                If lbl.Side = LabelSideEnum.TopOrLeft Then
-                    rt.DrawLine(New System.Numerics.Vector2(coord, trackRect.Y - 2), New System.Numerics.Vector2(coord, trackRect.Y - 2 - _标签连线长度), brush, 1.0F)
-                Else
-                    rt.DrawLine(New System.Numerics.Vector2(coord, trackRect.Bottom + 2), New System.Numerics.Vector2(coord, trackRect.Bottom + 2 + _标签连线长度), brush, 1.0F)
-                End If
-            Else
-                If lbl.Side = LabelSideEnum.TopOrLeft Then
-                    rt.DrawLine(New System.Numerics.Vector2(trackRect.X - 2, coord), New System.Numerics.Vector2(trackRect.X - 2 - _标签连线长度, coord), brush, 1.0F)
-                Else
-                    rt.DrawLine(New System.Numerics.Vector2(trackRect.Right + 2, coord), New System.Numerics.Vector2(trackRect.Right + 2 + _标签连线长度, coord), brush, 1.0F)
-                End If
-            End If
-        Next
-    End Sub
-
-    Private Function 获取文本格式(font As Font, align As DW.TextAlignment, paraAlign As DW.ParagraphAlignment, trimChar As Boolean) As DW.IDWriteTextFormat
-        Dim s As Single = DpiScale()
-        Dim sizePx As Single = D2DGlobals.GetDWriteFontSizePx(font, s)
-        Dim weight As DW.FontWeight = If(font.Bold, DW.FontWeight.Bold, DW.FontWeight.Normal)
-        Dim style As DW.FontStyle = If(font.Italic, DW.FontStyle.Italic, DW.FontStyle.Normal)
-        Return _当前合成器.TextFormatCache.Get(font.FontFamily.Name, weight, style, sizePx, align, paraAlign, trimChar)
-    End Function
-
-    Private Sub 绘制标签文字_D2D(rt As D2D.ID2D1DCRenderTarget)
-        If 标签列表.Count = 0 Then Return
-        Dim _标签连线长度 As Single = 标签连线长度 * DpiScale()
-        Dim trackRect As RectangleF = 计算轨道区域()
-        Dim labelFont As Font = 获取标签字体()
-        Dim fmt = 获取文本格式(labelFont, DW.TextAlignment.Center, DW.ParagraphAlignment.Center, False)
-        Dim brush = _当前合成器.BrushCache.Get(rt, 标签颜色)
-        If brush Is Nothing Then Return
-        For Each lbl In 标签列表
-            If lbl.Position < 最小值 OrElse lbl.Position > 最大值 Then Continue For
-            Dim displayText As String = 获取标签显示文字(lbl)
-            If String.IsNullOrEmpty(displayText) Then Continue For
-            Dim textSize As Size = TextRenderer.MeasureText(displayText, labelFont)
-            Dim coord As Single = 计算值对应轨道坐标(lbl.Position)
-            Dim textRect As RectangleF
-            If 方向 = TrackOrientationEnum.Horizontal Then
-                Dim textX As Single = coord - textSize.Width / 2.0F
-                If lbl.Side = LabelSideEnum.TopOrLeft Then
-                    textRect = New RectangleF(textX, trackRect.Y - 2 - _标签连线长度 - textSize.Height, textSize.Width, textSize.Height)
-                Else
-                    textRect = New RectangleF(textX, trackRect.Bottom + 2 + _标签连线长度, textSize.Width, textSize.Height)
-                End If
-            Else
-                Dim textY As Single = coord - textSize.Height / 2.0F
-                If lbl.Side = LabelSideEnum.TopOrLeft Then
-                    textRect = New RectangleF(trackRect.X - 2 - _标签连线长度 - textSize.Width, textY, textSize.Width, textSize.Height)
-                Else
-                    textRect = New RectangleF(trackRect.Right + 2 + _标签连线长度, textY, textSize.Width, textSize.Height)
-                End If
-            End If
-            If textRect.Width > 0 AndAlso textRect.Height > 0 Then
-                rt.DrawText(displayText, fmt, D2DGlobals.ToD2DRect(textRect), brush)
-            End If
-        Next
-    End Sub
 
     Private Function 格式化显示值(val As Double) As String
         Dim rounded As Double
@@ -1012,15 +1066,6 @@ Public Class ExcellentTrackBar
                 Return String.Empty
         End Select
     End Function
-
-    Private Sub 绘制滑块文字_D2D(rt As D2D.ID2D1DCRenderTarget, thumbRect As RectangleF)
-        If 滑块文字模式 = ThumbTextModeEnum.None Then Return
-        Dim displayText As String = 获取滑块显示文字()
-        If String.IsNullOrEmpty(displayText) OrElse thumbRect.Width <= 0 OrElse thumbRect.Height <= 0 Then Return
-        Dim fmt = 获取文本格式(Me.Font, DW.TextAlignment.Center, DW.ParagraphAlignment.Center, True)
-        Dim brush = _当前合成器.BrushCache.Get(rt, 滑块文字颜色)
-        If brush IsNot Nothing Then rt.DrawText(displayText, fmt, D2DGlobals.ToD2DRect(thumbRect), brush)
-    End Sub
 #End Region
 
 #Region "鼠标交互"
@@ -1037,13 +1082,13 @@ Public Class ExcellentTrackBar
     Protected Overrides Sub OnMouseEnter(e As EventArgs)
         MyBase.OnMouseEnter(e)
         鼠标状态 = MouseStateEnum.Hover
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnMouseLeave(e As EventArgs)
         MyBase.OnMouseLeave(e)
         鼠标状态 = MouseStateEnum.Normal
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
@@ -1051,7 +1096,7 @@ Public Class ExcellentTrackBar
         If Not Enabled OrElse e.Button <> MouseButtons.Left Then Return
         鼠标状态 = MouseStateEnum.Pressed
         Me.Focus()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
         Dim thumbRect As RectangleF = 计算滑块矩形()
         If thumbRect.Contains(e.Location) Then
             正在拖动 = True
@@ -1078,7 +1123,7 @@ Public Class ExcellentTrackBar
         MyBase.OnMouseUp(e)
         正在拖动 = False
         鼠标状态 = If(ClientRectangle.Contains(e.Location), MouseStateEnum.Hover, MouseStateEnum.Normal)
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnMouseWheel(e As MouseEventArgs)
@@ -1197,27 +1242,27 @@ Public Class ExcellentTrackBar
     Protected Overrides Sub OnFontChanged(e As EventArgs)
         MyBase.OnFontChanged(e)
         释放标签字体缓存()
-        D2DHelperV2.RefreshFontDependentRendering(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnResize(e As EventArgs)
         MyBase.OnResize(e)
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnEnabledChanged(e As EventArgs)
         MyBase.OnEnabledChanged(e)
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnPaddingChanged(e As EventArgs)
         MyBase.OnPaddingChanged(e)
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
 End Class

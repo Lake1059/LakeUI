@@ -62,6 +62,7 @@ Partial Class Form_MarkDownViewer
         ' MarkDownViewer1
         ' 
         MarkDownViewer1.BackColor1 = Color.FromArgb(CByte(20), CByte(220), CByte(220), CByte(220))
+        MarkDownViewer1.BackgroundSource = ModernPanel1
         MarkDownViewer1.BasePath = Nothing
         MarkDownViewer1.BlockQuoteForeColor = Color.FromArgb(CByte(160), CByte(160), CByte(160))
         MarkDownViewer1.BlockSpacing = 10

@@ -7,6 +7,7 @@ Imports DW = Vortice.DirectWrite
 
 <DefaultEvent("ChartChanged")>
 Public Class Ultra2DChart
+    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource
 
     Public Event ChartChanged As EventHandler
 
@@ -801,13 +802,12 @@ Public Class Ultra2DChart
         _pendingChartChanged = False
         _pendingInvalidate = False
         If raiseChanged Then RaiseEvent ChartChanged(Me, EventArgs.Empty)
-        If invalidateNow AndAlso AutoRefresh Then OuterToInnerRefreshScheduler.RequestFull(Me)
+        If invalidateNow AndAlso AutoRefresh Then 请求V3渲染()
     End Sub
 
     Public Sub RefreshChart(Optional rebuildLayout As Boolean = True)
         If rebuildLayout Then _layoutCache = Nothing
-        OuterToInnerRefreshScheduler.RequestFull(Me)
-        If Me.IsHandleCreated Then Me.Update()
+        请求V3渲染()
     End Sub
 
     Public Sub ResetPalette()
@@ -844,92 +844,289 @@ Public Class Ultra2DChart
     End Sub
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
-        If Me.Width <= 0 OrElse Me.Height <= 0 Then Return
-
-        Dim ssaa As Integer = D2DHelperV2.GetEffectiveSsaaScale(超采样倍率)
-
-        Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
-            If scope Is Nothing Then
-                MyBase.OnPaint(e)
-                Return
-            End If
-
-            Dim compositor = scope.Compositor
-            Dim brushCache = compositor.BrushCache
-
-            If _backgroundSource IsNot Nothing Then
-                BackgroundPenetrationV2.PaintBackground(Me, scope, _backgroundSource)
-            ElseIf MyBase.BackColor.A > 0 AndAlso MyBase.BackColor.A < 255 Then
-                Dim bgBrush = brushCache.Get(scope.BackgroundLayer, MyBase.BackColor)
-                If bgBrush IsNot Nothing Then scope.BackgroundLayer.FillRectangle(D2DGlobals.ToD2DRect(New RectangleF(0, 0, Me.Width, Me.Height)), bgBrush)
-            End If
-
-            Dim layout = 获取布局()
-            绘制图形层(scope.GraphicsLayer, compositor, layout)
-            scope.FlushGraphics()
-            绘制文字层(scope.TextLayer, compositor, layout)
-
-            If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
-                Dim maskBrush = brushCache.Get(scope.TextLayer, 禁用时遮罩颜色)
-                If maskBrush IsNot Nothing Then scope.TextLayer.FillRectangle(New Vortice.Mathematics.Rect(0, 0, Me.Width, Me.Height), maskBrush)
-            End If
-        End Using
+        If Not D3D_PaintBridge.PaintRenderable(e, Me, Me, 1) Then MyBase.OnPaint(e)
     End Sub
 
-    Private Sub 绘制图形层(rt As D2D.ID2D1RenderTarget, compositor As WindowCompositor, layout As ChartLayoutInfo)
-        If rt Is Nothing OrElse layout Is Nothing Then Return
-        Dim brushCache = compositor.BrushCache
-        Dim s As Single = layout.Scale
+    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+        If Me.Width <= 0 OrElse Me.Height <= 0 Then Return
 
-        If 绘图区背景颜色.A > 0 Then
-            RectangleRenderer.绘制矩形背景_D2D(rt, layout.PlotRect, 绘图区背景颜色, Color.Empty, Orientation.Vertical, brushCache)
+        If _backgroundSource IsNot Nothing Then
+            context.DrawBackgroundSource(Me, _backgroundSource, New RectangleF(0, 0, Me.Width, Me.Height))
+        ElseIf MyBase.BackColor.A > 0 Then
+            context.FillRectangle(New RectangleF(0, 0, Me.Width, Me.Height), MyBase.BackColor)
         End If
 
-        绘制网格与坐标轴(rt, brushCache, layout, s)
+        Dim layout = 获取布局()
+        绘制图形层_GPU(context, layout)
+        绘制文字层_GPU(context, layout)
+
+        If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
+            context.FillRectangle(New RectangleF(0, 0, Me.Width, Me.Height), 禁用时遮罩颜色)
+        End If
+    End Sub
+
+    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+        Return New Rectangle(Point.Empty, Me.Size)
+    End Function
+
+    Private Sub 绘制图形层_GPU(context As D3D_PaintContext, layout As ChartLayoutInfo)
+        If layout Is Nothing Then Return
+        Dim s As Single = layout.Scale
+
+        If 绘图区背景颜色.A > 0 Then context.FillRectangle(layout.PlotRect, 绘图区背景颜色)
+
+        绘制网格与坐标轴_GPU(context, layout, s)
 
         For Each draw In layout.SeriesDraws
             If draw.Series.ChartType = ChartSeriesTypeEnum.Column Then
                 For Each col In draw.Columns
                     If col.Rect.Width <= 0 OrElse col.Rect.Height <= 0 Then Continue For
-                    If col.CornerRadius > 0 Then
-                        Using geo = RectangleRenderer.创建圆角矩形几何(col.Rect, col.CornerRadius)
-                            RectangleRenderer.绘制圆角背景_D2D(rt, geo, col.Rect, col.FillColor, col.GradientColor, Orientation.Vertical, brushCache)
-                            If col.BorderThickness > 0 Then RectangleRenderer.绘制圆角边框_D2D(rt, geo, col.BorderColor, col.BorderThickness, brushCache)
-                        End Using
-                    Else
-                        RectangleRenderer.绘制矩形背景_D2D(rt, col.Rect, col.FillColor, col.GradientColor, Orientation.Vertical, brushCache)
-                        If col.BorderThickness > 0 Then RectangleRenderer.绘制矩形边框_D2D(rt, col.Rect, col.BorderColor, col.BorderThickness, brushCache)
-                    End If
+                    填充圆角矩形_GPU(context, col.Rect, col.CornerRadius, col.FillColor)
+                    If col.BorderThickness > 0 Then 绘制圆角边框_GPU(context, col.Rect, col.CornerRadius, col.BorderColor, col.BorderThickness)
                 Next
             End If
         Next
 
         For Each draw In layout.SeriesDraws
             If draw.Series.ChartType <> ChartSeriesTypeEnum.Line Then Continue For
-            Dim lineBrush = brushCache.Get(rt, draw.Color)
+            Dim lineBrush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, draw.Color, context.DeviceGeneration)
             If lineBrush IsNot Nothing Then
-                Dim strokeStyle = D2DGlobals.GetRoundStrokeStyle(roundDashCap:=True)
                 For Each segment In draw.LineSegments
                     If segment.Count < 2 Then Continue For
                     Using geo = 创建折线几何(segment)
-                        rt.DrawGeometry(geo, lineBrush, draw.Series.LineThickness * s, strokeStyle)
+                        context.DeviceContext.DrawGeometry(geo, lineBrush, draw.Series.LineThickness * s)
                     End Using
                 Next
             End If
 
             For Each marker In draw.Markers
-                绘制标记(rt, brushCache, marker)
+                绘制标记_GPU(context, marker)
             Next
         Next
 
         If 绘图区边框粗细 > 0 AndAlso 绘图区边框颜色.A > 0 Then
-            RectangleRenderer.绘制矩形边框_D2D(rt, layout.PlotRect, 绘图区边框颜色, 绘图区边框粗细 * s, brushCache)
+            context.DrawRectangle(layout.PlotRect, 绘图区边框颜色, 绘图区边框粗细 * s)
         End If
 
-        绘制折线悬停十字线(rt, brushCache, layout, s)
+        绘制折线悬停十字线_GPU(context, layout, s)
     End Sub
 
-    Private Sub 绘制网格与坐标轴(rt As D2D.ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache, layout As ChartLayoutInfo, s As Single)
+    Private Sub 绘制网格与坐标轴_GPU(context As D3D_PaintContext, layout As ChartLayoutInfo, s As Single)
+        Dim plot = layout.PlotRect
+        If plot.Width <= 0 OrElse plot.Height <= 0 Then Return
+
+        If 显示水平网格线 AndAlso 网格线颜色.A > 0 AndAlso 网格线粗细 > 0 Then
+            Dim gridBrush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, 网格线颜色, context.DeviceGeneration)
+            If gridBrush IsNot Nothing Then
+                For Each tick In layout.TickLabels
+                    context.DeviceContext.DrawLine(New Vector2(plot.Left, tick.Y), New Vector2(plot.Right, tick.Y), gridBrush, 网格线粗细 * s)
+                Next
+            End If
+        End If
+
+        If 显示垂直网格线 AndAlso 网格线颜色.A > 0 AndAlso 网格线粗细 > 0 AndAlso layout.CategoryCount > 0 Then
+            Dim gridBrush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, 网格线颜色, context.DeviceGeneration)
+            If gridBrush IsNot Nothing Then
+                For Each cat In layout.CategoryLabels
+                    context.DeviceContext.DrawLine(New Vector2(cat.X, plot.Top), New Vector2(cat.X, plot.Bottom), gridBrush, 网格线粗细 * s)
+                Next
+            End If
+        End If
+
+        If 坐标轴线颜色.A > 0 AndAlso 坐标轴线粗细 > 0 Then
+            Dim axisBrush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, 坐标轴线颜色, context.DeviceGeneration)
+            If axisBrush IsNot Nothing Then
+                context.DeviceContext.DrawLine(New Vector2(plot.Left, plot.Bottom), New Vector2(plot.Right, plot.Bottom), axisBrush, 坐标轴线粗细 * s)
+                context.DeviceContext.DrawLine(New Vector2(plot.Left, plot.Top), New Vector2(plot.Left, plot.Bottom), axisBrush, 坐标轴线粗细 * s)
+                If layout.ValueMin < 0 AndAlso layout.ValueMax > 0 Then
+                    context.DeviceContext.DrawLine(New Vector2(plot.Left, layout.ZeroY), New Vector2(plot.Right, layout.ZeroY), axisBrush, 坐标轴线粗细 * s)
+                End If
+            End If
+        End If
+
+        If 坐标轴刻度线颜色.A > 0 AndAlso 坐标轴刻度线粗细 > 0 Then
+            Dim tickBrush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, 坐标轴刻度线颜色, context.DeviceGeneration)
+            If tickBrush IsNot Nothing Then
+                Dim tickLen As Single = 主要刻度长度 * s
+                If 显示Y轴刻度线 Then
+                    For Each tick In layout.TickLabels
+                        context.DeviceContext.DrawLine(New Vector2(plot.Left - tickLen, tick.Y), New Vector2(plot.Left, tick.Y), tickBrush, 坐标轴刻度线粗细 * s)
+                    Next
+                End If
+                If 显示X轴刻度线 Then
+                    For Each cat In layout.CategoryLabels
+                        context.DeviceContext.DrawLine(New Vector2(cat.X, plot.Bottom), New Vector2(cat.X, plot.Bottom + tickLen), tickBrush, 坐标轴刻度线粗细 * s)
+                    Next
+                End If
+            End If
+        End If
+    End Sub
+
+    Private Sub 绘制标记_GPU(context As D3D_PaintContext, marker As MarkerDrawInfo)
+        If marker.Shape = MarkerShapeEnum.None OrElse marker.Size <= 0 Then Return
+        Dim half As Single = marker.Size / 2.0F
+        Dim rect As New RectangleF(marker.Center.X - half, marker.Center.Y - half, marker.Size, marker.Size)
+        Dim fillBrush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, marker.FillColor, context.DeviceGeneration)
+        Dim borderBrush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, marker.BorderColor, context.DeviceGeneration)
+
+        Select Case marker.Shape
+            Case MarkerShapeEnum.Circle
+                Dim e As New D2D.Ellipse(New Vector2(marker.Center.X, marker.Center.Y), half, half)
+                If fillBrush IsNot Nothing AndAlso marker.FillColor.A > 0 Then context.DeviceContext.FillEllipse(e, fillBrush)
+                If borderBrush IsNot Nothing AndAlso marker.BorderColor.A > 0 AndAlso marker.BorderThickness > 0 Then context.DeviceContext.DrawEllipse(e, borderBrush, marker.BorderThickness)
+            Case MarkerShapeEnum.Square
+                If fillBrush IsNot Nothing AndAlso marker.FillColor.A > 0 Then context.DeviceContext.FillRectangle(D3D_PaintContext.ToRawRect(rect), fillBrush)
+                If borderBrush IsNot Nothing AndAlso marker.BorderColor.A > 0 AndAlso marker.BorderThickness > 0 Then context.DeviceContext.DrawRectangle(D3D_PaintContext.ToRawRect(rect), borderBrush, marker.BorderThickness)
+            Case MarkerShapeEnum.Diamond
+                Using geo = 创建菱形几何(marker.Center, half)
+                    If fillBrush IsNot Nothing AndAlso marker.FillColor.A > 0 Then context.DeviceContext.FillGeometry(geo, fillBrush)
+                    If borderBrush IsNot Nothing AndAlso marker.BorderColor.A > 0 AndAlso marker.BorderThickness > 0 Then context.DeviceContext.DrawGeometry(geo, borderBrush, marker.BorderThickness)
+                End Using
+        End Select
+    End Sub
+
+    Private Sub 绘制文字层_GPU(context As D3D_PaintContext, layout As ChartLayoutInfo)
+        If layout Is Nothing Then Return
+
+        If 显示标题 AndAlso Not String.IsNullOrEmpty(标题文本) Then
+            绘制文本_GPU(context, 标题文本, 获取标题字体(), 标题颜色, layout.TitleRect, DW.TextAlignment.Center, DW.ParagraphAlignment.Center)
+        End If
+
+        If 显示Y轴标签 Then
+            For Each tick In layout.TickLabels
+                绘制文本_GPU(context, tick.Text, 获取坐标轴标签字体(), 坐标轴标签颜色, tick.TextRect, DW.TextAlignment.Trailing, DW.ParagraphAlignment.Center)
+            Next
+        End If
+
+        If 显示X轴标签 Then
+            For Each cat In layout.CategoryLabels
+                If cat.Rotated Then
+                    绘制旋转文本_GPU(context, cat.Text, 获取坐标轴标签字体(), 坐标轴标签颜色, cat.TextRect, X轴标签旋转角度)
+                Else
+                    绘制文本_GPU(context, cat.Text, 获取坐标轴标签字体(), 坐标轴标签颜色, cat.TextRect, DW.TextAlignment.Center, DW.ParagraphAlignment.Near)
+                End If
+            Next
+        End If
+
+        If Not String.IsNullOrEmpty(X轴标题文本) Then
+            绘制文本_GPU(context, X轴标题文本, 获取坐标轴标题字体(), 坐标轴标题颜色, layout.XAxisTitleRect, DW.TextAlignment.Center, DW.ParagraphAlignment.Center)
+        End If
+
+        If Not String.IsNullOrEmpty(Y轴标题文本) Then
+            绘制垂直标题_GPU(context, Y轴标题文本, 获取坐标轴标题字体(), 坐标轴标题颜色, layout.YAxisTitleRect)
+        End If
+
+        If 图例位置 <> LegendPositionEnum.None Then
+            绘制图例_GPU(context, layout)
+        End If
+
+        For Each label In layout.ValueLabels
+            绘制文本_GPU(context, label.Text, 获取值标签字体(), label.Color, label.Rect, DW.TextAlignment.Center, DW.ParagraphAlignment.Center)
+        Next
+
+        Dim hoverTarget = 获取折线悬停目标(layout)
+        If hoverTarget.HasTarget Then
+            绘制文本_GPU(context, hoverTarget.TooltipText, 获取悬停提示字体(), 折线悬停提示文字颜色, hoverTarget.TextRect, DW.TextAlignment.Leading, DW.ParagraphAlignment.Center)
+        End If
+    End Sub
+
+    Private Sub 绘制折线悬停十字线_GPU(context As D3D_PaintContext, layout As ChartLayoutInfo, s As Single)
+        Dim hoverTarget = 获取折线悬停目标(layout)
+        If Not hoverTarget.HasTarget Then Return
+
+        Dim plot = layout.PlotRect
+        Dim lineBrush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, 折线悬停十字线颜色, context.DeviceGeneration)
+        If lineBrush IsNot Nothing AndAlso 折线悬停十字线粗细 > 0 Then
+            context.DeviceContext.DrawLine(New Vector2(hoverTarget.Point.X, plot.Top), New Vector2(hoverTarget.Point.X, plot.Bottom), lineBrush, 折线悬停十字线粗细 * s)
+            context.DeviceContext.DrawLine(New Vector2(plot.Left, hoverTarget.Point.Y), New Vector2(plot.Right, hoverTarget.Point.Y), lineBrush, 折线悬停十字线粗细 * s)
+        End If
+
+        Dim highlightBrush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, hoverTarget.Color, context.DeviceGeneration)
+        Dim borderBrush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, 折线悬停吸附点边框颜色, context.DeviceGeneration)
+        Dim radius As Single = Math.Max(2.0F, 折线悬停吸附点半径 * s)
+        Dim ellipse As New D2D.Ellipse(New Vector2(hoverTarget.Point.X, hoverTarget.Point.Y), radius, radius)
+        If highlightBrush IsNot Nothing Then context.DeviceContext.FillEllipse(ellipse, highlightBrush)
+        If borderBrush IsNot Nothing AndAlso 折线悬停吸附点边框粗细 > 0 Then context.DeviceContext.DrawEllipse(ellipse, borderBrush, 折线悬停吸附点边框粗细 * s)
+
+        If 折线悬停提示背景颜色.A > 0 Then context.FillRectangle(hoverTarget.TooltipRect, 折线悬停提示背景颜色)
+        If 折线悬停提示边框颜色.A > 0 AndAlso 折线悬停提示边框粗细 > 0 Then
+            context.DrawRectangle(hoverTarget.TooltipRect, 折线悬停提示边框颜色, 折线悬停提示边框粗细 * s)
+        End If
+    End Sub
+
+    Private Sub 绘制图例_GPU(context As D3D_PaintContext, layout As ChartLayoutInfo)
+        For Each item In layout.LegendItems
+            Dim markerBrush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, item.Color, context.DeviceGeneration)
+            If markerBrush IsNot Nothing Then
+                If item.Series.ChartType = ChartSeriesTypeEnum.Column Then
+                    context.DeviceContext.FillRectangle(D3D_PaintContext.ToRawRect(item.MarkerRect), markerBrush)
+                Else
+                    Dim cy As Single = item.MarkerRect.Y + item.MarkerRect.Height / 2.0F
+                    context.DeviceContext.DrawLine(New Vector2(item.MarkerRect.Left, cy), New Vector2(item.MarkerRect.Right, cy), markerBrush, Math.Max(1.0F, item.Series.LineThickness * layout.Scale))
+                    Dim r As Single = Math.Min(item.MarkerRect.Width, item.MarkerRect.Height) / 3.0F
+                    context.DeviceContext.FillEllipse(New D2D.Ellipse(New Vector2(item.MarkerRect.X + item.MarkerRect.Width / 2.0F, cy), r, r), markerBrush)
+                End If
+            End If
+            绘制文本_GPU(context, item.Text, 获取图例字体(), 图例文字颜色, item.TextRect, DW.TextAlignment.Leading, DW.ParagraphAlignment.Center)
+        Next
+    End Sub
+
+    Private Sub 绘制文本_GPU(context As D3D_PaintContext, text As String, font As Font, color As Color, rect As RectangleF, align As DW.TextAlignment, paraAlign As DW.ParagraphAlignment)
+        If String.IsNullOrEmpty(text) OrElse color.A <= 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        context.DrawText(text, font, color, rect, align, paraAlign)
+    End Sub
+
+    Private Sub 绘制旋转文本_GPU(context As D3D_PaintContext, text As String, font As Font, color As Color, rect As RectangleF, angle As Single)
+        If String.IsNullOrEmpty(text) OrElse color.A <= 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        Dim oldTransform = context.DeviceContext.Transform
+        Dim rad As Single = angle * CSng(Math.PI / 180.0)
+        Dim anchor As New Vector2(rect.X + rect.Width / 2.0F, rect.Y)
+        Try
+            context.DeviceContext.Transform = Matrix3x2.CreateRotation(rad, anchor) * oldTransform
+            context.DrawText(text, font, color, rect, DW.TextAlignment.Center, DW.ParagraphAlignment.Center)
+        Finally
+            context.DeviceContext.Transform = oldTransform
+        End Try
+    End Sub
+
+    Private Sub 绘制垂直标题_GPU(context As D3D_PaintContext, text As String, font As Font, color As Color, rect As RectangleF)
+        If String.IsNullOrEmpty(text) OrElse color.A <= 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        Dim oldTransform = context.DeviceContext.Transform
+        Try
+            context.DeviceContext.Transform = Matrix3x2.CreateRotation(-CSng(Math.PI / 2.0F)) * Matrix3x2.CreateTranslation(rect.X, rect.Bottom) * oldTransform
+            context.DrawText(text, font, color, New RectangleF(0, 0, rect.Height, rect.Width), DW.TextAlignment.Center, DW.ParagraphAlignment.Center)
+        Finally
+            context.DeviceContext.Transform = oldTransform
+        End Try
+    End Sub
+
+    Private Sub 填充圆角矩形_GPU(context As D3D_PaintContext, rect As RectangleF, radius As Single, color As Color)
+        If color.A = 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
+        If radius <= 0 Then
+            context.DeviceContext.FillRectangle(D3D_PaintContext.ToRawRect(rect), brush)
+            Return
+        End If
+        Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New D2D.RoundedRectangle(rect, radius, radius))
+            context.DeviceContext.FillGeometry(geo, brush)
+        End Using
+    End Sub
+
+    Private Sub 绘制圆角边框_GPU(context As D3D_PaintContext, rect As RectangleF, radius As Single, color As Color, strokeWidth As Single)
+        If color.A = 0 OrElse strokeWidth <= 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
+        If radius <= 0 Then
+            context.DeviceContext.DrawRectangle(D3D_PaintContext.ToRawRect(rect), brush, strokeWidth)
+            Return
+        End If
+        Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New D2D.RoundedRectangle(rect, radius, radius))
+            context.DeviceContext.DrawGeometry(geo, brush, strokeWidth)
+        End Using
+    End Sub
+
+
+
+    Private Sub 绘制网格与坐标轴(rt As D2D.ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache, layout As ChartLayoutInfo, s As Single)
         Dim plot = layout.PlotRect
         If plot.Width <= 0 OrElse plot.Height <= 0 Then Return
 
@@ -980,7 +1177,7 @@ Public Class Ultra2DChart
         End If
     End Sub
 
-    Private Sub 绘制标记(rt As D2D.ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache, marker As MarkerDrawInfo)
+    Private Sub 绘制标记(rt As D2D.ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache, marker As MarkerDrawInfo)
         If marker.Shape = MarkerShapeEnum.None OrElse marker.Size <= 0 Then Return
         Dim half As Single = marker.Size / 2.0F
         Dim rect As New RectangleF(marker.Center.X - half, marker.Center.Y - half, marker.Size, marker.Size)
@@ -993,8 +1190,8 @@ Public Class Ultra2DChart
                 If fillBrush IsNot Nothing AndAlso marker.FillColor.A > 0 Then rt.FillEllipse(e, fillBrush)
                 If borderBrush IsNot Nothing AndAlso marker.BorderColor.A > 0 AndAlso marker.BorderThickness > 0 Then rt.DrawEllipse(e, borderBrush, marker.BorderThickness)
             Case MarkerShapeEnum.Square
-                If fillBrush IsNot Nothing AndAlso marker.FillColor.A > 0 Then rt.FillRectangle(D2DGlobals.ToD2DRect(rect), fillBrush)
-                If borderBrush IsNot Nothing AndAlso marker.BorderColor.A > 0 AndAlso marker.BorderThickness > 0 Then rt.DrawRectangle(D2DGlobals.ToD2DRect(rect), borderBrush, marker.BorderThickness)
+                If fillBrush IsNot Nothing AndAlso marker.FillColor.A > 0 Then rt.FillRectangle(D3D_D2DInterop.ToD2DRect(rect), fillBrush)
+                If borderBrush IsNot Nothing AndAlso marker.BorderColor.A > 0 AndAlso marker.BorderThickness > 0 Then rt.DrawRectangle(D3D_D2DInterop.ToD2DRect(rect), borderBrush, marker.BorderThickness)
             Case MarkerShapeEnum.Diamond
                 Using geo = 创建菱形几何(marker.Center, half)
                     If fillBrush IsNot Nothing AndAlso marker.FillColor.A > 0 Then rt.FillGeometry(geo, fillBrush)
@@ -1003,59 +1200,15 @@ Public Class Ultra2DChart
         End Select
     End Sub
 
-    Private Sub 绘制文字层(rt As D2D.ID2D1DCRenderTarget, compositor As WindowCompositor, layout As ChartLayoutInfo)
-        If rt Is Nothing OrElse layout Is Nothing Then Return
 
-        If 显示标题 AndAlso Not String.IsNullOrEmpty(标题文本) Then
-            绘制文本(rt, compositor, 标题文本, 获取标题字体(), 标题颜色, layout.TitleRect, DW.TextAlignment.Center, DW.ParagraphAlignment.Center, True)
-        End If
-
-        If 显示Y轴标签 Then
-            For Each tick In layout.TickLabels
-                绘制文本(rt, compositor, tick.Text, 获取坐标轴标签字体(), 坐标轴标签颜色, tick.TextRect, DW.TextAlignment.Trailing, DW.ParagraphAlignment.Center, True)
-            Next
-        End If
-
-        If 显示X轴标签 Then
-            For Each cat In layout.CategoryLabels
-                If cat.Rotated Then
-                    绘制旋转文本(rt, compositor, cat.Text, 获取坐标轴标签字体(), 坐标轴标签颜色, cat.TextRect, X轴标签旋转角度)
-                Else
-                    绘制文本(rt, compositor, cat.Text, 获取坐标轴标签字体(), 坐标轴标签颜色, cat.TextRect, DW.TextAlignment.Center, DW.ParagraphAlignment.Near, True)
-                End If
-            Next
-        End If
-
-        If Not String.IsNullOrEmpty(X轴标题文本) Then
-            绘制文本(rt, compositor, X轴标题文本, 获取坐标轴标题字体(), 坐标轴标题颜色, layout.XAxisTitleRect, DW.TextAlignment.Center, DW.ParagraphAlignment.Center, True)
-        End If
-
-        If Not String.IsNullOrEmpty(Y轴标题文本) Then
-            绘制垂直标题(rt, compositor, Y轴标题文本, 获取坐标轴标题字体(), 坐标轴标题颜色, layout.YAxisTitleRect)
-        End If
-
-        If 图例位置 <> LegendPositionEnum.None Then
-            绘制图例(rt, compositor, layout)
-        End If
-
-        For Each label In layout.ValueLabels
-            绘制文本(rt, compositor, label.Text, 获取值标签字体(), label.Color, label.Rect, DW.TextAlignment.Center, DW.ParagraphAlignment.Center, True)
-        Next
-
-        Dim hoverTarget = 获取折线悬停目标(layout)
-        If hoverTarget.HasTarget Then
-            绘制文本(rt, compositor, hoverTarget.TooltipText, 获取悬停提示字体(), 折线悬停提示文字颜色, hoverTarget.TextRect, DW.TextAlignment.Leading, DW.ParagraphAlignment.Center, True)
-        End If
-    End Sub
-
-    Private Sub 绘制折线悬停十字线(rt As D2D.ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache, layout As ChartLayoutInfo, s As Single)
+    Private Sub 绘制折线悬停十字线(rt As D2D.ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache, layout As ChartLayoutInfo, s As Single)
         Dim hoverTarget = 获取折线悬停目标(layout)
         If Not hoverTarget.HasTarget Then Return
 
         Dim plot = layout.PlotRect
         Dim lineBrush = brushCache.Get(rt, 折线悬停十字线颜色)
         If lineBrush IsNot Nothing AndAlso 折线悬停十字线粗细 > 0 Then
-            Dim stroke = D2DGlobals.GetRoundStrokeStyle(roundDashCap:=True)
+            Dim stroke = D3D_D2DInterop.GetRoundStrokeStyle(roundDashCap:=True)
             rt.DrawLine(New Vector2(hoverTarget.Point.X, plot.Top), New Vector2(hoverTarget.Point.X, plot.Bottom), lineBrush, 折线悬停十字线粗细 * s, stroke)
             rt.DrawLine(New Vector2(plot.Left, hoverTarget.Point.Y), New Vector2(plot.Right, hoverTarget.Point.Y), lineBrush, 折线悬停十字线粗细 * s, stroke)
         End If
@@ -1068,72 +1221,21 @@ Public Class Ultra2DChart
         If borderBrush IsNot Nothing AndAlso 折线悬停吸附点边框粗细 > 0 Then rt.DrawEllipse(ellipse, borderBrush, 折线悬停吸附点边框粗细 * s)
 
         If 折线悬停提示背景颜色.A > 0 Then
-            RectangleRenderer.绘制矩形背景_D2D(rt, hoverTarget.TooltipRect, 折线悬停提示背景颜色, Color.Empty, Orientation.Vertical, brushCache)
+            D3D_RectangleRenderer.绘制矩形背景_D2D(rt, hoverTarget.TooltipRect, 折线悬停提示背景颜色, Color.Empty, Orientation.Vertical, brushCache)
         End If
         If 折线悬停提示边框颜色.A > 0 AndAlso 折线悬停提示边框粗细 > 0 Then
-            RectangleRenderer.绘制矩形边框_D2D(rt, hoverTarget.TooltipRect, 折线悬停提示边框颜色, 折线悬停提示边框粗细 * s, brushCache)
+            D3D_RectangleRenderer.绘制矩形边框_D2D(rt, hoverTarget.TooltipRect, 折线悬停提示边框颜色, 折线悬停提示边框粗细 * s, brushCache)
         End If
     End Sub
 
-    Private Sub 绘制图例(rt As D2D.ID2D1DCRenderTarget, compositor As WindowCompositor, layout As ChartLayoutInfo)
-        Dim brushCache = compositor.BrushCache
-        For Each item In layout.LegendItems
-            Dim markerBrush = brushCache.Get(rt, item.Color)
-            If markerBrush IsNot Nothing Then
-                If item.Series.ChartType = ChartSeriesTypeEnum.Column Then
-                    rt.FillRectangle(D2DGlobals.ToD2DRect(item.MarkerRect), markerBrush)
-                Else
-                    Dim cy As Single = item.MarkerRect.Y + item.MarkerRect.Height / 2.0F
-                    rt.DrawLine(New Vector2(item.MarkerRect.Left, cy), New Vector2(item.MarkerRect.Right, cy), markerBrush, Math.Max(1.0F, item.Series.LineThickness * layout.Scale))
-                    Dim r As Single = Math.Min(item.MarkerRect.Width, item.MarkerRect.Height) / 3.0F
-                    rt.FillEllipse(New D2D.Ellipse(New Vector2(item.MarkerRect.X + item.MarkerRect.Width / 2.0F, cy), r, r), markerBrush)
-                End If
-            End If
-            绘制文本(rt, compositor, item.Text, 获取图例字体(), 图例文字颜色, item.TextRect, DW.TextAlignment.Leading, DW.ParagraphAlignment.Center, True)
-        Next
-    End Sub
 
-    Private Sub 绘制文本(rt As D2D.ID2D1DCRenderTarget, compositor As WindowCompositor, text As String, font As Font, color As Color, rect As RectangleF, align As DW.TextAlignment, paraAlign As DW.ParagraphAlignment, trim As Boolean)
-        If String.IsNullOrEmpty(text) OrElse color.A <= 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
-        Dim fmt = 获取文本格式(compositor, font, align, paraAlign, trim, False)
-        Dim brush = compositor.BrushCache.Get(rt, color)
-        If brush IsNot Nothing Then rt.DrawText(text, fmt, D2DGlobals.ToD2DRect(rect), brush)
-    End Sub
 
-    Private Sub 绘制旋转文本(rt As D2D.ID2D1DCRenderTarget, compositor As WindowCompositor, text As String, font As Font, color As Color, rect As RectangleF, angle As Single)
-        If String.IsNullOrEmpty(text) OrElse color.A <= 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
-        Dim fmt = 获取文本格式(compositor, font, DW.TextAlignment.Center, DW.ParagraphAlignment.Center, True, False)
-        Dim brush = compositor.BrushCache.Get(rt, color)
-        If brush Is Nothing Then Return
-        Dim oldTransform = rt.Transform
-        Dim rad As Single = angle * CSng(Math.PI / 180.0)
-        Dim anchor As New Vector2(rect.X + rect.Width / 2.0F, rect.Y)
-        Try
-            rt.Transform = Matrix3x2.CreateRotation(rad, anchor) * oldTransform
-            rt.DrawText(text, fmt, D2DGlobals.ToD2DRect(rect), brush)
-        Finally
-            rt.Transform = oldTransform
-        End Try
-    End Sub
 
-    Private Sub 绘制垂直标题(rt As D2D.ID2D1DCRenderTarget, compositor As WindowCompositor, text As String, font As Font, color As Color, rect As RectangleF)
-        If String.IsNullOrEmpty(text) OrElse color.A <= 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
-        Dim fmt = 获取文本格式(compositor, font, DW.TextAlignment.Center, DW.ParagraphAlignment.Center, True, False)
-        Dim brush = compositor.BrushCache.Get(rt, color)
-        If brush Is Nothing Then Return
-        Dim oldTransform = rt.Transform
-        Try
-            rt.Transform = Matrix3x2.CreateRotation(-CSng(Math.PI / 2.0F)) * Matrix3x2.CreateTranslation(rect.X, rect.Bottom) * oldTransform
-            rt.DrawText(text, fmt, New Vortice.Mathematics.Rect(0, 0, rect.Height, rect.Width), brush)
-        Finally
-            rt.Transform = oldTransform
-        End Try
-    End Sub
 #End Region
 
 #Region "布局"
     Private Function 获取布局() As ChartLayoutInfo
-        Dim currentDpi As Integer = D2DGlobals.GetCurrentDpi(Me)
+        Dim currentDpi As Integer = V3_DpiContext.FromControl(Me).Dpi
         Dim cached = _layoutCache
         If cached IsNot Nothing AndAlso
            cached.Width = Me.Width AndAlso
@@ -1838,21 +1940,26 @@ Public Class Ultra2DChart
     End Function
 
     Private Function DpiScale() As Single
-        Return D2DGlobals.GetCurrentDpiScale(Me)
+        Return V3_DpiContext.FromControl(Me).Scale
     End Function
+
+    Private Sub 请求V3渲染(Optional immediate As Boolean = False)
+        请求V3渲染(New Rectangle(Point.Empty, Me.Size), immediate)
+    End Sub
+
+    Private Sub 请求V3渲染(dirtyRect As Rectangle, Optional immediate As Boolean = False)
+        If Me.IsDisposed Then Return
+        V3_InvalidationRouter.RequestRender(Me, dirtyRect)
+    End Sub
 
     Private Function 测量文本尺寸(text As String, font As Font) As Size
         If String.IsNullOrEmpty(text) Then Return Size.Empty
         Return TextRenderer.MeasureText(text, font, New Size(Integer.MaxValue, Integer.MaxValue), TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine)
     End Function
 
-    Private Function 获取文本格式(compositor As WindowCompositor, font As Font, align As DW.TextAlignment, paraAlign As DW.ParagraphAlignment, trim As Boolean, wrap As Boolean) As DW.IDWriteTextFormat
-        Dim sizePx As Single = D2DGlobals.GetDWriteFontSizePx(font, DpiScale())
-        Return compositor.TextFormatCache.Get(font, sizePx, align, paraAlign, trim, wrap)
-    End Function
 
     Private Shared Function 创建折线几何(points As IList(Of PointF)) As D2D.ID2D1PathGeometry
-        Dim path = D2DGlobals.GetD2DFactory().CreatePathGeometry()
+        Dim path = D3D_RenderCore.DeviceManager.D2DFactory.CreatePathGeometry()
         Dim sink = path.Open()
         Try
             sink.BeginFigure(New Vector2(points(0).X, points(0).Y), D2D.FigureBegin.Hollow)
@@ -1868,7 +1975,7 @@ Public Class Ultra2DChart
     End Function
 
     Private Shared Function 创建菱形几何(center As PointF, half As Single) As D2D.ID2D1PathGeometry
-        Dim path = D2DGlobals.GetD2DFactory().CreatePathGeometry()
+        Dim path = D3D_RenderCore.DeviceManager.D2DFactory.CreatePathGeometry()
         Dim sink = path.Open()
         Try
             sink.BeginFigure(New Vector2(center.X, center.Y - half), D2D.FigureBegin.Filled)
@@ -1904,7 +2011,7 @@ Public Class Ultra2DChart
             Return
         End If
         RaiseEvent ChartChanged(Me, EventArgs.Empty)
-        If AutoRefresh Then OuterToInnerRefreshScheduler.RequestFull(Me)
+        If AutoRefresh Then 请求V3渲染()
     End Sub
 
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
@@ -1924,7 +2031,7 @@ Public Class Ultra2DChart
         Set(value As Boolean)
             If _autoRefresh = value Then Return
             _autoRefresh = value
-            If value Then OuterToInnerRefreshScheduler.RequestFull(Me)
+            If value Then 请求V3渲染()
         End Set
     End Property
 
@@ -1949,7 +2056,7 @@ Public Class Ultra2DChart
         End Get
         Set(value As Control)
             If _backgroundSource Is value Then Return
-            _backgroundSource = BackgroundPenetrationV2.SetConsumerSource(Me, _backgroundSource, value)
+            _backgroundSource = D3D_BackgroundPenetration.SetBackgroundSource(Me, _backgroundSource, value)
             NotifyStyleChanged()
         End Set
     End Property
@@ -3029,18 +3136,17 @@ Public Class Ultra2DChart
         If _hasHoverPoint AndAlso _hoverClientPoint = location Then Return
         _hasHoverPoint = True
         _hoverClientPoint = location
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Private Sub 清除折线悬停点()
         If Not _hasHoverPoint Then Return
         _hasHoverPoint = False
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
         MyBase.OnFontChanged(e)
-        D2DHelperV2.InvalidateTextFormatCache(Me)
         NotifyStyleChanged()
     End Sub
 
@@ -3056,13 +3162,12 @@ Public Class Ultra2DChart
 
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
-        D2DHelperV2.InvalidateTextFormatCache(Me)
         NotifyStyleChanged()
     End Sub
 
     Protected Overrides Sub OnEnabledChanged(e As EventArgs)
         MyBase.OnEnabledChanged(e)
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnForeColorChanged(e As EventArgs)
@@ -3072,7 +3177,7 @@ Public Class Ultra2DChart
 
     Protected Overrides Sub OnBackColorChanged(e As EventArgs)
         MyBase.OnBackColorChanged(e)
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 #End Region
 

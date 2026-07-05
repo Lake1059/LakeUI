@@ -1,6 +1,6 @@
 ''' <summary>
 ''' D3D_DirectCompositionHost 保留新核心 DirectComposition 呈现路线的宿主边界。
-''' 本阶段可验证路线优先使用 D3D_SwapChainHost 的 HWND swap chain；该类不创建 HDC 回退、不接入 Demo，也不混入旧 WindowCompositor。
+''' 本阶段可验证路线优先使用 D3D_SwapChainHost 的 HWND swap chain；该类不创建 HDC 回退、不接入 Demo，也不混入旧 D3D_SurfaceCompositor。
 ''' 后续若引入 Vortice.DirectComposition 或原生 COM wrapper，资源生命周期必须绑定 D3D_DeviceManager generation，并由 D3D_WindowCompositor 调用 Commit。
 ''' </summary>
 Public NotInheritable Class D3D_DirectCompositionHost

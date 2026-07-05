@@ -8,6 +8,7 @@ Imports D2D = Vortice.Direct2D1
 ''' </summary>
 <DefaultEvent("SelectionChanged")>
 Public Class PixelPictureBox
+    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource
 
     ''' <summary>当框选区域发生变化时引发。</summary>
     Public Event SelectionChanged As EventHandler
@@ -32,13 +33,22 @@ Public Class PixelPictureBox
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
             更新滚动区域()
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End If
     End Sub
 
     Private Function DpiScale() As Single
-        Return D2DGlobals.GetCurrentDpiScale(Me)
+        Return V3_DpiContext.FromControl(Me).Scale
     End Function
+
+    Private Sub 请求V3渲染(Optional immediate As Boolean = False)
+        请求V3渲染(New Rectangle(Point.Empty, Me.Size), immediate)
+    End Sub
+
+    Private Sub 请求V3渲染(dirtyRect As Rectangle, Optional immediate As Boolean = False)
+        If Me.IsDisposed Then Return
+        V3_InvalidationRouter.RequestRender(Me, dirtyRect)
+    End Sub
 
     ''' <summary>如果启用了强制居中模式，则将框选矩形居中到图片中心；否则原样返回。</summary>
     Private Function 应用强制居中(r As Rectangle) As Rectangle
@@ -271,7 +281,7 @@ Public Class PixelPictureBox
             _zoomFactor = 0
             更新缩放范围()
             更新滚动区域()
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -285,7 +295,7 @@ Public Class PixelPictureBox
             最大像素边长 = Math.Max(1, value)
             更新缩放范围()
             更新滚动区域()
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -325,7 +335,7 @@ Public Class PixelPictureBox
                 If value AndAlso HasSelection Then
                     _selectionRect = 应用强制居中(_selectionRect)
                 End If
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                请求V3渲染()
             End If
         End Set
     End Property
@@ -338,7 +348,7 @@ Public Class PixelPictureBox
         End Get
         Set(value As Rectangle)
             _selectionRect = 应用强制居中(value)
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
             RaiseEvent SelectionChanged(Me, EventArgs.Empty)
         End Set
     End Property
@@ -352,7 +362,7 @@ Public Class PixelPictureBox
         Set(value As Size)
             Dim r As New Rectangle(_selectionRect.Location, value)
             _selectionRect = 应用强制居中(约束矩形到图片(r))
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
             RaiseEvent SelectionChanged(Me, EventArgs.Empty)
         End Set
     End Property
@@ -368,7 +378,7 @@ Public Class PixelPictureBox
     ''' <summary>清除当前框选区域。</summary>
     Public Sub ClearSelection()
         _selectionRect = New Rectangle(0, 0, 0, 0)
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
         RaiseEvent SelectionChanged(Me, EventArgs.Empty)
     End Sub
 
@@ -457,15 +467,14 @@ Public Class PixelPictureBox
 
 #Region "内部状态"
 
-    Private _当前合成器 As WindowCompositor
     Private _backgroundSource As Control = Nothing
 
     Private Sub DisposeD2DResources()
-        ' V2: D2D 资源由 WindowCompositor 统一接管，控件级 Dispose 不再需要释放
+        ' V3: D2D 资源由窗口级 D3D compositor 统一接管，控件级 Dispose 不再需要释放
     End Sub
 
-    <Category("LakeUI"),
-     Description("背景采样源（V2 透明背景穿透）。设置后将跨越任意层级直接采样此控件的绘制内容作为透明背景。"),
+<Category("LakeUI"),
+     Description("背景采样源。设置后记录关联源控件；V3 渲染由窗口合成器统一调度。"),
      DefaultValue(GetType(Control), Nothing), Browsable(True)>
     Public Property BackgroundSource As Control
         Get
@@ -473,8 +482,8 @@ Public Class PixelPictureBox
         End Get
         Set(value As Control)
             If _backgroundSource IsNot value Then
-                _backgroundSource = BackgroundPenetrationV2.SetConsumerSource(Me, _backgroundSource, value)
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                _backgroundSource = D3D_BackgroundPenetration.SetBackgroundSource(Me, _backgroundSource, value)
+                请求V3渲染()
             End If
         End Set
     End Property
@@ -486,8 +495,8 @@ Public Class PixelPictureBox
     Private _scrollX As Integer = 0
     Private _scrollY As Integer = 0
 
-    Private ReadOnly _vScrollBar As New ScrollBarRenderer()
-    Private ReadOnly _hScrollBar As New ScrollBarRenderer()
+    Private ReadOnly _vScrollBar As New V3_ScrollBarRenderer()
+    Private ReadOnly _hScrollBar As New V3_ScrollBarRenderer()
 
     Private _showVScroll As Boolean = False
     Private _showHScroll As Boolean = False
@@ -573,7 +582,7 @@ Public Class PixelPictureBox
 
     Private Function 获取有效视口大小() As Size
         Dim bw As Integer = CInt(Math.Round(边框宽度 * DpiScale()))
-        Dim sbReserve As Integer = CInt(Math.Round(滚动条宽度 * DpiScale())) + ScrollBarRenderer.Margin
+        Dim sbReserve As Integer = CInt(Math.Round(滚动条宽度 * DpiScale())) + V3_ScrollBarRenderer.Margin
         Dim w As Integer = Me.Width - bw * 2 - If(_showVScroll, sbReserve, 0)
         Dim h As Integer = Me.Height - bw * 2 - If(_showHScroll, sbReserve, 0)
         Return New Size(Math.Max(0, w), Math.Max(0, h))
@@ -607,7 +616,7 @@ Public Class PixelPictureBox
 
         Dim scaledSize As Size = 获取缩放图片尺寸()
         Dim bw As Integer = CInt(Math.Round(边框宽度 * DpiScale()))
-        Dim sbReserve As Integer = CInt(Math.Round(滚动条宽度 * DpiScale())) + ScrollBarRenderer.Margin
+        Dim sbReserve As Integer = CInt(Math.Round(滚动条宽度 * DpiScale())) + V3_ScrollBarRenderer.Margin
 
         Dim fullW As Integer = Me.Width - bw * 2
         Dim fullH As Integer = Me.Height - bw * 2
@@ -789,44 +798,36 @@ Public Class PixelPictureBox
     End Sub
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
-        If Me.Width < 1 OrElse Me.Height < 1 Then Return
-
-        更新滚动区域()
-
-        Using scope = D2DHelperV2.BeginPaint(e, Me, 1)
-            If scope Is Nothing Then Return
-            _当前合成器 = scope.Compositor
-            Try
-                If _backgroundSource IsNot Nothing Then
-                    BackgroundPenetrationV2.PaintBackground(Me, scope, _backgroundSource)
-                End If
-                Dim rt As D2D.ID2D1RenderTarget = scope.GraphicsLayer
-                绘制背景与边框_D2D(rt)
-                绘制图片_D2D(rt)
-                绘制框选_D2D(rt)
-                绘制垂直滚动条_D2D(rt)
-                绘制水平滚动条_D2D(rt)
-                scope.FlushGraphics()
-            Finally
-                _当前合成器 = Nothing
-            End Try
-        End Using
+        If Not D3D_PaintBridge.PaintRenderable(e, Me, Me, 1) Then MyBase.OnPaint(e)
     End Sub
 
-    Private Sub 绘制背景与边框_D2D(rt As D2D.ID2D1RenderTarget)
+    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+        If context Is Nothing OrElse Me.Width < 1 OrElse Me.Height < 1 Then Return
+
+        更新滚动区域()
+        绘制背景与边框_GPU(context)
+        绘制图片_GPU(context)
+        绘制框选_GPU(context)
+        绘制垂直滚动条_GPU(context)
+        绘制水平滚动条_GPU(context)
+    End Sub
+
+    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+        Return New Rectangle(Point.Empty, Me.Size)
+    End Function
+
+    Private Sub 绘制背景与边框_GPU(context As D3D_PaintContext)
         Dim s As Single = DpiScale()
         Dim boundsRect As New RectangleF(0, 0, Me.Width, Me.Height)
         If 边框宽度 > 0 Then
             Dim half As Single = 边框宽度 * s / 2.0F
             boundsRect.Inflate(-half, -half)
         End If
-        If 背景颜色.A > 0 Then
-            RectangleRenderer.绘制矩形背景_D2D(rt, boundsRect, 背景颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal, _当前合成器.BrushCache)
-        End If
-        RectangleRenderer.绘制矩形边框_D2D(rt, boundsRect, 边框颜色, 边框宽度 * s, _当前合成器.BrushCache)
+        If 背景颜色.A > 0 Then context.FillRectangle(boundsRect, 背景颜色)
+        If 边框颜色.A > 0 AndAlso 边框宽度 > 0 Then context.DrawRectangle(boundsRect, 边框颜色, 边框宽度 * s)
     End Sub
 
-    Private Sub 绘制图片_D2D(rt As D2D.ID2D1RenderTarget)
+    Private Sub 绘制图片_GPU(context As D3D_PaintContext)
         If _image Is Nothing Then Return
 
         Dim bw As Integer = CInt(Math.Round(边框宽度 * DpiScale()))
@@ -838,82 +839,85 @@ Public Class PixelPictureBox
 
         Dim offsetX As Single = 0
         Dim offsetY As Single = 0
-        If exactW < viewport.Width Then
-            offsetX = (viewport.Width - exactW) / 2.0F
-        End If
-        If exactH < viewport.Height Then
-            offsetY = (viewport.Height - exactH) / 2.0F
-        End If
+        If exactW < viewport.Width Then offsetX = (viewport.Width - exactW) / 2.0F
+        If exactH < viewport.Height Then offsetY = (viewport.Height - exactH) / 2.0F
 
-        Dim destX As Single = bw + offsetX - _scrollX
-        Dim destY As Single = bw + offsetY - _scrollY
-        Dim destRect As New RectangleF(destX, destY, exactW, exactH)
-
-        Dim clipRect As New Rectangle(bw, bw, viewport.Width, viewport.Height)
-        Dim bmp = _当前合成器.GetBitmapCache(_image).GetBitmap(rt, _image)
-        If bmp Is Nothing Then Return
-        rt.PushAxisAlignedClip(New Vortice.RawRectF(clipRect.Left, clipRect.Top, clipRect.Right, clipRect.Bottom), D2D.AntialiasMode.Aliased)
-        Try
-            Dim srcRect As New RectangleF(0, 0, _image.Width, _image.Height)
-            rt.DrawBitmap(bmp, D2DGlobals.ToD2DRect(destRect), 1.0F, D2D.BitmapInterpolationMode.NearestNeighbor, D2DGlobals.ToD2DRect(srcRect))
-        Finally
-            rt.PopAxisAlignedClip()
-        End Try
+        Dim destRect As New RectangleF(bw + offsetX - _scrollX, bw + offsetY - _scrollY, exactW, exactH)
+        Dim clipRect As New RectangleF(bw, bw, viewport.Width, viewport.Height)
+        Using context.PushClip(clipRect)
+            context.DrawImage(_image,
+                              destRect,
+                              New RectangleF(0, 0, _image.Width, _image.Height),
+                              1.0F,
+                              0,
+                              D2D.InterpolationMode.NearestNeighbor)
+        End Using
     End Sub
 
-    Private Sub 绘制框选_D2D(rt As D2D.ID2D1RenderTarget)
-        If Not _showSelection Then Return
-        If Not HasSelection Then Return
+    Private Sub 绘制框选_GPU(context As D3D_PaintContext)
+        If Not _showSelection OrElse Not HasSelection Then Return
 
         Dim selScreen As RectangleF = 图片矩形转客户矩形(_selectionRect)
         If selScreen.Width < 1 AndAlso selScreen.Height < 1 Then Return
 
-        ' 将矩形对齐到像素边缘，使线条居中在像素格边界上
         Dim snapX As Single = CSng(Math.Round(selScreen.X))
         Dim snapY As Single = CSng(Math.Round(selScreen.Y))
         Dim snapR As Single = CSng(Math.Round(selScreen.Right))
         Dim snapB As Single = CSng(Math.Round(selScreen.Bottom))
         Dim snapped As New RectangleF(snapX, snapY, snapR - snapX, snapB - snapY)
 
-        Dim br = _当前合成器.BrushCache.Get(rt, 框选填充颜色)
-        If br IsNot Nothing Then rt.FillRectangle(D2DGlobals.ToD2DRect(snapped), br)
+        If 框选填充颜色.A > 0 Then context.FillRectangle(snapped, 框选填充颜色)
 
-        ' 边框居中到像素边缘：向内偏移半个线宽
         Dim halfPen As Single = 框选边框宽度 / 2.0F
         Dim borderRect As New RectangleF(snapped.X + halfPen, snapped.Y + halfPen,
                                           snapped.Width - 框选边框宽度, snapped.Height - 框选边框宽度)
         If borderRect.Width > 0 AndAlso borderRect.Height > 0 Then
-            RectangleRenderer.绘制矩形边框_D2D(rt, borderRect, 框选边框颜色, 框选边框宽度, _当前合成器.BrushCache)
+            context.DrawRectangle(borderRect, 框选边框颜色, 框选边框宽度)
         End If
 
-        Dim handleBrush = _当前合成器.BrushCache.Get(rt, 手柄颜色)
-        Dim handlePen = _当前合成器.BrushCache.Get(rt, 手柄边框颜色)
-        If handleBrush IsNot Nothing AndAlso handlePen IsNot Nothing Then
-            For Each hp As HandlePosition In AllHandlePositions
-                Dim hr As RectangleF = 获取手柄矩形(hp)
-                If hr.IsEmpty Then Continue For
-                Dim hSnap As New RectangleF(CSng(Math.Round(hr.X)), CSng(Math.Round(hr.Y)),
-                                             CSng(Math.Round(hr.Width)), CSng(Math.Round(hr.Height)))
-                rt.FillRectangle(D2DGlobals.ToD2DRect(hSnap), handleBrush)
-                rt.DrawRectangle(D2DGlobals.ToD2DRect(hSnap), handlePen, 1.0F)
-            Next
-        End If
+        For Each hp As HandlePosition In AllHandlePositions
+            Dim hr As RectangleF = 获取手柄矩形(hp)
+            If hr.IsEmpty Then Continue For
+            Dim hSnap As New RectangleF(CSng(Math.Round(hr.X)), CSng(Math.Round(hr.Y)),
+                                         CSng(Math.Round(hr.Width)), CSng(Math.Round(hr.Height)))
+            If 手柄颜色.A > 0 Then context.FillRectangle(hSnap, 手柄颜色)
+            If 手柄边框颜色.A > 0 Then context.DrawRectangle(hSnap, 手柄边框颜色, 1.0F)
+        Next
     End Sub
 
-    Private Sub 绘制垂直滚动条_D2D(rt As D2D.ID2D1RenderTarget)
+    Private Sub 绘制垂直滚动条_GPU(context As D3D_PaintContext)
         If _vScrollBar.TrackRect.IsEmpty Then Return
         Dim s As Single = DpiScale()
-        _vScrollBar.Draw_D2D(rt, Me.Width, Me.Height, CInt(Math.Round(边框宽度 * s)), 0,
-            CInt(Math.Round(滚动条宽度 * s)), 滚动条轨道颜色, 滚动条滑块颜色, 滚动条悬停颜色,
-            _当前合成器?.BrushCache)
+        Dim scrollBarWidth As Single = Math.Max(1.0F, 滚动条宽度 * s)
+        Dim trackArea As New RectangleF(_vScrollBar.VisualLeft, _vScrollBar.TrackRect.Y, scrollBarWidth, _vScrollBar.TrackRect.Height)
+        Dim thumbArea As New RectangleF(_vScrollBar.VisualLeft, _vScrollBar.ThumbRect.Y, scrollBarWidth, _vScrollBar.ThumbRect.Height)
+        填充圆角矩形_GPU(context, trackArea, Math.Min(scrollBarWidth / 2.0F, trackArea.Height / 2.0F), 滚动条轨道颜色)
+        Dim thumbColor = If(_vScrollBar.IsDragging OrElse _vScrollBar.IsHover, 滚动条悬停颜色, 滚动条滑块颜色)
+        填充圆角矩形_GPU(context, thumbArea, Math.Min(scrollBarWidth / 2.0F, thumbArea.Height / 2.0F), thumbColor)
     End Sub
 
-    Private Sub 绘制水平滚动条_D2D(rt As D2D.ID2D1RenderTarget)
+    Private Sub 绘制水平滚动条_GPU(context As D3D_PaintContext)
         If _hScrollBar.TrackRect.IsEmpty Then Return
         Dim s As Single = DpiScale()
-        _hScrollBar.DrawHorizontal_D2D(rt, Me.Width, Me.Height, CInt(Math.Round(边框宽度 * s)), 0,
-            CInt(Math.Round(滚动条宽度 * s)), 滚动条轨道颜色, 滚动条滑块颜色, 滚动条悬停颜色,
-            _当前合成器?.BrushCache)
+        Dim scrollBarHeight As Single = Math.Max(1.0F, 滚动条宽度 * s)
+        Dim trackArea As New RectangleF(_hScrollBar.TrackRect.X, _hScrollBar.VisualTop, _hScrollBar.TrackRect.Width, scrollBarHeight)
+        Dim thumbArea As New RectangleF(_hScrollBar.ThumbRect.X, _hScrollBar.VisualTop, _hScrollBar.ThumbRect.Width, scrollBarHeight)
+        填充圆角矩形_GPU(context, trackArea, Math.Min(scrollBarHeight / 2.0F, trackArea.Width / 2.0F), 滚动条轨道颜色)
+        Dim thumbColor = If(_hScrollBar.IsDragging OrElse _hScrollBar.IsHover, 滚动条悬停颜色, 滚动条滑块颜色)
+        填充圆角矩形_GPU(context, thumbArea, Math.Min(scrollBarHeight / 2.0F, thumbArea.Width / 2.0F), thumbColor)
+    End Sub
+
+    Private Sub 填充圆角矩形_GPU(context As D3D_PaintContext, rect As RectangleF, radius As Single, color As Color)
+        If color.A = 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
+        If radius <= 0 Then
+            context.DeviceContext.FillRectangle(D3D_PaintContext.ToRawRect(rect), brush)
+            Return
+        End If
+
+        Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New D2D.RoundedRectangle(rect, radius, radius))
+            context.DeviceContext.FillGeometry(geo, brush)
+        End Using
     End Sub
 
 #End Region
@@ -940,7 +944,7 @@ Public Class PixelPictureBox
                 If newOff <> _scrollY Then
                     _scrollY = newOff
                     更新滚动区域()
-                    OuterToInnerRefreshScheduler.RequestFull(Me)
+                    请求V3渲染()
                     Return
                 End If
             End If
@@ -949,7 +953,7 @@ Public Class PixelPictureBox
                 If newHOff <> _scrollX Then
                     _scrollX = newHOff
                     更新滚动区域()
-                    OuterToInnerRefreshScheduler.RequestFull(Me)
+                    请求V3渲染()
                     Return
                 End If
             End If
@@ -990,7 +994,7 @@ Public Class PixelPictureBox
             Dim py As Integer = Math.Max(0, Math.Min(CInt(Math.Floor(imgPt.Y)), _image.Height - 1))
             _selectionRect = New Rectangle(px, py, 0, 0)
             _dragSelectionStart = _selectionRect
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
             Return
         End If
     End Sub
@@ -1003,14 +1007,14 @@ Public Class PixelPictureBox
             Dim viewport As Size = 获取有效视口大小()
             _scrollY = _vScrollBar.DragMove(e.Y, 获取缩放图片尺寸().Height, viewport.Height)
             更新滚动区域()
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
             Return
         End If
         If _hScrollBar.IsDragging Then
             Dim viewport As Size = 获取有效视口大小()
             _scrollX = _hScrollBar.DragMoveHorizontal(e.X, 获取缩放图片尺寸().Width, viewport.Width)
             更新滚动区域()
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
             Return
         End If
 
@@ -1021,7 +1025,7 @@ Public Class PixelPictureBox
                 _scrollX = _dragScrollStart.X - dx
                 _scrollY = _dragScrollStart.Y - dy
                 更新滚动区域()
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                请求V3渲染()
 
             Case DragMode.MoveSelection
                 If _image IsNot Nothing AndAlso Not _selectionForceCenter Then
@@ -1032,7 +1036,7 @@ Public Class PixelPictureBox
                     newX = Math.Max(0, Math.Min(newX, _image.Width - _dragSelectionStart.Width))
                     newY = Math.Max(0, Math.Min(newY, _image.Height - _dragSelectionStart.Height))
                     _selectionRect = New Rectangle(newX, newY, _dragSelectionStart.Width, _dragSelectionStart.Height)
-                    OuterToInnerRefreshScheduler.RequestFull(Me)
+                    请求V3渲染()
                 End If
 
             Case DragMode.ResizeSelection
@@ -1060,7 +1064,7 @@ Public Class PixelPictureBox
                         If y2 < y1 Then ry = y1 - rh
                     End If
                     _selectionRect = 应用强制居中(约束矩形到图片(New Rectangle(rx, ry, rw, rh)))
-                    OuterToInnerRefreshScheduler.RequestFull(Me)
+                    请求V3渲染()
                 End If
 
             Case DragMode.None
@@ -1070,7 +1074,7 @@ Public Class PixelPictureBox
                 Dim needInvalidate As Boolean = False
                 If _vScrollBar.UpdateHover(e.Location) Then needInvalidate = True
                 If _hScrollBar.UpdateHover(e.Location) Then needInvalidate = True
-                If needInvalidate Then OuterToInnerRefreshScheduler.RequestFull(Me)
+                If needInvalidate Then 请求V3渲染()
         End Select
     End Sub
 
@@ -1094,7 +1098,7 @@ Public Class PixelPictureBox
         Dim needInvalidate As Boolean = False
         If _vScrollBar.ResetHover() Then needInvalidate = True
         If _hScrollBar.ResetHover() Then needInvalidate = True
-        If needInvalidate Then OuterToInnerRefreshScheduler.RequestFull(Me)
+        If needInvalidate Then 请求V3渲染()
         Me.Cursor = Cursors.Default
     End Sub
 
@@ -1121,7 +1125,7 @@ Public Class PixelPictureBox
         _scrollY = CInt(Math.Round(imgPt.Y * _zoomFactor - (e.Location.Y - bw)))
 
         更新滚动区域()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Private Sub 更新光标(clientPt As Point)
@@ -1217,7 +1221,7 @@ Public Class PixelPictureBox
         End If
 
         _selectionRect = 应用强制居中(约束矩形到图片(New Rectangle(newX, newY, newW, newH)))
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Private Function 约束矩形到图片(r As Rectangle) As Rectangle
@@ -1249,12 +1253,12 @@ Public Class PixelPictureBox
         MyBase.OnSizeChanged(e)
         更新缩放范围()
         更新滚动区域()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
         MyBase.OnFontChanged(e)
-        D2DHelperV2.RefreshFontDependentRendering(Me)
+        请求V3渲染()
     End Sub
 
 #End Region

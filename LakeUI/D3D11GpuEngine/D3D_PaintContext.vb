@@ -3,7 +3,7 @@ Imports Vortice.Direct2D1
 Imports Vortice.Mathematics
 
 ''' <summary>
-''' D3D_PaintContext 是后续 GPU 控件迁移唯一允许接收的绘制上下文，替代旧 PaintScopeV2。
+''' D3D_PaintContext 是后续 GPU 控件迁移唯一允许接收的绘制上下文，替代旧 D3D_PaintScope。
 ''' 它提供当前 ID2D1DeviceContext、控件本地到窗口 surface 的 transform、clip、DPI scale、文字质量、背景采样入口、frame generation 和 device generation。
 ''' FrameGeneration 只描述窗口帧序号，DeviceGeneration 只描述底层 D3D/D2D 设备代号；长期 GPU 缓存必须使用 DeviceGeneration 判定是否过期。
 ''' 它不拥有长期 GPU 资源，不提交 Present，不访问 PaintEventArgs、Graphics、HDC 或 BitBlt。
@@ -28,6 +28,7 @@ Public NotInheritable Class D3D_PaintContext
                    clipBounds As RectangleF,
                    dpiScale As Single,
                    textQuality As D3D_TextQualityMode,
+                   targetHasAlpha As Boolean,
                    frameGeneration As Integer,
                    deviceGeneration As Integer,
                    dirtyRegion As IReadOnlyList(Of Rectangle))
@@ -37,6 +38,7 @@ Public NotInheritable Class D3D_PaintContext
         Me.ClipBounds = clipBounds
         Me.DpiScale = dpiScale
         Me.TextQuality = textQuality
+        Me.TargetHasAlpha = targetHasAlpha
         Me.FrameGeneration = frameGeneration
         Me.DeviceGeneration = deviceGeneration
         Me.DirtyRegion = dirtyRegion
@@ -48,6 +50,7 @@ Public NotInheritable Class D3D_PaintContext
     Public ReadOnly Property ClipBounds As RectangleF
     Public ReadOnly Property DpiScale As Single
     Public ReadOnly Property TextQuality As D3D_TextQualityMode
+    Public ReadOnly Property TargetHasAlpha As Boolean
     Public ReadOnly Property FrameGeneration As Integer
     Public ReadOnly Property DeviceGeneration As Integer
     Public ReadOnly Property DirtyRegion As IReadOnlyList(Of Rectangle)
@@ -71,15 +74,50 @@ Public NotInheritable Class D3D_PaintContext
     ''' <summary>
     ''' 绘制图片，图片上传和缩放策略由 D3D_ImageCache 处理；控件不得缓存预缩放 CPU bitmap。
     ''' </summary>
-    Public Sub DrawImage(image As Image, destination As RectangleF, Optional source As RectangleF? = Nothing, Optional opacity As Single = 1.0F)
-        Compositor.ImageCache.DrawImage(Me, image, destination, source, opacity)
+    Public Sub DrawImage(image As Image,
+                         destination As RectangleF,
+                         Optional source As RectangleF? = Nothing,
+                         Optional opacity As Single = 1.0F,
+                         Optional frameIndex As Integer = 0,
+                         Optional interpolation As InterpolationMode = InterpolationMode.Linear)
+        Compositor.ImageCache.DrawImage(Me, image, destination, source, opacity, frameIndex, interpolation)
     End Sub
 
     ''' <summary>
-    ''' 绘制文本，文本质量由 D3D_TextRenderer 控制；后续迁移控件不要直接调用旧 D2DTextRenderer。
+    ''' 按显式 source 关系采样背景。主链路使用 D3D_BackgroundPenetration 的 CPU backing + D2D 上传缓存，
+    ''' 不再递归生成窗口级 GPU snapshot。
     ''' </summary>
-    Public Sub DrawText(text As String, font As Font, color As System.Drawing.Color, layoutRect As RectangleF, Optional hAlign As Vortice.DirectWrite.TextAlignment = Vortice.DirectWrite.TextAlignment.Leading)
-        Compositor.TextRenderer.DrawText(Me, text, font, color, layoutRect, hAlign)
+    ''' <param name="destination">控件本地目标矩形；局部背景采样必须显式传局部矩形，不能隐式扩成全控件。</param>
+    Public Function DrawBackgroundSource(consumer As Control, source As Control, destination As RectangleF) As Boolean
+        If consumer Is Nothing OrElse consumer.IsDisposed Then Return False
+        If source Is Nothing OrElse source.IsDisposed Then Return False
+        If consumer.Width <= 0 OrElse consumer.Height <= 0 Then Return False
+        If destination.Width <= 0 OrElse destination.Height <= 0 Then
+            destination = New RectangleF(0, 0, consumer.Width, consumer.Height)
+        End If
+        D3D_BackgroundPenetration.PaintBackground(consumer, Me, source, destination)
+        Return True
+    End Function
+
+    ''' <summary>
+    ''' 绘制文本，文本质量由 D3D_TextRenderer 控制；后续迁移控件不要直接调用旧 D3D_TextInterop。
+    ''' </summary>
+    Public Sub DrawText(text As String,
+                        font As Font,
+                        color As System.Drawing.Color,
+                        layoutRect As RectangleF,
+                        Optional hAlign As Vortice.DirectWrite.TextAlignment = Vortice.DirectWrite.TextAlignment.Leading,
+                        Optional vAlign As Vortice.DirectWrite.ParagraphAlignment = Vortice.DirectWrite.ParagraphAlignment.Near,
+                        Optional wordWrap As Boolean = False)
+        Compositor.TextRenderer.DrawText(Me, text, font, color, layoutRect, hAlign, vAlign, wordWrap)
+    End Sub
+
+    Public Sub DrawText(text As String,
+                        font As Font,
+                        color As System.Drawing.Color,
+                        layoutRect As RectangleF,
+                        flags As TextFormatFlags)
+        Compositor.TextRenderer.DrawText(Me, text, font, color, layoutRect, flags)
     End Sub
 
     ''' <summary>

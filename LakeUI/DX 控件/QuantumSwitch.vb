@@ -3,6 +3,7 @@ Imports Vortice.Direct2D1
 
 <DefaultEvent("StateChanged")>
 Public Class QuantumSwitch
+    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource
 
     Public Event StateChanged As EventHandler
 
@@ -11,10 +12,10 @@ Public Class QuantumSwitch
         动画助手.DirtyProvider = AddressOf 开关动画脏区
     End Sub
 
-#Region "V2 透明背景穿透"
+#Region "背景源"
     Private _backgroundSource As Control = Nothing
     <Category("LakeUI"),
-     Description("背景采样源（V2 透明背景穿透）。设置后将跨越任意层级直接采样此控件的绘制内容作为透明背景。"),
+     Description("背景采样源。设置后记录关联源控件；V3 渲染由窗口合成器统一调度。"),
      DefaultValue(GetType(Control), Nothing), Browsable(True)>
     Public Property BackgroundSource As Control
         Get
@@ -22,8 +23,8 @@ Public Class QuantumSwitch
         End Get
         Set(value As Control)
             If _backgroundSource IsNot value Then
-                _backgroundSource = BackgroundPenetrationV2.SetConsumerSource(Me, _backgroundSource, value)
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                _backgroundSource = D3D_BackgroundPenetration.SetBackgroundSource(Me, _backgroundSource, value)
+                请求V3渲染()
             End If
         End Set
     End Property
@@ -49,7 +50,17 @@ Public Class QuantumSwitch
     End Sub
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
-        If Me.Width <= 0 OrElse Me.Height <= 0 Then Return
+        If Not D3D_PaintBridge.PaintRenderable(e, Me, Me, 1) Then MyBase.OnPaint(e)
+    End Sub
+
+    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+        If context Is Nothing OrElse Me.Width <= 0 OrElse Me.Height <= 0 Then Return
+
+        If _backgroundSource IsNot Nothing Then
+            context.DrawBackgroundSource(Me, _backgroundSource, New RectangleF(0, 0, Me.Width, Me.Height))
+        ElseIf MyBase.BackColor.A > 0 Then
+            context.FillRectangle(New RectangleF(0, 0, Me.Width, Me.Height), MyBase.BackColor)
+        End If
 
         Dim 极限矩形区域 As New RectangleF(0, 0, Me.Width - 1, Me.Height - 1)
         Dim s As Single = DpiScale()
@@ -57,33 +68,104 @@ Public Class QuantumSwitch
             Dim half As Single = 边框宽度 * s / 2.0F
             极限矩形区域.Inflate(-half, -half)
         End If
+        If 极限矩形区域.Width <= 0 OrElse 极限矩形区域.Height <= 0 Then Return
 
-        Dim ssaa As Integer = D2DHelperV2.GetEffectiveSsaaScale(超采样倍率)
+        Dim 是未观测状态 As Boolean = 观测者模式 AndAlso 鼠标状态 = MouseStateEnum.Normal
+        If 是未观测状态 Then
+            绘制不确定态_GPU(context, 极限矩形区域)
+            绘制不确定态文字_GPU(context, 极限矩形区域)
+        Else
+            绘制正常态_GPU(context, 极限矩形区域)
+        End If
 
-        Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
-            If scope Is Nothing Then Return
+        If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
+            填充圆角矩形_GPU(context, 极限矩形区域, CSng(Math.Floor(极限矩形区域.Height / 2.0F)), 禁用时遮罩颜色)
+        End If
+    End Sub
 
-            If _backgroundSource IsNot Nothing Then
-                BackgroundPenetrationV2.PaintBackground(Me, scope, _backgroundSource)
-            End If
+    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+        Return New Rectangle(Point.Empty, Me.Size)
+    End Function
 
-            Dim 是未观测状态 As Boolean = 观测者模式 AndAlso 鼠标状态 = MouseStateEnum.Normal
-            绘制图形内容_D2D(scope.GraphicsLayer, scope.Compositor.BrushCache, 极限矩形区域, 是未观测状态)
-            scope.FlushGraphics()
+    Private Sub 绘制正常态_GPU(context As D3D_PaintContext, 极限矩形区域 As RectangleF)
+        Dim 轨道颜色 As Color = 获取当前轨道颜色()
+        Dim 滑块颜色 As Color = 获取当前滑块颜色()
+        Dim 当前边框颜色 As Color = 获取当前边框颜色()
+        Dim 圆角半径 As Single = CSng(Math.Floor(极限矩形区域.Height / 2.0F))
 
-            If 是未观测状态 Then
-                绘制不确定态文字_D2D(scope.TextLayer, scope.Compositor, 极限矩形区域)
-            End If
+        填充圆角矩形_GPU(context, 极限矩形区域, 圆角半径, 轨道颜色)
+        绘制圆角边框_GPU(context, 极限矩形区域, 圆角半径, 当前边框颜色, 边框宽度 * DpiScale())
 
-            If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
-                Using geo = RectangleRenderer.创建圆角矩形几何(极限矩形区域, CSng(Math.Floor(极限矩形区域.Height / 2.0F)))
-                    RectangleRenderer.绘制圆角背景_D2D(scope.DCRenderTarget, geo, 极限矩形区域, 禁用时遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Vertical, scope.Compositor.BrushCache)
-                End Using
-            End If
+        Dim 滑块区域 As RectangleF = 计算当前滑块区域(极限矩形区域, 动画助手.Progress)
+        填充椭圆_GPU(context, 滑块区域, 滑块颜色)
+    End Sub
+
+    Private Sub 绘制不确定态_GPU(context As D3D_PaintContext, 极限矩形区域 As RectangleF)
+        Dim 圆角半径 As Single = CSng(Math.Floor(极限矩形区域.Height / 2.0F))
+        填充圆角矩形_GPU(context, 极限矩形区域, 圆角半径, 不确定态轨道颜色值)
+        绘制圆角边框_GPU(context, 极限矩形区域, 圆角半径, 获取当前边框颜色(), 边框宽度 * DpiScale())
+
+        Dim 滑块区域 As RectangleF = 计算不确定态滑块区域(极限矩形区域)
+        填充椭圆_GPU(context, 滑块区域, 不确定态滑块颜色值)
+    End Sub
+
+    Private Sub 绘制不确定态文字_GPU(context As D3D_PaintContext, 极限矩形区域 As RectangleF)
+        Dim 滑块区域 As RectangleF = 计算不确定态滑块区域(极限矩形区域)
+        If 滑块区域.Width <= 0 OrElse 滑块区域.Height <= 0 Then Return
+
+        Dim 字体大小Px As Single = Math.Max(1.0F, 滑块区域.Height * 0.55F)
+        Dim 字体大小Pt As Single = 字体大小Px * 72.0F / 96.0F / Math.Max(0.01F, DpiScale())
+        Using font As New Font("Segoe UI", 字体大小Pt, FontStyle.Bold, GraphicsUnit.Point)
+            context.DrawText("?", font, 不确定态轨道颜色值, 滑块区域, Vortice.DirectWrite.TextAlignment.Center, Vortice.DirectWrite.ParagraphAlignment.Center)
         End Using
     End Sub
 
-    Private Sub 绘制图形内容_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache, 极限矩形区域 As RectangleF, 是未观测状态 As Boolean)
+    Private Function 计算当前滑块区域(极限矩形区域 As RectangleF, progress As Single) As RectangleF
+        Dim _滑块边距 As Single = 滑块边距值 * DpiScale()
+        Dim 滑块直径 As Single = 极限矩形区域.Height - _滑块边距 * 2
+        If 滑块直径 <= 0 Then Return RectangleF.Empty
+        Dim 滑块最小X As Single = 极限矩形区域.X + _滑块边距
+        Dim 滑块最大X As Single = 极限矩形区域.Right - _滑块边距 - 滑块直径
+        Dim 滑块X As Single = 滑块最小X + (滑块最大X - 滑块最小X) * progress
+        Dim 滑块Y As Single = 极限矩形区域.Y + _滑块边距
+        Return New RectangleF(滑块X, 滑块Y, 滑块直径, 滑块直径)
+    End Function
+
+    Private Sub 填充圆角矩形_GPU(context As D3D_PaintContext, bounds As RectangleF, radius As Single, color As Color)
+        If color.A = 0 OrElse bounds.Width <= 0 OrElse bounds.Height <= 0 Then Return
+        Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
+        If radius <= 0 Then
+            context.DeviceContext.FillRectangle(D3D_PaintContext.ToRawRect(bounds), brush)
+            Return
+        End If
+        Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New RoundedRectangle(bounds, radius, radius))
+            context.DeviceContext.FillGeometry(geo, brush)
+        End Using
+    End Sub
+
+    Private Sub 绘制圆角边框_GPU(context As D3D_PaintContext, bounds As RectangleF, radius As Single, color As Color, strokeWidth As Single)
+        If color.A = 0 OrElse strokeWidth <= 0 OrElse bounds.Width <= 0 OrElse bounds.Height <= 0 Then Return
+        Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
+        If radius <= 0 Then
+            context.DeviceContext.DrawRectangle(D3D_PaintContext.ToRawRect(bounds), brush, strokeWidth)
+            Return
+        End If
+        Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New RoundedRectangle(bounds, radius, radius))
+            context.DeviceContext.DrawGeometry(geo, brush, strokeWidth)
+        End Using
+    End Sub
+
+    Private Sub 填充椭圆_GPU(context As D3D_PaintContext, bounds As RectangleF, color As Color)
+        If color.A = 0 OrElse bounds.Width <= 0 OrElse bounds.Height <= 0 Then Return
+        Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
+        context.DeviceContext.FillEllipse(New Ellipse(New System.Numerics.Vector2(bounds.X + bounds.Width / 2.0F, bounds.Y + bounds.Height / 2.0F),
+                                                      bounds.Width / 2.0F,
+                                                      bounds.Height / 2.0F),
+                                         brush)
+    End Sub
+
+
+    Private Sub 绘制图形内容_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache, 极限矩形区域 As RectangleF, 是未观测状态 As Boolean)
         If 是未观测状态 Then
             ' 未被观测：绘制不确定态外观
             绘制不确定态_D2D(rt, brushCache, 极限矩形区域)
@@ -93,18 +175,18 @@ Public Class QuantumSwitch
         End If
     End Sub
 
-    Private Sub 绘制正常态_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache, 极限矩形区域 As RectangleF)
+    Private Sub 绘制正常态_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache, 极限矩形区域 As RectangleF)
         Dim 轨道颜色 As Color = 获取当前轨道颜色()
         Dim 滑块颜色 As Color = 获取当前滑块颜色()
         Dim 当前边框颜色 As Color = 获取当前边框颜色()
 
         ' 绘制轨道（药丸形状）
         Dim 圆角半径 As Single = CSng(Math.Floor(极限矩形区域.Height / 2.0F))
-        Using geo = RectangleRenderer.创建圆角矩形几何(极限矩形区域, 圆角半径)
+        Using geo = D3D_RectangleRenderer.创建圆角矩形几何(极限矩形区域, 圆角半径)
             Dim brush = brushCache.Get(rt, 轨道颜色)
             If brush IsNot Nothing Then rt.FillGeometry(geo, brush)
             Dim s As Single = DpiScale()
-            RectangleRenderer.绘制圆角边框_D2D(rt, geo, 当前边框颜色, 边框宽度 * s, brushCache)
+            D3D_RectangleRenderer.绘制圆角边框_D2D(rt, geo, 当前边框颜色, 边框宽度 * s, brushCache)
         End Using
 
         ' 绘制滑块（圆形）
@@ -116,17 +198,17 @@ Public Class QuantumSwitch
         Dim 滑块X As Single = 滑块最小X + (滑块最大X - 滑块最小X) * 动画助手.Progress
         Dim 滑块Y As Single = 极限矩形区域.Y + _滑块边距
         Dim 滑块区域 As New RectangleF(滑块X, 滑块Y, 滑块直径, 滑块直径)
-        RectangleRenderer.填充椭圆_D2D(rt, 滑块区域, 滑块颜色, brushCache)
+        D3D_RectangleRenderer.填充椭圆_D2D(rt, 滑块区域, 滑块颜色, brushCache)
     End Sub
 
-    Private Sub 绘制不确定态_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache, 极限矩形区域 As RectangleF)
+    Private Sub 绘制不确定态_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache, 极限矩形区域 As RectangleF)
         ' 绘制轨道（药丸形状）- 使用不确定态颜色
         Dim 圆角半径 As Single = CSng(Math.Floor(极限矩形区域.Height / 2.0F))
-        Using geo = RectangleRenderer.创建圆角矩形几何(极限矩形区域, 圆角半径)
+        Using geo = D3D_RectangleRenderer.创建圆角矩形几何(极限矩形区域, 圆角半径)
             Dim brush = brushCache.Get(rt, 不确定态轨道颜色值)
             If brush IsNot Nothing Then rt.FillGeometry(geo, brush)
             Dim s As Single = DpiScale()
-            RectangleRenderer.绘制圆角边框_D2D(rt, geo, 获取当前边框颜色(), 边框宽度 * s, brushCache)
+            D3D_RectangleRenderer.绘制圆角边框_D2D(rt, geo, 获取当前边框颜色(), 边框宽度 * s, brushCache)
         End Using
 
         ' 绘制滑块固定在中间位置
@@ -134,7 +216,7 @@ Public Class QuantumSwitch
         Dim 滑块直径 As Single = 极限矩形区域.Height - _滑块边距 * 2
         If 滑块直径 <= 0 Then Return
         Dim 滑块区域 As RectangleF = 计算不确定态滑块区域(极限矩形区域)
-        RectangleRenderer.填充椭圆_D2D(rt, 滑块区域, 不确定态滑块颜色值, brushCache)
+        D3D_RectangleRenderer.填充椭圆_D2D(rt, 滑块区域, 不确定态滑块颜色值, brushCache)
     End Sub
 
     Private Function 计算不确定态滑块区域(极限矩形区域 As RectangleF) As RectangleF
@@ -148,24 +230,6 @@ Public Class QuantumSwitch
         Return New RectangleF(滑块X, 滑块Y, 滑块直径, 滑块直径)
     End Function
 
-    Private Sub 绘制不确定态文字_D2D(rt As ID2D1RenderTarget, compositor As WindowCompositor, 极限矩形区域 As RectangleF)
-        If rt Is Nothing OrElse compositor Is Nothing Then Return
-        Dim 滑块区域 As RectangleF = 计算不确定态滑块区域(极限矩形区域)
-        If 滑块区域.Width <= 0 OrElse 滑块区域.Height <= 0 Then Return
-
-        Dim 字体大小 As Single = 滑块区域.Height * 0.55F
-        Dim fmt = compositor.TextFormatCache.Get("Segoe UI",
-                                                 Vortice.DirectWrite.FontWeight.Bold,
-                                                 Vortice.DirectWrite.FontStyle.Normal,
-                                                 字体大小,
-                                                 Vortice.DirectWrite.TextAlignment.Center,
-                                                 Vortice.DirectWrite.ParagraphAlignment.Center,
-                                                 False)
-        Dim brush = compositor.BrushCache.Get(rt, 不确定态轨道颜色值)
-        If fmt IsNot Nothing AndAlso brush IsNot Nothing Then
-            rt.DrawText("?", fmt, D2DGlobals.ToD2DRect(滑块区域), brush)
-        End If
-    End Sub
 
     Private Function 获取当前轨道颜色() As Color
         Dim 目标进度 As Single = 动画助手.Progress
@@ -258,7 +322,7 @@ Public Class QuantumSwitch
         MyBase.OnMouseEnter(e)
         If Not Enabled Then Return
         鼠标状态 = MouseStateEnum.Hover
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
         If 观测者模式 Then RaiseEvent StateChanged(Me, EventArgs.Empty)
     End Sub
 
@@ -266,7 +330,7 @@ Public Class QuantumSwitch
         MyBase.OnMouseLeave(e)
         If Not Enabled Then Return
         鼠标状态 = MouseStateEnum.Normal
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
         If 观测者模式 Then RaiseEvent StateChanged(Me, EventArgs.Empty)
     End Sub
 
@@ -274,14 +338,14 @@ Public Class QuantumSwitch
         MyBase.OnMouseDown(e)
         If Not Enabled Then Return
         鼠标状态 = MouseStateEnum.Pressed
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnMouseUp(e As MouseEventArgs)
         MyBase.OnMouseUp(e)
         If Not Enabled Then Return
         鼠标状态 = If(ClientRectangle.Contains(e.Location), MouseStateEnum.Hover, MouseStateEnum.Normal)
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Private Shared ReadOnly 随机数生成器 As New Random()
@@ -325,16 +389,16 @@ Public Class QuantumSwitch
             鼠标状态 = MouseStateEnum.Normal
             动画助手.StopAnimation()
         End If
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
         MyBase.OnFontChanged(e)
-        D2DHelperV2.RefreshFontDependentRendering(Me)
+        请求V3渲染()
     End Sub
 #End Region
 
@@ -342,19 +406,28 @@ Public Class QuantumSwitch
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End If
     End Sub
 
-    Private ReadOnly 动画助手 As New AnimationHelperV2(Me)
+    Private ReadOnly 动画助手 As New V3_AnimationHelper(Me)
 
-    Private Sub 开关动画脏区(helper As AnimationHelperV2, owner As Control, sink As AnimationHelperV2.InvalidateRegionSink)
+    Private Sub 开关动画脏区(helper As V3_AnimationHelper, owner As Control, sink As V3_AnimationHelper.InvalidateRegionSink)
         sink.Add(计算动画脏区())
     End Sub
 
     Private Function DpiScale() As Single
-        Return D2DGlobals.GetCurrentDpiScale(Me)
+        Return V3_DpiContext.FromControl(Me).Scale
     End Function
+
+    Private Sub 请求V3渲染(Optional immediate As Boolean = False)
+        请求V3渲染(New Rectangle(Point.Empty, Me.Size), immediate)
+    End Sub
+
+    Private Sub 请求V3渲染(dirtyRect As Rectangle, Optional immediate As Boolean = False)
+        If Me.IsDisposed Then Return
+        V3_InvalidationRouter.RequestRender(Me, dirtyRect)
+    End Sub
 
     Private Function 计算动画脏区() As Rectangle
         If Me.Width <= 0 OrElse Me.Height <= 0 Then Return Rectangle.Empty

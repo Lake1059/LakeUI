@@ -1,30 +1,30 @@
 Imports Vortice.Direct2D1
 
 ''' <summary>
-''' V2 窗口级合成器：每个顶层 Form 一份实例，集中持有该窗口内所有控件共享的 D2D / DWrite 资源。
+''' 兼容窗口级合成器：每个顶层 Form 一份实例，集中持有该窗口内所有控件共享的 D2D / DWrite 资源。
 '''
 ''' === 持有的资源 ===
 ''' • 1 个共享 <see cref="ID2D1DCRenderTarget"/>（背景层 / 文字层 / 1× 图形层共用）
 '''   - 每次 <see cref="BeginPaint"/> BindDC 到当前控件 HDC；窗口内所有控件共用同一份 RT 实例。
-'''   - DC RT 不支持嵌套 BindDC / BeginDraw；同一 Form 内绘制重入时直接返回 Nothing，由调用方跳过本次 V2 绘制。
-'''   - <see cref="D2DGlobals.SolidColorBrushCache"/> 内部按 RT 分桶，因此 BindDC 不会让 brush 失效。
-''' • 1 个 <see cref="D2DGlobals.SolidColorBrushCache"/>（按 RT 分桶；<see cref="BrushCache"/>）。
-''' • 1 个 <see cref="D2DGlobals.TextFormatCache"/>（DWrite TextFormat 与 RT 无关，全 Form 通用）。
-''' • 一组 <see cref="D2DGlobals.D2DBitmapCache"/>：按 Image 弱引用建索引，用于图标 / 背景图复用上传。
+'''   - DC RT 不支持嵌套 BindDC / BeginDraw；同一 Form 内绘制重入时直接返回 Nothing，由调用方跳过本次兼容绘制。
+'''   - <see cref="D3D_D2DInterop.SolidColorBrushCache"/> 内部按 RT 分桶，因此 BindDC 不会让 brush 失效。
+''' • 1 个 <see cref="D3D_D2DInterop.SolidColorBrushCache"/>（按 RT 分桶；<see cref="BrushCache"/>）。
+''' • 1 个 <see cref="D3D_D2DInterop.TextFormatCache"/>（DWrite TextFormat 与 RT 无关，全 Form 通用）。
+''' • 一组 <see cref="D3D_D2DInterop.D2DBitmapCache"/>：按 Image 弱引用建索引，用于图标 / 背景图复用上传。
 ''' • 一个 SSAA <see cref="ID2D1BitmapRenderTarget"/> 池：按分桶像素尺寸 (W,H) 共享 1 份，避免每帧分配/释放。
 '''
 ''' === 不持有 ===
-''' • 控件级 SSAA 字段：V2 控件不再持有 _ssaaCache，每次绘制从池中 Rent / Return。
-''' • 背景采样位图：由 <see cref="BackgroundPenetrationV2"/> 按 source 控件维度独立维护。
+''' • 控件级 SSAA 字段：控件不再持有 _ssaaCache，每次绘制从池中 Rent / Return。
+''' • 背景采样位图：由 <see cref="D3D_BackgroundPenetration"/> 按 source 控件维度独立维护。
 '''
 ''' === 生命周期 ===
-''' • Form.HandleDestroyed → <see cref="Dispose"/> → 通知 <see cref="D2DHelperV2.UnregisterCompositor"/> 注销。
+''' • Form.HandleDestroyed → <see cref="Dispose"/> → 通知 <see cref="D3D_PaintBridge.UnregisterCompositor"/> 注销。
 ''' • Dispose 之后再调用任何 Get/Rent 都返回 Nothing；Return 路径会把传入对象直接 Dispose。
 '''
 ''' === 线程要求 ===
-''' • 所有方法都假定在 UI 线程调用；内部仅在 <see cref="D2DHelperV2"/> 的注册表层加锁，
+''' • 所有方法都假定在 UI 线程调用；内部仅在 <see cref="D3D_PaintBridge"/> 的注册表层加锁，
 '''   compositor 自身字段（_dcRT、_ssaaPool、_bitmapCaches）不做并发保护。
-''' • BeginPaint 仅防重入，不提供跨线程互斥；V2 绘制仍必须在 UI 线程完成。
+''' • BeginPaint 仅防重入，不提供跨线程互斥；兼容绘制仍必须在 UI 线程完成。
 '''
 ''' === 已知限制 ===
 ''' • SSAA 池接入进程级 GPU 总预算。极端大窗口 + 高倍率 SSAA 仍然可能瞬时占用较高显存；
@@ -32,8 +32,8 @@ Imports Vortice.Direct2D1
 ''' • DPI 变更会释放 DC RT、TextFormat、位图上传和 SSAA 池，下一帧按新 DPI 全量重建。
 ''' • <see cref="GetBitmapCache"/> 不再强持有 <see cref="Image"/>；源图被替换或释放后索引会在后续修剪中自动脱落。
 ''' </summary>
-Public NotInheritable Class WindowCompositor
-    Implements IDisposable, IRenderCacheOwner
+Public NotInheritable Class D3D_SurfaceCompositor
+    Implements IDisposable, D3D_IRenderCacheOwner
 
     Private ReadOnly _form As Form
     Private ReadOnly _unregisterOnDispose As Boolean
@@ -54,7 +54,7 @@ Public NotInheritable Class WindowCompositor
     ''' <summary>Image → D2DBitmapCache 弱索引；为长期存在的图标 / 背景图复用 D2D 上传。</summary>
     Private NotInheritable Class BitmapCacheEntry
         Public SourceRef As WeakReference(Of Image)
-        Public Cache As D2DGlobals.D2DBitmapCache
+        Public Cache As D3D_D2DInterop.D2DBitmapCache
         Public LastUsed As Long
     End Class
 
@@ -62,10 +62,10 @@ Public NotInheritable Class WindowCompositor
     Private _bitmapCacheClock As Long
 
     ''' <summary>共享的 SolidColorBrush 缓存（按 RT 切换自动失效）。</summary>
-    Public ReadOnly Property BrushCache As New D2DGlobals.SolidColorBrushCache()
+    Public ReadOnly Property BrushCache As New D3D_D2DInterop.SolidColorBrushCache()
 
     ''' <summary>共享的 DirectWrite TextFormat 缓存。</summary>
-    Public ReadOnly Property TextFormatCache As New D2DGlobals.TextFormatCache()
+    Public ReadOnly Property TextFormatCache As New D3D_D2DInterop.TextFormatCache()
 
     ''' <summary>所属 Form。</summary>
     Public ReadOnly Property Form As Form
@@ -93,7 +93,7 @@ Public NotInheritable Class WindowCompositor
         Try
             If _form IsNot Nothing AndAlso Not _form.IsDisposed AndAlso _form.IsHandleCreated Then
                 _formHwnd = _form.Handle
-                D2DGlobals.SetWindowDpi(_formHwnd, newDpi)
+                D3D_D2DInterop.SetWindowDpi(_formHwnd, newDpi)
             End If
         Catch
         End Try
@@ -103,13 +103,13 @@ Public NotInheritable Class WindowCompositor
         _form = form
         _unregisterOnDispose = unregisterOnDispose
         _formHwnd = If(form.IsHandleCreated, form.Handle, IntPtr.Zero)
-        GpuCache.Register(Me)
+        D3D_GpuCache.Register(Me)
         AddHandler form.HandleCreated, AddressOf OnFormHandleCreated
         AddHandler form.HandleDestroyed, AddressOf OnFormHandleDestroyed
         If _unregisterOnDispose Then AddHandler form.DpiChanged, AddressOf OnFormDpiChanged
         If _unregisterOnDispose AndAlso form.IsHandleCreated Then
-            _lastObservedDpi = D2DGlobals.GetCurrentDpi(form)
-            D2DGlobals.SetWindowDpi(_formHwnd, _lastObservedDpi)
+            _lastObservedDpi = D3D_D2DInterop.GetCurrentDpi(form)
+            D3D_D2DInterop.SetWindowDpi(_formHwnd, _lastObservedDpi)
         End If
     End Sub
 
@@ -118,15 +118,15 @@ Public NotInheritable Class WindowCompositor
         If frm Is Nothing OrElse Not frm.IsHandleCreated Then Return
         _formHwnd = frm.Handle
         If _unregisterOnDispose Then
-            _lastObservedDpi = D2DGlobals.GetCurrentDpi(frm)
-            D2DGlobals.SetWindowDpi(_formHwnd, _lastObservedDpi)
+            _lastObservedDpi = D3D_D2DInterop.GetCurrentDpi(frm)
+            D3D_D2DInterop.SetWindowDpi(_formHwnd, _lastObservedDpi)
         End If
     End Sub
 
     Private Sub OnFormHandleDestroyed(sender As Object, e As EventArgs)
         If _unregisterOnDispose Then
             Try
-                D2DGlobals.ClearWindowDpi(_formHwnd)
+                D3D_D2DInterop.ClearWindowDpi(_formHwnd)
             Catch
             End Try
         End If
@@ -143,7 +143,7 @@ Public NotInheritable Class WindowCompositor
         Catch
             newDpi = 0
         End Try
-        If newDpi <= 0 Then newDpi = D2DGlobals.GetCurrentDpi(frm)
+        If newDpi <= 0 Then newDpi = D3D_D2DInterop.GetCurrentDpi(frm)
         If newDpi <= 0 Then Return
         If newDpi = _lastObservedDpi Then
             SynchronizeDpi(newDpi)
@@ -151,7 +151,7 @@ Public NotInheritable Class WindowCompositor
         End If
 
         SynchronizeDpi(newDpi)
-        D2DHelperV2.NotifyDpiChanged(frm, newDpi)
+        D3D_PaintBridge.NotifyDpiChanged(frm, newDpi)
     End Sub
 
     ''' <summary>
@@ -159,12 +159,12 @@ Public NotInheritable Class WindowCompositor
     ''' </summary>
     ''' <remarks>
     ''' 返回的 RT 在调用方 <see cref="ID2D1DCRenderTarget.BindDC"/> 之前不可绘制。
-    ''' 正常路径下应通过 <see cref="BeginPaint"/> 拿到 <see cref="PaintScopeV2"/>，由后者完成 BindDC + BeginDraw。
+    ''' 正常路径下应通过 <see cref="BeginPaint"/> 拿到 <see cref="D3D_PaintScope"/>，由后者完成 BindDC + BeginDraw。
     ''' </remarks>
     Friend Function GetOrCreateDCRenderTarget() As ID2D1DCRenderTarget
         If _disposed Then Return Nothing
         If _dcRT Is Nothing Then
-            _dcRT = D2DGlobals.CreateDCRenderTarget()
+            _dcRT = D3D_D2DInterop.CreateDCRenderTarget()
         End If
         Return _dcRT
     End Function
@@ -172,15 +172,15 @@ Public NotInheritable Class WindowCompositor
     ''' <summary>
     ''' 取（按需创建）本窗口的 <see cref="ID2D1DeviceContext"/>（D2D 1.1 入口）。
     ''' <para>
-    ''' 阶段 A 行为：首次访问时通过 <see cref="D3D11Globals.CreateDeviceContext"/> 创建一份
+    ''' 阶段 A 行为：首次访问时通过 <see cref="D3D_DeviceGlobals.CreateDeviceContext"/> 创建一份
     ''' per-form 的 DeviceContext，与本窗口的 DC RT 同生共死。LakeUI 不提供 GPU 不支持时的
     ''' 降级路线；除 compositor 已释放外，创建失败会直接向调用方抛出。
     ''' </para>
     ''' <para>
     ''' <b>设备丢失处理</b>：本属性会在第一次成功创建 DeviceContext 时订阅
-    ''' <see cref="D3D11Globals.DeviceLost"/>；一旦进程级设备失效，订阅回调会立即
+    ''' <see cref="D3D_DeviceGlobals.DeviceLost"/>；一旦进程级设备失效，订阅回调会立即
     ''' Dispose 当前 DeviceContext，下一次访问本属性会用新设备重建。
-    ''' 此外每次访问都会比对 <see cref="D3D11Globals.DeviceGeneration"/>，
+    ''' 此外每次访问都会比对 <see cref="D3D_DeviceGlobals.DeviceGeneration"/>，
     ''' 一旦发现代号变化也会主动放弃旧 DeviceContext，保证不会把死设备暴露给调用方。
     ''' </para>
     ''' <para>
@@ -194,14 +194,14 @@ Public NotInheritable Class WindowCompositor
         Get
             If _disposed Then Return Nothing
             ' 设备代号变化 → 旧 DeviceContext 必然失效，先扔掉再按"未探测"重新走创建路径。
-            If _deviceContext IsNot Nothing AndAlso _deviceContextGeneration <> D3D11Globals.DeviceGeneration Then
+            If _deviceContext IsNot Nothing AndAlso _deviceContextGeneration <> D3D_DeviceGlobals.DeviceGeneration Then
                 ReleaseDeviceContextNoLock()
             End If
             If _deviceContext IsNot Nothing Then Return _deviceContext
-            _deviceContext = D3D11Globals.CreateDeviceContext()
-            _deviceContextGeneration = D3D11Globals.DeviceGeneration
+            _deviceContext = D3D_DeviceGlobals.CreateDeviceContext()
+            _deviceContextGeneration = D3D_DeviceGlobals.DeviceGeneration
             If _deviceContext IsNot Nothing AndAlso Not _deviceLostHandlerAttached Then
-                AddHandler D3D11Globals.DeviceLost, AddressOf OnDeviceLost
+                AddHandler D3D_DeviceGlobals.DeviceLost, AddressOf OnDeviceLost
                 _deviceLostHandlerAttached = True
             End If
             Return _deviceContext
@@ -210,25 +210,25 @@ Public NotInheritable Class WindowCompositor
 
     ''' <summary>
     ''' 通知本 compositor"DeviceContext 抛出了设备级错误"。
-    ''' 内部会调用 <see cref="D3D11Globals.HandleDeviceLost"/>；如果确认是设备丢失，
+    ''' 内部会调用 <see cref="D3D_DeviceGlobals.HandleDeviceLost"/>；如果确认是设备丢失，
     ''' 还会顺手清空本 compositor 的 DeviceContext 引用以加快下一帧重建。
     ''' 返回 <c>True</c> 表示确实是设备丢失，调用方应 swallow 本帧并请求下一帧重画。
     ''' </summary>
     Public Function NotifyDeviceContextException(ex As Exception) As Boolean
-        Dim isLost = D3D11Globals.HandleDeviceLost(ex)
+        Dim isLost = D3D_DeviceGlobals.HandleDeviceLost(ex)
         If isLost Then ReleaseDeviceContextNoLock()
         Return isLost
     End Function
 
     Friend Function NotifyDCRenderTargetException(ex As Exception) As Boolean
-        If Not D3D11Globals.IsDeviceLostException(ex) Then Return False
+        If Not D3D_DeviceGlobals.IsDeviceLostException(ex) Then Return False
         ReleaseDCRenderTargetNoLock()
-        D3D11Globals.HandleDeviceLost(ex)
+        D3D_DeviceGlobals.HandleDeviceLost(ex)
         Return True
     End Function
 
     Private Sub OnDeviceLost(sender As Object, e As EventArgs)
-        ' D3D11Globals 已在 UI 线程同步触发，这里直接释放即可。
+        ' D3D_DeviceGlobals 已在 UI 线程同步触发，这里直接释放即可。
         ReleaseDeviceContextNoLock()
     End Sub
 
@@ -251,28 +251,28 @@ Public NotInheritable Class WindowCompositor
         End If
     End Sub
 
-    Friend Function CleanupD2DResources(level As D2DCacheCleanupLevel) As Boolean
+    Friend Function CleanupD2DResources(level As D3DCacheCleanupLevel) As Boolean
         If _disposed Then Return False
         If _activePaintScopes > 0 Then Return False
 
         Select Case level
-            Case D2DCacheCleanupLevel.TrimToBudget
+            Case D3DCacheCleanupLevel.TrimToBudget
                 TrimTransientCaches()
 
-            Case D2DCacheCleanupLevel.ReleaseVolatileCaches
+            Case D3DCacheCleanupLevel.ReleaseVolatileCaches
                 Try : BrushCache.Invalidate() : Catch : End Try
                 ReleaseSsaaPoolNoLock()
                 ResetTransientTrimState()
 
-            Case D2DCacheCleanupLevel.ReleaseAllCaches
+            Case D3DCacheCleanupLevel.ReleaseAllCaches
                 Try : BrushCache.Invalidate() : Catch : End Try
                 Try : TextFormatCache.Invalidate() : Catch : End Try
                 ReleaseBitmapCacheIndexNoLock()
                 ReleaseSsaaPoolNoLock()
                 ResetTransientTrimState()
 
-            Case D2DCacheCleanupLevel.ReleaseRenderTargets,
-                 D2DCacheCleanupLevel.RecreateDevice
+            Case D3DCacheCleanupLevel.ReleaseRenderTargets,
+                 D3DCacheCleanupLevel.RecreateDevice
                 Try : TextFormatCache.Invalidate() : Catch : End Try
                 ReleaseDCRenderTargetNoLock()
                 ReleaseDeviceContextNoLock()
@@ -286,14 +286,14 @@ Public NotInheritable Class WindowCompositor
     End Function
 
     ''' <summary>
-    ''' 取（按需创建）一份 <see cref="Image"/> 对应的 <see cref="D2DGlobals.D2DBitmapCache"/>。
+    ''' 取（按需创建）一份 <see cref="Image"/> 对应的 <see cref="D3D_D2DInterop.D2DBitmapCache"/>。
     ''' Key 为 Image 引用本身（不复制，不哈希像素）。
     ''' </summary>
     ''' <remarks>
     ''' 适用于 ImageList 中长期存在的图标 / 背景图。索引只弱持有源 Image；
     ''' 调用方仍不要把临时 Bitmap（如 OnPaint 内 new 出来的）放进来。
     ''' </remarks>
-    Friend Function GetBitmapCache(src As Image) As D2DGlobals.D2DBitmapCache
+    Friend Function GetBitmapCache(src As Image) As D3D_D2DInterop.D2DBitmapCache
         If _disposed OrElse src Is Nothing Then Return Nothing
         For i As Integer = _bitmapCaches.Count - 1 To 0 Step -1
             Dim entry = _bitmapCaches(i)
@@ -309,7 +309,7 @@ Public NotInheritable Class WindowCompositor
                 Return entry.Cache
             End If
         Next
-        Dim cache = New D2DGlobals.D2DBitmapCache()
+        Dim cache = New D3D_D2DInterop.D2DBitmapCache()
         _bitmapCaches.Add(New BitmapCacheEntry With {
             .SourceRef = New WeakReference(Of Image)(src),
             .Cache = cache,
@@ -362,7 +362,7 @@ Public NotInheritable Class WindowCompositor
     ''' <summary>
     ''' SSAA 离屏 RT 池：按分桶后的 (pixelW, pixelH) 共享一份 <see cref="ID2D1BitmapRenderTarget"/>。
     '''
-    ''' V1 / V2 早期方案是控件内 Create + 帧末 Dispose，避免显存按控件数堆积，但代价是每个 OnPaint
+    ''' 早期方案是控件内 Create + 帧末 Dispose，避免显存按控件数堆积，但代价是每个 OnPaint
     ''' 在 UI 线程上做一次 GPU 资源分配/释放 —— 多个控件在同一动画 tick 重绘时会形成周期性卡顿。
     ''' 这里改为按 SSAA 像素尺寸分桶池化：窗口内同桶共享 1 份；不同尺寸由 LRU 字节预算约束。
     ''' </summary>
@@ -405,7 +405,7 @@ Public NotInheritable Class WindowCompositor
             _ssaaPool.Remove(key)
             _ssaaPoolBytes -= entry.Bytes
             If _ssaaPoolBytes < 0 Then _ssaaPoolBytes = 0
-            entry.LastUsed = GpuCache.NextTick()
+            entry.LastUsed = D3D_GpuCache.NextTick()
             Return entry.RenderTarget
         End If
         Return owner.CreateCompatibleRenderTarget(New Vortice.Mathematics.SizeI(rentedPixelW, rentedPixelH))
@@ -435,11 +435,11 @@ Public NotInheritable Class WindowCompositor
             .PixelW = pixelW,
             .PixelH = pixelH,
             .Bytes = EstimateBytes(pixelW, pixelH),
-            .LastUsed = GpuCache.NextTick()
+            .LastUsed = D3D_GpuCache.NextTick()
         }
         _ssaaPool(key) = entry
         _ssaaPoolBytes += entry.Bytes
-        GpuCache.TrimToBudget(Me)
+        D3D_GpuCache.TrimToBudget(Me)
     End Sub
 
     Private Sub ReleaseSsaaPoolNoLock()
@@ -478,13 +478,13 @@ Public NotInheritable Class WindowCompositor
     End Sub
 
     ''' <summary>
-    ''' 开始一次 V2 绘制作用域。内部完成：取 HDC → BindDC → BeginDraw → 应用全局抗锯齿 → 按需创建 SSAA RT。
-    ''' 返回的 <see cref="PaintScopeV2"/> 必须 Using 释放（Dispose 内 FlushGraphics + EndDraw + ReleaseHdc + 退出重入标记）。
+    ''' 开始一次兼容绘制作用域。内部完成：取 HDC → BindDC → BeginDraw → 应用全局抗锯齿 → 按需创建 SSAA RT。
+    ''' 返回的 <see cref="D3D_PaintScope"/> 必须 Using 释放（Dispose 内 FlushGraphics + EndDraw + ReleaseHdc + 退出重入标记）。
     ''' 若当前 Form 的共享 DC RT 正在绘制，返回 Nothing，避免嵌套 BindDC 触发 D2DERR_WRONG_STATE。
     ''' </summary>
     Friend Function BeginPaint(e As PaintEventArgs, control As Control, ssaaScale As Integer,
                                Optional disposeCompositorWithScope As Boolean = False,
-                               Optional returnCompositorToBackgroundSamplingPool As Boolean = False) As PaintScopeV2
+                               Optional returnCompositorToBackgroundSamplingPool As Boolean = False) As D3D_PaintScope
         If _disposed Then Return Nothing
         If _activePaintScopes > 0 Then Return Nothing
         Dim dcRT = GetOrCreateDCRenderTarget()
@@ -492,7 +492,7 @@ Public NotInheritable Class WindowCompositor
         Dim hdc As IntPtr = e.Graphics.GetHdc()
         _activePaintScopes += 1
         Try
-            Return New PaintScopeV2(Me, e.Graphics, hdc, dcRT, control.Width, control.Height, ssaaScale, e.ClipRectangle,
+            Return New D3D_PaintScope(Me, e.Graphics, hdc, dcRT, control.Width, control.Height, ssaaScale, e.ClipRectangle,
                                     disposeCompositorWithScope, returnCompositorToBackgroundSamplingPool)
         Catch ex As Exception
             Try : NotifyDCRenderTargetException(ex) : Catch : End Try
@@ -503,6 +503,26 @@ Public NotInheritable Class WindowCompositor
     End Function
 
     ''' <summary>结束一次活动绘制作用域，允许下一次 BindDC / BeginDraw。</summary>
+    Friend Function BeginGpuPaint(e As PaintEventArgs, control As Control,
+                                  Optional disposeCompositorWithScope As Boolean = False,
+                                  Optional returnCompositorToBackgroundSamplingPool As Boolean = False) As D3D_PaintScope
+        If _disposed Then Return Nothing
+        If _activePaintScopes > 0 Then Return Nothing
+        If e Is Nothing OrElse control Is Nothing Then Return Nothing
+        If control.Width <= 0 OrElse control.Height <= 0 Then Return Nothing
+
+        Dim hdc As IntPtr = e.Graphics.GetHdc()
+        _activePaintScopes += 1
+        Try
+            Return New D3D_PaintScope(Me, e.Graphics, hdc, Nothing, control.Width, control.Height, 1, e.ClipRectangle,
+                                      disposeCompositorWithScope, returnCompositorToBackgroundSamplingPool)
+        Catch
+            EndPaintScope()
+            Try : e.Graphics.ReleaseHdc(hdc) : Catch : End Try
+            Throw
+        End Try
+    End Function
+
     Friend Sub EndPaintScope()
         If _activePaintScopes > 0 Then _activePaintScopes -= 1
         If ShouldTrimTransientCaches() Then TrimTransientCaches()
@@ -539,7 +559,7 @@ Public NotInheritable Class WindowCompositor
             Try : entry.Cache.TrimToCurrentBudget() : Catch : End Try
         Next
         Try : TrimBitmapCacheIndex(Nothing) : Catch : End Try
-        Try : GpuCache.TrimToBudget() : Catch : End Try
+        Try : D3D_GpuCache.TrimToBudget() : Catch : End Try
     End Sub
 
     Private Sub ResetTransientTrimState()
@@ -566,7 +586,7 @@ Public NotInheritable Class WindowCompositor
         End Try
         If _unregisterOnDispose Then
             Try
-                D2DGlobals.ClearWindowDpi(_formHwnd)
+                D3D_D2DInterop.ClearWindowDpi(_formHwnd)
             Catch
             End Try
         End If
@@ -578,20 +598,20 @@ Public NotInheritable Class WindowCompositor
         _bitmapCaches.Clear()
         ReleaseDCRenderTargetNoLock()
         If _deviceLostHandlerAttached Then
-            Try : RemoveHandler D3D11Globals.DeviceLost, AddressOf OnDeviceLost : Catch : End Try
+            Try : RemoveHandler D3D_DeviceGlobals.DeviceLost, AddressOf OnDeviceLost : Catch : End Try
             _deviceLostHandlerAttached = False
         End If
         ReleaseDeviceContextNoLock()
-        If _unregisterOnDispose Then D2DHelperV2.UnregisterCompositor(_form)
+        If _unregisterOnDispose Then D3D_PaintBridge.UnregisterCompositor(_form)
     End Sub
 
-    Public ReadOnly Property CacheBytes As Long Implements IRenderCacheOwner.CacheBytes
+    Public ReadOnly Property CacheBytes As Long Implements D3D_IRenderCacheOwner.CacheBytes
         Get
             Return _ssaaPoolBytes
         End Get
     End Property
 
-    Public ReadOnly Property OldestUseTick As Long Implements IRenderCacheOwner.OldestUseTick
+    Public ReadOnly Property OldestUseTick As Long Implements D3D_IRenderCacheOwner.OldestUseTick
         Get
             Dim oldest As Long = Long.MaxValue
             For Each entry In _ssaaPool.Values
@@ -601,11 +621,11 @@ Public NotInheritable Class WindowCompositor
         End Get
     End Property
 
-    Public Function TrimOldest() As Boolean Implements IRenderCacheOwner.TrimOldest
+    Public Function TrimOldest() As Boolean Implements D3D_IRenderCacheOwner.TrimOldest
         Return TrimSsaaPool()
     End Function
 
-    Public Sub ReleaseAll() Implements IRenderCacheOwner.ReleaseAll
+    Public Sub ReleaseAll() Implements D3D_IRenderCacheOwner.ReleaseAll
         ReleaseSsaaPoolNoLock()
     End Sub
 End Class

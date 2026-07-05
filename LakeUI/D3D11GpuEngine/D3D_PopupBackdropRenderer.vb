@@ -1,6 +1,6 @@
 ''' <summary>
 ''' 弹出控件共用的毛玻璃背景适配层。
-''' 底层仍使用 <see cref="BackdropRenderer"/>，确保与 <see cref="ThisIsYourWindow"/> 的抓屏、模糊和噪点逻辑保持同步。
+''' 底层仍使用 <see cref="D3D_BackdropSurfaceRenderer"/>，确保与 <see cref="ThisIsYourWindow"/> 的抓屏、模糊和噪点逻辑保持同步。
 ''' </summary>
 ''' <remarks>
 ''' 本类是 popup / message dialog 的轻量 façade，不拥有任何窗口消息，也不自动定时刷新。
@@ -11,18 +11,18 @@
 ''' • popup 是独立顶层窗口，不能直接采样主窗口已有 backdrop 帧；捕获区域必须以 popup 自己的 bounds
 '''   为准。
 ''' • Auto 模式只在 Prepare 时抓一帧，不做持续 timer；持续刷新会让浮层 hover 产生不必要的后台抓屏。
-''' • Image 模式仍会通过 BackdropRenderer 生成模糊帧，因此 SourceImage 变化后必须再次 Prepare。
+''' • Image 模式仍会通过 D3D_BackdropSurfaceRenderer 生成模糊帧，因此 SourceImage 变化后必须再次 Prepare。
 '''
 ''' 坑点：
 ''' • <see cref="WaitForFrame"/> 只等待 worker 空闲；它不是强制同步重绘。调用方仍需 Invalidate / Paint。
-''' • <see cref="Draw"/> 使用 BackdropRenderer 的 GPU 合成路径一次性输出到 GDI HDC，适合顶层 popup；
-'''   V2 控件内的背景穿透应走 <see cref="BackgroundPenetrationV2"/> 采样宿主容器。
+''' • <see cref="Draw"/> 使用 D3D_BackdropSurfaceRenderer 的 GPU 合成路径一次性输出到 GDI HDC，适合顶层 popup；
+'''   控件内的背景穿透应走 <see cref="D3D_BackgroundPenetration"/> 采样宿主容器。
 ''' </remarks>
-Friend NotInheritable Class PopupBackdropRenderer
+Friend NotInheritable Class D3D_PopupBackdropRenderer
     Implements IDisposable
 
     Private ReadOnly _host As Form
-    Private _renderer As BackdropRenderer
+    Private _renderer As D3D_BackdropSurfaceRenderer
 
     Public Property Mode As PopupBackdropMode = PopupBackdropMode.None
     Public Property SourceImage As Image = Nothing
@@ -68,7 +68,7 @@ Friend NotInheritable Class PopupBackdropRenderer
             Return
         End If
 
-        If _renderer Is Nothing Then _renderer = New BackdropRenderer(_host)
+        If _renderer Is Nothing Then _renderer = New D3D_BackdropSurfaceRenderer(_host)
         _renderer.ApplyParameters(BlurRadius, BlurPasses, DownsampleFactor,
                                   NoiseScale)
         _renderer.SetSource(Mode = PopupBackdropMode.Image, SourceImage)
@@ -87,7 +87,7 @@ Friend NotInheritable Class PopupBackdropRenderer
         Try
             _renderer.DrawTo(g, target, TintColor, NoiseOpacity)
         Catch ex As Exception
-            If D3D11Globals.HandleDeviceLost(ex) Then
+            If D3D_DeviceGlobals.HandleDeviceLost(ex) Then
                 Try : _host?.Invalidate() : Catch : End Try
                 Return
             End If

@@ -5,6 +5,7 @@ Imports Vortice.DirectWrite
 
 <DefaultEvent("ValueChanged")>
 Public Class RoundDashBoard
+    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource
 
     Public Event ValueChanged As EventHandler
 
@@ -13,16 +14,13 @@ Public Class RoundDashBoard
         动画助手.DirtyProvider = AddressOf 表盘动画脏区
     End Sub
 
-#Region "V2 背景穿透"
-    ' V2：D2D 资源由 WindowCompositor 按顶层 Form 共享管理，本控件不再持有 _dcRT / _ssaaCache / _textFormatCache。
-
+#Region "背景源"
     Private _backgroundSource As Control = Nothing
     ''' <summary>
-    ''' 背景采样源（超容器背景映射）。指定后会跨越任意层级直接采样此控件的绘制内容作为透明背景；
-    ''' 为 Nothing 时不进行背景采样，按 BackColor 协议处理。
+    ''' 背景采样源。V3 渲染保留该关系，具体背景图由窗口级合成器统一调度。
     ''' </summary>
     <Category("LakeUI"),
-     Description("背景采样源（超容器背景映射）。设置后将跨越任意层级直接采样此控件的绘制内容作为透明背景；为空时不进行背景采样。"),
+     Description("背景采样源。设置后记录关联源控件；V3 渲染由窗口合成器统一调度。"),
      DefaultValue(GetType(Control), Nothing), Browsable(True)>
     Public Property BackgroundSource As Control
         Get
@@ -30,14 +28,13 @@ Public Class RoundDashBoard
         End Get
         Set(value As Control)
             If _backgroundSource IsNot value Then
-                _backgroundSource = BackgroundPenetrationV2.SetConsumerSource(Me, _backgroundSource, value)
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                _backgroundSource = D3D_BackgroundPenetration.SetBackgroundSource(Me, _backgroundSource, value)
+                请求V3渲染()
             End If
         End Set
     End Property
 
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
-        ' V2 路径下 OnPaint 入口统一处理背景，基类填底冗余。
         If _backgroundSource IsNot Nothing Then Return
         MyBase.OnPaintBackground(e)
     End Sub
@@ -45,48 +42,119 @@ Public Class RoundDashBoard
 
 #Region "绘制"
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
-        If Me.Width < 1 OrElse Me.Height < 1 Then Return
-        Dim ssaa As Integer = D2DHelperV2.GetEffectiveSsaaScale(超采样倍率)
-
-        Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
-            If scope Is Nothing Then
-                MyBase.OnPaint(e)
-                Return
-            End If
-
-            ' 背景层：显式 BackgroundSource 优先；否则按 BackColor 协议处理。
-            If _backgroundSource IsNot Nothing Then
-                BackgroundPenetrationV2.PaintBackground(Me, scope, _backgroundSource)
-            ElseIf MyBase.BackColor.A > 0 AndAlso MyBase.BackColor.A < 255 Then
-                Dim bgLayer = scope.BackgroundLayer
-                Dim brush = scope.Compositor.BrushCache.[Get](bgLayer, MyBase.BackColor)
-                If brush IsNot Nothing Then
-                    bgLayer.FillRectangle(D2DGlobals.ToD2DRect(New RectangleF(0, 0, Me.Width, Me.Height)), brush)
-                End If
-            End If
-
-            Dim gRT As ID2D1RenderTarget = scope.GraphicsLayer
-            Dim dcRT As ID2D1DCRenderTarget = scope.DCRenderTarget
-            Dim brushCache = scope.Compositor.BrushCache
-
-            Dim 中心X As Single = 0
-            Dim 中心Y As Single = 0
-            Dim progress As Single = 动画助手.Progress
-            Dim hasContent As Boolean = 绘制图形内容_D2D(gRT, brushCache, 中心X, 中心Y, progress)
-
-            scope.FlushGraphics()
-            If hasContent Then 绘制中心文字_D2D(dcRT, 中心X, 中心Y, progress, scope.Compositor.TextFormatCache, brushCache)
-
-            If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
-                Dim maskBrush = brushCache.[Get](dcRT, 禁用时遮罩颜色)
-                If maskBrush IsNot Nothing Then
-                    dcRT.FillEllipse(New Ellipse(New Vector2(Me.Width / 2.0F, Me.Height / 2.0F), Math.Max(0, (Me.Width - 1) / 2.0F), Math.Max(0, (Me.Height - 1) / 2.0F)), maskBrush)
-                End If
-            End If
-        End Using
+        If Not D3D_PaintBridge.PaintRenderable(e, Me, Me, 1) Then MyBase.OnPaint(e)
     End Sub
 
-    Private Function 绘制图形内容_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache, ByRef 中心X As Single, ByRef 中心Y As Single, ByRef progress As Single) As Boolean
+    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+        If context Is Nothing OrElse Me.Width < 1 OrElse Me.Height < 1 Then Return
+
+        If _backgroundSource IsNot Nothing Then
+            context.DrawBackgroundSource(Me, _backgroundSource, New RectangleF(0, 0, Me.Width, Me.Height))
+        ElseIf MyBase.BackColor.A > 0 Then
+            context.FillRectangle(New RectangleF(0, 0, Me.Width, Me.Height), MyBase.BackColor)
+        End If
+
+        Dim 中心X As Single = 0
+        Dim 中心Y As Single = 0
+        Dim progress As Single = 动画助手.Progress
+        Dim hasContent As Boolean = 绘制图形内容_GPU(context, 中心X, 中心Y, progress)
+        If hasContent Then 绘制中心文字_GPU(context, 中心X, 中心Y, progress)
+
+        If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
+            Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, 禁用时遮罩颜色, context.DeviceGeneration)
+            context.DeviceContext.FillEllipse(New Ellipse(New Vector2(Me.Width / 2.0F, Me.Height / 2.0F),
+                                                          Math.Max(0, (Me.Width - 1) / 2.0F),
+                                                          Math.Max(0, (Me.Height - 1) / 2.0F)),
+                                             brush)
+        End If
+    End Sub
+
+    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+        Return New Rectangle(Point.Empty, Me.Size)
+    End Function
+
+    Private Function 绘制图形内容_GPU(context As D3D_PaintContext, ByRef 中心X As Single, ByRef 中心Y As Single, ByRef progress As Single) As Boolean
+        Dim s As Single = DpiScale()
+
+        Dim 内容宽 As Single = Me.Width - Padding.Left - Padding.Right
+        Dim 内容高 As Single = Me.Height - Padding.Top - Padding.Bottom
+        Dim 正方形边长 As Single = Math.Min(内容宽, 内容高)
+        中心X = Padding.Left + 内容宽 / 2.0F
+        中心Y = Padding.Top + 内容高 / 2.0F
+        Dim 外径 As Single = 外圈半径
+        Dim 厚度值 As Single = 圆弧厚度 * s
+
+        Dim 最大半径 As Single = 正方形边长 / 2.0F - 1
+        If 外径 > 最大半径 Then 外径 = 最大半径
+        If 外径 < 1 Then Return False
+
+        Dim 画笔宽度 As Single = Math.Min(厚度值, 外径)
+        Dim 绘制半径 As Single = 外径 - 画笔宽度 / 2.0F
+        If 绘制半径 < 1 Then Return False
+
+        Dim 绘制矩形 As New RectangleF(中心X - 绘制半径, 中心Y - 绘制半径, 绘制半径 * 2, 绘制半径 * 2)
+        Dim 实际起始角 As Single = 起始角度 - 90
+        Dim 实际扫过角 As Single = 表盘角度
+
+        绘制圆弧_GPU(context, 绘制矩形, 轨道背景颜色, 画笔宽度, 实际起始角, 实际扫过角)
+
+        progress = 动画助手.Progress
+        If progress > 0.001F Then
+            Dim 填充扫过角 As Single = 实际扫过角 * progress
+            If 填充渐变颜色 <> Color.Empty Then
+                绘制渐变弧_GPU(context, 绘制矩形, 画笔宽度, 实际起始角, 填充扫过角, 实际扫过角)
+            Else
+                绘制圆弧_GPU(context, 绘制矩形, 填充基础颜色, 画笔宽度, 实际起始角, 填充扫过角)
+            End If
+
+            If 显示指针 Then 绘制指针_GPU(context, 中心X, 中心Y, 外径, 画笔宽度, 实际起始角 + 填充扫过角, s)
+        End If
+
+        Return True
+    End Function
+
+    Private Sub 绘制圆弧_GPU(context As D3D_PaintContext, rect As RectangleF, color As Color, penWidth As Single, startAngle As Single, sweepAngle As Single)
+        If context Is Nothing OrElse color.A <= 0 OrElse penWidth <= 0 OrElse sweepAngle <= 0 Then Return
+        Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
+        Dim strokeStyle = 创建线帽样式(CapStyle.Round, CapStyle.Round)
+        If sweepAngle >= 360 Then
+            context.DeviceContext.DrawEllipse(创建椭圆(rect), brush, penWidth, strokeStyle)
+        Else
+            Using geo = 创建圆弧几何(rect, startAngle, sweepAngle)
+                context.DeviceContext.DrawGeometry(geo, brush, penWidth, strokeStyle)
+            End Using
+        End If
+    End Sub
+
+    Private Sub 绘制指针_GPU(context As D3D_PaintContext, 中心X As Single, 中心Y As Single, 外径 As Single, 画笔宽度 As Single, 角度 As Single, s As Single)
+        Dim 指针角度弧度 As Double = 角度 * Math.PI / 180.0
+        Dim cosVal As Single = CSng(Math.Cos(指针角度弧度))
+        Dim sinVal As Single = CSng(Math.Sin(指针角度弧度))
+        Dim 指针内半径 As Single = Math.Max(0, 外径 - 画笔宽度 - 指针长度值 * s)
+        Dim 指针外半径 As Single = 外径 + 2
+
+        Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, 指针颜色值, context.DeviceGeneration)
+        Dim strokeStyle = 创建线帽样式(CapStyle.Round, CapStyle.Round)
+        context.DeviceContext.DrawLine(
+            New Vector2(中心X + cosVal * 指针内半径, 中心Y + sinVal * 指针内半径),
+            New Vector2(中心X + cosVal * 指针外半径, 中心Y + sinVal * 指针外半径),
+            brush,
+            指针宽度值 * s,
+            strokeStyle)
+    End Sub
+
+    Private Sub 绘制中心文字_GPU(context As D3D_PaintContext, 中心X As Single, 中心Y As Single, progress As Single)
+        If 中心文字模式 = CenterTextModeEnum.None Then Return
+
+        Dim 文字内容 As String = 获取中心文字内容(progress)
+        If String.IsNullOrEmpty(文字内容) Then Return
+
+        Dim textRect As New RectangleF(中心X - Me.Width / 2.0F, 中心Y - Me.Height / 2.0F, Me.Width, Me.Height)
+        context.DrawText(文字内容, Me.Font, Me.ForeColor, textRect, TextAlignment.Center, ParagraphAlignment.Center)
+    End Sub
+
+
+    Private Function 绘制图形内容_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache, ByRef 中心X As Single, ByRef 中心Y As Single, ByRef progress As Single) As Boolean
         Dim s As Single = DpiScale()
 
         ' 计算 Padding 后的内容区域，并保持正方形
@@ -131,7 +199,7 @@ Public Class RoundDashBoard
         Return True
     End Function
 
-    Private Shared Sub 绘制圆弧_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache, rect As RectangleF, color As Color, penWidth As Single, startAngle As Single, sweepAngle As Single)
+    Private Shared Sub 绘制圆弧_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache, rect As RectangleF, color As Color, penWidth As Single, startAngle As Single, sweepAngle As Single)
         If rt Is Nothing OrElse color.A <= 0 OrElse penWidth <= 0 OrElse sweepAngle <= 0 Then Return
         Dim brush = brushCache?.Get(rt, color)
         If brush Is Nothing Then Return
@@ -145,7 +213,7 @@ Public Class RoundDashBoard
         End If
     End Sub
 
-    Private Sub 绘制指针_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache, 中心X As Single, 中心Y As Single, 外径 As Single, 画笔宽度 As Single, 角度 As Single, s As Single)
+    Private Sub 绘制指针_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache, 中心X As Single, 中心Y As Single, 外径 As Single, 画笔宽度 As Single, 角度 As Single, s As Single)
         Dim 指针角度弧度 As Double = 角度 * Math.PI / 180.0
         Dim cosVal As Single = CSng(Math.Cos(指针角度弧度))
         Dim sinVal As Single = CSng(Math.Sin(指针角度弧度))
@@ -163,14 +231,14 @@ Public Class RoundDashBoard
             strokeStyle)
     End Sub
 
-    Private Sub 绘制中心文字_D2D(rt As ID2D1DCRenderTarget, 中心X As Single, 中心Y As Single, progress As Single, textFormatCache As D2DGlobals.TextFormatCache, brushCache As D2DGlobals.SolidColorBrushCache)
+    Private Sub 绘制中心文字_D2D(rt As ID2D1DCRenderTarget, 中心X As Single, 中心Y As Single, progress As Single, textFormatCache As D3D_D2DInterop.TextFormatCache, brushCache As D3D_D2DInterop.SolidColorBrushCache)
         If 中心文字模式 = CenterTextModeEnum.None Then Return
 
         Dim 文字内容 As String = 获取中心文字内容(progress)
         If String.IsNullOrEmpty(文字内容) Then Return
 
         Dim s As Single = DpiScale()
-        Dim sizePx As Single = D2DGlobals.GetDWriteFontSizePx(Me.Font, s)
+        Dim sizePx As Single = D3D_D2DInterop.GetDWriteFontSizePx(Me.Font, s)
         Dim weight As Vortice.DirectWrite.FontWeight = If(Me.Font.Bold, Vortice.DirectWrite.FontWeight.Bold, Vortice.DirectWrite.FontWeight.Normal)
         Dim style As Vortice.DirectWrite.FontStyle = If(Me.Font.Italic, Vortice.DirectWrite.FontStyle.Italic, Vortice.DirectWrite.FontStyle.Normal)
         Dim fmt = textFormatCache.Get(Me.Font.FontFamily.Name, weight, style, sizePx, TextAlignment.Center, ParagraphAlignment.Center, False)
@@ -193,7 +261,36 @@ Public Class RoundDashBoard
     End Function
 #End Region
 
-    Private Sub 绘制渐变弧_D2D(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache, rect As RectangleF, penWidth As Single, startAngle As Single, fillSweep As Single, totalSweep As Single)
+    Private Sub 绘制渐变弧_GPU(context As D3D_PaintContext, rect As RectangleF, penWidth As Single, startAngle As Single, fillSweep As Single, totalSweep As Single)
+        If context Is Nothing OrElse penWidth <= 0 OrElse fillSweep <= 0 Then Return
+        Const 步进角度 As Single = 2.0F
+        Dim 段数 As Integer = Math.Max(1, CInt(Math.Ceiling(fillSweep / 步进角度)))
+        Dim 每段角度 As Single = fillSweep / 段数
+
+        For i As Integer = 0 To 段数 - 1
+            Dim 段起始角 As Single = startAngle + i * 每段角度
+            Dim 段跨度 As Single = If(i < 段数 - 1, 每段角度 + 0.5F, 每段角度)
+
+            Dim 段中点比例 As Single = (i + 0.5F) / 段数
+            Dim 渐变比例 As Single
+            If 渐变模式 = FillGradientModeEnum.FixedPosition Then
+                Dim 弧上绝对位置 As Single = (i + 0.5F) * 每段角度
+                渐变比例 = If(totalSweep > 0, 弧上绝对位置 / totalSweep, 0)
+            Else
+                渐变比例 = 段中点比例
+            End If
+            渐变比例 = Math.Max(0, Math.Min(1, 渐变比例))
+
+            Dim c As Color = 颜色插值(填充基础颜色, 填充渐变颜色, 渐变比例)
+            Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, c, context.DeviceGeneration)
+            Dim strokeStyle = 创建线帽样式(If(i = 0, CapStyle.Round, CapStyle.Flat), If(i = 段数 - 1, CapStyle.Round, CapStyle.Flat))
+            Using geo = 创建圆弧几何(rect, 段起始角, 段跨度)
+                context.DeviceContext.DrawGeometry(geo, brush, penWidth, strokeStyle)
+            End Using
+        Next
+    End Sub
+
+    Private Sub 绘制渐变弧_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache, rect As RectangleF, penWidth As Single, startAngle As Single, fillSweep As Single, totalSweep As Single)
         If rt Is Nothing OrElse penWidth <= 0 OrElse fillSweep <= 0 Then Return
         Const 步进角度 As Single = 2.0F
         Dim 段数 As Integer = Math.Max(1, CInt(Math.Ceiling(fillSweep / 步进角度)))
@@ -240,7 +337,7 @@ Public Class RoundDashBoard
         Dim startPoint As New Vector2(cx + CSng(Math.Cos(startRad)) * rx, cy + CSng(Math.Sin(startRad)) * ry)
         Dim endPoint As New Vector2(cx + CSng(Math.Cos(endRad)) * rx, cy + CSng(Math.Sin(endRad)) * ry)
 
-        Dim path As ID2D1PathGeometry = D2DGlobals.GetD2DFactory().CreatePathGeometry()
+        Dim path As ID2D1PathGeometry = D3D_D2DInterop.GetD2DFactory().CreatePathGeometry()
         Dim sink As ID2D1GeometrySink = path.Open()
         Try
             sink.BeginFigure(startPoint, FigureBegin.Hollow)
@@ -259,7 +356,7 @@ Public Class RoundDashBoard
     End Function
 
     Private Shared Function 创建线帽样式(startCap As CapStyle, endCap As CapStyle) As ID2D1StrokeStyle
-        Return D2DGlobals.GetStrokeStyle(startCap, endCap)
+        Return D3D_D2DInterop.GetStrokeStyle(startCap, endCap)
     End Function
 
     Private Shared Function 颜色插值(c1 As Color, c2 As Color, t As Single) As Color
@@ -278,13 +375,13 @@ Public Class RoundDashBoard
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End If
     End Sub
 
-    Private ReadOnly 动画助手 As New AnimationHelperV2(Me) With {.EasingMode = AnimationHelperV2.EasingModeEnum.EaseInOut}
+    Private ReadOnly 动画助手 As New V3_AnimationHelper(Me) With {.EasingMode = V3_AnimationHelper.EasingModeEnum.EaseInOut}
 
-    Private Sub 表盘动画脏区(helper As AnimationHelperV2, owner As Control, sink As AnimationHelperV2.InvalidateRegionSink)
+    Private Sub 表盘动画脏区(helper As V3_AnimationHelper, owner As Control, sink As V3_AnimationHelper.InvalidateRegionSink)
         sink.InvalidateAll()
     End Sub
 
@@ -297,17 +394,26 @@ Public Class RoundDashBoard
     Protected Overrides Sub OnEnabledChanged(e As EventArgs)
         MyBase.OnEnabledChanged(e)
         If Not Enabled Then 动画助手.StopAnimation()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Private Function DpiScale() As Single
-        Return D2DGlobals.GetCurrentDpiScale(Me)
+        Return V3_DpiContext.FromControl(Me).Scale
     End Function
+
+    Private Sub 请求V3渲染(Optional immediate As Boolean = False)
+        请求V3渲染(New Rectangle(Point.Empty, Me.Size), immediate)
+    End Sub
+
+    Private Sub 请求V3渲染(dirtyRect As Rectangle, Optional immediate As Boolean = False)
+        If Me.IsDisposed Then Return
+        V3_InvalidationRouter.RequestRender(Me, dirtyRect)
+    End Sub
 #End Region
 
 #Region "属性"
@@ -334,7 +440,7 @@ Public Class RoundDashBoard
             最小值 = value
             If 当前值 < 最小值 Then 当前值 = 最小值
             动画助手.SetImmediate(计算值比例(当前值))
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -350,7 +456,7 @@ Public Class RoundDashBoard
             最大值 = value
             If 当前值 > 最大值 Then 当前值 = 最大值
             动画助手.SetImmediate(计算值比例(当前值))
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -578,7 +684,7 @@ Public Class RoundDashBoard
 #Region "生命周期"
     Protected Overrides Sub OnFontChanged(e As EventArgs)
         MyBase.OnFontChanged(e)
-        D2DHelperV2.RefreshFontDependentRendering(Me)
+        请求V3渲染()
     End Sub
 #End Region
 

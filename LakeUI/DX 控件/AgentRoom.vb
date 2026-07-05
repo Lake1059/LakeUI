@@ -1,6 +1,8 @@
 Imports System.ComponentModel
 Imports System.Drawing.Drawing2D
+Imports System.Numerics
 Imports System.Text.RegularExpressions
+Imports Vortice.Direct2D1
 
 ''' <summary>
 ''' AI 聊天室控件：仅保留消息显示区，支持气泡消息与卡片消息、文字选取/复制、链接点击。
@@ -9,6 +11,7 @@ Imports System.Text.RegularExpressions
 <DefaultEvent("LinkClicked")>
 Public Class AgentRoom
     Inherits Control
+    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource
 
 #Region "枚举与项类型"
     Public Enum ChatItemKind
@@ -261,7 +264,7 @@ Public Class AgentRoom
     End Structure
 
     Friend ReadOnly _items As New ChatItemCollection(Me)
-    Friend ReadOnly _scrollBar As New ScrollBarRenderer()
+    Friend ReadOnly _scrollBar As New V3_ScrollBarRenderer()
     Friend _滚动偏移 As Integer = 0
     Friend _contentHeight As Integer = 0
     Friend _contentHeightDirty As Boolean = True
@@ -405,7 +408,7 @@ Public Class AgentRoom
 
     Private _backgroundSource As Control = Nothing
     <Category("LakeUI"),
-     Description("背景采样源（V2 透明背景穿透）。设置后将跨越任意层级直接采样此控件的绘制内容作为透明背景；为空时按 BackColor 协议处理。"),
+     Description("背景采样源（V3 背景图）。设置后将跨越任意层级直接采样此控件的绘制内容作为透明背景；为空时按 BackColor 协议处理。"),
      DefaultValue(GetType(Control), Nothing), Browsable(True)>
     Public Property BackgroundSource As Control
         Get
@@ -413,8 +416,8 @@ Public Class AgentRoom
         End Get
         Set(value As Control)
             If _backgroundSource IsNot value Then
-                _backgroundSource = BackgroundPenetrationV2.SetConsumerSource(Me, _backgroundSource, value)
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                _backgroundSource = D3D_BackgroundPenetration.SetBackgroundSource(Me, _backgroundSource, value)
+                RequestV3Render()
             End If
         End Set
     End Property
@@ -482,7 +485,7 @@ Public Class AgentRoom
             If _itemSpacing <> value Then
                 _itemSpacing = value
                 MarkContentLayoutDirty(0)
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                RequestV3Render()
             End If
         End Set
     End Property
@@ -496,7 +499,7 @@ Public Class AgentRoom
         Set(value As Padding)
             If _bubblePadding <> value Then
                 _bubblePadding = value
-                InvalidateAllItemsLayout() : OuterToInnerRefreshScheduler.RequestFull(Me)
+                InvalidateAllItemsLayout() : RequestV3Render()
             End If
         End Set
     End Property
@@ -521,7 +524,7 @@ Public Class AgentRoom
         Set(value As BubbleWidthMode)
             If _bubbleWidthMode <> value Then
                 _bubbleWidthMode = value
-                InvalidateAllItemsLayout() : OuterToInnerRefreshScheduler.RequestFull(Me)
+                InvalidateAllItemsLayout() : RequestV3Render()
             End If
         End Set
     End Property
@@ -536,7 +539,7 @@ Public Class AgentRoom
             value = Math.Max(0.1F, Math.Min(1.0F, value))
             If _bubbleMaxWidthRatio <> value Then
                 _bubbleMaxWidthRatio = value
-                InvalidateAllItemsLayout() : OuterToInnerRefreshScheduler.RequestFull(Me)
+                InvalidateAllItemsLayout() : RequestV3Render()
             End If
         End Set
     End Property
@@ -551,7 +554,7 @@ Public Class AgentRoom
             value = Math.Max(40, value)
             If _bubbleFixedWidth <> value Then
                 _bubbleFixedWidth = value
-                InvalidateAllItemsLayout() : OuterToInnerRefreshScheduler.RequestFull(Me)
+                InvalidateAllItemsLayout() : RequestV3Render()
             End If
         End Set
     End Property
@@ -719,7 +722,7 @@ Public Class AgentRoom
         Set(value As Padding)
             If _cardPadding <> value Then
                 _cardPadding = value
-                InvalidateAllItemsLayout() : OuterToInnerRefreshScheduler.RequestFull(Me)
+                InvalidateAllItemsLayout() : RequestV3Render()
             End If
         End Set
     End Property
@@ -734,7 +737,7 @@ Public Class AgentRoom
             value = Math.Max(0.2F, Math.Min(1.0F, value))
             If _cardMaxWidthRatio <> value Then
                 _cardMaxWidthRatio = value
-                InvalidateAllItemsLayout() : OuterToInnerRefreshScheduler.RequestFull(Me)
+                InvalidateAllItemsLayout() : RequestV3Render()
             End If
         End Set
     End Property
@@ -1461,7 +1464,7 @@ Public Class AgentRoom
         _itemLayoutTops.Clear()
         _layoutAreaWidth = -1
         MarkContentLayoutDirty(0)
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        RequestV3Render()
     End Sub
 
     ''' <summary>添加一条用户消息。</summary>
@@ -1611,15 +1614,15 @@ Public Class AgentRoom
             Dim borderSize As Integer = Dpi(_borderSize)
             Dim borderRadius As Integer = Dpi(_borderRadius)
             Dim inset As Integer = Math.Max(borderSize, If(borderRadius > 0, borderRadius \ 2, 0))
-            Dim bandWidth As Integer = Dpi(_scrollBarWidth) + ScrollBarRenderer.Margin * 4 + inset
+            Dim bandWidth As Integer = Dpi(_scrollBarWidth) + V3_ScrollBarRenderer.Margin * 4 + inset
             Dim bandLeft As Integer = Math.Max(0, Width - bandWidth)
             dirty = Rectangle.Union(dirty, New Rectangle(bandLeft, 0, Width - bandLeft, Height))
         End If
         dirty = Rectangle.Intersect(ClientRectangle, dirty)
         If dirty.Width > 0 AndAlso dirty.Height > 0 Then
-            OuterToInnerRefreshScheduler.Request(Me, dirty)
+            RequestV3Render(dirty)
         Else
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            RequestV3Render()
         End If
     End Sub
 
@@ -1643,21 +1646,21 @@ Public Class AgentRoom
         }
         Dim cached As Integer = 0
         If _textWidthCache.TryGetValue(key, cached) Then Return cached
-        cached = CInt(Math.Ceiling(TextRenderHelper.MeasureTextWidth_D2D(text, font, DpiScale(), GetTextFormatCacheForMeasure())))
+        cached = CInt(Math.Ceiling(D3D_TextMeasureHelper.MeasureTextWidth_D2D(text, font, DpiScale(), GetTextFormatCacheForMeasure())))
         If _textWidthCache.Count >= MaxTextWidthCacheEntries Then _textWidthCache.Clear()
         _textWidthCache(key) = cached
         Return cached
     End Function
 
-    Private Function GetTextFormatCacheForMeasure() As D2DGlobals.TextFormatCache
-        Return D2DHelperV2.GetCompositor(Me)?.TextFormatCache
+    Private Function GetTextFormatCacheForMeasure() As D3D_D2DInterop.TextFormatCache
+        Return Nothing
     End Function
 
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
             InvalidateAllItemsLayout()
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            RequestV3Render()
         End If
     End Sub
 
@@ -1669,7 +1672,7 @@ Public Class AgentRoom
     End Sub
 
     Private Function DpiScale() As Single
-        Return D2DGlobals.GetCurrentDpiScale(Me)
+        Return V3_DpiContext.FromControl(Me).Scale
     End Function
 
     Private Function Dpi(value As Integer) As Integer
@@ -1691,7 +1694,7 @@ Public Class AgentRoom
 
     Private Function GetLineHeight(font As Font) As Integer
         If font Is Nothing Then Return Dpi(18)
-        Return CInt(Math.Ceiling(font.GetHeight(D2DGlobals.GetCurrentDpi(Me))))
+        Return CInt(Math.Ceiling(font.GetHeight(V3_DpiContext.FromControl(Me).Dpi)))
     End Function
 
     Private Sub InvalidateMarkdownRenderers()
@@ -1700,7 +1703,7 @@ Public Class AgentRoom
             it.NeedsRelayout = True
         Next
         MarkContentLayoutDirty(0)
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        RequestV3Render()
     End Sub
 
     Friend Sub ReleaseMarkdownRenderer(it As ChatItem)
@@ -1773,7 +1776,7 @@ Public Class AgentRoom
 
         ConfigureMarkdownRenderer(it.MarkdownRenderer, it)
         Dim safeWidth As Integer = Math.Max(1, contentWidth)
-        it.MarkdownRenderer.PrepareEmbeddedContent(safeWidth, D2DGlobals.GetCurrentDpi(Me), Me)
+        it.MarkdownRenderer.PrepareEmbeddedContent(safeWidth, V3_DpiContext.FromControl(Me).Dpi, Me)
         If it.MarkdownRendererSubmittedTextVersion <> it.TextVersion OrElse it.MarkdownRendererWidth <> safeWidth Then
             If it.MarkdownRendererWidth = safeWidth AndAlso it.MarkdownRendererSubmittedTextVersion >= 0 Then
                 If Not it.HasMarkdownRendererAppend Then
@@ -1906,7 +1909,7 @@ Public Class AgentRoom
         Dim pad As Padding = Dpi(Me.Padding)
         Dim x As Integer = inset + pad.Left
         Dim y As Integer = inset + pad.Top
-        Dim sbReserved As Integer = If(_scrollBarWidth > 0, Dpi(_scrollBarWidth) + ScrollBarRenderer.Margin * 2, 0)
+        Dim sbReserved As Integer = If(_scrollBarWidth > 0, Dpi(_scrollBarWidth) + V3_ScrollBarRenderer.Margin * 2, 0)
         Dim w As Integer = Math.Max(0, Width - inset * 2 - pad.Horizontal - sbReserved)
         Dim h As Integer = Math.Max(0, Height - inset * 2 - pad.Vertical)
         Return New Rectangle(x, y, w, h)
@@ -1917,7 +1920,7 @@ Public Class AgentRoom
     End Function
 
     Private Sub EnsureLayout()
-        Dim currentDpi As Integer = D2DGlobals.GetCurrentDpi(Me)
+        Dim currentDpi As Integer = V3_DpiContext.FromControl(Me).Dpi
         If currentDpi > 0 AndAlso currentDpi <> _layoutDpi Then
             _layoutDpi = currentDpi
             InvalidateAllItemsLayout()
@@ -2158,122 +2161,277 @@ Public Class AgentRoom
     End Function
 
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
-        ' V2 契约：显式 BackgroundSource 由 OnPaint 内绘制穿透底图；否则交给基类处理透明 BackColor。
         If _backgroundSource IsNot Nothing Then Return
         MyBase.OnPaintBackground(e)
     End Sub
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
+        If Not D3D_PaintBridge.PaintRenderable(e, Me, Me, 1) Then MyBase.OnPaint(e)
+    End Sub
+
+    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
         EnsureLayout()
         If Me.Width < 1 OrElse Me.Height < 1 Then Return
 
-        Dim ssaa As Integer = D2DHelperV2.GetEffectiveSsaaScale(_superSamplingScale)
+        Dim borderSize As Integer = Dpi(_borderSize)
+        Dim borderRadius As Integer = Dpi(_borderRadius)
+        Dim scrollBarWidth As Integer = Dpi(_scrollBarWidth)
+        Dim scaledPadding As Padding = Dpi(Me.Padding)
+        Dim bgRect As RectangleF = GetCenteredStrokeRect(New RectangleF(0, 0, Width, Height), borderSize)
 
-        Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
-            If scope Is Nothing Then Return
+        If _backgroundSource IsNot Nothing Then
+            context.DrawBackgroundSource(Me, _backgroundSource, New RectangleF(0, 0, Width, Height))
+        End If
 
-            ' 背景层：显式 BackgroundSource 绘制穿透底图；半透明 BackColor 作为底层遮罩。
-            If _backgroundSource IsNot Nothing Then
-                BackgroundPenetrationV2.PaintBackground(Me, scope, _backgroundSource)
-            ElseIf MyBase.BackColor.A > 0 AndAlso MyBase.BackColor.A < 255 Then
-                Dim bgLayer = scope.BackgroundLayer
-                Dim bgBrush = scope.Compositor.BrushCache.[Get](bgLayer, MyBase.BackColor)
-                If bgBrush IsNot Nothing Then
-                    bgLayer.FillRectangle(D2DGlobals.ToD2DRect(New RectangleF(0, 0, Me.Width, Me.Height)), bgBrush)
+        Dim backColorMask As Color = MyBase.BackColor
+        If backColorMask.A > 0 AndAlso backColorMask.A < 255 Then FillRoundedRect_GPU(context, bgRect, borderRadius, backColorMask)
+        If _backColor1.A > 0 Then FillRoundedRect_GPU(context, bgRect, borderRadius, _backColor1)
+
+        Dim area As Rectangle = GetContentArea()
+        Dim font As Font = Me.Font
+        Dim lineHeight As Integer = GetLineHeight(font)
+        Dim firstVisible As Integer
+        Dim lastVisible As Integer
+        GetVisibleItemRange(area, firstVisible, lastVisible)
+
+        Using context.PushClip(New RectangleF(area.Left, area.Top, area.Width, area.Height))
+            For i As Integer = firstVisible To lastVisible
+                Dim it = _items(i)
+                Dim r As Rectangle = GetItemViewportRect(i, area)
+                DrawItemShapes_GPU(context, it, r, font, lineHeight, i)
+                If ShouldUseMarkdown(it) Then DrawMarkdownItem_GPU(context, it, r, area)
+                DrawItemText_GPU(context, it, r, font, lineHeight)
+            Next
+        End Using
+
+        Dim viewH As Integer = area.Height
+        Dim totalH As Integer = Math.Max(viewH, _contentHeight)
+        If _contentHeight > viewH AndAlso scrollBarWidth > 0 Then
+            _scrollBar.ComputeLayout(Width, Height, borderSize, borderRadius,
+                                     scaledPadding.Top, scaledPadding.Bottom,
+                                     scrollBarWidth, totalH, viewH, _滚动偏移)
+            DrawScrollBar_GPU(context, scrollBarWidth)
+        End If
+
+        If borderSize > 0 Then DrawRoundedBorder_GPU(context, bgRect, borderRadius, _borderColor, borderSize)
+    End Sub
+
+    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+        Return New Rectangle(Point.Empty, Me.Size)
+    End Function
+
+    Private Sub RequestV3Render(Optional immediate As Boolean = False)
+        RequestV3Render(New Rectangle(Point.Empty, Me.Size), immediate)
+    End Sub
+
+    Private Sub RequestV3Render(dirtyRect As Rectangle, Optional immediate As Boolean = False)
+        If Me.IsDisposed Then Return
+        V3_InvalidationRouter.RequestRender(Me, dirtyRect)
+    End Sub
+
+    Private Sub InvalidateV3TextResources()
+        D3D_RenderCore.InvalidateExistingTextResources(Me)
+    End Sub
+
+    Private Sub DrawItemShapes_GPU(context As D3D_PaintContext,
+                                   it As ChatItem,
+                                   areaItemRect As Rectangle,
+                                   font As Font,
+                                   lineHeight As Integer,
+                                   itemIndex As Integer)
+        Dim isCard As Boolean = (it.Kind = ChatItemKind.Card)
+        Dim bubbleAbs As New Rectangle(areaItemRect.X + it.BubbleRect.X,
+                                        areaItemRect.Y + it.BubbleRect.Y,
+                                        it.BubbleRect.Width, it.BubbleRect.Height)
+        Dim backColor As Color
+        If isCard Then
+            backColor = _cardBackColor
+        ElseIf it.Kind = ChatItemKind.UserMessage Then
+            backColor = _userBubbleBackColor
+        Else
+            backColor = _assistantBubbleBackColor
+        End If
+        Dim radius As Integer = If(isCard, Dpi(_cardRadius), Dpi(_bubbleRadius))
+        Dim borderSize As Integer = If(isCard, Dpi(_cardBorderSize), 0)
+        Dim rectF As RectangleF = GetCenteredStrokeRect(
+            New RectangleF(bubbleAbs.X, bubbleAbs.Y, bubbleAbs.Width, bubbleAbs.Height),
+            If(isCard, CSng(borderSize), 0.0F))
+
+        FillRoundedRect_GPU(context, rectF, radius, backColor)
+        If isCard AndAlso borderSize > 0 Then DrawRoundedBorder_GPU(context, rectF, radius, _cardBorderColor, borderSize)
+        DrawSelectionForItem_GPU(context, it, itemIndex, areaItemRect, font, lineHeight)
+    End Sub
+
+    Private Sub DrawSelectionForItem_GPU(context As D3D_PaintContext,
+                                         it As ChatItem,
+                                         itemIndex As Integer,
+                                         areaItemRect As Rectangle,
+                                         font As Font,
+                                         lineHeight As Integer)
+        If ShouldUseMarkdown(it) OrElse Not _hasSelection Then Return
+        Dim rangeStart, rangeEnd As TextPos
+        GetNormalizedSelection(rangeStart, rangeEnd)
+        If itemIndex < rangeStart.ItemIndex OrElse itemIndex > rangeEnd.ItemIndex Then Return
+        Dim selStart As Integer = If(itemIndex = rangeStart.ItemIndex, rangeStart.CharIndex, 0)
+        Dim selEnd As Integer = If(itemIndex = rangeEnd.ItemIndex, rangeEnd.CharIndex, it.Text.Length)
+        If selEnd <= selStart Then Return
+
+        Dim textX As Integer = areaItemRect.X + it.TextOriginX
+        Dim textY As Integer = areaItemRect.Y + it.TextOriginY
+        For li = 0 To it.LineRanges.Count - 1
+            Dim lr = it.LineRanges(li)
+            Dim lineS As Integer = lr.Start, lineE As Integer = lr.Start + lr.Length
+            Dim a As Integer = Math.Max(selStart, lineS)
+            Dim b As Integer = Math.Min(selEnd, lineE)
+            If b <= a Then Continue For
+            Dim line As String = it.Text.Substring(lr.Start, lr.Length)
+            Dim preW As Integer = MeasureTextWidthCached(line.Substring(0, a - lineS), font, lineHeight)
+            Dim segW As Integer = MeasureTextWidthCached(line.Substring(a - lineS, b - a), font, lineHeight)
+            context.FillRectangle(New RectangleF(textX + preW, textY + li * lineHeight, segW, lineHeight), _selectionBackColor)
+        Next
+    End Sub
+
+    Private Sub DrawItemText_GPU(context As D3D_PaintContext,
+                                 it As ChatItem,
+                                 areaItemRect As Rectangle,
+                                 font As Font,
+                                 lineHeight As Integer)
+        If ShouldUseMarkdown(it) Then Return
+        Dim isCard As Boolean = (it.Kind = ChatItemKind.Card)
+        Dim foreColor As Color
+        If isCard Then
+            foreColor = _cardForeColor
+        ElseIf it.Kind = ChatItemKind.UserMessage Then
+            foreColor = _userBubbleForeColor
+        Else
+            foreColor = _assistantBubbleForeColor
+        End If
+        Dim textX As Integer = areaItemRect.X + it.TextOriginX
+        Dim textY As Integer = areaItemRect.Y + it.TextOriginY
+        For li = 0 To it.LineRanges.Count - 1
+            Dim lr = it.LineRanges(li)
+            Dim line As String = it.Text.Substring(lr.Start, lr.Length)
+            DrawLineWithLinks_GPU(context, it, line, lr.Start, textX, textY + li * lineHeight, font, lineHeight, foreColor)
+        Next
+    End Sub
+
+    Private Sub DrawMarkdownItem_GPU(context As D3D_PaintContext,
+                                     it As ChatItem,
+                                     areaItemRect As Rectangle,
+                                     viewportRect As Rectangle)
+        Dim renderer = it.MarkdownRenderer
+        If renderer Is Nothing OrElse renderer.IsDisposed Then Return
+
+        Dim origin As New Point(areaItemRect.X + it.TextOriginX, areaItemRect.Y + it.TextOriginY)
+        Dim visibleLocalTop As Integer = Math.Max(0, viewportRect.Top - origin.Y)
+        Dim visibleLocalBottom As Integer = Math.Min(renderer.ContentHeight, viewportRect.Bottom - origin.Y)
+        If visibleLocalBottom <= visibleLocalTop Then Return
+
+        Dim clipSize As New Size(Math.Max(1, renderer.Width), Math.Max(1, renderer.ContentHeight))
+        renderer.DrawEmbeddedContent_GPU(context, origin, clipSize, drawBackground:=False,
+                                         visibleLocalTop:=visibleLocalTop,
+                                         visibleLocalBottom:=visibleLocalBottom)
+    End Sub
+
+    Private Sub DrawLineWithLinks_GPU(context As D3D_PaintContext,
+                                      it As ChatItem,
+                                      line As String,
+                                      lineStartCharIndex As Integer,
+                                      x As Integer,
+                                      y As Integer,
+                                      font As Font,
+                                      lineHeight As Integer,
+                                      normalColor As Color)
+        If String.IsNullOrEmpty(line) Then Return
+        Dim curX As Integer = x
+        Dim lineEnd As Integer = lineStartCharIndex + line.Length
+        Dim p As Integer = lineStartCharIndex
+        While p < lineEnd
+            Dim link = FindLinkAt(it, p)
+            If link.HasValue AndAlso link.Value.Start < lineEnd Then
+                If link.Value.Start > p Then
+                    DrawTextSegment_GPU(context, line, p - lineStartCharIndex, link.Value.Start - p,
+                                        Nothing, curX, y, font, lineHeight, normalColor)
                 End If
-            End If
-
-            Dim gRT As Vortice.Direct2D1.ID2D1RenderTarget = scope.GraphicsLayer
-            Dim brushCache = scope.Compositor.BrushCache
-            Dim borderSize As Integer = Dpi(_borderSize)
-            Dim borderRadius As Integer = Dpi(_borderRadius)
-            Dim scrollBarWidth As Integer = Dpi(_scrollBarWidth)
-            Dim scaledPadding As Padding = Dpi(Me.Padding)
-            Dim bgRect As RectangleF = GetCenteredStrokeRect(New RectangleF(0, 0, Width, Height), borderSize)
-
-            ' 主体背景：BackColor 仅作透明/遮罩协议，BackColor1 负责控件主体填充。
-            Dim backColorMask As Color = MyBase.BackColor
-            If borderRadius > 0 Then
-                Using geo = RectangleRenderer.创建圆角矩形几何(bgRect, borderRadius)
-                    If backColorMask.A > 0 AndAlso backColorMask.A < 255 Then
-                        RectangleRenderer.绘制圆角背景_D2D(gRT, geo, bgRect, backColorMask, Color.Empty, 0, brushCache)
-                    End If
-                    If _backColor1.A > 0 Then
-                        RectangleRenderer.绘制圆角背景_D2D(gRT, geo, bgRect, _backColor1, Color.Empty, 0, brushCache)
-                    End If
-                End Using
+                Dim segE As Integer = Math.Min(lineEnd, link.Value.Start + link.Value.Length)
+                Dim segStart As Integer = Math.Max(p, link.Value.Start)
+                DrawTextSegment_GPU(context, line, segStart - lineStartCharIndex, segE - segStart,
+                                    link.Value.Url, curX, y, font, lineHeight, normalColor)
+                p = segE
             Else
-                If backColorMask.A > 0 AndAlso backColorMask.A < 255 Then
-                    RectangleRenderer.绘制矩形背景_D2D(gRT, bgRect, backColorMask, Color.Empty, 0, brushCache)
-                End If
-                If _backColor1.A > 0 Then
-                    RectangleRenderer.绘制矩形背景_D2D(gRT, bgRect, _backColor1, Color.Empty, 0, brushCache)
-                End If
+                DrawTextSegment_GPU(context, line, p - lineStartCharIndex, lineEnd - p,
+                                    Nothing, curX, y, font, lineHeight, normalColor)
+                p = lineEnd
             End If
+        End While
+    End Sub
 
-            ' 气泡形状 + 选区填充（GraphicsLayer 上、文字之下）
-            Dim area As Rectangle = GetContentArea()
-            Dim font As Font = Me.Font
-            Dim lineHeight As Integer = GetLineHeight(font)
-            Dim firstVisible As Integer
-            Dim lastVisible As Integer
-            GetVisibleItemRange(area, firstVisible, lastVisible)
-            gRT.PushAxisAlignedClip(New Vortice.RawRectF(area.Left, area.Top, area.Right, area.Bottom),
-                                     Vortice.Direct2D1.AntialiasMode.PerPrimitive)
-            Try
-                For i As Integer = firstVisible To lastVisible
-                    Dim it = _items(i)
-                    Dim r As Rectangle = GetItemViewportRect(i, area)
-                    DrawItemShapes_D2D(gRT, brushCache, it, r, font, lineHeight, i)
-                    If ShouldUseMarkdown(it) Then DrawMarkdownItem_D2D(gRT, scope.Compositor, it, r, area)
-                Next
-            Finally
-                gRT.PopAxisAlignedClip()
-            End Try
-
-            ' 滚动条
-            Dim viewH As Integer = area.Height
-            Dim totalH As Integer = Math.Max(viewH, _contentHeight)
-            If _contentHeight > viewH AndAlso scrollBarWidth > 0 Then
-                _scrollBar.ComputeLayout(Width, Height, borderSize, borderRadius,
-                                         scaledPadding.Top, scaledPadding.Bottom,
-                                         scrollBarWidth, totalH, viewH, _滚动偏移)
-                _scrollBar.Draw_D2D(gRT, Width, Height, borderSize, borderRadius, scrollBarWidth,
-                                    _scrollBarTrackColor, _scrollBarThumbColor, _scrollBarThumbHoverColor, brushCache)
+    Private Sub DrawTextSegment_GPU(context As D3D_PaintContext,
+                                    line As String,
+                                    startIndex As Integer,
+                                    length As Integer,
+                                    url As String,
+                                    ByRef curX As Integer,
+                                    y As Integer,
+                                    font As Font,
+                                    lineHeight As Integer,
+                                    normalColor As Color)
+        If length <= 0 Then Return
+        Dim part As String = line.Substring(startIndex, length)
+        Dim w As Integer = MeasureTextWidthCached(part, font, lineHeight)
+        If url IsNot Nothing Then
+            Dim col As Color = If(url = _hoverLinkUrl, _linkHoverColor, _linkColor)
+            context.DrawText(part, font, col, New RectangleF(curX, y, w, lineHeight), Vortice.DirectWrite.TextAlignment.Leading, Vortice.DirectWrite.ParagraphAlignment.Center)
+            If _linkUnderline Then
+                Dim br = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, col, context.DeviceGeneration)
+                Dim underlineY As Integer = y + lineHeight - Dpi(_linkUnderlineOffset)
+                context.DeviceContext.DrawLine(New Vector2(curX, underlineY),
+                                               New Vector2(curX + w, underlineY),
+                                               br,
+                                               Math.Max(1.0F, Dpi(_linkUnderlineThickness)))
             End If
+        Else
+            context.DrawText(part, font, normalColor, New RectangleF(curX, y, w, lineHeight), Vortice.DirectWrite.TextAlignment.Leading, Vortice.DirectWrite.ParagraphAlignment.Center)
+        End If
+        curX += w
+    End Sub
 
-            ' 边框
-            If borderSize > 0 Then
-                Dim brRect As RectangleF = bgRect
-                If borderRadius > 0 Then
-                    RectangleRenderer.绘制圆角边框_D2D(gRT, brRect, borderRadius, _borderColor, borderSize, brushCache)
-                Else
-                    RectangleRenderer.绘制矩形边框_D2D(gRT, brRect, _borderColor, borderSize, brushCache)
-                End If
-            End If
+    Private Sub DrawScrollBar_GPU(context As D3D_PaintContext, scrollBarWidth As Integer)
+        If _scrollBar.TrackRect.IsEmpty Then Return
+        Dim width As Single = Math.Max(1.0F, scrollBarWidth)
+        Dim trackArea As New RectangleF(_scrollBar.VisualLeft, _scrollBar.TrackRect.Y, width, _scrollBar.TrackRect.Height)
+        Dim thumbArea As New RectangleF(_scrollBar.VisualLeft, _scrollBar.ThumbRect.Y, width, _scrollBar.ThumbRect.Height)
+        FillRoundedRect_GPU(context, trackArea, Math.Min(width / 2.0F, trackArea.Height / 2.0F), _scrollBarTrackColor)
+        Dim thumbColor = If(_scrollBar.IsDragging OrElse _scrollBar.IsHover, _scrollBarThumbHoverColor, _scrollBarThumbColor)
+        FillRoundedRect_GPU(context, thumbArea, Math.Min(width / 2.0F, thumbArea.Height / 2.0F), thumbColor)
+    End Sub
 
-            scope.FlushGraphics()
+    Private Sub FillRoundedRect_GPU(context As D3D_PaintContext, rect As RectangleF, radius As Single, color As Color)
+        If color.A = 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
+        If radius <= 0 Then
+            context.DeviceContext.FillRectangle(D3D_PaintContext.ToRawRect(rect), brush)
+            Return
+        End If
+        Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New RoundedRectangle(rect, radius, radius))
+            context.DeviceContext.FillGeometry(geo, brush)
+        End Using
+    End Sub
 
-            ' 文字层：所有气泡文本 + 链接
-            Dim textRT As Vortice.Direct2D1.ID2D1RenderTarget = scope.TextLayer
-            Dim tfc = scope.Compositor.TextFormatCache
-            Dim dpiS As Single = D2DGlobals.GetCurrentDpiScale(Me)
-            textRT.PushAxisAlignedClip(New Vortice.RawRectF(area.Left, area.Top, area.Right, area.Bottom),
-                                       Vortice.Direct2D1.AntialiasMode.PerPrimitive)
-            Try
-                For i As Integer = firstVisible To lastVisible
-                    Dim it = _items(i)
-                    Dim r As Rectangle = GetItemViewportRect(i, area)
-                    DrawItemText_D2D(textRT, brushCache, tfc, dpiS, it, r, font, lineHeight)
-                Next
-            Finally
-                textRT.PopAxisAlignedClip()
-            End Try
+    Private Sub DrawRoundedBorder_GPU(context As D3D_PaintContext, rect As RectangleF, radius As Single, color As Color, strokeWidth As Single)
+        If color.A = 0 OrElse strokeWidth <= 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
+        If radius <= 0 Then
+            context.DeviceContext.DrawRectangle(D3D_PaintContext.ToRawRect(rect), brush, strokeWidth)
+            Return
+        End If
+        Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New RoundedRectangle(rect, radius, radius))
+            context.DeviceContext.DrawGeometry(geo, brush, strokeWidth)
         End Using
     End Sub
 
     Private Sub DrawItemShapes_D2D(rt As Vortice.Direct2D1.ID2D1RenderTarget,
-                                    brushCache As D2DGlobals.SolidColorBrushCache,
+                                    brushCache As D3D_D2DInterop.SolidColorBrushCache,
                                     it As ChatItem, areaItemRect As Rectangle,
                                     font As Font, lineHeight As Integer, itemIndex As Integer)
         Dim isCard As Boolean = (it.Kind = ChatItemKind.Card)
@@ -2294,16 +2452,16 @@ Public Class AgentRoom
             New RectangleF(bubbleAbs.X, bubbleAbs.Y, bubbleAbs.Width, bubbleAbs.Height),
             If(isCard, CSng(borderSize), 0.0F))
         If radius > 0 Then
-            Using geo = RectangleRenderer.创建圆角矩形几何(rectF, radius)
-                RectangleRenderer.绘制圆角背景_D2D(rt, geo, rectF, backColor, Color.Empty, 0, brushCache)
+            Using geo = D3D_RectangleRenderer.创建圆角矩形几何(rectF, radius)
+                D3D_RectangleRenderer.绘制圆角背景_D2D(rt, geo, rectF, backColor, Color.Empty, 0, brushCache)
                 If isCard AndAlso borderSize > 0 Then
-                    RectangleRenderer.绘制圆角边框_D2D(rt, geo, _cardBorderColor, borderSize, brushCache)
+                    D3D_RectangleRenderer.绘制圆角边框_D2D(rt, geo, _cardBorderColor, borderSize, brushCache)
                 End If
             End Using
         Else
-            RectangleRenderer.绘制矩形背景_D2D(rt, rectF, backColor, Color.Empty, 0, brushCache)
+            D3D_RectangleRenderer.绘制矩形背景_D2D(rt, rectF, backColor, Color.Empty, 0, brushCache)
             If isCard AndAlso borderSize > 0 Then
-                RectangleRenderer.绘制矩形边框_D2D(rt, rectF, _cardBorderColor, borderSize, brushCache)
+                D3D_RectangleRenderer.绘制矩形边框_D2D(rt, rectF, _cardBorderColor, borderSize, brushCache)
             End If
         End If
 
@@ -2312,7 +2470,7 @@ Public Class AgentRoom
     End Sub
 
     Private Sub DrawSelectionForItem_D2D(rt As Vortice.Direct2D1.ID2D1RenderTarget,
-                                          brushCache As D2DGlobals.SolidColorBrushCache,
+                                          brushCache As D3D_D2DInterop.SolidColorBrushCache,
                                           it As ChatItem, itemIndex As Integer,
                                           areaItemRect As Rectangle, font As Font, lineHeight As Integer)
         If ShouldUseMarkdown(it) Then Return
@@ -2340,8 +2498,8 @@ Public Class AgentRoom
     End Sub
 
     Private Sub DrawItemText_D2D(rt As Vortice.Direct2D1.ID2D1RenderTarget,
-                                  brushCache As D2DGlobals.SolidColorBrushCache,
-                                  tfc As D2DGlobals.TextFormatCache, dpiS As Single,
+                                  brushCache As D3D_D2DInterop.SolidColorBrushCache,
+                                  tfc As D3D_D2DInterop.TextFormatCache, dpiS As Single,
                                   it As ChatItem, areaItemRect As Rectangle, font As Font, lineHeight As Integer)
         If ShouldUseMarkdown(it) Then Return
         Dim isCard As Boolean = (it.Kind = ChatItemKind.Card)
@@ -2363,28 +2521,10 @@ Public Class AgentRoom
         Next
     End Sub
 
-    Private Sub DrawMarkdownItem_D2D(rt As Vortice.Direct2D1.ID2D1RenderTarget,
-                                     compositor As WindowCompositor,
-                                     it As ChatItem,
-                                     areaItemRect As Rectangle,
-                                     viewportRect As Rectangle)
-        Dim renderer = it.MarkdownRenderer
-        If renderer Is Nothing OrElse renderer.IsDisposed Then Return
-
-        Dim origin As New Point(areaItemRect.X + it.TextOriginX, areaItemRect.Y + it.TextOriginY)
-        Dim visibleLocalTop As Integer = Math.Max(0, viewportRect.Top - origin.Y)
-        Dim visibleLocalBottom As Integer = Math.Min(renderer.ContentHeight, viewportRect.Bottom - origin.Y)
-        If visibleLocalBottom <= visibleLocalTop Then Return
-
-        Dim clipSize As New Size(Math.Max(1, renderer.Width), Math.Max(1, renderer.ContentHeight))
-        renderer.DrawEmbeddedContent_D2D(rt, compositor, origin, clipSize, drawBackground:=False,
-                                         visibleLocalTop:=visibleLocalTop,
-                                         visibleLocalBottom:=visibleLocalBottom)
-    End Sub
 
     Private Sub DrawLineWithLinks_D2D(rt As Vortice.Direct2D1.ID2D1RenderTarget,
-                                       brushCache As D2DGlobals.SolidColorBrushCache,
-                                       tfc As D2DGlobals.TextFormatCache, dpiS As Single,
+                                       brushCache As D3D_D2DInterop.SolidColorBrushCache,
+                                       tfc As D3D_D2DInterop.TextFormatCache, dpiS As Single,
                                        it As ChatItem, line As String, lineStartCharIndex As Integer,
                                        x As Integer, y As Integer, font As Font, lineHeight As Integer,
                                        normalColor As Color)
@@ -2417,8 +2557,8 @@ Public Class AgentRoom
     End Sub
 
     Private Sub DrawTextSegment_D2D(rt As Vortice.Direct2D1.ID2D1RenderTarget,
-                                    brushCache As D2DGlobals.SolidColorBrushCache,
-                                    tfc As D2DGlobals.TextFormatCache, dpiS As Single,
+                                    brushCache As D3D_D2DInterop.SolidColorBrushCache,
+                                    tfc As D3D_D2DInterop.TextFormatCache, dpiS As Single,
                                     line As String, startIndex As Integer, length As Integer, url As String,
                                     ByRef curX As Integer, y As Integer, font As Font, lineHeight As Integer,
                                     normalColor As Color, flags As TextFormatFlags)
@@ -2427,7 +2567,7 @@ Public Class AgentRoom
         Dim w As Integer = MeasureTextWidthCached(part, font, lineHeight)
         If url IsNot Nothing Then
             Dim col As Color = If(url = _hoverLinkUrl, _linkHoverColor, _linkColor)
-            D2DTextRenderer.DrawText(rt, part, font, New Rectangle(curX, y, w, lineHeight), col, flags, dpiS, tfc, brushCache)
+            D3D_TextInterop.DrawText(rt, part, font, New Rectangle(curX, y, w, lineHeight), col, flags, dpiS, tfc, brushCache)
             If _linkUnderline Then
                 Dim br = brushCache.Get(rt, col)
                 Dim underlineY As Integer = y + lineHeight - Dpi(_linkUnderlineOffset)
@@ -2435,7 +2575,7 @@ Public Class AgentRoom
                                 New System.Numerics.Vector2(curX + w, underlineY), br, Math.Max(1.0F, Dpi(_linkUnderlineThickness)))
             End If
         Else
-            D2DTextRenderer.DrawText(rt, part, font, New Rectangle(curX, y, w, lineHeight), normalColor, flags, dpiS, tfc, brushCache)
+            D3D_TextInterop.DrawText(rt, part, font, New Rectangle(curX, y, w, lineHeight), normalColor, flags, dpiS, tfc, brushCache)
         End If
         curX += w
     End Sub
@@ -2748,7 +2888,7 @@ Public Class AgentRoom
             Dim li As Integer = Math.Max(0, Math.Min(it.LineRanges.Count - 1, relY \ Math.Max(1, lineHeight)))
             Dim lr = it.LineRanges(li)
             Dim line As String = it.Text.Substring(lr.Start, lr.Length)
-            Dim col As Integer = TextRenderHelper.FindColFromX_D2D(line, pt.X - textX, font, DpiScale(), GetTextFormatCacheForMeasure())
+            Dim col As Integer = D3D_TextMeasureHelper.FindColFromX_D2D(line, pt.X - textX, font, DpiScale(), GetTextFormatCacheForMeasure())
             result = New TextPos(i, lr.Start + col)
             Return True
         Next
@@ -2791,7 +2931,7 @@ Public Class AgentRoom
             If li < 0 OrElse li >= it.LineRanges.Count Then Continue For
             Dim lr = it.LineRanges(li)
             Dim line As String = it.Text.Substring(lr.Start, lr.Length)
-            Dim col As Integer = TextRenderHelper.FindColFromX_D2D(line, pt.X - textX, font, DpiScale(), GetTextFormatCacheForMeasure())
+            Dim col As Integer = D3D_TextMeasureHelper.FindColFromX_D2D(line, pt.X - textX, font, DpiScale(), GetTextFormatCacheForMeasure())
             Dim absCharIndex As Integer = lr.Start + col
             it.EnsureLinksCurrent()
             For Each ls In it.LinkSpans
@@ -2944,14 +3084,15 @@ Public Class AgentRoom
 
     Protected Overrides Sub OnSizeChanged(e As EventArgs)
         MyBase.OnSizeChanged(e)
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        RequestV3Render()
     End Sub
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
         MyBase.OnFontChanged(e)
         InvalidateAllItemsLayout()
         InvalidateMarkdownRenderers()
-        D2DHelperV2.RefreshFontDependentRendering(Me)
+        InvalidateV3TextResources()
+        RequestV3Render()
     End Sub
 
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
@@ -2959,8 +3100,8 @@ Public Class AgentRoom
         InvalidateMeasureCache()
         InvalidateMarkdownRenderers()
         InvalidateAllItemsLayout()
-        D2DHelperV2.RefreshFontDependentRendering(Me)
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        InvalidateV3TextResources()
+        RequestV3Render()
     End Sub
 
     Protected Overrides Function IsInputKey(keyData As Keys) As Boolean
@@ -3106,6 +3247,6 @@ Friend Module ChatTextHelper
     Private Function InvokeMeasureWidth(text As String, font As Font, lineHeight As Integer,
                                         measureWidth As Func(Of String, Font, Integer, Integer)) As Integer
         If measureWidth IsNot Nothing Then Return measureWidth(text, font, lineHeight)
-        Return TextRenderHelper.MeasureTextWidth(text, font, lineHeight)
+        Return D3D_TextMeasureHelper.MeasureTextWidth(text, font, lineHeight)
     End Function
 End Module

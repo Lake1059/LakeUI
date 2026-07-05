@@ -8,6 +8,7 @@ Imports Vortice.DirectWrite
 ''' </summary>
 <DefaultProperty("Items")>
 Partial Public Class EasyStatesPanel
+    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource
 
 #Region "数据模型"
 
@@ -166,9 +167,9 @@ Partial Public Class EasyStatesPanel
 #Region "字段"
 
     Private ReadOnly _items As New StateItemCollection(Me)
-    Private ReadOnly _scrollBar As New ScrollBarRenderer()
+    Private ReadOnly _scrollBar As New V3_ScrollBarRenderer()
     Private ReadOnly _layoutCache As New List(Of CardLayout)
-    Private ReadOnly _scrollAnimationHelper As New AnimationHelperV2(Me) With {.Duration = 220, .FPS = 60}
+    Private ReadOnly _scrollAnimationHelper As New V3_AnimationHelper(Me) With {.Duration = 220, .FPS = 60}
 
     Private Structure CardLayout
         Public Index As Integer
@@ -212,26 +213,35 @@ Partial Public Class EasyStatesPanel
 #Region "通用"
 
     Private Function DpiScale() As Single
-        Return D2DGlobals.GetCurrentDpiScale(Me)
+        Return V3_DpiContext.FromControl(Me).Scale
     End Function
+
+    Private Sub 请求V3渲染(Optional immediate As Boolean = False)
+        请求V3渲染(New Rectangle(Point.Empty, Me.Size), immediate)
+    End Sub
+
+    Private Sub 请求V3渲染(dirtyRect As Rectangle, Optional immediate As Boolean = False)
+        If Me.IsDisposed Then Return
+        V3_InvalidationRouter.RequestRender(Me, dirtyRect)
+    End Sub
 
     Private Sub SetValue(Of T)(ByRef field As T, value As T, Optional affectsLayout As Boolean = False)
         If EqualityComparer(Of T).Default.Equals(field, value) Then Return
         field = value
         If affectsLayout Then _layoutDirty = True
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Friend Sub NotifyItemContentChanged()
         _layoutDirty = True
         ClampScrollOffsets()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Public Sub Redraw()
         _layoutDirty = True
         ClampScrollOffsets()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Private Shared Function TextRenderGuard(dpiScale As Single) As Single
@@ -278,7 +288,7 @@ Partial Public Class EasyStatesPanel
 
     Private _backgroundSource As Control = Nothing
     <Category("LakeUI"),
-     Description("背景采样源（V2 透明背景穿透）。设置后将跨越任意层级直接采样此控件的绘制内容作为透明背景。"),
+     Description("背景采样源。设置后记录关联源控件；V3 渲染由窗口合成器统一调度。"),
      DefaultValue(GetType(Control), Nothing), Browsable(True)>
     Public Property BackgroundSource As Control
         Get
@@ -286,8 +296,8 @@ Partial Public Class EasyStatesPanel
         End Get
         Set(value As Control)
             If _backgroundSource Is value Then Return
-            _backgroundSource = BackgroundPenetrationV2.SetConsumerSource(Me, _backgroundSource, value)
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            _backgroundSource = D3D_BackgroundPenetration.SetBackgroundSource(Me, _backgroundSource, value)
+            请求V3渲染()
         End Set
     End Property
 
@@ -354,7 +364,7 @@ Partial Public Class EasyStatesPanel
         Set(value As Color)
             If MyBase.ForeColor = value Then Return
             MyBase.ForeColor = value
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -381,7 +391,7 @@ Partial Public Class EasyStatesPanel
             _subTextSize = value
             ReleaseSubTextFont()
             _layoutDirty = True
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -570,7 +580,7 @@ Partial Public Class EasyStatesPanel
         End Set
     End Property
 
-    <Category("LakeUI"), Description("平滑滚动动画帧率。0 表示使用 Application.Idle 驱动。"), DefaultValue(60), Browsable(True)>
+    <Category("LakeUI"), Description("平滑滚动动画帧率。0 表示不限制帧率上限，仍使用高精度计时器驱动。"), DefaultValue(60), Browsable(True)>
     Public Property SmoothScrollFPS As Integer
         Get
             Return _scrollAnimationHelper.FPS
@@ -669,7 +679,7 @@ Partial Public Class EasyStatesPanel
         Dim needScroll As Boolean = contentH > _cardsViewportRect.Height
 
         If needScroll Then
-            Dim reserve As Single = CInt(Math.Round(_scrollBarWidth * s)) + ScrollBarRenderer.Margin * 2 + _cardSpacing * s
+            Dim reserve As Single = CInt(Math.Round(_scrollBarWidth * s)) + V3_ScrollBarRenderer.Margin * 2 + _cardSpacing * s
             _cardsViewportRect.Width = Math.Max(0.0F, _cardsViewportRect.Width - reserve)
             tempLayout.Clear()
             contentH = BuildCardLayout(_cardsViewportRect.Width, tempLayout)
@@ -731,11 +741,10 @@ Partial Public Class EasyStatesPanel
 
     Private Function CalculateCardHeight(s As Single) As Single
         Dim flags As TextFormatFlags = TextFormatFlags.Left Or TextFormatFlags.Top Or TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine
-        Dim textFormatCache = D2DHelperV2.GetCompositor(Me)?.TextFormatCache
-        Dim mainH As Single = Math.Max(1, D2DTextRenderer.MeasureText("Ag", Font, New Size(Integer.MaxValue, Integer.MaxValue), flags, s, textFormatCache).Height)
+        Dim mainH As Single = Math.Max(1, TextRenderer.MeasureText("Ag", Font, New Size(Integer.MaxValue, Integer.MaxValue), flags).Height)
         Dim subH As Single
         Dim subFont = GetSubTextFont()
-        subH = Math.Max(1, D2DTextRenderer.MeasureText("Ag", subFont, New Size(Integer.MaxValue, Integer.MaxValue), flags, s, textFormatCache).Height)
+        subH = Math.Max(1, TextRenderer.MeasureText("Ag", subFont, New Size(Integer.MaxValue, Integer.MaxValue), flags).Height)
         Dim totalTextH As Single = mainH + subH + _mainSubTextSpacing * s
         Return Math.Max(_cardMinHeight * s, totalTextH + _cardVerticalPadding * s * 2.0F + TextRenderGuard(s))
     End Function
@@ -743,8 +752,8 @@ Partial Public Class EasyStatesPanel
     Private Sub ComputeScrollBarLayout(borderPx As Integer, radiusPx As Integer, inset As Single)
         Dim s As Single = DpiScale()
         Dim scrollW As Integer = CInt(Math.Round(_scrollBarWidth * s))
-        Dim padTop As Integer = Math.Max(0, CInt(Math.Round(_cardsViewportRect.Top - inset - ScrollBarRenderer.Margin)))
-        Dim padBottom As Integer = Math.Max(0, CInt(Math.Round(Height - _cardsViewportRect.Bottom - inset - ScrollBarRenderer.Margin)))
+        Dim padTop As Integer = Math.Max(0, CInt(Math.Round(_cardsViewportRect.Top - inset - V3_ScrollBarRenderer.Margin)))
+        Dim padBottom As Integer = Math.Max(0, CInt(Math.Round(Height - _cardsViewportRect.Bottom - inset - V3_ScrollBarRenderer.Margin)))
         _scrollBar.ComputeLayout(Width, Height, borderPx, radiusPx, padTop, padBottom, scrollW,
                                  Math.Max(1, _contentHeight),
                                  Math.Max(1, CInt(Math.Floor(_cardsViewportRect.Height))),
@@ -784,46 +793,158 @@ Partial Public Class EasyStatesPanel
     End Sub
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
+        If Not D3D_PaintBridge.PaintRenderable(e, Me, Me, 1) Then MyBase.OnPaint(e)
+    End Sub
+
+    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+        If context Is Nothing OrElse Width <= 0 OrElse Height <= 0 Then Return
         EnsureLayout()
 
-        Dim ssaa As Integer = D2DHelperV2.GetEffectiveSsaaScale(_superSamplingScale)
+        If _backgroundSource IsNot Nothing Then
+            context.DrawBackgroundSource(Me, _backgroundSource, New RectangleF(0, 0, Width, Height))
+        ElseIf MyBase.BackColor.A > 0 Then
+            context.FillRectangle(New RectangleF(0, 0, Width, Height), MyBase.BackColor)
+        End If
+        DrawBackgroundAndFrame_GPU(context)
+        DrawCards_GPU(context)
+        If _showVScroll Then DrawScrollBar_GPU(context)
+        DrawCardTexts_GPU(context)
+        If Not Enabled AndAlso _disabledOverlayColor.A > 0 Then DrawDisabledOverlay_GPU(context)
+    End Sub
 
-        Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
-            If scope Is Nothing Then Return
-            Dim compositor = scope.Compositor
+    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+        Return New Rectangle(Point.Empty, Me.Size)
+    End Function
 
-            If _backgroundSource IsNot Nothing Then
-                BackgroundPenetrationV2.PaintBackground(Me, scope, _backgroundSource)
-            ElseIf MyBase.BackColor.A > 0 AndAlso MyBase.BackColor.A < 255 Then
-                Dim brush = compositor.BrushCache.[Get](scope.BackgroundLayer, MyBase.BackColor)
-                If brush IsNot Nothing Then
-                    scope.BackgroundLayer.FillRectangle(D2DGlobals.ToD2DRect(New RectangleF(0, 0, Width, Height)), brush)
+    Private Sub DrawBackgroundAndFrame_GPU(context As D3D_PaintContext)
+        Dim s As Single = DpiScale()
+        Dim rect As New RectangleF(0, 0, Width, Height)
+        If _borderSize > 0 Then
+            Dim half As Single = _borderSize * s / 2.0F
+            rect.Inflate(-half, -half)
+        End If
+        Dim radius As Single = _borderRadius * s
+        If _backColor1.A > 0 Then FillRoundedRect_GPU(context, rect, radius, _backColor1)
+        If _borderSize > 0 AndAlso _borderColor.A > 0 Then DrawRoundedBorder_GPU(context, rect, radius, _borderColor, _borderSize * s)
+    End Sub
+
+    Private Sub DrawCards_GPU(context As D3D_PaintContext)
+        If _cardsViewportRect.Width <= 0 OrElse _cardsViewportRect.Height <= 0 Then Return
+        Using context.PushClip(_cardsViewportRect)
+            Dim s As Single = DpiScale()
+            For Each l In _layoutCache
+                Dim drawRect As New RectangleF(
+                    _cardsViewportRect.X + l.Bounds.X,
+                    _cardsViewportRect.Y + l.Bounds.Y - _scrollOffset,
+                    l.Bounds.Width,
+                    l.Bounds.Height)
+                If drawRect.Bottom < _cardsViewportRect.Top OrElse drawRect.Top > _cardsViewportRect.Bottom Then Continue For
+
+                If _cardBorderSize > 0 Then
+                    Dim half As Single = _cardBorderSize * s / 2.0F
+                    drawRect.Inflate(-half, -half)
                 End If
-            End If
 
-            Dim gRT As ID2D1RenderTarget = scope.GraphicsLayer
-            DrawBackgroundAndFrame(gRT, compositor.BrushCache)
-            DrawCards(gRT, compositor.BrushCache)
-            If _showVScroll Then
-                Dim s As Single = DpiScale()
-                _scrollBar.Draw_D2D(gRT, Width, Height,
-                                    CInt(Math.Round(_borderSize * s)),
-                                    CInt(Math.Round(_borderRadius * s)),
-                                    CInt(Math.Round(_scrollBarWidth * s)),
-                                    _scrollBarTrackColor, _scrollBarThumbColor, _scrollBarThumbHoverColor,
-                                    compositor.BrushCache)
-            End If
-
-            scope.FlushGraphics()
-            DrawCardTexts(scope.TextLayer, compositor.TextFormatCache, compositor.BrushCache)
-
-            If Not Enabled AndAlso _disabledOverlayColor.A > 0 Then
-                DrawDisabledOverlay(scope.DCRenderTarget, compositor.BrushCache)
-            End If
+                Dim radius As Single = _cardRadius * s
+                If _cardBackColor.A > 0 Then FillRoundedRect_GPU(context, drawRect, radius, _cardBackColor)
+                If _cardBorderSize > 0 AndAlso _cardBorderColor.A > 0 Then DrawRoundedBorder_GPU(context, drawRect, radius, _cardBorderColor, _cardBorderSize * s)
+            Next
         End Using
     End Sub
 
-    Private Sub DrawBackgroundAndFrame(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache)
+    Private Sub DrawCardTexts_GPU(context As D3D_PaintContext)
+        If _cardsViewportRect.Width <= 0 OrElse _cardsViewportRect.Height <= 0 Then Return
+        Using context.PushClip(_cardsViewportRect)
+            Dim s As Single = DpiScale()
+            Dim padX As Single = _cardHorizontalPadding * s
+            Dim padY As Single = _cardVerticalPadding * s
+            Dim lineGap As Single = _mainSubTextSpacing * s
+            Dim subFont = GetSubTextFont()
+
+            For Each l In _layoutCache
+                If l.Index < 0 OrElse l.Index >= _items.Count Then Continue For
+                Dim it = _items(l.Index)
+                If it Is Nothing Then Continue For
+
+                Dim drawRect As New RectangleF(
+                    _cardsViewportRect.X + l.Bounds.X,
+                    _cardsViewportRect.Y + l.Bounds.Y - _scrollOffset,
+                    l.Bounds.Width,
+                    l.Bounds.Height)
+                If drawRect.Bottom < _cardsViewportRect.Top OrElse drawRect.Top > _cardsViewportRect.Bottom Then Continue For
+
+                Dim textRect As New RectangleF(drawRect.X + padX,
+                                               drawRect.Y + padY,
+                                               Math.Max(0.0F, drawRect.Width - padX * 2.0F),
+                                               Math.Max(0.0F, drawRect.Height - padY * 2.0F))
+                If textRect.Width <= 0 OrElse textRect.Height <= 0 Then Continue For
+
+                Dim mainText As String = If(it.Text, "")
+                Dim subText As String = If(it.SubText, "")
+                If String.IsNullOrEmpty(mainText) AndAlso String.IsNullOrEmpty(subText) Then Continue For
+
+                Dim mainH As Single = If(String.IsNullOrEmpty(mainText), 0.0F, TextRenderer.MeasureText(mainText, Font).Height)
+                Dim subH As Single = If(String.IsNullOrEmpty(subText), 0.0F, TextRenderer.MeasureText(subText, subFont).Height)
+                Dim totalH As Single = mainH + If(subH > 0, lineGap + subH, 0.0F)
+                Dim startY As Single = textRect.Y + Math.Max(0.0F, (textRect.Height - totalH) / 2.0F)
+
+                If Not String.IsNullOrEmpty(mainText) Then
+                    context.DrawText(mainText, Font, If(it.ForeColor.IsEmpty, MyBase.ForeColor, it.ForeColor), New RectangleF(textRect.X, startY, textRect.Width, Math.Max(1.0F, mainH)), TextAlignment.Leading, ParagraphAlignment.Near)
+                End If
+                If Not String.IsNullOrEmpty(subText) Then
+                    context.DrawText(subText, subFont, _subTextForeColor, New RectangleF(textRect.X, startY + mainH + lineGap, textRect.Width, Math.Max(1.0F, subH)), TextAlignment.Leading, ParagraphAlignment.Near)
+                End If
+            Next
+        End Using
+    End Sub
+
+    Private Sub DrawScrollBar_GPU(context As D3D_PaintContext)
+        If _scrollBar.TrackRect.IsEmpty Then Return
+        Dim s As Single = DpiScale()
+        Dim width As Single = Math.Max(1.0F, _scrollBarWidth * s)
+        Dim trackArea As New RectangleF(_scrollBar.VisualLeft, _scrollBar.TrackRect.Y, width, _scrollBar.TrackRect.Height)
+        Dim thumbArea As New RectangleF(_scrollBar.VisualLeft, _scrollBar.ThumbRect.Y, width, _scrollBar.ThumbRect.Height)
+        FillRoundedRect_GPU(context, trackArea, Math.Min(width / 2.0F, trackArea.Height / 2.0F), _scrollBarTrackColor)
+        Dim thumbColor = If(_scrollBar.IsDragging OrElse _scrollBar.IsHover, _scrollBarThumbHoverColor, _scrollBarThumbColor)
+        FillRoundedRect_GPU(context, thumbArea, Math.Min(width / 2.0F, thumbArea.Height / 2.0F), thumbColor)
+    End Sub
+
+    Private Sub DrawDisabledOverlay_GPU(context As D3D_PaintContext)
+        Dim s As Single = DpiScale()
+        Dim rect As New RectangleF(0, 0, Width, Height)
+        If _borderSize > 0 Then
+            Dim half As Single = _borderSize * s / 2.0F
+            rect.Inflate(-half, -half)
+        End If
+        FillRoundedRect_GPU(context, rect, _borderRadius * s, _disabledOverlayColor)
+    End Sub
+
+    Private Sub FillRoundedRect_GPU(context As D3D_PaintContext, rect As RectangleF, radius As Single, color As Color)
+        If color.A = 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
+        If radius <= 0 Then
+            context.DeviceContext.FillRectangle(D3D_PaintContext.ToRawRect(rect), brush)
+            Return
+        End If
+        Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New RoundedRectangle(rect, radius, radius))
+            context.DeviceContext.FillGeometry(geo, brush)
+        End Using
+    End Sub
+
+    Private Sub DrawRoundedBorder_GPU(context As D3D_PaintContext, rect As RectangleF, radius As Single, color As Color, strokeWidth As Single)
+        If color.A = 0 OrElse strokeWidth <= 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
+        If radius <= 0 Then
+            context.DeviceContext.DrawRectangle(D3D_PaintContext.ToRawRect(rect), brush, strokeWidth)
+            Return
+        End If
+        Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New RoundedRectangle(rect, radius, radius))
+            context.DeviceContext.DrawGeometry(geo, brush, strokeWidth)
+        End Using
+    End Sub
+
+
+    Private Sub DrawBackgroundAndFrame(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache)
         Dim s As Single = DpiScale()
         Dim rect As New RectangleF(0, 0, Width, Height)
         If _borderSize > 0 Then
@@ -834,31 +955,31 @@ Partial Public Class EasyStatesPanel
         Dim backColorMask As Color = MyBase.BackColor
 
         If radius > 0 Then
-            Using geo = RectangleRenderer.创建圆角矩形几何(rect, radius)
+            Using geo = D3D_RectangleRenderer.创建圆角矩形几何(rect, radius)
                 If backColorMask.A > 0 AndAlso backColorMask.A < 255 Then
-                    RectangleRenderer.绘制圆角背景_D2D(rt, geo, rect, backColorMask, Color.Empty, System.Windows.Forms.Orientation.Horizontal, brushCache)
+                    D3D_RectangleRenderer.绘制圆角背景_D2D(rt, geo, rect, backColorMask, Color.Empty, System.Windows.Forms.Orientation.Horizontal, brushCache)
                 End If
                 If _backColor1.A > 0 Then
-                    RectangleRenderer.绘制圆角背景_D2D(rt, geo, rect, _backColor1, Color.Empty, System.Windows.Forms.Orientation.Horizontal, brushCache)
+                    D3D_RectangleRenderer.绘制圆角背景_D2D(rt, geo, rect, _backColor1, Color.Empty, System.Windows.Forms.Orientation.Horizontal, brushCache)
                 End If
                 If _borderSize > 0 AndAlso _borderColor.A > 0 Then
-                    RectangleRenderer.绘制圆角边框_D2D(rt, geo, _borderColor, _borderSize * s, brushCache)
+                    D3D_RectangleRenderer.绘制圆角边框_D2D(rt, geo, _borderColor, _borderSize * s, brushCache)
                 End If
             End Using
         Else
             If backColorMask.A > 0 AndAlso backColorMask.A < 255 Then
-                RectangleRenderer.绘制矩形背景_D2D(rt, rect, backColorMask, Color.Empty, System.Windows.Forms.Orientation.Horizontal, brushCache)
+                D3D_RectangleRenderer.绘制矩形背景_D2D(rt, rect, backColorMask, Color.Empty, System.Windows.Forms.Orientation.Horizontal, brushCache)
             End If
             If _backColor1.A > 0 Then
-                RectangleRenderer.绘制矩形背景_D2D(rt, rect, _backColor1, Color.Empty, System.Windows.Forms.Orientation.Horizontal, brushCache)
+                D3D_RectangleRenderer.绘制矩形背景_D2D(rt, rect, _backColor1, Color.Empty, System.Windows.Forms.Orientation.Horizontal, brushCache)
             End If
             If _borderSize > 0 AndAlso _borderColor.A > 0 Then
-                RectangleRenderer.绘制矩形边框_D2D(rt, rect, _borderColor, _borderSize * s, brushCache)
+                D3D_RectangleRenderer.绘制矩形边框_D2D(rt, rect, _borderColor, _borderSize * s, brushCache)
             End If
         End If
     End Sub
 
-    Private Sub DrawCards(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache)
+    Private Sub DrawCards(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache)
         If _cardsViewportRect.Width <= 0 OrElse _cardsViewportRect.Height <= 0 Then Return
         rt.PushAxisAlignedClip(New Vortice.RawRectF(_cardsViewportRect.Left, _cardsViewportRect.Top, _cardsViewportRect.Right, _cardsViewportRect.Bottom),
                                AntialiasMode.PerPrimitive)
@@ -879,13 +1000,13 @@ Partial Public Class EasyStatesPanel
 
                 Dim radius As Single = _cardRadius * s
                 If radius > 0 Then
-                    Using geo = RectangleRenderer.创建圆角矩形几何(drawRect, radius)
-                        If _cardBackColor.A > 0 Then RectangleRenderer.绘制圆角背景_D2D(rt, geo, drawRect, _cardBackColor, Color.Empty, System.Windows.Forms.Orientation.Horizontal, brushCache)
-                        If _cardBorderSize > 0 AndAlso _cardBorderColor.A > 0 Then RectangleRenderer.绘制圆角边框_D2D(rt, geo, _cardBorderColor, _cardBorderSize * s, brushCache)
+                    Using geo = D3D_RectangleRenderer.创建圆角矩形几何(drawRect, radius)
+                        If _cardBackColor.A > 0 Then D3D_RectangleRenderer.绘制圆角背景_D2D(rt, geo, drawRect, _cardBackColor, Color.Empty, System.Windows.Forms.Orientation.Horizontal, brushCache)
+                        If _cardBorderSize > 0 AndAlso _cardBorderColor.A > 0 Then D3D_RectangleRenderer.绘制圆角边框_D2D(rt, geo, _cardBorderColor, _cardBorderSize * s, brushCache)
                     End Using
                 Else
-                    If _cardBackColor.A > 0 Then RectangleRenderer.绘制矩形背景_D2D(rt, drawRect, _cardBackColor, Color.Empty, System.Windows.Forms.Orientation.Horizontal, brushCache)
-                    If _cardBorderSize > 0 AndAlso _cardBorderColor.A > 0 Then RectangleRenderer.绘制矩形边框_D2D(rt, drawRect, _cardBorderColor, _cardBorderSize * s, brushCache)
+                    If _cardBackColor.A > 0 Then D3D_RectangleRenderer.绘制矩形背景_D2D(rt, drawRect, _cardBackColor, Color.Empty, System.Windows.Forms.Orientation.Horizontal, brushCache)
+                    If _cardBorderSize > 0 AndAlso _cardBorderColor.A > 0 Then D3D_RectangleRenderer.绘制矩形边框_D2D(rt, drawRect, _cardBorderColor, _cardBorderSize * s, brushCache)
                 End If
             Next
         Finally
@@ -893,20 +1014,20 @@ Partial Public Class EasyStatesPanel
         End Try
     End Sub
 
-    Private Sub DrawCardTexts(rt As ID2D1RenderTarget, textFormatCache As D2DGlobals.TextFormatCache,
-                              brushCache As D2DGlobals.SolidColorBrushCache)
+    Private Sub DrawCardTexts(rt As ID2D1RenderTarget, textFormatCache As D3D_D2DInterop.TextFormatCache,
+                              brushCache As D3D_D2DInterop.SolidColorBrushCache)
         If _cardsViewportRect.Width <= 0 OrElse _cardsViewportRect.Height <= 0 Then Return
         rt.PushAxisAlignedClip(New Vortice.RawRectF(_cardsViewportRect.Left, _cardsViewportRect.Top, _cardsViewportRect.Right, _cardsViewportRect.Bottom),
                                AntialiasMode.PerPrimitive)
         Try
             Dim s As Single = DpiScale()
-            Dim dw = D2DGlobals.GetDWriteFactory()
-            Dim mainSizePx As Single = D2DGlobals.GetDWriteFontSizePx(Font, s)
+            Dim dw = D3D_D2DInterop.GetDWriteFactory()
+            Dim mainSizePx As Single = D3D_D2DInterop.GetDWriteFontSizePx(Font, s)
             Dim padX As Single = _cardHorizontalPadding * s
             Dim padY As Single = _cardVerticalPadding * s
             Dim lineGap As Single = _mainSubTextSpacing * s
             Dim subFont = GetSubTextFont()
-            Dim subSizePx As Single = D2DGlobals.GetDWriteFontSizePx(subFont, s)
+            Dim subSizePx As Single = D3D_D2DInterop.GetDWriteFontSizePx(subFont, s)
             Dim mainFmt = textFormatCache.Get(Font, mainSizePx, TextAlignment.Leading, ParagraphAlignment.Near, True)
             Dim subFmt = textFormatCache.Get(subFont.FontFamily.Name, Vortice.DirectWrite.FontWeight.Normal, Vortice.DirectWrite.FontStyle.Normal,
                                              subSizePx, TextAlignment.Leading, ParagraphAlignment.Near, True)
@@ -956,7 +1077,7 @@ Partial Public Class EasyStatesPanel
         End Try
     End Sub
 
-    Private Sub DrawDisabledOverlay(rt As ID2D1RenderTarget, brushCache As D2DGlobals.SolidColorBrushCache)
+    Private Sub DrawDisabledOverlay(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache)
         Dim s As Single = DpiScale()
         Dim rect As New RectangleF(0, 0, Width, Height)
         If _borderSize > 0 Then
@@ -965,11 +1086,11 @@ Partial Public Class EasyStatesPanel
         End If
         Dim radius As Single = _borderRadius * s
         If radius > 0 Then
-            Using geo = RectangleRenderer.创建圆角矩形几何(rect, radius)
-                RectangleRenderer.绘制圆角背景_D2D(rt, geo, rect, _disabledOverlayColor, Color.Empty, System.Windows.Forms.Orientation.Horizontal, brushCache)
+            Using geo = D3D_RectangleRenderer.创建圆角矩形几何(rect, radius)
+                D3D_RectangleRenderer.绘制圆角背景_D2D(rt, geo, rect, _disabledOverlayColor, Color.Empty, System.Windows.Forms.Orientation.Horizontal, brushCache)
             End Using
         Else
-            RectangleRenderer.绘制矩形背景_D2D(rt, rect, _disabledOverlayColor, Color.Empty, System.Windows.Forms.Orientation.Horizontal, brushCache)
+            D3D_RectangleRenderer.绘制矩形背景_D2D(rt, rect, _disabledOverlayColor, Color.Empty, System.Windows.Forms.Orientation.Horizontal, brushCache)
         End If
     End Sub
 
@@ -998,7 +1119,7 @@ Partial Public Class EasyStatesPanel
             _scrollTargetOffset = target
         End If
         UpdateScrollBarForCurrentOffset()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Private Sub StopScrollAnimation()
@@ -1030,10 +1151,10 @@ Partial Public Class EasyStatesPanel
         End If
         ClampScrollOffsets()
         UpdateScrollBarForCurrentOffset()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
-    Private Sub 滚动动画脏区(helper As AnimationHelperV2, owner As Control, sink As AnimationHelperV2.InvalidateRegionSink)
+    Private Sub 滚动动画脏区(helper As V3_AnimationHelper, owner As Control, sink As V3_AnimationHelper.InvalidateRegionSink)
         sink.SuppressInvalidate()
     End Sub
 
@@ -1047,7 +1168,7 @@ Partial Public Class EasyStatesPanel
             Return
         End If
 
-        If _showVScroll AndAlso _scrollBar.UpdateHover(e.Location) Then OuterToInnerRefreshScheduler.RequestFull(Me)
+        If _showVScroll AndAlso _scrollBar.UpdateHover(e.Location) Then 请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
@@ -1058,7 +1179,7 @@ Partial Public Class EasyStatesPanel
 
         If _showVScroll AndAlso _scrollBar.BeginDrag(e.Location, CInt(Math.Round(_scrollOffset))) Then
             StopScrollAnimation()
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
             Return
         End If
 
@@ -1075,13 +1196,13 @@ Partial Public Class EasyStatesPanel
         MyBase.OnMouseUp(e)
         If _scrollBar.IsDragging Then
             _scrollBar.EndDrag()
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End If
     End Sub
 
     Protected Overrides Sub OnMouseLeave(e As EventArgs)
         MyBase.OnMouseLeave(e)
-        If _scrollBar.ResetHover() Then OuterToInnerRefreshScheduler.RequestFull(Me)
+        If _scrollBar.ResetHover() Then 请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnMouseWheel(e As MouseEventArgs)
@@ -1101,34 +1222,34 @@ Partial Public Class EasyStatesPanel
         MyBase.OnSizeChanged(e)
         _layoutDirty = True
         ClampScrollOffsets()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnPaddingChanged(e As EventArgs)
         MyBase.OnPaddingChanged(e)
         _layoutDirty = True
         ClampScrollOffsets()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
         MyBase.OnFontChanged(e)
         ReleaseSubTextFont()
         _layoutDirty = True
-        D2DHelperV2.RefreshFontDependentRendering(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
         ReleaseSubTextFont()
         _layoutDirty = True
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnEnabledChanged(e As EventArgs)
         MyBase.OnEnabledChanged(e)
         If Not Enabled Then StopScrollAnimation()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
 #End Region

@@ -12,9 +12,9 @@ Imports Vortice.DirectWrite
 ''' </summary>
 <DefaultEvent("SampleUpdated")>
 Public Class CpuMonitor
+    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource
 
-#Region "D2D 资源"
-    Private _当前合成器 As WindowCompositor
+#Region "D3D 渲染资源"
     Private _布局缓存 As 绘制布局信息
     Private _历史点缓存 As Vector2() = Array.Empty(Of Vector2)()
 #End Region
@@ -318,57 +318,209 @@ Public Class CpuMonitor
 
 #Region "绘制"
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
-        ' V2 契约：
-        '   • BackgroundSource 已设置 → 跳过 BackColor 整个逻辑，背景由 OnPaint 内 BackgroundPenetrationV2 绘制；
-        '   • 否则一律走 .NET 自身透明逻辑（半透明 BackColor 由基类合成父级背景，不透明色由基类填底）。
         If _backgroundSource IsNot Nothing Then Return
         MyBase.OnPaintBackground(e)
     End Sub
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
+        If Not D3D_PaintBridge.PaintRenderable(e, Me, Me, 1) Then MyBase.OnPaint(e)
+    End Sub
+
+    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
         If Me.Width <= 0 OrElse Me.Height <= 0 Then Return
 
-        Dim ssaa As Integer = D2DHelperV2.GetEffectiveSsaaScale(超采样倍率)
+        If _backgroundSource IsNot Nothing Then
+            context.DrawBackgroundSource(Me, _backgroundSource, New RectangleF(0, 0, Me.Width, Me.Height))
+        ElseIf MyBase.BackColor.A > 0 Then
+            context.FillRectangle(New RectangleF(0, 0, Me.Width, Me.Height), MyBase.BackColor)
+        End If
 
-        Using scope = D2DHelperV2.BeginPaint(e, Me, ssaa)
-            If scope Is Nothing Then Return
-            _当前合成器 = scope.Compositor
-            Try
-                Dim gRT As ID2D1RenderTarget = scope.GraphicsLayer
-                Dim dcRT As ID2D1DCRenderTarget = scope.DCRenderTarget
+        Dim layout = 获取绘制布局()
+        If layout IsNot Nothing Then
+            绘制图形内容_GPU(context, layout)
+            绘制文字内容_GPU(context, layout)
+        End If
 
-                ' 1) 背景层（1× 直绘）：
-                '    • 显式 BackgroundSource → 绘制穿透底图（跳过 BackColor）；
-                '    • 否则若 MyBase.BackColor 半透明 → 基类 OnPaintBackground 已把父级背景合成到 DC，
-                '      这里再叠加 BackColor 作为半透明遮罩（"颜色覆盖在上面"）。
-                If _backgroundSource IsNot Nothing Then
-                    BackgroundPenetrationV2.PaintBackground(Me, scope, _backgroundSource)
-                ElseIf MyBase.BackColor.A > 0 AndAlso MyBase.BackColor.A < 255 Then
-                    Dim bgLayer = scope.BackgroundLayer
-                    Dim brush = _当前合成器.BrushCache.[Get](bgLayer, MyBase.BackColor)
-                    If brush IsNot Nothing Then
-                        bgLayer.FillRectangle(D2DGlobals.ToD2DRect(New RectangleF(0, 0, Me.Width, Me.Height)), brush)
-                    End If
-                End If
+        If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
+            context.FillRectangle(New RectangleF(0, 0, Me.Width, Me.Height), 禁用时遮罩颜色)
+        End If
+    End Sub
 
-                Dim layout = 获取绘制布局()
-                If layout IsNot Nothing Then
-                    绘制图形内容_D2D(gRT, layout)
-                    scope.FlushGraphics()
-                    绘制文字内容_D2D(dcRT, layout)
+    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+        Return New Rectangle(Point.Empty, Me.Size)
+    End Function
+
+    Private Sub 绘制图形内容_GPU(context As D3D_PaintContext, layout As 绘制布局信息)
+        Dim usages() As Single = 最近占用
+        Dim s As Single = layout.Scale
+        Dim canDrawHistory As Boolean = Not layout.Simplified AndAlso 显示历史图表 AndAlso 启用历史记录
+
+        If canDrawHistory Then
+            SyncLock 历史锁
+                For Each item In layout.Items
+                    Dim hist As Single() = If(item.GlobalIndex >= 0 AndAlso item.GlobalIndex < 历史数据.Count, 历史数据(item.GlobalIndex), Nothing)
+                    绘制常规核心图形_GPU(context, item, hist, 历史写入位置, s)
+                Next
+            End SyncLock
+        Else
+            For Each item In layout.Items
+                Dim usage As Single = If(usages IsNot Nothing AndAlso item.GlobalIndex < usages.Length, usages(item.GlobalIndex), 0)
+                If layout.Simplified Then
+                    绘制简化核心_GPU(context, item, usage, s)
                 Else
-                    scope.FlushGraphics()
+                    绘制常规核心图形_GPU(context, item, Nothing, 0, s)
                 End If
+            Next
+        End If
+    End Sub
 
-                If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
-                    Dim b = _当前合成器.BrushCache.Get(dcRT, 禁用时遮罩颜色)
-                    dcRT.FillRectangle(New Vortice.Mathematics.Rect(0, 0, Me.Width, Me.Height), b)
+    Private Sub 绘制文字内容_GPU(context As D3D_PaintContext, layout As 绘制布局信息)
+        Dim usages() As Single = 最近占用
+        Dim s As Single = layout.Scale
+        For Each item In layout.Items
+            Dim usage As Single = If(usages IsNot Nothing AndAlso item.GlobalIndex < usages.Length, usages(item.GlobalIndex), 0)
+            If layout.Simplified Then
+                绘制简化核心文字_GPU(context, item, usage, s)
+            Else
+                绘制常规核心文字_GPU(context, item, usage, s)
+            End If
+        Next
+    End Sub
+
+    Private Sub 绘制常规核心图形_GPU(context As D3D_PaintContext, item As 核心布局项, hist As Single(), historyStart As Integer, s As Single)
+        绘制核心背景与边框_GPU(context, item.CellRect, s)
+        If item.InnerRect.Width <= 0 OrElse item.InnerRect.Height <= 0 Then Return
+
+        If 显示历史图表 AndAlso hist IsNot Nothing AndAlso hist.Length >= 2 AndAlso item.GraphRect.Height >= 2 Then
+            Using context.PushClip(item.CellRect)
+                绘制历史图表_GPU(context, item.GraphRect, hist, historyStart, s)
+            End Using
+        End If
+    End Sub
+
+    Private Sub 绘制常规核心文字_GPU(context As D3D_PaintContext, item As 核心布局项, usage As Single, s As Single)
+        If item.TextRect.Width <= 0 OrElse item.TextRect.Height <= 0 Then Return
+        Dim 文本 As String = 构造核心文字(item.GlobalIndex, usage)
+        If String.IsNullOrEmpty(文本) Then Return
+        绘制文字_GPU(context, item.TextRect, 文本, s)
+    End Sub
+
+    Private Sub 绘制简化核心_GPU(context As D3D_PaintContext, item As 核心布局项, usage As Single, s As Single)
+        绘制核心背景与边框_GPU(context, item.CellRect, s)
+        If item.InnerRect.Width > 0 AndAlso item.InnerRect.Height > 0 Then
+            Dim fillH As Single = item.InnerRect.Height * 限制占用值(usage)
+            If fillH > 0 Then
+                Using context.PushClip(item.CellRect)
+                    Dim fillRect As New RectangleF(item.InnerRect.X, item.InnerRect.Bottom - fillH, item.InnerRect.Width, fillH)
+                    context.FillRectangle(fillRect, 选择占用颜色(usage))
+                End Using
+            End If
+        End If
+    End Sub
+
+    Private Sub 绘制简化核心文字_GPU(context As D3D_PaintContext, item As 核心布局项, usage As Single, s As Single)
+        If item.TextRect.Width > 0 AndAlso item.TextRect.Height > 0 Then
+            绘制文字_GPU(context, item.TextRect, 百分比文本(usage), s)
+        End If
+    End Sub
+
+    Private Sub 绘制文字_GPU(context As D3D_PaintContext, inner As RectangleF, text As String, s As Single)
+        Dim tp As Padding = 文字内边距值
+        Dim textRect As New RectangleF(
+            inner.X + tp.Left * s,
+            inner.Y + tp.Top * s,
+            Math.Max(0, inner.Width - (tp.Left + tp.Right) * s),
+            Math.Max(0, inner.Height - (tp.Top + tp.Bottom) * s))
+        If textRect.Width <= 0 OrElse textRect.Height <= 0 Then Return
+
+        context.DrawText(If(text, ""), Me.Font, Me.ForeColor, textRect, 转文本水平对齐(文字对齐值), 转文本垂直对齐(文字对齐值))
+    End Sub
+
+    Private Sub 绘制核心背景与边框_GPU(context As D3D_PaintContext, rect As RectangleF, s As Single)
+        Dim bw As Single = 核心边框粗细值 * s
+        Dim r As Single = 圆角半径值 * s
+        Dim hasBorder As Boolean = 核心边框颜色值.A > 0 AndAlso bw > 0
+
+        If 核心背景颜色值.A > 0 Then
+            填充圆角矩形_GPU(context, rect, r, 核心背景颜色值)
+        End If
+
+        If hasBorder Then
+            Dim half As Single = bw * 0.5F
+            Dim bRect As RectangleF = RectangleF.Inflate(rect, -half, -half)
+            绘制圆角边框_GPU(context, bRect, Math.Max(0, r - half), 核心边框颜色值, bw)
+        End If
+    End Sub
+
+    Private Sub 绘制历史图表_GPU(context As D3D_PaintContext, rect As RectangleF, hist As Single(), historyStart As Integer, s As Single)
+        If rect.Width < 2 OrElse rect.Height < 2 Then Return
+        Dim n As Integer = hist.Length
+        If n < 2 Then Return
+
+        If 图表背景颜色值.A > 0 Then context.FillRectangle(rect, 图表背景颜色值)
+
+        Dim step_ As Single = rect.Width / (n - 1)
+        If _历史点缓存.Length < n Then
+            _历史点缓存 = New Vector2(n - 1) {}
+        End If
+        Dim pts As Vector2() = _历史点缓存
+        For i As Integer = 0 To n - 1
+            Dim v As Single = 限制占用值(hist(历史数组索引(i, n, historyStart)))
+            pts(i) = New Vector2(rect.X + i * step_, rect.Bottom - v * rect.Height)
+        Next
+
+        If 图表填充颜色值.A > 0 Then
+            Using geo = 创建历史填充几何(rect, pts, n)
+                Dim b = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, 图表填充颜色值, context.DeviceGeneration)
+                context.DeviceContext.FillGeometry(geo, b)
+            End Using
+        End If
+
+        Dim lineW As Single = 图表线条粗细值 * s
+        Dim lineBrush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, 图表线条颜色值, context.DeviceGeneration)
+        If lineBrush IsNot Nothing Then
+            For i As Integer = 0 To n - 2
+                context.DeviceContext.DrawLine(pts(i), pts(i + 1), lineBrush, lineW)
+            Next
+        End If
+
+        Dim fullBrush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, 占满颜色值, context.DeviceGeneration)
+        If fullBrush IsNot Nothing Then
+            Dim tickW As Single = Math.Max(lineW, 1.5F * s)
+            For i As Integer = 0 To n - 1
+                If 历史满载(hist(历史数组索引(i, n, historyStart))) Then
+                    context.DeviceContext.DrawLine(New Vector2(pts(i).X, pts(i).Y), New Vector2(pts(i).X, rect.Bottom), fullBrush, tickW)
                 End If
-            Finally
-                _当前合成器 = Nothing
-            End Try
+            Next
+        End If
+    End Sub
+
+    Private Sub 填充圆角矩形_GPU(context As D3D_PaintContext, rect As RectangleF, radius As Single, color As Color)
+        If color.A = 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
+        If radius <= 0 Then
+            context.DeviceContext.FillRectangle(D3D_PaintContext.ToRawRect(rect), brush)
+            Return
+        End If
+
+        Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New RoundedRectangle(rect, radius, radius))
+            context.DeviceContext.FillGeometry(geo, brush)
         End Using
     End Sub
+
+    Private Sub 绘制圆角边框_GPU(context As D3D_PaintContext, rect As RectangleF, radius As Single, color As Color, strokeWidth As Single)
+        If color.A = 0 OrElse strokeWidth <= 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
+        If radius <= 0 Then
+            context.DeviceContext.DrawRectangle(D3D_PaintContext.ToRawRect(rect), brush, strokeWidth)
+            Return
+        End If
+
+        Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New RoundedRectangle(rect, radius, radius))
+            context.DeviceContext.DrawGeometry(geo, brush, strokeWidth)
+        End Using
+    End Sub
+
 
     Private Function 获取绘制布局() As 绘制布局信息
         Dim s As Single = DpiScale()
@@ -380,7 +532,7 @@ Public Class CpuMonitor
         Dim simplified As Boolean = 应使用简化模式(count)
         Dim cols As Integer = 计算列数(count, simplified)
         Dim rows As Integer = CInt(Math.Ceiling(count / CDbl(cols)))
-        Dim currentDpi As Integer = D2DGlobals.GetCurrentDpi(Me)
+        Dim currentDpi As Integer = V3_DpiContext.FromControl(Me).Dpi
 
         Dim pad As Padding = Me.Padding
         Dim gap As Single = 网格间距值 * s
@@ -471,43 +623,6 @@ Public Class CpuMonitor
         Return layout
     End Function
 
-    Private Sub 绘制图形内容_D2D(rt As ID2D1RenderTarget, layout As 绘制布局信息)
-        Dim usages() As Single = 最近占用
-        Dim s As Single = layout.Scale
-        Dim canDrawHistory As Boolean = Not layout.Simplified AndAlso 显示历史图表 AndAlso 启用历史记录
-
-        If canDrawHistory Then
-            SyncLock 历史锁
-                For Each item In layout.Items
-                    Dim hist As Single() = If(item.GlobalIndex >= 0 AndAlso item.GlobalIndex < 历史数据.Count, 历史数据(item.GlobalIndex), Nothing)
-                    绘制常规核心图形_D2D(rt, item, hist, 历史写入位置, s)
-                Next
-            End SyncLock
-        Else
-            For Each item In layout.Items
-                Dim usage As Single = If(usages IsNot Nothing AndAlso item.GlobalIndex < usages.Length, usages(item.GlobalIndex), 0)
-                If layout.Simplified Then
-                    绘制简化核心_D2D(rt, item, usage, s)
-                Else
-                    绘制常规核心图形_D2D(rt, item, Nothing, 0, s)
-                End If
-            Next
-        End If
-    End Sub
-
-    Private Sub 绘制文字内容_D2D(rt As ID2D1RenderTarget, layout As 绘制布局信息)
-        Dim usages() As Single = 最近占用
-        Dim s As Single = layout.Scale
-        For Each item In layout.Items
-            Dim usage As Single = If(usages IsNot Nothing AndAlso item.GlobalIndex < usages.Length, usages(item.GlobalIndex), 0)
-            If layout.Simplified Then
-                绘制简化核心文字_D2D(rt, item, usage, s)
-            Else
-                绘制常规核心文字_D2D(rt, item, usage, s)
-            End If
-        Next
-    End Sub
-
     ''' <summary>返回当前是否应按简化样式绘制（用户显式启用 SimplifiedMode，或显示核心数超过 NormalMaxCores 阈值）。</summary>
     Private Function 应使用简化模式(count As Integer) As Boolean
         If 简化模式值 Then Return True
@@ -523,48 +638,6 @@ Public Class CpuMonitor
         If r.Count <= 0 Then Return (0, total)
         Return r
     End Function
-
-    Private Sub 绘制常规核心图形_D2D(rt As ID2D1RenderTarget, item As 核心布局项, hist As Single(), historyStart As Integer, s As Single)
-        绘制核心背景与边框_D2D(rt, item.CellRect, s)
-        If item.InnerRect.Width <= 0 OrElse item.InnerRect.Height <= 0 Then Return
-
-        If 显示历史图表 AndAlso hist IsNot Nothing AndAlso hist.Length >= 2 AndAlso item.GraphRect.Height >= 2 Then
-            使用核心裁剪_D2D(rt, item.CellRect, s,
-                Sub()
-                    绘制历史图表_D2D(rt, item.GraphRect, hist, historyStart, s)
-                End Sub)
-        End If
-    End Sub
-
-    Private Sub 绘制常规核心文字_D2D(rt As ID2D1RenderTarget, item As 核心布局项, usage As Single, s As Single)
-        If item.TextRect.Width <= 0 OrElse item.TextRect.Height <= 0 Then Return
-
-        Dim 文本 As String = 构造核心文字(item.GlobalIndex, usage)
-        If String.IsNullOrEmpty(文本) Then Return
-
-        绘制文字_D2D(rt, item.TextRect, 文本, s)
-    End Sub
-
-    Private Sub 绘制简化核心_D2D(rt As ID2D1RenderTarget, item As 核心布局项, usage As Single, s As Single)
-        绘制核心背景与边框_D2D(rt, item.CellRect, s)
-        If item.InnerRect.Width > 0 AndAlso item.InnerRect.Height > 0 Then
-            Dim fillH As Single = item.InnerRect.Height * 限制占用值(usage)
-            If fillH > 0 Then
-                使用核心裁剪_D2D(rt, item.CellRect, s,
-                    Sub()
-                        Dim fillRect As New RectangleF(item.InnerRect.X, item.InnerRect.Bottom - fillH, item.InnerRect.Width, fillH)
-                        Dim b = _当前合成器.BrushCache.Get(rt, 选择占用颜色(usage))
-                        If b IsNot Nothing Then rt.FillRectangle(D2DGlobals.ToD2DRect(fillRect), b)
-                    End Sub)
-            End If
-        End If
-    End Sub
-
-    Private Sub 绘制简化核心文字_D2D(rt As ID2D1RenderTarget, item As 核心布局项, usage As Single, s As Single)
-        If item.TextRect.Width > 0 AndAlso item.TextRect.Height > 0 Then
-            绘制文字_D2D(rt, item.TextRect, 百分比文本(usage), s)
-        End If
-    End Sub
 
     ''' <summary>根据占用率选择前景色。</summary>
     Private Function 选择占用颜色(usage As Single) As Color
@@ -596,115 +669,6 @@ Public Class CpuMonitor
                               Math.Max(0, rect.Height - pad * 2))
     End Function
 
-    Private Sub 绘制文字_D2D(rt As ID2D1RenderTarget, inner As RectangleF, text As String, s As Single)
-        Dim tp As Padding = 文字内边距值
-        Dim textRect As New RectangleF(
-            inner.X + tp.Left * s,
-            inner.Y + tp.Top * s,
-            Math.Max(0, inner.Width - (tp.Left + tp.Right) * s),
-            Math.Max(0, inner.Height - (tp.Top + tp.Bottom) * s))
-        If textRect.Width <= 0 OrElse textRect.Height <= 0 Then Return
-
-        Dim weight As FontWeight = If(Me.Font.Bold, FontWeight.Bold, FontWeight.Normal)
-        Dim style As FontStyle = If(Me.Font.Italic, FontStyle.Italic, FontStyle.Normal)
-        Dim fmt = _当前合成器.TextFormatCache.Get(Me.Font.FontFamily.Name, weight, style, 文本像素高度(s),
-                                       转文本水平对齐(文字对齐值), 转文本垂直对齐(文字对齐值), True)
-        Dim b = _当前合成器.BrushCache.Get(rt, Me.ForeColor)
-        If b IsNot Nothing Then rt.DrawText(If(text, ""), fmt, D2DGlobals.ToD2DRect(textRect), b, DrawTextOptions.Clip)
-    End Sub
-
-    Private Sub 绘制核心背景与边框_D2D(rt As ID2D1RenderTarget, rect As RectangleF, s As Single)
-        Dim bw As Single = 核心边框粗细值 * s
-        Dim r As Single = 圆角半径值 * s
-        Dim hasBorder As Boolean = 核心边框颜色值.A > 0 AndAlso bw > 0
-
-        If 核心背景颜色值.A > 0 Then
-            If r > 0 Then
-                Using geo = RectangleRenderer.创建圆角矩形几何(rect, r)
-                    RectangleRenderer.绘制圆角背景_D2D(rt, geo, rect, 核心背景颜色值, Color.Empty, System.Windows.Forms.Orientation.Vertical, _当前合成器.BrushCache)
-                End Using
-            Else
-                RectangleRenderer.绘制矩形背景_D2D(rt, rect, 核心背景颜色值, Color.Empty, System.Windows.Forms.Orientation.Vertical, _当前合成器.BrushCache)
-            End If
-        End If
-
-        If hasBorder Then
-            Dim half As Single = bw * 0.5F
-            Dim bRect As RectangleF = RectangleF.Inflate(rect, -half, -half)
-            If r > 0 Then
-                RectangleRenderer.绘制圆角边框_D2D(rt, bRect, Math.Max(0, r - half), 核心边框颜色值, bw, _当前合成器.BrushCache)
-            Else
-                Dim b = _当前合成器.BrushCache.Get(rt, 核心边框颜色值)
-                If b IsNot Nothing Then
-                    rt.DrawRectangle(D2DGlobals.ToD2DRect(bRect), b, bw)
-                End If
-            End If
-        End If
-    End Sub
-
-    Private Sub 使用核心裁剪_D2D(rt As ID2D1RenderTarget, rect As RectangleF, s As Single, drawAction As Action)
-        If drawAction Is Nothing Then Return
-        If 圆角半径值 <= 0 Then
-            drawAction()
-            Return
-        End If
-
-        Using geo = RectangleRenderer.创建圆角矩形几何(rect, 圆角半径值 * s)
-            D2DGlobals.PushGeometryClip(rt, geo, rect)
-            Try
-                drawAction()
-            Finally
-                rt.PopLayer()
-            End Try
-        End Using
-    End Sub
-
-    Private Sub 绘制历史图表_D2D(rt As ID2D1RenderTarget, rect As RectangleF, hist As Single(), historyStart As Integer, s As Single)
-        If rect.Width < 2 OrElse rect.Height < 2 Then Return
-        Dim n As Integer = hist.Length
-        If n < 2 Then Return
-
-        If 图表背景颜色值.A > 0 Then
-            Dim b = _当前合成器.BrushCache.Get(rt, 图表背景颜色值)
-            If b IsNot Nothing Then rt.FillRectangle(D2DGlobals.ToD2DRect(rect), b)
-        End If
-
-        Dim step_ As Single = rect.Width / (n - 1)
-        If _历史点缓存.Length < n Then
-            _历史点缓存 = New Vector2(n - 1) {}
-        End If
-        Dim pts As Vector2() = _历史点缓存
-        For i As Integer = 0 To n - 1
-            Dim v As Single = 限制占用值(hist(历史数组索引(i, n, historyStart)))
-            pts(i) = New Vector2(rect.X + i * step_, rect.Bottom - v * rect.Height)
-        Next
-
-        If 图表填充颜色值.A > 0 Then
-            Using geo = 创建历史填充几何(rect, pts, n)
-                Dim b = _当前合成器.BrushCache.Get(rt, 图表填充颜色值)
-                If b IsNot Nothing Then rt.FillGeometry(geo, b)
-            End Using
-        End If
-
-        Dim lineW As Single = 图表线条粗细值 * s
-        Dim lineBrush = _当前合成器.BrushCache.Get(rt, 图表线条颜色值)
-        If lineBrush IsNot Nothing Then
-            For i As Integer = 0 To n - 2
-                rt.DrawLine(pts(i), pts(i + 1), lineBrush, lineW)
-            Next
-        End If
-
-        Dim fullBrush = _当前合成器.BrushCache.Get(rt, 占满颜色值)
-        If fullBrush IsNot Nothing Then
-            Dim tickW As Single = Math.Max(lineW, 1.5F * s)
-            For i As Integer = 0 To n - 1
-                If 历史满载(hist(历史数组索引(i, n, historyStart))) Then
-                    rt.DrawLine(New Vector2(pts(i).X, pts(i).Y), New Vector2(pts(i).X, rect.Bottom), fullBrush, tickW)
-                End If
-            Next
-        End If
-    End Sub
-
     Private Shared Function 历史数组索引(logicalIndex As Integer, length As Integer, startIndex As Integer) As Integer
         If length <= 0 Then Return 0
         Dim idx As Integer = startIndex + logicalIndex
@@ -713,7 +677,7 @@ Public Class CpuMonitor
     End Function
 
     Private Shared Function 创建历史填充几何(rect As RectangleF, pts As Vector2(), count As Integer) As ID2D1PathGeometry
-        Dim geo As ID2D1PathGeometry = D2DGlobals.GetD2DFactory().CreatePathGeometry()
+        Dim geo As ID2D1PathGeometry = D3D_RenderCore.DeviceManager.D2DFactory.CreatePathGeometry()
         Dim sink As ID2D1GeometrySink = geo.Open()
         Try
             sink.BeginFigure(pts(0), FigureBegin.Filled)
@@ -731,7 +695,7 @@ Public Class CpuMonitor
     End Function
 
     Private Function 文本像素高度(s As Single) As Single
-        Return D2DGlobals.GetDWriteFontSizePx(Me.Font, s)
+        Return D3D_D2DInterop.GetDWriteFontSizePx(Me.Font, s)
     End Function
 
     Private Function 文本行像素高度(s As Single) As Single
@@ -862,7 +826,7 @@ Public Class CpuMonitor
             End SyncLock
         End If
 
-        If invalidateControl Then OuterToInnerRefreshScheduler.RequestFull(Me)
+        If invalidateControl Then 请求V3渲染()
         If raiseUpdated Then RaiseEvent SampleUpdated(Me, EventArgs.Empty)
     End Sub
 
@@ -889,7 +853,7 @@ Public Class CpuMonitor
             Next
             历史写入位置 = 0
         End SyncLock
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     ''' <summary>获取当前每核心占用（0.0~1.0）的只读快照。</summary>
@@ -1020,7 +984,7 @@ Public Class CpuMonitor
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
             清除布局缓存()
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End If
     End Sub
 
@@ -1029,8 +993,17 @@ Public Class CpuMonitor
     End Sub
 
     Private Function DpiScale() As Single
-        Return D2DGlobals.GetCurrentDpiScale(Me)
+        Return V3_DpiContext.FromControl(Me).Scale
     End Function
+
+    Private Sub 请求V3渲染(Optional immediate As Boolean = False)
+        请求V3渲染(New Rectangle(Point.Empty, Me.Size), immediate)
+    End Sub
+
+    Private Sub 请求V3渲染(dirtyRect As Rectangle, Optional immediate As Boolean = False)
+        If Me.IsDisposed Then Return
+        V3_InvalidationRouter.RequestRender(Me, dirtyRect)
+    End Sub
 
     Private Function 应执行采样刷新() As Boolean
         Return 正在运行 AndAlso
@@ -1083,35 +1056,35 @@ Public Class CpuMonitor
 
     Protected Overrides Sub OnEnabledChanged(e As EventArgs)
         MyBase.OnEnabledChanged(e)
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
         清除布局缓存()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnPaddingChanged(e As EventArgs)
         MyBase.OnPaddingChanged(e)
         清除布局缓存()
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
         MyBase.OnFontChanged(e)
         清除布局缓存()
-        D2DHelperV2.RefreshFontDependentRendering(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnForeColorChanged(e As EventArgs)
         MyBase.OnForeColorChanged(e)
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnBackColorChanged(e As EventArgs)
         MyBase.OnBackColorChanged(e)
-        OuterToInnerRefreshScheduler.RequestFull(Me)
+        请求V3渲染()
     End Sub
 #End Region
 
@@ -1143,7 +1116,7 @@ Public Class CpuMonitor
                 _挂起期间需要采样 = False
             End If
             更新采样定时器状态()
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -1158,7 +1131,7 @@ Public Class CpuMonitor
             If value = 简化模式值 Then Return
             简化模式值 = value
             If value Then Reset()
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -1173,7 +1146,7 @@ Public Class CpuMonitor
             If value < -1 Then value = -1
             If value = 显示处理器组值 Then Return
             显示处理器组值 = value
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -1412,7 +1385,7 @@ Public Class CpuMonitor
         End Get
         Set(value As Boolean)
             启用历史记录 = value
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -1451,7 +1424,7 @@ Public Class CpuMonitor
                 Next
                 历史写入位置 = 0
             End SyncLock
-            OuterToInnerRefreshScheduler.RequestFull(Me)
+            请求V3渲染()
         End Set
     End Property
 
@@ -1524,8 +1497,8 @@ Public Class CpuMonitor
         End Get
         Set(value As Control)
             If _backgroundSource IsNot value Then
-                _backgroundSource = BackgroundPenetrationV2.SetConsumerSource(Me, _backgroundSource, value)
-                OuterToInnerRefreshScheduler.RequestFull(Me)
+                _backgroundSource = D3D_BackgroundPenetration.SetBackgroundSource(Me, _backgroundSource, value)
+                请求V3渲染()
             End If
         End Set
     End Property

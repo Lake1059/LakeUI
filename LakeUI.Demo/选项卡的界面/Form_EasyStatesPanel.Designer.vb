@@ -252,7 +252,7 @@ Partial Class Form_EasyStatesPanel
         ModernButton2.Size = New Size(160, 50)
         ModernButton2.SubText = "技术路线"
         ModernButton2.TabIndex = 2
-        ModernButton2.Text = "Direct2D 卡片"
+        ModernButton2.Text = "V3 GPU 卡片"
         ModernButton2.TextAlign = ModernButton.TextAlignEnum.Left
         ' 
         ' Label2
