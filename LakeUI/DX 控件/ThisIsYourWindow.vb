@@ -268,6 +268,7 @@ Public Class ThisIsYourWindow
 
     Private Function BackdropCoversClient(form As Form) As Boolean
         Dim s = 查找状态(form)
+        If Not 毛玻璃允许用于窗体(s) Then Return False
         Select Case _毛玻璃模式
             Case BackdropModeEnum.Image
                 Return _毛玻璃图片 IsNot Nothing
@@ -2130,6 +2131,7 @@ Public Class ThisIsYourWindow
                                  active As Boolean) As Boolean
         If context Is Nothing OrElse s Is Nothing Then Return False
         If _毛玻璃模式 = BackdropModeEnum.None Then Return False
+        If Not 毛玻璃允许用于窗体(s) Then Return False
 
         Dim tint = If(active, _毛玻璃Tint颜色, _毛玻璃Tint失焦颜色)
 

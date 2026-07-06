@@ -2,10 +2,6 @@ Public Class Form1
 
     Private Sub Form1_Load(sender As Object, e As EventArgs) Handles MyBase.Load
         LakeUI.GlobalOptions.GlobalTextQuality = LakeUI.GlobalOptions.TextQualityMode.Outline
-        LakeUI.GlobalOptions.HDR.Enabled = True
-        LakeUI.GlobalOptions.HDR.Profile = LakeUI.GlobalOptions.HdrOutputProfile.HDR400
-        LakeUI.GlobalOptions.HDR.MapVectorColors = True
-        LakeUI.GlobalOptions.HDR.MapImages = True
         Me.ThisIsYourWindow1.Attach(Me)
 
         Me.ModernTabListControl1.Items(1).BoundControl = Form基本信息
