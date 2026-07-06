@@ -42,6 +42,7 @@ Public NotInheritable Class D3D_WindowCompositor
     Private ReadOnly _pendingTransparentHwnds As New HashSet(Of Control)()
     Private _disposed As Boolean
     Private _dpiContext As V3_DpiContext
+    Private _backgroundGraph As D3D_BackgroundGraph
 
     Public Sub New(form As Form, deviceManager As D3D_DeviceManager)
         If form Is Nothing Then Throw New ArgumentNullException(NameOf(form))
@@ -57,7 +58,6 @@ Public NotInheritable Class D3D_WindowCompositor
         TextureCache = New D3D_TextureCache()
         ImageCache = New D3D_ImageCache(TextureCache)
         TextRenderer = New D3D_TextRenderer(_deviceManager)
-        BackgroundGraph = New D3D_BackgroundGraph(TextureCache, _deviceManager, Me)
         D3D_BackdropSurfaceRenderer = New D3D_BackdropRenderer(ImageCache, _deviceManager)
         FrameGraph = D3D_FrameGraph.CreateDefault()
 
@@ -98,7 +98,6 @@ Public NotInheritable Class D3D_WindowCompositor
     Public ReadOnly Property TextureCache As D3D_TextureCache
     Public ReadOnly Property ImageCache As D3D_ImageCache
     Public ReadOnly Property TextRenderer As D3D_TextRenderer
-    Public ReadOnly Property BackgroundGraph As D3D_BackgroundGraph
     Public ReadOnly Property D3D_BackdropSurfaceRenderer As D3D_BackdropRenderer
     Public ReadOnly Property FrameGraph As D3D_FrameGraph
 
@@ -844,33 +843,40 @@ Public NotInheritable Class D3D_WindowCompositor
                                                consumer As Control,
                                                source As Control,
                                                destination As RectangleF) As Boolean
-        Return BackgroundGraph.DrawMappedBackground(context, consumer, source, destination)
+        Return EnsureBackgroundGraph().DrawMappedBackground(context, consumer, source, destination)
     End Function
 
     Friend Sub UnregisterBackgroundConsumer(consumer As Control, Optional recursive As Boolean = False)
-        If BackgroundGraph Is Nothing Then Return
-        BackgroundGraph.UnregisterConsumer(consumer, recursive)
+        If _backgroundGraph Is Nothing Then Return
+        _backgroundGraph.UnregisterConsumer(consumer, recursive)
     End Sub
 
     Friend Sub InvalidateBackgroundSource(source As Control)
-        If BackgroundGraph Is Nothing Then Return
-        BackgroundGraph.InvalidateSource(source)
+        If _backgroundGraph Is Nothing Then Return
+        _backgroundGraph.InvalidateSource(source)
     End Sub
 
     Friend Sub InvalidateBackgroundSource(source As Control, dirtyRect As Rectangle)
-        If BackgroundGraph Is Nothing Then Return
-        BackgroundGraph.InvalidateSource(source, dirtyRect)
+        If _backgroundGraph Is Nothing Then Return
+        _backgroundGraph.InvalidateSource(source, dirtyRect)
     End Sub
 
     Friend Sub InvalidateBackgroundSnapshots()
-        If BackgroundGraph Is Nothing Then Return
-        BackgroundGraph.Invalidate()
+        If _backgroundGraph Is Nothing Then Return
+        _backgroundGraph.Invalidate()
     End Sub
 
     Friend Sub InvalidateSnapshotsForRenderedControl(control As Control, dirtyRect As Rectangle)
-        If BackgroundGraph Is Nothing Then Return
-        BackgroundGraph.InvalidateSnapshotsForRenderedControl(control, dirtyRect)
+        If _backgroundGraph Is Nothing Then Return
+        _backgroundGraph.InvalidateSnapshotsForRenderedControl(control, dirtyRect)
     End Sub
+
+    Private Function EnsureBackgroundGraph() As D3D_BackgroundGraph
+        If _backgroundGraph Is Nothing Then
+            _backgroundGraph = New D3D_BackgroundGraph(TextureCache, _deviceManager, Me)
+        End If
+        Return _backgroundGraph
+    End Function
 
     ''' <summary>
     ''' 释放窗口级 target、D2D context 和所有 generation-aware cache。下一帧会从 D3D_DeviceManager 重新获取 device。
@@ -901,7 +907,7 @@ Public NotInheritable Class D3D_WindowCompositor
         TextureCache.ReleaseAll()
         ImageCache.Invalidate()
         TextRenderer.Invalidate()
-        BackgroundGraph.Invalidate()
+        If _backgroundGraph IsNot Nothing Then _backgroundGraph.Invalidate()
         D3D_BackdropSurfaceRenderer.Invalidate()
         _deviceGeneration = -1
 
@@ -946,7 +952,7 @@ Public NotInheritable Class D3D_WindowCompositor
             GeometryCache.Invalidate()
             TextureCache.InvalidateGeneration(_deviceGeneration)
             TextRenderer.Invalidate()
-            BackgroundGraph.Invalidate()
+            If _backgroundGraph IsNot Nothing Then _backgroundGraph.Invalidate()
         End If
 
         _dpiContext = V3_DpiContext.FromControl(_form)
@@ -1170,7 +1176,10 @@ Public NotInheritable Class D3D_WindowCompositor
         MarkDeviceLost()
         CompletePendingDeviceLost()
         D3D_BackdropSurfaceRenderer.Dispose()
-        BackgroundGraph.Dispose()
+        If _backgroundGraph IsNot Nothing Then
+            _backgroundGraph.Dispose()
+            _backgroundGraph = Nothing
+        End If
         TextRenderer.Dispose()
         ImageCache.Dispose()
         TextureCache.Dispose()

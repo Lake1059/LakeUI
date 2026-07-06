@@ -21,14 +21,7 @@ Friend NotInheritable Class V3_InvalidationRouter
         bounds = Rectangle.Intersect(New Rectangle(Point.Empty, control.Size), bounds)
         If bounds.Width <= 0 OrElse bounds.Height <= 0 Then bounds = New Rectangle(Point.Empty, control.Size)
 
-        Try
-            If control.IsHandleCreated Then
-                control.Invalidate(bounds)
-            Else
-                control.Invalidate()
-            End If
-        Catch
-        End Try
+        OuterToInnerRefreshScheduler.Request(control, bounds)
 
         Try
             D3D_RenderCore.NotifyControlInvalidated(control, bounds)

@@ -25,7 +25,7 @@ Public Class BooleanSwitch
     Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
         If context Is Nothing OrElse Me.Width <= 0 OrElse Me.Height <= 0 Then Return
 
-        Dim bounds As New RectangleF(0, 0, Me.Width - 1, Me.Height - 1)
+        Dim bounds As New RectangleF(0, 0, Me.Width, Me.Height)
         Dim scale As Single = DpiScale()
         If 边框宽度 > 0 Then
             Dim half As Single = 边框宽度 * scale / 2.0F

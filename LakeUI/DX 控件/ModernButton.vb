@@ -28,6 +28,7 @@ Public Class ModernButton
 
         Dim 是否有圆角 As Boolean = 边框圆角半径 > 0
         Dim s As Single = DpiScale()
+        Dim sourceRect As New RectangleF(0, 0, Me.Width, Me.Height)
         Dim 极限矩形区域 As New RectangleF(0, 0, Me.Width, Me.Height)
         If 边框宽度 > 0 Then
             Dim half As Single = 边框宽度 * s / 2.0F
@@ -41,7 +42,7 @@ Public Class ModernButton
         Dim 图标宽度 As Single = 计算图标占用的水平宽度(内容矩形区域, s)
 
         If _backgroundSource IsNot Nothing Then
-            context.DrawBackgroundSource(Me, _backgroundSource, 极限矩形区域)
+            context.DrawBackgroundSource(Me, _backgroundSource, sourceRect)
         ElseIf MyBase.BackColor.A > 0 Then
             填充形状_GPU(context, 极限矩形区域, If(是否有圆角, 边框圆角半径 * s, 0.0F), MyBase.BackColor)
         End If
@@ -706,7 +707,9 @@ Public Class ModernButton
             Return 动画助手.FPS
         End Get
         Set(value As Integer)
-            动画助手.FPS = Math.Max(0, value)
+            Dim fps As Integer = Math.Max(0, value)
+            动画助手.FPS = fps
+            长按动画助手.FPS = fps
         End Set
     End Property
 
@@ -1014,16 +1017,6 @@ Public Class ModernButton
         End Get
         Set(value As Integer)
             长按动画助手.Duration = Math.Max(0, value)
-        End Set
-    End Property
-
-    <Category("LakeUI"), Description("长按确认动画帧率"), DefaultValue(60), Browsable(True)>
-    Public Property HoldClickFPS As Integer
-        Get
-            Return 长按动画助手.FPS
-        End Get
-        Set(value As Integer)
-            长按动画助手.FPS = Math.Max(0, value)
         End Set
     End Property
 

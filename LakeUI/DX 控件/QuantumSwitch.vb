@@ -62,7 +62,7 @@ Public Class QuantumSwitch
             context.FillRectangle(New RectangleF(0, 0, Me.Width, Me.Height), MyBase.BackColor)
         End If
 
-        Dim 极限矩形区域 As New RectangleF(0, 0, Me.Width - 1, Me.Height - 1)
+        Dim 极限矩形区域 As New RectangleF(0, 0, Me.Width, Me.Height)
         Dim s As Single = DpiScale()
         If 边框宽度 > 0 Then
             Dim half As Single = 边框宽度 * s / 2.0F

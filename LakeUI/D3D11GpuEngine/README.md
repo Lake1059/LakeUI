@@ -12,7 +12,7 @@
 
 - 每个控件只绘制自身坐标系内的像素；父子、兄弟和整窗重绘只通过 WinForms invalidation 合并。
 - `RenderGpu` 只能使用传入的 `D3D_PaintContext`。不要缓存 context、device context、brush、bitmap、geometry、text format。
-- 控件状态变化调用 `V3_InvalidationRouter.RequestRender`；不要直接 `Update`，也不要触发旧的整树刷新。
+- 控件状态变化调用 `V3_InvalidationRouter.RequestRender`；它会进入 `OuterToInnerRefreshScheduler` 合并并按外到内顺序刷新。不要直接 `Update`，也不要触发旧的整树刷新。
 - `D3D_WindowCompositor` 的 swap-chain/window-frame 代码只保留给核心验证和后续能力，不是控件刷新入口。
 
 ## 当前核心边界

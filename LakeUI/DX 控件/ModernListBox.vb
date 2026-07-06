@@ -1253,7 +1253,8 @@ Public Class ModernListBox
         Dim w As Integer = ClientRectangle.Width
         Dim h As Integer = ClientRectangle.Height
         Dim hasRadius As Boolean = 边框圆角半径 > 0
-        Dim boundsRect As New RectangleF(0, 0, w - 1, h - 1)
+        Dim sourceRect As New RectangleF(0, 0, w, h)
+        Dim boundsRect As New RectangleF(0, 0, w, h)
         Dim s As Single = DpiScale()
         If 边框宽度 > 0 Then
             Dim half As Single = 边框宽度 * s / 2.0F
@@ -1265,7 +1266,7 @@ Public Class ModernListBox
 
         预计算滚动条布局()
 
-        DrawBackground_GPU(context, hasRadius, boundsRect, bc, effBg)
+        DrawBackground_GPU(context, hasRadius, sourceRect, boundsRect, bc, effBg)
 
         Using context.PushClip(获取内容裁剪矩形())
             绘制全部项背景与图标_GPU(context)
@@ -1286,13 +1287,13 @@ Public Class ModernListBox
 
     Private Function 获取内容裁剪矩形() As RectangleF
         Dim inset As Integer = 获取边框内边距()
-        Return New RectangleF(inset, inset, Width - inset * 2 - 1, Height - inset * 2 - 1)
+        Return New RectangleF(inset, inset, Math.Max(0, Width - inset * 2), Math.Max(0, Height - inset * 2))
     End Function
 
-    Private Sub DrawBackground_GPU(context As D3D_PaintContext, hasRadius As Boolean, boundsRect As RectangleF, borderClr As Color, bgClr As Color)
+    Private Sub DrawBackground_GPU(context As D3D_PaintContext, hasRadius As Boolean, sourceRect As RectangleF, boundsRect As RectangleF, borderClr As Color, bgClr As Color)
         Dim s As Single = DpiScale()
         Dim radius As Single = If(hasRadius, 边框圆角半径 * s, 0.0F)
-        If _backgroundSource IsNot Nothing Then context.DrawBackgroundSource(Me, _backgroundSource, boundsRect)
+        If _backgroundSource IsNot Nothing Then context.DrawBackgroundSource(Me, _backgroundSource, sourceRect)
         填充圆角矩形_GPU(context, boundsRect, radius, bgClr)
         绘制圆角边框_GPU(context, boundsRect, radius, borderClr, 边框宽度 * s)
     End Sub
@@ -1488,7 +1489,7 @@ Public Class ModernListBox
 
     Private Function CreateContentClip_D2D(rt As ID2D1RenderTarget, hasRadius As Boolean, s As Single) As D2DContentClipScope
         Dim inset As Integer = 获取边框内边距()
-        Dim clipRect As New RectangleF(inset, inset, Width - inset * 2 - 1, Height - inset * 2 - 1)
+        Dim clipRect As New RectangleF(inset, inset, Math.Max(0, Width - inset * 2), Math.Max(0, Height - inset * 2))
         Dim radius As Single = If(hasRadius, Math.Max(0, 边框圆角半径 * s - 边框宽度 * s), 0)
         Return New D2DContentClipScope(rt, clipRect, radius)
     End Function

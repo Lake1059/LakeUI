@@ -234,7 +234,7 @@ Friend Class ExFloatingTipForm
 
         SC = ResolveDpiScale(anchor)
         卡片内边距 = 缩放逻辑尺寸(主题.Padding)
-        卡片边框宽度 = 缩放逻辑尺寸(主题.CardBorderSize)
+        卡片边框宽度 = 缩放边框宽度(主题.CardBorderSize)
         卡片最大宽度 = Math.Max(1, 缩放逻辑尺寸(主题.MaxWidth))
 
         消息字体 = New Font(MessageDialogRendering.ResolveDialogFontName(anchor, Me), 9.5F, FontStyle.Regular)
@@ -486,6 +486,10 @@ Friend Class ExFloatingTipForm
 
     Private Function 缩放逻辑尺寸(value As Integer) As Integer
         Return Math.Max(0, CInt(Math.Round(value * SC, MidpointRounding.AwayFromZero)))
+    End Function
+
+    Private Function 缩放边框宽度(value As Integer) As Integer
+        Return Math.Max(0, CInt(Math.Round(value * SC)))
     End Function
 
 #End Region

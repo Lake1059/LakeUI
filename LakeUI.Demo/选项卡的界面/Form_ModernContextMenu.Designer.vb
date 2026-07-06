@@ -202,7 +202,7 @@ Partial Class Form_ModernContextMenu
         ModernContextMenu1.BackdropTintColor = Color.FromArgb(CByte(80), CByte(0), CByte(0), CByte(0))
         ModernContextMenu1.BorderColor = Color.FromArgb(CByte(80), CByte(220), CByte(220), CByte(220))
         ModernContextMenu1.BorderSize = 2
-        ModernContextMenu1.HoverAnimationFPS = 0
+        ModernContextMenu1.AnimationFPS = 0
         ModernContextMenu1.HoverBackColor = Color.FromArgb(CByte(60), CByte(220), CByte(220), CByte(220))
         ModernContextMenu1.HoverRadius = 5
         ModernContextMenu1.ItemHeight = 35
@@ -227,7 +227,6 @@ Partial Class Form_ModernContextMenu
         ModernContextMenu1.Items.Add(ModernMenuItem5)
         ModernContextMenu1.MenuFont = New Font("Microsoft YaHei UI", 10F)
         ModernContextMenu1.MenuPadding = New Padding(10)
-        ModernContextMenu1.PopupAnimationFPS = 0
         ModernContextMenu1.PressedBackColor = Color.FromArgb(CByte(80), CByte(220), CByte(220), CByte(220))
         ModernContextMenu1.SeparatorColor = Color.FromArgb(CByte(80), CByte(220), CByte(220), CByte(220))
         ModernContextMenu1.SeparatorHeight = 20

@@ -2666,7 +2666,7 @@ Public Class MarkdownViewerCore
         EnsureLayoutDpiCurrent()
         Dim s As Single = DpiScale()
 
-        Dim boundsRect As New RectangleF(0, 0, w - 1, h - 1)
+        Dim boundsRect As New RectangleF(0, 0, w, h)
         If 边框宽度 > 0 Then boundsRect.Inflate(-边框宽度 * s / 2.0F, -边框宽度 * s / 2.0F)
 
         If _embeddedContentMode Then

@@ -91,14 +91,7 @@ Public NotInheritable Class D3D_RenderCore
         bounds = Rectangle.Intersect(New Rectangle(Point.Empty, control.Size), bounds)
         If bounds.Width <= 0 OrElse bounds.Height <= 0 Then bounds = New Rectangle(Point.Empty, control.Size)
 
-        Try
-            If control.IsHandleCreated Then
-                control.Invalidate(bounds)
-            Else
-                control.Invalidate()
-            End If
-        Catch
-        End Try
+        OuterToInnerRefreshScheduler.Request(control, bounds)
 
         NotifyControlInvalidated(control, bounds)
     End Sub

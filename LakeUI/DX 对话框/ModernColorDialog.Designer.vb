@@ -45,7 +45,7 @@ Partial Class ModernColorDialog
         ModernContextMenu1.BackdropMode = ModernContextMenu.BackdropModeEnum.Auto
         ModernContextMenu1.BackdropNoiseOpacity = CByte(0)
         ModernContextMenu1.BorderSize = 2
-        ModernContextMenu1.HoverAnimationFPS = 0
+        ModernContextMenu1.AnimationFPS = 0
         ModernContextMenu1.HoverRadius = 5
         ModernContextMenu1.IconSize = 0
         ModernContextMenu1.ItemPadding = New Padding(7, 0, 0, 0)
@@ -94,7 +94,6 @@ Partial Class ModernColorDialog
         ModernContextMenu1.Items.Add(ModernMenuItem13)
         ModernContextMenu1.MenuPadding = New Padding(10)
         ModernContextMenu1.PopupAnimationDuration = 300
-        ModernContextMenu1.PopupAnimationFPS = 0
         ModernContextMenu1.SeparatorHeight = 20
         ' 
         ' ModernColorDialog

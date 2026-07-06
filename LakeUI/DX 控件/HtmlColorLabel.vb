@@ -390,6 +390,7 @@ Public Class HtmlColorLabel
         If context Is Nothing OrElse Me.Width <= 0 OrElse Me.Height <= 0 Then Return
 
         Dim 是否有圆角 As Boolean = 边框圆角半径 > 0
+        Dim sourceRect As New RectangleF(0, 0, Me.Width, Me.Height)
         Dim 极限矩形区域 As New RectangleF(0, 0, Me.Width, Me.Height)
         If 边框宽度 > 0 Then
             Dim half As Single = 边框宽度 * DpiScale() / 2.0F
@@ -401,7 +402,7 @@ Public Class HtmlColorLabel
             极限矩形区域.Width - Me.Padding.Horizontal,
             极限矩形区域.Height - Me.Padding.Vertical)
 
-        绘制图形内容_GPU(context, 是否有圆角, 极限矩形区域)
+        绘制图形内容_GPU(context, 是否有圆角, sourceRect, 极限矩形区域)
         绘制文本内容_GPU(context, 内容矩形区域)
 
         If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
@@ -413,11 +414,11 @@ Public Class HtmlColorLabel
         Return New Rectangle(Point.Empty, Me.Size)
     End Function
 
-    Private Sub 绘制图形内容_GPU(context As D3D_PaintContext, 是否有圆角 As Boolean, 极限矩形区域 As RectangleF)
+    Private Sub 绘制图形内容_GPU(context As D3D_PaintContext, 是否有圆角 As Boolean, sourceRect As RectangleF, 极限矩形区域 As RectangleF)
         Dim s As Single = DpiScale()
         Dim r As Single = If(是否有圆角, 边框圆角半径 * s, 0.0F)
         If _backgroundSource IsNot Nothing Then
-            context.DrawBackgroundSource(Me, _backgroundSource, 极限矩形区域)
+            context.DrawBackgroundSource(Me, _backgroundSource, sourceRect)
         ElseIf MyBase.BackColor.A > 0 Then
             填充圆角矩形_GPU(context, 极限矩形区域, r, MyBase.BackColor)
         End If

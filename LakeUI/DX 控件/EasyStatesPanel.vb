@@ -580,8 +580,8 @@ Partial Public Class EasyStatesPanel
         End Set
     End Property
 
-    <Category("LakeUI"), Description("平滑滚动动画帧率。0 表示不限制帧率上限，仍使用高精度计时器驱动。"), DefaultValue(60), Browsable(True)>
-    Public Property SmoothScrollFPS As Integer
+    <Category("LakeUI"), Description(GlobalOptions.动画帧率描述词), DefaultValue(60), Browsable(True)>
+    Public Property AnimationFPS As Integer
         Get
             Return _scrollAnimationHelper.FPS
         End Get

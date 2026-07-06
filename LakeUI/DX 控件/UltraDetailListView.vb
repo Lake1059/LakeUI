@@ -2313,7 +2313,7 @@ Public Class UltraDetailListView
         绘制背景与边框_GPU(context)
 
         Dim inset As Integer = 获取边框内边距()
-        Dim clipRect As New RectangleF(inset, inset, Me.Width - inset * 2 - 1, Me.Height - inset * 2 - 1)
+        Dim clipRect As New RectangleF(inset, inset, Math.Max(0, Me.Width - inset * 2), Math.Max(0, Me.Height - inset * 2))
         If clipRect.Width > 0 AndAlso clipRect.Height > 0 Then
             Using context.PushClip(clipRect)
                 If 列标题可见 AndAlso _columns.Count > 0 Then 绘制列标题形状_GPU(context)
@@ -2398,7 +2398,7 @@ Public Class UltraDetailListView
 
     Private Sub 绘制背景与边框_GPU(context As D3D_PaintContext)
         Dim s As Single = DpiScale()
-        Dim boundsRect As New RectangleF(0, 0, Me.Width - 1, Me.Height - 1)
+        Dim boundsRect As New RectangleF(0, 0, Me.Width, Me.Height)
         If 边框宽度 > 0 Then
             Dim half As Single = 边框宽度 * s / 2.0F
             boundsRect.Inflate(-half, -half)

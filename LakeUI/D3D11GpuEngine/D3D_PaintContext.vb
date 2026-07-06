@@ -124,6 +124,7 @@ Public NotInheritable Class D3D_PaintContext
     ''' 推入窗口 surface 上的轴对齐 clip。返回对象必须在同一 RenderGpu 调用栈中 Dispose，不能跨帧保存。
     ''' </summary>
     Public Function PushClip(rect As RectangleF) As IDisposable
+        If rect.Width <= 0 OrElse rect.Height <= 0 Then Return NoopClipScope.Instance
         Dim scope As New D3D_ClipScope(DeviceContext, rect)
         _clipStack.Push(scope)
         Return scope
@@ -163,6 +164,18 @@ Public NotInheritable Class D3D_PaintContext
             If _disposed Then Return
             _disposed = True
             _context.PopAxisAlignedClip()
+        End Sub
+    End Class
+
+    Private NotInheritable Class NoopClipScope
+        Implements IDisposable
+
+        Public Shared ReadOnly Instance As New NoopClipScope()
+
+        Private Sub New()
+        End Sub
+
+        Public Sub Dispose() Implements IDisposable.Dispose
         End Sub
     End Class
 End Class

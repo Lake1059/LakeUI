@@ -74,7 +74,6 @@ Partial Class Form_ModernComboBox
         ModernPanel1.Margin = New Padding(2)
         ModernPanel1.Name = "ModernPanel1"
         ModernPanel1.Padding = New Padding(20)
-        ModernPanel1.ScrollBarMode = ModernPanel.ScrollMode.None
         ModernPanel1.Size = New Size(742, 610)
         ModernPanel1.TabIndex = 36
         ' 
@@ -89,18 +88,16 @@ Partial Class Form_ModernComboBox
         ' 
         ' ModernComboBox4
         ' 
+        ModernComboBox4.AnimationFPS = 0
         ModernComboBox4.ArrowSize = 13
         ModernComboBox4.BackColor2 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
         ModernComboBox4.BackgroundSource = ModernPanel1
         ModernComboBox4.BorderSize = 2
-        ModernComboBox4.CaretColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
         ModernComboBox4.Dock = DockStyle.Left
         ModernComboBox4.DropDownAnimationDuration = 200
-        ModernComboBox4.DropDownAnimationFPS = 0
         ModernComboBox4.DropDownBorderSize = 2
         ModernComboBox4.DropDownMode = ModernComboBox.DropDownDisplayMode.Overlay
         ModernComboBox4.DropDownPadding = New Padding(10)
-        ModernComboBox4.DropDownScrollBarHoverColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
         ModernComboBox4.Font = New Font("Microsoft YaHei UI", 10.2F, FontStyle.Regular, GraphicsUnit.Point, CByte(134))
         ModernComboBox4.HoverBackColor2 = Color.FromArgb(CByte(80), CByte(80), CByte(80))
         ModernComboBox4.Items.Add("下拉选项1")
@@ -146,18 +143,16 @@ Partial Class Form_ModernComboBox
         ' 
         ' ModernComboBox3
         ' 
+        ModernComboBox3.AnimationFPS = 0
         ModernComboBox3.ArrowSize = 13
         ModernComboBox3.BackColor2 = Color.FromArgb(CByte(64), CByte(64), CByte(64))
         ModernComboBox3.BackgroundSource = ModernPanel1
         ModernComboBox3.BorderSize = 2
-        ModernComboBox3.CaretColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
         ModernComboBox3.Dock = DockStyle.Left
         ModernComboBox3.DropDownAnimationDuration = 200
-        ModernComboBox3.DropDownAnimationFPS = 0
         ModernComboBox3.DropDownBorderSize = 2
         ModernComboBox3.DropDownGap = -3
         ModernComboBox3.DropDownPadding = New Padding(10)
-        ModernComboBox3.DropDownScrollBarHoverColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
         ModernComboBox3.Font = New Font("Microsoft YaHei UI", 10.2F, FontStyle.Regular, GraphicsUnit.Point, CByte(134))
         ModernComboBox3.HoverBackColor2 = Color.FromArgb(CByte(80), CByte(80), CByte(80))
         ModernComboBox3.Items.Add("下拉选项1")
@@ -208,13 +203,11 @@ Partial Class Form_ModernComboBox
         ModernComboBox2.BackgroundSource = ModernPanel1
         ModernComboBox2.BorderRadius = 10
         ModernComboBox2.BorderSize = 2
-        ModernComboBox2.CaretColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
         ModernComboBox2.Dock = DockStyle.Left
         ModernComboBox2.DropDownAnimationDuration = 0
         ModernComboBox2.DropDownBorderSize = 2
         ModernComboBox2.DropDownGap = 10
         ModernComboBox2.DropDownPadding = New Padding(10)
-        ModernComboBox2.DropDownScrollBarHoverColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
         ModernComboBox2.Editable = True
         ModernComboBox2.Font = New Font("Microsoft YaHei UI", 10.2F, FontStyle.Regular, GraphicsUnit.Point, CByte(134))
         ModernComboBox2.HoverBackColor2 = Color.FromArgb(CByte(80), CByte(80), CByte(80))
@@ -266,13 +259,11 @@ Partial Class Form_ModernComboBox
         ModernComboBox1.BackgroundSource = ModernPanel1
         ModernComboBox1.BorderRadius = 10
         ModernComboBox1.BorderSize = 2
-        ModernComboBox1.CaretColor = Color.FromArgb(CByte(220), CByte(220), CByte(220))
         ModernComboBox1.Dock = DockStyle.Left
         ModernComboBox1.DropDownAnimationDuration = 0
         ModernComboBox1.DropDownBorderSize = 2
         ModernComboBox1.DropDownGap = 10
         ModernComboBox1.DropDownPadding = New Padding(10)
-        ModernComboBox1.DropDownScrollBarHoverColor = Color.FromArgb(CByte(200), CByte(200), CByte(200))
         ModernComboBox1.Font = New Font("Microsoft YaHei UI", 10.2F, FontStyle.Regular, GraphicsUnit.Point, CByte(134))
         ModernComboBox1.HoverBackColor2 = Color.FromArgb(CByte(80), CByte(80), CByte(80))
         ModernComboBox1.Items.Add("下拉选项1")

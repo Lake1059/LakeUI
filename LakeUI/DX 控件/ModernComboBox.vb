@@ -971,14 +971,14 @@ Public Class ModernComboBox
         End Set
     End Property
 
-    Private 下拉动画帧率 As Integer = 60
+    Private 动画帧率 As Integer = 60
     <Category("LakeUI"), Description(GlobalOptions.动画帧率描述词), DefaultValue(60), Browsable(True)>
-    Public Property DropDownAnimationFPS As Integer
+    Public Property AnimationFPS As Integer
         Get
-            Return 下拉动画帧率
+            Return 动画帧率
         End Get
         Set(value As Integer)
-            下拉动画帧率 = Math.Max(0, value)
+            动画帧率 = Math.Max(0, value)
         End Set
     End Property
 
@@ -1412,7 +1412,7 @@ Public Class ModernComboBox
         Dim hasArrowFill As Boolean = 获取箭头区域背景颜色(arrowBgClr, arrowBgClr2)
         If Not hasMask AndAlso Not hasFill AndAlso Not hasArrowFill Then Return
         Dim s As Single = DpiScale()
-        Dim fillRect As New RectangleF(boundsRect.X, boundsRect.Y, boundsRect.Width + 1, boundsRect.Height + 1)
+        Dim fillRect As RectangleF = boundsRect
 
         If hasArrowFill Then
             绘制分区背景_D2D(rt, brushCache, hasRadius, fillRect, s, hasMask, backColorMask, hasFill, bgClr, bgClr2, arrowBgClr, arrowBgClr2)
@@ -2090,8 +2090,8 @@ Public Class ModernComboBox
             UpdateStyles()
             Me.AutoScaleMode = AutoScaleMode.Dpi
 
-            展开关闭计时器 = CreateFrameTimer(owner.下拉动画帧率)
-            悬停计时器 = CreateFrameTimer(owner.下拉动画帧率)
+            展开关闭计时器 = CreateFrameTimer(owner.动画帧率)
+            悬停计时器 = CreateFrameTimer(owner.动画帧率)
 
             Dim visCount As Integer = Math.Min(owner._items.Count, owner.最大下拉项数)
             Dim s As Single = owner.DpiScale()

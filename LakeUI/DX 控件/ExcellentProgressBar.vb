@@ -47,7 +47,8 @@ Public Class ExcellentProgressBar
 
         Dim scale As Single = DpiScale()
         Dim p As Padding = Me.Padding
-        Dim bounds As New RectangleF(0, 0, Me.Width - 1, Me.Height - 1)
+        Dim sourceRect As New RectangleF(0, 0, Me.Width, Me.Height)
+        Dim bounds As New RectangleF(0, 0, Me.Width, Me.Height)
         If 边框宽度 > 0 Then
             Dim half As Single = 边框宽度 * scale / 2.0F
             bounds.Inflate(-half, -half)
@@ -61,7 +62,7 @@ Public Class ExcellentProgressBar
             bounds.Height - p.Vertical)
 
         If _backgroundSource IsNot Nothing Then
-            context.DrawBackgroundSource(Me, _backgroundSource, bounds)
+            context.DrawBackgroundSource(Me, _backgroundSource, sourceRect)
         End If
         绘制图形内容_GPU(context, bounds, content)
 
@@ -80,7 +81,7 @@ Public Class ExcellentProgressBar
 
     Private Sub 绘制文字_GPU(context As D3D_PaintContext)
         Dim p As Padding = 文字边距
-        Dim textRect As New RectangleF(p.Left, p.Top, Me.Width - p.Horizontal - 1, Me.Height - p.Vertical - 1)
+        Dim textRect As New RectangleF(p.Left, p.Top, Math.Max(0, Me.Width - p.Horizontal), Math.Max(0, Me.Height - p.Vertical))
         If textRect.Width < 1 OrElse textRect.Height < 1 Then Return
         context.DrawText(Me.Text, Me.Font, Me.ForeColor, textRect, Vortice.DirectWrite.TextAlignment.Leading, Vortice.DirectWrite.ParagraphAlignment.Far)
     End Sub

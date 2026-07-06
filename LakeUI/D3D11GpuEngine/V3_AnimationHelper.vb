@@ -118,8 +118,8 @@ Friend Class V3_AnimationHelper
     Private _frameLoopRunning As Boolean = False
     Private _frameLoopHandler As EventHandler
     Private _animationStartTicks As Long = 0
-    Private _lastAnimationDispatchTicks As Long = 0
-    Private _lastFrameLoopDispatchTicks As Long = 0
+    Private _nextAnimationDispatchTicks As Long = 0
+    Private _nextFrameLoopDispatchTicks As Long = 0
     Private _currentSegmentDurationMs As Double = 0
     Private _disposed As Boolean = False
     Private _easingMode As EasingModeEnum = EasingModeEnum.EaseOut
@@ -148,6 +148,8 @@ Friend Class V3_AnimationHelper
         End Get
         Set(value As Integer)
             _fps = Math.Max(0, value)
+            _nextAnimationDispatchTicks = 0
+            _nextFrameLoopDispatchTicks = 0
             If IsActive Then CurrentScheduler(_owner).Reconfigure()
         End Set
     End Property
@@ -249,7 +251,7 @@ Friend Class V3_AnimationHelper
 
         _currentSegmentDurationMs = Math.Max(1.0, _duration * CDbl(distance))
         _animationStartTicks = Stopwatch.GetTimestamp()
-        _lastAnimationDispatchTicks = 0
+        _nextAnimationDispatchTicks = 0
         If Not _animationRunning Then
             _animationRunning = True
             CurrentScheduler(_owner).Register(Me)
@@ -261,7 +263,7 @@ Friend Class V3_AnimationHelper
     Public Sub StopAnimation()
         If Not _animationRunning Then Return
         _animationRunning = False
-        _lastAnimationDispatchTicks = 0
+        _nextAnimationDispatchTicks = 0
         If Not IsActive Then CurrentScheduler(_owner).Unregister(Me) Else CurrentScheduler(_owner).Reconfigure()
     End Sub
 
@@ -270,7 +272,7 @@ Friend Class V3_AnimationHelper
         If _disposed Then Return
         If Not _owner.IsHandleCreated Then Return
         _frameLoopHandler = handler
-        _lastFrameLoopDispatchTicks = 0
+        _nextFrameLoopDispatchTicks = 0
         If Not _frameLoopRunning Then
             _frameLoopRunning = True
             CurrentScheduler(_owner).Register(Me)
@@ -283,7 +285,7 @@ Friend Class V3_AnimationHelper
         If Not _frameLoopRunning Then Return
         _frameLoopRunning = False
         _frameLoopHandler = Nothing
-        _lastFrameLoopDispatchTicks = 0
+        _nextFrameLoopDispatchTicks = 0
         If Not IsActive Then CurrentScheduler(_owner).Unregister(Me) Else CurrentScheduler(_owner).Reconfigure()
     End Sub
 
@@ -295,30 +297,55 @@ Friend Class V3_AnimationHelper
 
         Dim updated As Boolean = False
 
-        If _animationRunning AndAlso ShouldDispatch(nowTicks, _lastAnimationDispatchTicks) Then
-            _lastAnimationDispatchTicks = nowTicks
+        If _animationRunning AndAlso ShouldDispatch(nowTicks, _nextAnimationDispatchTicks) Then
             updated = UpdateAnimation(nowTicks)
+            If _animationRunning Then ScheduleNextDispatch(_nextAnimationDispatchTicks, nowTicks)
         End If
 
-        If _frameLoopRunning AndAlso ShouldDispatch(nowTicks, _lastFrameLoopDispatchTicks) Then
-            _lastFrameLoopDispatchTicks = nowTicks
+        If _frameLoopRunning AndAlso ShouldDispatch(nowTicks, _nextFrameLoopDispatchTicks) Then
             Try
                 _frameLoopHandler?.Invoke(Me, EventArgs.Empty)
                 updated = True
             Catch
                 StopFrameLoop()
             End Try
+            If _frameLoopRunning Then ScheduleNextDispatch(_nextFrameLoopDispatchTicks, nowTicks)
         End If
 
         If updated Then RequestInvalidate()
         Return updated
     End Function
 
-    Private Function ShouldDispatch(nowTicks As Long, lastTicks As Long) As Boolean
+    Private Function ShouldDispatch(nowTicks As Long, nextTicks As Long) As Boolean
         If _fps <= 0 Then Return True
-        If lastTicks = 0 Then Return True
+        Return nextTicks <= 0 OrElse nowTicks >= nextTicks
+    End Function
+
+    Private Sub ScheduleNextDispatch(ByRef nextTicks As Long, nowTicks As Long)
+        If _fps <= 0 Then
+            nextTicks = 0
+            Return
+        End If
+
         Dim intervalTicks As Long = FrameIntervalTicks(_fps)
-        Return nowTicks - lastTicks >= intervalTicks
+        If nextTicks <= 0 OrElse nowTicks - nextTicks > intervalTicks * 2 Then
+            nextTicks = nowTicks + intervalTicks
+            Return
+        End If
+
+        Do
+            nextTicks += intervalTicks
+        Loop While nextTicks <= nowTicks
+    End Sub
+
+    Friend Function NextDispatchTicks(nowTicks As Long) As Long
+        If Not IsActive Then Return Long.MaxValue
+        If _fps <= 0 Then Return nowTicks
+
+        Dim nextTicks As Long = Long.MaxValue
+        If _animationRunning Then nextTicks = Math.Min(nextTicks, If(_nextAnimationDispatchTicks > 0, _nextAnimationDispatchTicks, nowTicks))
+        If _frameLoopRunning Then nextTicks = Math.Min(nextTicks, If(_nextFrameLoopDispatchTicks > 0, _nextFrameLoopDispatchTicks, nowTicks))
+        Return nextTicks
     End Function
 
     Private Function UpdateAnimation(nowTicks As Long) As Boolean
@@ -356,6 +383,8 @@ Friend Class V3_AnimationHelper
         _animationRunning = False
         _frameLoopRunning = False
         _frameLoopHandler = Nothing
+        _nextAnimationDispatchTicks = 0
+        _nextFrameLoopDispatchTicks = 0
         CurrentScheduler(_owner).Unregister(Me)
     End Sub
 
@@ -386,6 +415,7 @@ Friend Class V3_AnimationHelper
 
         Private Const MaxDirtyRectsPerControl As Integer = 8
         Private Const FullInvalidateAreaRatio As Double = 0.65
+        Private Const MaxTimerIntervalMs As Integer = 16
 
         Private ReadOnly _helpers As New List(Of V3_AnimationHelper)()
         Private ReadOnly _timer As New PrecisionTimer()
@@ -450,7 +480,7 @@ Friend Class V3_AnimationHelper
                 Return
             End If
 
-            SetDriver(DriverKind.Timer, 1)
+            SetDriver(DriverKind.Timer, CalculateTimerIntervalMs(Stopwatch.GetTimestamp()))
         End Sub
 
         Private Sub SetDriver(kind As DriverKind, interval As Integer)
@@ -513,11 +543,34 @@ Friend Class V3_AnimationHelper
                     If helper IsNot Nothing AndAlso helper.IsActive Then helper.Tick(nowTicks)
                 Next
                 FlushInvalidations()
+                UpdateTimerInterval(Stopwatch.GetTimestamp())
             Finally
                 _inTick = False
                 If _reconfigurePending Then ApplyConfiguration()
             End Try
         End Sub
+
+        Private Sub UpdateTimerInterval(nowTicks As Long)
+            If _driver <> DriverKind.Timer OrElse Not _timer.IsRunning Then Return
+            _timer.Interval = CalculateTimerIntervalMs(nowTicks)
+        End Sub
+
+        Private Function CalculateTimerIntervalMs(nowTicks As Long) As Integer
+            Dim earliestTicks As Long = Long.MaxValue
+
+            ' Each helper owns its FPS gate; the shared timer only wakes for the earliest due helper.
+            For Each helper In _helpers
+                If helper Is Nothing OrElse Not helper.IsActive Then Continue For
+                Dim dueTicks = helper.NextDispatchTicks(nowTicks)
+                If dueTicks <= nowTicks Then Return 1
+                If dueTicks < earliestTicks Then earliestTicks = dueTicks
+            Next
+
+            If earliestTicks = Long.MaxValue Then Return MaxTimerIntervalMs
+
+            Dim remainingMs As Double = (earliestTicks - nowTicks) * 1000.0 / Stopwatch.Frequency
+            Return Math.Max(1, Math.Min(MaxTimerIntervalMs, CInt(Math.Ceiling(remainingMs))))
+        End Function
 
         Public Sub RequestInvalidate(helper As V3_AnimationHelper)
             If helper Is Nothing Then Return

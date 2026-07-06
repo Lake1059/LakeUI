@@ -349,25 +349,14 @@ Public Class ModernContextMenu
         End Set
     End Property
 
-    Private 悬停动画帧率 As Integer = 60
-    <Category("LakeUI"), Description("悬停动画帧率上限，设为 0 则不限制"), DefaultValue(60), Browsable(True)>
-    Public Property HoverAnimationFPS As Integer
+    Private 动画帧率 As Integer = 60
+    <Category("LakeUI"), Description(GlobalOptions.动画帧率描述词), DefaultValue(60), Browsable(True)>
+    Public Property AnimationFPS As Integer
         Get
-            Return 悬停动画帧率
+            Return 动画帧率
         End Get
         Set(value As Integer)
-            悬停动画帧率 = Math.Max(0, value)
-        End Set
-    End Property
-
-    Private 展开关闭动画帧率 As Integer = 60
-    <Category("LakeUI"), Description("展开/关闭动画帧率上限，设为 0 则不限制"), DefaultValue(60), Browsable(True)>
-    Public Property PopupAnimationFPS As Integer
-        Get
-            Return 展开关闭动画帧率
-        End Get
-        Set(value As Integer)
-            展开关闭动画帧率 = Math.Max(0, value)
+            动画帧率 = Math.Max(0, value)
         End Set
     End Property
 
@@ -637,8 +626,8 @@ Public Class ModernContextMenu
             BackColor = menu.BackColor1
             SetStyle(ControlStyles.AllPaintingInWmPaint Or ControlStyles.UserPaint Or ControlStyles.OptimizedDoubleBuffer, True)
 
-            动画计时器 = 创建动画计时器(menu.悬停动画帧率)
-            展开关闭计时器 = 创建动画计时器(menu.展开关闭动画帧率)
+            动画计时器 = 创建动画计时器(menu.动画帧率)
+            展开关闭计时器 = 创建动画计时器(menu.动画帧率)
         End Sub
 
         Private Shared Function FrameIntervalMilliseconds(fps As Integer) As Integer

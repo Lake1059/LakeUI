@@ -646,7 +646,8 @@ Public Class ModernNumericUpDown
         If w <= 0 OrElse h <= 0 Then Return
 
         Dim hasRadius As Boolean = 边框圆角半径 > 0
-        Dim boundsRect As New RectangleF(0, 0, w - 1, h - 1)
+        Dim sourceRect As New RectangleF(0, 0, w, h)
+        Dim boundsRect As New RectangleF(0, 0, w, h)
         If 边框宽度 > 0 Then
             Dim half As Single = 边框宽度 * DpiScale() / 2.0F
             boundsRect.Inflate(-half, -half)
@@ -666,15 +667,14 @@ Public Class ModernNumericUpDown
                 If 鼠标按下时边框颜色 <> Color.Empty Then bc = 鼠标按下时边框颜色
         End Select
 
-        绘制背景_GPU(context, hasRadius, boundsRect, effBg, effBg2)
+        绘制背景_GPU(context, hasRadius, sourceRect, boundsRect, effBg, effBg2)
         SyncTextRendererLayout()
         _textRenderer.DrawGpu(context)
         绘制按钮_GPU(context, w, h)
         绘制边框_GPU(context, hasRadius, boundsRect, bc)
 
         If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
-            Dim overlayRect As New RectangleF(boundsRect.X, boundsRect.Y, boundsRect.Width + 1, boundsRect.Height + 1)
-            填充圆角矩形_GPU(context, overlayRect, If(hasRadius, 边框圆角半径 * DpiScale(), 0.0F), 禁用时遮罩颜色)
+            填充圆角矩形_GPU(context, boundsRect, If(hasRadius, 边框圆角半径 * DpiScale(), 0.0F), 禁用时遮罩颜色)
         End If
     End Sub
 
@@ -682,7 +682,7 @@ Public Class ModernNumericUpDown
         Return New Rectangle(Point.Empty, Me.Size)
     End Function
 
-    Private Sub 绘制背景_GPU(context As D3D_PaintContext, hasRadius As Boolean, boundsRect As RectangleF, bgClr As Color, bgClr2 As Color)
+    Private Sub 绘制背景_GPU(context As D3D_PaintContext, hasRadius As Boolean, sourceRect As RectangleF, boundsRect As RectangleF, bgClr As Color, bgClr2 As Color)
         Dim backColorMask As Color = MyBase.BackColor
         Dim hasMask As Boolean = backColorMask.A > 0 AndAlso backColorMask.A < 255
         Dim fillColor As Color = If(bgClr.A > 0, bgClr, bgClr2)
@@ -690,9 +690,9 @@ Public Class ModernNumericUpDown
         Dim hasBackgroundSource As Boolean = _backgroundSource IsNot Nothing
         If Not hasBackgroundSource AndAlso Not hasMask AndAlso Not hasFill Then Return
         Dim s As Single = DpiScale()
-        Dim fillRect As New RectangleF(boundsRect.X, boundsRect.Y, boundsRect.Width + 1, boundsRect.Height + 1)
+        Dim fillRect As RectangleF = boundsRect
         Dim radius As Single = If(hasRadius, 边框圆角半径 * s, 0.0F)
-        If hasBackgroundSource Then context.DrawBackgroundSource(Me, _backgroundSource, fillRect)
+        If hasBackgroundSource Then context.DrawBackgroundSource(Me, _backgroundSource, sourceRect)
         If hasMask Then 填充圆角矩形_GPU(context, fillRect, radius, backColorMask)
         If hasFill Then 填充圆角矩形_GPU(context, fillRect, radius, fillColor)
     End Sub
@@ -852,7 +852,7 @@ Public Class ModernNumericUpDown
         Dim hasFill As Boolean = bgClr.A > 0 OrElse (bgClr2 <> Color.Empty AndAlso bgClr2.A > 0)
         If Not hasMask AndAlso Not hasFill Then Return
         Dim s As Single = DpiScale()
-        Dim fillRect As New RectangleF(boundsRect.X, boundsRect.Y, boundsRect.Width + 1, boundsRect.Height + 1)
+        Dim fillRect As RectangleF = boundsRect
         If hasRadius Then
             Using geo = D3D_RectangleRenderer.创建圆角矩形几何(fillRect, 边框圆角半径 * s)
                 If hasMask Then D3D_RectangleRenderer.绘制圆角背景_D2D(rt, geo, fillRect, backColorMask, Color.Empty, 渐变方向, brushCache)

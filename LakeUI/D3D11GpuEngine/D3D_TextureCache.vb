@@ -4,10 +4,9 @@
 ''' 它不在正在绘制的 target 上执行 trim，调用方必须在 BeginFrame 外或确认资源不再被当前帧引用时清理。
 ''' </summary>
 Public NotInheritable Class D3D_TextureCache
-    Implements IDisposable
+    Implements D3D_IRenderCacheOwner, IDisposable
 
     Private ReadOnly _entries As New Dictionary(Of String, D3D_TextureCacheEntry)(StringComparer.Ordinal)
-    Private _clock As Long
     Private _totalGpuBytes As Long
     Private _frameUseDepth As Integer
     Private _trimPending As Boolean
@@ -15,11 +14,42 @@ Public NotInheritable Class D3D_TextureCache
 
     Public Property BudgetBytes As Long = 256L * 1024L * 1024L
 
+    Public Sub New()
+        SyncBudget()
+        D3D_GpuCache.Register(Me)
+    End Sub
+
     Public ReadOnly Property TotalGpuBytes As Long
         Get
             Return _totalGpuBytes
         End Get
     End Property
+
+    Private ReadOnly Property CacheBytes As Long Implements D3D_IRenderCacheOwner.CacheBytes
+        Get
+            Return _totalGpuBytes
+        End Get
+    End Property
+
+    Private ReadOnly Property OldestUseTick As Long Implements D3D_IRenderCacheOwner.OldestUseTick
+        Get
+            If _frameUseDepth > 0 Then Return Long.MaxValue
+            If _entries.Count = 0 Then Return Long.MaxValue
+            Return _entries.Values.Min(Function(e) e.LastUsed)
+        End Get
+    End Property
+
+    Private Function TrimOldest() As Boolean Implements D3D_IRenderCacheOwner.TrimOldest
+        If _frameUseDepth > 0 Then
+            _trimPending = True
+            Return False
+        End If
+        If _entries.Count = 0 Then Return False
+        Dim victim = _entries.Values.OrderBy(Function(e) e.LastUsed).FirstOrDefault()
+        If victim Is Nothing Then Return False
+        RemoveEntry(victim.Key, victim)
+        Return True
+    End Function
 
     Friend Function ContainsTexture(Of T As IDisposable)(key As String, generation As Integer) As Boolean
         If _disposed OrElse String.IsNullOrEmpty(key) Then Return False
@@ -40,6 +70,7 @@ Public NotInheritable Class D3D_TextureCache
         If _disposed Then Throw New ObjectDisposedException(NameOf(D3D_TextureCache))
         If String.IsNullOrEmpty(key) Then Throw New ArgumentException("Texture cache key is required.", NameOf(key))
         If factory Is Nothing Then Throw New ArgumentNullException(NameOf(factory))
+        SyncBudget()
 
         Dim entry As D3D_TextureCacheEntry = Nothing
         If _entries.TryGetValue(key, entry) Then
@@ -72,15 +103,18 @@ Public NotInheritable Class D3D_TextureCache
 
         _trimPending = False
         TrimToBudget(force:=False)
+        D3D_GpuCache.TrimToBudget()
     End Sub
 
     Private Sub RequestBudgetTrim(Optional protectedKey As String = Nothing)
+        SyncBudget()
         If _frameUseDepth > 0 Then
             _trimPending = True
             Return
         End If
 
         TrimToBudget(force:=False, protectedKey:=protectedKey)
+        D3D_GpuCache.TrimToBudget(Me)
     End Sub
 
     ''' <summary>
@@ -115,6 +149,7 @@ Public NotInheritable Class D3D_TextureCache
     ''' protectedKey 用于保护刚创建并即将返回给调用方的资源；即使单个资源超过预算，也不能在返回前把它 Dispose。
     ''' </summary>
     Public Sub TrimToBudget(force As Boolean, Optional protectedKey As String = Nothing)
+        SyncBudget()
         If force Then
             ReleaseAll()
             Return
@@ -130,7 +165,7 @@ Public NotInheritable Class D3D_TextureCache
         End While
     End Sub
 
-    Public Sub ReleaseAll()
+    Public Sub ReleaseAll() Implements D3D_IRenderCacheOwner.ReleaseAll
         For Each entry In _entries.Values.ToArray()
             DisposeEntry(entry)
         Next
@@ -140,9 +175,12 @@ Public NotInheritable Class D3D_TextureCache
     End Sub
 
     Private Function NextClock() As Long
-        _clock += 1
-        Return _clock
+        Return D3D_GpuCache.NextTick()
     End Function
+
+    Private Sub SyncBudget()
+        BudgetBytes = Math.Max(0L, GlobalOptions.GpuCacheBudgetBytes)
+    End Sub
 
     Private Sub RemoveEntry(key As String, entry As D3D_TextureCacheEntry)
         If Not _entries.Remove(key) Then Return

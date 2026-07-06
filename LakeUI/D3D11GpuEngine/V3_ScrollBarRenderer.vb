@@ -265,7 +265,7 @@ Public Class V3_ScrollBarRenderer
                                               ByRef clipGeo As Vortice.Direct2D1.ID2D1Geometry)
         clipPushed = False
         If borderRadius <= 0 Then Return
-        Dim clipRect As New RectangleF(0, 0, containerW - 1, containerH - 1)
+        Dim clipRect As New RectangleF(0, 0, containerW, containerH)
         If borderWidth > 0 Then
             Dim half As Single = borderWidth / 2.0F
             clipRect.Inflate(-half, -half)

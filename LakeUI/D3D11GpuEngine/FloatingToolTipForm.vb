@@ -612,7 +612,7 @@ Public NotInheritable Class FloatingToolTipForm
     End Function
 
     Private Function BorderWidth() As Integer
-        Return Math.Max(0, ScaledLogicalSize(_style.BorderSize))
+        Return Math.Max(0, ScaledBorderWidth(_style.BorderSize))
     End Function
 
     Private Function BorderRadius() As Single
@@ -633,6 +633,10 @@ Public NotInheritable Class FloatingToolTipForm
 
     Private Function ScaledLogicalSize(value As Integer) As Integer
         Return CInt(Math.Round(value * OwnerDpiScale(), MidpointRounding.AwayFromZero))
+    End Function
+
+    Private Function ScaledBorderWidth(value As Integer) As Integer
+        Return CInt(Math.Round(value * OwnerDpiScale()))
     End Function
 
     Private Function TipFont() As Font
