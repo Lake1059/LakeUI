@@ -434,13 +434,13 @@ Public Class ModernFontDialog
             Return
         End If
         If _d2dInSizeMove Then
-            If Not D3D_PaintBridge.PaintRenderable(e, Me, Me, 1) Then MyBase.OnPaint(e)
+            If Not D3D_PaintBridge.PaintRenderable(e, Me, Me) Then MyBase.OnPaint(e)
             Return
         End If
 
         初始化D2D字体对话框()
         确保D2D布局()
-        If Not D3D_PaintBridge.PaintRenderable(e, Me, Me, 1) Then MyBase.OnPaint(e)
+        If Not D3D_PaintBridge.PaintRenderable(e, Me, Me) Then MyBase.OnPaint(e)
     End Sub
 
     Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu

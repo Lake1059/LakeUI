@@ -8,8 +8,11 @@ Imports Vortice.Direct2D1
 Public NotInheritable Class D3D_GeometryCache
     Implements IDisposable
 
+    Private Const MaxCachedGeometries As Integer = 512
+
     Private ReadOnly _manager As D3D_DeviceManager
     Private ReadOnly _geometries As New Dictionary(Of String, D3D_GeometryCacheEntry)(StringComparer.Ordinal)
+    Private ReadOnly _lruKeys As New LinkedList(Of String)()
     Private _disposed As Boolean
 
     Public Sub New(manager As D3D_DeviceManager)
@@ -24,13 +27,18 @@ Public NotInheritable Class D3D_GeometryCache
         Dim generation = _manager.DeviceGeneration
         Dim entry As D3D_GeometryCacheEntry = Nothing
         If _geometries.TryGetValue(key, entry) Then
-            If entry.Generation = generation Then Return entry.Geometry
+            If entry.Generation = generation Then
+                Touch(entry)
+                Return entry.Geometry
+            End If
             Release(key)
         End If
 
         Dim geometry = factory()
         If geometry Is Nothing Then Return Nothing
-        _geometries(key) = New D3D_GeometryCacheEntry(geometry, generation)
+        Dim node = _lruKeys.AddLast(key)
+        _geometries(key) = New D3D_GeometryCacheEntry(geometry, generation, node)
+        TrimExcess()
         Return geometry
     End Function
 
@@ -38,6 +46,7 @@ Public NotInheritable Class D3D_GeometryCache
         Dim entry As D3D_GeometryCacheEntry = Nothing
         If Not _geometries.TryGetValue(key, entry) Then Return
         _geometries.Remove(key)
+        If entry.LruNode IsNot Nothing Then _lruKeys.Remove(entry.LruNode)
         Try : entry.Geometry.Dispose() : Catch : End Try
     End Sub
 
@@ -46,6 +55,7 @@ Public NotInheritable Class D3D_GeometryCache
             Try : entry.Geometry.Dispose() : Catch : End Try
         Next
         _geometries.Clear()
+        _lruKeys.Clear()
     End Sub
 
     Public Sub Dispose() Implements IDisposable.Dispose
@@ -55,13 +65,27 @@ Public NotInheritable Class D3D_GeometryCache
         GC.SuppressFinalize(Me)
     End Sub
 
+    Private Sub Touch(entry As D3D_GeometryCacheEntry)
+        If entry.LruNode Is Nothing OrElse entry.LruNode.List Is Nothing Then Return
+        _lruKeys.Remove(entry.LruNode)
+        _lruKeys.AddLast(entry.LruNode)
+    End Sub
+
+    Private Sub TrimExcess()
+        While _geometries.Count > MaxCachedGeometries AndAlso _lruKeys.First IsNot Nothing
+            Release(_lruKeys.First.Value)
+        End While
+    End Sub
+
     Private NotInheritable Class D3D_GeometryCacheEntry
-        Public Sub New(geometry As ID2D1Geometry, generation As Integer)
+        Public Sub New(geometry As ID2D1Geometry, generation As Integer, lruNode As LinkedListNode(Of String))
             Me.Geometry = geometry
             Me.Generation = generation
+            Me.LruNode = lruNode
         End Sub
 
         Public ReadOnly Property Geometry As ID2D1Geometry
         Public ReadOnly Property Generation As Integer
+        Public ReadOnly Property LruNode As LinkedListNode(Of String)
     End Class
 End Class

@@ -419,9 +419,7 @@ Friend Module MessageDialogRendering
         End If
 
         Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
-        Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New RoundedRectangle(rect, radius, radius))
-            context.DeviceContext.FillGeometry(geo, brush)
-        End Using
+        context.FillRoundedRectangle(rect, radius, brush)
     End Sub
 
     Public Sub DrawRoundedRectangle(context As D3D_PaintContext,
@@ -438,9 +436,7 @@ Friend Module MessageDialogRendering
         End If
 
         Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
-        Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New RoundedRectangle(rect, radius, radius))
-            context.DeviceContext.DrawGeometry(geo, brush, width)
-        End Using
+        context.DrawRoundedRectangle(rect, radius, brush, width)
     End Sub
 
     Public Sub DrawText(context As D3D_PaintContext,

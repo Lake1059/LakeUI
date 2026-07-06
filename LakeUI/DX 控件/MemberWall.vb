@@ -863,7 +863,7 @@ Partial Public Class MemberWall
     End Sub
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
-        If Not D3D_PaintBridge.PaintRenderable(e, Me, Me, 1) Then MyBase.OnPaint(e)
+        If Not D3D_PaintBridge.PaintRenderable(e, Me, Me) Then MyBase.OnPaint(e)
     End Sub
 
     Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
@@ -991,9 +991,7 @@ Partial Public Class MemberWall
             context.DeviceContext.FillRectangle(D3D_PaintContext.ToRawRect(rect), brush)
             Return
         End If
-        Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New RoundedRectangle(rect, radius, radius))
-            context.DeviceContext.FillGeometry(geo, brush)
-        End Using
+        context.FillRoundedRectangle(rect, radius, brush)
     End Sub
 
     Private Sub DrawRoundedBorder_GPU(context As D3D_PaintContext, rect As RectangleF, radius As Single, color As Color, strokeWidth As Single)
@@ -1003,9 +1001,7 @@ Partial Public Class MemberWall
             context.DeviceContext.DrawRectangle(D3D_PaintContext.ToRawRect(rect), brush, strokeWidth)
             Return
         End If
-        Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New RoundedRectangle(rect, radius, radius))
-            context.DeviceContext.DrawGeometry(geo, brush, strokeWidth)
-        End Using
+        context.DrawRoundedRectangle(rect, radius, brush, strokeWidth)
     End Sub
 
 

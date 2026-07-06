@@ -59,13 +59,23 @@ Public NotInheritable Class D3D_ImageCache
         _textureCache.ReleaseByPrefix("image:")
     End Sub
 
+    Public Function ReleaseImage(image As Image) As Boolean
+        If image Is Nothing Then Return False
+        Return _textureCache.ReleaseByPrefix(BuildSourcePrefix(image))
+    End Function
+
     Private Shared Function BuildKey(image As Image, frameIndex As Integer, generation As Integer) As String
-        Return "image:" &
-               RuntimeHelpers.GetHashCode(image).ToString(Globalization.CultureInfo.InvariantCulture) & ":" &
+        Return BuildSourcePrefix(image) &
                image.Width.ToString(Globalization.CultureInfo.InvariantCulture) & "x" &
                image.Height.ToString(Globalization.CultureInfo.InvariantCulture) & ":" &
                frameIndex.ToString(Globalization.CultureInfo.InvariantCulture) & ":" &
+               D3D_HdrOutput.ImageRevision.ToString(Globalization.CultureInfo.InvariantCulture) & ":" &
                generation.ToString(Globalization.CultureInfo.InvariantCulture)
+    End Function
+
+    Private Shared Function BuildSourcePrefix(image As Image) As String
+        Return "image:" &
+               RuntimeHelpers.GetHashCode(image).ToString(Globalization.CultureInfo.InvariantCulture) & ":"
     End Function
 
     Private Shared Function UploadImage(context As ID2D1DeviceContext, image As Image) As ID2D1Bitmap1
@@ -75,6 +85,7 @@ Public NotInheritable Class D3D_ImageCache
                 g.CompositingMode = Drawing2D.CompositingMode.SourceCopy
                 g.DrawImage(image, 0, 0, image.Width, image.Height)
             End Using
+            D3D_HdrOutput.MapBitmapForImageUpload(staging)
 
             Dim rect As New Rectangle(0, 0, staging.Width, staging.Height)
             Dim data = staging.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format32bppPArgb)

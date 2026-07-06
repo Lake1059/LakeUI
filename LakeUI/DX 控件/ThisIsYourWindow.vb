@@ -2231,9 +2231,7 @@ Public Class ThisIsYourWindow
             Dim r As Integer = Math.Min(Math.Max(0, 缩放逻辑尺寸(s.HostForm, _按钮圆角半径)), CInt(Math.Min(vis.Width, vis.Height)) \ 2)
             Dim bgBrush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, bgColor, context.DeviceGeneration)
             If r > 0 Then
-                Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New RoundedRectangle(vis, r, r))
-                    context.DeviceContext.FillGeometry(geo, bgBrush)
-                End Using
+                context.FillRoundedRectangle(vis, r, bgBrush)
             Else
                 context.DeviceContext.FillRectangle(D3D_PaintContext.ToRawRect(vis), bgBrush)
             End If

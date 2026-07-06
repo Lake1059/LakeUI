@@ -34,6 +34,9 @@ Imports Vortice.Direct2D1
 Public NotInheritable Class D3D_PaintScope
     Implements IDisposable
 
+    Private Const StableGpuTargetMaxArea As Long = 65536L
+    Private Const StableGpuTargetMaxMinorSide As Integer = 96
+
     Private ReadOnly _compositor As D3D_SurfaceCompositor
     Private ReadOnly _g As Graphics
     Private ReadOnly _hdc As IntPtr
@@ -45,6 +48,7 @@ Public NotInheritable Class D3D_PaintScope
     Private ReadOnly _ssaaLogicalH As Integer
     Private ReadOnly _ssaaPixelW As Integer
     Private ReadOnly _ssaaPixelH As Integer
+    Private _gpuTargetRect As Rectangle
     Private _rentedPixelW As Integer
     Private _rentedPixelH As Integer
     Private _bitmapRT As ID2D1BitmapRenderTarget
@@ -53,6 +57,7 @@ Public NotInheritable Class D3D_PaintScope
     Private _gpuContext As ID2D1DeviceContext
     Private _gpuTarget As ID2D1Bitmap1
     Private _gpuInterop As ID2D1GdiInteropRenderTarget
+    Private _ownsGpuContext As Boolean
     Private _gpuDrawing As Boolean
     Private _gpuClipPushed As Boolean
     Private _gpuGeneration As Integer = -1
@@ -213,13 +218,13 @@ Public NotInheritable Class D3D_PaintScope
 
     Private Sub EnsureLegacyGraphicsLayer()
         If DCRenderTarget Is Nothing Then
-            Throw New InvalidOperationException("This D3D_PaintScope was created for GPU-only painting and has no legacy DC render target.")
+            Throw New InvalidOperationException("当前 D3D_PaintScope 为纯 GPU 绘制作用域，没有可用的兼容 DC 渲染目标。")
         End If
         If _graphicsLayer IsNot Nothing AndAlso (Not ReferenceEquals(_graphicsLayer, DCRenderTarget) OrElse _ssaa <= 1) Then Return
         If _ssaa <= 1 OrElse _bitmapRT IsNot Nothing Then Return
 
         _bitmapRT = _compositor.RentSsaaRT(DCRenderTarget, _ssaaPixelW, _ssaaPixelH, _rentedPixelW, _rentedPixelH)
-        If _bitmapRT Is Nothing Then Throw New InvalidOperationException("SSAA render target allocation failed.")
+        If _bitmapRT Is Nothing Then Throw New InvalidOperationException("SSAA 渲染目标分配失败。")
         Try
             D3D_D2DInterop.ApplyGlobalQuality(_bitmapRT)
             _bitmapRT.BeginDraw()
@@ -251,14 +256,13 @@ Public NotInheritable Class D3D_PaintScope
     Public Function CreateContext(control As Control) As D3D_PaintContext
         If _disposed Then Return Nothing
         If control Is Nothing OrElse control.IsDisposed Then Return Nothing
-        If _gpuContext IsNot Nothing Then Throw New InvalidOperationException("D3D_PaintScope only supports one active GPU paint context.")
+        If _gpuContext IsNot Nothing Then Throw New InvalidOperationException("D3D_PaintScope 同一时间只允许一个活动 GPU 绘制上下文。")
 
         _gpuCompositor = D3D_RenderCore.GetWindowCompositor(control)
         If _gpuCompositor Is Nothing Then Return Nothing
 
-        Dim manager = D3D_RenderCore.DeviceManager
-        _gpuContext = manager.CreateDeviceContext()
-        _gpuGeneration = manager.DeviceGeneration
+        _gpuContext = _gpuCompositor.AcquireDeviceContext(_ownsGpuContext, _gpuGeneration)
+        If _gpuContext Is Nothing Then Return Nothing
 
         Dim props As New BitmapProperties1(
             New Vortice.DCommon.PixelFormat(Vortice.DXGI.Format.B8G8R8A8_UNorm, Vortice.DCommon.AlphaMode.Ignore),
@@ -266,7 +270,8 @@ Public NotInheritable Class D3D_PaintScope
             96.0F,
             BitmapOptions.Target Or BitmapOptions.GdiCompatible)
 
-        _gpuTarget = _gpuContext.CreateBitmap(New Vortice.Mathematics.SizeI(_w, _h), IntPtr.Zero, 0UI, props)
+        _gpuTargetRect = ResolveGpuTargetRect(control)
+        _gpuTarget = _gpuContext.CreateBitmap(New Vortice.Mathematics.SizeI(_gpuTargetRect.Width, _gpuTargetRect.Height), IntPtr.Zero, 0UI, props)
         _gpuContext.Target = _gpuTarget
         _gpuContext.Transform = Matrix3x2.Identity
         _gpuContext.AntialiasMode = AntialiasMode.PerPrimitive
@@ -276,8 +281,11 @@ Public NotInheritable Class D3D_PaintScope
 
         CopyDestinationIntoGpuTarget()
 
-        _gpuContext.PushAxisAlignedClip(D3D_PaintContext.ToRawRect(_clipRect), AntialiasMode.Aliased)
+        _gpuContext.PushAxisAlignedClip(
+            ToGpuLocalRectF(_clipRect),
+            AntialiasMode.Aliased)
         _gpuClipPushed = True
+        _gpuContext.Transform = Matrix3x2.CreateTranslation(-_gpuTargetRect.X, -_gpuTargetRect.Y)
 
         Return New D3D_PaintContext(
             _gpuCompositor,
@@ -302,7 +310,7 @@ Public NotInheritable Class D3D_PaintScope
             sourceHdc = _gpuInterop.GetDC(DcInitializeMode.Copy)
             If sourceHdc = IntPtr.Zero Then Return
 
-            BitBlt(sourceHdc, 0, 0, _w, _h, _hdc, 0, 0, SRCCOPY)
+            BitBlt(sourceHdc, 0, 0, _gpuTargetRect.Width, _gpuTargetRect.Height, _hdc, _gpuTargetRect.X, _gpuTargetRect.Y, SRCCOPY)
         Finally
             If _gpuInterop IsNot Nothing AndAlso sourceHdc <> IntPtr.Zero Then
                 Try : _gpuInterop.ReleaseDC(Nothing) : Catch : End Try
@@ -320,14 +328,15 @@ Public NotInheritable Class D3D_PaintScope
                 _gpuContext.PopAxisAlignedClip()
                 _gpuClipPushed = False
             End If
+            _gpuContext.Transform = Matrix3x2.Identity
 
             If _gpuInterop Is Nothing Then _gpuInterop = _gpuContext.QueryInterface(Of ID2D1GdiInteropRenderTarget)()
             If _gpuInterop IsNot Nothing Then
                 sourceHdc = _gpuInterop.GetDC(DcInitializeMode.Copy)
                 If sourceHdc <> IntPtr.Zero Then
                     If Not BitBlt(_hdc, _clipRect.X, _clipRect.Y, _clipRect.Width, _clipRect.Height,
-                                  sourceHdc, _clipRect.X, _clipRect.Y, SRCCOPY) Then
-                        Throw New InvalidOperationException("D3D paint scope BitBlt failed.")
+                                  sourceHdc, _clipRect.X - _gpuTargetRect.X, _clipRect.Y - _gpuTargetRect.Y, SRCCOPY) Then
+                        Throw New InvalidOperationException("D3D_PaintScope 回贴 HDC 失败。")
                     End If
                 End If
             End If
@@ -340,8 +349,10 @@ Public NotInheritable Class D3D_PaintScope
                 Try
                     _gpuContext.EndDraw()
                 Catch ex As Exception
-                    If _gpuCompositor IsNot Nothing AndAlso D3D_RenderCore.DeviceManager.HandleDeviceLost(ex) Then
-                        Try : _gpuCompositor.HandleDeviceLost() : Catch : End Try
+                    If _gpuCompositor IsNot Nothing Then
+                        Try : _gpuCompositor.NotifyDeviceContextException(ex) : Catch : End Try
+                    Else
+                        Try : D3D_RenderCore.DeviceManager.HandleDeviceLost(ex) : Catch : End Try
                     End If
                     endDrawException = ex
                 End Try
@@ -362,6 +373,7 @@ Public NotInheritable Class D3D_PaintScope
             _gpuDrawing = False
         End If
         If _gpuContext IsNot Nothing Then
+            Try : _gpuContext.Transform = Matrix3x2.Identity : Catch : End Try
             Try : _gpuContext.Target = Nothing : Catch : End Try
         End If
         If _gpuInterop IsNot Nothing Then
@@ -373,12 +385,47 @@ Public NotInheritable Class D3D_PaintScope
             _gpuTarget = Nothing
         End If
         If _gpuContext IsNot Nothing Then
-            Try : _gpuContext.Dispose() : Catch : End Try
-            _gpuContext = Nothing
+            If _gpuCompositor IsNot Nothing Then
+                Try : _gpuCompositor.ReleaseDeviceContext(_gpuContext, _ownsGpuContext) : Catch : End Try
+            ElseIf _ownsGpuContext Then
+                Try : _gpuContext.Dispose() : Catch : End Try
+            End If
         End If
+        _gpuContext = Nothing
+        _ownsGpuContext = False
         _gpuCompositor = Nothing
         _gpuGeneration = -1
+        _gpuTargetRect = Rectangle.Empty
     End Sub
+
+    Private Function ResolveGpuTargetRect(control As Control) As Rectangle
+        Dim bounds As New Rectangle(0, 0, Math.Max(1, _w), Math.Max(1, _h))
+        If ShouldUseFullGpuTarget(control, bounds) Then Return bounds
+        Return _clipRect
+    End Function
+
+    Private Function ShouldUseFullGpuTarget(control As Control, bounds As Rectangle) As Boolean
+        If bounds.Width <= 0 OrElse bounds.Height <= 0 Then Return True
+        If _clipRect.Width <= 0 OrElse _clipRect.Height <= 0 Then Return True
+
+        Dim controlArea As Long = CLng(bounds.Width) * CLng(bounds.Height)
+        If controlArea <= StableGpuTargetMaxArea Then Return True
+
+        Dim minorSide = Math.Min(bounds.Width, bounds.Height)
+        If minorSide <= StableGpuTargetMaxMinorSide Then Return True
+
+        If TypeOf control Is ButtonBase Then Return True
+
+        Return False
+    End Function
+
+    Private Function ToGpuLocalRectF(rect As Rectangle) As Vortice.RawRectF
+        Return New Vortice.RawRectF(
+            rect.Left - _gpuTargetRect.X,
+            rect.Top - _gpuTargetRect.Y,
+            rect.Right - _gpuTargetRect.X,
+            rect.Bottom - _gpuTargetRect.Y)
+    End Function
 
     Private Shared Function NormalizeClipRect(rect As Rectangle, w As Integer, h As Integer) As Rectangle
         Dim bounds As New Rectangle(0, 0, Math.Max(0, w), Math.Max(0, h))

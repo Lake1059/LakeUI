@@ -19,7 +19,7 @@ Public Class BooleanSwitch
     End Sub
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
-        If Not D3D_PaintBridge.PaintRenderable(e, Me, Me, 1) Then MyBase.OnPaint(e)
+        If Not D3D_PaintBridge.PaintRenderable(e, Me, Me) Then MyBase.OnPaint(e)
     End Sub
 
     Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
@@ -54,10 +54,7 @@ Public Class BooleanSwitch
 
         Dim borderWidth As Single = 边框宽度 * DpiScale()
         If currentBorderColor.A > 0 AndAlso borderWidth > 0 Then
-            Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New RoundedRectangle(bounds, radius, radius))
-                Dim borderBrush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, currentBorderColor, context.DeviceGeneration)
-                context.DeviceContext.DrawGeometry(geo, borderBrush, borderWidth)
-            End Using
+            context.DrawRoundedRectangle(bounds, radius, currentBorderColor, borderWidth)
         End If
 
         Dim thumbMargin As Single = 滑块边距值 * DpiScale()
@@ -84,9 +81,7 @@ Public Class BooleanSwitch
             context.DeviceContext.FillRectangle(D3D_PaintContext.ToRawRect(bounds), brush)
             Return
         End If
-        Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New RoundedRectangle(bounds, radius, radius))
-            context.DeviceContext.FillGeometry(geo, brush)
-        End Using
+        context.FillRoundedRectangle(bounds, radius, brush)
     End Sub
 
     Private Sub 绘制图形内容_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache, 极限矩形区域 As RectangleF)

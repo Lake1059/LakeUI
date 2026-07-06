@@ -131,6 +131,9 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
     Private _gpuSourceVersion As Integer = -1
     Private _gpuSourceOwnerContext As WeakReference
     Private _gpuBlurEffect As ID2D1Effect
+    Private _mappedStaticFrame As Bitmap
+    Private _mappedStaticFrameVersion As Integer = -1
+    Private _mappedStaticFrameHdrRevision As Integer = -1
 
     ' ── 抓屏临时位图复用（仅 Auto 模式使用，尺寸 = 窗口逻辑尺寸）──
     Private _capturedBitmap As Bitmap
@@ -315,6 +318,7 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
         If changed Then
             ' 切换源后已发布的平均色不再可信
             Volatile.Write(_publishedAverage, -1)
+            InvalidateMappedStaticFrameCache()
             InvalidateDerivedFrameCaches()
         End If
     End Sub
@@ -356,6 +360,7 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
                 _currentFrame = Nothing
                 _spareFrame?.Dispose()
                 _spareFrame = Nothing
+                DisposeMappedStaticFrameNoLock()
                 Interlocked.Increment(_frameVersion)
             End SyncLock
         End If
@@ -373,6 +378,7 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
         SyncLock _frameLock
             total += EstimateBitmapBytes(_currentFrame)
             total += EstimateBitmapBytes(_spareFrame)
+            total += EstimateBitmapBytes(_mappedStaticFrame)
         End SyncLock
         total += EstimateBitmapBytes(_capturedBitmap)
         Return total
@@ -410,6 +416,10 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
                 _spareFrame = Nothing
                 Return True
             End If
+            If _mappedStaticFrame IsNot Nothing Then
+                DisposeMappedStaticFrameNoLock()
+                Return True
+            End If
             If _currentFrame IsNot Nothing Then
                 _currentFrame.Dispose()
                 _currentFrame = Nothing
@@ -432,6 +442,7 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
             _currentFrame = Nothing
             _spareFrame?.Dispose()
             _spareFrame = Nothing
+            DisposeMappedStaticFrameNoLock()
             Interlocked.Increment(_frameVersion)
         End SyncLock
         ReleaseCaptureBitmap()
@@ -470,6 +481,21 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
         If old IsNot Nothing Then
             Try : old.Dispose() : Catch : End Try
         End If
+    End Sub
+
+    Private Sub InvalidateMappedStaticFrameCache()
+        SyncLock _frameLock
+            DisposeMappedStaticFrameNoLock()
+        End SyncLock
+    End Sub
+
+    Private Sub DisposeMappedStaticFrameNoLock()
+        If _mappedStaticFrame IsNot Nothing Then
+            Try : _mappedStaticFrame.Dispose() : Catch : End Try
+            _mappedStaticFrame = Nothing
+        End If
+        _mappedStaticFrameVersion = -1
+        _mappedStaticFrameHdrRevision = -1
     End Sub
 
     Private Sub DisposeGpuResources()
@@ -604,6 +630,8 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
         ' 1+2. 准备下采样源 —— 复用 _spareFrame 作为下采样目标，避免每帧两次大位图分配。
         Dim small As Bitmap = AcquireSpareFrame(dw, dh)
         Dim smallCommitted As Boolean = False
+        Dim mappedStaticFrame As Bitmap = Nothing
+        Dim mappedStaticFrameHdrRevision As Integer = -1
         Try
             Dim useImage As Boolean = (Volatile.Read(_sourceMode) = 1)
             If useImage Then
@@ -691,6 +719,20 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
                 publishedNow = True
             End If
 
+            If useImage AndAlso D3D_HdrOutput.ShouldMapImages Then
+                mappedStaticFrameHdrRevision = D3D_HdrOutput.ImageRevision
+                Try
+                    mappedStaticFrame = DirectCast(small.Clone(), Bitmap)
+                    D3D_HdrOutput.MapBitmapForImageUpload(mappedStaticFrame)
+                Catch
+                    If mappedStaticFrame IsNot Nothing Then
+                        Try : mappedStaticFrame.Dispose() : Catch : End Try
+                        mappedStaticFrame = Nothing
+                    End If
+                    mappedStaticFrameHdrRevision = -1
+                End Try
+            End If
+
             ' 4. 交换前后帧：旧的 _currentFrame 退役为下次的 _spareFrame，避免分配。
             '    同时递增 _frameVersion，让 UI 侧 D2D 上传缓存知道需要重传。
             SyncLock _frameLock
@@ -698,8 +740,17 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
                 _currentFrame = small
                 smallCommitted = True
                 _spareFrame = previousCurrent
+                DisposeMappedStaticFrameNoLock()
                 _lastCpuUse = D3D_CpuCache.NextTick()
-                Interlocked.Increment(_frameVersion)
+                Dim newFrameVersion As Integer = Interlocked.Increment(_frameVersion)
+                If mappedStaticFrame IsNot Nothing AndAlso
+                   mappedStaticFrameHdrRevision = D3D_HdrOutput.ImageRevision AndAlso
+                   D3D_HdrOutput.ShouldMapImages Then
+                    _mappedStaticFrame = mappedStaticFrame
+                    _mappedStaticFrameVersion = newFrameVersion
+                    _mappedStaticFrameHdrRevision = mappedStaticFrameHdrRevision
+                    mappedStaticFrame = Nothing
+                End If
             End SyncLock
 
             ' 5. 触发 UI 重绘
@@ -716,6 +767,9 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
             End Try
         Finally
             If Not smallCommitted Then ReturnSpareFrame(small)
+            If mappedStaticFrame IsNot Nothing Then
+                Try : mappedStaticFrame.Dispose() : Catch : End Try
+            End If
         End Try
     End Sub
 
@@ -842,9 +896,10 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
             Try
                 Dim sx As Single = target.Width / CSng(Math.Max(1, sourceSize.Width))
                 Dim sy As Single = target.Height / CSng(Math.Max(1, sourceSize.Height))
-                context.DeviceContext.Transform = previousTransform *
+                context.DeviceContext.Transform =
                     Matrix3x2.CreateScale(sx, sy) *
-                    Matrix3x2.CreateTranslation(target.X, target.Y)
+                    Matrix3x2.CreateTranslation(target.X, target.Y) *
+                    previousTransform
 
                 Dim image As ID2D1Image = GetGpuOutputImage(context.DeviceContext)
                 If image Is Nothing Then Return False
@@ -1011,9 +1066,13 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
         If deviceContext Is Nothing Then Throw New InvalidOperationException("D3D11 device context is not available.")
 
         Dim curVer As Integer = Volatile.Read(_frameVersion)
+        Dim sourceVersion As Integer = curVer
+        Dim staticImageSource As Boolean = (Volatile.Read(_sourceMode) = 1)
+        Dim imageHdrRevision As Integer = D3D_HdrOutput.ImageRevision
+        If staticImageSource Then sourceVersion = HashCode.Combine(curVer, imageHdrRevision)
         Dim ownerAlive As Boolean = _gpuSourceOwnerContext IsNot Nothing AndAlso
                                     ReferenceEquals(_gpuSourceOwnerContext.Target, deviceContext)
-        If _gpuSource IsNot Nothing AndAlso _gpuSourceVersion = curVer AndAlso ownerAlive Then
+        If _gpuSource IsNot Nothing AndAlso _gpuSourceVersion = sourceVersion AndAlso ownerAlive Then
             Dim ps = _gpuSource.PixelSize
             sourceSize = New Size(ps.Width, ps.Height)
             _lastGpuUse = D3D_GpuCache.NextTick()
@@ -1031,10 +1090,24 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
             _gpuBlurEffect = Nothing
         End If
 
+        Dim useMappedStaticFrame As Boolean = staticImageSource AndAlso D3D_HdrOutput.ShouldMapImages
+        If useMappedStaticFrame AndAlso Not EnsureMappedStaticFrame(curVer, imageHdrRevision) Then Return False
+
+        Dim uploadFrame As Bitmap = Nothing
         SyncLock _frameLock
             If _currentFrame Is Nothing Then Return False
-            Dim data As BitmapData = _currentFrame.LockBits(
-                New Rectangle(0, 0, _currentFrame.Width, _currentFrame.Height),
+            If Not useMappedStaticFrame AndAlso _mappedStaticFrame IsNot Nothing Then DisposeMappedStaticFrameNoLock()
+            If useMappedStaticFrame Then
+                If _mappedStaticFrame Is Nothing OrElse
+                   _mappedStaticFrameVersion <> curVer OrElse
+                   _mappedStaticFrameHdrRevision <> imageHdrRevision Then Return False
+                uploadFrame = _mappedStaticFrame
+            Else
+                uploadFrame = _currentFrame
+            End If
+
+            Dim data As BitmapData = uploadFrame.LockBits(
+                New Rectangle(0, 0, uploadFrame.Width, uploadFrame.Height),
                 ImageLockMode.ReadOnly,
                 PixelFormat.Format32bppPArgb)
             Try
@@ -1043,18 +1116,60 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
                     96.0F, 96.0F,
                     BitmapOptions.None)
                 _gpuSource = deviceContext.CreateBitmap(
-                    New Vortice.Mathematics.SizeI(_currentFrame.Width, _currentFrame.Height),
+                    New Vortice.Mathematics.SizeI(uploadFrame.Width, uploadFrame.Height),
                     data.Scan0, CUInt(data.Stride), props)
-                _gpuSourceVersion = curVer
+                _gpuSourceVersion = sourceVersion
                 _gpuSourceOwnerContext = New WeakReference(deviceContext)
-                sourceSize = New Size(_currentFrame.Width, _currentFrame.Height)
+                sourceSize = New Size(uploadFrame.Width, uploadFrame.Height)
                 _lastGpuUse = D3D_GpuCache.NextTick()
             Finally
-                _currentFrame.UnlockBits(data)
+                uploadFrame.UnlockBits(data)
             End Try
         End SyncLock
 
         Return _gpuSource IsNot Nothing
+    End Function
+
+    Private Function EnsureMappedStaticFrame(frameVersion As Integer, hdrRevision As Integer) As Boolean
+        SyncLock _frameLock
+            If _mappedStaticFrame IsNot Nothing AndAlso
+               _mappedStaticFrameVersion = frameVersion AndAlso
+               _mappedStaticFrameHdrRevision = hdrRevision Then
+                _lastCpuUse = D3D_CpuCache.NextTick()
+                Return True
+            End If
+        End SyncLock
+
+        Dim mapped As Bitmap = Nothing
+        Try
+            SyncLock _frameLock
+                If _currentFrame Is Nothing OrElse Volatile.Read(_frameVersion) <> frameVersion Then Return False
+                mapped = DirectCast(_currentFrame.Clone(), Bitmap)
+            End SyncLock
+
+            D3D_HdrOutput.MapBitmapForImageUpload(mapped)
+
+            SyncLock _frameLock
+                If Volatile.Read(_sourceMode) <> 1 OrElse
+                   Not D3D_HdrOutput.ShouldMapImages OrElse
+                   Volatile.Read(_frameVersion) <> frameVersion OrElse
+                   D3D_HdrOutput.ImageRevision <> hdrRevision Then
+                    Return False
+                End If
+
+                DisposeMappedStaticFrameNoLock()
+                _mappedStaticFrame = mapped
+                _mappedStaticFrameVersion = frameVersion
+                _mappedStaticFrameHdrRevision = hdrRevision
+                mapped = Nothing
+                _lastCpuUse = D3D_CpuCache.NextTick()
+                Return True
+            End SyncLock
+        Finally
+            If mapped IsNot Nothing Then
+                Try : mapped.Dispose() : Catch : End Try
+            End If
+        End Try
     End Function
 
     Private Sub EnsureGpuTarget(size As Size)
@@ -1269,6 +1384,7 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
             _currentFrame = Nothing
             _spareFrame?.Dispose()
             _spareFrame = Nothing
+            DisposeMappedStaticFrameNoLock()
         End SyncLock
         DisposeGpuResources()
         _capturedBitmap?.Dispose()

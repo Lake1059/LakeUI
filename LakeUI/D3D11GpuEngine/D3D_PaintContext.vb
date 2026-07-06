@@ -1,4 +1,5 @@
 Imports System.Numerics
+Imports System.Globalization
 Imports Vortice.Direct2D1
 Imports Vortice.Mathematics
 
@@ -71,6 +72,51 @@ Public NotInheritable Class D3D_PaintContext
         DeviceContext.DrawRectangle(ToRawRect(rect), brush, Math.Max(0.1F, strokeWidth))
     End Sub
 
+    Public Sub FillRoundedRectangle(rect As RectangleF, radius As Single, color As System.Drawing.Color)
+        If color.A = 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        Dim brush = Compositor.BrushCache.GetSolidBrush(DeviceContext, color, DeviceGeneration)
+        FillRoundedRectangle(rect, radius, DirectCast(brush, ID2D1Brush))
+    End Sub
+
+    Public Sub FillRoundedRectangle(rect As RectangleF, radius As Single, brush As ID2D1Brush)
+        If brush Is Nothing OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        radius = NormalizeRoundedRadius(rect, radius)
+        If radius <= 0 Then
+            DeviceContext.FillRectangle(ToRawRect(rect), brush)
+            Return
+        End If
+
+        Dim geometry = GetRoundedRectangleGeometry(rect, radius)
+        If geometry IsNot Nothing Then DeviceContext.FillGeometry(geometry, brush)
+    End Sub
+
+    Public Function GetRoundedRectangleGeometry(rect As RectangleF, radius As Single) As ID2D1Geometry
+        If rect.Width <= 0 OrElse rect.Height <= 0 Then Return Nothing
+        radius = NormalizeRoundedRadius(rect, radius)
+        If radius <= 0 Then Return Nothing
+
+        Return Compositor.GeometryCache.GetOrCreateGeometry(
+            CreateRoundedRectangleGeometryKey(rect, radius),
+            Function() D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New RoundedRectangle(rect, radius, radius)))
+    End Function
+
+    Public Sub DrawRoundedRectangle(rect As RectangleF, radius As Single, color As System.Drawing.Color, Optional strokeWidth As Single = 1.0F)
+        If color.A = 0 OrElse strokeWidth <= 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        Dim brush = Compositor.BrushCache.GetSolidBrush(DeviceContext, color, DeviceGeneration)
+        DrawRoundedRectangle(rect, radius, DirectCast(brush, ID2D1Brush), strokeWidth)
+    End Sub
+
+    Public Sub DrawRoundedRectangle(rect As RectangleF, radius As Single, brush As ID2D1Brush, Optional strokeWidth As Single = 1.0F)
+        If brush Is Nothing OrElse strokeWidth <= 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        radius = NormalizeRoundedRadius(rect, radius)
+        If radius <= 0 Then
+            DeviceContext.DrawRectangle(ToRawRect(rect), brush, Math.Max(0.1F, strokeWidth))
+            Return
+        End If
+
+        DeviceContext.DrawRoundedRectangle(New RoundedRectangle(rect, radius, radius), brush, Math.Max(0.1F, strokeWidth))
+    End Sub
+
     ''' <summary>
     ''' 绘制图片，图片上传和缩放策略由 D3D_ImageCache 处理；控件不得缓存预缩放 CPU bitmap。
     ''' </summary>
@@ -134,8 +180,30 @@ Public NotInheritable Class D3D_PaintContext
         Return New Vortice.RawRectF(rect.Left, rect.Top, rect.Right, rect.Bottom)
     End Function
 
+    Private Shared Function NormalizeRoundedRadius(rect As RectangleF, radius As Single) As Single
+        If radius <= 0 Then Return 0.0F
+        Return Math.Min(radius, Math.Min(rect.Width / 2.0F, rect.Height / 2.0F))
+    End Function
+
+    Private Shared Function CreateRoundedRectangleGeometryKey(rect As RectangleF, radius As Single) As String
+        Return "rr:" &
+            SingleToKey(rect.X) & ":" &
+            SingleToKey(rect.Y) & ":" &
+            SingleToKey(rect.Width) & ":" &
+            SingleToKey(rect.Height) & ":" &
+            SingleToKey(radius)
+    End Function
+
+    Private Shared Function SingleToKey(value As Single) As String
+        Return BitConverter.SingleToInt32Bits(value).ToString("X8", CultureInfo.InvariantCulture)
+    End Function
+
     Friend Shared Function ToColor4(color As System.Drawing.Color) As Color4
-        Return New Color4(color.R / 255.0F, color.G / 255.0F, color.B / 255.0F, color.A / 255.0F)
+        Return D3D_HdrOutput.MapColor4(color)
+    End Function
+
+    Friend Shared Function ToRawColor4(color As System.Drawing.Color) As Color4
+        Return D3D_HdrOutput.ToRawColor4(color)
     End Function
 
     Public Sub Dispose() Implements IDisposable.Dispose

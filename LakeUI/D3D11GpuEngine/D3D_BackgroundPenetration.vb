@@ -223,6 +223,8 @@ Public Module D3D_BackgroundPenetration
         If clipRect.Width <= 0 OrElse clipRect.Height <= 0 Then
             clipRect = New Rectangle(Point.Empty, If(child IsNot Nothing, child.Size, Size.Empty))
         End If
+        clipRect = IntersectWithDirtyRegion(clipRect, context.DirtyRegion)
+        If clipRect.Width <= 0 OrElse clipRect.Height <= 0 Then Return
 
         PaintBackgroundCore(
             child,
@@ -230,10 +232,31 @@ Public Module D3D_BackgroundPenetration
             clipRect,
             context.DeviceContext,
             Sub(rt, destRect, solidColor)
-                Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, solidColor, context.DeviceGeneration)
+                Dim brush = context.Compositor.BrushCache.GetRawSolidBrush(context.DeviceContext, solidColor, context.DeviceGeneration)
                 context.DeviceContext.FillRectangle(D3D_PaintContext.ToRawRect(destRect), brush)
             End Sub)
     End Sub
+
+    Private Function IntersectWithDirtyRegion(rect As Rectangle, dirtyRegion As IReadOnlyList(Of Rectangle)) As Rectangle
+        If rect.Width <= 0 OrElse rect.Height <= 0 Then Return Rectangle.Empty
+        If dirtyRegion Is Nothing OrElse dirtyRegion.Count = 0 Then Return rect
+
+        Dim hasIntersection As Boolean
+        Dim union As Rectangle = Rectangle.Empty
+        For Each dirty In dirtyRegion
+            Dim clipped = Rectangle.Intersect(rect, dirty)
+            If clipped.Width <= 0 OrElse clipped.Height <= 0 Then Continue For
+            If hasIntersection Then
+                union = Rectangle.Union(union, clipped)
+            Else
+                union = clipped
+                hasIntersection = True
+            End If
+        Next
+
+        If hasIntersection Then Return union
+        Return Rectangle.Empty
+    End Function
 
     Private Delegate Sub SolidBackgroundPainter(rt As ID2D1RenderTarget, destRect As Rectangle, solidColor As Color)
 

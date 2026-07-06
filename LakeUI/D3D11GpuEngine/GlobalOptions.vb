@@ -175,6 +175,191 @@ Public Class GlobalOptions
     ''' <remarks>默认值：0.6。多个脏区合并后接近 source 面积时，完整重采通常更便宜。</remarks>
     Public Shared Property BackgroundFullDirtyRatio As Single = 0.6F
 
+    ''' <summary>
+    ''' 当前 V3 per-control OnPaint 路线的 HDR 输出映射设置。
+    ''' 该路线不创建窗口级 swapchain；它在控件自己的 D2D 绘制与直接 Image 上传入口统一提升业务颜色。
+    ''' 背景穿透采样像素保持原样回放，避免超容器背景映射被二次增强。
+    ''' </summary>
+    Public Enum HdrOutputProfile
+        ''' <summary>最轻量 HDR 提升，适合只希望略微抬高亮部的界面。</summary>
+        HDR200 = 200
+        ''' <summary>较轻 HDR 提升，适合接近 SDR 观感但需要一点高光余量的界面。</summary>
+        HDR300 = 300
+        ''' <summary>轻量 HDR 提升，适合 HDR400 显示器或希望整体观感接近 SDR 的界面。</summary>
+        HDR400 = 400
+        ''' <summary>介于 HDR400 和 HDR600 之间的中等 HDR 提升。</summary>
+        HDR500 = 500
+        ''' <summary>中等 HDR 提升，适合 HDR600 显示器和大多数常规 HDR 屏幕。</summary>
+        HDR600 = 600
+        ''' <summary>略强于 HDR600 的 HDR 提升。</summary>
+        HDR700 = 700
+        ''' <summary>较强 HDR 提升，适合希望界面高光更突出的 HDR 屏幕。</summary>
+        HDR800 = 800
+        ''' <summary>介于 HDR800 和 HDR1000 之间的强 HDR 提升。</summary>
+        HDR900 = 900
+        ''' <summary>更强 HDR 提升，适合 HDR1000 显示器或需要更明显高光表现的界面。</summary>
+        HDR1000 = 1000
+    End Enum
+
+    ''' <summary>
+    ''' HDR 显示档位对应的内部映射参数。
+    ''' </summary>
+    Friend Structure HdrCurvePreset
+        Friend ReadOnly Exposure As Single
+        Friend ReadOnly Saturation As Single
+
+        Friend Sub New(exposure As Single, saturation As Single)
+            Me.Exposure = exposure
+            Me.Saturation = saturation
+        End Sub
+    End Structure
+
+    Public Class HdrOutputOptions
+        Private _enabled As Boolean = False
+        Private _profile As HdrOutputProfile = HdrOutputProfile.HDR400
+        Private _mapVectorColors As Boolean = True
+        Private _mapImages As Boolean = True
+        Private _revision As Integer
+
+        ''' <summary>
+        ''' 是否启用当前 V3 per-control OnPaint 路线的 HDR 输出映射。
+        ''' </summary>
+        ''' <remarks>
+        ''' 默认值：False。启用后不会创建窗口级 swapchain，也不会绕过 WinForms 控件堆叠；HDR 只在 D2D 矢量颜色和直接 Image 上传入口做颜色提升。
+        ''' 修改该值会递增内部版本号，使画刷、图片和静态背景图的 HDR 缓存按新设置重建。
+        ''' </remarks>
+        Public Property Enabled As Boolean
+            Get
+                Return _enabled
+            End Get
+            Set(value As Boolean)
+                If _enabled = value Then Return
+                _enabled = value
+                BumpRevision()
+            End Set
+        End Property
+
+        ''' <summary>
+        ''' HDR 输出映射档位。
+        ''' </summary>
+        ''' <remarks>
+        ''' 默认值：HDR400。该值使用显示器常见 HDR 峰值亮度档位命名，比直接调曝光系数更直观。
+        ''' 允许范围：HDR200 到 HDR1000，每 100 一个档位。HDR400 较克制，HDR600 适合多数 HDR 屏幕，HDR1000 会更明显地提升中高亮颜色。
+        ''' 该选项同时作用于矢量颜色和 Image 像素映射，但只在对应的 MapVectorColors 或 MapImages 开启时生效；调整该值会使 HDR 查表缓存、画刷缓存和图片上传缓存失效。
+        ''' </remarks>
+        Public Property Profile As HdrOutputProfile
+            Get
+                Return _profile
+            End Get
+            Set(value As HdrOutputProfile)
+                Dim normalized = NormalizeProfile(value)
+                If _profile = normalized Then Return
+                _profile = normalized
+                BumpRevision()
+            End Set
+        End Property
+
+        ''' <summary>
+        ''' 是否对控件代码绘制的矢量颜色启用 HDR 映射。
+        ''' </summary>
+        ''' <remarks>
+        ''' 默认值：True。影响通过 D3D_PaintContext、D3D_BrushCache 和渐变 stop 创建的填充色、边框色、文本色、遮罩色等业务颜色。
+        ''' 关闭后，矢量绘制保持 SDR 原色；Image 上传是否映射仍由 MapImages 单独控制。
+        ''' 背景穿透和超容器背景映射回放会使用 raw 画刷入口，避免被该选项二次增强。
+        ''' </remarks>
+        Public Property MapVectorColors As Boolean
+            Get
+                Return _mapVectorColors
+            End Get
+            Set(value As Boolean)
+                If _mapVectorColors = value Then Return
+                _mapVectorColors = value
+                BumpRevision()
+            End Set
+        End Property
+
+        ''' <summary>
+        ''' 是否对直接上传到 D2D 的 System.Drawing.Image / Bitmap 内容启用 HDR 映射。
+        ''' </summary>
+        ''' <remarks>
+        ''' 默认值：True。影响图标、背景图、Markdown 图片、PictureBox 类图片，以及 ThisIsYourWindow 静态图片背景源。
+        ''' 该映射发生在图片上传或静态背景源帧生成阶段，并按 ImageRevision / 帧版本缓存；重复绘制不会重复逐像素转换。
+        ''' 背景穿透采样得到的中间位图不属于业务 Image 内容，会保持原样回放，避免超容器背景映射和防自照路径被二次 HDR 提升。
+        ''' </remarks>
+        Public Property MapImages As Boolean
+            Get
+                Return _mapImages
+            End Get
+            Set(value As Boolean)
+                If _mapImages = value Then Return
+                _mapImages = value
+                BumpRevision()
+            End Set
+        End Property
+
+        ''' <summary>
+        ''' HDR 配置的内部版本号，用于让依赖 HDR 设置的缓存失效。
+        ''' </summary>
+        ''' <remarks>
+        ''' 该值不是公开配置项。Enabled、Profile、MapVectorColors 或 MapImages 发生有效变化时会递增。
+        ''' D3D_HdrOutput、画刷缓存、图片上传缓存和静态背景图缓存会读取该版本号，保证设置变化后不会复用旧 HDR 结果。
+        ''' </remarks>
+        Friend ReadOnly Property Revision As Integer
+            Get
+                Return _revision
+            End Get
+        End Property
+
+        Friend ReadOnly Property CurvePreset As HdrCurvePreset
+            Get
+                Dim nits = CInt(_profile)
+                If nits <= 400 Then
+                    Return InterpolatePreset(nits, 200, 400, 1.15F, 1.35F, 1.02F, 1.04F)
+                End If
+                If nits <= 600 Then
+                    Return InterpolatePreset(nits, 400, 600, 1.35F, 1.75F, 1.04F, 1.07F)
+                End If
+                Return InterpolatePreset(nits, 600, 1000, 1.75F, 2.2F, 1.07F, 1.1F)
+            End Get
+        End Property
+
+        Private Shared Function NormalizeProfile(value As HdrOutputProfile) As HdrOutputProfile
+            Dim nits = CInt(value)
+            If nits < 200 OrElse nits > 1000 OrElse nits Mod 100 <> 0 Then Return HdrOutputProfile.HDR400
+            Return CType(nits, HdrOutputProfile)
+        End Function
+
+        Private Shared Function InterpolatePreset(nits As Integer,
+                                                  startNits As Integer,
+                                                  endNits As Integer,
+                                                  startExposure As Single,
+                                                  endExposure As Single,
+                                                  startSaturation As Single,
+                                                  endSaturation As Single) As HdrCurvePreset
+            Dim t = (nits - startNits) / CSng(endNits - startNits)
+            Return New HdrCurvePreset(Lerp(startExposure, endExposure, t),
+                                      Lerp(startSaturation, endSaturation, t))
+        End Function
+
+        Private Shared Function Lerp(startValue As Single, endValue As Single, amount As Single) As Single
+            Return startValue + (endValue - startValue) * amount
+        End Function
+
+        Private Sub BumpRevision()
+            _revision += 1
+            If _revision = Integer.MaxValue Then _revision = 1
+        End Sub
+    End Class
+
+    ''' <summary>
+    ''' 当前 V3 per-control OnPaint 路线的全局 HDR 输出映射选项。
+    ''' </summary>
+    ''' <remarks>
+    ''' 该对象只控制 LakeUI 自身绘制和直接 Image 上传的颜色映射，不代表系统 HDR 开关，也不创建独立 HDR swapchain。
+    ''' 它的设计目标是稳定兼容 WinForms 控件堆叠、超容器背景映射和背景穿透防自照路径。
+    ''' </remarks>
+    Public Shared ReadOnly Property HDR As New HdrOutputOptions()
+
     Public Const 动画时长描述词 As String = "指定动画时长，单位为毫秒。0 表示禁用动画并立即跳到目标状态；100-180ms 适合按钮、开关、悬停等轻交互；200-300ms 适合列表滚动、展开收起和较明显的位置变化；超过 500ms 会显得拖沓，除非用于刻意的演示效果。"
     Public Const 动画帧率描述词 As String = "指定动画目标帧率，单位为 FPS。0 表示不限制，会尽可能快地请求重绘，容易明显增加 UI 线程和 D2D 绘制压力；30 适合低功耗或后台效果；60 适合大多数颜色、透明度和短距离位移动画；120 适合高刷新率屏幕上的精细滑动。超过显示器刷新率通常不会更顺滑，只会增加无效计算。"
 

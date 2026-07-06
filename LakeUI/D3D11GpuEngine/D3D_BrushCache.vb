@@ -15,12 +15,26 @@ Public NotInheritable Class D3D_BrushCache
     Public Property MaxSolidBrushes As Integer = 256
 
     Public Function GetSolidBrush(context As ID2D1DeviceContext, color As System.Drawing.Color, generation As Integer) As ID2D1SolidColorBrush
+        Return GetSolidBrushCore(context, color, generation, mapHdr:=True)
+    End Function
+
+    Friend Function GetRawSolidBrush(context As ID2D1DeviceContext, color As System.Drawing.Color, generation As Integer) As ID2D1SolidColorBrush
+        Return GetSolidBrushCore(context, color, generation, mapHdr:=False)
+    End Function
+
+    Private Function GetSolidBrushCore(context As ID2D1DeviceContext,
+                                       color As System.Drawing.Color,
+                                       generation As Integer,
+                                       mapHdr As Boolean) As ID2D1SolidColorBrush
         If _disposed Then Throw New ObjectDisposedException(NameOf(D3D_BrushCache))
         If context Is Nothing Then Throw New ArgumentNullException(NameOf(context))
 
         Dim contextKey = Runtime.CompilerServices.RuntimeHelpers.GetHashCode(context)
+        Dim hdrRevision = If(mapHdr, D3D_HdrOutput.VectorColorRevision, 0)
         Dim key = generation.ToString(Globalization.CultureInfo.InvariantCulture) & ":" &
                   contextKey.ToString(Globalization.CultureInfo.InvariantCulture) & ":" &
+                  hdrRevision.ToString(Globalization.CultureInfo.InvariantCulture) & ":" &
+                  If(mapHdr, "mapped:", "raw:") &
                   color.ToArgb().ToString(Globalization.CultureInfo.InvariantCulture)
         Dim entry As D3D_BrushCacheEntry = Nothing
         If _solidBrushes.TryGetValue(key, entry) Then
@@ -28,7 +42,8 @@ Public NotInheritable Class D3D_BrushCache
             Return entry.Brush
         End If
 
-        Dim brush = context.CreateSolidColorBrush(D3D_PaintContext.ToColor4(color))
+        Dim brushColor = If(mapHdr, D3D_HdrOutput.MapColor4(color), D3D_HdrOutput.ToRawColor4(color))
+        Dim brush = context.CreateSolidColorBrush(brushColor)
         _solidBrushes(key) = New D3D_BrushCacheEntry(brush, generation, NextClock())
         Trim(protectedKey:=key)
         Return brush

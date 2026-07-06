@@ -39,7 +39,7 @@ Public Class ExcellentProgressBar
 
 #Region "绘制"
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
-        If Not D3D_PaintBridge.PaintRenderable(e, Me, Me, 1) Then MyBase.OnPaint(e)
+        If Not D3D_PaintBridge.PaintRenderable(e, Me, Me) Then MyBase.OnPaint(e)
     End Sub
 
     Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
@@ -93,23 +93,14 @@ Public Class ExcellentProgressBar
 
         Dim clipGeo As ID2D1Geometry = Nothing
         If 边框圆角半径 > 0 Then
-            clipGeo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New RoundedRectangle(bounds, radius, radius))
+            clipGeo = context.GetRoundedRectangleGeometry(bounds, radius)
         End If
 
-        Try
-            填充形状_GPU(context, bounds, radius, 轨道背景颜色, 轨道渐变颜色, 轨道渐变方向)
-            绘制双填充区域_GPU(context, content, clipGeo)
-            If 边框颜色.A > 0 AndAlso borderWidth > 0 Then
-                Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, 边框颜色, context.DeviceGeneration)
-                If clipGeo IsNot Nothing Then
-                    context.DeviceContext.DrawGeometry(clipGeo, brush, borderWidth)
-                Else
-                    context.DeviceContext.DrawRectangle(D3D_PaintContext.ToRawRect(bounds), brush, borderWidth)
-                End If
-            End If
-        Finally
-            clipGeo?.Dispose()
-        End Try
+        填充形状_GPU(context, bounds, radius, 轨道背景颜色, 轨道渐变颜色, 轨道渐变方向)
+        绘制双填充区域_GPU(context, content, clipGeo)
+        If 边框颜色.A > 0 AndAlso borderWidth > 0 Then
+            context.DrawRoundedRectangle(bounds, radius, 边框颜色, borderWidth)
+        End If
     End Sub
 
     Private Sub 绘制双填充区域_GPU(context As D3D_PaintContext, content As RectangleF, clipGeo As ID2D1Geometry)
@@ -185,9 +176,7 @@ Public Class ExcellentProgressBar
 
         Try
             If radius > 0 Then
-                Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New RoundedRectangle(bounds, radius, radius))
-                    context.DeviceContext.FillGeometry(geo, brush)
-                End Using
+                context.FillRoundedRectangle(bounds, radius, brush)
             Else
                 context.DeviceContext.FillRectangle(D3D_PaintContext.ToRawRect(bounds), brush)
             End If

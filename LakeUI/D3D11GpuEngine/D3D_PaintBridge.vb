@@ -389,6 +389,7 @@ Public Module D3D_PaintBridge
                 Next
             End If
         End SyncLock
+        hasActivePaint = hasActivePaint OrElse D3D_RenderCore.HasActivePaint(targetForm)
 
         Dim cleaned As Integer = 0
         Dim invalidateForms As New List(Of Form)()
@@ -398,6 +399,7 @@ Public Module D3D_PaintBridge
                 If comp.Form IsNot Nothing AndAlso Not comp.Form.IsDisposed Then invalidateForms.Add(comp.Form)
             End If
         Next
+        cleaned += D3D_RenderCore.CleanupD2DResources(level, targetForm, invalidateAfterCleanup)
         If targetForm IsNot Nothing Then invalidateForms.Add(targetForm)
 
         If Not hasActivePaint Then
@@ -486,6 +488,7 @@ Public Module D3D_PaintBridge
                 If comp.Form IsNot Nothing AndAlso Not comp.Form.IsDisposed Then invalidateForms.Add(comp.Form)
             End If
         Next
+        cleaned += D3D_RenderCore.ReleaseImageCache(image, targetForm, invalidateAfterCleanup)
 
         If invalidateAfterCleanup Then
             For Each form In invalidateForms
@@ -509,27 +512,6 @@ Public Module D3D_PaintBridge
         Catch
             Return Nothing
         End Try
-    End Function
-
-#End Region
-
-#Region "SSAA 倍率"
-
-    ''' <summary>
-    ''' 计算控件实际使用的 SSAA 倍率。
-    ''' </summary>
-    ''' <remarks>
-    ''' OFF 不强制全局倍率；x2/x3/x4 与控件自身设置取较高值。这里不做额外上限裁剪，
-    ''' 避免改变已有控件或用户显式选择的画质行为。明确传入 BeginPaint(..., 1) 的特化路径
-    ''' 仍可保持不参与全局 SSAA。
-    ''' </remarks>
-    Public Function GetEffectiveSsaaScale(controlScale As Integer) As Integer
-        Return GlobalOptions.GetEffectiveSsaaScale(controlScale)
-    End Function
-
-    ''' <summary>计算控件实际使用的 SSAA 倍率。</summary>
-    Public Function GetEffectiveSsaaScale(controlScale As GlobalOptions.SuperSamplingScaleEnum) As Integer
-        Return GlobalOptions.GetEffectiveSsaaScale(controlScale)
     End Function
 
 #End Region
@@ -632,8 +614,7 @@ Public Module D3D_PaintBridge
 
     Public Function PaintRenderable(e As PaintEventArgs,
                                     control As Control,
-                                    renderable As V3_IGpuRenderable,
-                                    ssaaScale As Integer) As Boolean
+                                    renderable As V3_IGpuRenderable) As Boolean
         If e Is Nothing OrElse control Is Nothing OrElse renderable Is Nothing Then Return False
         If control.IsDisposed OrElse control.Width <= 0 OrElse control.Height <= 0 Then Return False
 
@@ -653,13 +634,6 @@ Public Module D3D_PaintBridge
             End If
             Throw
         End Try
-    End Function
-
-    Public Function PaintRenderable(e As PaintEventArgs,
-                                    control As Control,
-                                    renderable As V3_IGpuRenderable,
-                                    ssaaScale As GlobalOptions.SuperSamplingScaleEnum) As Boolean
-        Return PaintRenderable(e, control, renderable, GetEffectiveSsaaScale(ssaaScale))
     End Function
 
 #End Region

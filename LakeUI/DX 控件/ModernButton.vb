@@ -20,7 +20,7 @@ Public Class ModernButton
     End Sub
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
-        If Not D3D_PaintBridge.PaintRenderable(e, Me, Me, 1) Then MyBase.OnPaint(e)
+        If Not D3D_PaintBridge.PaintRenderable(e, Me, Me) Then MyBase.OnPaint(e)
     End Sub
 
     Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
@@ -85,13 +85,9 @@ Public Class ModernButton
         End If
 
         Dim geo As ID2D1Geometry = Nothing
-        If 是否有圆角 Then geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New RoundedRectangle(极限矩形区域, radius, radius))
-        Try
-            绘制背景图片_GPU(context, 极限矩形区域, geo)
-            绘制长按遮罩_GPU(context, 极限矩形区域, geo)
-        Finally
-            geo?.Dispose()
-        End Try
+        If 是否有圆角 Then geo = context.GetRoundedRectangleGeometry(极限矩形区域, radius)
+        绘制背景图片_GPU(context, 极限矩形区域, geo)
+        绘制长按遮罩_GPU(context, 极限矩形区域, geo)
 
         If 边框颜色缓存值.A > 0 AndAlso 边框宽度 > 0 Then
             绘制形状边框_GPU(context, 极限矩形区域, radius, 边框颜色缓存值, 边框宽度 * s)
@@ -202,9 +198,7 @@ Public Class ModernButton
 
         Try
             If radius > 0 Then
-                Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New RoundedRectangle(bounds, radius, radius))
-                    context.DeviceContext.FillGeometry(geo, brush)
-                End Using
+                context.FillRoundedRectangle(bounds, radius, brush)
             Else
                 context.DeviceContext.FillRectangle(D3D_PaintContext.ToRawRect(bounds), brush)
             End If
@@ -217,9 +211,7 @@ Public Class ModernButton
         If color.A = 0 OrElse strokeWidth <= 0 OrElse bounds.Width <= 0 OrElse bounds.Height <= 0 Then Return
         Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
         If radius > 0 Then
-            Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New RoundedRectangle(bounds, radius, radius))
-                context.DeviceContext.DrawGeometry(geo, brush, strokeWidth)
-            End Using
+            context.DrawRoundedRectangle(bounds, radius, brush, strokeWidth)
         Else
             context.DeviceContext.DrawRectangle(D3D_PaintContext.ToRawRect(bounds), brush, strokeWidth)
         End If

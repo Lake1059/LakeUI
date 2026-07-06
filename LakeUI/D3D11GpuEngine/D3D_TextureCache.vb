@@ -120,22 +120,26 @@ Public NotInheritable Class D3D_TextureCache
     ''' <summary>
     ''' 释放指定 key 的缓存资源。Release 不能在资源作为当前帧 target 时调用。
     ''' </summary>
-    Public Sub Release(key As String)
-        If String.IsNullOrEmpty(key) Then Return
+    Public Function Release(key As String) As Boolean
+        If String.IsNullOrEmpty(key) Then Return False
         Dim entry As D3D_TextureCacheEntry = Nothing
-        If _entries.TryGetValue(key, entry) Then RemoveEntry(key, entry)
-    End Sub
+        If Not _entries.TryGetValue(key, entry) Then Return False
+        RemoveEntry(key, entry)
+        Return True
+    End Function
 
     ''' <summary>
     ''' 释放指定前缀的一组资源。用于 ImageCache 等上层缓存只清理自己的 key 空间，避免误删 background snapshot 或 blur intermediate。
     ''' </summary>
-    Public Sub ReleaseByPrefix(prefix As String)
-        If String.IsNullOrEmpty(prefix) Then Return
+    Public Function ReleaseByPrefix(prefix As String) As Boolean
+        If String.IsNullOrEmpty(prefix) Then Return False
+        Dim released As Boolean
         Dim keys = _entries.Keys.Where(Function(k) k.StartsWith(prefix, StringComparison.Ordinal)).ToArray()
         For Each key In keys
-            Release(key)
+            released = Release(key) OrElse released
         Next
-    End Sub
+        Return released
+    End Function
 
     Public Sub InvalidateGeneration(generation As Integer)
         Dim keys = _entries.Values.Where(Function(e) e.Generation <> generation).Select(Function(e) e.Key).ToArray()

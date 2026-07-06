@@ -796,7 +796,7 @@ Public Class ExcellentTrackBar
     End Sub
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
-        If Not D3D_PaintBridge.PaintRenderable(e, Me, Me, 1) Then MyBase.OnPaint(e)
+        If Not D3D_PaintBridge.PaintRenderable(e, Me, Me) Then MyBase.OnPaint(e)
     End Sub
 
     Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
@@ -846,14 +846,15 @@ Public Class ExcellentTrackBar
         End If
 
         If radius > 0 Then
-            Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New D2D.RoundedRectangle(trackRect, radius, radius))
+            Dim geo = context.GetRoundedRectangleGeometry(trackRect, radius)
+            If geo IsNot Nothing Then
                 PushGeometryClip_GPU(context, geo, trackRect)
                 Try
                     context.FillRectangle(fillRect, 轨道填充颜色)
                 Finally
                     context.DeviceContext.PopLayer()
                 End Try
-            End Using
+            End If
         Else
             context.FillRectangle(fillRect, 轨道填充颜色)
         End If
@@ -951,9 +952,7 @@ Public Class ExcellentTrackBar
 
         Try
             If radius > 0 Then
-                Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New D2D.RoundedRectangle(rect, radius, radius))
-                    context.DeviceContext.FillGeometry(geo, brush)
-                End Using
+                context.FillRoundedRectangle(rect, radius, brush)
             Else
                 context.DeviceContext.FillRectangle(D3D_PaintContext.ToRawRect(rect), brush)
             End If
@@ -966,9 +965,7 @@ Public Class ExcellentTrackBar
         If color.A = 0 OrElse strokeWidth <= 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
         Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
         If radius > 0 Then
-            Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New D2D.RoundedRectangle(rect, radius, radius))
-                context.DeviceContext.DrawGeometry(geo, brush, strokeWidth)
-            End Using
+            context.DrawRoundedRectangle(rect, radius, brush, strokeWidth)
         Else
             context.DeviceContext.DrawRectangle(D3D_PaintContext.ToRawRect(rect), brush, strokeWidth)
         End If

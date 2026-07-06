@@ -1058,7 +1058,7 @@ Public Class ModernTextBox
     End Sub
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
-        If Not D3D_PaintBridge.PaintRenderable(e, Me, Me, 1) Then MyBase.OnPaint(e)
+        If Not D3D_PaintBridge.PaintRenderable(e, Me, Me) Then MyBase.OnPaint(e)
     End Sub
 
     Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
@@ -1144,9 +1144,7 @@ Public Class ModernTextBox
             context.DeviceContext.FillRectangle(D3D_PaintContext.ToRawRect(rect), brush)
             Return
         End If
-        Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New RoundedRectangle(rect, radius, radius))
-            context.DeviceContext.FillGeometry(geo, brush)
-        End Using
+        context.FillRoundedRectangle(rect, radius, brush)
     End Sub
 
     Private Sub 绘制圆角边框_GPU(context As D3D_PaintContext, rect As RectangleF, radius As Single, color As Color, strokeWidth As Single)
@@ -1156,9 +1154,7 @@ Public Class ModernTextBox
             context.DeviceContext.DrawRectangle(D3D_PaintContext.ToRawRect(rect), brush, strokeWidth)
             Return
         End If
-        Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New RoundedRectangle(rect, radius, radius))
-            context.DeviceContext.DrawGeometry(geo, brush, strokeWidth)
-        End Using
+        context.DrawRoundedRectangle(rect, radius, brush, strokeWidth)
     End Sub
 
     Private Function 计算当前绘制超采样倍率() As Integer
@@ -1252,15 +1248,15 @@ Public Class ModernTextBox
                     End If
 
                     If clipRect.Width > 0 AndAlso clipRect.Height > 0 Then
-                        Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(
-                            New RoundedRectangle(clipRect, 边框圆角半径 * DpiScale(), 边框圆角半径 * DpiScale()))
+                        Dim geo = context.GetRoundedRectangleGeometry(clipRect, 边框圆角半径 * DpiScale())
+                        If geo IsNot Nothing Then
                             D3D_D2DInterop.PushGeometryClip(context.DeviceContext, geo, clipRect)
                             Try
                                 context.FillRectangle(gutterRect, _lineNumBackColor)
                             Finally
                                 context.DeviceContext.PopLayer()
                             End Try
-                        End Using
+                        End If
                     Else
                         context.FillRectangle(gutterRect, _lineNumBackColor)
                     End If

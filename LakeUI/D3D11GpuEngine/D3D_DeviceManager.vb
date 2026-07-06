@@ -7,7 +7,7 @@ Imports Vortice.DXGI
 ''' <summary>
 ''' D3D_DeviceManager 是新 D3D11 GPU 核心的进程级设备所有者。
 ''' 它负责创建并持有同一条 GPU 路线上的 D3D11 device、DXGI device、D2D1 device、DWrite factory 和 DXGI factory。
-''' 它不负责窗口 swap chain、控件绘制、旧 DC RenderTarget、HDC 输出或任何 WARP/CPU 回退。
+''' 它不负责窗口 swapchain、控件绘制、旧 DC RenderTarget、HDC 输出或任何 WARP/CPU 回退。
 ''' <para>
 ''' 资源生命周期：本类拥有进程级 device/factory；窗口级 target、bitmap、brush、geometry、text layer 由各自的 D3D_ 缓存或 D3D_WindowCompositor 持有。
 ''' 所有跨帧 GPU 资源都必须记录 <see cref="DeviceGeneration"/>，generation 改变后必须丢弃并重建。
@@ -15,13 +15,13 @@ Imports Vortice.DXGI
 ''' 即使下一帧尚未成功重建设备，窗口级缓存也能立刻判断自己已经过期。
 ''' </para>
 ''' <para>
-''' 线程边界：创建设备使用内部锁保护；D2D device context 和窗口呈现只能在 UI 线程调用。
+''' 线程边界：创建设备使用内部锁保护；D2D device context 只能在 UI 线程绘制调用中使用。
 ''' 后续控件迁移时不得直接使用 Graphics.GetHdc、不得自建 D3D device，也不得绕过 D3D_WindowCompositor 获取绘制入口。
 ''' </para>
 ''' <para>
 ''' 设备丢失边界：驱动更新、TDR、显示适配器重置、休眠恢复、远程桌面切换等都按同一套 device lost 流程处理。
 ''' 本类只释放进程级资源并广播失效；窗口级资源由各自 compositor 在 UI 线程释放，随后按需重建。
-''' DirectComposition 当前作为独立宿主文件保留；本阶段可验证路线优先使用 HWND DXGI swap chain，仍由 DWM 合成，不经过 LakeUI 旧 CPU/HDC 出口。
+''' 窗口级 swapchain 和 DirectComposition 宿主路线已移除；当前只通过 per-control paint scope 回贴到 WinForms HDC。
 ''' </para>
 ''' </summary>
 Public NotInheritable Class D3D_DeviceManager

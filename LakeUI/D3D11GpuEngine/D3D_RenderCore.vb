@@ -1,10 +1,11 @@
 ''' <summary>
 ''' D3D_RenderCore 是新 GPU 核心入口，替代旧 D3D_PaintBridge 的职责但不兼容旧 API。
-''' 它管理进程级 D3D_DeviceManager、为顶层 Form 创建 D3D_WindowCompositor、路由 RequestRender，并处理冷启动级重置。
-''' 它不迁移控件、不调用 Demo、不兼容 D3D_PaintScope，也不向后提供 HDC/D2D DC RenderTarget 回退。
+''' 它管理进程级 D3D_DeviceManager、为顶层 Form 创建 D3D_WindowCompositor 资源容器、路由 RequestRender，并处理冷启动级重置。
+''' 它不迁移控件、不调用 Demo，也不向后提供旧 HDC/D2D DC RenderTarget 回退。
+''' 当前唯一呈现链路是 WinForms per-control OnPaint + D3D_PaintScope 回贴 HDC。
 ''' <para>
-''' 后续迁移控件不要再直接使用 Graphics.GetHdc，不要自己创建 D3D device，只能通过窗口 compositor 获取 D3D_PaintContext。
-''' 设备资源跟随 generation；跨 generation 缓存必须丢弃。
+''' 后续迁移控件不要再直接使用 Graphics.GetHdc，不要自己创建 D3D 设备，只能通过 PaintBridge/PaintScope 获取 D3D_PaintContext。
+''' 设备资源跟随设备代号；跨设备代号缓存必须丢弃。
 ''' </para>
 ''' </summary>
 Public NotInheritable Class D3D_RenderCore
@@ -26,20 +27,39 @@ Public NotInheritable Class D3D_RenderCore
     End Property
 
     ''' <summary>
-    ''' 获取或创建指定 Form 的窗口级 GPU compositor。该入口只绑定顶层 HWND，不要求任何现有控件配合。
+    ''' 获取或创建指定 Form 的 V3 资源容器。它不创建 swapchain，也不参与 WinForms 控件堆叠。
     ''' </summary>
     Public Shared Function GetWindowCompositor(form As Form) As D3D_WindowCompositor
         If form Is Nothing OrElse form.IsDisposed Then Return Nothing
 
+        Dim compositor As D3D_WindowCompositor = Nothing
         SyncLock _compositorsLock
-            Dim compositor As D3D_WindowCompositor = Nothing
             If _compositors.TryGetValue(form, compositor) Then
-                If compositor IsNot Nothing AndAlso Not compositor.IsDisposed Then Return compositor
-                _compositors.Remove(form)
+                If compositor Is Nothing OrElse compositor.IsDisposed Then
+                    _compositors.Remove(form)
+                    compositor = Nothing
+                End If
             End If
 
-            compositor = New D3D_WindowCompositor(form, _deviceManager)
-            _compositors(form) = compositor
+            If compositor Is Nothing Then
+                compositor = New D3D_WindowCompositor(form, _deviceManager)
+                _compositors(form) = compositor
+            End If
+        End SyncLock
+
+        Return compositor
+    End Function
+
+    Private Shared Function TryGetExistingWindowCompositor(form As Form) As D3D_WindowCompositor
+        If form Is Nothing OrElse form.IsDisposed Then Return Nothing
+
+        SyncLock _compositorsLock
+            Dim compositor As D3D_WindowCompositor = Nothing
+            If Not _compositors.TryGetValue(form, compositor) Then Return Nothing
+            If compositor Is Nothing OrElse compositor.IsDisposed Then
+                _compositors.Remove(form)
+                Return Nothing
+            End If
             Return compositor
         End SyncLock
     End Function
@@ -80,8 +100,7 @@ Public NotInheritable Class D3D_RenderCore
     End Function
 
     ''' <summary>
-    ''' 控件迁移的核心失效入口。阶段 1 之后只让目标控件自己的 OnPaint 重新执行，
-    ''' 不再创建或调度窗口级 compositor。
+    ''' 控件迁移的核心失效入口。阶段 1 之后只让目标控件自己的 OnPaint 重新执行。
     ''' </summary>
     Public Shared Sub RequestRender(control As Control, dirtyRect As Rectangle)
         If control Is Nothing OrElse control.IsDisposed Then Return
@@ -109,19 +128,123 @@ Public NotInheritable Class D3D_RenderCore
         Try : compositor.TextRenderer.Invalidate() : Catch : End Try
     End Sub
 
-    Private Shared Function TryGetExistingWindowCompositor(control As Control) As D3D_WindowCompositor
-        Dim form = ResolveCompositorForm(control)
-        If form Is Nothing Then Return Nothing
+    Friend Shared Function CleanupD2DResources(level As D3DCacheCleanupLevel,
+                                               Optional owner As Control = Nothing,
+                                               Optional invalidateAfterCleanup As Boolean = True) As Integer
+        Dim targetForm As Form = If(level = D3DCacheCleanupLevel.ReleaseEverything, Nothing, ResolveCompositorForm(owner))
+        Dim snapshot As New List(Of D3D_WindowCompositor)()
 
         SyncLock _compositorsLock
-            Dim compositor As D3D_WindowCompositor = Nothing
-            If Not _compositors.TryGetValue(form, compositor) Then Return Nothing
-            If compositor Is Nothing OrElse compositor.IsDisposed Then
-                _compositors.Remove(form)
-                Return Nothing
+            If targetForm IsNot Nothing Then
+                Dim compositor As D3D_WindowCompositor = Nothing
+                If _compositors.TryGetValue(targetForm, compositor) AndAlso compositor IsNot Nothing AndAlso Not compositor.IsDisposed Then
+                    snapshot.Add(compositor)
+                End If
+            Else
+                For Each compositor In _compositors.Values
+                    If compositor IsNot Nothing AndAlso Not compositor.IsDisposed Then snapshot.Add(compositor)
+                Next
             End If
-            Return compositor
         End SyncLock
+
+        Dim cleaned As Integer
+        Dim invalidateForms As New List(Of Form)()
+        For Each compositor In snapshot
+            Dim form = compositor.Form
+            If compositor.CleanupD2DResources(level) Then
+                cleaned += 1
+                AddInvalidateForm(invalidateForms, form)
+            End If
+        Next
+        AddInvalidateForm(invalidateForms, targetForm)
+
+        If level = D3DCacheCleanupLevel.TrimToBudget Then
+            Try : D3D_GpuCache.TrimToBudget() : Catch : End Try
+        End If
+
+        If invalidateAfterCleanup Then
+            For Each form In invalidateForms
+                RequestFullFormRender(form)
+            Next
+        End If
+
+        Return cleaned
+    End Function
+
+    Friend Shared Function HasActivePaint(Optional owner As Control = Nothing) As Boolean
+        Dim targetForm = ResolveCompositorForm(owner)
+
+        SyncLock _compositorsLock
+            If targetForm IsNot Nothing Then
+                Dim compositor As D3D_WindowCompositor = Nothing
+                If Not _compositors.TryGetValue(targetForm, compositor) Then Return False
+                If compositor Is Nothing OrElse compositor.IsDisposed Then Return False
+                Return compositor.IsPainting
+            End If
+
+            For Each compositor In _compositors.Values
+                If compositor IsNot Nothing AndAlso Not compositor.IsDisposed AndAlso compositor.IsPainting Then Return True
+            Next
+        End SyncLock
+
+        Return False
+    End Function
+
+    Friend Shared Function ReleaseImageCache(image As Image,
+                                             Optional owner As Control = Nothing,
+                                             Optional invalidateAfterCleanup As Boolean = False) As Integer
+        If image Is Nothing Then Return 0
+        Dim targetForm = ResolveCompositorForm(owner)
+        Dim snapshot As New List(Of D3D_WindowCompositor)()
+
+        SyncLock _compositorsLock
+            If targetForm IsNot Nothing Then
+                Dim compositor As D3D_WindowCompositor = Nothing
+                If _compositors.TryGetValue(targetForm, compositor) AndAlso compositor IsNot Nothing AndAlso Not compositor.IsDisposed Then
+                    snapshot.Add(compositor)
+                End If
+            Else
+                For Each compositor In _compositors.Values
+                    If compositor IsNot Nothing AndAlso Not compositor.IsDisposed Then snapshot.Add(compositor)
+                Next
+            End If
+        End SyncLock
+
+        Dim cleaned As Integer
+        Dim invalidateForms As New List(Of Form)()
+        For Each compositor In snapshot
+            If compositor.ReleaseImageCache(image) Then
+                cleaned += 1
+                AddInvalidateForm(invalidateForms, compositor.Form)
+            End If
+        Next
+
+        If invalidateAfterCleanup Then
+            For Each form In invalidateForms
+                RequestFullFormRender(form)
+            Next
+        End If
+
+        Return cleaned
+    End Function
+
+    Private Shared Sub AddInvalidateForm(forms As List(Of Form), form As Form)
+        If forms Is Nothing OrElse form Is Nothing OrElse form.IsDisposed Then Return
+        If Not forms.Contains(form) Then forms.Add(form)
+    End Sub
+
+    Private Shared Sub RequestFullFormRender(form As Form)
+        Try
+            If form IsNot Nothing AndAlso Not form.IsDisposed AndAlso form.IsHandleCreated Then
+                OuterToInnerRefreshScheduler.RequestFull(form, invalidateChildren:=True)
+            End If
+        Catch
+        End Try
+    End Sub
+
+    Private Shared Function TryGetExistingWindowCompositor(control As Control) As D3D_WindowCompositor
+        Dim form = ResolveCompositorForm(control)
+        Return TryGetExistingWindowCompositor(form)
     End Function
 
     Public Shared Sub UnregisterBackgroundConsumer(control As Control, Optional recursive As Boolean = False)
@@ -146,60 +269,14 @@ Public NotInheritable Class D3D_RenderCore
     End Sub
 
     ''' <summary>
-    ''' 冷启动级重置：先让所有窗口 compositor 停止使用窗口级 GPU target/cache，再失效进程级 device。
-    ''' InvalidateDevice 会再次广播 DeviceLost；compositor 的处理必须保持幂等，用于覆盖驱动更新、TDR 恢复后手动重置等场景。
-    ''' 下一次 RequestRender 会按新的 DeviceGeneration 按需重建设备、swap chain 和缓存。
+    ''' 冷启动级重置：先让所有窗口资源容器释放可重建缓存，再失效进程级设备。
+    ''' InvalidateDevice 会再次广播设备丢失事件；合成器的处理必须保持幂等，用于覆盖驱动更新、TDR 恢复后手动重置等场景。
+    ''' 下一次 RequestRender 会按新的设备代号按需重建设备和缓存。
     ''' </summary>
     Public Shared Sub ResetRenderCore()
-        Dim snapshot As List(Of D3D_WindowCompositor)
-        SyncLock _compositorsLock
-            snapshot = _compositors.Values.Where(Function(c) c IsNot Nothing).ToList()
-        End SyncLock
-
-        For Each compositor In snapshot
-            Try : compositor.HandleDeviceLost() : Catch : End Try
-        Next
-
+        CleanupD2DResources(D3DCacheCleanupLevel.ReleaseEverything, owner:=Nothing, invalidateAfterCleanup:=False)
         _deviceManager.InvalidateDevice()
     End Sub
-
-    ''' <summary>
-    ''' 核心级验证入口：在指定 Form 的 HWND swap chain 上绘制一帧矩形和文字并 Present。
-    ''' 该方法不修改 Demo、不要求任何现有控件迁移，也不通过 Graphics/HDC 输出；失败时返回 False 并把异常写入 errorMessage。
-    ''' </summary>
-    Public Shared Function RenderValidationFrame(form As Form, Optional ByRef errorMessage As String = Nothing) As Boolean
-        errorMessage = Nothing
-        If form Is Nothing OrElse form.IsDisposed OrElse Not form.IsHandleCreated Then
-            errorMessage = "Form must be alive and have an HWND before validating the D3D11 GPU path."
-            Return False
-        End If
-
-        Try
-            Dim compositor = GetWindowCompositor(form)
-            If compositor Is Nothing Then
-                errorMessage = "D3D_WindowCompositor is not available."
-                Return False
-            End If
-
-            Dim presented = compositor.RenderFrame(
-                Sub(context)
-                    Dim renderSize = compositor.RenderTargetSize
-                    Dim bounds As New RectangleF(0, 0, Math.Max(1, renderSize.Width), Math.Max(1, renderSize.Height))
-                    context.FillRectangle(bounds, form.BackColor)
-                    context.FillRectangle(New RectangleF(8, 8, 160, 48), System.Drawing.Color.FromArgb(220, 40, 120, 220))
-                    context.DrawText("LakeUI D3D11 GPU", form.Font, System.Drawing.Color.White, New RectangleF(16, 18, 220, 32))
-                End Sub)
-            If Not presented Then
-                errorMessage = "Validation frame was not presented; the window may be minimized/unavailable or the device was lost and queued for rebuild."
-                Return False
-            End If
-            Return True
-        Catch ex As Exception
-            errorMessage = ex.Message
-            If _deviceManager.HandleDeviceLost(ex) Then Return False
-            Return False
-        End Try
-    End Function
 
     Friend Shared Sub UnregisterCompositor(form As Form, compositor As D3D_WindowCompositor)
         If form Is Nothing Then Return

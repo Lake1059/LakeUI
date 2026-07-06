@@ -1517,9 +1517,7 @@ Public Class ModernPanel
             Return
         End If
 
-        Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New RoundedRectangle(rect, radius, radius))
-            context.DeviceContext.FillGeometry(geo, brush)
-        End Using
+        context.FillRoundedRectangle(rect, radius, brush)
     End Sub
 
     Private Function 获取圆角几何_GPU(context As D3D_PaintContext, rect As RectangleF, radius As Single, corners As RoundCorners) As ID2D1Geometry
@@ -1642,7 +1640,7 @@ Public Class ModernPanel
     End Sub
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
-        If Not D3D_PaintBridge.PaintRenderable(e, Me, Me, 1) Then MyBase.OnPaint(e)
+        If Not D3D_PaintBridge.PaintRenderable(e, Me, Me) Then MyBase.OnPaint(e)
     End Sub
 
     ''' <summary>

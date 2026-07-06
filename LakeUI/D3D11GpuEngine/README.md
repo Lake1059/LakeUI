@@ -13,15 +13,14 @@
 - 每个控件只绘制自身坐标系内的像素；父子、兄弟和整窗重绘只通过 WinForms invalidation 合并。
 - `RenderGpu` 只能使用传入的 `D3D_PaintContext`。不要缓存 context、device context、brush、bitmap、geometry、text format。
 - 控件状态变化调用 `V3_InvalidationRouter.RequestRender`；它会进入 `OuterToInnerRefreshScheduler` 合并并按外到内顺序刷新。不要直接 `Update`，也不要触发旧的整树刷新。
-- `D3D_WindowCompositor` 的 swap-chain/window-frame 代码只保留给核心验证和后续能力，不是控件刷新入口。
+- `D3D_WindowCompositor` 只保留 Form 级共享缓存、文字/图片/Backdrop 服务和设备失效协调，不再创建 swapchain 或渲染整窗。
 
 ## 当前核心边界
 
 - `D3D_` 类型负责 D3D11/DXGI/D2D1.1/DirectWrite、Form 级共享 GPU 缓存、文字、背景穿透、Backdrop 和最终 D3D->HDC 合成。
 - `V3_` 类型只描述后续控件迁移契约、DPI、失效路由、树遍历和迁移标记，不隐藏 GPU 资源创建。
 - 已迁移控件必须在自己的 `OnPaint` 中输出像素；状态变化只请求 `Invalidate`，不主动绘制整窗。
-- 旧的窗口级 swap-chain/render-host/full-tree compositor 路线已从主链路移除；保留的 swap-chain 验证代码不得作为控件刷新入口。
-- DirectComposition 宿主作为独立边界保留；当前不作为阻塞项。后续启用时必须继续遵守 device generation、UI 线程和 per-control paint 生命周期。
+- 旧的窗口级 swap-chain/render-host/full-tree compositor、HDR 子交换链镜像、DirectComposition 宿主和窗口级背景 snapshot 路线已从代码中移除。
 
 ## 设备丢失策略
 
@@ -46,9 +45,9 @@
 - 控件 `RenderGpu` 不得调用 `Graphics.GetHdc`、`BitBlt`、`PaintEventArgs`、旧 `PaintScopeV2` 或旧背景穿透路径；最终 HDC 合成只允许在 `D3D_PaintScope` 内部完成。
 - 不得自行创建 D3D/D2D/DXGI/DirectWrite device、factory、swap chain 或 render target。
 - 不得持有跨帧 `ID2D1Brush`、`ID2D1Bitmap`、`ID2D1Geometry`、`IDWriteTextFormat` 等 GPU/DirectWrite 对象；长期资源必须交给 `D3D_` 缓存。
-- 不得在控件内提交 `Present` 或 DirectComposition `Commit`。
+- 不得在控件内提交 `Present`、创建 swapchain 或 DirectComposition 宿主。
 - 不得主动绘制父控件、兄弟控件或递归调用 WinForms paint。
-- 不得把 `D3D_BackgroundGraph` 重新接回主链路；当前背景主链路只允许 `D3D_BackgroundPenetration`。
+- 不得重新引入窗口级 GPU 背景 snapshot；当前背景主链路只允许 `D3D_BackgroundPenetration`。
 - 不得在 `RenderGpu` 内创建另一个 paint scope 或 HDC 路线，否则容易触发 reentrant factory/target 混用。
 
 允许事项：
@@ -68,6 +67,15 @@
 ## 背景与 Backdrop
 
 `D3D_BackgroundPenetration` 是当前唯一背景穿透主链路。它只在显式 `BackgroundSource` 存在时采样 source，使用 CPU backing bitmap + D2D 上传缓存绘制到当前控件 paint scope，不生成窗口级 GPU snapshot，也不递归绘制整棵控件树。
+
+Form 级 HDR/swapchain 呈现后端已移除，不再保留 `EnableHdrForForm`、HDR 状态查询或交换链验证入口。当前 HDR 只作为 V3 per-control OnPaint 路线的输出映射存在：业务颜色和直接 Image 上传可按 `GlobalOptions.HDR` 提升，背景穿透采样像素保持原样回放，避免超容器背景映射被二次增强。
+
+HDR 映射强度使用常见显示档位配置，不再直接暴露曝光/饱和度系数；默认值为 `HDR400`，可选 `HDR200` 到 `HDR1000` 的每 100 档位：
+
+```vb
+GlobalOptions.HDR.Enabled = True
+GlobalOptions.HDR.Profile = GlobalOptions.HdrOutputProfile.HDR400
+```
 
 `D3D_BackdropRenderer` 当前实现 Image 模式 GPU 路线。Auto/CaptionOnly 的 Desktop Duplication 路线保留为后续核心能力，不能为了兼容普通 WinForms 控件重新引入 CPU 截图或 HDC 回贴。
 
