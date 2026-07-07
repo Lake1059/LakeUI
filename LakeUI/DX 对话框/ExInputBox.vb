@@ -579,7 +579,7 @@ Friend Class ExInputBoxForm
     Protected Overrides Sub OnShown(e As EventArgs)
         MyBase.OnShown(e)
         If 拥有者 IsNot Nothing Then MessageDialogRendering.CenterOnOwner(Me, 拥有者)
-        RequestV3Render()
+        刷新毛玻璃背景()
     End Sub
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
@@ -590,7 +590,7 @@ Friend Class ExInputBoxForm
         If context Is Nothing OrElse ClientSize.Width <= 0 OrElse ClientSize.Height <= 0 Then Return
 
         Dim bounds As New RectangleF(0, 0, ClientSize.Width, ClientSize.Height)
-        Dim glass = MessageDialogRendering.DrawBackdrop(context, bounds)
+        Dim glass = MessageDialogRendering.DrawBackdrop(context, bounds, 毛玻璃)
 
         If Not glass Then
             MessageDialogRendering.FillRectangle(context, 标题栏区域, 主题.TitleBarBackColor)
@@ -650,6 +650,7 @@ Friend Class ExInputBoxForm
 
     Private Sub 刷新毛玻璃背景()
         If IsDisposed OrElse Not IsHandleCreated Then Return
+        毛玻璃?.Prepare()
         RequestV3Render()
     End Sub
 

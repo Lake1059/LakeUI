@@ -95,6 +95,20 @@ Friend NotInheritable Class D3D_PopupBackdropRenderer
         End Try
     End Sub
 
+    Public Function Draw(context As D3D_PaintContext, target As RectangleF) As Boolean
+        If Not HasFrame OrElse target.Width <= 0 OrElse target.Height <= 0 Then Return False
+
+        Try
+            Return _renderer.DrawTo(context, target, TintColor, NoiseOpacity)
+        Catch ex As Exception
+            If D3D_DeviceGlobals.HandleDeviceLost(ex) Then
+                Try : _host?.Invalidate() : Catch : End Try
+                Return False
+            End If
+            Throw
+        End Try
+    End Function
+
     Private Sub ResetRenderer()
         If _renderer Is Nothing Then Return
         _renderer.Dispose()

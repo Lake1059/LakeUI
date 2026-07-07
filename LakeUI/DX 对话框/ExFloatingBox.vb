@@ -522,6 +522,8 @@ Friend Class ExFloatingBoxForm
                 Me.Opacity = 1.0
                 Me.Location = 最终位置
                 停止动画()
+                毛玻璃?.Prepare()
+                RequestV3Render()
             End If
         ElseIf 正在关闭动画 Then
             Dim duration As Integer = 主题.CloseAnimationDuration
@@ -855,6 +857,7 @@ Friend Class ExFloatingBoxForm
         If Me.Owner IsNot Nothing AndAlso Me.Owner.IsHandleCreated Then
             EnableWindow(Me.Owner.Handle, True)
         End If
+        毛玻璃?.Prepare()
         RequestV3Render()
     End Sub
 
@@ -866,7 +869,7 @@ Friend Class ExFloatingBoxForm
         If context Is Nothing OrElse ClientSize.Width <= 0 OrElse ClientSize.Height <= 0 Then Return
 
         Dim bounds As New RectangleF(0, 0, ClientSize.Width, ClientSize.Height)
-        Dim glass = MessageDialogRendering.DrawBackdrop(context, bounds)
+        Dim glass = MessageDialogRendering.DrawBackdrop(context, bounds, 毛玻璃)
         If Not glass Then
             MessageDialogRendering.FillRectangle(context, bounds, 主题.CardBackColor)
         End If

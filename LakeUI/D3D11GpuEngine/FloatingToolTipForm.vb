@@ -27,7 +27,7 @@ End Enum
 
 Public NotInheritable Class FloatingToolTipForm
     Inherits PopupForm
-    Implements IMessageFilter
+    Implements IMessageFilter, V3_IGpuRenderable, V3_IGpuInvalidationSource
 
     Private ReadOnly _owner As Control
     Private _tipText As String = ""
@@ -135,7 +135,7 @@ Public NotInheritable Class FloatingToolTipForm
         EnsureOwnerStateHandlers()
         EnsureMessageFilter()
         If Not Visible Then Show()
-        Invalidate()
+        RequestV3Render()
     End Sub
 
     Friend ReadOnly Property HasSelectedText As Boolean
@@ -175,6 +175,11 @@ Public NotInheritable Class FloatingToolTipForm
     End Sub
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
+        If D3D_PaintBridge.PaintRenderable(e, Me, Me) Then Return
+        PaintFallback(e)
+    End Sub
+
+    Private Sub PaintFallback(e As PaintEventArgs)
         绘制毛玻璃背景(e.Graphics)
 
         Dim w As Integer = ClientSize.Width
@@ -199,6 +204,27 @@ Public NotInheritable Class FloatingToolTipForm
         End Using
     End Sub
 
+    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+        If context Is Nothing OrElse ClientSize.Width <= 0 OrElse ClientSize.Height <= 0 Then Return
+
+        Dim w As Integer = ClientSize.Width
+        Dim h As Integer = ClientSize.Height
+        Dim bw As Integer = BorderWidth()
+        Dim bounds As New RectangleF(0, 0, w, h)
+        Dim hasBackdrop As Boolean = 绘制毛玻璃背景(context, bounds)
+
+        DrawBackground_GPU(context, bw, w, h, Not hasBackdrop)
+
+        Dim textRect As RectangleF = GetTextRectangle()
+        DrawSelection_GPU(context, textRect)
+        context.DrawText(_tipText, TipFont(), _style.ForeColor, textRect,
+                         TextFormatFlags.WordBreak Or TextFormatFlags.NoPadding Or TextFormatFlags.Left Or TextFormatFlags.Top)
+    End Sub
+
+    Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
+        Return New Rectangle(Point.Empty, Me.Size)
+    End Function
+
     Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
         MyBase.OnMouseDown(e)
         If Not IsSelectableCopyEnabled() OrElse e.Button <> MouseButtons.Left OrElse String.IsNullOrEmpty(_tipText) Then Return
@@ -209,7 +235,7 @@ Public NotInheritable Class FloatingToolTipForm
         _isMouseSelecting = True
         Capture = True
         Cursor = Cursors.IBeam
-        Invalidate()
+        RequestV3Render()
     End Sub
 
     Protected Overrides Sub OnMouseMove(e As MouseEventArgs)
@@ -220,7 +246,7 @@ Public NotInheritable Class FloatingToolTipForm
         If Not _isMouseSelecting Then Return
         _selectionCaret = TextPositionFromPoint(e.Location)
         ClampSelection()
-        Invalidate()
+        RequestV3Render()
     End Sub
 
     Protected Overrides Sub OnMouseUp(e As MouseEventArgs)
@@ -304,6 +330,39 @@ Public NotInheritable Class FloatingToolTipForm
         End Using
     End Sub
 
+    Private Sub DrawSelection_GPU(context As D3D_PaintContext, textRect As RectangleF)
+        If Not IsSelectableCopyEnabled() Then Return
+        Dim length As Integer = SelectionLength()
+        If context Is Nothing OrElse length <= 0 OrElse textRect.Width <= 0 OrElse textRect.Height <= 0 Then Return
+
+        Dim start As Integer = SelectionStart()
+        Using fmt = CreateTipTextFormat()
+            If fmt Is Nothing Then Return
+            Using layout = D3D_D2DInterop.GetDWriteFactory().CreateTextLayout(_tipText, fmt,
+                                                                          Math.Max(1.0F, textRect.Width),
+                                                                          Math.Max(1.0F, textRect.Height))
+                Dim metrics(Math.Max(1, length + 1) - 1) As HitTestMetrics
+                Dim actual As UInteger = 0
+                Try
+                    layout.HitTestTextRange(CUInt(start), CUInt(length), textRect.X, textRect.Y, metrics, actual)
+                Catch
+                    Return
+                End Try
+                If actual <= 0 Then Return
+
+                Dim selectionBrush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext,
+                                                                                 EffectiveSelectionFocusColor(),
+                                                                                 context.DeviceGeneration)
+                Dim count As Integer = Math.Min(metrics.Length, CInt(actual))
+                For i As Integer = 0 To count - 1
+                    Dim m = metrics(i)
+                    If m.Width <= 0.0F OrElse m.Height <= 0.0F Then Continue For
+                    context.DeviceContext.FillRectangle(New Vortice.Mathematics.Rect(m.Left, m.Top, m.Width, m.Height), selectionBrush)
+                Next
+            End Using
+        End Using
+    End Sub
+
     Private Function TextPositionFromPoint(point As Point) As Integer
         If Not IsSelectableCopyEnabled() Then Return 0
         If String.IsNullOrEmpty(_tipText) Then Return 0
@@ -370,7 +429,7 @@ Public NotInheritable Class FloatingToolTipForm
         _selectionAnchor = 0
         _selectionCaret = _tipText.Length
         _keyboardSelectionOwner = Me
-        Invalidate()
+        RequestV3Render()
     End Sub
 
     Private Sub ClearSelection(Optional invalidateForm As Boolean = True)
@@ -378,7 +437,7 @@ Public NotInheritable Class FloatingToolTipForm
         _selectionCaret = 0
         _isMouseSelecting = False
         If ReferenceEquals(_keyboardSelectionOwner, Me) Then _keyboardSelectionOwner = Nothing
-        If invalidateForm Then Invalidate()
+        If invalidateForm Then RequestV3Render()
     End Sub
 
     Private Sub ClampSelection()
@@ -531,6 +590,39 @@ Public NotInheritable Class FloatingToolTipForm
         End If
     End Sub
 
+    Private Sub DrawBackground_GPU(context As D3D_PaintContext, bw As Integer, w As Integer, h As Integer, fillBackground As Boolean)
+        Dim radius As Single = BorderRadius()
+        Dim fillColor As Color = ToolTipFillColor()
+
+        If radius > 0 Then
+            Dim boundsRect As New RectangleF(0, 0, Math.Max(1, w), Math.Max(1, h))
+            If bw > 0 Then
+                Dim half As Single = bw / 2.0F
+                boundsRect.Inflate(-half, -half)
+            End If
+            If fillBackground Then context.FillRoundedRectangle(boundsRect, radius, fillColor)
+            If bw > 0 AndAlso _style.BorderColor.A > 0 Then context.DrawRoundedRectangle(boundsRect, radius, _style.BorderColor, bw)
+            Return
+        End If
+
+        If fillBackground Then context.FillRectangle(New RectangleF(0, 0, w, h), fillColor)
+        If bw > 0 AndAlso _style.BorderColor.A > 0 Then DrawSquareBorder_GPU(context, w, h, bw)
+    End Sub
+
+    Private Sub DrawSquareBorder_GPU(context As D3D_PaintContext, w As Integer, h As Integer, bw As Integer)
+        Dim border As Integer = Math.Min(bw, Math.Min(w, h))
+        If border <= 0 Then Return
+
+        context.FillRectangle(New RectangleF(0, 0, w, border), _style.BorderColor)
+        If h > border Then context.FillRectangle(New RectangleF(0, h - border, w, border), _style.BorderColor)
+
+        Dim middleHeight As Integer = h - border * 2
+        If middleHeight > 0 Then
+            context.FillRectangle(New RectangleF(0, border, border, middleHeight), _style.BorderColor)
+            If w > border Then context.FillRectangle(New RectangleF(w - border, border, border, middleHeight), _style.BorderColor)
+        End If
+    End Sub
+
     Private Sub ApplyPopupWindowState()
         TransparencyKey = Color.Empty
         Opacity = 1.0R
@@ -590,6 +682,11 @@ Public NotInheritable Class FloatingToolTipForm
         _backdrop.Draw(g, New Rectangle(0, 0, ClientSize.Width, ClientSize.Height))
     End Sub
 
+    Private Function 绘制毛玻璃背景(context As D3D_PaintContext, target As RectangleF) As Boolean
+        If Not HasBackdropFrame() Then Return False
+        Return _backdrop.Draw(context, target)
+    End Function
+
     Private Function HasBackdropFrame() As Boolean
         Return _backdrop IsNot Nothing AndAlso _backdrop.HasFrame
     End Function
@@ -605,6 +702,16 @@ Public NotInheritable Class FloatingToolTipForm
     Private Shared Function IsSelectableCopyEnabled() As Boolean
         Return SelectableCopyEnabled
     End Function
+
+    Private Sub RequestV3Render()
+        RequestV3Render(New Rectangle(Point.Empty, Me.Size))
+    End Sub
+
+    Private Sub RequestV3Render(dirtyRect As Rectangle)
+        If IsDisposed OrElse Disposing Then Return
+        If dirtyRect.Width <= 0 OrElse dirtyRect.Height <= 0 Then Return
+        V3_InvalidationRouter.RequestRender(Me, dirtyRect)
+    End Sub
 
     Private Function EffectiveSelectionFocusColor() As Color
         If _style.SelectionBackColor <> Color.Empty Then Return _style.SelectionBackColor

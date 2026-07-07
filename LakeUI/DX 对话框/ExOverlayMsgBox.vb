@@ -914,6 +914,7 @@ Friend Class ExOverlayMsgBoxHostForm
 
     Private Sub 准备卡片毛玻璃()
         If IsDisposed Then Return
+        If Not 卡片区域.IsEmpty Then 毛玻璃?.Prepare(RectangleToScreen(卡片区域))
         RequestV3Render(卡片区域)
     End Sub
 
@@ -923,7 +924,7 @@ Friend Class ExOverlayMsgBoxHostForm
         context.FillRectangle(New RectangleF(0, 0, ClientSize.Width, ClientSize.Height), Color.FromArgb(255, 主题.OverlayBackColor))
 
         Dim cardRect As RectangleF = 卡片区域
-        Dim glass = MessageDialogRendering.DrawBackdrop(context, cardRect)
+        Dim glass = MessageDialogRendering.DrawBackdrop(context, cardRect, 毛玻璃)
         If Not glass Then
             MessageDialogRendering.FillRectangle(context, cardRect, 主题.CardBackColor)
             MessageDialogRendering.FillRectangle(context, 按钮区域, 主题.ButtonAreaBackColor)
@@ -1603,6 +1604,7 @@ Friend Class ExOverlayMsgBoxForm
     End Sub
 
     Public Sub 准备毛玻璃()
+        毛玻璃?.Prepare()
         RequestV3Render()
     End Sub
 
@@ -1614,7 +1616,7 @@ Friend Class ExOverlayMsgBoxForm
         If context Is Nothing OrElse ClientSize.Width <= 0 OrElse ClientSize.Height <= 0 Then Return
 
         Dim cardRect As New RectangleF(0, 0, ClientSize.Width, ClientSize.Height)
-        Dim glass = MessageDialogRendering.DrawBackdrop(context, cardRect)
+        Dim glass = MessageDialogRendering.DrawBackdrop(context, cardRect, 毛玻璃)
         If Not glass Then
             MessageDialogRendering.FillRectangle(context, cardRect, 主题.CardBackColor)
             MessageDialogRendering.FillRectangle(context, 按钮区域, 主题.ButtonAreaBackColor)

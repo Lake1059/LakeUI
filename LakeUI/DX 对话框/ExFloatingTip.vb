@@ -193,6 +193,7 @@ Friend Class ExFloatingTipForm
     Private 主题 As ExFloatingTipTheme
     Private 锚点控件 As Control
     Private 已关闭 As Boolean = False
+    Private ReadOnly 毛玻璃 As MessageDialogBackdropController
 
     ' DPI 缩放系数
     Private SC As Single = 1.0F
@@ -228,6 +229,7 @@ Friend Class ExFloatingTipForm
         主题 = If(theme, New ExFloatingTipTheme())
         锚点控件 = anchor
         显示时长 = duration
+        毛玻璃 = New MessageDialogBackdropController(Me)
 
         Me.DoubleBuffered = True
         Me.BackColor = 主题.CardBackColor
@@ -290,6 +292,8 @@ Friend Class ExFloatingTipForm
                 Me.Opacity = 1.0
                 Me.Location = 最终位置
                 停止动画()
+                毛玻璃?.Prepare()
+                RequestV3Render()
                 启动自动关闭()
             End If
         ElseIf 正在关闭动画 Then
@@ -432,6 +436,7 @@ Friend Class ExFloatingTipForm
 
     Protected Overrides Sub OnShown(e As EventArgs)
         MyBase.OnShown(e)
+        毛玻璃?.Prepare()
         RequestV3Render()
     End Sub
 
@@ -443,7 +448,7 @@ Friend Class ExFloatingTipForm
         If context Is Nothing OrElse ClientSize.Width <= 0 OrElse ClientSize.Height <= 0 Then Return
 
         Dim bounds As New RectangleF(0, 0, ClientSize.Width, ClientSize.Height)
-        Dim glass = MessageDialogRendering.DrawBackdrop(context, bounds)
+        Dim glass = MessageDialogRendering.DrawBackdrop(context, bounds, 毛玻璃)
         If Not glass Then
             MessageDialogRendering.FillRectangle(context, bounds, 主题.CardBackColor)
         End If
@@ -526,6 +531,7 @@ Friend Class ExFloatingTipForm
             动画计时器?.Dispose()
             自动关闭计时器?.Stop()
             自动关闭计时器?.Dispose()
+            毛玻璃?.Dispose()
             消息字体?.Dispose()
         End If
         MyBase.Dispose(disposing)

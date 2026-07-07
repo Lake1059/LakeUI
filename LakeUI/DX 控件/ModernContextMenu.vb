@@ -801,8 +801,8 @@ Public Class ModernContextMenu
         Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
             If ClientSize.Width <= 0 OrElse ClientSize.Height <= 0 Then Return
 
-            DrawBackdrop_GPU(context)
-            DrawGraphicsContent_GPU(context)
+            Dim hasBackdrop = DrawBackdrop_GPU(context)
+            DrawGraphicsContent_GPU(context, hasBackdrop)
             DrawAllText_GPU(context)
         End Sub
 
@@ -823,22 +823,13 @@ Public Class ModernContextMenu
             D3D_RenderCore.InvalidateExistingTextResources(Me)
         End Sub
 
-        Private Sub DrawBackdrop_GPU(context As D3D_PaintContext)
-            If 菜单.毛玻璃模式 = BackdropModeEnum.Image AndAlso 菜单.毛玻璃图片 IsNot Nothing Then
-                Dim renderer = context.Compositor.D3D_BackdropSurfaceRenderer
-                renderer.SetImage(菜单.毛玻璃图片)
-                renderer.ApplyParameters(菜单.毛玻璃模糊半径,
-                                         菜单.毛玻璃模糊次数,
-                                         菜单.毛玻璃下采样,
-                                         菜单.毛玻璃噪点缩放)
-                renderer.TintColor = 菜单.毛玻璃Tint颜色
-                renderer.NoiseOpacity = 菜单.毛玻璃噪点不透明度
-                renderer.DrawImageBackdrop(context, New RectangleF(0, 0, ClientSize.Width, ClientSize.Height))
-            End If
-        End Sub
+        Private Function DrawBackdrop_GPU(context As D3D_PaintContext) As Boolean
+            If Not HasBackdropFrame() Then Return False
+            Return _backdrop.Draw(context, New RectangleF(0, 0, ClientSize.Width, ClientSize.Height))
+        End Function
 
-        Private Sub DrawGraphicsContent_GPU(context As D3D_PaintContext)
-            If Not (菜单.毛玻璃模式 = BackdropModeEnum.Image AndAlso 菜单.毛玻璃图片 IsNot Nothing) Then
+        Private Sub DrawGraphicsContent_GPU(context As D3D_PaintContext, hasBackdrop As Boolean)
+            If Not hasBackdrop Then
                 context.FillRectangle(New RectangleF(0, 0, ClientSize.Width, ClientSize.Height), 菜单.背景颜色)
             ElseIf 菜单.背景颜色.A > 0 AndAlso 菜单.背景颜色.A < 255 Then
                 context.FillRectangle(New RectangleF(0, 0, ClientSize.Width, ClientSize.Height), 菜单.背景颜色)

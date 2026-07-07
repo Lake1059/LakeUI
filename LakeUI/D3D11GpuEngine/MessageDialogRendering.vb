@@ -35,6 +35,7 @@ Friend NotInheritable Class MessageDialogBackdropController
     Implements IDisposable
 
     Private ReadOnly _host As Form
+    Private _backdrop As D3D_PopupBackdropRenderer
 
     Public Sub New(host As Form)
         _host = host
@@ -48,7 +49,7 @@ Friend NotInheritable Class MessageDialogBackdropController
 
     Public ReadOnly Property HasFrame As Boolean
         Get
-            Return Enabled
+            Return _backdrop IsNot Nothing AndAlso _backdrop.HasFrame
         End Get
     End Property
 
@@ -57,11 +58,34 @@ Friend NotInheritable Class MessageDialogBackdropController
     End Sub
 
     Public Sub Prepare(captureBounds As Rectangle)
-        ' V3 消息窗只接入 GPU Image Backdrop；旧截图捕获路径不再执行。
+        If _backdrop Is Nothing Then _backdrop = New D3D_PopupBackdropRenderer(_host)
+        _backdrop.TransientExcludeOnCapture = True
+
+        If Enabled Then
+            _backdrop.Configure(MessageDialogOptions.BackdropMode,
+                                MessageDialogOptions.BackdropImage,
+                                MessageDialogOptions.BackdropTintColor,
+                                MessageDialogOptions.BackdropBlurRadius,
+                                MessageDialogOptions.BackdropBlurPasses,
+                                MessageDialogOptions.BackdropDownsampleFactor,
+                                MessageDialogOptions.BackdropNoiseOpacity,
+                                MessageDialogOptions.BackdropNoiseScale)
+        Else
+            _backdrop.Configure(PopupBackdropMode.None,
+                                Nothing,
+                                Color.Transparent,
+                                1,
+                                0,
+                                1,
+                                0,
+                                1.0F)
+        End If
+        _backdrop.Prepare(captureBounds, True)
     End Sub
 
     Public Function WaitForFrame(Optional timeoutMilliseconds As Integer = 500) As Boolean
-        Return True
+        If _backdrop Is Nothing Then Return True
+        Return _backdrop.WaitForFrame(timeoutMilliseconds)
     End Function
 
     Public Sub Draw(g As Graphics)
@@ -76,7 +100,16 @@ Friend NotInheritable Class MessageDialogBackdropController
         ' V3-only: pixels are emitted by RenderGpu.
     End Sub
 
+    Public Function Draw(context As D3D_PaintContext, target As RectangleF) As Boolean
+        If Not Enabled OrElse _backdrop Is Nothing Then Return False
+        Return _backdrop.Draw(context, target)
+    End Function
+
     Public Sub Dispose() Implements IDisposable.Dispose
+        If _backdrop IsNot Nothing Then
+            _backdrop.Dispose()
+            _backdrop = Nothing
+        End If
     End Sub
 End Class
 
@@ -132,8 +165,9 @@ Friend Module MessageDialogRendering
 
     Public Function IsGlassEnabled() As Boolean
         Return MessageDialogOptions.BackdropEnabled AndAlso
-               MessageDialogOptions.BackdropMode = PopupBackdropMode.Image AndAlso
-               MessageDialogOptions.BackdropImage IsNot Nothing
+               MessageDialogOptions.BackdropMode <> PopupBackdropMode.None AndAlso
+               (MessageDialogOptions.BackdropMode <> PopupBackdropMode.Image OrElse
+                MessageDialogOptions.BackdropImage IsNot Nothing)
     End Function
 
     Public Function ResolveDialogFontName(owner As IWin32Window, Optional fallbackControl As Control = Nothing) As String
@@ -363,9 +397,18 @@ Friend Module MessageDialogRendering
         rt.DrawLine(New Vector2(cx + half, cy - half), New Vector2(cx - half, cy + half), brush, width)
     End Sub
 
-    Public Function DrawBackdrop(context As D3D_PaintContext, bounds As RectangleF) As Boolean
+    Public Function DrawBackdrop(context As D3D_PaintContext,
+                                 bounds As RectangleF,
+                                 Optional controller As MessageDialogBackdropController = Nothing) As Boolean
         If context Is Nothing OrElse bounds.Width <= 0 OrElse bounds.Height <= 0 Then Return False
         If Not IsGlassEnabled() Then Return False
+
+        If controller IsNot Nothing Then
+            Return controller.Draw(context, bounds)
+        End If
+
+        If MessageDialogOptions.BackdropMode <> PopupBackdropMode.Image OrElse
+           MessageDialogOptions.BackdropImage Is Nothing Then Return False
 
         context.Compositor.D3D_BackdropSurfaceRenderer.SetImage(MessageDialogOptions.BackdropImage)
         context.Compositor.D3D_BackdropSurfaceRenderer.ApplyParameters(MessageDialogOptions.BackdropBlurRadius,

@@ -92,7 +92,7 @@ Public Class ModernComboBox
             _toolTipText = If(toolTipText, "")
         End Sub
 
-        <Category("LakeUI"), Description("对应的下拉项文本")>
+        <Category("LakeUI - ToolTip"), Description("对应的下拉项文本")>
         Public Property ItemText As String
             Get
                 Return _itemText
@@ -102,7 +102,7 @@ Public Class ModernComboBox
             End Set
         End Property
 
-        <Category("LakeUI"), Description("工具提示内容")>
+        <Category("LakeUI - ToolTip"), Description("工具提示内容")>
         Public Property ToolTipText As String
             Get
                 Return _toolTipText
@@ -256,7 +256,7 @@ Public Class ModernComboBox
 
     <DesignerSerializationVisibility(DesignerSerializationVisibility.Content),
      Editor("System.Windows.Forms.Design.StringCollectionEditor, System.Design", "System.Drawing.Design.UITypeEditor, System.Drawing"),
-     Category("LakeUI"), Description("下拉列表项"), Browsable(True)>
+     Category("LakeUI - DropDown"), Description("下拉列表项"), Browsable(True)>
     Public ReadOnly Property Items As ItemCollection
         Get
             Return _items
@@ -638,7 +638,7 @@ Public Class ModernComboBox
     End Property
 
     Private 下拉背景颜色 As Color = Color.FromArgb(36, 36, 36)
-    <Category("LakeUI"), Description("下拉列表背景颜色"), DefaultValue(GetType(Color), "36,36,36"), Browsable(True)>
+    <Category("LakeUI - DropDown"), Description("下拉列表背景颜色"), DefaultValue(GetType(Color), "36,36,36"), Browsable(True)>
     Public Property DropDownBackColor As Color
         Get
             Return 下拉背景颜色
@@ -737,7 +737,7 @@ Public Class ModernComboBox
     End Property
 
     Private 下拉悬停颜色 As Color = Color.FromArgb(60, 60, 60)
-    <Category("LakeUI"), Description("下拉列表悬停颜色"), DefaultValue(GetType(Color), "60,60,60"), Browsable(True)>
+    <Category("LakeUI - DropDown"), Description("下拉列表悬停颜色"), DefaultValue(GetType(Color), "60,60,60"), Browsable(True)>
     Public Property DropDownHoverColor As Color
         Get
             Return 下拉悬停颜色
@@ -747,8 +747,30 @@ Public Class ModernComboBox
         End Set
     End Property
 
+    Private 下拉按下颜色 As Color = Color.FromArgb(80, 80, 80)
+    <Category("LakeUI - DropDown"), Description("下拉列表项鼠标按下颜色"), DefaultValue(GetType(Color), "80,80,80"), Browsable(True)>
+    Public Property DropDownPressedColor As Color
+        Get
+            Return 下拉按下颜色
+        End Get
+        Set(value As Color)
+            SetValue(下拉按下颜色, value)
+        End Set
+    End Property
+
+    Private 下拉悬停圆角半径 As Integer = 0
+    <Category("LakeUI - DropDown"), Description("下拉列表悬停高亮圆角半径，0 = 直角矩形"), DefaultValue(GetType(Integer), "0"), Browsable(True)>
+    Public Property DropDownHoverRadius As Integer
+        Get
+            Return 下拉悬停圆角半径
+        End Get
+        Set(value As Integer)
+            SetValue(下拉悬停圆角半径, Math.Max(0, value))
+        End Set
+    End Property
+
     Private 下拉选中颜色 As Color = Color.FromArgb(80, 80, 80)
-    <Category("LakeUI"), Description("下拉列表选中颜色"), DefaultValue(GetType(Color), "80,80,80"), Browsable(True)>
+    <Category("LakeUI - DropDown"), Description("下拉列表选中颜色"), DefaultValue(GetType(Color), "80,80,80"), Browsable(True)>
     Public Property DropDownSelectedColor As Color
         Get
             Return 下拉选中颜色
@@ -759,7 +781,7 @@ Public Class ModernComboBox
     End Property
 
     Private 下拉选中文字颜色 As Color = Color.Empty
-    <Category("LakeUI"), Description("下拉列表选中项文字颜色，Empty 时使用 ForeColor"), DefaultValue(GetType(Color), ""), Browsable(True)>
+    <Category("LakeUI - DropDown"), Description("下拉列表选中项文字颜色，Empty 时使用 ForeColor"), DefaultValue(GetType(Color), ""), Browsable(True)>
     Public Property DropDownSelectedForeColor As Color
         Get
             Return 下拉选中文字颜色
@@ -770,7 +792,7 @@ Public Class ModernComboBox
     End Property
 
     Private 下拉项高度 As Integer = 30
-    <Category("LakeUI"), Description("下拉列表项高度"), DefaultValue(GetType(Integer), "30"), Browsable(True)>
+    <Category("LakeUI - DropDown"), Description("下拉列表项高度"), DefaultValue(GetType(Integer), "30"), Browsable(True)>
     Public Property DropDownItemHeight As Integer
         Get
             Return 下拉项高度
@@ -781,7 +803,7 @@ Public Class ModernComboBox
     End Property
 
     Private 最大下拉项数 As Integer = 8
-    <Category("LakeUI"), Description("下拉列表最大可见项数"), DefaultValue(GetType(Integer), "8"), Browsable(True)>
+    <Category("LakeUI - DropDown"), Description("下拉列表最大可见项数"), DefaultValue(GetType(Integer), "8"), Browsable(True)>
     Public Property MaxDropDownItems As Integer
         Get
             Return 最大下拉项数
@@ -792,7 +814,7 @@ Public Class ModernComboBox
     End Property
 
     Private 下拉边框颜色 As Color = Color.Gray
-    <Category("LakeUI"), Description("下拉列表边框颜色"), DefaultValue(GetType(Color), "Gray"), Browsable(True)>
+    <Category("LakeUI - DropDown"), Description("下拉列表边框颜色"), DefaultValue(GetType(Color), "Gray"), Browsable(True)>
     Public Property DropDownBorderColor As Color
         Get
             Return 下拉边框颜色
@@ -803,7 +825,7 @@ Public Class ModernComboBox
     End Property
 
     Private 下拉边框宽度 As Integer = 1
-    <Category("LakeUI"), Description("下拉列表边框宽度"), DefaultValue(GetType(Integer), "1"), Browsable(True)>
+    <Category("LakeUI - DropDown"), Description("下拉列表边框宽度"), DefaultValue(GetType(Integer), "1"), Browsable(True)>
     Public Property DropDownBorderSize As Integer
         Get
             Return 下拉边框宽度
@@ -814,7 +836,7 @@ Public Class ModernComboBox
     End Property
 
     Private 下拉高亮左侧偏移 As Integer = 0
-    <Category("LakeUI"), Description("下拉列表高亮区域左侧偏移量（正值外扩，负值内缩）"), DefaultValue(GetType(Integer), "0"), Browsable(True)>
+    <Category("LakeUI - DropDown"), Description("下拉列表高亮区域左侧偏移量（正值外扩，负值内缩）"), DefaultValue(GetType(Integer), "0"), Browsable(True)>
     Public Property DropDownHighlightInsetLeft As Integer
         Get
             Return 下拉高亮左侧偏移
@@ -825,7 +847,7 @@ Public Class ModernComboBox
     End Property
 
     Private 下拉高亮右侧偏移 As Integer = 0
-    <Category("LakeUI"), Description("下拉列表高亮区域右侧偏移量（正值外扩，负值内缩）"), DefaultValue(GetType(Integer), "0"), Browsable(True)>
+    <Category("LakeUI - DropDown"), Description("下拉列表高亮区域右侧偏移量（正值外扩，负值内缩）"), DefaultValue(GetType(Integer), "0"), Browsable(True)>
     Public Property DropDownHighlightInsetRight As Integer
         Get
             Return 下拉高亮右侧偏移
@@ -836,7 +858,7 @@ Public Class ModernComboBox
     End Property
 
     Private 下拉高亮兼容内边距 As Boolean = False
-    <Category("LakeUI"), Description("是否让选项高亮区域兼容内边距（左右方向随 DropDownPadding 收缩）"), DefaultValue(GetType(Boolean), "False"), Browsable(True)>
+    <Category("LakeUI - DropDown"), Description("是否让选项高亮区域兼容内边距（左右方向随 DropDownPadding 收缩）"), DefaultValue(GetType(Boolean), "False"), Browsable(True)>
     Public Property DropDownHighlightMatchPadding As Boolean
         Get
             Return 下拉高亮兼容内边距
@@ -847,7 +869,7 @@ Public Class ModernComboBox
     End Property
 
     Private 下拉间距 As Integer = 0
-    <Category("LakeUI"), Description("下拉列表与主体的垂直间距"), DefaultValue(GetType(Integer), "0"), Browsable(True)>
+    <Category("LakeUI - DropDown"), Description("下拉列表与主体的垂直间距"), DefaultValue(GetType(Integer), "0"), Browsable(True)>
     Public Property DropDownGap As Integer
         Get
             Return 下拉间距
@@ -858,7 +880,7 @@ Public Class ModernComboBox
     End Property
 
     Private 下拉滚动条宽度 As Integer = 10
-    <Category("LakeUI"), Description("下拉列表滚动条宽度"), DefaultValue(GetType(Integer), "10"), Browsable(True)>
+    <Category("LakeUI - DropDown"), Description("下拉列表滚动条宽度"), DefaultValue(GetType(Integer), "10"), Browsable(True)>
     Public Property DropDownScrollBarWidth As Integer
         Get
             Return 下拉滚动条宽度
@@ -870,7 +892,7 @@ Public Class ModernComboBox
 
     Private Shared ReadOnly 默认下拉滚动条颜色 As Color = Color.FromArgb(140, 140, 140)
     Private 下拉滚动条颜色 As Color = 默认下拉滚动条颜色
-    <Category("LakeUI"), Description("下拉列表滚动条滑块颜色"), Browsable(True)>
+    <Category("LakeUI - DropDown"), Description("下拉列表滚动条滑块颜色"), Browsable(True)>
     Public Property DropDownScrollBarColor As Color
         Get
             Return 下拉滚动条颜色
@@ -890,7 +912,7 @@ Public Class ModernComboBox
 
     Private Shared ReadOnly 默认下拉滚动条悬停颜色 As Color = Color.FromArgb(200, 200, 200)
     Private 下拉滚动条悬停颜色 As Color = 默认下拉滚动条悬停颜色
-    <Category("LakeUI"), Description("下拉列表滚动条滑块悬停/拖拽颜色"), Browsable(True)>
+    <Category("LakeUI - DropDown"), Description("下拉列表滚动条滑块悬停/拖拽颜色"), Browsable(True)>
     Public Property DropDownScrollBarHoverColor As Color
         Get
             Return 下拉滚动条悬停颜色
@@ -910,7 +932,7 @@ Public Class ModernComboBox
 
     Private Shared ReadOnly 默认下拉滚动条轨道颜色 As Color = Color.FromArgb(20, 255, 255, 255)
     Private 下拉滚动条轨道颜色 As Color = 默认下拉滚动条轨道颜色
-    <Category("LakeUI"), Description("下拉列表滚动条轨道颜色"), Browsable(True)>
+    <Category("LakeUI - DropDown"), Description("下拉列表滚动条轨道颜色"), Browsable(True)>
     Public Property DropDownScrollBarTrackColor As Color
         Get
             Return 下拉滚动条轨道颜色
@@ -929,7 +951,7 @@ Public Class ModernComboBox
     End Sub
 
     Private 下拉内边距 As Padding = Padding.Empty
-    <Category("LakeUI"), Description("下拉列表内边距"), DefaultValue(GetType(Padding), "0, 0, 0, 0"), Browsable(True)>
+    <Category("LakeUI - DropDown"), Description("下拉列表内边距"), DefaultValue(GetType(Padding), "0, 0, 0, 0"), Browsable(True)>
     Public Property DropDownPadding As Padding
         Get
             Return 下拉内边距
@@ -948,7 +970,7 @@ Public Class ModernComboBox
     End Sub
 
     Private 下拉展开关闭动画时长 As Integer = 150
-    <Category("LakeUI"), Description("下拉列表展开/关闭动画时长（毫秒），0 = 无动画"), DefaultValue(GetType(Integer), "150"), Browsable(True)>
+    <Category("LakeUI - DropDown"), Description("下拉列表展开/关闭动画时长（毫秒），0 = 无动画"), DefaultValue(GetType(Integer), "150"), Browsable(True)>
     Public Property DropDownAnimationDuration As Integer
         Get
             Return 下拉展开关闭动画时长
@@ -960,7 +982,7 @@ Public Class ModernComboBox
     End Property
 
     Private 下拉悬停动画时长 As Integer = 200
-    <Category("LakeUI"), Description("下拉列表悬停高亮移动动画时长（毫秒），0 = 无动画"), DefaultValue(GetType(Integer), "200"), Browsable(True)>
+    <Category("LakeUI - DropDown"), Description("下拉列表悬停高亮移动动画时长（毫秒），0 = 无动画"), DefaultValue(GetType(Integer), "200"), Browsable(True)>
     Public Property DropDownHoverAnimationDuration As Integer
         Get
             Return 下拉悬停动画时长
@@ -972,7 +994,7 @@ Public Class ModernComboBox
     End Property
 
     Private 动画帧率 As Integer = 60
-    <Category("LakeUI"), Description(GlobalOptions.动画帧率描述词), DefaultValue(60), Browsable(True)>
+    <Category("LakeUI - DropDown"), Description(GlobalOptions.动画帧率描述词), DefaultValue(60), Browsable(True)>
     Public Property AnimationFPS As Integer
         Get
             Return 动画帧率
@@ -993,7 +1015,7 @@ Public Class ModernComboBox
     End Enum
 
     Private 下拉显示模式 As DropDownDisplayMode = DropDownDisplayMode.Classic
-    <Category("LakeUI"), Description("下拉列表显示模式（Classic = 常规下拉；Overlay = 选中项与控件重合）"), DefaultValue(DropDownDisplayMode.Classic), Browsable(True)>
+    <Category("LakeUI - DropDown"), Description("下拉列表显示模式（Classic = 常规下拉；Overlay = 选中项与控件重合）"), DefaultValue(DropDownDisplayMode.Classic), Browsable(True)>
     Public Property DropDownMode As DropDownDisplayMode
         Get
             Return 下拉显示模式
@@ -1005,15 +1027,15 @@ Public Class ModernComboBox
 
     <DesignerSerializationVisibility(DesignerSerializationVisibility.Content),
      Editor("System.ComponentModel.Design.CollectionEditor, System.Design", "System.Drawing.Design.UITypeEditor, System.Drawing"),
-     Category("LakeUI"), Description("下拉项工具提示映射（ItemText → ToolTipText）"), Browsable(True)>
+     Category("LakeUI - ToolTip"), Description("下拉项工具提示映射（ItemText → ToolTipText）"), Browsable(True)>
     Public ReadOnly Property ItemToolTips As ToolTipEntryCollection
         Get
             Return _itemToolTips
         End Get
     End Property
 
-    Private 提示背景颜色 As Color = Color.FromArgb(50, 50, 50)
-    <Category("LakeUI"), Description("工具提示背景颜色"), DefaultValue(GetType(Color), "50,50,50"), Browsable(True)>
+    Private 提示背景颜色 As Color = Color.FromArgb(48, 48, 48)
+    <Category("LakeUI - ToolTip"), Description("工具提示背景颜色"), DefaultValue(GetType(Color), "48,48,48"), Browsable(True)>
     Public Property ToolTipBackColor As Color
         Get
             Return 提示背景颜色
@@ -1024,7 +1046,7 @@ Public Class ModernComboBox
     End Property
 
     Private 提示文本颜色 As Color = Color.Silver
-    <Category("LakeUI"), Description("工具提示文本颜色"), DefaultValue(GetType(Color), "Silver"), Browsable(True)>
+    <Category("LakeUI - ToolTip"), Description("工具提示文本颜色"), DefaultValue(GetType(Color), "Silver"), Browsable(True)>
     Public Property ToolTipForeColor As Color
         Get
             Return 提示文本颜色
@@ -1035,7 +1057,7 @@ Public Class ModernComboBox
     End Property
 
     Private 提示边框颜色 As Color = Color.Gray
-    <Category("LakeUI"), Description("工具提示边框颜色"), DefaultValue(GetType(Color), "Gray"), Browsable(True)>
+    <Category("LakeUI - ToolTip"), Description("工具提示边框颜色"), DefaultValue(GetType(Color), "Gray"), Browsable(True)>
     Public Property ToolTipBorderColor As Color
         Get
             Return 提示边框颜色
@@ -1046,7 +1068,7 @@ Public Class ModernComboBox
     End Property
 
     Private 提示边框宽度 As Integer = 1
-    <Category("LakeUI"), Description("工具提示边框宽度"), DefaultValue(GetType(Integer), "1"), Browsable(True)>
+    <Category("LakeUI - ToolTip"), Description("工具提示边框宽度"), DefaultValue(GetType(Integer), "1"), Browsable(True)>
     Public Property ToolTipBorderSize As Integer
         Get
             Return 提示边框宽度
@@ -1057,7 +1079,7 @@ Public Class ModernComboBox
     End Property
 
     Private 提示圆角半径 As Integer = 0
-    <Category("LakeUI"), Description("工具提示圆角半径"), DefaultValue(GetType(Integer), "0"), Browsable(True)>
+    <Category("LakeUI - ToolTip"), Description("工具提示圆角半径"), DefaultValue(GetType(Integer), "0"), Browsable(True)>
     Public Property ToolTipBorderRadius As Integer
         Get
             Return 提示圆角半径
@@ -1068,7 +1090,7 @@ Public Class ModernComboBox
     End Property
 
     Private 提示内边距 As New Padding(10, 10, 10, 10)
-    <Category("LakeUI"), Description("工具提示内边距"), DefaultValue(GetType(Padding), "10, 10, 10, 10"), Browsable(True)>
+    <Category("LakeUI - ToolTip"), Description("工具提示内边距"), DefaultValue(GetType(Padding), "10, 10, 10, 10"), Browsable(True)>
     Public Property ToolTipPadding As Padding
         Get
             Return 提示内边距
@@ -1079,7 +1101,7 @@ Public Class ModernComboBox
     End Property
 
     Private 提示最大宽度 As Integer = 300
-    <Category("LakeUI"), Description("工具提示最大宽度"), DefaultValue(GetType(Integer), "300"), Browsable(True)>
+    <Category("LakeUI - ToolTip"), Description("工具提示最大宽度"), DefaultValue(GetType(Integer), "300"), Browsable(True)>
     Public Property ToolTipMaxWidth As Integer
         Get
             Return 提示最大宽度
@@ -1090,7 +1112,7 @@ Public Class ModernComboBox
     End Property
 
     Private 提示间距 As Integer = 0
-    <Category("LakeUI"), Description("工具提示与下拉列表的水平间距（逻辑像素，可为负数）"), DefaultValue(GetType(Integer), "0"), Browsable(True)>
+    <Category("LakeUI - ToolTip"), Description("工具提示与下拉列表的水平间距（逻辑像素，可为负数）"), DefaultValue(GetType(Integer), "0"), Browsable(True)>
     Public Property ToolTipGap As Integer
         Get
             Return 提示间距
@@ -1101,7 +1123,7 @@ Public Class ModernComboBox
     End Property
 
     Private 提示默认侧 As ToolTipSideEnum = ToolTipSideEnum.Right
-    <Category("LakeUI"), Description("工具提示默认显示在下拉列表左侧还是右侧"), DefaultValue(GetType(ToolTipSideEnum), "Right"), Browsable(True)>
+    <Category("LakeUI - ToolTip"), Description("工具提示默认显示在下拉列表左侧还是右侧"), DefaultValue(GetType(ToolTipSideEnum), "Right"), Browsable(True)>
     Public Property ToolTipSide As ToolTipSideEnum
         Get
             Return 提示默认侧
@@ -2175,7 +2197,7 @@ Public Class ModernComboBox
         End Function
 
         Private Function HasBackdropFrame() As Boolean
-            Return _owner.下拉毛玻璃模式 = PopupBackdropMode.Image AndAlso _owner.下拉毛玻璃图片 IsNot Nothing
+            Return _backdrop IsNot Nothing AndAlso _backdrop.HasFrame
         End Function
 
         Private Function DropDownFillColor() As Color
@@ -2189,7 +2211,17 @@ Public Class ModernComboBox
         End Sub
 
         Private Sub 准备毛玻璃背景()
-            ' V3-only: dropdown backdrop is drawn from Image mode inside RenderGpu.
+            If _backdrop Is Nothing Then _backdrop = New D3D_PopupBackdropRenderer(Me)
+            _backdrop.TransientExcludeOnCapture = False
+            _backdrop.Configure(_owner.下拉毛玻璃模式,
+                                _owner.下拉毛玻璃图片,
+                                _owner.下拉毛玻璃Tint颜色,
+                                _owner.下拉毛玻璃模糊半径,
+                                _owner.下拉毛玻璃模糊次数,
+                                _owner.下拉毛玻璃下采样,
+                                _owner.下拉毛玻璃噪点不透明度,
+                                _owner.下拉毛玻璃噪点缩放)
+            _backdrop.Prepare(Me.Bounds, True)
         End Sub
 
         Private Sub 绘制毛玻璃背景(g As Graphics)
@@ -2438,15 +2470,7 @@ Public Class ModernComboBox
 
         Private Function DrawDropDownBackdrop_GPU(context As D3D_PaintContext, w As Integer, h As Integer) As Boolean
             If Not HasBackdropFrame() OrElse w <= 0 OrElse h <= 0 Then Return False
-            context.Compositor.D3D_BackdropSurfaceRenderer.SetImage(_owner.下拉毛玻璃图片)
-            context.Compositor.D3D_BackdropSurfaceRenderer.ApplyParameters(_owner.下拉毛玻璃模糊半径,
-                                                                           _owner.下拉毛玻璃模糊次数,
-                                                                           _owner.下拉毛玻璃下采样,
-                                                                           _owner.下拉毛玻璃噪点缩放)
-            context.Compositor.D3D_BackdropSurfaceRenderer.TintColor = _owner.下拉毛玻璃Tint颜色
-            context.Compositor.D3D_BackdropSurfaceRenderer.NoiseOpacity = _owner.下拉毛玻璃噪点不透明度
-            context.Compositor.D3D_BackdropSurfaceRenderer.DrawImageBackdrop(context, New RectangleF(0, 0, w, h))
-            Return True
+            Return _backdrop.Draw(context, New RectangleF(0, 0, w, h))
         End Function
 
         Private Sub DrawDropDownBackground_GPU(context As D3D_PaintContext, backColor As Color, bw As Integer, w As Integer, h As Integer, fillBackground As Boolean)
@@ -2466,16 +2490,43 @@ Public Class ModernComboBox
             End If
         End Sub
 
+        Private Function 获取悬停焦点颜色() As Color
+            If _pressedIndex >= 0 AndAlso _hoverIndex >= 0 Then Return _owner.下拉按下颜色
+            Return _owner.下拉悬停颜色
+        End Function
+
+        Private Function 获取悬停焦点矩形(w As Integer, layout As DropDownLayout) As RectangleF
+            If _hoverIndex < 0 Then Return RectangleF.Empty
+            If 悬停动画显示 Then
+                Return New RectangleF(layout.HlL, 悬停动画当前Y,
+                                      Math.Max(0, w - layout.HlL - layout.HlR - layout.ScrollW),
+                                      悬停动画当前高度)
+            End If
+
+            Dim visualIndex As Integer = _hoverIndex - _scrollOffset
+            If visualIndex < 0 OrElse visualIndex >= layout.VisCount Then Return RectangleF.Empty
+            Return layout.ItemRect(w, visualIndex)
+        End Function
+
+        Private Function 获取悬停焦点圆角(rect As RectangleF) As Single
+            If rect.Width <= 0 OrElse rect.Height <= 0 Then Return 0.0F
+            Return Math.Min(_owner.下拉悬停圆角半径 * _owner.DpiScale(), rect.Height / 2.0F)
+        End Function
+
+        Private Sub 绘制悬停焦点_GPU(context As D3D_PaintContext, w As Integer, layout As DropDownLayout)
+            Dim highlightColor As Color = 获取悬停焦点颜色()
+            If highlightColor.A = 0 Then Return
+
+            Dim highlightRect As RectangleF = 获取悬停焦点矩形(w, layout)
+            If highlightRect.Width <= 0 OrElse highlightRect.Height <= 0 Then Return
+
+            _owner.填充圆角矩形_GPU(context, highlightRect, 获取悬停焦点圆角(highlightRect), highlightColor)
+        End Sub
+
         Private Sub DrawDropDownItems_GPU(context As D3D_PaintContext, w As Integer, h As Integer, layout As DropDownLayout)
             Dim clipRect As RectangleF = layout.ClipRect(w, h)
             If clipRect.Width <= 0 OrElse clipRect.Height <= 0 Then Return
-            Dim shouldDrawHover As Boolean = _hoverIndex <> _owner._selectedIndex
             Using context.PushClip(clipRect)
-                If shouldDrawHover AndAlso 悬停动画显示 AndAlso _owner.下拉悬停颜色.A > 0 Then
-                    Dim highlightRect As New RectangleF(layout.HlL, 悬停动画当前Y, w - layout.HlL - layout.HlR - layout.ScrollW, 悬停动画当前高度)
-                    context.FillRectangle(highlightRect, _owner.下拉悬停颜色)
-                End If
-
                 For i As Integer = 0 To layout.VisCount - 1
                     Dim idx As Integer = i + _scrollOffset
                     If idx >= _owner._items.Count Then Exit For
@@ -2483,10 +2534,15 @@ Public Class ModernComboBox
 
                     If idx = _owner._selectedIndex AndAlso _owner.下拉选中颜色.A > 0 Then
                         context.FillRectangle(itemRect, _owner.下拉选中颜色)
-                    ElseIf shouldDrawHover AndAlso idx = _hoverIndex AndAlso Not 悬停动画显示 AndAlso _owner.下拉悬停颜色.A > 0 Then
-                        context.FillRectangle(itemRect, _owner.下拉悬停颜色)
                     End If
+                Next
 
+                绘制悬停焦点_GPU(context, w, layout)
+
+                For i As Integer = 0 To layout.VisCount - 1
+                    Dim idx As Integer = i + _scrollOffset
+                    If idx >= _owner._items.Count Then Exit For
+                    Dim itemRect As RectangleF = layout.ItemRect(w, i)
                     Dim textColor As Color = If(idx = _owner._selectedIndex AndAlso _owner.下拉选中文字颜色 <> Color.Empty,
                         _owner.下拉选中文字颜色,
                         _owner.ForeColor)
@@ -2534,22 +2590,28 @@ Public Class ModernComboBox
             End If
         End Sub
 
+        Private Sub 绘制悬停焦点_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache, w As Integer, layout As DropDownLayout)
+            Dim highlightColor As Color = 获取悬停焦点颜色()
+            If highlightColor.A = 0 Then Return
+
+            Dim highlightRect As RectangleF = 获取悬停焦点矩形(w, layout)
+            If highlightRect.Width <= 0 OrElse highlightRect.Height <= 0 Then Return
+
+            D3D_RectangleRenderer.绘制圆角背景_D2D(rt, highlightRect, 获取悬停焦点圆角(highlightRect),
+                                             highlightColor, Color.Empty,
+                                             System.Windows.Forms.Orientation.Horizontal,
+                                             brushCache)
+        End Sub
+
         Private Sub DrawDropDownItems_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache,
                                           textFormatCache As D3D_D2DInterop.TextFormatCache,
                                           w As Integer, h As Integer, layout As DropDownLayout)
             Dim s As Single = _owner.DpiScale()
             Dim clipRect As RectangleF = layout.ClipRect(w, h)
             If clipRect.Width <= 0 OrElse clipRect.Height <= 0 Then Return
-            Dim hoverBrush = If(_owner.下拉悬停颜色.A > 0, brushCache.Get(rt, _owner.下拉悬停颜色), Nothing)
             Dim selectedBrush = If(_owner.下拉选中颜色.A > 0, brushCache.Get(rt, _owner.下拉选中颜色), Nothing)
-            Dim shouldDrawHover As Boolean = _hoverIndex <> _owner._selectedIndex
             rt.PushAxisAlignedClip(New Vortice.RawRectF(clipRect.X, clipRect.Y, clipRect.Right, clipRect.Bottom), AntialiasMode.PerPrimitive)
             Try
-                If shouldDrawHover AndAlso 悬停动画显示 AndAlso hoverBrush IsNot Nothing Then
-                    Dim highlightRect As New RectangleF(layout.HlL, 悬停动画当前Y, w - layout.HlL - layout.HlR - layout.ScrollW, 悬停动画当前高度)
-                    rt.FillRectangle(D3D_D2DInterop.ToD2DRect(highlightRect), hoverBrush)
-                End If
-
                 For i As Integer = 0 To layout.VisCount - 1
                     Dim idx As Integer = i + _scrollOffset
                     If idx >= _owner._items.Count Then Exit For
@@ -2557,10 +2619,15 @@ Public Class ModernComboBox
 
                     If idx = _owner._selectedIndex AndAlso selectedBrush IsNot Nothing Then
                         rt.FillRectangle(D3D_D2DInterop.ToD2DRect(itemRect), selectedBrush)
-                    ElseIf shouldDrawHover AndAlso idx = _hoverIndex AndAlso Not 悬停动画显示 AndAlso hoverBrush IsNot Nothing Then
-                        rt.FillRectangle(D3D_D2DInterop.ToD2DRect(itemRect), hoverBrush)
                     End If
+                Next
 
+                绘制悬停焦点_D2D(rt, brushCache, w, layout)
+
+                For i As Integer = 0 To layout.VisCount - 1
+                    Dim idx As Integer = i + _scrollOffset
+                    If idx >= _owner._items.Count Then Exit For
+                    Dim itemRect As RectangleF = layout.ItemRect(w, i)
                     Dim textColor As Color = If(idx = _owner._selectedIndex AndAlso _owner.下拉选中文字颜色 <> Color.Empty,
                         _owner.下拉选中文字颜色,
                         _owner.ForeColor)
@@ -2585,7 +2652,13 @@ Public Class ModernComboBox
 
         Private Function GetItemIndexAtY(y As Integer) As Integer
             Dim layout As New DropDownLayout(Me, ClientRectangle.Width)
-            Dim idx As Integer = (y - layout.Bw - layout.Pad.Top) \ layout.ItemH + _scrollOffset
+            Dim localY As Integer = y - layout.Bw - layout.Pad.Top
+            If localY < 0 OrElse layout.ItemH <= 0 Then Return -1
+
+            Dim visualIndex As Integer = localY \ layout.ItemH
+            If visualIndex < 0 OrElse visualIndex >= layout.VisCount Then Return -1
+
+            Dim idx As Integer = visualIndex + _scrollOffset
             If idx < 0 OrElse idx >= _owner._items.Count Then Return -1
             Return idx
         End Function
@@ -2701,26 +2774,34 @@ Public Class ModernComboBox
                 End If
             End If
             _pressedIndex = GetItemIndexAtY(e.Y)
+            If _pressedIndex >= 0 Then 请求重绘()
         End Sub
 
         Protected Overrides Sub OnMouseUp(e As MouseEventArgs)
             MyBase.OnMouseUp(e)
             _scrollBar.EndDrag()
             Dim idx As Integer = GetItemIndexAtY(e.Y)
-            If _pressedIndex >= 0 AndAlso idx = _pressedIndex Then
-                _owner.OnDropDownItemClicked(idx)
-            End If
+            Dim pressedIndex As Integer = _pressedIndex
             _pressedIndex = -1
+            If pressedIndex >= 0 AndAlso idx = pressedIndex Then
+                请求重绘()
+                _owner.OnDropDownItemClicked(idx)
+            ElseIf pressedIndex >= 0 Then
+                请求重绘()
+            End If
         End Sub
 
         Protected Overrides Sub OnMouseLeave(e As EventArgs)
             MyBase.OnMouseLeave(e)
+            Dim hadPressed As Boolean = _pressedIndex >= 0
+            _pressedIndex = -1
             If _hoverIndex <> -1 Then
                 _hoverIndex = -1
                 更新悬停动画()
                 延迟关闭工具提示()
                 请求重绘()
             End If
+            If hadPressed Then 请求重绘()
             If _scrollBar.ResetHover() Then 请求重绘()
         End Sub
 
