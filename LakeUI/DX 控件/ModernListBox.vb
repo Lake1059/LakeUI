@@ -306,13 +306,29 @@ Public Class ModernListBox
     Private _itemToolTips As ToolTipEntryCollection
     Private _itemIcons As IconEntryCollection
 
-    ' 悬停动画
-    Private ReadOnly _hoverAnim As New V3_AnimationHelper(Me) With {.Duration = 0}
+    ' 高亮位置动画
+    Private 动画帧率 As Integer = 60
+    Private _动画计时器 As PrecisionTimer
+    Private _动画驱动中 As Boolean = False
+
+    Private ReadOnly _hoverAnimStopwatch As New Stopwatch()
     Private _hoverAnimFromY As Single
     Private _hoverAnimFromH As Single
     Private _hoverAnimToY As Single
     Private _hoverAnimToH As Single
+    Private _hoverAnimCurrentY As Single
+    Private _hoverAnimCurrentH As Single
     Private _hoverAnimActive As Boolean = False
+
+    Private ReadOnly _selectionAnimStopwatch As New Stopwatch()
+    Private _selectionAnimFromY As Single
+    Private _selectionAnimFromH As Single
+    Private _selectionAnimToY As Single
+    Private _selectionAnimToH As Single
+    Private _selectionAnimCurrentY As Single
+    Private _selectionAnimCurrentH As Single
+    Private _selectionAnimTargetIndex As Integer = -1
+    Private _selectionAnimActive As Boolean = False
 
     ' 拖选
     Private _mouseDownInContent As Boolean = False
@@ -384,10 +400,13 @@ Public Class ModernListBox
         Set(value As Integer)
             If value < -1 OrElse value >= _items.Count Then value = -1
             If _selectedIndex = value Then Return
+            Dim oldIndex As Integer = If(_selectedIndices.Count = 1, _selectedIndex, -1)
+            Dim oldCount As Integer = _selectedIndices.Count
             _selectedIndex = value
             _selectedIndices.Clear()
             If _selectedIndex >= 0 Then _selectedIndices.Add(_selectedIndex)
             _selectionAnchor = _selectedIndex
+            启动选中动画(oldIndex, _selectedIndex, oldCount, _selectedIndices.Count)
             请求V3渲染()
             RaiseEvent SelectedIndexChanged(Me, EventArgs.Empty)
         End Set
@@ -615,6 +634,8 @@ Public Class ModernListBox
         End Get
         Set(value As Integer)
             行高 = Math.Max(10, value)
+            停止悬停动画()
+            停止选中动画()
             校正滚动偏移()
             请求V3渲染()
         End Set
@@ -1102,17 +1123,22 @@ Public Class ModernListBox
         End Get
         Set(value As Integer)
             动画时长 = Math.Max(0, value)
-            _hoverAnim.Duration = 动画时长
+            If 动画时长 <= 0 Then
+                停止悬停动画()
+                停止选中动画()
+                请求V3渲染()
+            End If
         End Set
     End Property
 
     <Category("LakeUI"), Description(GlobalOptions.动画帧率描述词), DefaultValue(60), Browsable(True)>
     Public Property AnimationFPS As Integer
         Get
-            Return _hoverAnim.FPS
+            Return 动画帧率
         End Get
         Set(value As Integer)
-            _hoverAnim.FPS = Math.Max(0, value)
+            动画帧率 = Math.Max(0, value)
+            If _动画计时器 IsNot Nothing Then _动画计时器.Interval = 计算动画帧间隔(动画帧率)
         End Set
     End Property
 
@@ -1140,7 +1166,7 @@ Public Class ModernListBox
         _itemToolTips = New ToolTipEntryCollection()
         _itemIcons = New IconEntryCollection()
         InitializeComponent()
-        _hoverAnim.DirtyProvider = AddressOf 悬停动画脏区
+        _动画计时器 = 创建动画计时器(动画帧率)
         SetStyle(ControlStyles.OptimizedDoubleBuffer Or
                  ControlStyles.AllPaintingInWmPaint Or
                  ControlStyles.UserPaint Or
@@ -1194,13 +1220,22 @@ Public Class ModernListBox
     End Function
 
     Private Sub 校正滚动偏移()
+        Dim oldOffset As Integer = _scrollOffset
         If _items.Count = 0 Then
             _scrollOffset = 0
+            If oldOffset <> _scrollOffset Then
+                停止悬停动画()
+                停止选中动画()
+            End If
             Return
         End If
         Dim visCount As Integer = 估算可见行数()
         Dim maxOff As Integer = Math.Max(0, _items.Count - visCount)
         _scrollOffset = Math.Max(0, Math.Min(_scrollOffset, maxOff))
+        If oldOffset <> _scrollOffset Then
+            停止悬停动画()
+            停止选中动画()
+        End If
     End Sub
 
     Private Function 获取项Y坐标(index As Integer) As Integer
@@ -1325,11 +1360,15 @@ Public Class ModernListBox
         Dim scrollW As Integer = If(Not _scrollBar.TrackRect.IsEmpty, Width - inset - _scrollBar.VisualLeft, 0)
         Dim availW As Integer = contentRect.Width - scrollW
 
+        Dim animatingSingleSelection As Boolean =
+            _selectionAnimActive AndAlso _selectedIndices.Count = 1 AndAlso _selectionAnimTargetIndex >= 0
+
+        If animatingSingleSelection Then
+            context.FillRectangle(New RectangleF(contentRect.X, _selectionAnimCurrentY, availW, _selectionAnimCurrentH), 项选中颜色)
+        End If
+
         If _hoverAnimActive AndAlso _hoverIndex >= 0 AndAlso Not _selectedIndices.Contains(_hoverIndex) Then
-            Dim t As Single = _hoverAnim.Progress
-            Dim animY As Single = _hoverAnimFromY + (_hoverAnimToY - _hoverAnimFromY) * t
-            Dim animH As Single = _hoverAnimFromH + (_hoverAnimToH - _hoverAnimFromH) * t
-            context.FillRectangle(New RectangleF(contentRect.X, animY, availW, animH), 项悬停颜色)
+            context.FillRectangle(New RectangleF(contentRect.X, _hoverAnimCurrentY, availW, _hoverAnimCurrentH), 项悬停颜色)
         End If
 
         Dim visCount As Integer = 估算可见行数()
@@ -1341,7 +1380,9 @@ Public Class ModernListBox
 
             Dim itemRect As New RectangleF(contentRect.X, itemY, availW, scaledH)
             If _selectedIndices.Contains(idx) Then
-                context.FillRectangle(itemRect, 项选中颜色)
+                If Not (animatingSingleSelection AndAlso idx = _selectionAnimTargetIndex) Then
+                    context.FillRectangle(itemRect, 项选中颜色)
+                End If
             ElseIf idx = _hoverIndex AndAlso Not _hoverAnimActive Then
                 context.FillRectangle(itemRect, 项悬停颜色)
             End If
@@ -1575,6 +1616,8 @@ Public Class ModernListBox
                 Dim newOff = _scrollBar.TrackClick(e.Location, _scrollOffset, _items.Count, visCount)
                 If newOff <> _scrollOffset Then
                     _scrollOffset = newOff
+                    停止悬停动画()
+                    停止选中动画()
                     请求V3渲染()
                     Return
                 End If
@@ -1633,7 +1676,13 @@ Public Class ModernListBox
         If _scrollBar.IsDragging Then
             关闭工具提示()
             Dim visCount = 估算可见行数()
-            _scrollOffset = _scrollBar.DragMove(e.Y, _items.Count, visCount)
+            Dim newOff = _scrollBar.DragMove(e.Y, _items.Count, visCount)
+            If newOff <> _scrollOffset Then
+                _scrollOffset = newOff
+                停止悬停动画()
+                停止选中动画()
+                _hoverIndex = -1
+            End If
             Dim hitIdx = 命中测试(e.Y)
             更新悬停(hitIdx)
             请求V3渲染()
@@ -1760,6 +1809,9 @@ Public Class ModernListBox
         Dim newOff = V3_ScrollBarRenderer.HandleWheel(e.Delta, _scrollOffset, _items.Count, visCount, 3)
         If newOff <> _scrollOffset Then
             _scrollOffset = newOff
+            停止悬停动画()
+            停止选中动画()
+            _hoverIndex = -1
             Dim hitIdx = 命中测试(e.Y)
             更新悬停(hitIdx)
             请求V3渲染()
@@ -1885,8 +1937,12 @@ Public Class ModernListBox
     Private Sub 设置选中集合(indices As IEnumerable(Of Integer))
         Dim newSet As New HashSet(Of Integer)(indices)
         If newSet.Count = _selectedIndices.Count AndAlso newSet.SetEquals(_selectedIndices) Then Return
+        Dim oldIndex As Integer = If(_selectedIndices.Count = 1, _selectedIndices.First(), -1)
+        Dim oldCount As Integer = _selectedIndices.Count
         _selectedIndices = newSet
         _selectedIndex = If(_selectedIndices.Count > 0, _selectedIndices.Min(), -1)
+        Dim newIndex As Integer = If(_selectedIndices.Count = 1, _selectedIndex, -1)
+        启动选中动画(oldIndex, newIndex, oldCount, _selectedIndices.Count)
         请求V3渲染()
         RaiseEvent SelectedIndexChanged(Me, EventArgs.Empty)
     End Sub
@@ -1939,64 +1995,238 @@ Public Class ModernListBox
 
 #End Region
 
-#Region "悬停动画"
+#Region "高亮动画"
+
+    Private Shared Function 计算动画帧间隔(fps As Integer) As Integer
+        If fps <= 0 Then Return 1
+        Return Math.Max(1, CInt(Math.Ceiling(1000.0R / Math.Max(1, fps))))
+    End Function
+
+    Private Function 创建动画计时器(fps As Integer) As PrecisionTimer
+        Return New PrecisionTimer() With {
+            .Interval = 计算动画帧间隔(fps),
+            .DispatchMode = PrecisionTimer.DispatchModeEnum.NonBlocking,
+            .OverrunPolicy = PrecisionTimer.OverrunPolicyEnum.Drop,
+            .WorkerThreadCount = 1,
+            .SynchronizingObject = Me
+        }
+    End Function
 
     Private Sub 更新悬停(newIndex As Integer)
         If newIndex = _hoverIndex Then Return
         Dim oldIndex As Integer = _hoverIndex
+        Dim oldDirty As Rectangle = If(_hoverAnimActive, 获取悬停动画脏区(), If(oldIndex >= 0, 获取项矩形(oldIndex), Rectangle.Empty))
         _hoverIndex = newIndex
 
         If 动画时长 <= 0 OrElse Not IsHandleCreated Then
-            _hoverAnimActive = False
-            请求V3渲染()
+            停止悬停动画()
+            请求V3渲染(合并脏区(oldDirty, If(newIndex >= 0, 获取项矩形(newIndex), Rectangle.Empty)))
             Return
         End If
 
         If newIndex < 0 Then
-            _hoverAnimActive = False
-            请求V3渲染()
+            停止悬停动画()
+            请求V3渲染(oldDirty)
             Return
         End If
 
         Dim newY = 获取项Y坐标(newIndex)
         If newY < 0 Then
-            _hoverAnimActive = False
-            请求V3渲染()
+            停止悬停动画()
+            请求V3渲染(oldDirty)
             Return
         End If
 
-        If oldIndex >= 0 AndAlso _hoverAnimActive Then
-            Dim t As Single = _hoverAnim.Progress
-            _hoverAnimFromY += (_hoverAnimToY - _hoverAnimFromY) * t
-            _hoverAnimFromH += (_hoverAnimToH - _hoverAnimFromH) * t
-        Else
+        Dim itemH As Single = CInt(Math.Round(行高 * DpiScale()))
+        If oldIndex < 0 AndAlso Not _hoverAnimActive Then
+            _hoverAnimCurrentY = newY
+            _hoverAnimCurrentH = itemH
             _hoverAnimFromY = newY
-            _hoverAnimFromH = CInt(Math.Round(行高 * DpiScale()))
+            _hoverAnimFromH = itemH
+            _hoverAnimToY = newY
+            _hoverAnimToH = itemH
+            请求V3渲染(获取项矩形(newIndex))
+            Return
+        End If
+
+        If _hoverAnimActive Then
+            _hoverAnimFromY = _hoverAnimCurrentY
+            _hoverAnimFromH = _hoverAnimCurrentH
+        Else
+            Dim oldY = 获取项Y坐标(oldIndex)
+            _hoverAnimFromY = If(oldY >= 0, oldY, newY)
+            _hoverAnimFromH = itemH
         End If
 
         _hoverAnimToY = newY
-        _hoverAnimToH = CInt(Math.Round(行高 * DpiScale()))
-        _hoverAnimActive = True
-        _hoverAnim.Duration = 动画时长
-        _hoverAnim.SetImmediate(0)
-        _hoverAnim.AnimateTo(1)
-    End Sub
+        _hoverAnimToH = itemH
+        _hoverAnimCurrentY = _hoverAnimFromY
+        _hoverAnimCurrentH = _hoverAnimFromH
 
-    Private Sub 悬停动画脏区(helper As V3_AnimationHelper, owner As Control, sink As V3_AnimationHelper.InvalidateRegionSink)
-        If Not _hoverAnimActive Then
-            sink.SuppressInvalidate()
+        If Math.Abs(_hoverAnimFromY - _hoverAnimToY) < 0.5F AndAlso Math.Abs(_hoverAnimFromH - _hoverAnimToH) < 0.5F Then
+            停止悬停动画()
+            请求V3渲染(合并脏区(oldDirty, 获取项矩形(newIndex)))
             Return
         End If
 
-        Dim dirty = 获取悬停动画脏区()
-        If dirty.Width > 0 AndAlso dirty.Height > 0 Then
-            sink.Add(dirty)
+        _hoverAnimActive = True
+        _hoverAnimStopwatch.Restart()
+        启动动画驱动()
+        请求V3渲染(合并脏区(oldDirty, 获取悬停动画脏区()))
+    End Sub
+
+    Private Sub 启动选中动画(oldIndex As Integer, newIndex As Integer, oldCount As Integer, newCount As Integer)
+        If oldCount <> 1 OrElse newCount <> 1 OrElse oldIndex < 0 OrElse newIndex < 0 OrElse oldIndex = newIndex Then
+            停止选中动画()
+            Return
+        End If
+
+        If 动画时长 <= 0 OrElse Not IsHandleCreated Then
+            停止选中动画()
+            Return
+        End If
+
+        Dim targetY As Integer = 获取项Y坐标(newIndex)
+        Dim oldY As Integer = 获取项Y坐标(oldIndex)
+        If targetY < 0 OrElse (oldY < 0 AndAlso Not _selectionAnimActive) Then
+            停止选中动画()
+            Return
+        End If
+
+        Dim itemH As Single = CInt(Math.Round(行高 * DpiScale()))
+        If _selectionAnimActive Then
+            _selectionAnimFromY = _selectionAnimCurrentY
+            _selectionAnimFromH = _selectionAnimCurrentH
         Else
-            sink.InvalidateAll()
+            _selectionAnimFromY = oldY
+            _selectionAnimFromH = itemH
+        End If
+
+        _selectionAnimToY = targetY
+        _selectionAnimToH = itemH
+        _selectionAnimCurrentY = _selectionAnimFromY
+        _selectionAnimCurrentH = _selectionAnimFromH
+        _selectionAnimTargetIndex = newIndex
+        _selectionAnimActive = True
+        _selectionAnimStopwatch.Restart()
+        启动动画驱动()
+    End Sub
+
+    Private Sub 动画更新帧(sender As Object, e As EventArgs)
+        If IsDisposed OrElse Not IsHandleCreated Then
+            停止动画驱动()
+            Return
+        End If
+
+        Dim dirtyBefore As Rectangle = 获取全部动画脏区()
+        Dim updated As Boolean = False
+        Dim duration As Integer = 动画时长
+
+        If _hoverAnimActive Then updated = 更新悬停动画帧(duration) OrElse updated
+        If _selectionAnimActive Then updated = 更新选中动画帧(duration) OrElse updated
+
+        If Not _hoverAnimActive AndAlso Not _selectionAnimActive Then 停止动画驱动()
+        If updated Then
+            Dim dirty As Rectangle = 合并脏区(dirtyBefore, 获取全部动画脏区())
+            请求V3渲染(If(dirty.IsEmpty, New Rectangle(Point.Empty, Me.Size), dirty))
         End If
     End Sub
 
+    Private Function 更新悬停动画帧(duration As Integer) As Boolean
+        If duration <= 0 Then
+            _hoverAnimCurrentY = _hoverAnimToY
+            _hoverAnimCurrentH = _hoverAnimToH
+            停止悬停动画()
+            Return True
+        End If
+
+        Dim t As Single = CSng(Math.Min(_hoverAnimStopwatch.Elapsed.TotalMilliseconds / duration, 1.0R))
+        Dim eased As Single = EaseOutCubic(t)
+        _hoverAnimCurrentY = _hoverAnimFromY + (_hoverAnimToY - _hoverAnimFromY) * eased
+        _hoverAnimCurrentH = _hoverAnimFromH + (_hoverAnimToH - _hoverAnimFromH) * eased
+        If t >= 1.0F Then
+            _hoverAnimCurrentY = _hoverAnimToY
+            _hoverAnimCurrentH = _hoverAnimToH
+            停止悬停动画()
+        End If
+        Return True
+    End Function
+
+    Private Function 更新选中动画帧(duration As Integer) As Boolean
+        If duration <= 0 Then
+            _selectionAnimCurrentY = _selectionAnimToY
+            _selectionAnimCurrentH = _selectionAnimToH
+            停止选中动画()
+            Return True
+        End If
+
+        Dim t As Single = CSng(Math.Min(_selectionAnimStopwatch.Elapsed.TotalMilliseconds / duration, 1.0R))
+        Dim eased As Single = EaseOutCubic(t)
+        _selectionAnimCurrentY = _selectionAnimFromY + (_selectionAnimToY - _selectionAnimFromY) * eased
+        _selectionAnimCurrentH = _selectionAnimFromH + (_selectionAnimToH - _selectionAnimFromH) * eased
+        If t >= 1.0F Then
+            _selectionAnimCurrentY = _selectionAnimToY
+            _selectionAnimCurrentH = _selectionAnimToH
+            停止选中动画()
+        End If
+        Return True
+    End Function
+
+    Private Shared Function EaseOutCubic(t As Single) As Single
+        t = Math.Max(0.0F, Math.Min(1.0F, t))
+        Return 1.0F - CSng(Math.Pow(1.0F - t, 3))
+    End Function
+
+    Private Sub 启动动画驱动()
+        If _动画计时器 Is Nothing Then _动画计时器 = 创建动画计时器(动画帧率)
+        If _动画驱动中 Then Return
+        AddHandler _动画计时器.Tick, AddressOf 动画更新帧
+        _动画计时器.Start()
+        _动画驱动中 = True
+    End Sub
+
+    Private Sub 停止动画驱动()
+        If Not _动画驱动中 OrElse _动画计时器 Is Nothing Then Return
+        _动画计时器.Stop()
+        RemoveHandler _动画计时器.Tick, AddressOf 动画更新帧
+        _动画驱动中 = False
+    End Sub
+
+    Private Sub 停止悬停动画()
+        If _hoverAnimActive Then
+            _hoverAnimActive = False
+            _hoverAnimStopwatch.Stop()
+        End If
+        If Not _selectionAnimActive Then 停止动画驱动()
+    End Sub
+
+    Private Sub 停止选中动画()
+        If _selectionAnimActive Then
+            _selectionAnimActive = False
+            _selectionAnimTargetIndex = -1
+            _selectionAnimStopwatch.Stop()
+        End If
+        If Not _hoverAnimActive Then 停止动画驱动()
+    End Sub
+
+    Private Function 获取全部动画脏区() As Rectangle
+        Dim dirty As Rectangle = Rectangle.Empty
+        If _hoverAnimActive Then dirty = 合并脏区(dirty, 获取悬停动画脏区())
+        If _selectionAnimActive Then dirty = 合并脏区(dirty, 获取选中动画脏区())
+        Return dirty
+    End Function
+
     Private Function 获取悬停动画脏区() As Rectangle
+        If Not _hoverAnimActive Then Return Rectangle.Empty
+        Return 获取高亮动画脏区(_hoverAnimFromY, _hoverAnimFromH, _hoverAnimToY, _hoverAnimToH)
+    End Function
+
+    Private Function 获取选中动画脏区() As Rectangle
+        If Not _selectionAnimActive Then Return Rectangle.Empty
+        Return 获取高亮动画脏区(_selectionAnimFromY, _selectionAnimFromH, _selectionAnimToY, _selectionAnimToH)
+    End Function
+
+    Private Function 获取高亮动画脏区(fromY As Single, fromH As Single, toY As Single, toH As Single) As Rectangle
         Dim contentRect = 获取内容区域()
         If contentRect.Width <= 0 OrElse contentRect.Height <= 0 Then Return ClientRectangle
 
@@ -2005,11 +2235,17 @@ Public Class ModernListBox
         Dim availW As Integer = Math.Max(0, contentRect.Width - scrollW)
         If availW <= 0 Then Return Rectangle.Empty
 
-        Dim top As Integer = CInt(Math.Floor(Math.Min(_hoverAnimFromY, _hoverAnimToY)))
-        Dim bottom As Integer = CInt(Math.Ceiling(Math.Max(_hoverAnimFromY + _hoverAnimFromH, _hoverAnimToY + _hoverAnimToH)))
+        Dim top As Integer = CInt(Math.Floor(Math.Min(fromY, toY)))
+        Dim bottom As Integer = CInt(Math.Ceiling(Math.Max(fromY + fromH, toY + toH)))
         Dim rect As New Rectangle(contentRect.X, top, availW, Math.Max(0, bottom - top))
         rect.Inflate(2, 2)
         Return Rectangle.Intersect(ClientRectangle, rect)
+    End Function
+
+    Private Shared Function 合并脏区(a As Rectangle, b As Rectangle) As Rectangle
+        If a.IsEmpty Then Return b
+        If b.IsEmpty Then Return a
+        Return Rectangle.Union(a, b)
     End Function
 
 #End Region
@@ -2204,10 +2440,14 @@ Public Class ModernListBox
         Dim visCount = 估算可见行数()
         If index < _scrollOffset Then
             _scrollOffset = index
+            停止悬停动画()
+            停止选中动画()
             请求V3渲染()
         ElseIf index >= _scrollOffset + visCount Then
             _scrollOffset = index - visCount + 1
             校正滚动偏移()
+            停止悬停动画()
+            停止选中动画()
             请求V3渲染()
         End If
     End Sub
@@ -2285,6 +2525,8 @@ Public Class ModernListBox
 
     Protected Overrides Sub OnSizeChanged(e As EventArgs)
         MyBase.OnSizeChanged(e)
+        停止悬停动画()
+        停止选中动画()
         校正滚动偏移()
         请求V3渲染()
     End Sub
@@ -2292,6 +2534,8 @@ Public Class ModernListBox
     Protected Overrides Sub OnFontChanged(e As EventArgs)
         关闭工具提示()
         MyBase.OnFontChanged(e)
+        停止悬停动画()
+        停止选中动画()
         校正滚动偏移()
         请求V3渲染()
     End Sub
@@ -2306,12 +2550,16 @@ Public Class ModernListBox
 
     Protected Overrides Sub OnPaddingChanged(e As EventArgs)
         MyBase.OnPaddingChanged(e)
+        停止悬停动画()
+        停止选中动画()
         校正滚动偏移()
         请求V3渲染()
     End Sub
 
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
+        停止悬停动画()
+        停止选中动画()
         校正滚动偏移()
         请求V3渲染()
     End Sub
@@ -2392,7 +2640,11 @@ Public Class ModernListBox
     End Sub
 
     Friend Sub 释放资源()
-        _hoverAnim?.Dispose()
+        停止动画驱动()
+        If _动画计时器 IsNot Nothing Then
+            _动画计时器.Dispose()
+            _动画计时器 = Nothing
+        End If
         关闭工具提示()
     End Sub
 

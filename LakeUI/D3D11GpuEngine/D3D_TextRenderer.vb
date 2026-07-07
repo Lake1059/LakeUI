@@ -122,6 +122,7 @@ Public NotInheritable Class D3D_TextRenderer
         format.TextAlignment = hAlign
         format.ParagraphAlignment = vAlign
         format.WordWrapping = If(wordWrap, WordWrapping.Wrap, WordWrapping.NoWrap)
+        D3D_TextMeasureHelper.ApplyUniformLineSpacing(format, font, dpiScale)
         If trimChar Then
             Try
                 format.SetTrimming(New Trimming With {.Granularity = TrimmingGranularity.Character}, Nothing)

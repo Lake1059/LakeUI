@@ -8,7 +8,6 @@ Partial Class ModernPanel
         Try
             If disposing Then
                 停止图片动画()
-                清除图片缓存()
                 If components IsNot Nothing Then
                     components.Dispose()
                 End If

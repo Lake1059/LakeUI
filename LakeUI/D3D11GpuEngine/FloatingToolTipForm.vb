@@ -294,9 +294,7 @@ Public NotInheritable Class FloatingToolTipForm
     Private Function MeasureWrappedText(text As String, font As Font, contentW As Integer) As Size
         If String.IsNullOrEmpty(text) Then Return Size.Empty
         Dim textFormatCache = D3D_PaintBridge.GetCompositor(_owner)?.TextFormatCache
-        Return D3D_TextInterop.MeasureText(text, font, New Size(contentW, Integer.MaxValue),
-                                           TextFormatFlags.WordBreak Or TextFormatFlags.NoPadding Or TextFormatFlags.Left Or TextFormatFlags.Top,
-                                           OwnerDpiScale(), textFormatCache)
+        Return D3D_TextMeasureHelper.MeasureWrappedText_D2D(text, font, contentW, OwnerDpiScale(), textFormatCache)
     End Function
 
     Private Sub DrawSelection_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache, textRect As RectangleF)
@@ -396,6 +394,7 @@ Public NotInheritable Class FloatingToolTipForm
         fmt.TextAlignment = TextAlignment.Leading
         fmt.ParagraphAlignment = ParagraphAlignment.Near
         fmt.WordWrapping = WordWrapping.Wrap
+        D3D_TextMeasureHelper.ApplyUniformLineSpacing(fmt, font, OwnerDpiScale())
         Return fmt
     End Function
 

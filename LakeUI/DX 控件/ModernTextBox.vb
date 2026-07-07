@@ -1214,20 +1214,19 @@ Public Class ModernTextBox
 
     Private Sub DrawTextContent_GPU(context As D3D_PaintContext, w As Integer, h As Integer)
         Dim bi As Integer = ScaledBorderWidth()
-        Dim textTop As Integer = Math.Max(Padding.Top, bi)
-        Dim textRight As Integer = Math.Max(Padding.Right, bi)
-        Dim textBottom As Integer = Math.Max(Padding.Bottom, bi)
+        Dim pad As Padding = ScaledPadding()
+        Dim textTop As Integer = Math.Max(pad.Top, bi)
+        Dim textBottom As Integer = Math.Max(pad.Bottom, bi)
         Dim gutterW As Integer = LineNumberGutterWidth()
         Dim gutterLeft As Integer = bi
         Dim textLeft As Integer
         If gutterW > 0 Then
-            textLeft = bi + gutterW + Padding.Left
+            textLeft = bi + gutterW + pad.Left
         Else
-            textLeft = Math.Max(Padding.Left, bi)
+            textLeft = Math.Max(pad.Left, bi)
         End If
 
-        Dim scrollW As Integer = If(_scrollBarVisible, CInt(Math.Round(滚动条宽度 * DpiScale())) + V3_ScrollBarRenderer.Margin * 2, 0)
-        Dim textWidth As Integer = Math.Max(0, w - textLeft - textRight - scrollW)
+        Dim textWidth As Integer = Math.Max(0, TextAreaRight() - textLeft)
         Dim textHeight As Integer = Math.Max(0, h - textTop - textBottom)
         Dim isSingleLine As Boolean = Not 启用多行
         Dim singleLineY As Single = textTop + (textHeight - _scaledLineHeight) / 2.0F
@@ -1394,7 +1393,8 @@ Public Class ModernTextBox
         Dim lineY As Single
         If Not 启用多行 Then
             Dim bi2 As Integer = ScaledBorderWidth()
-            Dim textHeight As Integer = ClientRectangle.Height - Math.Max(Padding.Top, bi2) - Math.Max(Padding.Bottom, bi2)
+            Dim pad As Padding = ScaledPadding()
+            Dim textHeight As Integer = ClientRectangle.Height - Math.Max(pad.Top, bi2) - Math.Max(pad.Bottom, bi2)
             lineY = textTop + (textHeight - _scaledLineHeight) / 2.0F
         Else
             lineY = textTop + vi * _scaledLineHeight - _scrollPixelOffset
@@ -1569,7 +1569,8 @@ Public Class ModernTextBox
         Dim lineY As Single
         If Not 启用多行 Then
             Dim bi2 As Integer = ScaledBorderWidth()
-            Dim textHeight As Integer = ClientRectangle.Height - Math.Max(Padding.Top, bi2) - Math.Max(Padding.Bottom, bi2)
+            Dim pad As Padding = ScaledPadding()
+            Dim textHeight As Integer = ClientRectangle.Height - Math.Max(pad.Top, bi2) - Math.Max(pad.Bottom, bi2)
             lineY = textTop + (textHeight - _scaledLineHeight) / 2.0F
         Else
             lineY = textTop + vi * _scaledLineHeight - _scrollPixelOffset
@@ -1688,18 +1689,21 @@ Public Class ModernTextBox
         Dim sizePx As Single = D3D_D2DInterop.GetDWriteFontSizePx(useFont, s)
         ownsFormat = (textFormatCache Is Nothing)
         If textFormatCache IsNot Nothing Then
-            Return textFormatCache.[Get](
+            Dim cached = textFormatCache.[Get](
                 useFont,
                 sizePx,
                 Vortice.DirectWrite.TextAlignment.Leading,
                 Vortice.DirectWrite.ParagraphAlignment.Center,
                 False,
                 False)
+            D3D_TextMeasureHelper.ApplyUniformLineSpacing(cached, useFont, s)
+            Return cached
         End If
 
         Dim fmt = D3D_TextMeasureHelper.CreateDWriteTextFormat(useFont, s)
         fmt.WordWrapping = Vortice.DirectWrite.WordWrapping.NoWrap
         fmt.ParagraphAlignment = Vortice.DirectWrite.ParagraphAlignment.Center
+        D3D_TextMeasureHelper.ApplyUniformLineSpacing(fmt, useFont, s)
         Return fmt
     End Function
 
@@ -1914,7 +1918,8 @@ Public Class ModernTextBox
             _caretCol = pos.X
             _hasSelection = (_caretLine <> _selAnchorLine OrElse _caretCol <> _selAnchorCol)
             EnsureCaretVisible()
-            If 启用多行 AndAlso (e.Y < Math.Max(Padding.Top, ScaledBorderWidth()) OrElse e.Y > ClientRectangle.Height - Math.Max(Padding.Bottom, ScaledBorderWidth())) Then
+            Dim pad As Padding = ScaledPadding()
+            If 启用多行 AndAlso (e.Y < Math.Max(pad.Top, ScaledBorderWidth()) OrElse e.Y > ClientRectangle.Height - Math.Max(pad.Bottom, ScaledBorderWidth())) Then
                 If Not _autoScrollTimer.Enabled Then _autoScrollTimer.Start()
             Else
                 _autoScrollTimer.Stop()
@@ -1952,12 +1957,13 @@ Public Class ModernTextBox
         Dim line As String = _lines(_caretLine)
         If line.Length = 0 Then Return
         Dim col As Integer = Math.Min(_caretCol, line.Length - 1)
+        If IsDoubleClickSeparator(line(col)) Then Return
         Dim left As Integer = col
-        While left > 0 AndAlso Not Char.IsWhiteSpace(line(left - 1))
+        While left > 0 AndAlso Not IsDoubleClickSeparator(line(left - 1))
             left -= 1
         End While
         Dim right As Integer = col
-        While right < line.Length AndAlso Not Char.IsWhiteSpace(line(right))
+        While right < line.Length AndAlso Not IsDoubleClickSeparator(line(right))
             right += 1
         End While
         _selAnchorLine = _caretLine
@@ -1970,11 +1976,12 @@ Public Class ModernTextBox
     Private Function HitTest(x As Integer, y As Integer) As Point
         EnsureDpiCacheCurrent()
         Dim bi As Integer = ScaledBorderWidth()
+        Dim pad As Padding = ScaledPadding()
         Dim gutterW As Integer = LineNumberGutterWidth()
-        Dim textLeft As Integer = If(gutterW > 0, bi + gutterW + Padding.Left, Math.Max(Padding.Left, bi))
+        Dim textLeft As Integer = If(gutterW > 0, bi + gutterW + pad.Left, Math.Max(pad.Left, bi))
         Dim vi As Integer
         If 启用多行 Then
-            Dim textTop As Integer = Math.Max(Padding.Top, bi)
+            Dim textTop As Integer = Math.Max(pad.Top, bi)
             vi = CInt(Math.Floor((y - textTop + _scrollPixelOffset) / _scaledLineHeight))
         Else
             vi = 0
@@ -2597,16 +2604,14 @@ Public Class ModernTextBox
 
     Private Function 滚动动画失效区域() As Rectangle
         Dim bi As Integer = ScaledBorderWidth()
-        Dim top As Integer = Math.Max(Padding.Top, bi)
-        Dim bottom As Integer = ClientRectangle.Height - Math.Max(Padding.Bottom, bi)
+        Dim pad As Padding = ScaledPadding()
+        Dim top As Integer = Math.Max(pad.Top, bi)
+        Dim bottom As Integer = ClientRectangle.Height - Math.Max(pad.Bottom, bi)
         If bottom <= top Then Return ClientRectangle
 
         Dim gutterW As Integer = LineNumberGutterWidth()
-        Dim left As Integer = If(gutterW > 0, bi, Math.Max(Padding.Left, bi))
-        Dim right As Integer = ClientRectangle.Width - Math.Max(Padding.Right, bi)
-        If _scrollBarVisible Then
-            right = ClientRectangle.Width
-        End If
+        Dim left As Integer = If(gutterW > 0, bi, Math.Max(pad.Left, bi))
+        Dim right As Integer = If(_scrollBarVisible, ClientRectangle.Width, TextAreaRight())
         Dim dirty As New Rectangle(left, top, Math.Max(0, right - left), Math.Max(0, bottom - top))
         dirty.Inflate(2, 2)
         Return Rectangle.Intersect(ClientRectangle, dirty)
@@ -2625,9 +2630,10 @@ Public Class ModernTextBox
         Dim vl = _visualLines(vi)
         Dim wrapActive As Boolean = IsWordWrapActive()
         Dim bi As Integer = ScaledBorderWidth()
+        Dim pad As Padding = ScaledPadding()
         Dim gutterW As Integer = LineNumberGutterWidth()
-        Dim imeLeft As Integer = If(gutterW > 0, bi + gutterW + Padding.Left, Math.Max(Padding.Left, bi))
-        Dim imeTop As Integer = Math.Max(Padding.Top, bi)
+        Dim imeLeft As Integer = If(gutterW > 0, bi + gutterW + pad.Left, Math.Max(pad.Left, bi))
+        Dim imeTop As Integer = Math.Max(pad.Top, bi)
         Dim alignOff As Integer = If(wrapActive, 0, GetAlignOffsetXForLine(_caretLine, TextAreaWidth()))
         Dim scrollX As Integer = If(wrapActive, 0, _scrollXOffset)
         Dim cx As Integer = imeLeft + alignOff + MeasureLineWidth(_caretLine, vl.StartCol, _caretCol - vl.StartCol) - scrollX
@@ -2635,7 +2641,7 @@ Public Class ModernTextBox
         If 启用多行 Then
             cy = CInt(Math.Round(imeTop + vi * _scaledLineHeight - _scrollPixelOffset + _scaledLineHeight))
         Else
-            Dim textHeight As Integer = ClientRectangle.Height - imeTop - Math.Max(Padding.Bottom, bi)
+            Dim textHeight As Integer = ClientRectangle.Height - imeTop - Math.Max(pad.Bottom, bi)
             cy = imeTop + (textHeight - _scaledLineHeight) \ 2 + _scaledLineHeight
         End If
         ImeHelper.SetCompositionPosition(Handle, cx, cy)
@@ -2768,14 +2774,35 @@ Public Class ModernTextBox
     End Function
     Private Function TextViewportHeight() As Integer
         Dim bi As Integer = ScaledBorderWidth()
-        Return Math.Max(0, ClientRectangle.Height - Math.Max(Padding.Top, bi) - Math.Max(Padding.Bottom, bi))
+        Dim pad As Padding = ScaledPadding()
+        Return Math.Max(0, ClientRectangle.Height - Math.Max(pad.Top, bi) - Math.Max(pad.Bottom, bi))
+    End Function
+    Private Function TextAreaRight() As Integer
+        Dim bi As Integer = ScaledBorderWidth()
+        Dim pad As Padding = ScaledPadding()
+        Dim rightEdge As Integer = ClientRectangle.Width - Math.Max(pad.Right, bi)
+        If _scrollBarVisible Then
+            Dim radiusInset As Integer = If(边框圆角半径 > 0, CInt(Math.Round(边框圆角半径 * DpiScale())) \ 2, 0)
+            Dim inset As Integer = Math.Max(bi, radiusInset)
+            Dim scaledScrollW As Integer = CInt(Math.Round(滚动条宽度 * DpiScale()))
+            rightEdge = ClientRectangle.Width - inset - V3_ScrollBarRenderer.Margin - scaledScrollW - Math.Max(pad.Right, bi)
+        End If
+        Return Math.Max(0, rightEdge)
     End Function
     Private Function TextAreaWidth() As Integer
         Dim bi As Integer = ScaledBorderWidth()
-        Dim scrollW As Integer = If(_scrollBarVisible, CInt(Math.Round(滚动条宽度 * DpiScale())) + V3_ScrollBarRenderer.Margin * 2, 0)
+        Dim pad As Padding = ScaledPadding()
         Dim gutterW As Integer = LineNumberGutterWidth()
-        Dim leftUsed As Integer = If(gutterW > 0, bi + gutterW + Padding.Left, Math.Max(Padding.Left, bi))
-        Return Math.Max(0, ClientRectangle.Width - leftUsed - Math.Max(Padding.Right, bi) - scrollW)
+        Dim leftUsed As Integer = If(gutterW > 0, bi + gutterW + pad.Left, Math.Max(pad.Left, bi))
+        Return Math.Max(0, TextAreaRight() - leftUsed)
+    End Function
+    Private Function ScaledPadding() As Padding
+        Dim s As Single = DpiScale()
+        Return New Padding(
+            CInt(Math.Round(Padding.Left * s)),
+            CInt(Math.Round(Padding.Top * s)),
+            CInt(Math.Round(Padding.Right * s)),
+            CInt(Math.Round(Padding.Bottom * s)))
     End Function
     Private Function LineNumberGutterWidth() As Integer
         If Not _showLineNumbers OrElse Not 启用多行 Then Return 0
@@ -2847,21 +2874,7 @@ Public Class ModernTextBox
                 hi = mid - 1
             End If
         End While
-        Dim bestLen As Integer = Math.Max(1, best)
-        If bestLen < remaining Then
-            bestLen = PreferWhitespaceWrap(line, startCol, bestLen)
-        End If
-        Return bestLen
-    End Function
-    Private Function PreferWhitespaceWrap(line As String, startCol As Integer, fitLength As Integer) As Integer
-        If fitLength <= 1 Then Return fitLength
-        Dim limit As Integer = Math.Min(line.Length, startCol + fitLength)
-        For i As Integer = limit - 1 To startCol + 1 Step -1
-            If Char.IsWhiteSpace(line(i)) Then
-                Return i - startCol + 1
-            End If
-        Next
-        Return fitLength
+        Return Math.Max(1, best)
     End Function
     Private Function BuildWaterTextVisualLines(text As String, maxWidth As Integer) As List(Of String)
         Dim result As New List(Of String)
@@ -2905,11 +2918,10 @@ Public Class ModernTextBox
             End If
         End While
 
-        Dim bestLen As Integer = Math.Max(1, best)
-        If bestLen < remaining Then
-            bestLen = PreferWhitespaceWrap(line, startCol, bestLen)
-        End If
-        Return bestLen
+        Return Math.Max(1, best)
+    End Function
+    Private Shared Function IsDoubleClickSeparator(ch As Char) As Boolean
+        Return ch = " "c OrElse ch = ControlChars.Tab OrElse ch = ","c OrElse ch = "."c OrElse ch = "，"c OrElse ch = "。"c
     End Function
     Private Function GetVisualLineIndex(logicalLine As Integer, col As Integer) As Integer
         If _visualLines.Count = 0 Then Return 0
@@ -3303,8 +3315,9 @@ Public Class ModernTextBox
             Return
         End If
         Dim bi As Integer = ScaledBorderWidth()
-        Dim textTop As Integer = Math.Max(Padding.Top, bi)
-        Dim textBottom As Integer = ClientRectangle.Height - Math.Max(Padding.Bottom, bi)
+        Dim pad As Padding = ScaledPadding()
+        Dim textTop As Integer = Math.Max(pad.Top, bi)
+        Dim textBottom As Integer = ClientRectangle.Height - Math.Max(pad.Bottom, bi)
         Dim scrollDelta As Integer
         If _lastMousePos.Y < textTop Then
             scrollDelta = -1

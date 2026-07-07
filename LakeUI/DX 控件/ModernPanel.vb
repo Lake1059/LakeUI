@@ -192,7 +192,6 @@ Public Class ModernPanel
             Return 边框宽度
         End Get
         Set(value As Integer)
-            清除图片缓存()
             SetValue(边框宽度, value)
         End Set
     End Property
@@ -204,7 +203,6 @@ Public Class ModernPanel
             Return 边框圆角半径
         End Get
         Set(value As Integer)
-            清除图片缓存()
             SetValue(边框圆角半径, value)
         End Set
     End Property
@@ -216,7 +214,6 @@ Public Class ModernPanel
             Return 圆角位置
         End Get
         Set(value As RoundCorners)
-            清除图片缓存()
             SetValue(圆角位置, value)
         End Set
     End Property
@@ -260,7 +257,6 @@ Public Class ModernPanel
             If _image Is value Then Return
             停止图片动画()
             _image = value
-            清除图片缓存()
             启动图片动画()
             请求V3渲染()
         End Set
@@ -284,19 +280,6 @@ Public Class ModernPanel
     Private _animationCompletedLoops As Integer = 0
     Private _animationHostForm As Form = Nothing
     Private ReadOnly _animationVisibilitySources As New List(Of Control)()
-    Private _animationFrameImage As Bitmap = Nothing
-    Private _animationFrameImageSource As Image = Nothing
-    Private _animationFrameImageIndex As Integer = -1
-    Private _animationFrameSourceRect As Rectangle = Rectangle.Empty
-    Private _animationFrameSize As Size = Size.Empty
-    Private _animationFrameD2DBitmap As ID2D1Bitmap = Nothing
-    Private _animationFrameD2DRenderTarget As ID2D1RenderTarget = Nothing
-
-    Private _scaledImageBitmap As ID2D1Bitmap = Nothing
-    Private _scaledImageRenderTarget As ID2D1RenderTarget = Nothing
-    Private _scaledImageSource As Image = Nothing
-    Private _scaledImageSourceRect As Rectangle = Rectangle.Empty
-    Private _scaledImageSize As Size = Size.Empty
 
     Private Sub 启动图片动画()
         If Not 准备图片动画(_image) Then Return
@@ -307,7 +290,6 @@ Public Class ModernPanel
         停止图片动画计时器(True)
         更新图片动画宿主窗体订阅(Nothing)
         清除图片动画可见性订阅()
-        清除动画帧图片缓存()
         If _animatedImage IsNot Nothing AndAlso _animatedImage IsNot _image Then
             Try : _animatedImage.Dispose() : Catch : End Try
         End If
@@ -543,7 +525,6 @@ Public Class ModernPanel
         End If
 
         If frameChanged Then
-            失效背景图片上传缓存()
             请求V3渲染(获取背景图片刷新区域())
         End If
     End Sub
@@ -577,11 +558,6 @@ Public Class ModernPanel
     Private Shared Function 毫秒转StopwatchTicks(milliseconds As Integer) As Long
         Return Math.Max(1L, CLng(Stopwatch.Frequency * (Math.Max(1, milliseconds) / 1000.0)))
     End Function
-
-    Private Sub 失效背景图片上传缓存()
-        清除动画帧图片缓存()
-        清除缩放图片缓存()
-    End Sub
 
     Private Function 获取背景图片刷新区域() As Rectangle
         If _image Is Nothing OrElse Me.ClientSize.Width <= 0 OrElse Me.ClientSize.Height <= 0 Then Return Me.ClientRectangle
@@ -660,108 +636,6 @@ Public Class ModernPanel
         更新图片动画运行状态()
     End Sub
 
-    Private Sub 清除动画帧图片缓存()
-        If _animationFrameD2DBitmap IsNot Nothing Then
-            Try : _animationFrameD2DBitmap.Dispose() : Catch : End Try
-            _animationFrameD2DBitmap = Nothing
-        End If
-        If _animationFrameImage IsNot Nothing Then
-            Try : _animationFrameImage.Dispose() : Catch : End Try
-            _animationFrameImage = Nothing
-        End If
-        _animationFrameImageSource = Nothing
-        _animationFrameImageIndex = -1
-        _animationFrameSourceRect = Rectangle.Empty
-        _animationFrameSize = Size.Empty
-        _animationFrameD2DRenderTarget = Nothing
-    End Sub
-
-
-    Private Function 获取动画帧位图_D2D(rt As ID2D1RenderTarget, sourceRect As Rectangle, frameSize As Size) As ID2D1Bitmap
-        If _image Is Nothing OrElse rt Is Nothing Then Return Nothing
-        If sourceRect.Width <= 0 OrElse sourceRect.Height <= 0 OrElse frameSize.Width <= 0 OrElse frameSize.Height <= 0 Then Return Nothing
-
-        If _animationFrameD2DBitmap IsNot Nothing AndAlso
-           _animationFrameD2DRenderTarget Is rt AndAlso
-           _animationFrameImageSource Is _animatedImage AndAlso
-           _animationFrameImageIndex = _animationFrameIndex AndAlso
-           _animationFrameSourceRect.Equals(sourceRect) AndAlso
-           _animationFrameSize.Equals(frameSize) Then
-            Return _animationFrameD2DBitmap
-        End If
-
-        Dim frameImage As Bitmap = 获取动画帧图像(sourceRect, frameSize)
-        If frameImage Is Nothing Then Return Nothing
-
-        If _animationFrameD2DBitmap IsNot Nothing Then
-            Try : _animationFrameD2DBitmap.Dispose() : Catch : End Try
-            _animationFrameD2DBitmap = Nothing
-        End If
-        _animationFrameD2DRenderTarget = Nothing
-
-        _animationFrameD2DBitmap = D3D_D2DInterop.CreateBitmapFromGdi(rt, frameImage)
-        If _animationFrameD2DBitmap Is Nothing Then Return Nothing
-        _animationFrameD2DRenderTarget = rt
-        Return _animationFrameD2DBitmap
-    End Function
-
-    Private Function 获取动画帧图像(sourceRect As Rectangle, frameSize As Size) As Bitmap
-        Dim img = _animatedImage
-        If img Is Nothing OrElse _animationFrameDimension Is Nothing Then Return Nothing
-
-        If _animationFrameImage IsNot Nothing AndAlso
-           _animationFrameImageSource Is img AndAlso
-           _animationFrameImageIndex = _animationFrameIndex AndAlso
-           _animationFrameSourceRect.Equals(sourceRect) AndAlso
-           _animationFrameSize.Equals(frameSize) Then
-            Return _animationFrameImage
-        End If
-
-        清除动画帧图片缓存()
-
-        Dim frameImage As Bitmap = Nothing
-        Try
-            SyncLock img
-                img.SelectActiveFrame(_animationFrameDimension, _animationFrameIndex)
-                frameImage = New Bitmap(frameSize.Width, frameSize.Height, PixelFormat.Format32bppPArgb)
-                frameImage.SetResolution(img.HorizontalResolution, img.VerticalResolution)
-                Using g = Graphics.FromImage(frameImage)
-                    g.CompositingMode = Drawing2D.CompositingMode.SourceCopy
-                    g.CompositingQuality = Drawing2D.CompositingQuality.HighQuality
-                    g.InterpolationMode = Drawing2D.InterpolationMode.HighQualityBicubic
-                    g.PixelOffsetMode = Drawing2D.PixelOffsetMode.HighQuality
-                    g.SmoothingMode = Drawing2D.SmoothingMode.HighQuality
-                    Using attr As New ImageAttributes()
-                        attr.SetWrapMode(Drawing2D.WrapMode.TileFlipXY)
-                        g.DrawImage(
-                            img,
-                            New Rectangle(0, 0, frameSize.Width, frameSize.Height),
-                            sourceRect.X,
-                            sourceRect.Y,
-                            sourceRect.Width,
-                            sourceRect.Height,
-                            GraphicsUnit.Pixel,
-                            attr)
-                    End Using
-                End Using
-            End SyncLock
-
-            _animationFrameImage = frameImage
-            frameImage = Nothing
-            _animationFrameImageSource = img
-            _animationFrameImageIndex = _animationFrameIndex
-            _animationFrameSourceRect = sourceRect
-            _animationFrameSize = frameSize
-        Catch
-            If frameImage IsNot Nothing Then
-                Try : frameImage.Dispose() : Catch : End Try
-            End If
-            清除动画帧图片缓存()
-        End Try
-
-        Return _animationFrameImage
-    End Function
-
     Private Shared Function 计算背景图片目标矩形(area As RectangleF, srcW As Single, srcH As Single, mode As ImageFillMode) As RectangleF
         If srcW <= 0 OrElse srcH <= 0 OrElse area.Width <= 0 OrElse area.Height <= 0 Then Return RectangleF.Empty
 
@@ -779,115 +653,25 @@ Public Class ModernPanel
             drawH)
     End Function
 
-    Private Shared Function 计算可见源矩形(destRect As RectangleF, visibleDest As RectangleF, ratio As Single, srcW As Integer, srcH As Integer) As Rectangle
+    Private Shared Function 计算可见源矩形(destRect As RectangleF, visibleDest As RectangleF, ratio As Single, srcW As Integer, srcH As Integer) As RectangleF
         If ratio <= 0 OrElse srcW <= 0 OrElse srcH <= 0 OrElse visibleDest.Width <= 0 OrElse visibleDest.Height <= 0 Then
-            Return Rectangle.Empty
+            Return RectangleF.Empty
         End If
 
-        Dim srcLeft As Integer = 限制整数(CInt(Math.Floor((visibleDest.Left - destRect.Left) / ratio)), 0, srcW)
-        Dim srcTop As Integer = 限制整数(CInt(Math.Floor((visibleDest.Top - destRect.Top) / ratio)), 0, srcH)
-        Dim srcRight As Integer = 限制整数(CInt(Math.Ceiling((visibleDest.Right - destRect.Left) / ratio)), 0, srcW)
-        Dim srcBottom As Integer = 限制整数(CInt(Math.Ceiling((visibleDest.Bottom - destRect.Top) / ratio)), 0, srcH)
+        Dim srcLeft As Single = 限制单精度((visibleDest.Left - destRect.Left) / ratio, 0.0F, CSng(srcW))
+        Dim srcTop As Single = 限制单精度((visibleDest.Top - destRect.Top) / ratio, 0.0F, CSng(srcH))
+        Dim srcRight As Single = 限制单精度((visibleDest.Right - destRect.Left) / ratio, 0.0F, CSng(srcW))
+        Dim srcBottom As Single = 限制单精度((visibleDest.Bottom - destRect.Top) / ratio, 0.0F, CSng(srcH))
 
-        If srcRight <= srcLeft OrElse srcBottom <= srcTop Then Return Rectangle.Empty
-        Return New Rectangle(srcLeft, srcTop, srcRight - srcLeft, srcBottom - srcTop)
+        If srcRight <= srcLeft OrElse srcBottom <= srcTop Then Return RectangleF.Empty
+        Return New RectangleF(srcLeft, srcTop, srcRight - srcLeft, srcBottom - srcTop)
     End Function
 
-    Private Shared Function 计算缩放位图尺寸(visibleDest As RectangleF, renderScale As Integer) As Size
-        Dim scale As Integer = Math.Max(1, renderScale)
-        Return New Size(
-            Math.Max(1, CInt(Math.Round(visibleDest.Width * scale))),
-            Math.Max(1, CInt(Math.Round(visibleDest.Height * scale))))
-    End Function
-
-    Private Shared Function 限制整数(value As Integer, minimum As Integer, maximum As Integer) As Integer
+    Private Shared Function 限制单精度(value As Single, minimum As Single, maximum As Single) As Single
         If value < minimum Then Return minimum
         If value > maximum Then Return maximum
         Return value
     End Function
-
-    Private Function 获取高质量缩放背景位图_D2D(rt As ID2D1RenderTarget, img As Image, sourceRect As Rectangle, scaledSize As Size) As ID2D1Bitmap
-        If rt Is Nothing OrElse img Is Nothing Then Return Nothing
-        If sourceRect.Width <= 0 OrElse sourceRect.Height <= 0 OrElse scaledSize.Width <= 0 OrElse scaledSize.Height <= 0 Then Return Nothing
-
-        If _scaledImageBitmap IsNot Nothing AndAlso
-           _scaledImageRenderTarget Is rt AndAlso
-           _scaledImageSource Is img AndAlso
-           _scaledImageSourceRect.Equals(sourceRect) AndAlso
-           _scaledImageSize.Equals(scaledSize) Then
-            Return _scaledImageBitmap
-        End If
-
-        清除缩放图片缓存()
-
-        Dim scaledBitmap As Bitmap = Nothing
-        Dim uploadedBitmap As ID2D1Bitmap = Nothing
-        Try
-            scaledBitmap = 创建高质量缩放位图(img, sourceRect, scaledSize)
-            uploadedBitmap = D3D_D2DInterop.CreateBitmapFromGdi(rt, scaledBitmap)
-            If uploadedBitmap Is Nothing Then Return Nothing
-
-            _scaledImageBitmap = uploadedBitmap
-            uploadedBitmap = Nothing
-            _scaledImageRenderTarget = rt
-            _scaledImageSource = img
-            _scaledImageSourceRect = sourceRect
-            _scaledImageSize = scaledSize
-            Return _scaledImageBitmap
-        Catch
-            清除缩放图片缓存()
-            Return Nothing
-        Finally
-            If uploadedBitmap IsNot Nothing Then
-                Try : uploadedBitmap.Dispose() : Catch : End Try
-            End If
-            If scaledBitmap IsNot Nothing Then
-                Try : scaledBitmap.Dispose() : Catch : End Try
-            End If
-        End Try
-    End Function
-
-    Private Shared Function 创建高质量缩放位图(img As Image, sourceRect As Rectangle, scaledSize As Size) As Bitmap
-        Dim scaled As New Bitmap(scaledSize.Width, scaledSize.Height, PixelFormat.Format32bppPArgb)
-        Try
-            Try : scaled.SetResolution(img.HorizontalResolution, img.VerticalResolution) : Catch : End Try
-            Using g = Graphics.FromImage(scaled)
-                g.CompositingMode = Drawing2D.CompositingMode.SourceCopy
-                g.CompositingQuality = Drawing2D.CompositingQuality.HighQuality
-                g.InterpolationMode = Drawing2D.InterpolationMode.HighQualityBicubic
-                g.PixelOffsetMode = Drawing2D.PixelOffsetMode.HighQuality
-                g.SmoothingMode = Drawing2D.SmoothingMode.HighQuality
-
-                Using attr As New ImageAttributes()
-                    attr.SetWrapMode(Drawing2D.WrapMode.TileFlipXY)
-                    g.DrawImage(
-                        img,
-                        New Rectangle(0, 0, scaledSize.Width, scaledSize.Height),
-                        sourceRect.X,
-                        sourceRect.Y,
-                        sourceRect.Width,
-                        sourceRect.Height,
-                        GraphicsUnit.Pixel,
-                        attr)
-                End Using
-            End Using
-            Return scaled
-        Catch
-            scaled.Dispose()
-            Throw
-        End Try
-    End Function
-
-    Private Sub 清除缩放图片缓存()
-        If _scaledImageBitmap IsNot Nothing Then
-            Try : _scaledImageBitmap.Dispose() : Catch : End Try
-            _scaledImageBitmap = Nothing
-        End If
-        _scaledImageRenderTarget = Nothing
-        _scaledImageSource = Nothing
-        _scaledImageSourceRect = Rectangle.Empty
-        _scaledImageSize = Size.Empty
-    End Sub
 
     Private _imageFillMode As ImageFillMode = ImageFillMode.Fill
     ''' <summary>背景图片填充模式：Zoom（完整显示）或 Fill（撑满裁切）。</summary>
@@ -899,7 +683,6 @@ Public Class ModernPanel
         Set(value As ImageFillMode)
             If _imageFillMode <> value Then
                 _imageFillMode = value
-                清除图片缓存()
                 请求V3渲染()
             End If
         End Set
@@ -1183,14 +966,6 @@ Public Class ModernPanel
     Private _lastDeviceDpi As Integer = 96
     Private _inDpiChange As Boolean = False
 
-    ' V3：窗口级 D3D compositor 统一持有图形资源，控件本身不持有长期 D2D 字段。
-
-    ''' <summary>清理控件级动图帧上传缓存；静态背景图缓存由窗口级 D3D compositor 共享管理。</summary>
-    Private Sub 清除图片缓存()
-        清除动画帧图片缓存()
-        清除缩放图片缓存()
-    End Sub
-
 #End Region
 
 #Region "滚动区域计算"
@@ -1447,7 +1222,7 @@ Public Class ModernPanel
         If visibleDest.Width <= 0 OrElse visibleDest.Height <= 0 Then Return
 
         Dim ratio As Single = destRect.Width / srcW
-        Dim sourceRect As Rectangle = 计算可见源矩形(destRect, visibleDest, ratio, srcW, srcH)
+        Dim sourceRect As RectangleF = 计算可见源矩形(destRect, visibleDest, ratio, srcW, srcH)
         If sourceRect.IsEmpty Then Return
 
         Dim imageToDraw As Image = _image
@@ -1468,13 +1243,13 @@ Public Class ModernPanel
         If clipGeo IsNot Nothing Then
             PushGeometryClip_GPU(context, clipGeo, area)
             Try
-                context.DrawImage(imageToDraw, destRect, New RectangleF(sourceRect.X, sourceRect.Y, sourceRect.Width, sourceRect.Height), 1.0F, frameIndex)
+                context.DrawImage(imageToDraw, visibleDest, sourceRect, 1.0F, frameIndex, InterpolationMode.HighQualityCubic)
             Finally
                 context.DeviceContext.PopLayer()
             End Try
         Else
             Using context.PushClip(area)
-                context.DrawImage(imageToDraw, destRect, New RectangleF(sourceRect.X, sourceRect.Y, sourceRect.Width, sourceRect.Height), 1.0F, frameIndex)
+                context.DrawImage(imageToDraw, visibleDest, sourceRect, 1.0F, frameIndex, InterpolationMode.HighQualityCubic)
             End Using
         End If
     End Sub
@@ -1810,7 +1585,6 @@ Public Class ModernPanel
 
     Protected Overrides Sub OnSizeChanged(e As EventArgs)
         MyBase.OnSizeChanged(e)
-        清除图片缓存()
         _contentSizeDirty = True
         更新滚动区域()
         请求V3渲染()
@@ -1839,7 +1613,6 @@ Public Class ModernPanel
             _childLayouts.Clear()
         End If
 
-        清除图片缓存()
         _contentSizeDirty = True
         _inDpiChange = False
         更新滚动区域()

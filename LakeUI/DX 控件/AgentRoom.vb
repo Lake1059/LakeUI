@@ -268,6 +268,7 @@ Public Class AgentRoom
     Friend _滚动偏移 As Integer = 0
     Friend _contentHeight As Integer = 0
     Friend _contentHeightDirty As Boolean = True
+    Friend _scrollBarVisible As Boolean = False
     Friend _pinnedToBottom As Boolean = True
     Private _layoutDpi As Integer = 0
     Private _layoutAreaWidth As Integer = -1
@@ -1694,7 +1695,7 @@ Public Class AgentRoom
 
     Private Function GetLineHeight(font As Font) As Integer
         If font Is Nothing Then Return Dpi(18)
-        Return CInt(Math.Ceiling(font.GetHeight(V3_DpiContext.FromControl(Me).Dpi)))
+        Return D3D_TextMeasureHelper.GetLineHeightPx(font, DpiScale())
     End Function
 
     Private Sub InvalidateMarkdownRenderers()
@@ -1815,6 +1816,7 @@ Public Class AgentRoom
         Dim fore As Color = GetItemForeColor(it)
         If renderer.BackgroundSource IsNot Nothing Then renderer.BackgroundSource = Nothing
         renderer.Font = Me.Font
+        renderer.Padding = Padding.Empty
         renderer.ForeColor = fore
         renderer.HeadingColor = _markdownHeadingColor
         renderer.HeadingSeparatorColor = _markdownHeadingSeparatorColor
@@ -1909,8 +1911,12 @@ Public Class AgentRoom
         Dim pad As Padding = Dpi(Me.Padding)
         Dim x As Integer = inset + pad.Left
         Dim y As Integer = inset + pad.Top
-        Dim sbReserved As Integer = If(_scrollBarWidth > 0, Dpi(_scrollBarWidth) + V3_ScrollBarRenderer.Margin * 2, 0)
-        Dim w As Integer = Math.Max(0, Width - inset * 2 - pad.Horizontal - sbReserved)
+        Dim right As Integer = Width - inset - pad.Right
+        If _scrollBarVisible AndAlso _scrollBarWidth > 0 Then
+            Dim scrollVisualLeft As Integer = Width - Dpi(_scrollBarWidth) - inset - V3_ScrollBarRenderer.Margin
+            right = scrollVisualLeft - pad.Right
+        End If
+        Dim w As Integer = Math.Max(0, right - x)
         Dim h As Integer = Math.Max(0, Height - inset * 2 - pad.Vertical)
         Return New Rectangle(x, y, w, h)
     End Function
@@ -1926,22 +1932,38 @@ Public Class AgentRoom
             InvalidateAllItemsLayout()
         End If
 
-        Dim area = GetContentArea()
-        If area.Width <= 0 Then
-            _contentHeight = 0
-            _contentHeightDirty = False
+        Dim area As Rectangle = Rectangle.Empty
+        For pass As Integer = 0 To 2
+            area = GetContentArea()
+            If area.Width <= 0 Then
+                _contentHeight = 0
+                _contentHeightDirty = False
+                _layoutAreaWidth = -1
+                _layoutDirtyFromIndex = Integer.MaxValue
+                _itemLayoutTops.Clear()
+                _scrollBarVisible = False
+                _scrollBar.TrackRect = Rectangle.Empty
+                _scrollBar.ThumbRect = Rectangle.Empty
+                Return
+            End If
+
+            If _contentHeightDirty OrElse
+               _layoutAreaWidth <> area.Width OrElse
+               _itemLayoutTops.Count <> _items.Count Then
+                RebuildItemLayout(area.Width)
+            End If
+
+            Dim shouldShowScrollBar As Boolean = _scrollBarWidth > 0 AndAlso _contentHeight > area.Height
+            If _scrollBarVisible = shouldShowScrollBar Then Exit For
+
+            _scrollBarVisible = shouldShowScrollBar
             _layoutAreaWidth = -1
-            _layoutDirtyFromIndex = Integer.MaxValue
-            _itemLayoutTops.Clear()
-            Return
-        End If
+        Next
 
-        If _contentHeightDirty OrElse
-           _layoutAreaWidth <> area.Width OrElse
-           _itemLayoutTops.Count <> _items.Count Then
-            RebuildItemLayout(area.Width)
+        If Not _scrollBarVisible Then
+            _scrollBar.TrackRect = Rectangle.Empty
+            _scrollBar.ThumbRect = Rectangle.Empty
         End If
-
         ClampScrollOffset(area.Height)
     End Sub
 
@@ -2206,11 +2228,14 @@ Public Class AgentRoom
 
         Dim viewH As Integer = area.Height
         Dim totalH As Integer = Math.Max(viewH, _contentHeight)
-        If _contentHeight > viewH AndAlso scrollBarWidth > 0 Then
+        If _scrollBarVisible AndAlso scrollBarWidth > 0 Then
             _scrollBar.ComputeLayout(Width, Height, borderSize, borderRadius,
                                      scaledPadding.Top, scaledPadding.Bottom,
                                      scrollBarWidth, totalH, viewH, _滚动偏移)
             DrawScrollBar_GPU(context, scrollBarWidth)
+        Else
+            _scrollBar.TrackRect = Rectangle.Empty
+            _scrollBar.ThumbRect = Rectangle.Empty
         End If
 
         If borderSize > 0 Then DrawRoundedBorder_GPU(context, bgRect, borderRadius, _borderColor, borderSize)
@@ -2947,12 +2972,12 @@ Public Class AgentRoom
 
         If e.Button = MouseButtons.Left Then
             ' 滚动条优先
-            If _scrollBar.BeginDrag(e.Location, _滚动偏移) Then
+            If _scrollBarVisible AndAlso _scrollBar.BeginDrag(e.Location, _滚动偏移) Then
                 Capture = True
                 RequestViewportRefresh()
                 Return
             End If
-            If _scrollBar.TrackRect.Contains(e.Location) Then
+            If _scrollBarVisible AndAlso _scrollBar.TrackRect.Contains(e.Location) Then
                 Dim viewH = ContentViewportHeight()
                 Dim totalH = Math.Max(viewH, _contentHeight)
                 SetScrollOffset(_scrollBar.TrackClick(e.Location, _滚动偏移, totalH, viewH))
@@ -3029,7 +3054,11 @@ Public Class AgentRoom
         End If
         If Cursor IsNot desiredCursor Then Cursor = desiredCursor
 
-        If _scrollBar.UpdateHover(e.Location) Then RequestViewportRefresh()
+        If _scrollBarVisible Then
+            If _scrollBar.UpdateHover(e.Location) Then RequestViewportRefresh()
+        ElseIf _scrollBar.ResetHover() Then
+            RequestViewportRefresh()
+        End If
     End Sub
 
     Protected Overrides Sub OnMouseUp(e As MouseEventArgs)
@@ -3168,7 +3197,7 @@ Friend Module ChatTextHelper
         Next
     End Sub
 
-    ''' <summary>把文本按 maxWidth 折行（按字符），保留换行符。</summary>
+    ''' <summary>把文本按 maxWidth 折行（按字符），兼容 CRLF/LF/CR 换行。</summary>
     Public Sub WrapLines(text As String, font As Font, lineHeight As Integer, maxWidth As Integer,
                          output As List(Of LineRange),
                          Optional measureWidth As Func(Of String, Font, Integer, Integer) = Nothing)
@@ -3182,28 +3211,14 @@ Friend Module ChatTextHelper
 
         Dim i As Integer = 0
         While i < n
-            ' 找到下一个换行
-            Dim eol As Integer = text.IndexOf(ControlChars.Lf, i)
+            ' 找到下一个换行，行内容不包含 CR/LF 控制字符。
+            Dim eol As Integer = FindNextLineBreak(text, i, n)
             Dim segEnd As Integer = If(eol < 0, n, eol)
             ' 在 [i, segEnd) 内按宽度分段
             Dim p As Integer = i
             While p < segEnd
                 Dim fitLen As Integer = FitLength(text, p, segEnd, font, lineHeight, maxWidth, measureWidth)
                 If fitLen <= 0 Then fitLen = 1
-                ' 优先在空白处断行
-                If p + fitLen < segEnd Then
-                    Dim breakAt As Integer = -1
-                    For k = p + fitLen - 1 To p + 1 Step -1
-                        Dim ch = text(k)
-                        If ch = " "c OrElse ch = ControlChars.Tab OrElse ch = "/"c OrElse ch = "-"c Then
-                            breakAt = k + 1
-                            Exit For
-                        End If
-                    Next
-                    If breakAt > p AndAlso breakAt - p <= fitLen Then
-                        fitLen = breakAt - p
-                    End If
-                End If
                 output.Add(New LineRange(p, fitLen))
                 p += fitLen
             End While
@@ -3214,12 +3229,21 @@ Friend Module ChatTextHelper
                 i = n
             Else
                 i = eol + 1
+                If text(eol) = ControlChars.Cr AndAlso i < n AndAlso text(i) = ControlChars.Lf Then i += 1
                 If i = n Then output.Add(New LineRange(n, 0))
             End If
         End While
 
         If output.Count = 0 Then output.Add(New LineRange(0, 0))
     End Sub
+
+    Private Function FindNextLineBreak(text As String, start As Integer, [end] As Integer) As Integer
+        For i As Integer = start To [end] - 1
+            Dim ch As Char = text(i)
+            If ch = ControlChars.Cr OrElse ch = ControlChars.Lf Then Return i
+        Next
+        Return -1
+    End Function
 
     Private Function FitLength(text As String, start As Integer, [end] As Integer,
                                font As Font, lineHeight As Integer, maxWidth As Integer,

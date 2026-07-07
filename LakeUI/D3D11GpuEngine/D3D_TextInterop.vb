@@ -150,13 +150,17 @@ Public Module D3D_TextInterop
         Dim wordWrap As Boolean = (flags And TextFormatFlags.WordBreak) = TextFormatFlags.WordBreak AndAlso
                                   (flags And TextFormatFlags.SingleLine) <> TextFormatFlags.SingleLine
         ownsFormat = (cache Is Nothing)
+        Dim fmt As IDWriteTextFormat
         If cache IsNot Nothing Then
-            Return cache.[Get](font, sizePx, textAlign, paraAlign, trimChar, wordWrap)
+            fmt = cache.[Get](font, sizePx, textAlign, paraAlign, trimChar, wordWrap)
+            D3D_TextMeasureHelper.ApplyUniformLineSpacing(fmt, font, dpiScale)
+            Return fmt
         End If
-        Dim fmt = D3D_D2DInterop.CreateTextFormat(font, sizePx)
+        fmt = D3D_D2DInterop.CreateTextFormat(font, sizePx)
         fmt.TextAlignment = textAlign
         fmt.ParagraphAlignment = paraAlign
         fmt.WordWrapping = If(wordWrap, WordWrapping.Wrap, WordWrapping.NoWrap)
+        D3D_TextMeasureHelper.ApplyUniformLineSpacing(fmt, font, dpiScale)
         If trimChar Then
             Try : fmt.SetTrimming(New Trimming With {.Granularity = TrimmingGranularity.Character}, Nothing) : Catch : End Try
         End If
@@ -192,6 +196,11 @@ End Module
 Friend Module D3D_TextMeasureHelper
 
     Private Const UnboundedLayoutExtent As Single = 100000.0F
+
+    Friend Function GetLineHeightPx(font As Font, dpiScale As Single) As Integer
+        If font Is Nothing Then Return 1
+        Return CInt(Math.Ceiling(D3D_D2DInterop.GetDWriteLineHeightPx(font, dpiScale)))
+    End Function
 
     ''' <summary>
     ''' 测量文本渲染宽度。
@@ -238,6 +247,27 @@ Friend Module D3D_TextMeasureHelper
         Return D3D_D2DInterop.CreateTextFormat(font, sizePx)
     End Function
 
+    Friend Sub ApplyUniformLineSpacing(fmt As IDWriteTextFormat, font As Font, dpiScale As Single)
+        If fmt Is Nothing OrElse font Is Nothing Then Return
+        Dim lineHeight As Single = CSng(Math.Ceiling(D3D_D2DInterop.GetDWriteLineHeightPx(font, dpiScale)))
+        If lineHeight <= 0.0F Then Return
+
+        Dim sizePx As Single = D3D_D2DInterop.GetDWriteFontSizePx(font, dpiScale)
+        Dim baseline As Single = sizePx * 0.8F
+        Try
+            Dim em As Integer = font.FontFamily.GetEmHeight(font.Style)
+            Dim ascent As Integer = font.FontFamily.GetCellAscent(font.Style)
+            If em > 0 AndAlso ascent > 0 Then baseline = CSng(Math.Ceiling(sizePx * ascent / em))
+        Catch
+        End Try
+        baseline = Math.Max(1.0F, Math.Min(lineHeight, baseline))
+
+        Try
+            fmt.SetLineSpacing(LineSpacingMethod.Uniform, lineHeight, baseline)
+        Catch
+        End Try
+    End Sub
+
     ''' <summary>使用 DirectWrite 测量单行文本宽度（像素）。</summary>
     Friend Function MeasureTextWidth_D2D(text As String, font As Font, dpiScale As Single,
                                          Optional textFormatCache As D3D_D2DInterop.TextFormatCache = Nothing) As Single
@@ -248,6 +278,39 @@ Friend Module D3D_TextMeasureHelper
         Try
             Using layout = D3D_D2DInterop.GetDWriteFactory().CreateTextLayout(text, fmt, UnboundedLayoutExtent, UnboundedLayoutExtent)
                 Return layout.Metrics.WidthIncludingTrailingWhitespace
+            End Using
+        Finally
+            If ownsFormat Then Try : fmt.Dispose() : Catch : End Try
+        End Try
+    End Function
+
+    Friend Function MeasureWrappedText_D2D(text As String, font As Font, contentWidth As Integer, dpiScale As Single,
+                                           Optional textFormatCache As D3D_D2DInterop.TextFormatCache = Nothing) As Size
+        If String.IsNullOrEmpty(text) OrElse font Is Nothing OrElse contentWidth <= 0 Then Return Size.Empty
+        Dim ownsFormat As Boolean = (textFormatCache Is Nothing)
+        Dim fmt As IDWriteTextFormat
+        Dim sizePx As Single = D3D_D2DInterop.GetDWriteFontSizePx(font, dpiScale)
+        If textFormatCache IsNot Nothing Then
+            fmt = textFormatCache.Get(font, sizePx,
+                                      Vortice.DirectWrite.TextAlignment.Leading,
+                                      Vortice.DirectWrite.ParagraphAlignment.Near,
+                                      False,
+                                      True)
+            ApplyUniformLineSpacing(fmt, font, dpiScale)
+        Else
+            fmt = D3D_D2DInterop.CreateTextFormat(font, sizePx)
+            fmt.TextAlignment = Vortice.DirectWrite.TextAlignment.Leading
+            fmt.ParagraphAlignment = Vortice.DirectWrite.ParagraphAlignment.Near
+            fmt.WordWrapping = WordWrapping.Wrap
+            ApplyUniformLineSpacing(fmt, font, dpiScale)
+        End If
+        If fmt Is Nothing Then Return Size.Empty
+        Try
+            Using layout = D3D_D2DInterop.GetDWriteFactory().CreateTextLayout(text, fmt, Math.Max(1.0F, CSng(contentWidth)), UnboundedLayoutExtent)
+                Dim m = layout.Metrics
+                Return New Size(
+                    CInt(Math.Ceiling(Math.Max(0.0F, m.WidthIncludingTrailingWhitespace))),
+                    CInt(Math.Ceiling(Math.Max(0.0F, m.Height))))
             End Using
         Finally
             If ownsFormat Then Try : fmt.Dispose() : Catch : End Try
@@ -314,14 +377,17 @@ Friend Module D3D_TextMeasureHelper
         ownsFormat = (textFormatCache Is Nothing)
         Dim sizePx As Single = D3D_D2DInterop.GetDWriteFontSizePx(font, dpiScale)
         If textFormatCache IsNot Nothing Then
-            Return textFormatCache.Get(font, sizePx,
-                                       Vortice.DirectWrite.TextAlignment.Leading,
-                                       Vortice.DirectWrite.ParagraphAlignment.Near,
-                                       False,
-                                       False)
+            Dim cached = textFormatCache.Get(font, sizePx,
+                                             Vortice.DirectWrite.TextAlignment.Leading,
+                                             Vortice.DirectWrite.ParagraphAlignment.Near,
+                                             False,
+                                             False)
+            ApplyUniformLineSpacing(cached, font, dpiScale)
+            Return cached
         End If
         Dim fmt = D3D_D2DInterop.CreateTextFormat(font, sizePx)
         fmt.WordWrapping = Vortice.DirectWrite.WordWrapping.NoWrap
+        ApplyUniformLineSpacing(fmt, font, dpiScale)
         Return fmt
     End Function
 

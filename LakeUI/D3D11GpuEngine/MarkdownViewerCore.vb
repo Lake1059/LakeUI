@@ -2732,8 +2732,7 @@ Public Class MarkdownViewerCore
 
         Dim s As Single = DpiScale()
         Dim ci = GetContentInsets()
-        Dim scrollW As Integer = If(_scrollBarVisible AndAlso Not _embeddedContentMode, CInt(Math.Round(滚动条宽度 * s)) + V3_ScrollBarRenderer.Margin * 2, 0)
-        Dim clipW As Integer = Math.Max(0, Math.Min(TextAreaWidth(), clipSize.Width - ci.Left - Math.Max(ci.Right, scrollW)))
+        Dim clipW As Integer = Math.Max(0, Math.Min(TextAreaWidth(), clipSize.Width - ci.Left - ci.Right))
         Dim clipH As Integer = Math.Max(0, clipSize.Height - ci.Top - ci.Bottom)
         If clipW <= 0 OrElse clipH <= 0 Then Return
 
@@ -3347,6 +3346,7 @@ Public Class MarkdownViewerCore
         Dim paraAlign As Vortice.DirectWrite.ParagraphAlignment = If(verticalCenter, Vortice.DirectWrite.ParagraphAlignment.Center, Vortice.DirectWrite.ParagraphAlignment.Near)
         Dim sizePx As Single = D3D_D2DInterop.GetDWriteFontSizePx(font, DpiScale())
         Dim fmt = _当前合成器.TextFormatCache.Get(font.FontFamily.Name, weight, style, sizePx, textAlign, paraAlign, True)
+        D3D_TextMeasureHelper.ApplyUniformLineSpacing(fmt, font, DpiScale())
         rt.DrawText(text, fmt, D3D_D2DInterop.ToD2DRect(rect), _当前合成器.BrushCache.Get(rt, color))
     End Sub
 
@@ -3646,8 +3646,21 @@ Public Class MarkdownViewerCore
 
     Private Function TextAreaWidth() As Integer
         Dim ci = GetContentInsets()
-        Dim scrollW As Integer = If(_scrollBarVisible AndAlso Not _embeddedContentMode, CInt(Math.Round(滚动条宽度 * DpiScale())) + V3_ScrollBarRenderer.Margin * 2, 0)
-        Return ClientRectangle.Width - ci.Left - Math.Max(ci.Right, scrollW)
+        Return Math.Max(0, TextAreaRight() - ci.Left)
+    End Function
+
+    Private Function TextAreaRight() As Integer
+        Dim ci = GetContentInsets()
+        Dim s As Single = DpiScale()
+        Dim bi As Integer = CInt(Math.Round(边框宽度 * s))
+        Dim rightEdge As Integer = ClientRectangle.Width - ci.Right
+        If _scrollBarVisible AndAlso Not _embeddedContentMode Then
+            Dim radiusInset As Integer = If(边框圆角半径 > 0, CInt(Math.Round(边框圆角半径 * s)) \ 2, 0)
+            Dim inset As Integer = Math.Max(bi, radiusInset)
+            Dim scrollW As Integer = CInt(Math.Round(滚动条宽度 * s))
+            rightEdge = ClientRectangle.Width - inset - V3_ScrollBarRenderer.Margin - scrollW - ci.Right
+        End If
+        Return Math.Max(0, rightEdge)
     End Function
 
 #End Region
@@ -4236,11 +4249,12 @@ Public Class MarkdownViewerCore
 
     Private Function GetContentInsets() As ContentInsets
         Dim bi As Integer = CInt(Math.Round(边框宽度 * DpiScale()))
+        Dim s As Single = DpiScale()
         Return New ContentInsets With {
-            .Left = Math.Max(Padding.Left, bi),
-            .Top = Math.Max(Padding.Top, bi),
-            .Right = Math.Max(Padding.Right, bi),
-            .Bottom = Math.Max(Padding.Bottom, bi)
+            .Left = Math.Max(CInt(Math.Round(Padding.Left * s)), bi),
+            .Top = Math.Max(CInt(Math.Round(Padding.Top * s)), bi),
+            .Right = Math.Max(CInt(Math.Round(Padding.Right * s)), bi),
+            .Bottom = Math.Max(CInt(Math.Round(Padding.Bottom * s)), bi)
         }
     End Function
 
