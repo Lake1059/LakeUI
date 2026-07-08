@@ -119,7 +119,7 @@ Partial Class Form_EasyStatesPanel
         ModernButton7.PressedBackColor1 = Color.FromArgb(80, 220, 220, 220)
         ModernButton7.Size = New Size(140, 35)
         ModernButton7.TabIndex = 4
-        ModernButton7.Text = "平滑滚动：开"
+        ModernButton7.Text = "平滑滚动：关"
         ' 
         ' Label9
         ' 

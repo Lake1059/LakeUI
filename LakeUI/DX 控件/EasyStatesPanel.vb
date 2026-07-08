@@ -182,6 +182,8 @@ Partial Public Class EasyStatesPanel
     Private _scrollTargetOffset As Single = 0.0F
     Private _scrollAnimationRunning As Boolean = False
     Private _scrollAnimationLastTicks As Long = 0
+    Private _scrollAnimationFrameNeedsInvalidate As Boolean = False
+    Private _scrollAnimationLastPaintOffset As Single = Single.NaN
     Private _showVScroll As Boolean = False
     Private _cardsViewportRect As RectangleF = RectangleF.Empty
 
@@ -557,8 +559,8 @@ Partial Public Class EasyStatesPanel
         End Set
     End Property
 
-    Private _smoothScroll As Boolean = True
-    <Category("LakeUI"), Description("是否启用平滑滚动"), DefaultValue(True), Browsable(True)>
+    Private _smoothScroll As Boolean = False
+    <Category("LakeUI"), Description("是否启用平滑滚动"), DefaultValue(False), Browsable(True)>
     Public Property SmoothScroll As Boolean
         Get
             Return _smoothScroll
@@ -1102,11 +1104,18 @@ Partial Public Class EasyStatesPanel
     Private Sub SetScrollOffset(value As Single, Optional animate As Boolean = False)
         EnsureLayout()
         Dim target As Single = ClampScrollOffsetValue(value)
-        If animate AndAlso _smoothScroll AndAlso IsHandleCreated AndAlso _scrollAnimationHelper.Duration > 0 Then
+        Dim useAnimation As Boolean = animate AndAlso
+                                      _smoothScroll AndAlso
+                                      IsHandleCreated AndAlso
+                                      _scrollAnimationHelper.Duration > 0 AndAlso
+                                      Math.Abs(target - _scrollOffset) >= ScrollStopThreshold
+        If useAnimation Then
             _scrollTargetOffset = target
             If Not _scrollAnimationRunning Then
                 _scrollAnimationRunning = True
                 _scrollAnimationLastTicks = Stopwatch.GetTimestamp()
+                _scrollAnimationFrameNeedsInvalidate = True
+                _scrollAnimationLastPaintOffset = Single.NaN
                 _scrollAnimationHelper.StartFrameLoop(AddressOf ScrollAnimationTick)
             End If
         Else
@@ -1115,7 +1124,7 @@ Partial Public Class EasyStatesPanel
             _scrollTargetOffset = target
         End If
         UpdateScrollBarForCurrentOffset()
-        请求V3渲染()
+        If Not useAnimation Then RequestScrollRender()
     End Sub
 
     Private Sub StopScrollAnimation()
@@ -1141,18 +1150,70 @@ Partial Public Class EasyStatesPanel
         Dim diff As Single = _scrollTargetOffset - _scrollOffset
         Dim alpha As Single = 1.0F - CSng(Math.Exp(-ScrollSmoothCoefficient() * dt))
         _scrollOffset += diff * alpha
-        If Math.Abs(diff) < ScrollStopThreshold Then
+        Dim stopAfterThisTick As Boolean = Math.Abs(diff) < ScrollStopThreshold
+        If stopAfterThisTick Then
             _scrollOffset = _scrollTargetOffset
-            StopScrollAnimation()
         End If
         ClampScrollOffsets()
         UpdateScrollBarForCurrentOffset()
-        请求V3渲染()
+        _scrollAnimationFrameNeedsInvalidate = ShouldInvalidateScrollAnimationFrame(stopAfterThisTick)
+        If stopAfterThisTick Then StopScrollAnimation()
     End Sub
 
     Private Sub 滚动动画脏区(helper As V3_AnimationHelper, owner As Control, sink As V3_AnimationHelper.InvalidateRegionSink)
-        sink.SuppressInvalidate()
+        If Not _scrollAnimationFrameNeedsInvalidate Then
+            sink.SuppressInvalidate()
+            Return
+        End If
+
+        Dim dirty = GetScrollDirtyRect()
+        If dirty.Width > 0 AndAlso dirty.Height > 0 Then
+            sink.Add(dirty)
+        Else
+            sink.InvalidateAll()
+        End If
     End Sub
+
+    Private Function ShouldInvalidateScrollAnimationFrame(force As Boolean) As Boolean
+        If force OrElse Single.IsNaN(_scrollAnimationLastPaintOffset) OrElse
+           Math.Abs(_scrollOffset - _scrollAnimationLastPaintOffset) >= ScrollStopThreshold Then
+            _scrollAnimationLastPaintOffset = _scrollOffset
+            Return True
+        End If
+        Return False
+    End Function
+
+    Private Sub RequestScrollRender()
+        Dim dirty = GetScrollDirtyRect()
+        If dirty.Width > 0 AndAlso dirty.Height > 0 Then
+            请求V3渲染(dirty)
+        Else
+            请求V3渲染()
+        End If
+    End Sub
+
+    Private Function GetScrollDirtyRect() As Rectangle
+        Dim dirty As Rectangle = Rectangle.Empty
+
+        If _cardsViewportRect.Width > 0 AndAlso _cardsViewportRect.Height > 0 Then
+            dirty = Rectangle.Round(_cardsViewportRect)
+            dirty.Inflate(2, 2)
+        End If
+
+        If _showVScroll AndAlso Not _scrollBar.TrackRect.IsEmpty Then
+            Dim s As Single = DpiScale()
+            Dim scrollW As Integer = CInt(Math.Ceiling(Math.Max(1.0F, _scrollBarWidth * s)))
+            Dim trackRect As New Rectangle(CInt(Math.Floor(_scrollBar.VisualLeft)),
+                                           _scrollBar.TrackRect.Y,
+                                           scrollW,
+                                           _scrollBar.TrackRect.Height)
+            trackRect.Inflate(2, 2)
+            dirty = If(dirty.IsEmpty, trackRect, Rectangle.Union(dirty, trackRect))
+        End If
+
+        If dirty.IsEmpty Then Return Rectangle.Empty
+        Return Rectangle.Intersect(ClientRectangle, dirty)
+    End Function
 
     Protected Overrides Sub OnMouseMove(e As MouseEventArgs)
         MyBase.OnMouseMove(e)

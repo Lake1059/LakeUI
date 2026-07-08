@@ -1,5 +1,4 @@
 Imports System.ComponentModel
-Imports System.Drawing.Drawing2D
 Imports Vortice.Direct2D1
 
 <DefaultEvent("ValueChanged")>
@@ -83,7 +82,8 @@ Public Class ExcellentProgressBar
         Dim p As Padding = 文字边距
         Dim textRect As New RectangleF(p.Left, p.Top, Math.Max(0, Me.Width - p.Horizontal), Math.Max(0, Me.Height - p.Vertical))
         If textRect.Width < 1 OrElse textRect.Height < 1 Then Return
-        context.DrawText(Me.Text, Me.Font, Me.ForeColor, textRect, Vortice.DirectWrite.TextAlignment.Leading, Vortice.DirectWrite.ParagraphAlignment.Far)
+        Dim flags As TextFormatFlags = TextFormatFlags.HorizontalCenter Or TextFormatFlags.VerticalCenter Or TextFormatFlags.SingleLine Or TextFormatFlags.EndEllipsis
+        context.DrawText(Me.Text, Me.Font, Me.ForeColor, textRect, flags)
     End Sub
 
     Private Sub 绘制图形内容_GPU(context As D3D_PaintContext, bounds As RectangleF, content As RectangleF)
@@ -91,17 +91,29 @@ Public Class ExcellentProgressBar
         Dim radius As Single = 边框圆角半径 * scale
         Dim borderWidth As Single = 边框宽度 * scale
 
-        Dim clipGeo As ID2D1Geometry = Nothing
+        Dim fillClipGeo As ID2D1Geometry = Nothing
         If 边框圆角半径 > 0 Then
-            clipGeo = context.GetRoundedRectangleGeometry(bounds, radius)
+            Dim fillRadius As Single = 计算内容区圆角半径(bounds, content, radius)
+            If fillRadius > 0 Then
+                fillClipGeo = context.GetRoundedRectangleGeometry(content, fillRadius)
+            End If
         End If
 
         填充形状_GPU(context, bounds, radius, 轨道背景颜色, 轨道渐变颜色, 轨道渐变方向)
-        绘制双填充区域_GPU(context, content, clipGeo)
+        绘制双填充区域_GPU(context, content, fillClipGeo)
         If 边框颜色.A > 0 AndAlso borderWidth > 0 Then
             context.DrawRoundedRectangle(bounds, radius, 边框颜色, borderWidth)
         End If
     End Sub
+
+    Private Shared Function 计算内容区圆角半径(bounds As RectangleF, content As RectangleF, outerRadius As Single) As Single
+        If outerRadius <= 0 OrElse content.Width <= 0 OrElse content.Height <= 0 Then Return 0.0F
+
+        Dim inset As Single = Math.Max(
+            Math.Max(Math.Max(content.Left - bounds.Left, content.Top - bounds.Top), bounds.Right - content.Right),
+            bounds.Bottom - content.Bottom)
+        Return Math.Max(0.0F, outerRadius - Math.Max(0.0F, inset))
+    End Function
 
     Private Sub 绘制双填充区域_GPU(context As D3D_PaintContext, content As RectangleF, clipGeo As ID2D1Geometry)
         Dim progress1 As Single = 动画助手.Progress
@@ -224,112 +236,6 @@ Public Class ExcellentProgressBar
         context.DeviceContext.PushLayer(parameters, Nothing)
     End Sub
 
-    Private Sub 绘制文字_D2D(rt As ID2D1RenderTarget,
-                              textFormatCache As D3D_D2DInterop.TextFormatCache,
-                              brushCache As D3D_D2DInterop.SolidColorBrushCache)
-        Dim p As Padding = 文字边距
-        Dim textRect As New Rectangle(p.Left, p.Top, Me.Width - p.Horizontal - 1, Me.Height - p.Vertical - 1)
-        If textRect.Width < 1 OrElse textRect.Height < 1 Then Return
-        Dim flags As TextFormatFlags = TextFormatFlags.Left Or TextFormatFlags.Bottom Or TextFormatFlags.SingleLine Or TextFormatFlags.EndEllipsis
-        D3D_TextInterop.DrawText(rt, Me.Text, Me.Font, textRect, Me.ForeColor, flags, DpiScale(), textFormatCache, brushCache)
-    End Sub
-
-    Private Sub 绘制图形内容_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache,
-                              极限矩形区域 As RectangleF, 内容区域 As RectangleF)
-        Dim s As Single = DpiScale()
-        Dim _边框圆角半径 As Single = 边框圆角半径 * s
-        Dim _边框宽度 As Single = 边框宽度 * s
-        Dim 是否有圆角 As Boolean = 边框圆角半径 > 0
-
-        If 是否有圆角 Then
-            Using geo = D3D_RectangleRenderer.创建圆角矩形几何(极限矩形区域, _边框圆角半径)
-                D3D_RectangleRenderer.绘制圆角背景_D2D(rt, geo, 极限矩形区域, 轨道背景颜色, 轨道渐变颜色, 轨道渐变方向, brushCache)
-                绘制双填充区域_D2D(rt, brushCache, 内容区域, geo)
-                D3D_RectangleRenderer.绘制圆角边框_D2D(rt, geo, 边框颜色, _边框宽度, brushCache)
-            End Using
-        Else
-            D3D_RectangleRenderer.绘制矩形背景_D2D(rt, 极限矩形区域, 轨道背景颜色, 轨道渐变颜色, 轨道渐变方向, brushCache)
-            绘制双填充区域_D2D(rt, brushCache, 内容区域, Nothing)
-            D3D_RectangleRenderer.绘制矩形边框_D2D(rt, 极限矩形区域, 边框颜色, _边框宽度, brushCache)
-        End If
-    End Sub
-
-    Private Sub 绘制双填充区域_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache,
-                                极限矩形区域 As RectangleF, clipGeo As ID2D1Geometry)
-        Dim progress1 As Single = 动画助手.Progress
-        Dim progress2 As Single = 动画助手2.Progress
-
-        ' 先绘制较大的进度（在底层），再绘制较小的进度（在上层）
-        If progress1 >= progress2 Then
-            绘制单个填充区域_D2D(rt, brushCache, 极限矩形区域, clipGeo, progress1, 填充基础颜色, 填充渐变颜色, 填充渐变方向, 渐变模式)
-            绘制单个填充区域_D2D(rt, brushCache, 极限矩形区域, clipGeo, progress2, 填充基础颜色2, 填充渐变颜色2, 填充渐变方向2, 渐变模式2)
-        Else
-            绘制单个填充区域_D2D(rt, brushCache, 极限矩形区域, clipGeo, progress2, 填充基础颜色2, 填充渐变颜色2, 填充渐变方向2, 渐变模式2)
-            绘制单个填充区域_D2D(rt, brushCache, 极限矩形区域, clipGeo, progress1, 填充基础颜色, 填充渐变颜色, 填充渐变方向, 渐变模式)
-        End If
-    End Sub
-
-    Private Sub 绘制单个填充区域_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache,
-                                  极限矩形区域 As RectangleF, clipGeo As ID2D1Geometry,
-                                  progress As Single, baseColor As Color, gradColor As Color, gradDir As Orientation,
-                                  gradMode As FillGradientModeEnum)
-        If progress < 0.001F Then Return
-
-        Dim 填充区域 As RectangleF
-        If 方向 = BarOrientationEnum.Horizontal Then
-            Dim fillWidth As Single = 极限矩形区域.Width * progress
-            填充区域 = New RectangleF(极限矩形区域.X, 极限矩形区域.Y, fillWidth, 极限矩形区域.Height)
-        Else
-            Dim fillHeight As Single = 极限矩形区域.Height * progress
-            填充区域 = New RectangleF(极限矩形区域.X, 极限矩形区域.Bottom - fillHeight, 极限矩形区域.Width, fillHeight)
-        End If
-
-        If 填充区域.Width < 1 OrElse 填充区域.Height < 1 Then Return
-
-        Dim 渐变参考区域 As RectangleF = If(gradMode = FillGradientModeEnum.WithinProgress, 填充区域, 极限矩形区域)
-
-        Dim clipPushed As Boolean = False
-        If clipGeo IsNot Nothing Then
-            ' 用 D2D 几何裁剪到圆角轨道范围内，再在填充矩形里绘制（避免渐变与圆角不一致导致的锯齿）
-            D3D_D2DInterop.PushGeometryClip(rt, clipGeo, 极限矩形区域)
-            clipPushed = True
-        End If
-        Try
-            If gradColor <> Color.Empty AndAlso 渐变参考区域.Width > 0 AndAlso 渐变参考区域.Height > 0 Then
-                Using brush = 创建填充渐变画刷_D2D(rt, 渐变参考区域, baseColor, gradColor, gradDir)
-                    rt.FillRectangle(D3D_D2DInterop.ToD2DRect(填充区域), brush)
-                End Using
-            Else
-                Dim solid = brushCache.[Get](rt, baseColor)
-                If solid IsNot Nothing Then rt.FillRectangle(D3D_D2DInterop.ToD2DRect(填充区域), solid)
-            End If
-        Finally
-            If clipPushed Then rt.PopLayer()
-        End Try
-    End Sub
-
-    Private Shared Function 创建填充渐变画刷_D2D(rt As ID2D1RenderTarget, 区域 As RectangleF,
-                                          baseColor As Color, gradColor As Color, gradDir As Orientation) As ID2D1LinearGradientBrush
-        Dim startPt As System.Numerics.Vector2
-        Dim endPt As System.Numerics.Vector2
-        If gradDir = System.Windows.Forms.Orientation.Vertical Then
-            ' 竖向：底部为主色、顶部为渐变色（GDI 中 270° 的效果）
-            startPt = New System.Numerics.Vector2(区域.X, 区域.Bottom)
-            endPt = New System.Numerics.Vector2(区域.X, 区域.Y)
-        Else
-            startPt = New System.Numerics.Vector2(区域.X, 区域.Y)
-            endPt = New System.Numerics.Vector2(区域.Right, 区域.Y)
-        End If
-        Dim stops() As Vortice.Direct2D1.GradientStop = {
-            New Vortice.Direct2D1.GradientStop With {.Position = 0.0F, .Color = D3D_D2DInterop.ToColor4(baseColor)},
-            New Vortice.Direct2D1.GradientStop With {.Position = 1.0F, .Color = D3D_D2DInterop.ToColor4(gradColor)}}
-        Dim gsc = rt.CreateGradientStopCollection(stops)
-        Try
-            Return rt.CreateLinearGradientBrush(New LinearGradientBrushProperties(startPt, endPt), gsc)
-        Finally
-            gsc.Dispose()
-        End Try
-    End Function
 #End Region
 
 #Region "通用"
@@ -682,7 +588,8 @@ Public Class ExcellentProgressBar
         End Set
     End Property
 
-    <Category("LakeUI"), Description("显示在进度条上的文字"), DefaultValue(""), Browsable(True)>
+    <Category("LakeUI"), Description("显示在进度条上的文字"), DefaultValue(GetType(String), ""), Browsable(True),
+     DesignerSerializationVisibility(DesignerSerializationVisibility.Visible)>
     Public Overrides Property Text As String
         Get
             Return MyBase.Text
@@ -693,11 +600,29 @@ Public Class ExcellentProgressBar
             请求V3渲染()
         End Set
     End Property
+
+    Private Function ShouldSerializeText() As Boolean
+        Return Not String.IsNullOrEmpty(Text)
+    End Function
+
+    Public Overrides Sub ResetText()
+        Text = String.Empty
+    End Sub
 #End Region
 
 #Region "生命周期"
     Protected Overrides Sub OnFontChanged(e As EventArgs)
         MyBase.OnFontChanged(e)
+        请求V3渲染()
+    End Sub
+
+    Protected Overrides Sub OnForeColorChanged(e As EventArgs)
+        MyBase.OnForeColorChanged(e)
+        请求V3渲染()
+    End Sub
+
+    Protected Overrides Sub OnPaddingChanged(e As EventArgs)
+        MyBase.OnPaddingChanged(e)
         请求V3渲染()
     End Sub
 #End Region
