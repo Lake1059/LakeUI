@@ -1524,46 +1524,6 @@ Public Class ModernListBox
         context.DrawRoundedRectangle(rect, radius, brush, strokeWidth)
     End Sub
 
-    Private Function CreateContentClip_D2D(rt As ID2D1RenderTarget, hasRadius As Boolean, s As Single) As D2DContentClipScope
-        Dim inset As Integer = 获取边框内边距()
-        Dim clipRect As New RectangleF(inset, inset, Math.Max(0, Width - inset * 2), Math.Max(0, Height - inset * 2))
-        Dim radius As Single = If(hasRadius, Math.Max(0, 边框圆角半径 * s - 边框宽度 * s), 0)
-        Return New D2DContentClipScope(rt, clipRect, radius)
-    End Function
-
-    Private NotInheritable Class D2DContentClipScope
-        Implements IDisposable
-
-        Private ReadOnly _rt As ID2D1RenderTarget
-        Private ReadOnly _usesLayer As Boolean
-        Private ReadOnly _geo As ID2D1Geometry
-        Private ReadOnly _active As Boolean
-
-        Public Sub New(rt As ID2D1RenderTarget, clipRect As RectangleF, radius As Single)
-            If rt Is Nothing OrElse clipRect.Width <= 0 OrElse clipRect.Height <= 0 Then Return
-            _rt = rt
-            If radius > 0 Then
-                _geo = D3D_RectangleRenderer.创建圆角矩形几何(clipRect, radius)
-                D3D_D2DInterop.PushGeometryClip(rt, _geo, clipRect)
-                _usesLayer = True
-            Else
-                rt.PushAxisAlignedClip(New Vortice.RawRectF(clipRect.X, clipRect.Y, clipRect.Right, clipRect.Bottom), AntialiasMode.PerPrimitive)
-            End If
-            _active = True
-        End Sub
-
-        Public Sub Dispose() Implements IDisposable.Dispose
-            If _active Then
-                If _usesLayer Then
-                    _rt.PopLayer()
-                Else
-                    _rt.PopAxisAlignedClip()
-                End If
-            End If
-            If _geo IsNot Nothing Then _geo.Dispose()
-        End Sub
-    End Class
-
     Private Sub 预计算滚动条布局()
         If _items.Count = 0 Then
             _scrollBar.ThumbRect = Rectangle.Empty

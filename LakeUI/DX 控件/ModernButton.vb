@@ -256,65 +256,6 @@ Public Class ModernButton
         context.DeviceContext.PushLayer(parameters, Nothing)
     End Sub
 
-
-
-
-
-
-    Private Sub 绘制文本_D2D(rt As ID2D1DCRenderTarget, 内容矩形区域 As RectangleF, 图标宽度 As Single, s As Single, textFormatCache As D3D_D2DInterop.TextFormatCache, brushCache As D3D_D2DInterop.SolidColorBrushCache)
-        Dim _图标边距 As Single = 图标边距 * s
-        Dim _边框圆角半径 As Single = 边框圆角半径 * s
-        Dim 图标占用总宽度 As Single = If(图标宽度 > 0, 图标宽度 + _图标边距, 0)
-        Dim 文本绘制区域 As New RectangleF(
-            内容矩形区域.X + 图标占用总宽度 + _边框圆角半径,
-            内容矩形区域.Y,
-            内容矩形区域.Width - 图标占用总宽度 - _边框圆角半径 * 2,
-            内容矩形区域.Height)
-        If 文本绘制区域.Width <= 0 OrElse 文本绘制区域.Height <= 0 Then Return
-
-        Dim align As Vortice.DirectWrite.TextAlignment
-        Select Case 文字对齐方位
-            Case TextAlignEnum.Left : align = Vortice.DirectWrite.TextAlignment.Leading
-            Case TextAlignEnum.Right : align = Vortice.DirectWrite.TextAlignment.Trailing
-            Case Else : align = Vortice.DirectWrite.TextAlignment.Center
-        End Select
-
-        Dim mainTextInfo = 解析助记键文本(If(MyBase.Text, ""))
-        Dim mainText As String = mainTextInfo.DisplayText
-        If String.IsNullOrEmpty(mainText) AndAlso String.IsNullOrEmpty(次要文本) Then Return
-        ' 控件 Font 可能已被 WinForms AutoScale 修改，DirectWrite 字号统一交给 D3D_D2DInterop 推断基准 DPI。
-        Dim mainSizePx As Single = D3D_D2DInterop.GetDWriteFontSizePx(Me.Font, s)
-        Dim dw = D3D_D2DInterop.GetDWriteFactory()
-
-        If Not String.IsNullOrEmpty(次要文本) Then
-            ' 次要文本字号是独立数值属性，不会被 WinForms 自动缩放，所以按当前 DPI 显式放大。
-            Dim subSizePx As Single = 次要文本字号 * (96.0F / 72.0F) * s
-            Dim mainFmt = textFormatCache.Get(Me.Font, mainSizePx, align, ParagraphAlignment.Near, False)
-            Dim subFmt = textFormatCache.Get(Me.Font.FontFamily.Name, Vortice.DirectWrite.FontWeight.Normal, Vortice.DirectWrite.FontStyle.Normal, subSizePx, align, ParagraphAlignment.Near, False)
-            Using mainLayout = dw.CreateTextLayout(mainText, mainFmt, 文本绘制区域.Width, 文本绘制区域.Height)
-                Using subLayout = dw.CreateTextLayout(次要文本, subFmt, 文本绘制区域.Width, 文本绘制区域.Height)
-                    应用助记键下划线(mainLayout, mainTextInfo.MnemonicIndex)
-                    Dim mm = mainLayout.Metrics
-                    Dim sm = subLayout.Metrics
-                    Dim _主次文本间距 As Single = 主次文本间距 * s
-                    Dim totalH As Single = mm.Height + _主次文本间距 + sm.Height
-                    Dim startY As Single = 文本绘制区域.Y + (文本绘制区域.Height - totalH) / 2.0F
-                    Dim fb1 = brushCache.Get(rt, 文本颜色)
-                    Dim fb2 = brushCache.Get(rt, 次要文本颜色)
-                    If fb1 IsNot Nothing Then rt.DrawTextLayout(New Vector2(文本绘制区域.X, startY), mainLayout, fb1)
-                    If fb2 IsNot Nothing Then rt.DrawTextLayout(New Vector2(文本绘制区域.X, startY + mm.Height + _主次文本间距), subLayout, fb2)
-                End Using
-            End Using
-        Else
-            Dim mainFmt = textFormatCache.Get(Me.Font, mainSizePx, align, ParagraphAlignment.Center, False)
-            Using mainLayout = dw.CreateTextLayout(mainText, mainFmt, 文本绘制区域.Width, 文本绘制区域.Height)
-                应用助记键下划线(mainLayout, mainTextInfo.MnemonicIndex)
-                Dim fb = brushCache.Get(rt, 文本颜色)
-                If fb IsNot Nothing Then rt.DrawTextLayout(New Vector2(文本绘制区域.X, 文本绘制区域.Y), mainLayout, fb)
-            End Using
-        End If
-    End Sub
-
     Private Structure 助记键文本信息
         Public DisplayText As String
         Public MnemonicIndex As Integer

@@ -430,8 +430,8 @@ Friend Class V3_AnimationHelper
         Private _droppedInvalidates As Long
 
         Public Sub New()
-            _timer.DispatchMode = PrecisionTimer.DispatchModeEnum.NonBlocking
-            _timer.OverrunPolicy = PrecisionTimer.OverrunPolicyEnum.Drop
+            _timer.DispatchMode = PrecisionTimer.DispatchModeEnum.Blocking
+            _timer.OverrunPolicy = PrecisionTimer.OverrunPolicyEnum.Queue
             _timer.WorkerThreadCount = 1
             AddHandler _timer.Tick, AddressOf TimerTick
         End Sub

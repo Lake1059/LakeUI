@@ -1420,42 +1420,6 @@ Public Class ModernComboBox
     End Sub
 
 
-    Private Sub 绘制背景_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache, hasRadius As Boolean, boundsRect As RectangleF, bgClr As Color, bgClr2 As Color)
-        ' BackColor 半透明遮罩层：位于背景层之上、状态填充色之下。
-        Dim backColorMask As Color = MyBase.BackColor
-        Dim hasMask As Boolean = backColorMask.A > 0 AndAlso backColorMask.A < 255
-        Dim hasFill As Boolean = bgClr.A > 0 OrElse (bgClr2 <> Color.Empty AndAlso bgClr2.A > 0)
-        Dim arrowBgClr As Color = Color.Empty
-        Dim arrowBgClr2 As Color = Color.Empty
-        Dim hasArrowFill As Boolean = 获取箭头区域背景颜色(arrowBgClr, arrowBgClr2)
-        If Not hasMask AndAlso Not hasFill AndAlso Not hasArrowFill Then Return
-        Dim s As Single = DpiScale()
-        Dim fillRect As RectangleF = boundsRect
-
-        If hasArrowFill Then
-            绘制分区背景_D2D(rt, brushCache, hasRadius, fillRect, s, hasMask, backColorMask, hasFill, bgClr, bgClr2, arrowBgClr, arrowBgClr2)
-            Return
-        End If
-
-        If hasRadius Then
-            Using geo = D3D_RectangleRenderer.创建圆角矩形几何(fillRect, 边框圆角半径 * s)
-                If hasMask Then
-                    D3D_RectangleRenderer.绘制圆角背景_D2D(rt, geo, fillRect, backColorMask, Color.Empty, 渐变方向, brushCache)
-                End If
-                If hasFill Then
-                    D3D_RectangleRenderer.绘制圆角背景_D2D(rt, geo, fillRect, bgClr, bgClr2, 渐变方向, brushCache)
-                End If
-            End Using
-        Else
-            If hasMask Then
-                D3D_RectangleRenderer.绘制矩形背景_D2D(rt, fillRect, backColorMask, Color.Empty, 渐变方向, brushCache)
-            End If
-            If hasFill Then
-                D3D_RectangleRenderer.绘制矩形背景_D2D(rt, fillRect, bgClr, bgClr2, 渐变方向, brushCache)
-            End If
-        End If
-    End Sub
-
     Private Function 获取箭头区域背景颜色(ByRef bgClr As Color, ByRef bgClr2 As Color) As Boolean
         bgClr = Color.Empty
         bgClr2 = Color.Empty
@@ -1473,152 +1437,16 @@ Public Class ModernComboBox
         Return bgClr.A > 0 OrElse (bgClr2 <> Color.Empty AndAlso bgClr2.A > 0)
     End Function
 
-    Private Sub 绘制分区背景_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache, hasRadius As Boolean, fillRect As RectangleF, s As Single,
-                               hasMask As Boolean, backColorMask As Color,
-                               hasBodyFill As Boolean, bodyBgClr As Color, bodyBgClr2 As Color,
-                               arrowBgClr As Color, arrowBgClr2 As Color)
-        Dim arrowRect As RectangleF = 获取箭头区域背景矩形(fillRect)
-        Dim bodyRect As New RectangleF(fillRect.X, fillRect.Y,
-                                       Math.Max(0, arrowRect.X - fillRect.X),
-                                       fillRect.Height)
-
-        If hasRadius Then
-            Using geo = D3D_RectangleRenderer.创建圆角矩形几何(fillRect, 边框圆角半径 * s)
-                If hasMask Then
-                    D3D_RectangleRenderer.绘制圆角背景_D2D(rt, geo, fillRect, backColorMask, Color.Empty, 渐变方向, brushCache)
-                End If
-                If hasBodyFill Then
-                    绘制裁剪背景_D2D(rt, brushCache, bodyRect, geo, fillRect, bodyBgClr, bodyBgClr2)
-                End If
-                绘制裁剪背景_D2D(rt, brushCache, arrowRect, geo, arrowRect, arrowBgClr, arrowBgClr2)
-            End Using
-        Else
-            If hasMask Then
-                D3D_RectangleRenderer.绘制矩形背景_D2D(rt, fillRect, backColorMask, Color.Empty, 渐变方向, brushCache)
-            End If
-            If hasBodyFill Then
-                绘制裁剪背景_D2D(rt, brushCache, bodyRect, Nothing, fillRect, bodyBgClr, bodyBgClr2)
-            End If
-            绘制裁剪背景_D2D(rt, brushCache, arrowRect, Nothing, arrowRect, arrowBgClr, arrowBgClr2)
-        End If
-    End Sub
-
     Private Function 获取箭头区域背景矩形(fillRect As RectangleF) As RectangleF
         Dim arrowX As Single = Math.Max(fillRect.X, ClientRectangle.Width - ArrowAreaWidth)
         Dim arrowRight As Single = fillRect.Right
         Return New RectangleF(arrowX, fillRect.Y, Math.Max(0, arrowRight - arrowX), fillRect.Height)
     End Function
 
-    Private Sub 绘制裁剪背景_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache, clipRect As RectangleF, geo As ID2D1Geometry,
-                              brushBounds As RectangleF, bgClr As Color, bgClr2 As Color)
-        If clipRect.Width <= 0 OrElse clipRect.Height <= 0 Then Return
-        If bgClr.A = 0 AndAlso (bgClr2 = Color.Empty OrElse bgClr2.A = 0) Then Return
-
-        rt.PushAxisAlignedClip(New Vortice.RawRectF(clipRect.X, clipRect.Y, clipRect.Right, clipRect.Bottom), AntialiasMode.PerPrimitive)
-        Try
-            If geo IsNot Nothing Then
-                D3D_RectangleRenderer.绘制圆角背景_D2D(rt, geo, brushBounds, bgClr, bgClr2, 渐变方向, brushCache)
-            Else
-                D3D_RectangleRenderer.绘制矩形背景_D2D(rt, brushBounds, bgClr, bgClr2, 渐变方向, brushCache)
-            End If
-        Finally
-            rt.PopAxisAlignedClip()
-        End Try
-    End Sub
-
-    Private Sub 绘制边框_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache, hasRadius As Boolean, boundsRect As RectangleF, borderClr As Color)
-        If 边框宽度 <= 0 OrElse borderClr.A = 0 Then Return
-        Dim s As Single = DpiScale()
-        If hasRadius Then
-            D3D_RectangleRenderer.绘制圆角边框_D2D(rt, boundsRect, 边框圆角半径 * s, borderClr, 边框宽度 * s, brushCache)
-        Else
-            D3D_RectangleRenderer.绘制矩形边框_D2D(rt, boundsRect, borderClr, 边框宽度 * s, brushCache)
-        End If
-    End Sub
-
     Private Function GetBorderRenderRect(boundsRect As RectangleF) As RectangleF
         Return boundsRect
     End Function
 
-
-    Private Sub 绘制分隔线与箭头_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache, w As Integer, h As Integer, borderClr As Color)
-        Dim s As Single = DpiScale()
-        Dim aaw As Integer = ArrowAreaWidth
-        Dim bi As Integer = CInt(边框宽度 * s)
-        Dim sepX As Single = w - aaw - If(bi > 0, bi / 2.0F, 0)
-        Dim topInset As Integer = Math.Max(Padding.Top, bi)
-        Dim bottomInset As Integer = Math.Max(Padding.Bottom, bi)
-
-        ' 分隔线
-        If 显示分隔线 AndAlso 边框宽度 > 0 Then
-            Dim br = brushCache.Get(rt, borderClr)
-            rt.DrawLine(New Vector2(sepX, topInset), New Vector2(sepX, h - bottomInset), br, 边框宽度 * s)
-        End If
-
-        ' 箭头颜色解析
-        Dim effArrowClr As Color = 箭头颜色
-        Dim isArrowActive As Boolean = Not 启用编辑 OrElse _mouseOverArrow
-        If isArrowActive Then
-            Select Case 鼠标状态
-                Case MouseStateEnum.Hover
-                    If 鼠标移上时箭头颜色 <> Color.Empty Then effArrowClr = 鼠标移上时箭头颜色
-                Case MouseStateEnum.Pressed
-                    If 鼠标按下时箭头颜色 <> Color.Empty Then effArrowClr = 鼠标按下时箭头颜色
-            End Select
-        End If
-        If effArrowClr.A = 0 Then Return
-
-        ' 箭头几何（圆角三角形 PathGeometry）
-        Dim squareLeft As Single = w - aaw
-        Dim centerX As Single = squareLeft + aaw / 2.0F
-        Dim centerY As Single = h / 2.0F
-        Dim scaledArrow As Single = 箭头大小 * s
-        Dim arrW As Single = scaledArrow
-        Dim arrH As Single = CSng(scaledArrow * Math.Sqrt(3.0) / 2.0)
-        Dim verts() As PointF = {
-            New PointF(centerX - arrW / 2.0F, centerY - arrH / 2.0F),
-            New PointF(centerX + arrW / 2.0F, centerY - arrH / 2.0F),
-            New PointF(centerX, centerY + arrH / 2.0F)
-        }
-        Dim cr As Single = Math.Max(scaledArrow * 0.2F, 1.0F)
-
-        Dim path As ID2D1PathGeometry = D3D_RenderCore.DeviceManager.D2DFactory.CreatePathGeometry()
-        Dim sink As ID2D1GeometrySink = path.Open()
-        Try
-            Dim firstA As Vector2 = Nothing
-            For i As Integer = 0 To 2
-                Dim curr As PointF = verts(i)
-                Dim prv As PointF = verts((i + 2) Mod 3)
-                Dim nxt As PointF = verts((i + 1) Mod 3)
-                Dim d1x As Single = prv.X - curr.X, d1y As Single = prv.Y - curr.Y
-                Dim d2x As Single = nxt.X - curr.X, d2y As Single = nxt.Y - curr.Y
-                Dim l1 As Single = CSng(Math.Sqrt(d1x * d1x + d1y * d1y))
-                Dim l2 As Single = CSng(Math.Sqrt(d2x * d2x + d2y * d2y))
-                Dim a As New Vector2(curr.X + cr * d1x / l1, curr.Y + cr * d1y / l1)
-                Dim b As New Vector2(curr.X + cr * d2x / l2, curr.Y + cr * d2y / l2)
-                Dim cp1 As New Vector2(a.X + 2.0F / 3.0F * (curr.X - a.X), a.Y + 2.0F / 3.0F * (curr.Y - a.Y))
-                Dim cp2 As New Vector2(b.X + 2.0F / 3.0F * (curr.X - b.X), b.Y + 2.0F / 3.0F * (curr.Y - b.Y))
-                If i = 0 Then
-                    sink.BeginFigure(a, FigureBegin.Filled)
-                    firstA = a
-                Else
-                    sink.AddLine(a)
-                End If
-                sink.AddBezier(New BezierSegment With {.Point1 = cp1, .Point2 = cp2, .Point3 = b})
-            Next
-            sink.EndFigure(FigureEnd.Closed)
-            sink.Close()
-        Finally
-            sink.Dispose()
-        End Try
-
-        Try
-            Dim br = brushCache.Get(rt, effArrowClr)
-            rt.FillGeometry(path, br)
-        Finally
-            path.Dispose()
-        End Try
-    End Sub
 
 #End Region
 
@@ -2564,92 +2392,6 @@ Public Class ModernComboBox
         End Sub
 
 
-        Private Sub DrawDropDownBackground_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache, backColor As Color, bw As Integer, w As Integer, h As Integer, fillBackground As Boolean)
-            If fillBackground Then
-                Dim br = brushCache.Get(rt, backColor)
-                rt.FillRectangle(New Vortice.Mathematics.Rect(0, 0, w, h), br)
-            End If
-
-            If bw > 0 AndAlso _owner.下拉边框颜色.A > 0 Then
-                DrawDropDownBorder_D2D(rt, brushCache, w, h, bw)
-            End If
-        End Sub
-
-        Private Sub DrawDropDownBorder_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache, w As Integer, h As Integer, bw As Integer)
-            Dim border As Integer = Math.Min(bw, Math.Min(w, h))
-            If border <= 0 Then Return
-
-            Dim br = brushCache.Get(rt, _owner.下拉边框颜色)
-            rt.FillRectangle(New Vortice.Mathematics.Rect(0, 0, w, border), br)
-            If h > border Then rt.FillRectangle(New Vortice.Mathematics.Rect(0, h - border, w, border), br)
-
-            Dim middleHeight As Integer = h - border * 2
-            If middleHeight > 0 Then
-                rt.FillRectangle(New Vortice.Mathematics.Rect(0, border, border, middleHeight), br)
-                If w > border Then rt.FillRectangle(New Vortice.Mathematics.Rect(w - border, border, border, middleHeight), br)
-            End If
-        End Sub
-
-        Private Sub 绘制悬停焦点_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache, w As Integer, layout As DropDownLayout)
-            Dim highlightColor As Color = 获取悬停焦点颜色()
-            If highlightColor.A = 0 Then Return
-
-            Dim highlightRect As RectangleF = 获取悬停焦点矩形(w, layout)
-            If highlightRect.Width <= 0 OrElse highlightRect.Height <= 0 Then Return
-
-            D3D_RectangleRenderer.绘制圆角背景_D2D(rt, highlightRect, 获取悬停焦点圆角(highlightRect),
-                                             highlightColor, Color.Empty,
-                                             System.Windows.Forms.Orientation.Horizontal,
-                                             brushCache)
-        End Sub
-
-        Private Sub DrawDropDownItems_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache,
-                                          textFormatCache As D3D_D2DInterop.TextFormatCache,
-                                          w As Integer, h As Integer, layout As DropDownLayout)
-            Dim s As Single = _owner.DpiScale()
-            Dim clipRect As RectangleF = layout.ClipRect(w, h)
-            If clipRect.Width <= 0 OrElse clipRect.Height <= 0 Then Return
-            Dim selectedBrush = If(_owner.下拉选中颜色.A > 0, brushCache.Get(rt, _owner.下拉选中颜色), Nothing)
-            rt.PushAxisAlignedClip(New Vortice.RawRectF(clipRect.X, clipRect.Y, clipRect.Right, clipRect.Bottom), AntialiasMode.PerPrimitive)
-            Try
-                For i As Integer = 0 To layout.VisCount - 1
-                    Dim idx As Integer = i + _scrollOffset
-                    If idx >= _owner._items.Count Then Exit For
-                    Dim itemRect As RectangleF = layout.ItemRect(w, i)
-
-                    If idx = _owner._selectedIndex AndAlso selectedBrush IsNot Nothing Then
-                        rt.FillRectangle(D3D_D2DInterop.ToD2DRect(itemRect), selectedBrush)
-                    End If
-                Next
-
-                绘制悬停焦点_D2D(rt, brushCache, w, layout)
-
-                For i As Integer = 0 To layout.VisCount - 1
-                    Dim idx As Integer = i + _scrollOffset
-                    If idx >= _owner._items.Count Then Exit For
-                    Dim itemRect As RectangleF = layout.ItemRect(w, i)
-                    Dim textColor As Color = If(idx = _owner._selectedIndex AndAlso _owner.下拉选中文字颜色 <> Color.Empty,
-                        _owner.下拉选中文字颜色,
-                        _owner.ForeColor)
-                    DrawSingleLineText_D2D(rt, _owner._items(idx), _owner.Font, textColor,
-                        layout.TextRect(itemRect), s, True, textFormatCache, brushCache)
-                Next
-            Finally
-                rt.PopAxisAlignedClip()
-            End Try
-        End Sub
-
-        Private Sub DrawDropDownScrollBar_D2D(rt As ID2D1RenderTarget,
-                                              brushCache As D3D_D2DInterop.SolidColorBrushCache,
-                                              w As Integer, h As Integer, bw As Integer)
-            If Not _scrollBarVisible OrElse _scrollBar.TrackRect.IsEmpty Then Return
-            _scrollBar.Draw_D2D(rt, w, h, bw, 0, _owner.下拉滚动条宽度,
-                _owner.下拉滚动条轨道颜色,
-                _owner.下拉滚动条颜色,
-                _owner.下拉滚动条悬停颜色,
-                brushCache)
-        End Sub
-
         Private Function GetItemIndexAtY(y As Integer) As Integer
             Dim layout As New DropDownLayout(Me, ClientRectangle.Width)
             Dim localY As Integer = y - layout.Bw - layout.Pad.Top
@@ -2907,13 +2649,6 @@ Public Class ModernComboBox
         If _updateCount > 0 Then Return
         _updateCount = 0
         If invalidateAfter Then 请求V3渲染()
-    End Sub
-
-    Private Shared Sub DrawSingleLineText_D2D(rt As ID2D1RenderTarget, text As String, font As Font, foreColor As Color,
-                                              rect As RectangleF, dpiScale As Single, endEllipsis As Boolean,
-                                              Optional textFormatCache As D3D_D2DInterop.TextFormatCache = Nothing,
-                                              Optional brushCache As D3D_D2DInterop.SolidColorBrushCache = Nothing)
-        SingleLineTextBoxRenderer.DrawSingleLineText_D2D(rt, text, font, foreColor, rect, dpiScale, endEllipsis, textFormatCache, brushCache)
     End Sub
 
     Private Function CreateToolTipStyle() As FloatingToolTipStyle

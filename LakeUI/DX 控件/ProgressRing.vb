@@ -76,9 +76,12 @@ Public Class ProgressRing
 
     Private Sub 绘制Win11样式_GPU(context As D3D_PaintContext)
         Dim s As Single = DpiScale()
-        Dim 中心X As Single = Me.Width / 2.0F
-        Dim 中心Y As Single = Me.Height / 2.0F
-        Dim 半径 As Single = Math.Min(中心X, 中心Y) - 1
+        Dim 绘制区域 As RectangleF = 获取内容绘制区域()
+        If 绘制区域.Width <= 0.0F OrElse 绘制区域.Height <= 0.0F Then Return
+
+        Dim 中心X As Single = 绘制区域.X + 绘制区域.Width / 2.0F
+        Dim 中心Y As Single = 绘制区域.Y + 绘制区域.Height / 2.0F
+        Dim 半径 As Single = Math.Min(绘制区域.Width, 绘制区域.Height) / 2.0F - 1
         Dim 画笔宽度 As Single = 圆弧厚度值 * s
         If 画笔宽度 >= 半径 Then 画笔宽度 = 半径 - 1
         If 画笔宽度 < 0.5F Then Return
@@ -122,15 +125,20 @@ Public Class ProgressRing
 
         Using geo = 创建圆弧几何(绘制矩形, startAngle, sweepAngle)
             Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, 圆弧颜色, context.DeviceGeneration)
-            context.DeviceContext.DrawGeometry(geo, brush, 画笔宽度, 获取圆头描边样式())
+            Using strokeStyle = 创建圆头描边样式_GPU()
+                context.DeviceContext.DrawGeometry(geo, brush, 画笔宽度, strokeStyle)
+            End Using
         End Using
     End Sub
 
     Private Sub 绘制Win10样式_GPU(context As D3D_PaintContext)
         Dim s As Single = DpiScale()
-        Dim 中心X As Single = Me.Width / 2.0F
-        Dim 中心Y As Single = Me.Height / 2.0F
-        Dim 半径 As Single = Math.Min(中心X, 中心Y) - 1
+        Dim 绘制区域 As RectangleF = 获取内容绘制区域()
+        If 绘制区域.Width <= 0.0F OrElse 绘制区域.Height <= 0.0F Then Return
+
+        Dim 中心X As Single = 绘制区域.X + 绘制区域.Width / 2.0F
+        Dim 中心Y As Single = 绘制区域.Y + 绘制区域.Height / 2.0F
+        Dim 半径 As Single = Math.Min(绘制区域.Width, 绘制区域.Height) / 2.0F - 1
         Dim 点直径 As Single = 圆弧厚度值 * s
         If 点直径 >= 半径 Then 点直径 = 半径 - 1
         If 点直径 < 1 Then Return
@@ -153,99 +161,13 @@ Public Class ProgressRing
         Next
     End Sub
 
-
-    Private Sub 绘制Win11样式_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache)
-        Dim s As Single = DpiScale()
-        Dim 中心X As Single = Me.Width / 2.0F
-        Dim 中心Y As Single = Me.Height / 2.0F
-        Dim 半径 As Single = Math.Min(中心X, 中心Y) - 1
-        Dim 画笔宽度 As Single = 圆弧厚度值 * s
-        If 画笔宽度 >= 半径 Then 画笔宽度 = 半径 - 1
-        If 画笔宽度 < 0.5F Then Return
-        Dim 绘制半径 As Single = 半径 - 画笔宽度 / 2.0F
-        If 绘制半径 < 1 Then Return
-
-        Dim 绘制矩形 As New RectangleF(中心X - 绘制半径, 中心Y - 绘制半径, 绘制半径 * 2, 绘制半径 * 2)
-
-        Const minArc As Single = 15.0F
-        Const maxArc As Single = 260.0F
-        Const baseRotation As Single = 535.0F
-        Const sweepRange As Single = maxArc - minArc
-        ' 每周期尾部总位移 = 535 + 245 = 780°，780 mod 360 = 60°
-        ' 弧线最长/最短位置每周期自然漂移 60°
-        Const totalPerCycle As Single = baseRotation + sweepRange
-
-        ' 使用连续时间计算，保证周期间无缝衔接
-        Dim n As Single
-        Dim t As Single
-        If DesignMode Then
-            n = 0 : t = 0.15F
-        ElseIf Not 动画运行中 Then
-            n = 0 : t = 0.0F
-        Else
-            Dim cycles As Double = 秒表.Elapsed.TotalMilliseconds / 动画周期时长
-            ' 每 6 周期角度精确回归（6 × 780 = 13 × 360），取模避免精度损失
-            Dim reduced As Double = cycles Mod 6.0
-            n = CSng(Math.Floor(reduced))
-            t = CSng(reduced - Math.Floor(reduced))
-        End If
-
-        Dim sweepAngle As Single
-        Dim sweepOffset As Single = 0
-
-        If t < 0.5F Then
-            ' 前半段：弧线从短变长（头部快速前进，尾部缓慢跟随）
-            Dim p As Single = 缓动(t * 2.0F)
-            sweepAngle = minArc + sweepRange * p
-        Else
-            ' 后半段：弧线从长变短（尾部追上头部）
-            Dim p As Single = 缓动((t - 0.5F) * 2.0F)
-            sweepAngle = maxArc - sweepRange * p
-            sweepOffset = maxArc - sweepAngle
-        End If
-
-        ' 从12点位置（-90°）开始，连续旋转
-        Dim startAngle As Single = n * totalPerCycle + baseRotation * t + sweepOffset - 90.0F
-        If sweepAngle <= 0.05F Then Return
-
-        Using geo = 创建圆弧几何(绘制矩形, startAngle, sweepAngle)
-            Dim brush = brushCache.[Get](rt, 圆弧颜色)
-            If brush IsNot Nothing Then
-                rt.DrawGeometry(geo, brush, 画笔宽度, 获取圆头描边样式())
-            End If
-        End Using
-    End Sub
-
-    Private Sub 绘制Win10样式_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache)
-        Dim s As Single = DpiScale()
-        Dim 中心X As Single = Me.Width / 2.0F
-        Dim 中心Y As Single = Me.Height / 2.0F
-        Dim 半径 As Single = Math.Min(中心X, 中心Y) - 1
-        Dim 点直径 As Single = 圆弧厚度值 * s
-        If 点直径 >= 半径 Then 点直径 = 半径 - 1
-        If 点直径 < 1 Then Return
-        Dim 轨道半径 As Single = 半径 - 点直径 / 2.0F
-        If 轨道半径 < 1 Then Return
-
-        Dim t As Double = 获取动画进度()
-        Const 点数量 As Integer = 5
-        Const 相位跨度 As Double = 0.25  ' 5个点的相位覆盖范围（占周期的25%）
-        Const A As Double = 0.75         ' 正弦变速幅度，<1 保证速度始终为正
-        ' 正弦变速公式：angle(p) = 720p - (180A/π)·sin(4πp) - 90
-        ' 12点位置慢（圆点聚拢），6点位置快（圆点散开）
-        ' 5个点始终可见，总角度跨度 94°~266°，永远不会互相超越
-
-        Dim brush = brushCache.[Get](rt, 圆弧颜色)
-        If brush Is Nothing Then Return
-        Dim 点半径 As Single = 点直径 / 2.0F
-        For i As Integer = 0 To 点数量 - 1
-            Dim p As Double = (t + CDbl(i) / (点数量 - 1) * 相位跨度) Mod 1.0
-            Dim 角度 As Double = (720.0 * p - (180.0 * A / Math.PI) * Math.Sin(4.0 * Math.PI * p) - 90.0) * Math.PI / 180.0
-            Dim 点X As Single = 中心X + CSng(Math.Cos(角度)) * 轨道半径
-            Dim 点Y As Single = 中心Y + CSng(Math.Sin(角度)) * 轨道半径
-            rt.FillEllipse(New Ellipse(New Vector2(点X, 点Y), 点半径, 点半径), brush)
-        Next
-    End Sub
+    Private Function 获取内容绘制区域() As RectangleF
+        Return New RectangleF(
+            Padding.Left,
+            Padding.Top,
+            Math.Max(0.0F, CSng(Me.Width - Padding.Horizontal)),
+            Math.Max(0.0F, CSng(Me.Height - Padding.Vertical)))
+    End Function
 
     Private Shared Function 创建圆弧几何(rect As RectangleF, startAngle As Single, sweepAngle As Single) As ID2D1PathGeometry
         Dim rx As Single = rect.Width / 2.0F
@@ -257,7 +179,7 @@ Public Class ProgressRing
         Dim startPoint As New Vector2(cx + CSng(Math.Cos(startRad)) * rx, cy + CSng(Math.Sin(startRad)) * ry)
         Dim endPoint As New Vector2(cx + CSng(Math.Cos(endRad)) * rx, cy + CSng(Math.Sin(endRad)) * ry)
 
-        Dim path As ID2D1PathGeometry = D3D_D2DInterop.GetD2DFactory().CreatePathGeometry()
+        Dim path As ID2D1PathGeometry = D3D_RenderCore.DeviceManager.D2DFactory.CreatePathGeometry()
         Dim sink As ID2D1GeometrySink = path.Open()
         Try
             sink.BeginFigure(startPoint, FigureBegin.Hollow)
@@ -374,12 +296,19 @@ Public Class ProgressRing
         End If
     End Sub
 
-    Private Function 获取圆头描边样式() As ID2D1StrokeStyle
-        Return D3D_D2DInterop.GetRoundStrokeStyle()
+    Private Shared Function 创建圆头描边样式_GPU() As ID2D1StrokeStyle
+        Return D3D_RenderCore.DeviceManager.D2DFactory.CreateStrokeStyle(
+            New StrokeStyleProperties With {
+                .StartCap = CapStyle.Round,
+                .EndCap = CapStyle.Round,
+                .DashCap = CapStyle.Flat,
+                .LineJoin = LineJoin.Round,
+                .DashStyle = DashStyle.Solid,
+                .MiterLimit = 10.0F
+            })
     End Function
 
     Private Sub 释放描边样式()
-        ' StrokeStyle 现在由 D3D_D2DInterop 进程级缓存持有；保留此方法以兼容 Designer Dispose 调用。
     End Sub
 
     Protected Overrides Sub OnHandleCreated(e As EventArgs)
@@ -418,6 +347,11 @@ Public Class ProgressRing
 
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
+        请求V3渲染()
+    End Sub
+
+    Protected Overrides Sub OnPaddingChanged(e As EventArgs)
+        MyBase.OnPaddingChanged(e)
         请求V3渲染()
     End Sub
 

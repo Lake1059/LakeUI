@@ -84,30 +84,6 @@ Public Class BooleanSwitch
         context.FillRoundedRectangle(bounds, radius, brush)
     End Sub
 
-    Private Sub 绘制图形内容_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache, 极限矩形区域 As RectangleF)
-        Dim 轨道颜色 As Color = 获取当前轨道颜色()
-        Dim 滑块颜色 As Color = 获取当前滑块颜色()
-        Dim 当前边框颜色 As Color = 获取当前边框颜色()
-
-        Dim 圆角半径 As Single = CSng(Math.Floor(极限矩形区域.Height / 2.0F))
-        Using geo = D3D_RectangleRenderer.创建圆角矩形几何(极限矩形区域, 圆角半径)
-            Dim brush = brushCache.Get(rt, 轨道颜色)
-            If brush IsNot Nothing Then rt.FillGeometry(geo, brush)
-            Dim s As Single = DpiScale()
-            D3D_RectangleRenderer.绘制圆角边框_D2D(rt, geo, 当前边框颜色, 边框宽度 * s, brushCache)
-        End Using
-
-        Dim _滑块边距 As Single = 滑块边距值 * DpiScale()
-        Dim 滑块直径 As Single = 极限矩形区域.Height - _滑块边距 * 2
-        If 滑块直径 <= 0 Then Return
-        Dim 滑块最小X As Single = 极限矩形区域.X + _滑块边距
-        Dim 滑块最大X As Single = 极限矩形区域.Right - _滑块边距 - 滑块直径
-        Dim 滑块X As Single = 滑块最小X + (滑块最大X - 滑块最小X) * 动画助手.Progress
-        Dim 滑块Y As Single = 极限矩形区域.Y + _滑块边距
-        Dim 滑块区域 As New RectangleF(滑块X, 滑块Y, 滑块直径, 滑块直径)
-        D3D_RectangleRenderer.填充椭圆_D2D(rt, 滑块区域, 滑块颜色, brushCache)
-    End Sub
-
     Private Function 获取当前轨道颜色() As Color
         Return 颜色插值(获取状态轨道颜色(False), 获取状态轨道颜色(True), 动画助手.Progress)
     End Function

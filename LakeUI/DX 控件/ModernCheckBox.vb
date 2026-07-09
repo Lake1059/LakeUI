@@ -131,11 +131,25 @@ Public Class ModernCheckBox
 
         Try
             Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, 当前勾号色, context.DeviceGeneration)
-            context.DeviceContext.DrawGeometry(path, brush, 勾号线宽 * s, D3D_D2DInterop.GetRoundStrokeStyle())
+            Using strokeStyle As ID2D1StrokeStyle = 创建圆头描边样式_GPU()
+                context.DeviceContext.DrawGeometry(path, brush, 勾号线宽 * s, strokeStyle)
+            End Using
         Finally
             path.Dispose()
         End Try
     End Sub
+
+    Private Shared Function 创建圆头描边样式_GPU() As ID2D1StrokeStyle
+        Return D3D_RenderCore.DeviceManager.D2DFactory.CreateStrokeStyle(
+            New StrokeStyleProperties With {
+                .StartCap = CapStyle.Round,
+                .EndCap = CapStyle.Round,
+                .DashCap = CapStyle.Flat,
+                .LineJoin = LineJoin.Round,
+                .DashStyle = DashStyle.Solid,
+                .MiterLimit = 10.0F
+            })
+    End Function
 
     Private Sub 绘制圆框_GPU(context As D3D_PaintContext, 框区域 As RectangleF, 背景色 As Color, 边框色 As Color, 边框宽 As Single, s As Single)
         填充椭圆_GPU(context, 框区域, 背景色)
@@ -166,21 +180,19 @@ Public Class ModernCheckBox
         Dim mainText As String = If(MyBase.Text, "")
         If String.IsNullOrEmpty(mainText) AndAlso String.IsNullOrEmpty(次要文本) Then Return
 
-        Dim 框区域 As RectangleF = 计算框区域(s)
-        Dim 框中心Y As Single = 框区域.Y + 框区域.Height / 2.0F
+        Dim mainY As Single = 计算主文本Y(s)
 
         If Not String.IsNullOrEmpty(次要文本) Then
             Dim mainH As Single = 获取主文本行高()
             Dim subH As Single = 获取次文本行高()
             Dim gap As Single = 主次文本间距 * s
-            Dim totalH As Single = mainH + gap + subH
-            Dim startY As Single = 框中心Y - totalH / 2.0F
-            context.DrawText(mainText, Me.Font, 文本颜色, New RectangleF(文本X, startY, 文本可用宽度, mainH), Vortice.DirectWrite.TextAlignment.Leading, Vortice.DirectWrite.ParagraphAlignment.Near)
+            context.DrawText(mainText, Me.Font, 文本颜色, New RectangleF(文本X, mainY, 文本可用宽度, mainH), Vortice.DirectWrite.TextAlignment.Leading, Vortice.DirectWrite.ParagraphAlignment.Near)
             Using subFont As New Font(Me.Font.FontFamily, 次要文本字号, FontStyle.Regular)
-                context.DrawText(次要文本, subFont, 次要文本颜色, New RectangleF(文本X, startY + mainH + gap, 文本可用宽度, subH), Vortice.DirectWrite.TextAlignment.Leading, Vortice.DirectWrite.ParagraphAlignment.Near)
+                context.DrawText(次要文本, subFont, 次要文本颜色, New RectangleF(文本X, mainY + mainH + gap, 文本可用宽度, subH), Vortice.DirectWrite.TextAlignment.Leading, Vortice.DirectWrite.ParagraphAlignment.Near)
             End Using
         Else
-            context.DrawText(mainText, Me.Font, 文本颜色, New RectangleF(文本X, Me.Padding.Top, 文本可用宽度, Math.Max(1, Me.Height - Me.Padding.Vertical)), Vortice.DirectWrite.TextAlignment.Leading, Vortice.DirectWrite.ParagraphAlignment.Center)
+            Dim mainH As Single = 获取主文本行高()
+            context.DrawText(mainText, Me.Font, 文本颜色, New RectangleF(文本X, mainY, 文本可用宽度, mainH), Vortice.DirectWrite.TextAlignment.Leading, Vortice.DirectWrite.ParagraphAlignment.Near)
         End If
     End Sub
 
@@ -217,21 +229,6 @@ Public Class ModernCheckBox
     End Sub
 
 
-    Private Sub 绘制图形内容_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache)
-        Dim s As Single = DpiScale()
-        Dim 当前框边框宽度 As Single = 框边框宽度 * s
-        Dim 框区域 As RectangleF = 计算框区域(s)
-
-        Dim 当前框背景色 As Color = 获取当前框背景颜色()
-        Dim 当前框边框色 As Color = 获取鼠标状态颜色(框边框颜色值, 鼠标移上时框边框颜色, 鼠标按下时框边框颜色)
-
-        If 当前模式 = CheckModeEnum.CheckBox Then
-            绘制方框_D2D(rt, brushCache, 框区域, 当前框背景色, 当前框边框色, 当前框边框宽度, s)
-        Else
-            绘制圆框_D2D(rt, brushCache, 框区域, 当前框背景色, 当前框边框色, 当前框边框宽度, s)
-        End If
-    End Sub
-
     Private Function 计算主文本Y(s As Single) As Single
         Dim 主文本高度 As Integer = 获取主文本行高()
         If Not String.IsNullOrEmpty(次要文本) Then
@@ -263,140 +260,6 @@ Public Class ModernCheckBox
             框区域.Width + 框边框宽度 * s,
             框区域.Height + 框边框宽度 * s)
     End Function
-
-    Private Sub 绘制禁用遮罩_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache)
-        If Enabled OrElse 禁用时遮罩颜色.A <= 0 Then Return
-
-        Dim s As Single = DpiScale()
-        Dim 边框偏移 As Single = 框边框宽度 * s / 2.0F
-        Dim 遮罩区域 As RectangleF = 计算框外缘区域(s)
-        If 当前模式 = CheckModeEnum.CheckBox Then
-            Dim 圆角 As Single = 框圆角半径 * s + 边框偏移
-            If 圆角 > 0 Then
-                Using geo = D3D_RectangleRenderer.创建圆角矩形几何(遮罩区域, 圆角)
-                    D3D_RectangleRenderer.绘制圆角背景_D2D(rt, geo, 遮罩区域, 禁用时遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Vertical, brushCache)
-                End Using
-            Else
-                D3D_RectangleRenderer.绘制矩形背景_D2D(rt, 遮罩区域, 禁用时遮罩颜色, Color.Empty, System.Windows.Forms.Orientation.Vertical, brushCache)
-            End If
-        Else
-            Dim brush = brushCache.Get(rt, 禁用时遮罩颜色)
-            If brush Is Nothing Then Return
-
-            Dim ellipse As New Ellipse(
-                New Vector2(遮罩区域.X + 遮罩区域.Width / 2.0F, 遮罩区域.Y + 遮罩区域.Height / 2.0F),
-                遮罩区域.Width / 2.0F,
-                遮罩区域.Height / 2.0F)
-            rt.FillEllipse(ellipse, brush)
-        End If
-    End Sub
-
-    Private Sub 绘制方框_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache, 框区域 As RectangleF, 背景色 As Color, 边框色 As Color, 边框宽 As Single, s As Single)
-        Dim 圆角 As Single = 框圆角半径 * s
-        If 圆角 > 0 Then
-            Using geo = D3D_RectangleRenderer.创建圆角矩形几何(框区域, 圆角)
-                If 背景色.A > 0 Then
-                    Dim brush = brushCache.Get(rt, 背景色)
-                    If brush IsNot Nothing Then rt.FillGeometry(geo, brush)
-                End If
-                If 边框宽 > 0 AndAlso 边框色.A > 0 Then
-                    Dim brush = brushCache.Get(rt, 边框色)
-                    If brush IsNot Nothing Then rt.DrawGeometry(geo, brush, 边框宽)
-                End If
-            End Using
-        Else
-            If 背景色.A > 0 Then
-                Dim brush = brushCache.Get(rt, 背景色)
-                If brush IsNot Nothing Then rt.FillRectangle(D3D_D2DInterop.ToD2DRect(框区域), brush)
-            End If
-            If 边框宽 > 0 AndAlso 边框色.A > 0 Then
-                Dim brush = brushCache.Get(rt, 边框色)
-                If brush IsNot Nothing Then rt.DrawRectangle(D3D_D2DInterop.ToD2DRect(框区域), brush, 边框宽)
-            End If
-        End If
-        ' 绘制勾号笔迹动画
-        Dim progress As Single = 动画助手.Progress
-        If progress > 0.001F Then
-            绘制勾号_D2D(rt, brushCache, 框区域, progress, s)
-        End If
-    End Sub
-
-    Private Sub 绘制勾号_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache, 框区域 As RectangleF, progress As Single, s As Single)
-        Dim 当前勾号色 As Color = 获取鼠标状态颜色(勾号颜色值, 鼠标移上时勾号颜色, 鼠标按下时勾号颜色)
-        Dim 内边距 As Single = 框内边距 * s + 框边框宽度 * s / 2.0F
-        Dim x1 As Single = 框区域.X + 内边距
-        Dim y1 As Single = 框区域.Y + 框区域.Height * 0.5F
-        Dim x2 As Single = 框区域.X + 框区域.Width * 0.4F
-        Dim y2 As Single = 框区域.Bottom - 内边距
-        Dim x3 As Single = 框区域.Right - 内边距
-        Dim y3 As Single = 框区域.Y + 内边距
-        Dim 段1长 As Single = CSng(Math.Sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1)))
-        Dim 段2长 As Single = CSng(Math.Sqrt((x3 - x2) * (x3 - x2) + (y3 - y2) * (y3 - y2)))
-        Dim 总长度 As Single = 段1长 + 段2长
-        If 总长度 < 0.01F Then Return
-        Dim 笔宽 As Single = 勾号线宽 * s
-        Dim 可见长度 As Single = 总长度 * progress
-
-        ' 用进度截断的两段折线（动画效果同 GDI 版本）
-        Dim path As ID2D1PathGeometry = D3D_D2DInterop.GetD2DFactory().CreatePathGeometry()
-        Dim sink As ID2D1GeometrySink = path.Open()
-        Try
-            sink.BeginFigure(New Vector2(x1, y1), FigureBegin.Hollow)
-            If 可见长度 <= 段1长 Then
-                Dim t As Single = If(段1长 > 0, 可见长度 / 段1长, 0F)
-                Dim ex As Single = x1 + (x2 - x1) * t
-                Dim ey As Single = y1 + (y2 - y1) * t
-                sink.AddLine(New Vector2(ex, ey))
-            Else
-                sink.AddLine(New Vector2(x2, y2))
-                Dim 剩余 As Single = 可见长度 - 段1长
-                Dim t As Single = If(段2长 > 0, 剩余 / 段2长, 0F)
-                Dim ex As Single = x2 + (x3 - x2) * t
-                Dim ey As Single = y2 + (y3 - y2) * t
-                sink.AddLine(New Vector2(ex, ey))
-            End If
-            sink.EndFigure(FigureEnd.Open)
-            sink.Close()
-        Finally
-            sink.Dispose()
-        End Try
-        Try
-            Dim brush = brushCache.Get(rt, 当前勾号色)
-            If brush Is Nothing Then Return
-            rt.DrawGeometry(path, brush, 笔宽, D3D_D2DInterop.GetRoundStrokeStyle())
-        Finally
-            path.Dispose()
-        End Try
-    End Sub
-
-    Private Sub 绘制圆框_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache, 框区域 As RectangleF, 背景色 As Color, 边框色 As Color, 边框宽 As Single, s As Single)
-        Dim cx As Single = 框区域.X + 框区域.Width / 2.0F
-        Dim cy As Single = 框区域.Y + 框区域.Height / 2.0F
-        Dim rx As Single = 框区域.Width / 2.0F
-        Dim ry As Single = 框区域.Height / 2.0F
-        Dim e As New Ellipse(New Vector2(cx, cy), rx, ry)
-
-        If 背景色.A > 0 Then
-            Dim brush = brushCache.Get(rt, 背景色)
-            If brush IsNot Nothing Then rt.FillEllipse(e, brush)
-        End If
-        If 边框宽 > 0 AndAlso 边框色.A > 0 Then
-            Dim brush = brushCache.Get(rt, 边框色)
-            If brush IsNot Nothing Then rt.DrawEllipse(e, brush, 边框宽)
-        End If
-
-        ' 绘制内圆缩放动画
-        Dim progress As Single = 动画助手.Progress
-        If progress > 0.001F Then
-            Dim 当前勾号色 As Color = 获取鼠标状态颜色(勾号颜色值, 鼠标移上时勾号颜色, 鼠标按下时勾号颜色)
-            Dim 最大半径 As Single = (框区域.Width / 2.0F) - 框内边距 * s - 框边框宽度 * s / 2.0F
-            If 最大半径 < 1 Then 最大半径 = 1
-            Dim 当前半径 As Single = 最大半径 * progress
-            Dim inner As New Ellipse(New Vector2(cx, cy), 当前半径, 当前半径)
-            Dim brush = brushCache.Get(rt, 当前勾号色)
-            If brush IsNot Nothing Then rt.FillEllipse(inner, brush)
-        End If
-    End Sub
 
 #End Region
 

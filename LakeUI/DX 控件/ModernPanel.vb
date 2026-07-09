@@ -1397,18 +1397,6 @@ Public Class ModernPanel
                _backgroundSource IsNot Nothing OrElse MyBase.BackColor.A < 255
     End Function
 
-    Private Function 需要D2D绘制() As Boolean
-        If _backgroundSource IsNot Nothing Then Return True
-        If _image IsNot Nothing Then Return True
-        If 背景颜色.A > 0 Then Return True
-        If 遮罩颜色.A > 0 Then Return True
-        If 边框圆角半径 > 0 Then Return True
-        If 边框宽度 > 0 AndAlso 边框颜色.A > 0 Then Return True
-        If MyBase.BackColor.A > 0 AndAlso MyBase.BackColor.A < 255 Then Return True
-        If _showVScroll OrElse _showHScroll Then Return True
-        Return False
-    End Function
-
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
         If _backgroundSource IsNot Nothing Then Return
         MyBase.OnPaintBackground(e)
@@ -1416,30 +1404,6 @@ Public Class ModernPanel
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
         If Not D3D_PaintBridge.PaintRenderable(e, Me, Me) Then MyBase.OnPaint(e)
-    End Sub
-
-    ''' <summary>
-    ''' （已废弃）透明背景贴底图的 GDI 路径。V3 不再使用，保留方法占位避免外部引用编译失败。
-    ''' </summary>
-    Private Sub 绘制父容器背景(g As Graphics)
-        ' no-op
-    End Sub
-
-
-    ''' <summary>D2D 绘制背景图片：按 ImageMode 计算目标矩形，圆角下用几何裁切。</summary>
-
-    Private Sub 绘制垂直滚动条_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache)
-        If _vScrollBar.TrackRect.IsEmpty Then Return
-        Dim s As Single = DpiScale()
-        _vScrollBar.Draw_D2D(rt, Me.Width, Me.Height, CInt(Math.Round(边框宽度 * s)), CInt(Math.Round(边框圆角半径 * s)),
-            CInt(Math.Round(滚动条宽度 * s)), 滚动条轨道颜色, 滚动条滑块颜色, 滚动条悬停颜色, brushCache)
-    End Sub
-
-    Private Sub 绘制水平滚动条_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache)
-        If _hScrollBar.TrackRect.IsEmpty Then Return
-        Dim s As Single = DpiScale()
-        _hScrollBar.DrawHorizontal_D2D(rt, Me.Width, Me.Height, CInt(Math.Round(边框宽度 * s)), CInt(Math.Round(边框圆角半径 * s)),
-            CInt(Math.Round(滚动条宽度 * s)), 滚动条轨道颜色, 滚动条滑块颜色, 滚动条悬停颜色, brushCache)
     End Sub
 
 #End Region

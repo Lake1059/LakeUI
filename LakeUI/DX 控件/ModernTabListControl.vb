@@ -44,6 +44,19 @@ Public Class ModernTabListControl
             End Set
         End Property
 
+        Private _visible As Boolean = True
+        <Category("LakeUI"), Description("是否显示该标签页标题"), DefaultValue(True), Browsable(True)>
+        Public Property Visible As Boolean
+            Get
+                Return _visible
+            End Get
+            Set(value As Boolean)
+                If _visible = value Then Return
+                _visible = value
+                通知父级布局变更()
+            End Set
+        End Property
+
         Private _tabFont As Font = Nothing
         <Category("LakeUI"), Description("该标签页标题使用的字体，为 Nothing 时使用控件默认字体"), Browsable(True)>
         Public Property TabFont As Font
@@ -1463,7 +1476,9 @@ Public Class ModernTabListControl
         For i = 0 To count - 1
             Dim it = 项目列表(i)
             Dim visible As Boolean
-            If Not hasSearch Then
+            If it Is Nothing OrElse Not it.Visible Then
+                visible = False
+            ElseIf Not hasSearch Then
                 visible = True
             ElseIf it.IsSeparator OrElse it.IsDescription Then
                 visible = True
@@ -1473,7 +1488,9 @@ Public Class ModernTabListControl
             _布局项可见数组(i) = visible
 
             Dim itemH As Single
-            If it.IsSeparator Then
+            If it Is Nothing Then
+                itemH = 0
+            ElseIf it.IsSeparator Then
                 itemH = 分割线高度值 * s
             ElseIf it.IsDescription Then
                 itemH = 说明项高度值 * s
@@ -1990,7 +2007,7 @@ Public Class ModernTabListControl
     Protected Overrides Function ProcessCmdKey(ByRef msg As Message, keyData As Keys) As Boolean
         Dim selectableCount = 0
         For Each item In 项目列表
-            If Not item.IsSeparator AndAlso Not item.IsDescription Then selectableCount += 1
+            If item IsNot Nothing AndAlso item.Visible AndAlso Not item.IsSeparator AndAlso Not item.IsDescription Then selectableCount += 1
         Next
         If selectableCount > 1 Then
             If keyData = (Keys.Tab Or Keys.Control) Then

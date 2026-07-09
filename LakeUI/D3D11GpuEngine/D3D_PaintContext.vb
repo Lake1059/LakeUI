@@ -20,7 +20,7 @@ Imports Vortice.Mathematics
 Public NotInheritable Class D3D_PaintContext
     Implements IDisposable
 
-    Private ReadOnly _clipStack As New Stack(Of D3D_ClipScope)()
+    Private ReadOnly _clipStack As New Stack(Of IDisposable)()
     Private _disposed As Boolean
 
     Friend Sub New(compositor As D3D_WindowCompositor,
@@ -176,6 +176,16 @@ Public NotInheritable Class D3D_PaintContext
         Return scope
     End Function
 
+    ''' <summary>
+    ''' 推入几何 clip。返回对象必须在同一 RenderGpu 调用栈中 Dispose，不能跨帧保存。
+    ''' </summary>
+    Public Function PushGeometryClip(geometry As ID2D1Geometry, contentBounds As RectangleF) As IDisposable
+        If geometry Is Nothing OrElse contentBounds.Width <= 0 OrElse contentBounds.Height <= 0 Then Return NoopClipScope.Instance
+        Dim scope As New D3D_GeometryClipScope(DeviceContext, geometry, contentBounds)
+        _clipStack.Push(scope)
+        Return scope
+    End Function
+
     Friend Shared Function ToRawRect(rect As RectangleF) As Vortice.RawRectF
         Return New Vortice.RawRectF(rect.Left, rect.Top, rect.Right, rect.Bottom)
     End Function
@@ -232,6 +242,33 @@ Public NotInheritable Class D3D_PaintContext
             If _disposed Then Return
             _disposed = True
             _context.PopAxisAlignedClip()
+        End Sub
+    End Class
+
+    Private NotInheritable Class D3D_GeometryClipScope
+        Implements IDisposable
+
+        Private ReadOnly _context As ID2D1DeviceContext
+        Private _disposed As Boolean
+
+        Public Sub New(context As ID2D1DeviceContext, geometry As ID2D1Geometry, contentBounds As RectangleF)
+            _context = context
+            Dim parameters As New LayerParameters With {
+                .ContentBounds = ToRawRect(contentBounds),
+                .GeometricMask = geometry,
+                .MaskAntialiasMode = AntialiasMode.PerPrimitive,
+                .MaskTransform = Matrix3x2.Identity,
+                .Opacity = 1.0F,
+                .OpacityBrush = Nothing,
+                .LayerOptions = LayerOptions.None
+            }
+            _context.PushLayer(parameters, Nothing)
+        End Sub
+
+        Public Sub Dispose() Implements IDisposable.Dispose
+            If _disposed Then Return
+            _disposed = True
+            _context.PopLayer()
         End Sub
     End Class
 

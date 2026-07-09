@@ -945,109 +945,26 @@ Public Class BreadcrumbNavigationBar
                 sink.Close()
             End Using
             Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, c, context.DeviceGeneration)
-            context.DeviceContext.DrawGeometry(path, brush, 箭头线宽 * s, D3D_D2DInterop.GetRoundStrokeStyle(roundDashCap:=True))
-        Finally
-            path.Dispose()
-        End Try
-    End Sub
-
-
-    Private Sub DrawNodesShapes_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache)
-        Dim s As Single = DpiScale()
-        Dim radius As Single = 节点圆角半径 * s
-
-        For Each l In _layoutCache
-            Dim isSelected As Boolean = (Not l.IsOverflow) AndAlso (l.Index = _selectedIndex) AndAlso l.Index >= 0
-
-            Dim textHover As Boolean = (_hoverNodeIndex = l.Index AndAlso Not _hoverIsArrow)
-            Dim textPressed As Boolean = (_pressedNodeIndex = l.Index AndAlso Not _pressedIsArrow)
-            Dim textHl As Color = Color.Empty
-            If textPressed Then
-                textHl = 节点按下背景
-            ElseIf textHover Then
-                textHl = 节点悬停背景
-            ElseIf isSelected Then
-                textHl = 选中节点背景
-            End If
-            If textHl <> Color.Empty AndAlso textHl.A > 0 Then
-                FillRoundedRect_D2D(rt, brushCache, l.TextRect, radius, textHl)
-            End If
-
-            If l.HasArrow Then
-                Dim arrowHover As Boolean = (_hoverNodeIndex = l.Index AndAlso _hoverIsArrow)
-                Dim arrowPressed As Boolean = (_pressedNodeIndex = l.Index AndAlso _pressedIsArrow) OrElse (_dropDownArrowIndex = l.Index)
-                Dim arrHl As Color = Color.Empty
-                If arrowPressed Then
-                    arrHl = 节点按下背景
-                ElseIf arrowHover Then
-                    arrHl = 节点悬停背景
-                End If
-                If arrHl <> Color.Empty AndAlso arrHl.A > 0 Then
-                    FillRoundedRect_D2D(rt, brushCache, l.ArrowRect, radius, arrHl)
-                End If
-
-                Dim arrowClr As Color = 箭头颜色
-                If (_hoverNodeIndex = l.Index AndAlso _hoverIsArrow) OrElse (_dropDownArrowIndex = l.Index) Then
-                    arrowClr = 箭头悬停颜色
-                End If
-                Dim chevronDown As Boolean = (_dropDownArrowIndex = l.Index)
-                DrawChevron_D2D(rt, brushCache, l.ArrowRect, arrowClr, chevronDown)
-            End If
-
-        Next
-    End Sub
-
-
-
-    Private Sub FillRoundedRect_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache,
-                                    r As Rectangle, radius As Single, c As Color)
-        If r.Width <= 0 OrElse r.Height <= 0 OrElse c.A = 0 Then Return
-        Dim brush = brushCache.[Get](rt, c)
-        If brush Is Nothing Then Return
-        If radius <= 0.5F Then
-            rt.FillRectangle(D3D_D2DInterop.ToD2DRect(New RectangleF(r.X, r.Y, r.Width, r.Height)), brush)
-            Return
-        End If
-        Using geo = D3D_RectangleRenderer.创建圆角矩形几何(New RectangleF(r.X, r.Y, r.Width, r.Height), radius)
-            rt.FillGeometry(geo, brush)
-        End Using
-    End Sub
-
-    Private Sub DrawChevron_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache,
-                                area As Rectangle, c As Color, pointDown As Boolean)
-        Dim s As Single = DpiScale()
-        Dim sz As Single = 箭头大小 * s
-        Dim cx As Single = area.X + area.Width / 2.0F
-        Dim cy As Single = area.Y + area.Height / 2.0F
-        Dim half As Single = sz / 2.0F
-        Dim hh As Single = half * 0.55F
-        Dim p1, p2, p3 As System.Numerics.Vector2
-        If pointDown Then
-            p1 = New System.Numerics.Vector2(cx - half, cy - hh)
-            p2 = New System.Numerics.Vector2(cx, cy + hh)
-            p3 = New System.Numerics.Vector2(cx + half, cy - hh)
-        Else
-            p1 = New System.Numerics.Vector2(cx - hh, cy - half)
-            p2 = New System.Numerics.Vector2(cx + hh, cy)
-            p3 = New System.Numerics.Vector2(cx - hh, cy + half)
-        End If
-        Dim brush = brushCache.[Get](rt, c)
-        If brush Is Nothing Then Return
-        Dim factory = D3D_D2DInterop.GetD2DFactory()
-        Dim path As ID2D1PathGeometry = factory.CreatePathGeometry()
-        Try
-            Using sink = path.Open()
-                sink.BeginFigure(p1, FigureBegin.Hollow)
-                sink.AddLine(p2)
-                sink.AddLine(p3)
-                sink.EndFigure(FigureEnd.Open)
-                sink.Close()
+            Using strokeStyle = 创建圆头描边样式_GPU()
+                context.DeviceContext.DrawGeometry(path, brush, 箭头线宽 * s, strokeStyle)
             End Using
-            rt.DrawGeometry(path, brush, 箭头线宽 * s, D3D_D2DInterop.GetRoundStrokeStyle(roundDashCap:=True))
         Finally
             path.Dispose()
         End Try
     End Sub
+
+    Private Shared Function 创建圆头描边样式_GPU() As ID2D1StrokeStyle
+        Return D3D_RenderCore.DeviceManager.D2DFactory.CreateStrokeStyle(
+            New StrokeStyleProperties With {
+                .StartCap = CapStyle.Round,
+                .EndCap = CapStyle.Round,
+                .DashCap = CapStyle.Round,
+                .LineJoin = LineJoin.Round,
+                .DashStyle = DashStyle.Solid,
+                .MiterLimit = 10.0F
+            })
+    End Function
+
 #End Region
 
 #Region "鼠标处理"

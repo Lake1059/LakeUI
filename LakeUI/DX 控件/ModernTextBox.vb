@@ -1161,57 +1161,6 @@ Public Class ModernTextBox
         Return GlobalOptions.GetEffectiveSsaaScale(超采样倍率)
     End Function
 
-    Private Sub 绘制背景_D2D(rt As ID2D1RenderTarget, hasRadius As Boolean, fillRect As RectangleF, brushCache As D3D_D2DInterop.SolidColorBrushCache)
-        ' BackColor 半透明遮罩层：位于采样底图之上、BackColor1（=背景颜色）之下。A=255 不走本路径。
-        Dim backColorMask As Color = MyBase.BackColor
-        Dim s As Single = DpiScale()
-        If hasRadius Then
-            Using geo = D3D_RectangleRenderer.创建圆角矩形几何(fillRect, 边框圆角半径 * s)
-                If backColorMask.A > 0 AndAlso backColorMask.A < 255 Then
-                    D3D_RectangleRenderer.绘制圆角背景_D2D(rt, geo, fillRect, backColorMask, Color.Empty, System.Windows.Forms.Orientation.Horizontal, brushCache)
-                End If
-                If 背景颜色.A > 0 Then
-                    D3D_RectangleRenderer.绘制圆角背景_D2D(rt, geo, fillRect, 背景颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal, brushCache)
-                End If
-            End Using
-        Else
-            If backColorMask.A > 0 AndAlso backColorMask.A < 255 Then
-                D3D_RectangleRenderer.绘制矩形背景_D2D(rt, fillRect, backColorMask, Color.Empty, System.Windows.Forms.Orientation.Horizontal, brushCache)
-            End If
-            If 背景颜色.A > 0 Then
-                D3D_RectangleRenderer.绘制矩形背景_D2D(rt, fillRect, 背景颜色, Color.Empty, System.Windows.Forms.Orientation.Horizontal, brushCache)
-            End If
-        End If
-    End Sub
-
-    Private Sub 绘制边框_D2D(rt As ID2D1RenderTarget, hasRadius As Boolean, boundsRect As RectangleF, borderClr As Color, brushCache As D3D_D2DInterop.SolidColorBrushCache)
-        If 边框宽度 <= 0 OrElse borderClr.A = 0 Then Return
-        Dim s As Single = DpiScale()
-        If hasRadius Then
-            D3D_RectangleRenderer.绘制圆角边框_D2D(rt, boundsRect, 边框圆角半径 * s, borderClr, 边框宽度 * s, brushCache)
-        Else
-            D3D_RectangleRenderer.绘制矩形边框_D2D(rt, boundsRect, borderClr, 边框宽度 * s, brushCache)
-        End If
-    End Sub
-
-    Private Sub DrawScrollBar_D2D(rt As ID2D1RenderTarget,
-                                  brushCache As D3D_D2DInterop.SolidColorBrushCache,
-                                  w As Integer, h As Integer)
-        If Not _scrollBarVisible Then Return
-        Dim s As Single = DpiScale()
-        Dim scaledBorder As Integer = CInt(Math.Round(边框宽度 * s))
-        Dim scaledRadius As Integer = CInt(Math.Round(边框圆角半径 * s))
-        Dim scaledScrollW As Integer = CInt(Math.Round(滚动条宽度 * s))
-        Dim totalH As Integer = TotalContentPixelHeight()
-        Dim viewH As Integer = TextViewportHeight()
-        If totalH <= 0 OrElse viewH <= 0 Then Return
-        _scrollBar.ComputeLayout(w, h, scaledBorder, scaledRadius, 0, 0, scaledScrollW,
-            totalH, viewH, CInt(Math.Round(_scrollPixelOffset)))
-        _scrollBar.Draw_D2D(rt, w, h, scaledBorder, scaledRadius, scaledScrollW,
-            滚动条轨道颜色, 滚动条颜色, 滚动条悬停颜色, brushCache)
-    End Sub
-
-
     Private Sub DrawTextContent_GPU(context As D3D_PaintContext, w As Integer, h As Integer)
         Dim bi As Integer = ScaledBorderWidth()
         Dim pad As Padding = ScaledPadding()
@@ -1249,12 +1198,9 @@ Public Class ModernTextBox
                     If clipRect.Width > 0 AndAlso clipRect.Height > 0 Then
                         Dim geo = context.GetRoundedRectangleGeometry(clipRect, 边框圆角半径 * DpiScale())
                         If geo IsNot Nothing Then
-                            D3D_D2DInterop.PushGeometryClip(context.DeviceContext, geo, clipRect)
-                            Try
+                            Using context.PushGeometryClip(geo, clipRect)
                                 context.FillRectangle(gutterRect, _lineNumBackColor)
-                            Finally
-                                context.DeviceContext.PopLayer()
-                            End Try
+                            End Using
                         End If
                     Else
                         context.FillRectangle(gutterRect, _lineNumBackColor)
@@ -1274,7 +1220,7 @@ Public Class ModernTextBox
                     If vl.LogicalLine <> lastDrawnLogical Then
                         lastDrawnLogical = vl.LogicalLine
                         Dim numStr As String = (vl.LogicalLine + 1).ToString()
-                        Dim numW As Integer = CInt(Math.Ceiling(MeasureTextWidth_D2D(numStr, useNumFont, Nothing)))
+                        Dim numW As Integer = CInt(Math.Ceiling(MeasureTextWidthDirectWrite(numStr, useNumFont, Nothing)))
                         Dim numX As Integer
                         Select Case _lineNumAlign
                             Case TextAlignMode.Left
@@ -1472,7 +1418,7 @@ Public Class ModernTextBox
     Private Function DrawTextSegment_GPU(context As D3D_PaintContext, text As String, font As Font, foreColor As Color,
                                          x As Single, y As Single, width As Single, height As Single, underline As Boolean) As Single
         If String.IsNullOrEmpty(text) OrElse foreColor.A = 0 OrElse font Is Nothing Then Return 0.0F
-        Dim measuredWidth As Single = MeasureTextWidth_D2D(text, font, Nothing)
+        Dim measuredWidth As Single = MeasureTextWidthDirectWrite(text, font, Nothing)
         Dim layoutWidth As Single = Math.Max(1.0F, width)
         Dim layoutHeight As Single = Math.Max(1.0F, height)
         context.DrawText(text, font, foreColor, New RectangleF(x, y, layoutWidth, layoutHeight),
@@ -1493,196 +1439,8 @@ Public Class ModernTextBox
         Return measuredWidth
     End Function
 
-    Private Sub DrawWaterText_D2D(rt As ID2D1RenderTarget,
-                                  textLeft As Integer,
-                                  textTop As Integer,
-                                  textWidth As Integer,
-                                  textHeight As Integer,
-                                  singleLineY As Single,
-                                  textFormatCache As D3D_D2DInterop.TextFormatCache,
-                                  brushCache As D3D_D2DInterop.SolidColorBrushCache)
-        If rt Is Nothing OrElse String.IsNullOrEmpty(水印文本) OrElse 水印颜色.A = 0 Then Return
-        If textWidth <= 0 OrElse textHeight <= 0 Then Return
-
-        If Not IsWordWrapActive() Then
-            Dim waterLineY As Single = If(启用多行, CSng(textTop), singleLineY)
-            Dim waterAlignOff As Integer = If(启用多行 OrElse 文本对齐 = TextAlignMode.Left, 0,
-                ComputeAlignOffset(MeasureWidth(水印文本), textWidth))
-            DrawTextSegment_D2D(rt, 水印文本, Font, 水印颜色, textLeft + waterAlignOff, waterLineY,
-                textWidth, _scaledLineHeight, False, textFormatCache, brushCache)
-            Return
-        End If
-
-        Dim waterLines = BuildWaterTextVisualLines(水印文本, textWidth)
-        Dim visibleLines As Integer = Math.Min(waterLines.Count, Math.Max(1, CInt(Math.Ceiling(textHeight / CDbl(_scaledLineHeight)))))
-        For i As Integer = 0 To visibleLines - 1
-            Dim lineText As String = waterLines(i)
-            If lineText.Length = 0 Then Continue For
-            DrawTextSegment_D2D(rt, lineText, Font, 水印颜色, textLeft,
-                textTop + i * _scaledLineHeight, textWidth, _scaledLineHeight,
-                False, textFormatCache, brushCache)
-        Next
-    End Sub
-
-    Private Sub PushClip(rt As ID2D1RenderTarget, rect As RectangleF)
-        rt.PushAxisAlignedClip(New Vortice.RawRectF(rect.Left, rect.Top, rect.Right, rect.Bottom), AntialiasMode.Aliased)
-    End Sub
-
-    Private Sub DrawVisualLineSelection_D2D(rt As ID2D1RenderTarget, vl As VisualLineInfo, lineY As Single, textLeft As Integer,
-                                         alignOff As Integer, scrollX As Integer,
-                                         minL As Integer, minC As Integer, maxL As Integer, maxC As Integer,
-                                         brushCache As D3D_D2DInterop.SolidColorBrushCache)
-        Dim li As Integer = vl.LogicalLine
-        If li < minL OrElse li > maxL Then Return
-        Dim selStart As Integer = If(li = minL, minC, 0)
-        Dim selEnd As Integer = If(li = maxL, maxC, _lines(li).Length)
-        Dim vlEnd As Integer = vl.StartCol + vl.Length
-        Dim drawStart As Integer = Math.Max(selStart, vl.StartCol)
-        Dim drawEnd As Integer = Math.Min(selEnd, vlEnd)
-        If drawStart > drawEnd Then Return
-        If drawStart = drawEnd AndAlso Not (selEnd > vlEnd OrElse li < maxL) Then Return
-        Dim x1 As Single = textLeft + alignOff + MeasureLineWidth(li, vl.StartCol, drawStart - vl.StartCol) - scrollX
-        Dim x2 As Single
-        If selEnd > vlEnd OrElse li < maxL Then
-            x2 = textLeft + alignOff + MeasureLineWidth(li, vl.StartCol, vl.Length) + 6 - scrollX
-        Else
-            x2 = textLeft + alignOff + MeasureLineWidth(li, vl.StartCol, drawEnd - vl.StartCol) - scrollX
-        End If
-        If x2 <= x1 Then Return
-        FillRectangle_D2D(rt, New RectangleF(x1, lineY, x2 - x1, _scaledLineHeight), 选区背景色, brushCache)
-    End Sub
-
-    Private Sub DrawCaret_D2D(rt As ID2D1RenderTarget, textLeft As Integer, textTop As Integer,
-                              brushCache As D3D_D2DInterop.SolidColorBrushCache)
-        Dim vi As Integer = GetVisualLineIndex(_caretLine, _caretCol)
-        Dim viewH As Integer = TextViewportHeight()
-        Dim caretTop As Integer = vi * _scaledLineHeight
-        Dim caretBottom As Integer = caretTop + _scaledLineHeight
-        If 启用多行 AndAlso (caretBottom < _scrollPixelOffset OrElse caretTop > _scrollPixelOffset + viewH) Then
-            Return
-        End If
-        Dim vl = _visualLines(vi)
-        Dim wrapActive As Boolean = IsWordWrapActive()
-        Dim alignOff As Integer = If(wrapActive, 0, GetAlignOffsetXForLine(_caretLine, TextAreaWidth()))
-        Dim scrollX As Integer = If(wrapActive, 0, _scrollXOffset)
-        Dim cx As Integer = textLeft + alignOff + MeasureLineWidth(_caretLine, vl.StartCol, _caretCol - vl.StartCol) - scrollX
-        Dim lineY As Single
-        If Not 启用多行 Then
-            Dim bi2 As Integer = ScaledBorderWidth()
-            Dim pad As Padding = ScaledPadding()
-            Dim textHeight As Integer = ClientRectangle.Height - Math.Max(pad.Top, bi2) - Math.Max(pad.Bottom, bi2)
-            lineY = textTop + (textHeight - _scaledLineHeight) / 2.0F
-        Else
-            lineY = textTop + vi * _scaledLineHeight - _scrollPixelOffset
-        End If
-        Dim caretH As Integer = _scaledLineHeight - 2
-        Dim caretY As Single = lineY + (_scaledLineHeight - caretH) / 2.0F
-        FillRectangle_D2D(rt, New RectangleF(cx, caretY, _scaledCaretWidth, caretH), 光标颜色, brushCache)
-    End Sub
-
-    Private Sub DrawLineRuns_D2D(rt As ID2D1RenderTarget, lineIndex As Integer, vlStartCol As Integer,
-                                  vlLength As Integer, x As Single, lineY As Single,
-                                  textFormatCache As D3D_D2DInterop.TextFormatCache,
-                                  brushCache As D3D_D2DInterop.SolidColorBrushCache)
-        Dim runs = _lineRuns(lineIndex)
-        Dim lineStr = _lines(lineIndex)
-        Dim vlEnd = vlStartCol + vlLength
-        Dim links = If(lineIndex < _lineLinks.Count, _lineLinks(lineIndex), Nothing)
-        Dim hasLinks As Boolean = links IsNot Nothing AndAlso links.Count > 0 AndAlso (_passwordChar = vbNullChar OrElse 启用多行)
-        If runs Is Nothing OrElse runs.Count = 0 Then
-            If Not hasLinks Then
-                Dim text = GetDisplayText(lineStr.Substring(vlStartCol, vlLength))
-                DrawTextSegment_D2D(rt, text, Font, ForeColor, x, lineY, Short.MaxValue, _scaledLineHeight, False, textFormatCache, brushCache)
-            Else
-                DrawSegmentsWithLinks_D2D(rt, lineStr, vlStartCol, vlEnd, x, lineY, ForeColor, Font, links, textFormatCache, brushCache)
-            End If
-            Return
-        End If
-        Dim drawX = x
-        For Each r In runs
-            Dim rEnd = r.StartCol + r.Length
-            Dim segStart = Math.Max(r.StartCol, vlStartCol)
-            Dim segEnd = Math.Min(rEnd, vlEnd)
-            If segStart >= segEnd Then Continue For
-            Dim useFore = If(r.ForeColor = Color.Empty, ForeColor, r.ForeColor)
-            Dim useFont = If(r.RunFont, Font)
-            If Not hasLinks Then
-                Dim segText = GetDisplayText(lineStr.Substring(segStart, segEnd - segStart))
-                drawX += DrawTextSegment_D2D(rt, segText, useFont, useFore, drawX, lineY, Short.MaxValue, _scaledLineHeight, False, textFormatCache, brushCache)
-            Else
-                drawX = DrawSegmentsWithLinks_D2D(rt, lineStr, segStart, segEnd, drawX, lineY, useFore, useFont, links, textFormatCache, brushCache)
-            End If
-        Next
-    End Sub
-
-    Private Function DrawSegmentsWithLinks_D2D(rt As ID2D1RenderTarget, lineStr As String, startCol As Integer, endCol As Integer,
-                                                x As Single, lineY As Single, baseFore As Color, baseFont As Font,
-                                                links As List(Of LinkRange),
-                                                textFormatCache As D3D_D2DInterop.TextFormatCache,
-                                                brushCache As D3D_D2DInterop.SolidColorBrushCache) As Single
-        Dim pos = startCol
-        Dim drawX = x
-        For Each link In links
-            Dim linkEnd = link.StartCol + link.Length
-            If link.StartCol >= endCol OrElse linkEnd <= pos Then Continue For
-            If pos < link.StartCol AndAlso pos < endCol Then
-                Dim nonLinkEnd = Math.Min(link.StartCol, endCol)
-                Dim segText = GetDisplayText(lineStr.Substring(pos, nonLinkEnd - pos))
-                drawX += DrawTextSegment_D2D(rt, segText, baseFont, baseFore, drawX, lineY, Short.MaxValue, _scaledLineHeight, False, textFormatCache, brushCache)
-                pos = nonLinkEnd
-            End If
-            Dim overlapStart = Math.Max(pos, link.StartCol)
-            Dim overlapEnd = Math.Min(endCol, linkEnd)
-            If overlapStart < overlapEnd Then
-                Dim linkText = GetDisplayText(lineStr.Substring(overlapStart, overlapEnd - overlapStart))
-                drawX += DrawTextSegment_D2D(rt, linkText, baseFont, 链接颜色, drawX, lineY, Short.MaxValue, _scaledLineHeight, 链接下划线, textFormatCache, brushCache)
-                pos = overlapEnd
-            End If
-        Next
-        If pos < endCol Then
-            Dim segText = GetDisplayText(lineStr.Substring(pos, endCol - pos))
-            drawX += DrawTextSegment_D2D(rt, segText, baseFont, baseFore, drawX, lineY, Short.MaxValue, _scaledLineHeight, False, textFormatCache, brushCache)
-        End If
-        Return drawX
-    End Function
-
-    Private Function DrawTextSegment_D2D(rt As ID2D1RenderTarget, text As String, font As Font, foreColor As Color,
-                                         x As Single, y As Single, width As Single, height As Single, underline As Boolean,
-                                         textFormatCache As D3D_D2DInterop.TextFormatCache,
-                                         brushCache As D3D_D2DInterop.SolidColorBrushCache) As Single
-        If rt Is Nothing OrElse String.IsNullOrEmpty(text) OrElse foreColor.A = 0 Then Return 0.0F
-        Dim ownsFormat As Boolean = False
-        Dim fmt = AcquireTextFormat_D2D(font, textFormatCache, ownsFormat)
-        If fmt Is Nothing Then Return 0.0F
-        Try
-            Dim layoutWidth As Single = Math.Max(1.0F, width)
-            Dim layoutHeight As Single = Math.Max(1.0F, height)
-            Using layout = D3D_D2DInterop.GetDWriteFactory().CreateTextLayout(text, fmt, layoutWidth, layoutHeight)
-                Dim measuredWidth As Single = CSng(Math.Ceiling(layout.Metrics.WidthIncludingTrailingWhitespace))
-                If underline Then
-                    layout.SetUnderline(True, New Vortice.DirectWrite.TextRange(0, CUInt(text.Length)))
-                End If
-                Dim brush As ID2D1Brush = Nothing
-                Dim ownsBrush As Boolean = False
-                Try
-                    brush = GetSolidBrush_D2D(rt, foreColor, brushCache, ownsBrush)
-                    If brush IsNot Nothing Then rt.DrawTextLayout(New System.Numerics.Vector2(x, y), layout, brush)
-                Finally
-                    If ownsBrush AndAlso brush IsNot Nothing Then
-                        Try : brush.Dispose() : Catch : End Try
-                    End If
-                End Try
-                Return measuredWidth
-            End Using
-        Finally
-            If ownsFormat AndAlso fmt IsNot Nothing Then
-                Try : fmt.Dispose() : Catch : End Try
-            End If
-        End Try
-    End Function
-
-    Private Function AcquireTextFormat_D2D(font As Font, textFormatCache As D3D_D2DInterop.TextFormatCache,
-                                           ByRef ownsFormat As Boolean) As Vortice.DirectWrite.IDWriteTextFormat
+    Private Function AcquireTextFormatForMeasure(font As Font, textFormatCache As D3D_D2DInterop.TextFormatCache,
+                                                 ByRef ownsFormat As Boolean) As Vortice.DirectWrite.IDWriteTextFormat
         Dim useFont As Font = If(font, Me.Font)
         If useFont Is Nothing Then Return Nothing
         Dim s As Single = DpiScale()
@@ -1707,11 +1465,11 @@ Public Class ModernTextBox
         Return fmt
     End Function
 
-    Private Function MeasureTextWidth_D2D(text As String, font As Font,
-                                          textFormatCache As D3D_D2DInterop.TextFormatCache) As Single
+    Private Function MeasureTextWidthDirectWrite(text As String, font As Font,
+                                                 textFormatCache As D3D_D2DInterop.TextFormatCache) As Single
         If String.IsNullOrEmpty(text) Then Return 0.0F
         Dim ownsFormat As Boolean = False
-        Dim fmt = AcquireTextFormat_D2D(font, textFormatCache, ownsFormat)
+        Dim fmt = AcquireTextFormatForMeasure(font, textFormatCache, ownsFormat)
         If fmt Is Nothing Then Return 0.0F
         Try
             Using layout = D3D_D2DInterop.GetDWriteFactory().CreateTextLayout(text, fmt, Single.MaxValue, Single.MaxValue)
@@ -1723,30 +1481,6 @@ Public Class ModernTextBox
             End If
         End Try
     End Function
-
-    Private Function GetSolidBrush_D2D(rt As ID2D1RenderTarget, color As Color,
-                                       brushCache As D3D_D2DInterop.SolidColorBrushCache,
-                                       ByRef ownsBrush As Boolean) As ID2D1Brush
-        If rt Is Nothing OrElse color.A = 0 Then Return Nothing
-        ownsBrush = (brushCache Is Nothing)
-        If brushCache IsNot Nothing Then Return brushCache.[Get](rt, color)
-        Return rt.CreateSolidColorBrush(D3D_D2DInterop.ToColor4(color))
-    End Function
-
-    Private Sub FillRectangle_D2D(rt As ID2D1RenderTarget, rect As RectangleF, color As Color,
-                                  brushCache As D3D_D2DInterop.SolidColorBrushCache)
-        If rect.Width <= 0 OrElse rect.Height <= 0 OrElse color.A = 0 Then Return
-        Dim brush As ID2D1Brush = Nothing
-        Dim ownsBrush As Boolean = False
-        Try
-            brush = GetSolidBrush_D2D(rt, color, brushCache, ownsBrush)
-            If brush IsNot Nothing Then rt.FillRectangle(D3D_D2DInterop.ToD2DRect(rect), brush)
-        Finally
-            If ownsBrush AndAlso brush IsNot Nothing Then
-                Try : brush.Dispose() : Catch : End Try
-            End If
-        End Try
-    End Sub
 
 #End Region
 

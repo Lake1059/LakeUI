@@ -2195,7 +2195,7 @@ Public Class ThisIsYourWindow
         If img Is Nothing Then Return
 
         Dim r = s.IconRect
-        context.DrawImage(img, New RectangleF(r.X, r.Y, r.Width, r.Height))
+        context.DrawImage(img, New RectangleF(r.X, r.Y, r.Width, r.Height), Nothing, 1.0F, 0, Vortice.Direct2D1.InterpolationMode.HighQualityCubic)
     End Sub
 
     Private Sub 绘制控制按钮_GPU(context As D3D_PaintContext, s As PerFormState, rect As Rectangle, htValue As Integer)
