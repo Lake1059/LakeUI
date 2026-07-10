@@ -62,6 +62,8 @@ Public Class ExcellentProgressBar
 
         If _backgroundSource IsNot Nothing Then
             context.DrawBackgroundSource(Me, _backgroundSource, sourceRect)
+        ElseIf MyBase.BackColor.A > 0 Then
+            context.FillRectangle(sourceRect, MyBase.BackColor)
         End If
         绘制图形内容_GPU(context, bounds, content)
 

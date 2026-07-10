@@ -124,6 +124,7 @@ Public NotInheritable Class D3D_DeviceManager
 
         Select Case hresult
             Case &H8899000CUI,  ' D2DERR_RECREATE_TARGET
+                 &H88990001UI,  ' D2DERR_WRONG_STATE (device teardown/reinstall may expose it during cleanup)
                  &H887A0005UI,  ' DXGI_ERROR_DEVICE_REMOVED
                  &H887A0006UI,  ' DXGI_ERROR_DEVICE_HUNG
                  &H887A0007UI,  ' DXGI_ERROR_DEVICE_RESET

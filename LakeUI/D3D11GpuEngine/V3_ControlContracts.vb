@@ -14,6 +14,15 @@ Public Interface V3_IGpuRenderable
     Sub RenderGpu(context As D3D_PaintContext)
 End Interface
 
+''' <summary>
+''' 仅内部审计后的渲染器才能声明：其一次 RenderGpu 调用会以不透明像素覆盖本次脏区。
+''' 未实现本接口时，PaintScope 始终将当前 HDC 内容拷入 GPU target，保证背景映射、
+''' alpha 图像、毛玻璃和原生子控件的既有语义不变。
+''' </summary>
+Friend Interface V3_IGpuDirtyRegionCoverage
+    Function CoversDirtyRegion(dirtyRegion As Rectangle) As Boolean
+End Interface
+
 Public Interface V3_IGpuInvalidationSource
     Function GetRenderBounds() As Rectangle
 End Interface

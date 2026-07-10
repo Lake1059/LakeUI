@@ -1,5 +1,6 @@
 Imports System.Drawing.Imaging
 Imports System.Buffers
+Imports System.Runtime.InteropServices
 Imports Vortice.Direct2D1
 
 ''' <summary>
@@ -413,13 +414,27 @@ Public Module D3D_BackgroundPenetration
     Private Sub UnregisterSingleConsumer(child As Control, Optional source As Control = Nothing)
         If child Is Nothing Then Return
 
+        Dim stillMapped As Boolean
         SyncLock _cache
             For Each kv In _cache.ToArray()
                 If source IsNot Nothing AndAlso kv.Key IsNot source Then Continue For
                 RemoveConsumerNoLock(kv.Key, kv.Value, child)
             Next
+            stillMapped = IsConsumerMappedNoLock(child)
         End SyncLock
+        If Not stillMapped Then DetachConsumerLifecycle(child)
     End Sub
+
+    Private Function IsConsumerMappedNoLock(child As Control) As Boolean
+        If child Is Nothing Then Return False
+        For Each entry In _cache.Values
+            If entry Is Nothing Then Continue For
+            For Each consumer In entry.Consumers
+                If TryCast(consumer.ChildRef.Target, Control) Is child Then Return True
+            Next
+        Next
+        Return False
+    End Function
 
     Private Sub AttachConsumerLifecycle(owner As Control)
         If owner Is Nothing Then Return
@@ -813,6 +828,11 @@ Public Module D3D_BackgroundPenetration
             Else
                 ForceOpaqueAlpha(entry.Bmp, repaintRects)
                 entry.IsSolidColor = False
+                Dim nextVersion As Integer
+                SyncLock _cache
+                    nextVersion = entry.Version + 1
+                    UpdateSharedUploadsForDirtyRegions(entry, repaintRects, nextVersion)
+                End SyncLock
             End If
 
             SyncLock _cache
@@ -916,6 +936,7 @@ Public Module D3D_BackgroundPenetration
             .LastUsed = D3D_GpuCache.NextTick()
         }
         If newUpload.D2DBmp Is Nothing Then Return Nothing
+        D3D_RenderDiagnostics.BackgroundFullUpload(uploadBytes)
         If Not cacheEnabled Then
             Return New BitmapAcquireResult With {.Bitmap = newUpload.D2DBmp, .SourceRect = sourceRect, .DisposeAfterDraw = True}
         End If
@@ -1136,11 +1157,91 @@ Public Module D3D_BackgroundPenetration
 
     Private Sub InvalidateSharedUploads(entry As Entry, dirtyRect As Rectangle?)
         If entry Is Nothing Then Return
-        ' Shared uploads cover the whole source, so any source pixel change invalidates every RT upload.
+        ' A partial source invalidation keeps its matching GPU uploads alive until the CPU backing bitmap
+        ' has been rebuilt; RebuildGdiBitmap then applies the same rects through CopyFromMemory. Full
+        ' dirty/resize/device cleanup still discards the complete upload immediately.
+        If dirtyRect.HasValue AndAlso dirtyRect.Value.Width > 0 AndAlso dirtyRect.Value.Height > 0 Then Return
         For i As Integer = entry.SharedUploads.Count - 1 To 0 Step -1
             ReleaseSharedUpload(entry, i)
         Next
     End Sub
+
+    Private Sub UpdateSharedUploadsForDirtyRegions(entry As Entry,
+                                                    dirtyRects As IEnumerable(Of Rectangle),
+                                                    nextVersion As Integer)
+        If entry Is Nothing OrElse entry.Bmp Is Nothing OrElse dirtyRects Is Nothing Then Return
+        If entry.SharedUploads.Count = 0 Then Return
+
+        Dim bounds As New Rectangle(0, 0, entry.Bmp.Width, entry.Bmp.Height)
+        Dim validRects As New List(Of Rectangle)()
+        For Each dirty In dirtyRects
+            Dim clipped = Rectangle.Intersect(bounds, dirty)
+            If clipped.Width > 0 AndAlso clipped.Height > 0 Then validRects.Add(clipped)
+        Next
+        If validRects.Count = 0 Then Return
+
+        Dim data As BitmapData = Nothing
+        Try
+            data = entry.Bmp.LockBits(bounds, ImageLockMode.ReadOnly, PixelFormat.Format32bppPArgb)
+            For i As Integer = entry.SharedUploads.Count - 1 To 0 Step -1
+                Dim upload = entry.SharedUploads(i)
+                Dim sameSize = upload IsNot Nothing AndAlso upload.D2DBmp IsNot Nothing AndAlso
+                               upload.Width = entry.Bmp.Width AndAlso upload.Height = entry.Bmp.Height
+                Dim ownerAlive = sameSize AndAlso upload.D2DOwnerRT IsNot Nothing AndAlso upload.D2DOwnerRT.Target IsNot Nothing
+                If Not ownerAlive Then
+                    ReleaseSharedUpload(entry, i)
+                    Continue For
+                End If
+
+                Dim updated As Boolean = True
+                For Each dirty In validRects
+                    If Not CopyBitmapDirtyRectToUpload(upload.D2DBmp, data, dirty) Then
+                        updated = False
+                        Exit For
+                    End If
+                Next
+                If updated Then
+                    upload.Version = nextVersion
+                    upload.LastUsed = D3D_GpuCache.NextTick()
+                Else
+                    ReleaseSharedUpload(entry, i)
+                End If
+            Next
+        Catch
+            ' Any LockBits/CopyFromMemory failure leaves the old texture suspect; a later draw safely
+            ' recreates it from the complete CPU backing bitmap.
+            For i As Integer = entry.SharedUploads.Count - 1 To 0 Step -1
+                ReleaseSharedUpload(entry, i)
+            Next
+        Finally
+            If data IsNot Nothing Then
+                Try : entry.Bmp.UnlockBits(data) : Catch : End Try
+            End If
+        End Try
+    End Sub
+
+    Private Function CopyBitmapDirtyRectToUpload(upload As ID2D1Bitmap,
+                                                  bitmapData As BitmapData,
+                                                  dirtyRect As Rectangle) As Boolean
+        If upload Is Nothing OrElse bitmapData Is Nothing OrElse dirtyRect.Width <= 0 OrElse dirtyRect.Height <= 0 Then Return False
+        Dim pitch As Integer = dirtyRect.Width * 4
+        Dim length As Integer = pitch * dirtyRect.Height
+        Dim buffer = ArrayPool(Of Byte).Shared.Rent(length)
+        Try
+            For y = 0 To dirtyRect.Height - 1
+                Dim sourceOffset As Integer = (dirtyRect.Y + y) * bitmapData.Stride + dirtyRect.X * 4
+                Dim source = IntPtr.Add(bitmapData.Scan0, sourceOffset)
+                Marshal.Copy(source, buffer, y * pitch, pitch)
+            Next
+            upload.CopyFromMemory(dirtyRect, buffer, CUInt(pitch))
+            D3D_RenderDiagnostics.BackgroundPartialUpload(CLng(length))
+            Return True
+        Catch
+            Return False
+        Finally
+            ArrayPool(Of Byte).Shared.Return(buffer)
+        End Try
+    End Function
 
     Private Sub CollectConsumerInvalidations(source As Control, entry As Entry, dirtyRect As Rectangle?,
                                              invalidations As List(Of ConsumerInvalidation),

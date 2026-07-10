@@ -2,6 +2,7 @@ Imports System.Drawing.Drawing2D
 Imports System.Drawing.Imaging
 Imports System.Numerics
 Imports System.Runtime.InteropServices
+Imports System.Runtime.CompilerServices
 Imports Vortice.Direct2D1
 Imports Vortice.Mathematics
 
@@ -18,7 +19,7 @@ End Enum
 ''' Auto and CaptionOnly remain reserved for a future Desktop Duplication path.
 ''' </summary>
 Public NotInheritable Class D3D_BackdropRenderer
-    Implements IDisposable
+    Implements D3D_IRenderCacheOwner, IDisposable
 
     Private ReadOnly _imageCache As D3D_ImageCache
     Private ReadOnly _deviceManager As D3D_DeviceManager
@@ -31,6 +32,10 @@ Public NotInheritable Class D3D_BackdropRenderer
     Private _outputTarget As ID2D1Bitmap1
     Private _targetSize As Size = Size.Empty
     Private _blurEffect As ID2D1Effect
+    Private _blurCacheKey As String
+    Private _lastBlurUseTick As Long
+    Private _frameUseDepth As Integer
+    Private _trimPending As Boolean
 
     Private _noiseBitmap As Bitmap
     Private _noiseD2DBitmap As ID2D1Bitmap
@@ -49,6 +54,52 @@ Public NotInheritable Class D3D_BackdropRenderer
         If deviceManager Is Nothing Then Throw New ArgumentNullException(NameOf(deviceManager))
         _imageCache = imageCache
         _deviceManager = deviceManager
+        D3D_GpuCache.Register(Me)
+    End Sub
+
+    Private ReadOnly Property CacheBytes As Long Implements D3D_IRenderCacheOwner.CacheBytes
+        Get
+            Dim total As Long
+            If _sourceTarget IsNot Nothing Then total += CLng(Math.Max(1, _targetSize.Width)) * CLng(Math.Max(1, _targetSize.Height)) * 4L
+            If _outputTarget IsNot Nothing Then total += CLng(Math.Max(1, _targetSize.Width)) * CLng(Math.Max(1, _targetSize.Height)) * 4L
+            If _noiseD2DBitmap IsNot Nothing AndAlso _noiseBitmap IsNot Nothing Then total += CLng(_noiseBitmap.Width) * CLng(_noiseBitmap.Height) * 4L
+            Return total
+        End Get
+    End Property
+
+    Private ReadOnly Property OldestUseTick As Long Implements D3D_IRenderCacheOwner.OldestUseTick
+        Get
+            If _frameUseDepth > 0 Then Return Long.MaxValue
+            If CacheBytes <= 0 Then Return Long.MaxValue
+            Return _lastBlurUseTick
+        End Get
+    End Property
+
+    Private Function TrimOldest() As Boolean Implements D3D_IRenderCacheOwner.TrimOldest
+        If _frameUseDepth > 0 Then
+            _trimPending = True
+            Return False
+        End If
+        If CacheBytes <= 0 Then Return False
+        DisposeBlurTargets()
+        DisposeNoiseD2DResources()
+        Return True
+    End Function
+
+    Private Sub ReleaseAll() Implements D3D_IRenderCacheOwner.ReleaseAll
+        DisposeGpuResources()
+    End Sub
+
+    Friend Sub BeginFrameUse()
+        If _disposed Then Return
+        _frameUseDepth += 1
+    End Sub
+
+    Friend Sub EndFrameUse()
+        If _frameUseDepth > 0 Then _frameUseDepth -= 1
+        If _frameUseDepth > 0 OrElse Not _trimPending Then Return
+        _trimPending = False
+        D3D_GpuCache.TrimToBudget()
     End Sub
 
     Public Property Mode As D3D_BackdropMode = D3D_BackdropMode.None
@@ -67,15 +118,22 @@ Public NotInheritable Class D3D_BackdropRenderer
 
         _image = image
         Mode = If(image Is Nothing, D3D_BackdropMode.None, D3D_BackdropMode.Image)
+        InvalidateBlurCache()
         InvalidateAverage()
     End Sub
 
     Public Sub ApplyParameters(radius As Integer, passes As Integer, downsample As Integer, noiseScale As Single)
-        BlurRadius = Math.Max(1, Math.Min(96, radius))
-        BlurPasses = Math.Max(0, Math.Min(5, passes))
-        DownsampleFactor = Math.Max(1, downsample)
-        NoiseScale = Math.Max(0.1F, noiseScale)
+        Dim nextRadius = Math.Max(1, Math.Min(96, radius))
+        Dim nextPasses = Math.Max(0, Math.Min(5, passes))
+        Dim nextDownsample = Math.Max(1, downsample)
+        Dim nextNoiseScale = Math.Max(0.1F, noiseScale)
+        Dim blurChanged = BlurRadius <> nextRadius OrElse BlurPasses <> nextPasses OrElse DownsampleFactor <> nextDownsample
+        BlurRadius = nextRadius
+        BlurPasses = nextPasses
+        DownsampleFactor = nextDownsample
+        NoiseScale = nextNoiseScale
         If BlurPasses <= 0 Then DisposeBlurEffect()
+        If blurChanged Then InvalidateBlurCache()
     End Sub
 
     Public Sub DrawImageBackdrop(context As D3D_PaintContext, bounds As RectangleF)
@@ -167,13 +225,36 @@ Public NotInheritable Class D3D_BackdropRenderer
         If _offscreenContext Is Nothing OrElse _sourceTarget Is Nothing OrElse _outputTarget Is Nothing Then Return False
 
         Dim sourceRect = ComputeCoverSourceRect(image, bounds)
-        RenderSourceToOffscreen(bitmap, sourceRect, size)
-        RenderBlurToOffscreen(size)
+        Dim cacheKey = BuildBlurCacheKey(image, bounds, size, context.DeviceGeneration)
+        If String.Equals(_blurCacheKey, cacheKey, StringComparison.Ordinal) Then
+            D3D_RenderDiagnostics.BackdropCacheHit()
+        Else
+            RenderSourceToOffscreen(bitmap, sourceRect, size)
+            RenderBlurToOffscreen(size)
+            _blurCacheKey = cacheKey
+            D3D_RenderDiagnostics.BackdropRebuild()
+        End If
+        _lastBlurUseTick = D3D_GpuCache.NextTick()
 
         Dim dst As Vortice.RawRectF? = D3D_PaintContext.ToRawRect(bounds)
         Dim src As Vortice.RawRectF? = New Vortice.RawRectF(0, 0, size.Width, size.Height)
         context.DeviceContext.DrawBitmap(_outputTarget, dst, 1.0F, Vortice.Direct2D1.InterpolationMode.Linear, src, Nothing)
         Return True
+    End Function
+
+    Private Function BuildBlurCacheKey(image As Image, bounds As RectangleF, size As Size, deviceGeneration As Integer) As String
+        Return RuntimeHelpers.GetHashCode(image).ToString(Globalization.CultureInfo.InvariantCulture) & ":" &
+               image.Width.ToString(Globalization.CultureInfo.InvariantCulture) & "x" &
+               image.Height.ToString(Globalization.CultureInfo.InvariantCulture) & ":" &
+               D3D_HdrOutput.ImageRevision.ToString(Globalization.CultureInfo.InvariantCulture) & ":" &
+               BlurRadius.ToString(Globalization.CultureInfo.InvariantCulture) & ":" &
+               BlurPasses.ToString(Globalization.CultureInfo.InvariantCulture) & ":" &
+               DownsampleFactor.ToString(Globalization.CultureInfo.InvariantCulture) & ":" &
+               size.Width.ToString(Globalization.CultureInfo.InvariantCulture) & "x" &
+               size.Height.ToString(Globalization.CultureInfo.InvariantCulture) & ":" &
+               BitConverter.SingleToInt32Bits(bounds.Width).ToString("X8", Globalization.CultureInfo.InvariantCulture) & ":" &
+               BitConverter.SingleToInt32Bits(bounds.Height).ToString("X8", Globalization.CultureInfo.InvariantCulture) & ":" &
+               deviceGeneration.ToString(Globalization.CultureInfo.InvariantCulture)
     End Function
 
     Private Sub EnsureOffscreenContext(deviceGeneration As Integer)
@@ -486,6 +567,12 @@ Public NotInheritable Class D3D_BackdropRenderer
             _outputTarget = Nothing
         End If
         _targetSize = Size.Empty
+        InvalidateBlurCache()
+    End Sub
+
+    Private Sub InvalidateBlurCache()
+        _blurCacheKey = Nothing
+        _lastBlurUseTick = 0
     End Sub
 
     Private Sub DisposeBlurEffect()

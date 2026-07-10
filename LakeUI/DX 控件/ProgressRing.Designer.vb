@@ -8,8 +8,7 @@ Partial Class ProgressRing
         Try
             If disposing Then
                 StopAnimation()
-                RemoveHandler 计时器.Tick, AddressOf 动画帧回调
-                计时器.Dispose()
+                动画调度器.Dispose()
                 释放描边样式()
                 If components IsNot Nothing Then
                     components.Dispose()

@@ -1061,7 +1061,7 @@ Public Class ModernTextBox
         If Not D3D_PaintBridge.PaintRenderable(e, Me, Me) Then MyBase.OnPaint(e)
     End Sub
 
-    Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+    Public Overridable Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
         EnsureDpiCacheCurrent()
         Dim w As Integer = ClientRectangle.Width
         Dim h As Integer = ClientRectangle.Height

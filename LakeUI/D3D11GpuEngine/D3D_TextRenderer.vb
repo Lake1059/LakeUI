@@ -175,8 +175,8 @@ Public NotInheritable Class D3D_TextRenderer
     End Function
 
     Private Sub TrimFormatCache()
-        Const MaxEntries As Integer = 256
-        While _formats.Count > MaxEntries
+        Dim maxEntries As Integer = Math.Max(0, GlobalOptions.TextFormatCacheLimit)
+        While _formats.Count > maxEntries
             Dim victim = _formats.OrderBy(Function(kv) kv.Value.LastUsed).First()
             _formats.Remove(victim.Key)
             Try : victim.Value.Format.Dispose() : Catch : End Try

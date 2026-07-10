@@ -717,6 +717,7 @@ Public Class Ultra2DChart
     Private _panStartViewStart As Integer
     Private _hasHoverPoint As Boolean
     Private _hoverClientPoint As Point
+    Private _geometryCachePrefix As String
 
     Public Sub New()
         InitializeComponent()
@@ -881,25 +882,32 @@ Public Class Ultra2DChart
             If draw.Series.ChartType = ChartSeriesTypeEnum.Column Then
                 For Each col In draw.Columns
                     If col.Rect.Width <= 0 OrElse col.Rect.Height <= 0 Then Continue For
+                    If Not context.IntersectsDirty(col.Rect) Then Continue For
                     填充圆角矩形_GPU(context, col.Rect, col.CornerRadius, col.FillColor)
                     If col.BorderThickness > 0 Then 绘制圆角边框_GPU(context, col.Rect, col.CornerRadius, col.BorderColor, col.BorderThickness)
                 Next
             End If
         Next
 
-        For Each draw In layout.SeriesDraws
+        Dim geometryPrefix = EnsureGeometryCachePrefix(context)
+        For seriesIndex As Integer = 0 To layout.SeriesDraws.Count - 1
+            Dim draw = layout.SeriesDraws(seriesIndex)
             If draw.Series.ChartType <> ChartSeriesTypeEnum.Line Then Continue For
             Dim lineBrush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, draw.Color, context.DeviceGeneration)
             If lineBrush IsNot Nothing Then
-                For Each segment In draw.LineSegments
+                For segmentIndex As Integer = 0 To draw.LineSegments.Count - 1
+                    Dim segment = draw.LineSegments(segmentIndex)
                     If segment.Count < 2 Then Continue For
-                    Using geo = 创建折线几何(segment)
-                        context.DeviceContext.DrawGeometry(geo, lineBrush, draw.Series.LineThickness * s)
-                    End Using
+                    If Not context.IntersectsDirty(GetPointBounds(segment, draw.Series.LineThickness * s)) Then Continue For
+                    Dim key = geometryPrefix & ":line:" & seriesIndex.ToString(Globalization.CultureInfo.InvariantCulture) & ":" & segmentIndex.ToString(Globalization.CultureInfo.InvariantCulture)
+                    Dim geo = context.Compositor.GeometryCache.GetOrCreateGeometry(key, Function() 创建折线几何(segment))
+                    If geo IsNot Nothing Then context.DeviceContext.DrawGeometry(geo, lineBrush, draw.Series.LineThickness * s)
                 Next
             End If
 
             For Each marker In draw.Markers
+                Dim markerHalf As Single = marker.Size / 2.0F
+                If Not context.IntersectsDirty(New RectangleF(marker.Center.X - markerHalf, marker.Center.Y - markerHalf, marker.Size, marker.Size)) Then Continue For
                 绘制标记_GPU(context, marker)
             Next
         Next
@@ -919,6 +927,7 @@ Public Class Ultra2DChart
             Dim gridBrush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, 网格线颜色, context.DeviceGeneration)
             If gridBrush IsNot Nothing Then
                 For Each tick In layout.TickLabels
+                    If Not context.IntersectsDirty(New RectangleF(plot.Left, tick.Y - 1.0F, plot.Width, 2.0F)) Then Continue For
                     context.DeviceContext.DrawLine(New Vector2(plot.Left, tick.Y), New Vector2(plot.Right, tick.Y), gridBrush, 网格线粗细 * s)
                 Next
             End If
@@ -928,6 +937,7 @@ Public Class Ultra2DChart
             Dim gridBrush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, 网格线颜色, context.DeviceGeneration)
             If gridBrush IsNot Nothing Then
                 For Each cat In layout.CategoryLabels
+                    If Not context.IntersectsDirty(New RectangleF(cat.X - 1.0F, plot.Top, 2.0F, plot.Height)) Then Continue For
                     context.DeviceContext.DrawLine(New Vector2(cat.X, plot.Top), New Vector2(cat.X, plot.Bottom), gridBrush, 网格线粗细 * s)
                 Next
             End If
@@ -994,12 +1004,14 @@ Public Class Ultra2DChart
 
         If 显示Y轴标签 Then
             For Each tick In layout.TickLabels
+                If Not context.IntersectsDirty(tick.TextRect) Then Continue For
                 绘制文本_GPU(context, tick.Text, 获取坐标轴标签字体(), 坐标轴标签颜色, tick.TextRect, DW.TextAlignment.Trailing, DW.ParagraphAlignment.Center)
             Next
         End If
 
         If 显示X轴标签 Then
             For Each cat In layout.CategoryLabels
+                If Not context.IntersectsDirty(cat.TextRect) Then Continue For
                 If cat.Rotated Then
                     绘制旋转文本_GPU(context, cat.Text, 获取坐标轴标签字体(), 坐标轴标签颜色, cat.TextRect, X轴标签旋转角度)
                 Else
@@ -1021,6 +1033,7 @@ Public Class Ultra2DChart
         End If
 
         For Each label In layout.ValueLabels
+            If Not context.IntersectsDirty(label.Rect) Then Continue For
             绘制文本_GPU(context, label.Text, 获取值标签字体(), label.Color, label.Rect, DW.TextAlignment.Center, DW.ParagraphAlignment.Center)
         Next
 
@@ -1877,6 +1890,34 @@ Public Class Ultra2DChart
             sink.Dispose()
         End Try
         Return path
+    End Function
+
+    Private Function EnsureGeometryCachePrefix(context As D3D_PaintContext) As String
+        Dim prefix = "chart:" & Runtime.CompilerServices.RuntimeHelpers.GetHashCode(Me).ToString(Globalization.CultureInfo.InvariantCulture) & ":" &
+                     _dataVersion.ToString(Globalization.CultureInfo.InvariantCulture) & ":" &
+                     _styleVersion.ToString(Globalization.CultureInfo.InvariantCulture) & ":" &
+                     context.DeviceGeneration.ToString(Globalization.CultureInfo.InvariantCulture)
+        If _geometryCachePrefix IsNot Nothing AndAlso Not String.Equals(_geometryCachePrefix, prefix, StringComparison.Ordinal) Then
+            context.Compositor.GeometryCache.ReleaseByPrefix(_geometryCachePrefix)
+        End If
+        _geometryCachePrefix = prefix
+        Return prefix
+    End Function
+
+    Private Shared Function GetPointBounds(points As IList(Of PointF), strokeWidth As Single) As RectangleF
+        If points Is Nothing OrElse points.Count = 0 Then Return RectangleF.Empty
+        Dim left As Single = points(0).X
+        Dim right As Single = left
+        Dim top As Single = points(0).Y
+        Dim bottom As Single = top
+        For i As Integer = 1 To points.Count - 1
+            left = Math.Min(left, points(i).X)
+            right = Math.Max(right, points(i).X)
+            top = Math.Min(top, points(i).Y)
+            bottom = Math.Max(bottom, points(i).Y)
+        Next
+        Dim half = Math.Max(0.5F, strokeWidth / 2.0F)
+        Return RectangleF.FromLTRB(left - half, top - half, right + half, bottom + half)
     End Function
 #End Region
 

@@ -175,33 +175,7 @@ Public NotInheritable Class FloatingToolTipForm
     End Sub
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
-        If D3D_PaintBridge.PaintRenderable(e, Me, Me) Then Return
-        PaintFallback(e)
-    End Sub
-
-    Private Sub PaintFallback(e As PaintEventArgs)
-        绘制毛玻璃背景(e.Graphics)
-
-        Dim w As Integer = ClientSize.Width
-        Dim h As Integer = ClientSize.Height
-        If w <= 0 OrElse h <= 0 Then Return
-
-        Dim bw As Integer = BorderWidth()
-
-        Using scope = D3D_PaintBridge.BeginPaint(e, Me, 1)
-            If scope Is Nothing Then Return
-            Dim rt As ID2D1RenderTarget = scope.GraphicsLayer
-            Dim brushCache = scope.Compositor.BrushCache
-
-            DrawBackground_D2D(rt, brushCache, bw, w, h, Not HasBackdropFrame())
-            scope.FlushGraphics()
-
-            Dim textRect As RectangleF = GetTextRectangle()
-            DrawSelection_D2D(scope.DCRenderTarget, brushCache, textRect)
-            D3D_TextInterop.DrawText(scope.DCRenderTarget, _tipText, TipFont(), textRect, _style.ForeColor,
-                                     TextFormatFlags.WordBreak Or TextFormatFlags.NoPadding Or TextFormatFlags.Left Or TextFormatFlags.Top,
-                                     OwnerDpiScale(), scope.Compositor.TextFormatCache, brushCache)
-        End Using
+        If Not D3D_PaintBridge.PaintRenderable(e, Me, Me) Then MyBase.OnPaint(e)
     End Sub
 
     Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu

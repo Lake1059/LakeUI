@@ -325,7 +325,7 @@ End Module
 ''' </summary>
 Friend Class ExOverlayBackdropForm
     Inherits Form
-    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource
+    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource, V3_IGpuDirtyRegionCoverage
 
     <DllImport("dwmapi.dll")>
     Private Shared Function DwmSetWindowAttribute(hwnd As IntPtr, attr As Integer, ByRef attrValue As Integer, attrSize As Integer) As Integer
@@ -354,7 +354,7 @@ Friend Class ExOverlayBackdropForm
     Private Const WDA_NONE As Integer = &H0
     Private Const WDA_EXCLUDEFROMCAPTURE As Integer = &H11
 
-    Private 淡入计时器 As PrecisionTimer
+    Private 淡入调度器 As V3_AnimationHelper
     Private ReadOnly 目标不透明度 As Double
     Private ReadOnly 跟踪目标 As Control
 
@@ -412,8 +412,7 @@ Friend Class ExOverlayBackdropForm
     Protected Overrides Sub OnShown(e As EventArgs)
         MyBase.OnShown(e)
         RequestV3Render()
-        淡入计时器 = 创建淡入计时器()
-        淡入计时器.Start()
+        启动淡入动画()
     End Sub
 
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
@@ -433,6 +432,12 @@ Friend Class ExOverlayBackdropForm
         Return New Rectangle(Point.Empty, Me.Size)
     End Function
 
+    ''' <summary>该根遮罩每帧以完全不透明颜色覆盖整个客户区，可安全省略 HDC 入站拷贝。</summary>
+    Public Function CoversDirtyRegion(dirtyRegion As Rectangle) As Boolean Implements V3_IGpuDirtyRegionCoverage.CoversDirtyRegion
+        Return dirtyRegion.Width > 0 AndAlso dirtyRegion.Height > 0 AndAlso
+               New Rectangle(Point.Empty, ClientSize).Contains(dirtyRegion)
+    End Function
+
     Private Sub RequestV3Render()
         RequestV3Render(New Rectangle(Point.Empty, Me.Size))
     End Sub
@@ -446,28 +451,17 @@ Friend Class ExOverlayBackdropForm
         Me.Opacity += 0.06
         If Me.Opacity >= 目标不透明度 Then
             Me.Opacity = 目标不透明度
-            淡入计时器.Stop()
-            淡入计时器.Dispose()
-            淡入计时器 = Nothing
+            淡入调度器?.StopFrameLoop()
         End If
     End Sub
 
-    Private Shared Function FrameIntervalMilliseconds(fps As Integer) As Integer
-        fps = Math.Max(1, fps)
-        Return Math.Max(1, CInt(Math.Ceiling(1000.0R / fps)))
-    End Function
-
-    Private Function 创建淡入计时器() As PrecisionTimer
-        Dim timer As New PrecisionTimer() With {
-            .Interval = FrameIntervalMilliseconds(60),
-            .DispatchMode = PrecisionTimer.DispatchModeEnum.NonBlocking,
-            .OverrunPolicy = PrecisionTimer.OverrunPolicyEnum.Drop,
-            .WorkerThreadCount = 1,
-            .SynchronizingObject = Me
-        }
-        AddHandler timer.Tick, AddressOf 淡入动画帧
-        Return timer
-    End Function
+    Private Sub 启动淡入动画()
+        If 淡入调度器 Is Nothing Then
+            淡入调度器 = New V3_AnimationHelper(Me) With {.FPS = 60}
+            淡入调度器.SetDirtyRectProvider(Function() New Rectangle(Point.Empty, Me.Size))
+        End If
+        淡入调度器.StartFrameLoop(AddressOf 淡入动画帧)
+    End Sub
 
     Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
         MyBase.OnMouseDown(e)
@@ -508,7 +502,7 @@ Friend Class ExOverlayBackdropForm
 
     Protected Overrides Sub Dispose(disposing As Boolean)
         If disposing Then
-            淡入计时器?.Dispose()
+            淡入调度器?.Dispose()
             If 跟踪目标 IsNot Nothing Then
                 RemoveHandler 跟踪目标.LocationChanged, AddressOf 目标位置变化
                 RemoveHandler 跟踪目标.SizeChanged, AddressOf 目标位置变化
@@ -612,7 +606,7 @@ Friend Class ExOverlayMsgBoxHostForm
     Private 拥有者 As IWin32Window
     Private 拥有者控件 As Control
     Private 毛玻璃 As MessageDialogBackdropController
-    Private 淡入计时器 As PrecisionTimer
+    Private 淡入调度器 As V3_AnimationHelper
     Private 目标不透明度 As Double
     Private 返回值字段 As MsgBoxResult = MsgBoxResult.Cancel
     Private 自定义返回索引 As Integer = -1
@@ -900,8 +894,7 @@ Friend Class ExOverlayMsgBoxHostForm
     Protected Overrides Sub OnShown(e As EventArgs)
         MyBase.OnShown(e)
         准备卡片毛玻璃()
-        淡入计时器 = 创建淡入计时器()
-        淡入计时器.Start()
+        启动淡入动画()
     End Sub
 
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
@@ -955,28 +948,17 @@ Friend Class ExOverlayMsgBoxHostForm
         Opacity += 0.06
         If Opacity >= 目标不透明度 Then
             Opacity = 目标不透明度
-            淡入计时器?.Stop()
-            淡入计时器?.Dispose()
-            淡入计时器 = Nothing
+            淡入调度器?.StopFrameLoop()
         End If
     End Sub
 
-    Private Shared Function FrameIntervalMilliseconds(fps As Integer) As Integer
-        fps = Math.Max(1, fps)
-        Return Math.Max(1, CInt(Math.Ceiling(1000.0R / fps)))
-    End Function
-
-    Private Function 创建淡入计时器() As PrecisionTimer
-        Dim timer As New PrecisionTimer() With {
-            .Interval = FrameIntervalMilliseconds(60),
-            .DispatchMode = PrecisionTimer.DispatchModeEnum.NonBlocking,
-            .OverrunPolicy = PrecisionTimer.OverrunPolicyEnum.Drop,
-            .WorkerThreadCount = 1,
-            .SynchronizingObject = Me
-        }
-        AddHandler timer.Tick, AddressOf 淡入动画帧
-        Return timer
-    End Function
+    Private Sub 启动淡入动画()
+        If 淡入调度器 Is Nothing Then
+            淡入调度器 = New V3_AnimationHelper(Me) With {.FPS = 60}
+            淡入调度器.SetDirtyRectProvider(Function() New Rectangle(Point.Empty, Me.Size))
+        End If
+        淡入调度器.StartFrameLoop(AddressOf 淡入动画帧)
+    End Sub
 
 #End Region
 
@@ -1083,7 +1065,7 @@ Friend Class ExOverlayMsgBoxHostForm
                 RemoveHandler 拥有者控件.LocationChanged, AddressOf 拥有者位置变化
                 RemoveHandler 拥有者控件.SizeChanged, AddressOf 拥有者位置变化
             End If
-            淡入计时器?.Dispose()
+            淡入调度器?.Dispose()
             标题字体?.Dispose()
             消息字体?.Dispose()
             消息图标位图?.Dispose()

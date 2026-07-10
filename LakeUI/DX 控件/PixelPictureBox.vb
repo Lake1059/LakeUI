@@ -823,6 +823,11 @@ Public Class PixelPictureBox
             Dim half As Single = 边框宽度 * s / 2.0F
             boundsRect.Inflate(-half, -half)
         End If
+        If _backgroundSource IsNot Nothing Then
+            context.DrawBackgroundSource(Me, _backgroundSource, New RectangleF(0, 0, Me.Width, Me.Height))
+        ElseIf MyBase.BackColor.A > 0 Then
+            context.FillRectangle(New RectangleF(0, 0, Me.Width, Me.Height), MyBase.BackColor)
+        End If
         If 背景颜色.A > 0 Then context.FillRectangle(boundsRect, 背景颜色)
         If 边框颜色.A > 0 AndAlso 边框宽度 > 0 Then context.DrawRectangle(boundsRect, 边框颜色, 边框宽度 * s)
     End Sub

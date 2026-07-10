@@ -269,7 +269,7 @@ Public Class ModernPanel
     Private Const MinimumAnimationFrameDelayMs As Integer = 10
 
     Private _animatedImage As Image = Nothing
-    Private _animationTimer As PrecisionTimer = Nothing
+    Private _animationScheduler As V3_AnimationHelper = Nothing
     Private _animationFrameDimension As FrameDimension = Nothing
     Private _animationFrameDelays As Integer() = Array.Empty(Of Integer)()
     Private _animationFrameCount As Integer = 0
@@ -280,6 +280,7 @@ Public Class ModernPanel
     Private _animationCompletedLoops As Integer = 0
     Private _animationHostForm As Form = Nothing
     Private ReadOnly _animationVisibilitySources As New List(Of Control)()
+    Private _animationFrameDirty As Boolean
 
     Private Sub 启动图片动画()
         If Not 准备图片动画(_image) Then Return
@@ -451,23 +452,22 @@ Public Class ModernPanel
     End Function
 
     Private Sub 恢复图片动画渲染()
-        If _animationTimer Is Nothing Then
-            _animationTimer = New PrecisionTimer() With {
-                .DispatchMode = PrecisionTimer.DispatchModeEnum.NonBlocking,
-                .OverrunPolicy = PrecisionTimer.OverrunPolicyEnum.Drop,
-                .WorkerThreadCount = 1,
-                .SynchronizingObject = Me,
-                .AutoReset = True
-            }
-            AddHandler _animationTimer.Tick, AddressOf 图片动画计时器触发
+        If _animationScheduler Is Nothing Then
+            _animationScheduler = New V3_AnimationHelper(Me)
+            _animationScheduler.SetDirtyRectProvider(
+                Function()
+                    If Not _animationFrameDirty Then Return Rectangle.Empty
+                    _animationFrameDirty = False
+                    Return 获取背景图片刷新区域()
+                End Function)
         End If
 
-        _animationTimer.Interval = Math.Max(1, _animationTimerIntervalMs)
-        If _animationTimer.IsRunning Then Return
+        _animationScheduler.FPS = Math.Max(1, CInt(Math.Ceiling(1000.0R / Math.Max(1, _animationTimerIntervalMs))))
+        If _animationScheduler.IsFrameLoopRunning Then Return
 
         _animationNextFrameTicks = Stopwatch.GetTimestamp() + 毫秒转StopwatchTicks(获取当前图片动画帧延迟())
         Try
-            _animationTimer.Start()
+            _animationScheduler.StartFrameLoop(AddressOf 图片动画计时器触发)
         Catch
             停止图片动画计时器(True)
         End Try
@@ -476,20 +476,17 @@ Public Class ModernPanel
 
     Private Sub 停止图片动画计时器(disposeTimer As Boolean)
         _animationNextFrameTicks = 0
-        If _animationTimer Is Nothing Then Return
+        _animationFrameDirty = False
+        If _animationScheduler Is Nothing Then Return
 
-        Try
-            _animationTimer.Stop()
-        Catch
-        End Try
+        _animationScheduler.StopFrameLoop()
 
         If disposeTimer Then
             Try
-                RemoveHandler _animationTimer.Tick, AddressOf 图片动画计时器触发
-                _animationTimer.Dispose()
+                _animationScheduler.Dispose()
             Catch
             End Try
-            _animationTimer = Nothing
+            _animationScheduler = Nothing
         End If
     End Sub
 
@@ -525,7 +522,7 @@ Public Class ModernPanel
         End If
 
         If frameChanged Then
-            请求V3渲染(获取背景图片刷新区域())
+            _animationFrameDirty = True
         End If
     End Sub
 

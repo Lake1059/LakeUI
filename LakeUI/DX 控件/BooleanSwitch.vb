@@ -33,6 +33,13 @@ Public Class BooleanSwitch
         End If
         If bounds.Width <= 0 OrElse bounds.Height <= 0 Then Return
 
+        Dim sourceRect As New RectangleF(0, 0, Me.Width, Me.Height)
+        If _backgroundSource IsNot Nothing Then
+            context.DrawBackgroundSource(Me, _backgroundSource, sourceRect)
+        ElseIf MyBase.BackColor.A > 0 Then
+            context.FillRectangle(sourceRect, MyBase.BackColor)
+        End If
+
         绘制图形内容_GPU(context, bounds)
 
         If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then

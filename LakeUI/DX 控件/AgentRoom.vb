@@ -2220,6 +2220,7 @@ Public Class AgentRoom
             For i As Integer = firstVisible To lastVisible
                 Dim it = _items(i)
                 Dim r As Rectangle = GetItemViewportRect(i, area)
+                If Not context.IntersectsDirty(r) Then Continue For
                 DrawItemShapes_GPU(context, it, r, font, lineHeight, i)
                 If ShouldUseMarkdown(it) Then DrawMarkdownItem_GPU(context, it, r, area)
                 DrawItemText_GPU(context, it, r, font, lineHeight)

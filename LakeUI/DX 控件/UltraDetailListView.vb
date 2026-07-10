@@ -2520,6 +2520,11 @@ Public Class UltraDetailListView
             Dim rowRect As New Rectangle(contentRect.X, currentY, availW, rowH)
             Dim itemFocusRect As New Rectangle(contentRect.X, currentY, itemFocusW, rowH)
 
+            If Not context.IntersectsDirty(rowRect) Then
+                currentY += rowH
+                Continue For
+            End If
+
             If row.Type = DisplayRowType.GroupHeader Then
                 绘制分组标题行形状_GPU(context, row.Group, rowRect)
             Else
@@ -2572,6 +2577,12 @@ Public Class UltraDetailListView
             If currentY + spacing + rowH > bottomLimit Then Exit For
             currentY += spacing
             Dim rowRect As New Rectangle(contentRect.X, currentY, availW, rowH)
+
+            If Not context.IntersectsDirty(rowRect) Then
+                currentY += rowH
+                lastDrawnIndex = i
+                Continue For
+            End If
 
             If row.Type = DisplayRowType.GroupHeader Then
                 绘制分组标题行_GPU(context, row.Group, rowRect)
@@ -3453,6 +3464,10 @@ Public Class UltraDetailListView
 
         Private _frozenBackground As Image
 
+        Protected Overrides Sub OnPaint(e As PaintEventArgs)
+            If Not D3D_PaintBridge.PaintRenderable(e, Me, Me) Then MyBase.OnPaint(e)
+        End Sub
+
         <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
         Public Property FrozenBackground As Image
             Get
@@ -3469,16 +3484,17 @@ Public Class UltraDetailListView
         End Property
 
         Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
+            ' V3 final pixels are emitted only by RenderGpu and returned through GPU→HDC.
+        End Sub
+
+        Public Overrides Sub RenderGpu(context As D3D_PaintContext)
+            If context Is Nothing OrElse ClientSize.Width <= 0 OrElse ClientSize.Height <= 0 Then Return
             If _frozenBackground IsNot Nothing Then
-                If BackColor.A > 0 Then
-                    Using b As New SolidBrush(BackColor)
-                        e.Graphics.FillRectangle(b, ClientRectangle)
-                    End Using
-                End If
-                e.Graphics.DrawImage(_frozenBackground, New Rectangle(0, 0, Width, Height))
-                Return
+                context.DrawImage(_frozenBackground, New RectangleF(0, 0, ClientSize.Width, ClientSize.Height))
+            ElseIf BackColor.A > 0 Then
+                context.FillRectangle(New RectangleF(0, 0, ClientSize.Width, ClientSize.Height), BackColor)
             End If
-            MyBase.OnPaintBackground(e)
+            MyBase.RenderGpu(context)
         End Sub
 
         Protected Overrides Sub Dispose(disposing As Boolean)

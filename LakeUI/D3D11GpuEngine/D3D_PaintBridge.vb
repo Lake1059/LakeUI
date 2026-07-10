@@ -621,7 +621,7 @@ Public Module D3D_PaintBridge
         Try
             Using scope = BeginGpuPaint(e, control)
                 If scope Is Nothing Then Return False
-                Using context = scope.CreateContext(control)
+                Using context = scope.CreateContext(control, TryCast(renderable, V3_IGpuDirtyRegionCoverage))
                     If context Is Nothing Then Return False
                     renderable.RenderGpu(context)
                 End Using

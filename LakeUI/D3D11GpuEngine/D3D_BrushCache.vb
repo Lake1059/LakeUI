@@ -57,7 +57,9 @@ Public NotInheritable Class D3D_BrushCache
     End Sub
 
     Private Sub Trim(protectedKey As String)
-        While _solidBrushes.Count > Math.Max(0, MaxSolidBrushes)
+        Dim limit = Math.Max(0, GlobalOptions.BrushCacheLimit)
+        MaxSolidBrushes = limit
+        While _solidBrushes.Count > limit
             Dim victim = _solidBrushes.
                 Where(Function(kv) Not String.Equals(kv.Key, protectedKey, StringComparison.Ordinal)).
                 OrderBy(Function(kv) kv.Value.LastUsed).

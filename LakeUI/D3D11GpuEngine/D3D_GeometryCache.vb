@@ -50,6 +50,14 @@ Public NotInheritable Class D3D_GeometryCache
         Try : entry.Geometry.Dispose() : Catch : End Try
     End Sub
 
+    Public Sub ReleaseByPrefix(prefix As String)
+        If String.IsNullOrEmpty(prefix) Then Return
+        Dim keys = _geometries.Keys.Where(Function(key) key.StartsWith(prefix, StringComparison.Ordinal)).ToArray()
+        For Each key In keys
+            Release(key)
+        Next
+    End Sub
+
     Public Sub Invalidate()
         For Each entry In _geometries.Values
             Try : entry.Geometry.Dispose() : Catch : End Try

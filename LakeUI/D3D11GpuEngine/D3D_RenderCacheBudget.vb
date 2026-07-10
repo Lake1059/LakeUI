@@ -62,6 +62,7 @@ Friend Module D3D_GpuCache
 
             If total <= budget OrElse oldest Is Nothing Then Exit Do
             If Not oldest.TrimOldest() Then Exit Do
+            D3D_RenderDiagnostics.CacheEviction()
             guard += 1
         Loop While guard < 4096
     End Sub

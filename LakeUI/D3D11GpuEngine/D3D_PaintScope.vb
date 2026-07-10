@@ -56,11 +56,16 @@ Public NotInheritable Class D3D_PaintScope
     Private _gpuCompositor As D3D_WindowCompositor
     Private _gpuContext As ID2D1DeviceContext
     Private _gpuTarget As ID2D1Bitmap1
+    Private _gpuTargetPoolWidth As Integer
+    Private _gpuTargetPoolHeight As Integer
     Private _gpuInterop As ID2D1GdiInteropRenderTarget
     Private _ownsGpuContext As Boolean
     Private _gpuDrawing As Boolean
     Private _gpuClipPushed As Boolean
     Private _gpuGeneration As Integer = -1
+    Private _gpuTargetHealthy As Boolean = True
+    Private _textureFrameUseStarted As Boolean
+    Private _backdropFrameUseStarted As Boolean
     Private _disposed As Boolean
     Private ReadOnly _disposeCompositorWithScope As Boolean
     Private ReadOnly _returnCompositorToBackgroundSamplingPool As Boolean
@@ -253,7 +258,7 @@ Public NotInheritable Class D3D_PaintScope
         DCRenderTarget.Clear(D3D_D2DInterop.ToColor4(color))
     End Sub
 
-    Public Function CreateContext(control As Control) As D3D_PaintContext
+    Friend Function CreateContext(control As Control, Optional coverage As V3_IGpuDirtyRegionCoverage = Nothing) As D3D_PaintContext
         If _disposed Then Return Nothing
         If control Is Nothing OrElse control.IsDisposed Then Return Nothing
         If _gpuContext IsNot Nothing Then Throw New InvalidOperationException("D3D_PaintScope 同一时间只允许一个活动 GPU 绘制上下文。")
@@ -264,40 +269,65 @@ Public NotInheritable Class D3D_PaintScope
         _gpuContext = _gpuCompositor.AcquireDeviceContext(_ownsGpuContext, _gpuGeneration)
         If _gpuContext Is Nothing Then Return Nothing
 
-        Dim props As New BitmapProperties1(
-            New Vortice.DCommon.PixelFormat(Vortice.DXGI.Format.B8G8R8A8_UNorm, Vortice.DCommon.AlphaMode.Ignore),
-            96.0F,
-            96.0F,
-            BitmapOptions.Target Or BitmapOptions.GdiCompatible)
-
+        _gpuCompositor.TextureCache.BeginFrameUse()
+        _textureFrameUseStarted = True
+        _gpuCompositor.D3D_BackdropSurfaceRenderer.BeginFrameUse()
+        _backdropFrameUseStarted = True
         _gpuTargetRect = ResolveGpuTargetRect(control)
-        _gpuTarget = _gpuContext.CreateBitmap(New Vortice.Mathematics.SizeI(_gpuTargetRect.Width, _gpuTargetRect.Height), IntPtr.Zero, 0UI, props)
-        _gpuContext.Target = _gpuTarget
-        _gpuContext.Transform = Matrix3x2.Identity
-        _gpuContext.AntialiasMode = AntialiasMode.PerPrimitive
-        _gpuCompositor.TextRenderer.ConfigureDeviceContext(_gpuContext, _gpuCompositor.TextQuality, targetHasAlpha:=False)
-        _gpuContext.BeginDraw()
-        _gpuDrawing = True
+        _gpuTarget = _gpuCompositor.RentGpuPaintTarget(_gpuContext, _gpuTargetRect.Width, _gpuTargetRect.Height,
+                                                        _gpuGeneration, _gpuTargetPoolWidth, _gpuTargetPoolHeight)
+        If _gpuTarget Is Nothing Then
+            _gpuCompositor.TextureCache.EndFrameUse()
+            _textureFrameUseStarted = False
+            _gpuCompositor.D3D_BackdropSurfaceRenderer.EndFrameUse()
+            _backdropFrameUseStarted = False
+            _gpuCompositor.ReleaseDeviceContext(_gpuContext, _ownsGpuContext)
+            _gpuContext = Nothing
+            _gpuCompositor = Nothing
+            Return Nothing
+        End If
+        Try
+            _gpuContext.Target = _gpuTarget
+            _gpuContext.Transform = Matrix3x2.Identity
+            _gpuContext.AntialiasMode = AntialiasMode.PerPrimitive
+            _gpuCompositor.TextRenderer.ConfigureDeviceContext(_gpuContext, _gpuCompositor.TextQuality, targetHasAlpha:=False)
+            _gpuContext.BeginDraw()
+            _gpuDrawing = True
 
-        CopyDestinationIntoGpuTarget()
+            Dim fullyCovered As Boolean = False
+            Try
+                fullyCovered = coverage IsNot Nothing AndAlso coverage.CoversDirtyRegion(_clipRect)
+            Catch
+                fullyCovered = False
+            End Try
+            If fullyCovered Then
+                D3D_RenderDiagnostics.CoverageCopySkip()
+            Else
+                CopyDestinationIntoGpuTarget()
+            End If
 
-        _gpuContext.PushAxisAlignedClip(
-            ToGpuLocalRectF(_clipRect),
-            AntialiasMode.Aliased)
-        _gpuClipPushed = True
-        _gpuContext.Transform = Matrix3x2.CreateTranslation(-_gpuTargetRect.X, -_gpuTargetRect.Y)
+            _gpuContext.PushAxisAlignedClip(
+                ToGpuLocalRectF(_clipRect),
+                AntialiasMode.Aliased)
+            _gpuClipPushed = True
+            _gpuContext.Transform = Matrix3x2.CreateTranslation(-_gpuTargetRect.X, -_gpuTargetRect.Y)
 
-        Return New D3D_PaintContext(
-            _gpuCompositor,
-            _gpuContext,
-            Matrix3x2.Identity,
-            New RectangleF(0, 0, Math.Max(1, _w), Math.Max(1, _h)),
-            V3_DpiContext.FromControl(control).Scale,
-            _gpuCompositor.TextQuality,
-            targetHasAlpha:=False,
-            frameGeneration:=0,
-            deviceGeneration:=_gpuGeneration,
-            dirtyRegion:=New Rectangle() {_clipRect})
+            Return New D3D_PaintContext(
+                _gpuCompositor,
+                _gpuContext,
+                Matrix3x2.Identity,
+                New RectangleF(0, 0, Math.Max(1, _w), Math.Max(1, _h)),
+                V3_DpiContext.FromControl(control).Scale,
+                _gpuCompositor.TextQuality,
+                targetHasAlpha:=False,
+                frameGeneration:=0,
+                deviceGeneration:=_gpuGeneration,
+                dirtyRegion:=New Rectangle() {_clipRect})
+        Catch
+            _gpuTargetHealthy = False
+            ReleaseGpuContext()
+            Throw
+        End Try
     End Function
 
     Private Sub CopyDestinationIntoGpuTarget()
@@ -311,6 +341,7 @@ Public NotInheritable Class D3D_PaintScope
             If sourceHdc = IntPtr.Zero Then Return
 
             BitBlt(sourceHdc, 0, 0, _gpuTargetRect.Width, _gpuTargetRect.Height, _hdc, _gpuTargetRect.X, _gpuTargetRect.Y, SRCCOPY)
+            D3D_RenderDiagnostics.InboundCopy(CLng(_gpuTargetRect.Width) * CLng(_gpuTargetRect.Height) * 4L)
         Finally
             If _gpuInterop IsNot Nothing AndAlso sourceHdc <> IntPtr.Zero Then
                 Try : _gpuInterop.ReleaseDC(Nothing) : Catch : End Try
@@ -338,8 +369,17 @@ Public NotInheritable Class D3D_PaintScope
                                   sourceHdc, _clipRect.X - _gpuTargetRect.X, _clipRect.Y - _gpuTargetRect.Y, SRCCOPY) Then
                         Throw New InvalidOperationException("D3D_PaintScope 回贴 HDC 失败。")
                     End If
+                    D3D_RenderDiagnostics.OutboundCopy(CLng(_clipRect.Width) * CLng(_clipRect.Height) * 4L)
                 End If
             End If
+        Catch ex As Exception
+            _gpuTargetHealthy = False
+            If _gpuCompositor IsNot Nothing Then
+                Try : _gpuCompositor.NotifyDeviceContextException(ex) : Catch : End Try
+            Else
+                Try : D3D_RenderCore.DeviceManager.HandleDeviceLost(ex) : Catch : End Try
+            End If
+            endDrawException = ex
         Finally
             If _gpuInterop IsNot Nothing AndAlso sourceHdc <> IntPtr.Zero Then
                 Try : _gpuInterop.ReleaseDC(Nothing) : Catch : End Try
@@ -349,6 +389,7 @@ Public NotInheritable Class D3D_PaintScope
                 Try
                     _gpuContext.EndDraw()
                 Catch ex As Exception
+                    _gpuTargetHealthy = False
                     If _gpuCompositor IsNot Nothing Then
                         Try : _gpuCompositor.NotifyDeviceContextException(ex) : Catch : End Try
                     Else
@@ -360,7 +401,13 @@ Public NotInheritable Class D3D_PaintScope
             End If
         End Try
 
-        If endDrawException IsNot Nothing Then Throw endDrawException
+        If endDrawException IsNot Nothing Then
+            ' Rendering scope disposal is a cleanup boundary.  Device removal/reset may surface as
+            ' D2DERR_WRONG_STATE while ending/releasing a draw; the device manager has already
+            ' invalidated affected resources, so do not leak this transient state into WinForms paint.
+            If IsRecoverableGpuStateException(endDrawException) Then Return
+            Throw endDrawException
+        End If
     End Sub
 
     Private Sub ReleaseGpuContext()
@@ -369,7 +416,7 @@ Public NotInheritable Class D3D_PaintScope
             _gpuClipPushed = False
         End If
         If _gpuDrawing AndAlso _gpuContext IsNot Nothing Then
-            Try : _gpuContext.EndDraw() : Catch : End Try
+            Try : _gpuContext.EndDraw() : Catch : _gpuTargetHealthy = False : End Try
             _gpuDrawing = False
         End If
         If _gpuContext IsNot Nothing Then
@@ -381,9 +428,19 @@ Public NotInheritable Class D3D_PaintScope
             _gpuInterop = Nothing
         End If
         If _gpuTarget IsNot Nothing Then
-            Try : _gpuTarget.Dispose() : Catch : End Try
+            If _gpuTargetHealthy AndAlso _gpuCompositor IsNot Nothing Then
+                Try
+                    _gpuCompositor.ReturnGpuPaintTarget(_gpuTarget, _gpuTargetPoolWidth, _gpuTargetPoolHeight, _gpuGeneration)
+                Catch
+                    Try : _gpuTarget.Dispose() : Catch : End Try
+                End Try
+            Else
+                Try : _gpuTarget.Dispose() : Catch : End Try
+            End If
             _gpuTarget = Nothing
         End If
+        _gpuTargetPoolWidth = 0
+        _gpuTargetPoolHeight = 0
         If _gpuContext IsNot Nothing Then
             If _gpuCompositor IsNot Nothing Then
                 Try : _gpuCompositor.ReleaseDeviceContext(_gpuContext, _ownsGpuContext) : Catch : End Try
@@ -393,9 +450,19 @@ Public NotInheritable Class D3D_PaintScope
         End If
         _gpuContext = Nothing
         _ownsGpuContext = False
+        If _backdropFrameUseStarted AndAlso _gpuCompositor IsNot Nothing Then
+            Try : _gpuCompositor.D3D_BackdropSurfaceRenderer.EndFrameUse() : Catch : End Try
+            _backdropFrameUseStarted = False
+        End If
+        If _textureFrameUseStarted AndAlso _gpuCompositor IsNot Nothing Then
+            Try : _gpuCompositor.TextureCache.EndFrameUse() : Catch : End Try
+            _textureFrameUseStarted = False
+        End If
+        Try : D3D_GpuCache.TrimToBudget() : Catch : End Try
         _gpuCompositor = Nothing
         _gpuGeneration = -1
         _gpuTargetRect = Rectangle.Empty
+        _gpuTargetHealthy = True
     End Sub
 
     Private Function ResolveGpuTargetRect(control As Control) As Rectangle
@@ -521,8 +588,14 @@ Public NotInheritable Class D3D_PaintScope
             End If
         End Try
 
-        If pendingException IsNot Nothing Then Throw pendingException
+        If pendingException IsNot Nothing AndAlso Not IsRecoverableGpuStateException(pendingException) Then Throw pendingException
     End Sub
+
+    Private Shared Function IsRecoverableGpuStateException(ex As Exception) As Boolean
+        If ex Is Nothing Then Return False
+        If D3D_RenderCore.DeviceManager.HandleDeviceLost(ex) Then Return True
+        Return CUInt(CLng(ex.HResult) And 4294967295L) = &H88990001UI ' D2DERR_WRONG_STATE
+    End Function
 
     Private Const SRCCOPY As Integer = &HCC0020
 

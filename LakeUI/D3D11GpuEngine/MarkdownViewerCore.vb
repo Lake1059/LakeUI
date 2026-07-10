@@ -2756,9 +2756,9 @@ Public Class MarkdownViewerCore
                 Dim drawY As Integer = origin.Y + vl.Y - scrollY + ci.Top
                 If drawY + vl.Height < clipTop Then Continue For
                 If drawY > clipBottom Then Exit For
-
                 Dim block = _document.Blocks(vl.BlockIndex)
                 DrawBlockDecoration_GPU(context, block, vl, vli, CInt(clipLeft), drawY, clipW, s)
+                If Not context.IntersectsDirty(New RectangleF(clipLeft, drawY, clipW, vl.Height)) Then Continue For
                 DrawFragments_GPU(context, vl, vli, CInt(clipLeft), drawY, block.Kind, s, selStart, selEnd)
             Next
         End Using

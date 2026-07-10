@@ -7,11 +7,8 @@ Public Class ProgressRing
 
     Public Sub New()
         InitializeComponent()
-        计时器.DispatchMode = PrecisionTimer.DispatchModeEnum.NonBlocking
-        计时器.OverrunPolicy = PrecisionTimer.OverrunPolicyEnum.Drop
-        计时器.WorkerThreadCount = 1
-        计时器.SynchronizingObject = Me
-        AddHandler 计时器.Tick, AddressOf 动画帧回调
+        动画调度器 = New V3_AnimationHelper(Me) With {.FPS = 动画帧率值}
+        动画调度器.SetDirtyRectProvider(Function() New Rectangle(Point.Empty, Me.Size))
     End Sub
 
 #Region "背景源"
@@ -217,7 +214,7 @@ Public Class ProgressRing
 
 #Region "通用"
     Private ReadOnly 秒表 As New Stopwatch()
-    Private ReadOnly 计时器 As New PrecisionTimer()
+    Private ReadOnly 动画调度器 As V3_AnimationHelper
     Private 动画运行中 As Boolean = False
 
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
@@ -229,11 +226,6 @@ Public Class ProgressRing
 
     Private Function DpiScale() As Single
         Return V3_DpiContext.FromControl(Me).Scale
-    End Function
-
-    Private Shared Function FrameIntervalMilliseconds(fps As Integer) As Integer
-        fps = Math.Max(1, fps)
-        Return Math.Max(1, CInt(Math.Ceiling(1000.0R / fps)))
     End Function
 
     Private Sub 请求V3渲染(Optional immediate As Boolean = False)
@@ -251,7 +243,6 @@ Public Class ProgressRing
             动画运行中 = True
             秒表.Restart()
         End If
-        计时器.Interval = FrameIntervalMilliseconds(动画帧率值)
         更新动画计时器状态()
     End Sub
 
@@ -259,7 +250,7 @@ Public Class ProgressRing
     Public Sub StopAnimation()
         If Not 动画运行中 Then Return
         动画运行中 = False
-        计时器.Stop()
+        动画调度器.StopFrameLoop()
         秒表.Stop()
         请求V3渲染()
     End Sub
@@ -290,9 +281,10 @@ Public Class ProgressRing
 
     Private Sub 更新动画计时器状态()
         If 应运行动画计时器() Then
-            If Not 计时器.IsRunning Then 计时器.Start()
-        ElseIf 计时器.IsRunning Then
-            计时器.Stop()
+            动画调度器.FPS = 动画帧率值
+            动画调度器.StartFrameLoop(AddressOf 动画帧回调)
+        Else
+            动画调度器.StopFrameLoop()
         End If
     End Sub
 
@@ -321,7 +313,7 @@ Public Class ProgressRing
     End Sub
 
     Protected Overrides Sub OnHandleDestroyed(e As EventArgs)
-        计时器.Stop()
+        动画调度器.StopFrameLoop()
         MyBase.OnHandleDestroyed(e)
     End Sub
 
@@ -433,7 +425,7 @@ Public Class ProgressRing
         Set(value As Integer)
             动画帧率值 = Math.Max(1, value)
             If 动画运行中 Then
-                计时器.Interval = FrameIntervalMilliseconds(动画帧率值)
+                动画调度器.FPS = 动画帧率值
             End If
         End Set
     End Property

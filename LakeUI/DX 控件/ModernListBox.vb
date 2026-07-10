@@ -1329,6 +1329,7 @@ Public Class ModernListBox
         Dim s As Single = DpiScale()
         Dim radius As Single = If(hasRadius, 边框圆角半径 * s, 0.0F)
         If _backgroundSource IsNot Nothing Then context.DrawBackgroundSource(Me, _backgroundSource, sourceRect)
+        If _backgroundSource Is Nothing AndAlso MyBase.BackColor.A > 0 Then context.FillRectangle(sourceRect, MyBase.BackColor)
         填充圆角矩形_GPU(context, boundsRect, radius, bgClr)
         绘制圆角边框_GPU(context, boundsRect, radius, borderClr, 边框宽度 * s)
     End Sub

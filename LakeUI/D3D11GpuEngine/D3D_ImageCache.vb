@@ -79,6 +79,11 @@ Public NotInheritable Class D3D_ImageCache
     End Function
 
     Private Shared Function UploadImage(context As ID2D1DeviceContext, image As Image) As ID2D1Bitmap1
+        Dim sourceBitmap = TryCast(image, Bitmap)
+        If sourceBitmap IsNot Nothing AndAlso sourceBitmap.PixelFormat = PixelFormat.Format32bppPArgb AndAlso Not D3D_HdrOutput.ShouldMapImages Then
+            Return CreateBitmapFromLockedPArgb(context, sourceBitmap)
+        End If
+
         Using staging As New Bitmap(image.Width, image.Height, PixelFormat.Format32bppPArgb)
             staging.SetResolution(96.0F, 96.0F)
             Using g = Graphics.FromImage(staging)
@@ -87,20 +92,23 @@ Public NotInheritable Class D3D_ImageCache
             End Using
             D3D_HdrOutput.MapBitmapForImageUpload(staging)
 
-            Dim rect As New Rectangle(0, 0, staging.Width, staging.Height)
-            Dim data = staging.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format32bppPArgb)
-            Try
-                Dim props As New BitmapProperties1(
-                    New Vortice.DCommon.PixelFormat(Vortice.DXGI.Format.B8G8R8A8_UNorm, Vortice.DCommon.AlphaMode.Premultiplied),
-                    96.0F,
-                    96.0F,
-                    BitmapOptions.None)
-
-                Return context.CreateBitmap(New SizeI(staging.Width, staging.Height), data.Scan0, CUInt(data.Stride), props)
-            Finally
-                staging.UnlockBits(data)
-            End Try
+            Return CreateBitmapFromLockedPArgb(context, staging)
         End Using
+    End Function
+
+    Private Shared Function CreateBitmapFromLockedPArgb(context As ID2D1DeviceContext, bitmap As Bitmap) As ID2D1Bitmap1
+        Dim rect As New Rectangle(0, 0, bitmap.Width, bitmap.Height)
+        Dim data = bitmap.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format32bppPArgb)
+        Try
+            Dim props As New BitmapProperties1(
+                New Vortice.DCommon.PixelFormat(Vortice.DXGI.Format.B8G8R8A8_UNorm, Vortice.DCommon.AlphaMode.Premultiplied),
+                96.0F,
+                96.0F,
+                BitmapOptions.None)
+            Return context.CreateBitmap(New SizeI(bitmap.Width, bitmap.Height), data.Scan0, CUInt(data.Stride), props)
+        Finally
+            bitmap.UnlockBits(data)
+        End Try
     End Function
 
     Public Sub Dispose() Implements IDisposable.Dispose

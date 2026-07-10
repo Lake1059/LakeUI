@@ -56,6 +56,26 @@ Public NotInheritable Class D3D_PaintContext
     Public ReadOnly Property DeviceGeneration As Integer
     Public ReadOnly Property DirtyRegion As IReadOnlyList(Of Rectangle)
 
+    ''' <summary>返回指定本地矩形是否与当前脏区相交，供大型控件跳过确定不可见的绘制命令。</summary>
+    Public Function IntersectsDirty(rect As RectangleF) As Boolean
+        If rect.Width <= 0.0F OrElse rect.Height <= 0.0F Then Return False
+        If DirtyRegion Is Nothing OrElse DirtyRegion.Count = 0 Then Return True
+        Dim rounded = Rectangle.Ceiling(rect)
+        For Each dirty In DirtyRegion
+            If dirty.IntersectsWith(rounded) Then Return True
+        Next
+        Return False
+    End Function
+
+    Public Function IntersectsDirty(rect As Rectangle) As Boolean
+        If rect.Width <= 0 OrElse rect.Height <= 0 Then Return False
+        If DirtyRegion Is Nothing OrElse DirtyRegion.Count = 0 Then Return True
+        For Each dirty In DirtyRegion
+            If dirty.IntersectsWith(rect) Then Return True
+        Next
+        Return False
+    End Function
+
     ''' <summary>
     ''' 绘制填充矩形。调用方只传业务颜色；D3D_BrushCache 负责跨帧 brush 生命周期。
     ''' </summary>
@@ -86,8 +106,12 @@ Public NotInheritable Class D3D_PaintContext
             Return
         End If
 
-        Dim geometry = GetRoundedRectangleGeometry(rect, radius)
-        If geometry IsNot Nothing Then DeviceContext.FillGeometry(geometry, brush)
+        ' The Vortice 3.8 VB projection exposes an ambiguous by-ref FillRoundedRectangle overload.
+        ' Keep dynamic rounded rectangles out of the window geometry cache; their transient geometry is
+        ' released before returning from this draw call.
+        Using geometry = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New RoundedRectangle(rect, radius, radius))
+            DeviceContext.FillGeometry(geometry, brush)
+        End Using
     End Sub
 
     Public Function GetRoundedRectangleGeometry(rect As RectangleF, radius As Single) As ID2D1Geometry
