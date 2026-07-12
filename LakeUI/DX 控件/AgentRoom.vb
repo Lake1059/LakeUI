@@ -187,6 +187,20 @@ Public Class AgentRoom
             Next
         End Sub
 
+        Friend Sub MovePreservingRenderer(item As ChatItem, targetIndex As Integer)
+            If item Is Nothing Then Return
+            Dim oldIndex = IndexOf(item)
+            If oldIndex < 0 Then Return
+            targetIndex = Math.Max(0, Math.Min(targetIndex, Count - 1))
+            If oldIndex = targetIndex Then Return
+
+            MyBase.RemoveItem(oldIndex)
+            targetIndex = Math.Max(0, Math.Min(targetIndex, Count))
+            MyBase.InsertItem(targetIndex, item)
+            RefreshCachedIndexes(Math.Min(oldIndex, targetIndex))
+            _owner?.OnItemsChanged(Math.Min(oldIndex, targetIndex), False)
+        End Sub
+
         Protected Overrides Sub InsertItem(index As Integer, item As ChatItem)
             If item Is Nothing Then Return
             MyBase.InsertItem(index, item)
@@ -277,15 +291,18 @@ Public Class AgentRoom
     Private _measureVersion As Integer
     Private ReadOnly _textWidthCache As New Dictionary(Of TextWidthKey, Integer)(512)
     Private Const MaxTextWidthCacheEntries As Integer = 4096
-    Private ReadOnly _streamLayoutTimer As New PrecisionTimer() With {
-        .Interval = 50,
-        .DispatchMode = PrecisionTimer.DispatchModeEnum.NonBlocking,
-        .OverrunPolicy = PrecisionTimer.OverrunPolicyEnum.Drop,
-        .WorkerThreadCount = 1,
-        .AutoReset = True
-    }
+    Private ReadOnly _streamLayoutTimer As New Timer() With {.Interval = 50}
+    Private Const StreamIdleSettleMilliseconds As Integer = 1000
+    Private ReadOnly _streamIdleTimer As New Timer() With {.Interval = StreamIdleSettleMilliseconds}
     Private ReadOnly _dirtyStreamItems As New HashSet(Of ChatItem)()
+    Private ReadOnly _activeStreamItems As New HashSet(Of ChatItem)()
+    Private _lastStreamAppendTick As Long
     Private _suppressMarkdownRendererAppliedEvents As Integer
+    Private _lastRenderMilliseconds As Double
+    Private _maxRenderMilliseconds As Double
+    Private _maxLayoutMilliseconds As Double
+    Private _maxShapeDrawMilliseconds As Double
+    Private _maxMarkdownDrawMilliseconds As Double
 
     Friend _hoverLinkUrl As String = Nothing
 
@@ -344,8 +361,6 @@ Public Class AgentRoom
     Friend _mouseDownLinkUrl As String = Nothing
     Friend _mouseDownLinkItemIndex As Integer = -1
 
-    Friend _copyContextMenu As ContextMenuStrip
-
     Friend _enableMarkdownForAssistant As Boolean = True
     Private _markdownParser As MarkdownViewerCore.MarkdownParser = Nothing
     Private _markdownBasePath As String = Nothing
@@ -363,23 +378,19 @@ Public Class AgentRoom
         Me.Size = New Size(420, 560)
         Me.BackColor = Color.Transparent
 
-        _copyContextMenu = New ContextMenuStrip()
-        Dim miCopy As New ToolStripMenuItem("复制(&C)")
-        AddHandler miCopy.Click, Sub(s, e) CopySelectionToClipboard()
-        Dim miSelAll As New ToolStripMenuItem("全选(&A)")
-        AddHandler miSelAll.Click, Sub(s, e) SelectAllText()
-        _copyContextMenu.Items.Add(miCopy)
-        _copyContextMenu.Items.Add(miSelAll)
-        _streamLayoutTimer.SynchronizingObject = Me
         AddHandler _streamLayoutTimer.Tick, AddressOf StreamLayoutTimerTick
+        AddHandler _streamIdleTimer.Tick, AddressOf StreamIdleTimerTick
     End Sub
 
     Protected Overrides Sub Dispose(disposing As Boolean)
         If disposing Then
             Try
                 RemoveHandler _streamLayoutTimer.Tick, AddressOf StreamLayoutTimerTick
+                RemoveHandler _streamIdleTimer.Tick, AddressOf StreamIdleTimerTick
                 _streamLayoutTimer.Stop()
+                _streamIdleTimer.Stop()
                 _streamLayoutTimer.Dispose()
+                _streamIdleTimer.Dispose()
             Catch
             End Try
 
@@ -387,10 +398,6 @@ Public Class AgentRoom
                 ReleaseMarkdownRenderer(it)
             Next
 
-            Try
-                _copyContextMenu?.Dispose()
-            Catch
-            End Try
         End If
         MyBase.Dispose(disposing)
     End Sub
@@ -856,17 +863,6 @@ Public Class AgentRoom
         Set(value As Boolean)
             _selectableText = value
             If Not value Then ClearSelection()
-        End Set
-    End Property
-
-    Friend _showCopyContextMenu As Boolean = True
-    <Category("LakeUI"), Description("是否显示右键复制菜单"), DefaultValue(True)>
-    Public Property ShowCopyContextMenu As Boolean
-        Get
-            Return _showCopyContextMenu
-        End Get
-        Set(value As Boolean)
-            _showCopyContextMenu = value
         End Set
     End Property
 
@@ -1452,13 +1448,50 @@ Public Class AgentRoom
     End Property
 
     Public Event LinkClicked As EventHandler(Of LinkClickedEventArgs)
+
+    <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+    Public ReadOnly Property LastRenderMilliseconds As Double
+        Get
+            Return _lastRenderMilliseconds
+        End Get
+    End Property
+
+    <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+    Public ReadOnly Property MaxRenderMilliseconds As Double
+        Get
+            Return _maxRenderMilliseconds
+        End Get
+    End Property
+
+    <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+    Public ReadOnly Property MaxLayoutMilliseconds As Double
+        Get
+            Return _maxLayoutMilliseconds
+        End Get
+    End Property
+
+    <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+    Public ReadOnly Property MaxShapeDrawMilliseconds As Double
+        Get
+            Return _maxShapeDrawMilliseconds
+        End Get
+    End Property
+
+    <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+    Public ReadOnly Property MaxMarkdownDrawMilliseconds As Double
+        Get
+            Return _maxMarkdownDrawMilliseconds
+        End Get
+    End Property
 #End Region
 #Region "公共 API"
     ''' <summary>清空所有消息并重置滚动/选区。</summary>
     Public Sub Clear()
         ClearSelection()
         _streamLayoutTimer.Stop()
+        _streamIdleTimer.Stop()
         _dirtyStreamItems.Clear()
+        _activeStreamItems.Clear()
         _items.Clear()
         _滚动偏移 = 0
         _pinnedToBottom = True
@@ -1483,6 +1516,12 @@ Public Class AgentRoom
         Return AddItem(ChatItemKind.Card, text)
     End Function
 
+    ''' <summary>移动现有消息且保留其布局、Markdown 渲染器和流式解析状态。</summary>
+    Public Sub MoveItem(item As ChatItem, targetIndex As Integer)
+        If item Is Nothing OrElse item.OwnerRoom IsNot Me Then Return
+        _items.MovePreservingRenderer(item, targetIndex)
+    End Sub
+
     Private Function AddItem(kind As ChatItemKind, text As String) As ChatItem
         Dim it As New ChatItem(kind, text, scanLinks:=Not (kind = ChatItemKind.AssistantMessage AndAlso _enableMarkdownForAssistant))
         _items.Add(it)
@@ -1492,19 +1531,23 @@ Public Class AgentRoom
     ''' <summary>向最后一条消息追加文本（用于流式输出）。若没有任何消息，则新建一条助手消息。</summary>
     Public Sub AppendToLast(more As String)
         If String.IsNullOrEmpty(more) Then Return
-        Dim last As ChatItem
         If _items.Count = 0 Then
             Dim unused As ChatItem = AddAssistantMessage(more)
         Else
-            last = _items(_items.Count - 1)
-            If ShouldUseMarkdown(last) Then
-                last.AppendTextInternal(more, rescanLinks:=False, markRelayout:=False)
-                last.QueueMarkdownRendererAppend(more)
-                If Not SubmitPendingMarkdownRendererAppend(last) Then QueueStreamItemLayout(last)
-            Else
-                last.AppendTextInternal(more, rescanLinks:=True)
-                NotifyItemChanged(last)
-            End If
+            AppendToItem(_items(_items.Count - 1), more)
+        End If
+    End Sub
+
+    ''' <summary>向指定的现有消息追加文本，适用于消息后方还存在状态卡片的流式场景。</summary>
+    Public Sub AppendToItem(item As ChatItem, more As String)
+        If item Is Nothing OrElse item.OwnerRoom IsNot Me OrElse String.IsNullOrEmpty(more) Then Return
+        If ShouldUseMarkdown(item) Then
+            item.AppendTextInternal(more, rescanLinks:=False, markRelayout:=False)
+            item.QueueMarkdownRendererAppend(more)
+            QueueStreamItemLayout(item)
+        Else
+            item.AppendTextInternal(more, rescanLinks:=True)
+            NotifyItemChanged(item)
         End If
     End Sub
 
@@ -1515,6 +1558,22 @@ Public Class AgentRoom
         Dim viewH As Integer = ContentViewportHeight()
         _滚动偏移 = Math.Max(0, _contentHeight - viewH)
         RequestViewportRefresh()
+    End Sub
+
+    ''' <summary>立即提交并最终化最后一条流式 Markdown 消息。</summary>
+    Public Sub CompleteLastStreamingMessage()
+        If _items.Count = 0 Then Return
+        CompleteStreamingMessage(_items(_items.Count - 1))
+    End Sub
+
+    ''' <summary>立即提交并最终化指定的流式 Markdown 消息。</summary>
+    Public Sub CompleteStreamingMessage(item As ChatItem)
+        If item Is Nothing OrElse item.OwnerRoom IsNot Me Then Return
+        _streamLayoutTimer.Stop()
+        FlushPendingStreamItems()
+        _activeStreamItems.Remove(item)
+        If _activeStreamItems.Count = 0 Then _streamIdleTimer.Stop()
+        CompleteStreamingItem(item)
     End Sub
 #End Region
 
@@ -1529,17 +1588,23 @@ Public Class AgentRoom
     Private Sub QueueStreamItemLayout(item As ChatItem)
         If item Is Nothing OrElse item.OwnerRoom IsNot Me Then Return
         _dirtyStreamItems.Add(item)
-        If Not _streamLayoutTimer.IsRunning Then
-            Try
-                _streamLayoutTimer.Start()
-            Catch
-                StreamLayoutTimerTick(_streamLayoutTimer, EventArgs.Empty)
-            End Try
-        End If
+        _activeStreamItems.Add(item)
+        _lastStreamAppendTick = Environment.TickCount64
+        Dim renderer = item.MarkdownRenderer
+        _streamLayoutTimer.Interval = If(renderer IsNot Nothing AndAlso Not renderer.IsDisposed,
+                                         renderer.RecommendedStreamBatchInterval,
+                                         50)
+        If Not _streamLayoutTimer.Enabled Then _streamLayoutTimer.Start()
+        _streamIdleTimer.Stop()
+        _streamIdleTimer.Start()
     End Sub
 
     Private Sub StreamLayoutTimerTick(sender As Object, e As EventArgs)
         _streamLayoutTimer.Stop()
+        FlushPendingStreamItems()
+    End Sub
+
+    Private Sub FlushPendingStreamItems()
         If _dirtyStreamItems.Count = 0 Then Return
 
         Dim snapshot = _dirtyStreamItems.ToArray()
@@ -1556,6 +1621,38 @@ Public Class AgentRoom
             End If
         Next
         If needOuterRefresh Then RequestViewportRefresh()
+    End Sub
+
+    Private Sub StreamIdleTimerTick(sender As Object, e As EventArgs)
+        _streamIdleTimer.Stop()
+        Dim idleMilliseconds = Environment.TickCount64 - _lastStreamAppendTick
+        If idleMilliseconds < StreamIdleSettleMilliseconds Then
+            _streamIdleTimer.Interval = Math.Max(1, CInt(StreamIdleSettleMilliseconds - idleMilliseconds))
+            _streamIdleTimer.Start()
+            Return
+        End If
+        _streamIdleTimer.Interval = StreamIdleSettleMilliseconds
+        FlushPendingStreamItems()
+        If _activeStreamItems.Count = 0 Then Return
+
+        Dim snapshot = _activeStreamItems.ToArray()
+        _activeStreamItems.Clear()
+        For Each it In snapshot
+            CompleteStreamingItem(it)
+        Next
+    End Sub
+
+    Private Sub CompleteStreamingItem(it As ChatItem)
+        If it Is Nothing OrElse it.OwnerRoom IsNot Me OrElse Not ShouldUseMarkdown(it) Then Return
+        SubmitPendingMarkdownRendererAppend(it)
+        Dim renderer = it.MarkdownRenderer
+        If renderer Is Nothing OrElse renderer.IsDisposed Then
+            it.NeedsRelayout = True
+            MarkContentLayoutDirty(GetItemIndex(it))
+            RequestViewportRefresh()
+            Return
+        End If
+        renderer.CompleteStreaming()
     End Sub
 
     Private Function CanSubmitMarkdownRendererAppend(it As ChatItem) As Boolean
@@ -1708,7 +1805,10 @@ Public Class AgentRoom
     End Sub
 
     Friend Sub ReleaseMarkdownRenderer(it As ChatItem)
-        If it Is Nothing OrElse it.MarkdownRenderer Is Nothing Then Return
+        If it Is Nothing Then Return
+        _dirtyStreamItems.Remove(it)
+        _activeStreamItems.Remove(it)
+        If it.MarkdownRenderer Is Nothing Then Return
         Dim renderer = it.MarkdownRenderer
         it.MarkdownRenderer = Nothing
         it.MarkdownRendererText = Nothing
@@ -1742,6 +1842,7 @@ Public Class AgentRoom
     End Function
 
     Private Function EnsureMarkdownRenderer(it As ChatItem, contentWidth As Integer) As MarkdownViewerCore
+        Dim createdRenderer As Boolean = False
         If it.MarkdownRenderer Is Nothing OrElse it.MarkdownRenderer.IsDisposed Then
             Dim renderer As New MarkdownViewerCore With {
                 .EmbeddedContentMode = True,
@@ -1773,9 +1874,10 @@ Public Class AgentRoom
                     CommitMarkdownRendererLayout(it, requestRefresh:=True)
                 End Sub
             it.MarkdownRenderer = renderer
+            createdRenderer = True
         End If
 
-        ConfigureMarkdownRenderer(it.MarkdownRenderer, it)
+        If createdRenderer Then ConfigureMarkdownRenderer(it.MarkdownRenderer, it)
         Dim safeWidth As Integer = Math.Max(1, contentWidth)
         it.MarkdownRenderer.PrepareEmbeddedContent(safeWidth, V3_DpiContext.FromControl(Me).Dpi, Me)
         If it.MarkdownRendererSubmittedTextVersion <> it.TextVersion OrElse it.MarkdownRendererWidth <> safeWidth Then
@@ -2192,7 +2294,11 @@ Public Class AgentRoom
     End Sub
 
     Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+        Dim renderWatch = Diagnostics.Stopwatch.StartNew()
+        Dim layoutWatch = Diagnostics.Stopwatch.StartNew()
         EnsureLayout()
+        layoutWatch.Stop()
+        _maxLayoutMilliseconds = Math.Max(_maxLayoutMilliseconds, layoutWatch.Elapsed.TotalMilliseconds)
         If Me.Width < 1 OrElse Me.Height < 1 Then Return
 
         Dim borderSize As Integer = Dpi(_borderSize)
@@ -2223,8 +2329,16 @@ Public Class AgentRoom
                 Dim it = _items(i)
                 Dim r As Rectangle = GetItemViewportRect(i, area)
                 If Not context.IntersectsDirty(r) Then Continue For
+                Dim shapeWatch = Diagnostics.Stopwatch.StartNew()
                 DrawItemShapes_GPU(context, it, r, font, lineHeight, i)
-                If ShouldUseMarkdown(it) Then DrawMarkdownItem_GPU(context, it, r, area)
+                shapeWatch.Stop()
+                _maxShapeDrawMilliseconds = Math.Max(_maxShapeDrawMilliseconds, shapeWatch.Elapsed.TotalMilliseconds)
+                If ShouldUseMarkdown(it) Then
+                    Dim markdownWatch = Diagnostics.Stopwatch.StartNew()
+                    DrawMarkdownItem_GPU(context, it, r, area)
+                    markdownWatch.Stop()
+                    _maxMarkdownDrawMilliseconds = Math.Max(_maxMarkdownDrawMilliseconds, markdownWatch.Elapsed.TotalMilliseconds)
+                End If
                 DrawItemText_GPU(context, it, r, font, lineHeight)
             Next
         End Using
@@ -2242,6 +2356,9 @@ Public Class AgentRoom
         End If
 
         If borderSize > 0 Then DrawRoundedBorder_GPU(context, bgRect, borderRadius, _borderColor, borderSize)
+        renderWatch.Stop()
+        _lastRenderMilliseconds = renderWatch.Elapsed.TotalMilliseconds
+        _maxRenderMilliseconds = Math.Max(_maxRenderMilliseconds, _lastRenderMilliseconds)
     End Sub
 
     Public Function GetRenderBounds() As Rectangle Implements V3_IGpuInvalidationSource.GetRenderBounds
@@ -2935,14 +3052,6 @@ Public Class AgentRoom
             If e.Button = MouseButtons.Left Then ActivateMouseDownLinkIfClick(e.Location, hadSelection)
         End If
 
-        If e.Button = MouseButtons.Right AndAlso _showCopyContextMenu Then
-            Dim mdHit = HitTestMarkdown(e.Location)
-            If mdHit.HasValue Then
-                _activeMarkdownRenderer = mdHit.Renderer
-                _activeMarkdownItemIndex = mdHit.ItemIndex
-            End If
-            _copyContextMenu.Show(Me, e.Location)
-        End If
     End Sub
 
     Protected Overrides Sub OnMouseLeave(e As EventArgs)

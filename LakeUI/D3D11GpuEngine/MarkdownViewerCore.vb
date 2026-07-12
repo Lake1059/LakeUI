@@ -690,13 +690,7 @@ Public Class MarkdownViewerCore
     ' 流式追加
     Private _streamBuffer As New StringBuilder()
     Private _streamDirty As Boolean = False
-    Private _streamTimer As New PrecisionTimer() With {
-        .Interval = 30,
-        .DispatchMode = PrecisionTimer.DispatchModeEnum.NonBlocking,
-        .OverrunPolicy = PrecisionTimer.OverrunPolicyEnum.Drop,
-        .WorkerThreadCount = 1,
-        .AutoReset = True
-    }
+    Private _streamTimer As New Timer() With {.Interval = 50}
     Private _parseVersion As Integer
     Private _lastAppliedParseVersion As Integer
     Private _parseRunning As Boolean
@@ -704,10 +698,25 @@ Public Class MarkdownViewerCore
     Private _applyingParsedDocument As Boolean
     Private _pendingParseVersion As Integer
     Private _pendingParseParser As MarkdownParser
-    Private _pendingParseText As String = ""
     Private _pendingParseResetScroll As Boolean
     Private _pendingParseKeepAtBottom As Boolean
     Private _pendingParseClearSelection As Boolean
+    Private _pendingParseForceFull As Boolean
+    Private _stableSourceLength As Integer
+    Private _stableBlockCount As Integer
+    Private _appliedSourceLength As Integer
+    Private _streamParseCount As Long
+    Private _streamFullParseCount As Long
+    Private _lastApplyMilliseconds As Double
+    Private _maxApplyMilliseconds As Double
+    Private _streamTableParseReuseCount As Long
+    Private _streamTableLayoutReuseCount As Long
+    Private _streamLayoutFallbackCount As Long
+    Private _applyingStreamingDocument As Boolean
+    Private _lastDrawnVisualLineCount As Integer
+    Private _lastDrawnFragmentCount As Integer
+    Private _lastDrawMilliseconds As Double
+    Private _maxDrawMilliseconds As Double
 
     ' 字体缓存
     Private _fontCache As Dictionary(Of String, Font) = Nothing
@@ -717,6 +726,11 @@ Public Class MarkdownViewerCore
     Private _layoutAreaWidth As Integer = 0
     Private ReadOnly _blockLayoutTops As New List(Of Integer)
     Private ReadOnly _blockLayoutBottoms As New List(Of Integer)
+    Private ReadOnly _blockVisualLineStarts As New List(Of Integer)
+    Private ReadOnly _blockPreviousContentKinds As New List(Of BlockKind?)
+    Private ReadOnly _blockHadBlankLineBefore As New List(Of Boolean)
+    Private _layoutTailContentKind As BlockKind?
+    Private _layoutTailHadBlankLine As Boolean
     Private ReadOnly _textWidthCache As New Dictionary(Of TextWidthKey, Integer)(512)
     Private Const MaxTextWidthCacheEntries As Integer = 4096
 
@@ -824,7 +838,7 @@ Public Class MarkdownViewerCore
         _scrollY = 0
         _scrollBarVisible = False
         _embeddedInvalidationTarget = invalidationTarget
-        If invalidationTarget IsNot Nothing Then _streamTimer.SynchronizingObject = invalidationTarget
+        If _embeddedContentMode Then _streamTimer.Stop()
 
         Dim safeDpi As Integer = Math.Max(1, hostDpi)
         Dim safeWidth As Integer = Math.Max(1, contentWidth)
@@ -1615,9 +1629,12 @@ Public Class MarkdownViewerCore
             Return _streamBuffer.ToString()
         End Get
         Set(value As String)
+            _streamTimer.Stop()
+            _streamDirty = False
             _streamBuffer.Clear()
             _streamBuffer.Append(If(value, ""))
-            ParseAndLayout(resetScroll:=True, clearSelectionOnApply:=True)
+            ResetIncrementalParseState()
+            ParseAndLayout(resetScroll:=True, clearSelectionOnApply:=True, forceFull:=True)
         End Set
     End Property
 
@@ -1629,8 +1646,110 @@ Public Class MarkdownViewerCore
         End Get
         Set(value As MarkdownParser)
             _parser = If(value, New MarkdownParser())
+            ResetIncrementalParseState()
             ParseAndLayout()
         End Set
+    End Property
+
+    ''' <summary>流式解析批次数，供性能诊断使用。</summary>
+    <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+    Public ReadOnly Property StreamParseCount As Long
+        Get
+            Return Threading.Interlocked.Read(_streamParseCount)
+        End Get
+    End Property
+
+    ''' <summary>因完整赋值、最终化或自定义解析器触发的完整解析次数。</summary>
+    <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+    Public ReadOnly Property FullParseCount As Long
+        Get
+            Return Threading.Interlocked.Read(_streamFullParseCount)
+        End Get
+    End Property
+
+    ''' <summary>最近一次在 UI 线程应用解析结果和布局的耗时（毫秒）。</summary>
+    <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+    Public ReadOnly Property LastApplyMilliseconds As Double
+        Get
+            Return _lastApplyMilliseconds
+        End Get
+    End Property
+
+    <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+    Public ReadOnly Property MaxApplyMilliseconds As Double
+        Get
+            Return _maxApplyMilliseconds
+        End Get
+    End Property
+
+    <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+    Public ReadOnly Property LastDrawnVisualLineCount As Integer
+        Get
+            Return _lastDrawnVisualLineCount
+        End Get
+    End Property
+
+    <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+    Public ReadOnly Property LastDrawnFragmentCount As Integer
+        Get
+            Return _lastDrawnFragmentCount
+        End Get
+    End Property
+
+    <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+    Public ReadOnly Property LastDrawMilliseconds As Double
+        Get
+            Return _lastDrawMilliseconds
+        End Get
+    End Property
+
+    <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+    Public ReadOnly Property MaxDrawMilliseconds As Double
+        Get
+            Return _maxDrawMilliseconds
+        End Get
+    End Property
+
+    Friend ReadOnly Property RecommendedStreamBatchInterval As Integer
+        Get
+            Dim sourceLength = _streamBuffer.Length
+            Dim interval As Integer
+            If sourceLength >= 65536 Then
+                interval = 300
+            ElseIf sourceLength >= 32768 Then
+                interval = 200
+            ElseIf sourceLength >= 8192 Then
+                interval = 100
+            Else
+                interval = 50
+            End If
+            If _document?.Blocks IsNot Nothing AndAlso _document.Blocks.Count > 0 Then
+                Dim lastBlock = _document.Blocks(_document.Blocks.Count - 1)
+                If lastBlock IsNot Nothing AndAlso lastBlock.Kind = BlockKind.Table Then interval = Math.Max(interval, 200)
+            End If
+            Return interval
+        End Get
+    End Property
+
+    <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+    Public ReadOnly Property StreamTableParseReuseCount As Long
+        Get
+            Return Threading.Interlocked.Read(_streamTableParseReuseCount)
+        End Get
+    End Property
+
+    <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+    Public ReadOnly Property StreamTableLayoutReuseCount As Long
+        Get
+            Return Threading.Interlocked.Read(_streamTableLayoutReuseCount)
+        End Get
+    End Property
+
+    <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+    Public ReadOnly Property StreamLayoutFallbackCount As Long
+        Get
+            Return Threading.Interlocked.Read(_streamLayoutFallbackCount)
+        End Get
     End Property
 
     Private 自动滚动 As Boolean = True
@@ -1678,14 +1797,12 @@ Public Class MarkdownViewerCore
                  ControlStyles.SupportsTransparentBackColor, True)
         UpdateStyles()
 
-        _streamTimer.SynchronizingObject = Me
         AddHandler _autoScrollTimer.Tick, AddressOf AutoScrollTick
         AddHandler _streamTimer.Tick, AddressOf StreamTimerTick
     End Sub
 
     Protected Overrides Sub OnHandleCreated(e As EventArgs)
         MyBase.OnHandleCreated(e)
-        _streamTimer.SynchronizingObject = Me
         ParseAndLayout()
     End Sub
 
@@ -1695,7 +1812,7 @@ Public Class MarkdownViewerCore
         _parseVersion += 1
         _pendingParseVersion = 0
         _pendingParseParser = Nothing
-        _pendingParseText = ""
+        _pendingParseForceFull = False
         _parseRunning = False
         _runningParseVersion = 0
         DisposeFontCache()
@@ -1713,7 +1830,7 @@ Public Class MarkdownViewerCore
             _parseVersion += 1
             _pendingParseVersion = 0
             _pendingParseParser = Nothing
-            _pendingParseText = ""
+            _pendingParseForceFull = False
             _parseRunning = False
             _runningParseVersion = 0
             DisposeFontCache()
@@ -1743,7 +1860,19 @@ Public Class MarkdownViewerCore
         _streamBuffer.Append(text)
         _streamDirty = True
         InvalidatePendingParse()
-        If Not _streamTimer.IsRunning Then _streamTimer.Start()
+        If _embeddedContentMode Then
+            _streamDirty = False
+            ParseAndLayout()
+        ElseIf Not _streamTimer.Enabled Then
+            _streamTimer.Start()
+        End If
+    End Sub
+
+    ''' <summary>立即提交尾部内容，并以完整解析结果校准当前流式文档。</summary>
+    Public Sub CompleteStreaming()
+        _streamTimer.Stop()
+        _streamDirty = False
+        ParseAndLayout(forceFull:=True)
     End Sub
 
     ''' <summary>
@@ -1757,14 +1886,17 @@ Public Class MarkdownViewerCore
         _streamDirty = False
         _streamBuffer.Clear()
         _streamBuffer.Append(If(markdown, ""))
+        ResetIncrementalParseState()
         Dim version = System.Threading.Interlocked.Increment(_parseVersion)
         Dim doc As MarkdownDocument = Nothing
         Try
             doc = If(_parser, New MarkdownParser()).Parse(_streamBuffer.ToString())
+            Threading.Interlocked.Increment(_streamFullParseCount)
         Catch
             doc = New MarkdownDocument()
         End Try
-        ApplyParsedDocument(version, doc, resetScroll, keepAtBottom, clearSelectionOnApply)
+        ApplyParsedDocument(version, doc, resetScroll, keepAtBottom, clearSelectionOnApply,
+                            firstChangedBlockHint:=0, stableSourceLength:=0, stableBlockCount:=0)
     End Sub
 
     ''' <summary>清空全部内容。</summary>
@@ -1863,31 +1995,45 @@ Public Class MarkdownViewerCore
 
 #Region "解析与布局"
 
+    Private NotInheritable Class ParseWorkResult
+        Public Document As MarkdownDocument
+        Public FirstChangedBlock As Integer
+        Public StableSourceLength As Integer
+        Public StableBlockCount As Integer
+        Public IsStreamingUpdate As Boolean
+        Public SourceLength As Integer
+        Public ReusedGrowingTable As Boolean
+    End Class
+
     Private Sub ParseAndLayout(Optional resetScroll As Boolean = False,
                                Optional keepAtBottom As Boolean = False,
-                               Optional clearSelectionOnApply As Boolean = False)
+                               Optional clearSelectionOnApply As Boolean = False,
+                               Optional forceFull As Boolean = False)
         Dim parser = If(_parser, New MarkdownParser())
-        Dim markdown = _streamBuffer.ToString()
         Dim version = System.Threading.Interlocked.Increment(_parseVersion)
 
         Dim callbackTarget = GetAsyncCallbackTarget()
-        If parser.GetType() IsNot GetType(MarkdownParser) OrElse callbackTarget Is Nothing Then
+        If callbackTarget Is Nothing Then
+            Dim markdown = _streamBuffer.ToString()
             Dim doc As MarkdownDocument = Nothing
             Try
                 doc = parser.Parse(markdown)
+                Threading.Interlocked.Increment(_streamFullParseCount)
             Catch
                 doc = New MarkdownDocument()
             End Try
-            ApplyParsedDocument(version, doc, resetScroll, keepAtBottom, clearSelectionOnApply)
+            ApplyParsedDocument(version, doc, resetScroll, keepAtBottom, clearSelectionOnApply,
+                                firstChangedBlockHint:=0, stableSourceLength:=0, stableBlockCount:=0,
+                                isStreamingUpdate:=False)
             Return
         End If
 
         _pendingParseVersion = version
         _pendingParseParser = parser
-        _pendingParseText = markdown
         _pendingParseResetScroll = resetScroll
         _pendingParseKeepAtBottom = keepAtBottom
         _pendingParseClearSelection = clearSelectionOnApply
+        _pendingParseForceFull = forceFull
         StartPendingParseIfIdle()
     End Sub
 
@@ -1895,10 +2041,10 @@ Public Class MarkdownViewerCore
         System.Threading.Interlocked.Increment(_parseVersion)
         _pendingParseVersion = 0
         _pendingParseParser = Nothing
-        _pendingParseText = ""
         _pendingParseResetScroll = False
         _pendingParseKeepAtBottom = False
         _pendingParseClearSelection = False
+        _pendingParseForceFull = False
     End Sub
 
     Private Sub StartPendingParseIfIdle()
@@ -1906,17 +2052,31 @@ Public Class MarkdownViewerCore
 
         Dim version = _pendingParseVersion
         Dim parser = _pendingParseParser
-        Dim markdown = _pendingParseText
         Dim resetScroll = _pendingParseResetScroll
         Dim keepAtBottom = _pendingParseKeepAtBottom
         Dim clearSelectionOnApply = _pendingParseClearSelection
+        Dim forceFull = _pendingParseForceFull
+        Dim baseDocument = _document
+        Dim baseStableSourceLength = _stableSourceLength
+        Dim baseStableBlockCount = _stableBlockCount
+        Dim baseAppliedSourceLength = _appliedSourceLength
+        Dim sourceLength = _streamBuffer.Length
+        Dim sourceOffset As Integer = 0
+        Dim markdown As String
+        Dim useIncrementalTail = Not forceFull AndAlso parser.GetType() Is GetType(MarkdownParser)
+        If useIncrementalTail Then
+            sourceOffset = Math.Max(0, Math.Min(baseStableSourceLength, sourceLength))
+            markdown = _streamBuffer.ToString(sourceOffset, sourceLength - sourceOffset)
+        Else
+            markdown = _streamBuffer.ToString()
+        End If
 
         _pendingParseVersion = 0
         _pendingParseParser = Nothing
-        _pendingParseText = ""
         _pendingParseResetScroll = False
         _pendingParseKeepAtBottom = False
         _pendingParseClearSelection = False
+        _pendingParseForceFull = False
 
         _parseRunning = True
         _runningParseVersion = version
@@ -1928,17 +2088,41 @@ Public Class MarkdownViewerCore
         End If
 
         Task.Run(Sub()
-                     Dim doc As MarkdownDocument = Nothing
+                     Dim result As ParseWorkResult = Nothing
                      Try
-                         doc = parser.Parse(markdown)
+                         If useIncrementalTail Then
+                             result = ParseIncrementalTailSnapshot(parser, markdown, sourceOffset, sourceLength, baseDocument,
+                                                               baseStableSourceLength, baseStableBlockCount,
+                                                               baseAppliedSourceLength)
+                             If result.ReusedGrowingTable Then Threading.Interlocked.Increment(_streamTableParseReuseCount)
+                             Threading.Interlocked.Increment(_streamParseCount)
+                         Else
+                             Dim doc = parser.Parse(markdown)
+                             result = New ParseWorkResult With {
+                                 .Document = doc,
+                                 .FirstChangedBlock = FindFirstChangedBlock(baseDocument, doc),
+                                 .StableSourceLength = 0,
+                                 .StableBlockCount = 0,
+                                 .IsStreamingUpdate = False,
+                                 .SourceLength = markdown.Length
+                             }
+                             Threading.Interlocked.Increment(_streamFullParseCount)
+                         End If
                      Catch
-                         doc = New MarkdownDocument()
+                         result = New ParseWorkResult With {
+                             .Document = New MarkdownDocument(),
+                             .FirstChangedBlock = 0,
+                             .StableSourceLength = 0,
+                             .StableBlockCount = 0,
+                             .IsStreamingUpdate = False,
+                             .SourceLength = markdown.Length
+                         }
                      End Try
 
                      Try
                          callbackTarget.BeginInvoke(
                              Sub()
-                                 If Not IsDisposed Then CompleteAsyncParse(version, doc, resetScroll, keepAtBottom, clearSelectionOnApply)
+                                 If Not IsDisposed Then CompleteAsyncParse(version, result, resetScroll, keepAtBottom, clearSelectionOnApply)
                              End Sub)
                      Catch
                          _parseRunning = False
@@ -1947,7 +2131,7 @@ Public Class MarkdownViewerCore
                  End Sub)
     End Sub
 
-    Private Sub CompleteAsyncParse(version As Integer, doc As MarkdownDocument,
+    Private Sub CompleteAsyncParse(version As Integer, result As ParseWorkResult,
                                    resetScroll As Boolean, keepAtBottom As Boolean,
                                    clearSelectionOnApply As Boolean)
         If version = _runningParseVersion Then
@@ -1956,7 +2140,12 @@ Public Class MarkdownViewerCore
         End If
 
         If version = _parseVersion Then
-            ApplyParsedDocument(version, doc, resetScroll, keepAtBottom, clearSelectionOnApply)
+            ApplyParsedDocument(version, result?.Document, resetScroll, keepAtBottom, clearSelectionOnApply,
+                                If(result Is Nothing, 0, result.FirstChangedBlock),
+                                If(result Is Nothing, 0, result.StableSourceLength),
+                                If(result Is Nothing, 0, result.StableBlockCount),
+                                result IsNot Nothing AndAlso result.IsStreamingUpdate,
+                                If(result Is Nothing, 0, result.SourceLength))
         End If
 
         StartPendingParseIfIdle()
@@ -1964,14 +2153,26 @@ Public Class MarkdownViewerCore
 
     Private Sub ApplyParsedDocument(version As Integer, doc As MarkdownDocument,
                                     resetScroll As Boolean, keepAtBottom As Boolean,
-                                    clearSelectionOnApply As Boolean)
+                                    clearSelectionOnApply As Boolean,
+                                    Optional firstChangedBlockHint As Integer = -2,
+                                    Optional stableSourceLength As Integer = 0,
+                                    Optional stableBlockCount As Integer = 0,
+                                    Optional isStreamingUpdate As Boolean = False,
+                                    Optional appliedSourceLength As Integer = -1)
         If version < _lastAppliedParseVersion Then Return
+        Dim applyWatch = Diagnostics.Stopwatch.StartNew()
         _lastAppliedParseVersion = version
         Dim oldDoc = _document
         Dim oldContentHeight As Integer = _totalContentHeight
-        Dim firstChangedBlock As Integer = FindFirstChangedBlock(oldDoc, doc)
+        Dim firstChangedBlock As Integer = If(firstChangedBlockHint >= -1,
+                                              firstChangedBlockHint,
+                                              FindFirstChangedBlock(oldDoc, doc))
         _document = If(doc, New MarkdownDocument())
+        _stableSourceLength = Math.Max(0, stableSourceLength)
+        _stableBlockCount = Math.Max(0, Math.Min(stableBlockCount, _document.Blocks.Count))
+        _appliedSourceLength = If(appliedSourceLength >= 0, appliedSourceLength, _streamBuffer.Length)
         _applyingParsedDocument = True
+        _applyingStreamingDocument = isStreamingUpdate
         Try
             If firstChangedBlock < 0 Then
                 RaiseContentHeightChangedIfNeeded(oldContentHeight)
@@ -1980,6 +2181,7 @@ Public Class MarkdownViewerCore
             End If
         Finally
             _applyingParsedDocument = False
+            _applyingStreamingDocument = False
         End Try
         If resetScroll Then _scrollY = 0
         If keepAtBottom Then _scrollY = MaxScrollY()
@@ -1987,6 +2189,179 @@ Public Class MarkdownViewerCore
         ClampScroll()
         RaiseEvent EmbeddedContentApplied(Me, EventArgs.Empty)
         If Not _embeddedContentMode Then RequestEmbeddedOrSelfRefresh()
+        applyWatch.Stop()
+        _lastApplyMilliseconds = applyWatch.Elapsed.TotalMilliseconds
+        _maxApplyMilliseconds = Math.Max(_maxApplyMilliseconds, _lastApplyMilliseconds)
+    End Sub
+
+    Private Shared Function ParseIncrementalTailSnapshot(parser As MarkdownParser,
+                                                         markdownTail As String,
+                                                         sourceOffset As Integer,
+                                                         sourceLength As Integer,
+                                                         baseDocument As MarkdownDocument,
+                                                         stableSourceLength As Integer,
+                                                         stableBlockCount As Integer,
+                                                         appliedSourceLength As Integer) As ParseWorkResult
+        Dim source = If(markdownTail, "")
+        Dim safeSourceOffset = Math.Max(0, Math.Min(sourceOffset, sourceLength))
+        Dim growingTable = TryParseGrowingTableTailSnapshot(parser, source, safeSourceOffset, sourceLength,
+                                                            baseDocument, appliedSourceLength,
+                                                            stableSourceLength, stableBlockCount)
+        If growingTable IsNot Nothing Then Return growingTable
+        Dim safeBlockCount As Integer = 0
+        If baseDocument IsNot Nothing AndAlso baseDocument.Blocks IsNot Nothing Then
+            safeBlockCount = Math.Max(0, Math.Min(stableBlockCount, baseDocument.Blocks.Count))
+        End If
+
+        Dim stableTailLength = FindLastStableSourceBoundary(source, 0)
+        Dim newStableSourceLength = safeSourceOffset + stableTailLength
+        Dim combined As New MarkdownDocument()
+        If safeBlockCount > 0 Then
+            combined.Blocks.AddRange(baseDocument.Blocks.GetRange(0, safeBlockCount))
+        End If
+
+        If stableTailLength > 0 Then
+            Dim stableSegment = source.Substring(0, stableTailLength)
+            combined.Blocks.AddRange(ParseCompleteLineSegment(parser, stableSegment))
+        End If
+        Dim newStableBlockCount = combined.Blocks.Count
+
+        If stableTailLength < source.Length Then
+            Dim activeDocument = parser.Parse(source.Substring(stableTailLength))
+            If activeDocument IsNot Nothing AndAlso activeDocument.Blocks IsNot Nothing Then
+                If source.EndsWith(ControlChars.Lf) AndAlso activeDocument.Blocks.Count > 0 AndAlso
+                   activeDocument.Blocks(activeDocument.Blocks.Count - 1).Kind = BlockKind.BlankLine Then
+                    activeDocument.Blocks.RemoveAt(activeDocument.Blocks.Count - 1)
+                End If
+                combined.Blocks.AddRange(activeDocument.Blocks)
+            End If
+        End If
+
+        Return New ParseWorkResult With {
+            .Document = combined,
+            .FirstChangedBlock = FindFirstChangedBlock(baseDocument, combined, safeBlockCount),
+            .StableSourceLength = newStableSourceLength,
+            .StableBlockCount = newStableBlockCount,
+            .IsStreamingUpdate = True,
+            .SourceLength = sourceLength
+        }
+    End Function
+
+    Private Shared Function ParseCompleteLineSegment(parser As MarkdownParser, segment As String) As List(Of MarkdownBlock)
+        If String.IsNullOrEmpty(segment) Then Return New List(Of MarkdownBlock)()
+        Dim normalized = segment.Replace(vbCr, "")
+        Dim lines = normalized.Split(vbLf)
+        If normalized.EndsWith(vbLf, StringComparison.Ordinal) AndAlso lines.Length > 0 Then
+            Array.Resize(lines, lines.Length - 1)
+        End If
+        If lines.Length = 0 Then Return New List(Of MarkdownBlock)()
+        Return parser.ParseBlocks(lines)
+    End Function
+
+    Private Shared Function TryParseGrowingTableTailSnapshot(parser As MarkdownParser,
+                                                             sourceTail As String,
+                                                             sourceOffset As Integer,
+                                                             sourceLength As Integer,
+                                                             baseDocument As MarkdownDocument,
+                                                             appliedSourceLength As Integer,
+                                                             stableSourceLength As Integer,
+                                                             stableBlockCount As Integer) As ParseWorkResult
+        If parser Is Nothing OrElse baseDocument?.Blocks Is Nothing OrElse baseDocument.Blocks.Count = 0 Then Return Nothing
+        Dim source = If(sourceTail, "")
+        Dim appliedTailLength = appliedSourceLength - sourceOffset
+        If appliedTailLength <= 0 OrElse appliedTailLength >= source.Length Then Return Nothing
+        Dim tableIndex = baseDocument.Blocks.Count - 1
+        Dim oldTable = baseDocument.Blocks(tableIndex)
+        If oldTable Is Nothing OrElse oldTable.Kind <> BlockKind.Table OrElse
+           oldTable.TableRows Is Nothing OrElse oldTable.TableRows.Count = 0 OrElse
+           oldTable.ColumnAlignments Is Nothing OrElse oldTable.ColumnAlignments.Count = 0 Then Return Nothing
+
+        Dim previousEndedAtLineBoundary = source(appliedTailLength - 1) = ControlChars.Lf
+        Dim tailStart As Integer
+        Dim rowsToKeep As Integer
+        If previousEndedAtLineBoundary Then
+            tailStart = appliedTailLength
+            rowsToKeep = oldTable.TableRows.Count
+        Else
+            Dim previousLineBreak = source.LastIndexOf(ControlChars.Lf, appliedTailLength - 1)
+            tailStart = previousLineBreak + 1
+            rowsToKeep = Math.Max(1, oldTable.TableRows.Count - 1)
+        End If
+        If tailStart < 0 OrElse tailStart >= source.Length Then Return Nothing
+
+        Dim tail = source.Substring(tailStart)
+        Dim normalizedTail = tail.Replace(vbCr, "")
+        Dim tailLines = normalizedTail.Split(ControlChars.Lf)
+        Dim hasTableRow As Boolean = False
+        For lineIndex As Integer = 0 To tailLines.Length - 1
+            Dim line = tailLines(lineIndex)
+            If lineIndex = tailLines.Length - 1 AndAlso line.Length = 0 Then Continue For
+            If String.IsNullOrWhiteSpace(line) OrElse Not line.Contains("|"c) Then Return Nothing
+            hasTableRow = True
+        Next
+        If Not hasTableRow Then Return Nothing
+
+        Dim columnCount = oldTable.ColumnAlignments.Count
+        Dim fakeHeader = "|" & String.Join("|", Enumerable.Repeat("h", columnCount)) & "|"
+        Dim fakeSeparator = "|" & String.Join("|", Enumerable.Repeat("---", columnCount)) & "|"
+        Dim parsedTail = parser.Parse(fakeHeader & vbLf & fakeSeparator & vbLf & normalizedTail)
+        If parsedTail?.Blocks Is Nothing OrElse parsedTail.Blocks.Count = 0 Then Return Nothing
+        Dim parsedTable = parsedTail.Blocks.FirstOrDefault(Function(block) block IsNot Nothing AndAlso block.Kind = BlockKind.Table)
+        If parsedTable Is Nothing OrElse parsedTable.TableRows Is Nothing OrElse parsedTable.TableRows.Count < 1 Then Return Nothing
+
+        Dim mergedTable As New MarkdownBlock(BlockKind.Table) With {
+            .ColumnAlignments = oldTable.ColumnAlignments,
+            .TableRows = New List(Of List(Of MarkdownTableCell))(),
+            .HasHeader = oldTable.HasHeader
+        }
+        For rowIndex As Integer = 0 To Math.Min(rowsToKeep, oldTable.TableRows.Count) - 1
+            mergedTable.TableRows.Add(oldTable.TableRows(rowIndex))
+        Next
+        For rowIndex As Integer = 1 To parsedTable.TableRows.Count - 1
+            mergedTable.TableRows.Add(parsedTable.TableRows(rowIndex))
+        Next
+
+        Dim combined As New MarkdownDocument()
+        If tableIndex > 0 Then combined.Blocks.AddRange(baseDocument.Blocks.GetRange(0, tableIndex))
+        combined.Blocks.Add(mergedTable)
+        Return New ParseWorkResult With {
+            .Document = combined,
+            .FirstChangedBlock = tableIndex,
+            .StableSourceLength = stableSourceLength,
+            .StableBlockCount = stableBlockCount,
+            .IsStreamingUpdate = True,
+            .SourceLength = sourceLength,
+            .ReusedGrowingTable = True
+        }
+    End Function
+
+    Private Shared Function FindLastStableSourceBoundary(source As String, startIndex As Integer) As Integer
+        If String.IsNullOrEmpty(source) OrElse startIndex >= source.Length Then Return Math.Max(0, Math.Min(startIndex, If(source, "").Length))
+        Dim lineStart = Math.Max(0, startIndex)
+        Dim inCodeFence As Boolean = False
+        Dim lastBoundary = lineStart
+
+        While lineStart < source.Length
+            Dim lineEnd = source.IndexOf(ControlChars.Lf, lineStart)
+            If lineEnd < 0 Then Exit While
+            Dim lineLength = lineEnd - lineStart
+            If lineLength > 0 AndAlso source(lineEnd - 1) = ControlChars.Cr Then lineLength -= 1
+            Dim line = source.Substring(lineStart, Math.Max(0, lineLength))
+
+            If line.StartsWith("```", StringComparison.Ordinal) Then
+                inCodeFence = Not inCodeFence
+            ElseIf Not inCodeFence AndAlso String.IsNullOrWhiteSpace(line) Then
+                lastBoundary = lineEnd + 1
+            End If
+            lineStart = lineEnd + 1
+        End While
+        Return lastBoundary
+    End Function
+
+    Private Sub ResetIncrementalParseState()
+        _stableSourceLength = 0
+        _stableBlockCount = 0
+        _appliedSourceLength = 0
     End Sub
 
     Private Function TryRebuildLayoutFromChangedBlock(oldDoc As MarkdownDocument,
@@ -1998,12 +2373,19 @@ Public Class MarkdownViewerCore
         Dim areaW As Integer = TextAreaWidth()
         If areaW <= 0 Then Return False
 
+        If TryAppendSimpleTextBlockLayout(oldDoc, newDoc, firstChangedBlock, areaW, oldContentHeight) Then Return True
+        If TryAppendCodeBlockLayout(oldDoc, newDoc, firstChangedBlock, areaW, oldContentHeight) Then Return True
+        If TryAppendTableLayout(oldDoc, newDoc, firstChangedBlock, oldContentHeight) Then Return True
+        If _applyingStreamingDocument Then Threading.Interlocked.Increment(_streamLayoutFallbackCount)
+
         Dim startBlock As Integer = Math.Max(0, Math.Min(firstChangedBlock, newDoc.Blocks.Count))
         Dim y As Integer = If(startBlock < _blockLayoutTops.Count, _blockLayoutTops(startBlock), oldContentHeight)
-
-        For i As Integer = _visualLines.Count - 1 To 0 Step -1
-            If _visualLines(i).BlockIndex >= startBlock Then _visualLines.RemoveAt(i)
-        Next
+        Dim firstVisualLine As Integer = If(startBlock < _blockVisualLineStarts.Count,
+                                            _blockVisualLineStarts(startBlock),
+                                            _visualLines.Count)
+        If firstVisualLine < _visualLines.Count Then
+            _visualLines.RemoveRange(firstVisualLine, _visualLines.Count - firstVisualLine)
+        End If
 
         For Each key In _tableColumnWidths.Keys.ToArray()
             If key >= startBlock Then _tableColumnWidths.Remove(key)
@@ -2011,23 +2393,237 @@ Public Class MarkdownViewerCore
 
         If _blockLayoutTops.Count > startBlock Then _blockLayoutTops.RemoveRange(startBlock, _blockLayoutTops.Count - startBlock)
         If _blockLayoutBottoms.Count > startBlock Then _blockLayoutBottoms.RemoveRange(startBlock, _blockLayoutBottoms.Count - startBlock)
+        If _blockVisualLineStarts.Count > startBlock Then _blockVisualLineStarts.RemoveRange(startBlock, _blockVisualLineStarts.Count - startBlock)
 
         Dim lastContentKind As BlockKind? = Nothing
         Dim hadBlankLine As Boolean = False
-        GetLayoutContextBeforeBlock(newDoc, startBlock, lastContentKind, hadBlankLine)
+        If startBlock < _blockPreviousContentKinds.Count Then
+            lastContentKind = _blockPreviousContentKinds(startBlock)
+            hadBlankLine = _blockHadBlankLineBefore(startBlock)
+        Else
+            lastContentKind = _layoutTailContentKind
+            hadBlankLine = _layoutTailHadBlankLine
+        End If
+        If _blockPreviousContentKinds.Count > startBlock Then _blockPreviousContentKinds.RemoveRange(startBlock, _blockPreviousContentKinds.Count - startBlock)
+        If _blockHadBlankLineBefore.Count > startBlock Then _blockHadBlankLineBefore.RemoveRange(startBlock, _blockHadBlankLineBefore.Count - startBlock)
 
         Dim s As Single = DpiScale()
         For bi As Integer = startBlock To newDoc.Blocks.Count - 1
             y = LayoutDocumentBlock(bi, newDoc.Blocks(bi), areaW, y, s, lastContentKind, hadBlankLine)
         Next
+        _layoutTailContentKind = lastContentKind
+        _layoutTailHadBlankLine = hadBlankLine
 
         _totalContentHeight = y
         Dim prevVisible As Boolean = _scrollBarVisible
         UpdateScrollBarState()
         If _scrollBarVisible <> prevVisible Then Return False
 
-        TrimImageCache(GetActiveImageUrls())
+        TrimImageCacheIfNeeded()
         RaiseContentHeightChangedIfNeeded(oldContentHeight)
+        Return True
+    End Function
+
+    Private Function TryAppendSimpleTextBlockLayout(oldDoc As MarkdownDocument,
+                                                    newDoc As MarkdownDocument,
+                                                    blockIndex As Integer,
+                                                    areaW As Integer,
+                                                    oldContentHeight As Integer) As Boolean
+        If blockIndex < 0 OrElse oldDoc?.Blocks Is Nothing OrElse newDoc?.Blocks Is Nothing Then Return False
+        If blockIndex <> oldDoc.Blocks.Count - 1 OrElse blockIndex <> newDoc.Blocks.Count - 1 Then Return False
+        Dim oldBlock = oldDoc.Blocks(blockIndex)
+        Dim newBlock = newDoc.Blocks(blockIndex)
+        If oldBlock Is Nothing OrElse newBlock Is Nothing OrElse
+           oldBlock.Kind <> BlockKind.Paragraph OrElse newBlock.Kind <> BlockKind.Paragraph Then Return False
+        If oldBlock.Inlines Is Nothing OrElse newBlock.Inlines Is Nothing OrElse
+           oldBlock.Inlines.Count <> 1 OrElse newBlock.Inlines.Count <> 1 OrElse
+           oldBlock.Inlines(0).Kind <> InlineKind.Text OrElse newBlock.Inlines(0).Kind <> InlineKind.Text Then Return False
+
+        Dim oldText = If(oldBlock.Inlines(0).Text, "")
+        Dim newText = If(newBlock.Inlines(0).Text, "")
+        If newText.Length < oldText.Length OrElse Not newText.StartsWith(oldText, StringComparison.Ordinal) Then Return False
+        If blockIndex >= _blockVisualLineStarts.Count Then Return False
+        Dim firstVisual = _blockVisualLineStarts(blockIndex)
+        If firstVisual < 0 OrElse firstVisual >= _visualLines.Count Then Return False
+
+        Dim lastVisualIndex = _visualLines.Count - 1
+        Dim lastVisual = _visualLines(lastVisualIndex)
+        If lastVisual.BlockIndex <> blockIndex Then Return False
+        Dim charOffset As Integer = 0
+        If lastVisual.Fragments IsNot Nothing AndAlso lastVisual.Fragments.Count > 0 Then
+            charOffset = Math.Max(0, lastVisual.Fragments(0).CharStart)
+        End If
+        If charOffset > newText.Length Then Return False
+
+        Dim y = lastVisual.Y
+        _visualLines.RemoveAt(lastVisualIndex)
+        Dim newVisualStart = _visualLines.Count
+        Dim tailBlock As New MarkdownBlock(BlockKind.Paragraph, newText.Substring(charOffset)) With {
+            .Inlines = New List(Of MarkdownInline) From {
+                New MarkdownInline(InlineKind.Text, newText.Substring(charOffset))
+            }
+        }
+        Dim newBottom = LayoutInlineBlock(blockIndex, tailBlock, areaW, y, DpiScale())
+        For i As Integer = newVisualStart To _visualLines.Count - 1
+            Dim line = _visualLines(i)
+            If line.Fragments IsNot Nothing Then
+                For fi As Integer = 0 To line.Fragments.Count - 1
+                    Dim fragment = line.Fragments(fi)
+                    fragment.CharStart += charOffset
+                    line.Fragments(fi) = fragment
+                Next
+            End If
+            _visualLines(i) = line
+        Next
+        Return FinishAppendedTailLayout(blockIndex, newBottom, oldContentHeight)
+    End Function
+
+    Private Function TryAppendCodeBlockLayout(oldDoc As MarkdownDocument,
+                                              newDoc As MarkdownDocument,
+                                              blockIndex As Integer,
+                                              areaW As Integer,
+                                              oldContentHeight As Integer) As Boolean
+        If blockIndex < 0 OrElse oldDoc?.Blocks Is Nothing OrElse newDoc?.Blocks Is Nothing Then Return False
+        If blockIndex <> oldDoc.Blocks.Count - 1 OrElse blockIndex <> newDoc.Blocks.Count - 1 Then Return False
+        Dim oldBlock = oldDoc.Blocks(blockIndex)
+        Dim newBlock = newDoc.Blocks(blockIndex)
+        If oldBlock Is Nothing OrElse newBlock Is Nothing OrElse
+           oldBlock.Kind <> BlockKind.CodeBlock OrElse newBlock.Kind <> BlockKind.CodeBlock Then Return False
+
+        Dim oldText = If(oldBlock.RawText, "")
+        Dim newText = If(newBlock.RawText, "")
+        If newText.Length < oldText.Length OrElse Not newText.StartsWith(oldText, StringComparison.Ordinal) Then Return False
+        If blockIndex >= _blockVisualLineStarts.Count Then Return False
+        Dim firstVisual = _blockVisualLineStarts(blockIndex)
+        If firstVisual < 0 OrElse firstVisual >= _visualLines.Count Then Return False
+
+        Dim lastVisualIndex = _visualLines.Count - 1
+        Dim lastVisual = _visualLines(lastVisualIndex)
+        If lastVisual.BlockIndex <> blockIndex Then Return False
+        Dim tailOffset = oldText.LastIndexOf(ControlChars.Lf)
+        tailOffset = If(tailOffset < 0, 0, tailOffset + 1)
+        Dim tailText = newText.Substring(Math.Min(tailOffset, newText.Length))
+
+        Dim y = lastVisual.Y
+        _visualLines.RemoveAt(lastVisualIndex)
+        Dim codeFont = GetCodeFont()
+        Dim codeLines = tailText.Split(ControlChars.Lf)
+        Dim scale = DpiScale()
+        Dim padLeft = CInt(代码块内边距.Left * scale)
+        Dim padRight = CInt(代码块内边距.Right * scale)
+        Dim padBottom = CInt(代码块内边距.Bottom * scale)
+        Dim fontHeight = GetLayoutLineHeight(codeFont)
+        For lineIndex As Integer = 0 To codeLines.Length - 1
+            Dim codeText = codeLines(lineIndex)
+            Dim lineHeight = If(lineIndex < codeLines.Length - 1, fontHeight + 行内行距, fontHeight)
+            Dim fragment As New VisualFragment With {
+                .InlineIndex = 0,
+                .CharStart = tailOffset,
+                .CharLength = codeText.Length,
+                .X = padLeft,
+                .Width = areaW - padLeft - padRight,
+                .Text = codeText,
+                .UseFont = codeFont,
+                .ForeColor = 代码块文字颜色,
+                .BackColor = 代码块背景颜色,
+                .Kind = InlineKind.Code,
+                .TableColIndex = -1
+            }
+            _visualLines.Add(New VisualLine With {
+                .BlockIndex = blockIndex,
+                .Y = y,
+                .Height = lineHeight,
+                .Fragments = New List(Of VisualFragment) From {fragment},
+                .TableRowIndex = -1
+            })
+            y += lineHeight
+            tailOffset += codeText.Length + If(lineIndex < codeLines.Length - 1, 1, 0)
+        Next
+        Return FinishAppendedTailLayout(blockIndex, y + padBottom, oldContentHeight)
+    End Function
+
+    Private Function FinishAppendedTailLayout(blockIndex As Integer,
+                                              newBottom As Integer,
+                                              oldContentHeight As Integer) As Boolean
+        If blockIndex < 0 OrElse blockIndex >= _blockLayoutBottoms.Count Then Return False
+        _blockLayoutBottoms(blockIndex) = newBottom
+        _totalContentHeight = newBottom
+        Dim previousScrollBarVisible = _scrollBarVisible
+        UpdateScrollBarState()
+        If _scrollBarVisible <> previousScrollBarVisible Then Return False
+        TrimImageCacheIfNeeded()
+        RaiseContentHeightChangedIfNeeded(oldContentHeight)
+        Return True
+    End Function
+
+    Private Function TryAppendTableLayout(oldDoc As MarkdownDocument,
+                                          newDoc As MarkdownDocument,
+                                          blockIndex As Integer,
+                                          oldContentHeight As Integer) As Boolean
+        If Not _applyingStreamingDocument OrElse blockIndex < 0 OrElse
+           oldDoc?.Blocks Is Nothing OrElse newDoc?.Blocks Is Nothing Then Return False
+        If blockIndex <> oldDoc.Blocks.Count - 1 OrElse blockIndex <> newDoc.Blocks.Count - 1 Then Return False
+        Dim oldBlock = oldDoc.Blocks(blockIndex)
+        Dim newBlock = newDoc.Blocks(blockIndex)
+        If oldBlock Is Nothing OrElse newBlock Is Nothing OrElse
+           oldBlock.Kind <> BlockKind.Table OrElse newBlock.Kind <> BlockKind.Table OrElse
+           oldBlock.TableRows Is Nothing OrElse newBlock.TableRows Is Nothing Then Return False
+        If oldBlock.ColumnAlignments Is Nothing OrElse newBlock.ColumnAlignments Is Nothing OrElse
+           oldBlock.ColumnAlignments.Count <> newBlock.ColumnAlignments.Count OrElse
+           newBlock.TableRows.Count < oldBlock.TableRows.Count Then Return False
+
+        Dim columnWidths As Integer() = Nothing
+        If Not _tableColumnWidths.TryGetValue(blockIndex, columnWidths) OrElse
+           columnWidths Is Nothing OrElse columnWidths.Length <> newBlock.ColumnAlignments.Count Then Return False
+
+        Dim sharedRows = Math.Min(oldBlock.TableRows.Count, newBlock.TableRows.Count)
+        Dim firstChangedRow = sharedRows
+        For rowIndex As Integer = 0 To sharedRows - 1
+            If Not TableRowEquivalent(oldBlock.TableRows(rowIndex), newBlock.TableRows(rowIndex)) Then
+                firstChangedRow = rowIndex
+                Exit For
+            End If
+        Next
+        If firstChangedRow < Math.Max(0, oldBlock.TableRows.Count - 1) Then Return False
+        If firstChangedRow >= newBlock.TableRows.Count Then Return False
+
+        Dim firstVisual = If(blockIndex < _blockVisualLineStarts.Count,
+                             _blockVisualLineStarts(blockIndex),
+                             _visualLines.Count)
+        Dim replaceVisual = _visualLines.Count
+        For visualIndex As Integer = firstVisual To _visualLines.Count - 1
+            Dim line = _visualLines(visualIndex)
+            If line.BlockIndex = blockIndex AndAlso line.TableRowIndex >= firstChangedRow Then
+                replaceVisual = visualIndex
+                Exit For
+            End If
+        Next
+
+        Dim scale = DpiScale()
+        Dim topPadding = CInt(表格单元格内边距 * scale) \ 2
+        Dim y As Integer
+        If replaceVisual < _visualLines.Count Then
+            y = _visualLines(replaceVisual).Y - topPadding
+            _visualLines.RemoveRange(replaceVisual, _visualLines.Count - replaceVisual)
+        Else
+            y = _blockLayoutBottoms(blockIndex)
+        End If
+
+        Dim newBottom = LayoutTableRows(blockIndex, newBlock, columnWidths,
+                                        firstChangedRow, y, scale)
+        Threading.Interlocked.Increment(_streamTableLayoutReuseCount)
+        Return FinishAppendedTailLayout(blockIndex, newBottom, oldContentHeight)
+    End Function
+
+    Private Shared Function TableRowEquivalent(a As List(Of MarkdownTableCell),
+                                               b As List(Of MarkdownTableCell)) As Boolean
+        If a Is b Then Return True
+        If a Is Nothing OrElse b Is Nothing OrElse a.Count <> b.Count Then Return False
+        For columnIndex As Integer = 0 To a.Count - 1
+            If a(columnIndex) Is b(columnIndex) Then Continue For
+            If a(columnIndex) Is Nothing OrElse b(columnIndex) Is Nothing OrElse
+               Not InlineListsEquivalent(a(columnIndex).Inlines, b(columnIndex).Inlines) Then Return False
+        Next
         Return True
     End Function
 
@@ -2038,12 +2634,18 @@ Public Class MarkdownViewerCore
         If firstChangedBlock < 0 Then Return True
         If _layoutDpi <= 0 OrElse _layoutDpi <> EffectiveDeviceDpi() Then Return False
         If _layoutAreaWidth <= 0 OrElse _layoutAreaWidth <> TextAreaWidth() Then Return False
-        If _blockLayoutTops.Count <> oldDoc.Blocks.Count OrElse _blockLayoutBottoms.Count <> oldDoc.Blocks.Count Then Return False
+        If _blockLayoutTops.Count <> oldDoc.Blocks.Count OrElse
+           _blockLayoutBottoms.Count <> oldDoc.Blocks.Count OrElse
+           _blockVisualLineStarts.Count <> oldDoc.Blocks.Count OrElse
+           _blockPreviousContentKinds.Count <> oldDoc.Blocks.Count OrElse
+           _blockHadBlankLineBefore.Count <> oldDoc.Blocks.Count Then Return False
         If firstChangedBlock > oldDoc.Blocks.Count Then Return False
         Return True
     End Function
 
-    Private Shared Function FindFirstChangedBlock(oldDoc As MarkdownDocument, newDoc As MarkdownDocument) As Integer
+    Private Shared Function FindFirstChangedBlock(oldDoc As MarkdownDocument,
+                                                  newDoc As MarkdownDocument,
+                                                  Optional startIndex As Integer = 0) As Integer
         If oldDoc Is Nothing OrElse oldDoc.Blocks Is Nothing Then
             Return If(newDoc Is Nothing OrElse newDoc.Blocks Is Nothing OrElse newDoc.Blocks.Count = 0, -1, 0)
         End If
@@ -2052,7 +2654,7 @@ Public Class MarkdownViewerCore
         End If
 
         Dim sharedCount As Integer = Math.Min(oldDoc.Blocks.Count, newDoc.Blocks.Count)
-        For i As Integer = 0 To sharedCount - 1
+        For i As Integer = Math.Max(0, Math.Min(startIndex, sharedCount)) To sharedCount - 1
             If Not BlocksEquivalent(oldDoc.Blocks(i), newDoc.Blocks(i)) Then Return i
         Next
         If oldDoc.Blocks.Count <> newDoc.Blocks.Count Then Return sharedCount
@@ -2129,6 +2731,11 @@ Public Class MarkdownViewerCore
         _tableColumnWidths.Clear()
         _blockLayoutTops.Clear()
         _blockLayoutBottoms.Clear()
+        _blockVisualLineStarts.Clear()
+        _blockPreviousContentKinds.Clear()
+        _blockHadBlankLineBefore.Clear()
+        _layoutTailContentKind = Nothing
+        _layoutTailHadBlankLine = False
         _totalContentHeight = 0
         If Not IsHandleCreated AndAlso Not _embeddedContentMode Then
             RaiseContentHeightChangedIfNeeded(oldContentHeight)
@@ -2149,6 +2756,8 @@ Public Class MarkdownViewerCore
         For bi As Integer = 0 To _document.Blocks.Count - 1
             y = LayoutDocumentBlock(bi, _document.Blocks(bi), areaW, y, s, lastContentKind, hadBlankLine)
         Next
+        _layoutTailContentKind = lastContentKind
+        _layoutTailHadBlankLine = hadBlankLine
 
         _totalContentHeight = y
         Dim prevVisible As Boolean = _scrollBarVisible
@@ -2157,7 +2766,7 @@ Public Class MarkdownViewerCore
             RebuildLayout(oldContentHeight)
             Return
         End If
-        TrimImageCache(GetActiveImageUrls())
+        TrimImageCacheIfNeeded()
         RaiseContentHeightChangedIfNeeded(oldContentHeight)
     End Sub
 
@@ -2169,15 +2778,18 @@ Public Class MarkdownViewerCore
                                          ByRef lastContentKind As BlockKind?,
                                          ByRef hadBlankLine As Boolean) As Integer
         Dim blockTop As Integer = y
+        Dim visualLineStart As Integer = _visualLines.Count
+        _blockPreviousContentKinds.Add(lastContentKind)
+        _blockHadBlankLineBefore.Add(hadBlankLine)
 
         If block Is Nothing Then
-            AddBlockLayoutRange(blockTop, y)
+            AddBlockLayoutRange(blockTop, y, visualLineStart)
             Return y
         End If
 
         If block.Kind = BlockKind.BlankLine Then
             hadBlankLine = True
-            AddBlockLayoutRange(blockTop, y)
+            AddBlockLayoutRange(blockTop, y, visualLineStart)
             Return y
         End If
 
@@ -2217,33 +2829,14 @@ Public Class MarkdownViewerCore
         End Select
 
         lastContentKind = block.Kind
-        AddBlockLayoutRange(blockTop, y)
+        AddBlockLayoutRange(blockTop, y, visualLineStart)
         Return y
     End Function
 
-    Private Sub AddBlockLayoutRange(top As Integer, bottom As Integer)
+    Private Sub AddBlockLayoutRange(top As Integer, bottom As Integer, visualLineStart As Integer)
         _blockLayoutTops.Add(top)
         _blockLayoutBottoms.Add(bottom)
-    End Sub
-
-    Private Sub GetLayoutContextBeforeBlock(doc As MarkdownDocument,
-                                            blockIndex As Integer,
-                                            ByRef lastContentKind As BlockKind?,
-                                            ByRef hadBlankLine As Boolean)
-        lastContentKind = Nothing
-        hadBlankLine = False
-        If doc Is Nothing OrElse doc.Blocks Is Nothing Then Return
-
-        For i As Integer = 0 To Math.Min(blockIndex, doc.Blocks.Count) - 1
-            Dim block = doc.Blocks(i)
-            If block Is Nothing Then Continue For
-            If block.Kind = BlockKind.BlankLine Then
-                hadBlankLine = True
-            Else
-                lastContentKind = block.Kind
-                hadBlankLine = False
-            End If
-        Next
+        _blockVisualLineStarts.Add(visualLineStart)
     End Sub
 
     Private Sub RaiseContentHeightChangedIfNeeded(oldContentHeight As Integer)
@@ -2304,32 +2897,47 @@ Public Class MarkdownViewerCore
         Dim colCount As Integer = If(block.ColumnAlignments?.Count, 0)
         If colCount = 0 Then Return y
 
-        ' 计算每列最小宽度（单行时的理想宽度）
         Dim lineH As Integer = GetLayoutLineHeight(Font)
         Dim colWidths(colCount - 1) As Integer
-        Dim minColW As Integer = cellPadding * 2 + MeasureTextWidthCached("W", Font, lineH)
-        For Each row In block.TableRows
-            For ci As Integer = 0 To Math.Min(row.Count, colCount) - 1
-                Dim cellText = GetCellPlainText(row(ci))
-                Dim tw = MeasureTextWidthCached(cellText, Font, lineH) + cellPadding * 2
-                If tw > colWidths(ci) Then colWidths(ci) = tw
-            Next
-        Next
-
-        ' 如果总宽度超过可用区域，按比例缩放，但保证最小列宽
-        Dim totalW As Integer = colWidths.Sum()
-        If totalW > areaW AndAlso totalW > 0 Then
-            Dim ratio As Single = CSng(areaW) / totalW
+        If _applyingStreamingDocument OrElse block.TableRows.Count > 200 Then
+            Dim baseWidth = Math.Max(1, areaW \ colCount)
             For ci As Integer = 0 To colCount - 1
-                colWidths(ci) = Math.Max(minColW, CInt(colWidths(ci) * ratio))
+                colWidths(ci) = baseWidth
             Next
-            totalW = colWidths.Sum()
+            colWidths(colCount - 1) += Math.Max(0, areaW - colWidths.Sum())
+        Else
+            Dim minColW As Integer = cellPadding * 2 + MeasureTextWidthCached("W", Font, lineH)
+            For Each row In block.TableRows
+                For ci As Integer = 0 To Math.Min(row.Count, colCount) - 1
+                    Dim cellText = GetCellPlainText(row(ci))
+                    Dim tw = MeasureTextWidthCached(cellText, Font, lineH) + cellPadding * 2
+                    If tw > colWidths(ci) Then colWidths(ci) = tw
+                Next
+            Next
+
+            Dim totalW As Integer = colWidths.Sum()
+            If totalW > areaW AndAlso totalW > 0 Then
+                Dim ratio As Single = CSng(areaW) / totalW
+                For ci As Integer = 0 To colCount - 1
+                    colWidths(ci) = Math.Max(minColW, CInt(colWidths(ci) * ratio))
+                Next
+            End If
         End If
 
         _tableColumnWidths(bi) = colWidths
+        Return LayoutTableRows(bi, block, colWidths, 0, y, s)
+    End Function
 
-        ' 布局每一行（支持自动换行）
-        For ri As Integer = 0 To block.TableRows.Count - 1
+    Private Function LayoutTableRows(bi As Integer,
+                                     block As MarkdownBlock,
+                                     colWidths As Integer(),
+                                     startRow As Integer,
+                                     y As Integer,
+                                     s As Single) As Integer
+        Dim cellPadding As Integer = CInt(表格单元格内边距 * s)
+        Dim lineH As Integer = GetLayoutLineHeight(Font)
+        Dim colCount = colWidths.Length
+        For ri As Integer = Math.Max(0, startRow) To block.TableRows.Count - 1
             Dim row = block.TableRows(ri)
             Dim cellFont As Font = If(ri = 0 AndAlso block.HasHeader, GetBoldFont(), Font)
 
@@ -2339,7 +2947,7 @@ Public Class MarkdownViewerCore
             For ci As Integer = 0 To colCount - 1
                 Dim cellText As String = ""
                 If ci < row.Count Then cellText = GetCellPlainText(row(ci))
-                Dim contentW As Integer = colWidths(ci) - cellPadding * 2
+                Dim contentW As Integer = Math.Max(1, colWidths(ci) - cellPadding * 2)
                 Dim wrapped = WrapText(cellText, cellFont, contentW, lineH)
                 cellWrappedLines.Add(wrapped)
                 If wrapped.Count > maxSubLines Then maxSubLines = wrapped.Count
@@ -2744,6 +3352,9 @@ Public Class MarkdownViewerCore
         Dim clipTop As Single = origin.Y + localClipTop
         Dim clipBottom As Single = origin.Y + localClipBottom
 
+        Dim drawWatch = Diagnostics.Stopwatch.StartNew()
+        Dim drawnLines As Integer = 0
+        Dim drawnFragments As Integer = 0
         Using context.PushClip(New RectangleF(clipLeft, clipTop, clipW, clipBottom - clipTop))
             Dim selStart, selEnd As SelectionPos
             If _hasSelection Then GetOrderedSelection(selStart, selEnd)
@@ -2758,8 +3369,15 @@ Public Class MarkdownViewerCore
                 DrawBlockDecoration_GPU(context, block, vl, vli, CInt(clipLeft), drawY, clipW, s)
                 If Not context.IntersectsDirty(New RectangleF(clipLeft, drawY, clipW, vl.Height)) Then Continue For
                 DrawFragments_GPU(context, vl, vli, CInt(clipLeft), drawY, block.Kind, s, selStart, selEnd)
+                drawnLines += 1
+                drawnFragments += vl.Fragments.Count
             Next
         End Using
+        drawWatch.Stop()
+        _lastDrawnVisualLineCount = drawnLines
+        _lastDrawnFragmentCount = drawnFragments
+        _lastDrawMilliseconds = drawWatch.Elapsed.TotalMilliseconds
+        _maxDrawMilliseconds = Math.Max(_maxDrawMilliseconds, _lastDrawMilliseconds)
     End Sub
 
     Private Sub DrawBackground_GPU(context As D3D_PaintContext, boundsRect As RectangleF, s As Single)
@@ -3701,6 +4319,11 @@ Public Class MarkdownViewerCore
         Next
         Return active
     End Function
+
+    Private Sub TrimImageCacheIfNeeded()
+        If CacheBytes <= Math.Max(0L, GlobalOptions.CpuCacheBudgetBytes) Then Return
+        TrimImageCache(GetActiveImageUrls())
+    End Sub
 
     Private Sub TrimImageCache(protectedUrls As HashSet(Of String))
         While CacheBytes > Math.Max(0L, GlobalOptions.CpuCacheBudgetBytes)
