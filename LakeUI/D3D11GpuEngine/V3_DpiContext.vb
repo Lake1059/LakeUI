@@ -4,7 +4,7 @@ Imports System.Runtime.InteropServices
 ''' V3_DpiContext 是新主版本控件迁移使用的非渲染 DPI 上下文。
 ''' 它不持有 GPU 对象，不创建 D3D/D2D 资源，也不替代任何 D3D_ 缓存类。
 ''' </summary>
-Friend NotInheritable Class V3_DpiContext
+Friend Structure V3_DpiContext
     <DllImport("user32.dll")>
     Private Shared Function GetDpiForWindow(hwnd As IntPtr) As UInteger
     End Function
@@ -38,4 +38,4 @@ Friend NotInheritable Class V3_DpiContext
 
         Return New V3_DpiContext(96)
     End Function
-End Class
+End Structure

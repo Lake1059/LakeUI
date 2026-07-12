@@ -12,14 +12,14 @@ End Enum
 ''' D3D_TextRenderer 是新核心唯一的文字绘制入口。
 ''' 它集中管理 ClearType/MacType 兼容、Outline 高质量策略位、Grayscale 透明目标稳定路线，并允许 Auto 根据 target alpha 选择。
 ''' 当前基础实现先通过 DirectWrite/D2D 文本入口完成模式切换；后续如果需要真正几何描边或独立 text layer，必须扩展本类，不能让控件绕过核心自建文字管线。
-''' 后续迁移控件不要直接调用旧 D3D_TextInterop；文本测量可复用 DirectWrite 思路，但绘制入口必须通过本类。
+''' 文本测量可复用 DirectWrite 服务，但绘制入口必须通过本类。
 ''' ClearType 在透明 composition target 上可能不稳定，因此 text target 策略必须显式。
 ''' </summary>
 Public NotInheritable Class D3D_TextRenderer
     Implements IDisposable
 
     Private ReadOnly _manager As D3D_DeviceManager
-    Private ReadOnly _formats As New Dictionary(Of String, D3D_TextFormatCacheEntry)(StringComparer.Ordinal)
+    Private ReadOnly _formats As New Dictionary(Of D3D_TextFormatKey, D3D_TextFormatCacheEntry)()
     Private _clock As Long
     Private _disposed As Boolean
 
@@ -56,7 +56,6 @@ Public NotInheritable Class D3D_TextRenderer
                         Optional wordWrap As Boolean = False)
         If Not CanDrawText(context, text, font, color, layoutRect) Then Return
 
-        ConfigureDeviceContext(context.DeviceContext, context.TextQuality, context.TargetHasAlpha)
         Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
         Dim format = GetTextFormat(font, context.DpiScale, hAlign, vAlign, wordWrap, trimChar:=False)
         If format Is Nothing OrElse brush Is Nothing Then Return
@@ -71,7 +70,6 @@ Public NotInheritable Class D3D_TextRenderer
                         flags As TextFormatFlags)
         If Not CanDrawText(context, text, font, color, layoutRect) Then Return
 
-        ConfigureDeviceContext(context.DeviceContext, context.TextQuality, context.TargetHasAlpha)
         Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
         Dim format = GetTextFormat(
             font,
@@ -101,16 +99,8 @@ Public NotInheritable Class D3D_TextRenderer
         Dim generation = _manager.DeviceGeneration
         Dim sizePx = D3D_D2DInterop.GetDWriteFontSizePx(font, dpiScale)
         Dim resolved = D3D_D2DInterop.ResolveTextFont(font)
-        Dim key = generation.ToString(Globalization.CultureInfo.InvariantCulture) & ":" &
-                  resolved.Family & ":" &
-                  CInt(resolved.Weight).ToString(Globalization.CultureInfo.InvariantCulture) & ":" &
-                  CInt(resolved.Style).ToString(Globalization.CultureInfo.InvariantCulture) & ":" &
-                  CInt(resolved.Stretch).ToString(Globalization.CultureInfo.InvariantCulture) & ":" &
-                  sizePx.ToString("R", Globalization.CultureInfo.InvariantCulture) & ":" &
-                  CInt(hAlign).ToString(Globalization.CultureInfo.InvariantCulture) & ":" &
-                  CInt(vAlign).ToString(Globalization.CultureInfo.InvariantCulture) & ":" &
-                  If(wordWrap, "1", "0") & ":" &
-                  If(trimChar, "1", "0")
+        Dim key As New D3D_TextFormatKey(generation, resolved.Family, resolved.Weight, resolved.Style,
+                                         resolved.Stretch, sizePx, hAlign, vAlign, wordWrap, trimChar)
 
         Dim entry As D3D_TextFormatCacheEntry = Nothing
         If _formats.TryGetValue(key, entry) Then
@@ -182,6 +172,53 @@ Public NotInheritable Class D3D_TextRenderer
             Try : victim.Value.Format.Dispose() : Catch : End Try
         End While
     End Sub
+
+    Private Structure D3D_TextFormatKey
+        Implements IEquatable(Of D3D_TextFormatKey)
+
+        Private ReadOnly _generation As Integer
+        Private ReadOnly _family As String
+        Private ReadOnly _weight As FontWeight
+        Private ReadOnly _style As Vortice.DirectWrite.FontStyle
+        Private ReadOnly _stretch As FontStretch
+        Private ReadOnly _sizePx As Single
+        Private ReadOnly _hAlign As TextAlignment
+        Private ReadOnly _vAlign As ParagraphAlignment
+        Private ReadOnly _wordWrap As Boolean
+        Private ReadOnly _trimChar As Boolean
+
+        Friend Sub New(generation As Integer, family As String, weight As FontWeight,
+                       style As Vortice.DirectWrite.FontStyle, stretch As FontStretch, sizePx As Single,
+                       hAlign As TextAlignment, vAlign As ParagraphAlignment, wordWrap As Boolean, trimChar As Boolean)
+            _generation = generation
+            _family = family
+            _weight = weight
+            _style = style
+            _stretch = stretch
+            _sizePx = sizePx
+            _hAlign = hAlign
+            _vAlign = vAlign
+            _wordWrap = wordWrap
+            _trimChar = trimChar
+        End Sub
+
+        Public Overloads Function Equals(other As D3D_TextFormatKey) As Boolean Implements IEquatable(Of D3D_TextFormatKey).Equals
+            Return _generation = other._generation AndAlso
+                   String.Equals(_family, other._family, StringComparison.Ordinal) AndAlso
+                   _weight = other._weight AndAlso _style = other._style AndAlso _stretch = other._stretch AndAlso
+                   _sizePx.Equals(other._sizePx) AndAlso _hAlign = other._hAlign AndAlso _vAlign = other._vAlign AndAlso
+                   _wordWrap = other._wordWrap AndAlso _trimChar = other._trimChar
+        End Function
+
+        Public Overrides Function Equals(obj As Object) As Boolean
+            Return TypeOf obj Is D3D_TextFormatKey AndAlso Equals(DirectCast(obj, D3D_TextFormatKey))
+        End Function
+
+        Public Overrides Function GetHashCode() As Integer
+            Dim hash = HashCode.Combine(_generation, StringComparer.Ordinal.GetHashCode(If(_family, "")), CInt(_weight), CInt(_style), CInt(_stretch), _sizePx)
+            Return HashCode.Combine(hash, CInt(_hAlign), CInt(_vAlign), _wordWrap, _trimChar)
+        End Function
+    End Structure
 
     Public Sub Dispose() Implements IDisposable.Dispose
         If _disposed Then Return

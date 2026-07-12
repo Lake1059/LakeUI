@@ -199,10 +199,15 @@ Public Module OuterToInnerRefreshScheduler
                     _pending.Clear()
                 End SyncLock
 
+                Dim depths As New Dictionary(Of Control, Integer)(pending.Count)
+                For Each item In pending
+                    depths(item.Key) = GetTreeDepth(item.Key)
+                Next
+
                 pending.Sort(
                     Function(a, b)
-                        Dim da = GetTreeDepth(a.Key)
-                        Dim db = GetTreeDepth(b.Key)
+                        Dim da = depths(a.Key)
+                        Dim db = depths(b.Key)
                         If da <> db Then Return da.CompareTo(db)
                         Return a.Value.Sequence.CompareTo(b.Value.Sequence)
                     End Function)

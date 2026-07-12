@@ -8,7 +8,7 @@ Imports Vortice.DirectWrite
 ''' </summary>
 <DefaultProperty("Items")>
 Partial Public Class EasyStatesPanel
-    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource
+    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource, V3_ISuperSamplingSource
 
 #Region "数据模型"
 
@@ -305,7 +305,7 @@ Partial Public Class EasyStatesPanel
 
     Private _superSamplingScale As GlobalOptions.SuperSamplingScaleEnum = GlobalOptions.SuperSamplingScaleEnum.OFF
     <Category("LakeUI"), Description(GlobalOptions.超采样抗锯齿描述词), DefaultValue(GetType(GlobalOptions.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
-    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum
+    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements V3_ISuperSamplingSource.SuperSamplingScale
         Get
             Return _superSamplingScale
         End Get

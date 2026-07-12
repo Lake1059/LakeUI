@@ -6,7 +6,7 @@ Imports Vortice.Direct2D1
 
 <DefaultEvent("TextChanged")>
 Public Class ModernTextBox
-    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource
+    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource, V3_ISuperSamplingSource
 
 #Region "D3D 资源"
     ' V3：窗口级 D3D compositor 统一持有图形资源，本控件不再持有 _dcRT / _ssaaCache。
@@ -630,7 +630,7 @@ Public Class ModernTextBox
 
     Private 超采样倍率 As Integer = 1
     <Category("LakeUI"), Description(GlobalOptions.超采样抗锯齿描述词), DefaultValue(GetType(GlobalOptions.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
-    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum
+    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements V3_ISuperSamplingSource.SuperSamplingScale
         Get
             Return 超采样倍率
         End Get
@@ -1101,7 +1101,7 @@ Public Class ModernTextBox
         If _backgroundSource IsNot Nothing Then
             context.DrawBackgroundSource(Me, _backgroundSource, sourceRect)
         End If
-        If backColorMask.A > 0 AndAlso backColorMask.A < 255 Then
+        If _backgroundSource Is Nothing AndAlso backColorMask.A > 0 AndAlso backColorMask.A < 255 Then
             填充圆角矩形_GPU(context, fillRect, radius, backColorMask)
         End If
         If 背景颜色.A > 0 Then

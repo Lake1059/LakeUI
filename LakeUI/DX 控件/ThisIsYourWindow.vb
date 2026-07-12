@@ -2138,7 +2138,7 @@ Public Class ThisIsYourWindow
         Select Case _毛玻璃模式
             Case BackdropModeEnum.Image
                 If _毛玻璃图片 Is Nothing Then Return False
-                Dim renderer = context.Compositor.D3D_BackdropSurfaceRenderer
+                Dim renderer = context.Compositor.BackdropRenderer
                 renderer.SetImage(_毛玻璃图片)
                 renderer.ApplyParameters(_毛玻璃模糊半径, _毛玻璃模糊次数, _毛玻璃下采样, _毛玻璃噪点缩放)
                 renderer.TintColor = tint
@@ -2319,9 +2319,9 @@ Public Class ThisIsYourWindow
         If targetForm.Width <= 0 OrElse targetForm.Height <= 0 Then Return False
 
         Try
-            Using scope = D3D_PaintBridge.BeginGpuPaint(e, targetForm)
+            Using scope = D3D_PaintBridge.BeginGpuPaint(e, targetForm, New WindowChromeRenderable(Me, targetForm))
                 If scope Is Nothing Then Return False
-                Using context = scope.CreateContext(targetForm)
+                Using context = scope.CreateContext()
                     If context Is Nothing Then Return False
                     RenderGpuWindow(context, targetForm)
                 End Using
@@ -2335,6 +2335,22 @@ Public Class ThisIsYourWindow
             Throw
         End Try
     End Function
+
+    Private NotInheritable Class WindowChromeRenderable
+        Implements V3_IGpuRenderable
+
+        Private ReadOnly _owner As ThisIsYourWindow
+        Private ReadOnly _form As Form
+
+        Public Sub New(owner As ThisIsYourWindow, form As Form)
+            _owner = owner
+            _form = form
+        End Sub
+
+        Public Sub RenderGpu(context As D3D_PaintContext) Implements V3_IGpuRenderable.RenderGpu
+            _owner.RenderGpuWindow(context, _form)
+        End Sub
+    End Class
 
 
 

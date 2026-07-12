@@ -6,7 +6,7 @@
 Public NotInheritable Class D3D_TextureCache
     Implements D3D_IRenderCacheOwner, IDisposable
 
-    Private ReadOnly _entries As New Dictionary(Of String, D3D_TextureCacheEntry)(StringComparer.Ordinal)
+    Private ReadOnly _entries As New Dictionary(Of Object, D3D_TextureCacheEntry)()
     Private _totalGpuBytes As Long
     Private _frameUseDepth As Integer
     Private _trimPending As Boolean
@@ -51,8 +51,8 @@ Public NotInheritable Class D3D_TextureCache
         Return True
     End Function
 
-    Friend Function ContainsTexture(Of T As IDisposable)(key As String, generation As Integer) As Boolean
-        If _disposed OrElse String.IsNullOrEmpty(key) Then Return False
+    Friend Function ContainsTexture(Of T As IDisposable)(key As Object, generation As Integer) As Boolean
+        If _disposed OrElse key Is Nothing Then Return False
         Dim entry As D3D_TextureCacheEntry = Nothing
         Return _entries.TryGetValue(key, entry) AndAlso
                entry IsNot Nothing AndAlso
@@ -63,12 +63,12 @@ Public NotInheritable Class D3D_TextureCache
     ''' <summary>
     ''' 获取或创建 GPU texture-like 资源。factory 只能创建当前 device generation 的资源；旧 generation 命中会被释放并重建。
     ''' </summary>
-    Public Function AcquireTexture(Of T As IDisposable)(key As String,
+    Public Function AcquireTexture(Of T As IDisposable)(key As Object,
                                                         generation As Integer,
                                                         gpuBytes As Long,
                                                         factory As Func(Of T)) As T
         If _disposed Then Throw New ObjectDisposedException(NameOf(D3D_TextureCache))
-        If String.IsNullOrEmpty(key) Then Throw New ArgumentException("Texture cache key is required.", NameOf(key))
+        If key Is Nothing Then Throw New ArgumentException("Texture cache key is required.", NameOf(key))
         If factory Is Nothing Then Throw New ArgumentNullException(NameOf(factory))
         SyncBudget()
 
@@ -106,7 +106,7 @@ Public NotInheritable Class D3D_TextureCache
         D3D_GpuCache.TrimToBudget()
     End Sub
 
-    Private Sub RequestBudgetTrim(Optional protectedKey As String = Nothing)
+    Private Sub RequestBudgetTrim(Optional protectedKey As Object = Nothing)
         SyncBudget()
         If _frameUseDepth > 0 Then
             _trimPending = True
@@ -120,8 +120,8 @@ Public NotInheritable Class D3D_TextureCache
     ''' <summary>
     ''' 释放指定 key 的缓存资源。Release 不能在资源作为当前帧 target 时调用。
     ''' </summary>
-    Public Function Release(key As String) As Boolean
-        If String.IsNullOrEmpty(key) Then Return False
+    Public Function Release(key As Object) As Boolean
+        If key Is Nothing Then Return False
         Dim entry As D3D_TextureCacheEntry = Nothing
         If Not _entries.TryGetValue(key, entry) Then Return False
         RemoveEntry(key, entry)
@@ -134,8 +134,19 @@ Public NotInheritable Class D3D_TextureCache
     Public Function ReleaseByPrefix(prefix As String) As Boolean
         If String.IsNullOrEmpty(prefix) Then Return False
         Dim released As Boolean
-        Dim keys = _entries.Keys.Where(Function(k) k.StartsWith(prefix, StringComparison.Ordinal)).ToArray()
+        Dim keys = _entries.Keys.
+            Where(Function(k) TypeOf k Is String AndAlso DirectCast(k, String).StartsWith(prefix, StringComparison.Ordinal)).
+            ToArray()
         For Each key In keys
+            released = Release(key) OrElse released
+        Next
+        Return released
+    End Function
+
+    Friend Function ReleaseWhere(predicate As Func(Of Object, Boolean)) As Boolean
+        If predicate Is Nothing Then Return False
+        Dim released As Boolean
+        For Each key In _entries.Keys.Where(predicate).ToArray()
             released = Release(key) OrElse released
         Next
         Return released
@@ -152,7 +163,7 @@ Public NotInheritable Class D3D_TextureCache
     ''' 按 LRU 修剪到 GPU budget。force=True 时释放所有非空资源；调用方必须避开正在绘制的 target。
     ''' protectedKey 用于保护刚创建并即将返回给调用方的资源；即使单个资源超过预算，也不能在返回前把它 Dispose。
     ''' </summary>
-    Public Sub TrimToBudget(force As Boolean, Optional protectedKey As String = Nothing)
+    Public Sub TrimToBudget(force As Boolean, Optional protectedKey As Object = Nothing)
         SyncBudget()
         If force Then
             ReleaseAll()
@@ -161,7 +172,7 @@ Public NotInheritable Class D3D_TextureCache
 
         While _totalGpuBytes > BudgetBytes AndAlso _entries.Count > 0
             Dim victim = _entries.Values.
-                Where(Function(e) Not String.Equals(e.Key, protectedKey, StringComparison.Ordinal)).
+                Where(Function(e) Not Object.Equals(e.Key, protectedKey)).
                 OrderBy(Function(e) e.LastUsed).
                 FirstOrDefault()
             If victim Is Nothing Then Exit While
@@ -186,7 +197,7 @@ Public NotInheritable Class D3D_TextureCache
         BudgetBytes = Math.Max(0L, GlobalOptions.GpuCacheBudgetBytes)
     End Sub
 
-    Private Sub RemoveEntry(key As String, entry As D3D_TextureCacheEntry)
+    Private Sub RemoveEntry(key As Object, entry As D3D_TextureCacheEntry)
         If Not _entries.Remove(key) Then Return
         _totalGpuBytes -= entry.GpuBytes
         DisposeEntry(entry)
@@ -205,7 +216,7 @@ Public NotInheritable Class D3D_TextureCache
     End Sub
 
     Private NotInheritable Class D3D_TextureCacheEntry
-        Public Sub New(key As String, resource As IDisposable, generation As Integer, gpuBytes As Long, lastUsed As Long)
+        Public Sub New(key As Object, resource As IDisposable, generation As Integer, gpuBytes As Long, lastUsed As Long)
             Me.Key = key
             Me.Resource = resource
             Me.Generation = generation
@@ -213,7 +224,7 @@ Public NotInheritable Class D3D_TextureCache
             Me.LastUsed = lastUsed
         End Sub
 
-        Public ReadOnly Property Key As String
+        Public ReadOnly Property Key As Object
         Public ReadOnly Property Resource As IDisposable
         Public ReadOnly Property Generation As Integer
         Public ReadOnly Property GpuBytes As Long

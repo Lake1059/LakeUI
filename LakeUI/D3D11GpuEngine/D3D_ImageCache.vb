@@ -23,6 +23,7 @@ Public NotInheritable Class D3D_ImageCache
         If context Is Nothing Then Throw New ArgumentNullException(NameOf(context))
         If image Is Nothing Then Return Nothing
         If image.Width <= 0 OrElse image.Height <= 0 Then Return Nothing
+        context.BeginTextureUse()
 
         Dim generation = context.DeviceGeneration
         Dim key = BuildKey(image, frameIndex, generation)
@@ -56,27 +57,54 @@ Public NotInheritable Class D3D_ImageCache
     End Sub
 
     Public Sub Invalidate()
-        _textureCache.ReleaseByPrefix("image:")
+        _textureCache.ReleaseWhere(Function(key) TypeOf key Is D3D_ImageTextureKey)
     End Sub
 
     Public Function ReleaseImage(image As Image) As Boolean
         If image Is Nothing Then Return False
-        Return _textureCache.ReleaseByPrefix(BuildSourcePrefix(image))
+        Return _textureCache.ReleaseWhere(
+            Function(key)
+                If Not TypeOf key Is D3D_ImageTextureKey Then Return False
+                Return ReferenceEquals(DirectCast(key, D3D_ImageTextureKey).Image, image)
+            End Function)
     End Function
 
-    Private Shared Function BuildKey(image As Image, frameIndex As Integer, generation As Integer) As String
-        Return BuildSourcePrefix(image) &
-               image.Width.ToString(Globalization.CultureInfo.InvariantCulture) & "x" &
-               image.Height.ToString(Globalization.CultureInfo.InvariantCulture) & ":" &
-               frameIndex.ToString(Globalization.CultureInfo.InvariantCulture) & ":" &
-               D3D_HdrOutput.ImageRevision.ToString(Globalization.CultureInfo.InvariantCulture) & ":" &
-               generation.ToString(Globalization.CultureInfo.InvariantCulture)
+    Private Shared Function BuildKey(image As Image, frameIndex As Integer, generation As Integer) As D3D_ImageTextureKey
+        Return New D3D_ImageTextureKey(image, image.Width, image.Height, frameIndex, D3D_HdrOutput.ImageRevision, generation)
     End Function
 
-    Private Shared Function BuildSourcePrefix(image As Image) As String
-        Return "image:" &
-               RuntimeHelpers.GetHashCode(image).ToString(Globalization.CultureInfo.InvariantCulture) & ":"
-    End Function
+    Private Structure D3D_ImageTextureKey
+        Implements IEquatable(Of D3D_ImageTextureKey)
+
+        Friend ReadOnly Image As Image
+        Private ReadOnly _width As Integer
+        Private ReadOnly _height As Integer
+        Private ReadOnly _frameIndex As Integer
+        Private ReadOnly _imageRevision As Integer
+        Private ReadOnly _generation As Integer
+
+        Friend Sub New(image As Image, width As Integer, height As Integer, frameIndex As Integer, imageRevision As Integer, generation As Integer)
+            Me.Image = image
+            _width = width
+            _height = height
+            _frameIndex = frameIndex
+            _imageRevision = imageRevision
+            _generation = generation
+        End Sub
+
+        Public Overloads Function Equals(other As D3D_ImageTextureKey) As Boolean Implements IEquatable(Of D3D_ImageTextureKey).Equals
+            Return ReferenceEquals(Image, other.Image) AndAlso _width = other._width AndAlso _height = other._height AndAlso
+                   _frameIndex = other._frameIndex AndAlso _imageRevision = other._imageRevision AndAlso _generation = other._generation
+        End Function
+
+        Public Overrides Function Equals(obj As Object) As Boolean
+            Return TypeOf obj Is D3D_ImageTextureKey AndAlso Equals(DirectCast(obj, D3D_ImageTextureKey))
+        End Function
+
+        Public Overrides Function GetHashCode() As Integer
+            Return HashCode.Combine(RuntimeHelpers.GetHashCode(Image), _width, _height, _frameIndex, _imageRevision, _generation)
+        End Function
+    End Structure
 
     Private Shared Function UploadImage(context As ID2D1DeviceContext, image As Image) As ID2D1Bitmap1
         Dim sourceBitmap = TryCast(image, Bitmap)

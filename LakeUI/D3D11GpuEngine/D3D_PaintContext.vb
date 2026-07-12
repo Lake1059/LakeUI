@@ -20,7 +20,9 @@ Imports Vortice.Mathematics
 Public NotInheritable Class D3D_PaintContext
     Implements IDisposable
 
-    Private ReadOnly _clipStack As New Stack(Of IDisposable)()
+    Private _clipStack As Stack(Of IDisposable)
+    Private ReadOnly _beginTextureUse As Action
+    Private ReadOnly _beginBackdropUse As Action
     Private _disposed As Boolean
 
     Friend Sub New(compositor As D3D_WindowCompositor,
@@ -32,7 +34,9 @@ Public NotInheritable Class D3D_PaintContext
                    targetHasAlpha As Boolean,
                    frameGeneration As Integer,
                    deviceGeneration As Integer,
-                   dirtyRegion As IReadOnlyList(Of Rectangle))
+                   dirtyRectangle As Rectangle,
+                   beginTextureUse As Action,
+                   beginBackdropUse As Action)
         Me.Compositor = compositor
         Me.DeviceContext = deviceContext
         Me.LocalToWindowTransform = localToWindowTransform
@@ -42,7 +46,9 @@ Public NotInheritable Class D3D_PaintContext
         Me.TargetHasAlpha = targetHasAlpha
         Me.FrameGeneration = frameGeneration
         Me.DeviceGeneration = deviceGeneration
-        Me.DirtyRegion = dirtyRegion
+        Me.DirtyRectangle = dirtyRectangle
+        _beginTextureUse = beginTextureUse
+        _beginBackdropUse = beginBackdropUse
     End Sub
 
     Public ReadOnly Property Compositor As D3D_WindowCompositor
@@ -54,26 +60,20 @@ Public NotInheritable Class D3D_PaintContext
     Public ReadOnly Property TargetHasAlpha As Boolean
     Public ReadOnly Property FrameGeneration As Integer
     Public ReadOnly Property DeviceGeneration As Integer
-    Public ReadOnly Property DirtyRegion As IReadOnlyList(Of Rectangle)
+    Public ReadOnly Property DirtyRectangle As Rectangle
 
     ''' <summary>返回指定本地矩形是否与当前脏区相交，供大型控件跳过确定不可见的绘制命令。</summary>
     Public Function IntersectsDirty(rect As RectangleF) As Boolean
         If rect.Width <= 0.0F OrElse rect.Height <= 0.0F Then Return False
-        If DirtyRegion Is Nothing OrElse DirtyRegion.Count = 0 Then Return True
+        If DirtyRectangle.Width <= 0 OrElse DirtyRectangle.Height <= 0 Then Return True
         Dim rounded = Rectangle.Ceiling(rect)
-        For Each dirty In DirtyRegion
-            If dirty.IntersectsWith(rounded) Then Return True
-        Next
-        Return False
+        Return DirtyRectangle.IntersectsWith(rounded)
     End Function
 
     Public Function IntersectsDirty(rect As Rectangle) As Boolean
         If rect.Width <= 0 OrElse rect.Height <= 0 Then Return False
-        If DirtyRegion Is Nothing OrElse DirtyRegion.Count = 0 Then Return True
-        For Each dirty In DirtyRegion
-            If dirty.IntersectsWith(rect) Then Return True
-        Next
-        Return False
+        If DirtyRectangle.Width <= 0 OrElse DirtyRectangle.Height <= 0 Then Return True
+        Return DirtyRectangle.IntersectsWith(rect)
     End Function
 
     ''' <summary>
@@ -170,7 +170,7 @@ Public NotInheritable Class D3D_PaintContext
     End Function
 
     ''' <summary>
-    ''' 绘制文本，文本质量由 D3D_TextRenderer 控制；后续迁移控件不要直接调用旧 D3D_TextInterop。
+    ''' 绘制文本，文本质量由 D3D_TextRenderer 控制。
     ''' </summary>
     Public Sub DrawText(text As String,
                         font As Font,
@@ -196,6 +196,7 @@ Public NotInheritable Class D3D_PaintContext
     Public Function PushClip(rect As RectangleF) As IDisposable
         If rect.Width <= 0 OrElse rect.Height <= 0 Then Return NoopClipScope.Instance
         Dim scope As New D3D_ClipScope(DeviceContext, rect)
+        If _clipStack Is Nothing Then _clipStack = New Stack(Of IDisposable)()
         _clipStack.Push(scope)
         Return scope
     End Function
@@ -206,6 +207,7 @@ Public NotInheritable Class D3D_PaintContext
     Public Function PushGeometryClip(geometry As ID2D1Geometry, contentBounds As RectangleF) As IDisposable
         If geometry Is Nothing OrElse contentBounds.Width <= 0 OrElse contentBounds.Height <= 0 Then Return NoopClipScope.Instance
         Dim scope As New D3D_GeometryClipScope(DeviceContext, geometry, contentBounds)
+        If _clipStack Is Nothing Then _clipStack = New Stack(Of IDisposable)()
         _clipStack.Push(scope)
         Return scope
     End Function
@@ -244,11 +246,21 @@ Public NotInheritable Class D3D_PaintContext
         If _disposed Then Return
         _disposed = True
 
-        While _clipStack.Count > 0
-            Try : _clipStack.Pop().Dispose() : Catch : End Try
-        End While
+        If _clipStack IsNot Nothing Then
+            While _clipStack.Count > 0
+                Try : _clipStack.Pop().Dispose() : Catch : End Try
+            End While
+        End If
 
         GC.SuppressFinalize(Me)
+    End Sub
+
+    Friend Sub BeginBackdropUse()
+        _beginBackdropUse?.Invoke()
+    End Sub
+
+    Friend Sub BeginTextureUse()
+        _beginTextureUse?.Invoke()
     End Sub
 
     Private NotInheritable Class D3D_ClipScope

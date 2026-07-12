@@ -14,7 +14,7 @@ Imports Vortice.DirectWrite
 ''' </summary>
 <DefaultEvent("SampleUpdated")>
 Public Class RamMonitor
-    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource
+    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource, V3_ISuperSamplingSource
 
 #Region "D3D 渲染资源"
 #End Region
@@ -658,7 +658,7 @@ Public Class RamMonitor
 
     Private Sub 绘制背景与边框_GPU(context As D3D_PaintContext, rect As RectangleF, s As Single)
         Dim r As Single = 圆角半径值 * s
-        If MyBase.BackColor.A > 0 AndAlso MyBase.BackColor.A < 255 Then
+        If _backgroundSource Is Nothing AndAlso MyBase.BackColor.A > 0 AndAlso MyBase.BackColor.A < 255 Then
             填充圆角矩形_GPU(context, rect, r, MyBase.BackColor)
         End If
         If 主体背景颜色值.A > 0 Then
@@ -1573,7 +1573,7 @@ Public Class RamMonitor
     ' ====== SSAA ======
     Private 超采样倍率 As Integer = 1
     <Category("LakeUI"), Description(GlobalOptions.超采样抗锯齿描述词), DefaultValue(GetType(GlobalOptions.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
-    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum
+    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements V3_ISuperSamplingSource.SuperSamplingScale
         Get
             Return 超采样倍率
         End Get
@@ -1587,7 +1587,7 @@ Public Class RamMonitor
     ''' 背景采样源（超容器背景映射）。透明背景模式下用于采样父级或指定控件作为底图。
     ''' </summary>
     <Category("LakeUI"),
-     Description("背景采样源（超容器背景映射）。设置后将跨越任意层级直接采样此控件的绘制内容作为透明背景；为空时自动选择首个不透明祖先。"),
+     Description("背景采样源（超容器背景映射）。设置后将跨越任意层级直接采样此控件的绘制内容作为透明背景；为空时不进行背景采样。"),
      DefaultValue(GetType(Control), Nothing), Browsable(True)>
     Public Property BackgroundSource As Control
         Get

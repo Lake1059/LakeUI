@@ -4,7 +4,7 @@ Imports Vortice.Direct2D1
 
 <DefaultEvent("SelectedIndexChanged")>
 Public Class ModernComboBox
-    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource
+    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource, V3_ISuperSamplingSource
 
     Public Event SelectedIndexChanged As EventHandler
     Public Shadows Event TextChanged As EventHandler
@@ -495,7 +495,7 @@ Public Class ModernComboBox
 
     Private 超采样倍率 As Integer = 1
     <Category("LakeUI"), Description(GlobalOptions.超采样抗锯齿描述词), DefaultValue(GetType(GlobalOptions.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
-    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum
+    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements V3_ISuperSamplingSource.SuperSamplingScale
         Get
             Return 超采样倍率
         End Get
@@ -1251,7 +1251,7 @@ Public Class ModernComboBox
 
     Private Sub 绘制背景_GPU(context As D3D_PaintContext, hasRadius As Boolean, sourceRect As RectangleF, boundsRect As RectangleF, bgClr As Color, bgClr2 As Color)
         Dim backColorMask As Color = MyBase.BackColor
-        Dim hasMask As Boolean = backColorMask.A > 0 AndAlso backColorMask.A < 255
+        Dim hasMask As Boolean = _backgroundSource Is Nothing AndAlso backColorMask.A > 0 AndAlso backColorMask.A < 255
         Dim hasFill As Boolean = bgClr.A > 0 OrElse (bgClr2 <> Color.Empty AndAlso bgClr2.A > 0)
         Dim hasBackgroundSource As Boolean = _backgroundSource IsNot Nothing
         Dim arrowBgClr As Color = Color.Empty
@@ -1845,9 +1845,15 @@ Public Class ModernComboBox
 
     Private Class DropDownListForm
         Inherits PopupForm
-        Implements IMessageFilter, V3_IGpuRenderable, V3_IGpuInvalidationSource
+        Implements IMessageFilter, V3_IGpuRenderable, V3_IGpuInvalidationSource, V3_ISuperSamplingSource
 
         Private _owner As ModernComboBox
+
+        Private ReadOnly Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements V3_ISuperSamplingSource.SuperSamplingScale
+            Get
+                Return If(_owner Is Nothing, GlobalOptions.SuperSamplingScaleEnum.OFF, _owner.SuperSamplingScale)
+            End Get
+        End Property
         Private _hoverIndex As Integer = -1
         Private _pressedIndex As Integer = -1
         Private _scrollOffset As Integer = 0

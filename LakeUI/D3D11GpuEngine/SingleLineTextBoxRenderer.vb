@@ -19,7 +19,7 @@ Imports Vortice.Direct2D1
 ''' • 光标/选区列索引按 .NET 字符索引处理，不做 grapheme cluster 分割；组合 emoji、复杂脚本
 '''   的光标移动可能不是专业文本编辑器语义。
 ''' • IME 合成窗口位置由外层控件配合 <see cref="ImeHelper"/> 设置，本类只处理已经提交的文本。
-''' • 文字层应画在 <see cref="D3D_PaintScope.TextLayer"/> 上，避免在 SSAA 图形层里画 ClearType 文字。
+''' • 绘制只通过 <see cref="DrawGpu"/> 进入当前 V3 绘制上下文。
 ''' </remarks>
 Public Class SingleLineTextBoxRenderer
     Implements IDisposable
@@ -161,39 +161,6 @@ Public Class SingleLineTextBoxRenderer
         EnsureCaretVisible()
         InvalidateOwner()
         If changed AndAlso raiseTextChanged Then RaiseEvent TextChanged(_owner, EventArgs.Empty)
-    End Sub
-
-    Public Sub Draw(rt As ID2D1RenderTarget,
-                    Optional textFormatCache As D3D_D2DInterop.TextFormatCache = Nothing,
-                    Optional brushCache As D3D_D2DInterop.SolidColorBrushCache = Nothing)
-        If rt Is Nothing Then Return
-        Dim area As RectangleF = GetTextArea()
-        If area.Width <= 0 OrElse area.Height <= 0 Then Return
-
-        PushClip_D2D(rt, area)
-        Try
-            Dim singleLineY As Integer = CInt(area.Y + (area.Height - LineHeight) \ 2)
-            Dim isEmpty As Boolean = String.IsNullOrEmpty(_text)
-
-            If isEmpty AndAlso Not String.IsNullOrEmpty(WaterText) Then
-                Dim waterAlignOff As Integer = GetAlignOffsetX(WaterText, CInt(area.Width))
-                DrawSingleLineText_D2D(rt, WaterText, _owner.Font, WaterTextForeColor,
-                    New RectangleF(area.X + waterAlignOff, area.Y, area.Width, area.Height), DpiScale(), False, textFormatCache, brushCache)
-            End If
-
-            If Not isEmpty Then
-                If _hasSelection Then DrawSelection_D2D(rt, singleLineY, CInt(area.X), CInt(area.Width), brushCache)
-                Dim alignOff As Integer = GetAlignOffsetX(_text, CInt(area.Width))
-                DrawSingleLineText_D2D(rt, _text, _owner.Font, ForeColor,
-                    New RectangleF(area.X + alignOff - _scrollXOffset, area.Y, Short.MaxValue, area.Height), DpiScale(), False, textFormatCache, brushCache)
-            End If
-
-            If IsFocused() AndAlso _caretVisible AndAlso Editable Then
-                DrawCaret_D2D(rt, CInt(area.X), CInt(area.Y), brushCache)
-            End If
-        Finally
-            rt.PopAxisAlignedClip()
-        End Try
     End Sub
 
     Public Sub DrawGpu(context As D3D_PaintContext)
@@ -638,40 +605,6 @@ Public Class SingleLineTextBoxRenderer
         End Select
     End Function
 
-    Private Sub DrawSelection_D2D(rt As ID2D1RenderTarget, lineY As Integer, textLeft As Integer, textWidth As Integer,
-                                  brushCache As D3D_D2DInterop.SolidColorBrushCache)
-        Dim minC As Integer = Math.Min(_selAnchorCol, _caretCol)
-        Dim maxC As Integer = Math.Max(_selAnchorCol, _caretCol)
-        Dim alignOff As Integer = GetAlignOffsetX(_text, textWidth)
-        Dim x1 As Integer = textLeft + alignOff + MeasurePrefixWidth(minC) - _scrollXOffset
-        Dim x2 As Integer = textLeft + alignOff + MeasurePrefixWidth(maxC) - _scrollXOffset
-        If x2 <= x1 Then Return
-        If brushCache IsNot Nothing Then
-            rt.FillRectangle(New Vortice.Mathematics.Rect(x1, lineY, x2 - x1, LineHeight), brushCache.Get(rt, SelectionColor))
-        Else
-            Using br = rt.CreateSolidColorBrush(D3D_D2DInterop.ToColor4(SelectionColor))
-                rt.FillRectangle(New Vortice.Mathematics.Rect(x1, lineY, x2 - x1, LineHeight), br)
-            End Using
-        End If
-    End Sub
-
-    Private Sub DrawCaret_D2D(rt As ID2D1RenderTarget, textLeft As Integer, textTop As Integer,
-                              brushCache As D3D_D2DInterop.SolidColorBrushCache)
-        Dim area As RectangleF = GetTextArea()
-        Dim alignOff As Integer = GetAlignOffsetX(_text, CInt(area.Width))
-        Dim cx As Integer = textLeft + alignOff + MeasurePrefixWidth(_caretCol) - _scrollXOffset
-        Dim lineY As Integer = CInt(textTop + (area.Height - LineHeight) \ 2)
-        Dim caretH As Integer = LineHeight - 2
-        Dim caretY As Integer = lineY + (LineHeight - caretH) \ 2
-        If brushCache IsNot Nothing Then
-            rt.FillRectangle(New Vortice.Mathematics.Rect(cx, caretY, CInt(CaretWidth * DpiScale()), caretH), brushCache.Get(rt, CaretColor))
-        Else
-            Using br = rt.CreateSolidColorBrush(D3D_D2DInterop.ToColor4(CaretColor))
-                rt.FillRectangle(New Vortice.Mathematics.Rect(cx, caretY, CInt(CaretWidth * DpiScale()), caretH), br)
-            End Using
-        End If
-    End Sub
-
     Private Sub DrawSelection_GPU(context As D3D_PaintContext, lineY As Integer, textLeft As Integer, textWidth As Integer)
         Dim minC As Integer = Math.Min(_selAnchorCol, _caretCol)
         Dim maxC As Integer = Math.Max(_selAnchorCol, _caretCol)
@@ -692,58 +625,7 @@ Public Class SingleLineTextBoxRenderer
         context.FillRectangle(New RectangleF(cx, caretY, CInt(CaretWidth * DpiScale()), caretH), CaretColor)
     End Sub
 
-    Private Shared Sub PushClip_D2D(rt As ID2D1RenderTarget, rect As RectangleF)
-        rt.PushAxisAlignedClip(New Vortice.RawRectF(rect.Left, rect.Top, rect.Right, rect.Bottom), AntialiasMode.Aliased)
-    End Sub
-
-    Public Shared Sub DrawSingleLineText_D2D(rt As ID2D1RenderTarget, text As String, font As Font, foreColor As Color,
-                                             rect As RectangleF, dpiScale As Single, endEllipsis As Boolean,
-                                             Optional textFormatCache As D3D_D2DInterop.TextFormatCache = Nothing,
-                                             Optional brushCache As D3D_D2DInterop.SolidColorBrushCache = Nothing)
-        If String.IsNullOrEmpty(text) OrElse foreColor.A = 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
-        Dim ownsFormat As Boolean = (textFormatCache Is Nothing)
-        Dim fmt As Vortice.DirectWrite.IDWriteTextFormat = Nothing
-        Dim ownsBrush As Boolean = (brushCache Is Nothing)
-        Dim br As ID2D1Brush = Nothing
-        Try
-            Dim sizePx As Single = D3D_D2DInterop.GetDWriteFontSizePx(font, dpiScale)
-            If textFormatCache IsNot Nothing Then
-                fmt = textFormatCache.Get(font, sizePx,
-                                          Vortice.DirectWrite.TextAlignment.Leading,
-                                          Vortice.DirectWrite.ParagraphAlignment.Center,
-                                          endEllipsis,
-                                          False)
-            Else
-                fmt = D3D_TextMeasureHelper.CreateDWriteTextFormat(font, dpiScale)
-                fmt.WordWrapping = Vortice.DirectWrite.WordWrapping.NoWrap
-                fmt.ParagraphAlignment = Vortice.DirectWrite.ParagraphAlignment.Center
-                If endEllipsis Then
-                    Try
-                        fmt.SetTrimming(New Vortice.DirectWrite.Trimming With {.Granularity = Vortice.DirectWrite.TrimmingGranularity.Character}, Nothing)
-                    Catch
-                    End Try
-                End If
-            End If
-            If fmt Is Nothing Then Return
-            br = If(brushCache IsNot Nothing,
-                    DirectCast(brushCache.Get(rt, foreColor), ID2D1Brush),
-                    DirectCast(rt.CreateSolidColorBrush(D3D_D2DInterop.ToColor4(foreColor)), ID2D1Brush))
-            If br Is Nothing Then Return
-            Using layout = D3D_D2DInterop.GetDWriteFactory().CreateTextLayout(text, fmt, rect.Width, rect.Height)
-                rt.DrawTextLayout(New Vector2(rect.X, rect.Y), layout, br)
-            End Using
-        Finally
-            If ownsBrush AndAlso br IsNot Nothing Then
-                Try : br.Dispose() : Catch : End Try
-            End If
-            If ownsFormat AndAlso fmt IsNot Nothing Then
-                Try : fmt.Dispose() : Catch : End Try
-            End If
-        End Try
-    End Sub
-
     Private Shared Function DefaultFilterText(text As String) As String
         Return If(text, String.Empty).Replace(vbCr, String.Empty).Replace(vbLf, String.Empty)
     End Function
 End Class
-

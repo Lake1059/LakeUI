@@ -10,8 +10,7 @@ Imports Vortice.DXGI
 '''
 ''' === 设计目标 ===
 ''' • 进程内只创建一份 <see cref="ID3D11Device"/> + <see cref="ID2D1Device"/>，所有 Form 共享。
-''' • 仍保留兼容层现有 <see cref="ID2D1DCRenderTarget"/> 出口不变，本模块只是"额外提供"
-'''   <see cref="ID2D1DeviceContext"/> 入口给愿意走 D2D 1.1 effect / 跨 Form bitmap 缓存的路径使用。
+''' • 为 V3 窗口 compositor 提供 <see cref="ID2D1DeviceContext"/> 与共享设备。
 ''' • LakeUI 假定目标环境具备硬件 D3D11；不提供 WARP 或 CPU 绘制回退路线。
 '''
 ''' === 设备丢失（device lost / TDR / 远程桌面切换）处理 ===
@@ -20,19 +19,14 @@ Imports Vortice.DXGI
 ''' • 任何 D2D 调用都可能抛出 HRESULT = D2DERR_RECREATE_TARGET (0x8899000C)、
 '''   DXGI_ERROR_DEVICE_REMOVED (0x887A0005)、DXGI_ERROR_DEVICE_RESET (0x887A0007) 等。
 ''' • <see cref="HandleDeviceLost"/> 提供一个统一入口：传入异常 → 判断是否设备级错误 → 失效全部资源；
-'''   <see cref="DeviceLost"/> 事件让 per-form 的 <see cref="D3D_SurfaceCompositor"/> 收到通知，
+'''   <see cref="DeviceLost"/> 事件让 per-form 的 <see cref="D3D_WindowCompositor"/> 收到通知，
 '''   及时释放与旧设备绑定的 DeviceContext / Bitmap1 等资源；
 '''   下一次 <see cref="GetD2DDevice"/> 调用会按需重建一份全新设备。
 ''' • 上层调用方（例如 <c>ThisIsYourWindow.PaintWindow</c>）应把所有访问 DeviceContext 的代码用 Try 包裹。
 '''   Catch 后调用 <see cref="HandleDeviceLost"/>；若确认为掉驱动，则释放旧资源、吞掉本帧并请求下一帧重建。
 '''
 ''' === 与 D3D_D2DInterop.GetD2DFactory 的关系 ===
-''' • <c>D3D_D2DInterop.GetD2DFactory()</c> 返回 <see cref="ID2D1Factory"/>，仍按原逻辑创建 DC RT 给现有控件用。
-'''   阶段 A 将其内部实例升级为 <see cref="ID2D1Factory1"/>（接口向下兼容），并通过
-'''   <see cref="D3D_D2DInterop.GetD2DFactory1"/> 暴露给本模块以创建 D2D Device。
-''' • 注意：DC RT（factory.CreateDCRenderTarget）走的是 D2D 隐式 D3D10 设备，与本模块的
-'''   显式 D3D11 设备并非同一对象，因此 DC RT 与 DeviceContext 在阶段 A 不共享资源
-'''   （brush / bitmap 不能互通）。阶段 B 会把 DC RT 改为也由本设备创建以解除该限制。
+''' • <c>D3D_D2DInterop.GetD2DFactory1()</c> 暴露共享工厂，用于创建 D2D Device。
 '''
 ''' === 线程要求 ===
 ''' • 单例创建受 _lock 保护；只在 UI 线程使用 DeviceContext。

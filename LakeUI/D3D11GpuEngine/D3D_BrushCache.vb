@@ -8,7 +8,7 @@ Imports Vortice.Direct2D1
 Public NotInheritable Class D3D_BrushCache
     Implements IDisposable
 
-    Private ReadOnly _solidBrushes As New Dictionary(Of String, D3D_BrushCacheEntry)(StringComparer.Ordinal)
+    Private ReadOnly _solidBrushes As New Dictionary(Of D3D_BrushKey, D3D_BrushCacheEntry)()
     Private _clock As Long
     Private _disposed As Boolean
 
@@ -29,13 +29,8 @@ Public NotInheritable Class D3D_BrushCache
         If _disposed Then Throw New ObjectDisposedException(NameOf(D3D_BrushCache))
         If context Is Nothing Then Throw New ArgumentNullException(NameOf(context))
 
-        Dim contextKey = Runtime.CompilerServices.RuntimeHelpers.GetHashCode(context)
         Dim hdrRevision = If(mapHdr, D3D_HdrOutput.VectorColorRevision, 0)
-        Dim key = generation.ToString(Globalization.CultureInfo.InvariantCulture) & ":" &
-                  contextKey.ToString(Globalization.CultureInfo.InvariantCulture) & ":" &
-                  hdrRevision.ToString(Globalization.CultureInfo.InvariantCulture) & ":" &
-                  If(mapHdr, "mapped:", "raw:") &
-                  color.ToArgb().ToString(Globalization.CultureInfo.InvariantCulture)
+        Dim key As New D3D_BrushKey(context, generation, hdrRevision, mapHdr, color.ToArgb())
         Dim entry As D3D_BrushCacheEntry = Nothing
         If _solidBrushes.TryGetValue(key, entry) Then
             entry.LastUsed = NextClock()
@@ -56,19 +51,51 @@ Public NotInheritable Class D3D_BrushCache
         _solidBrushes.Clear()
     End Sub
 
-    Private Sub Trim(protectedKey As String)
+    Private Sub Trim(protectedKey As D3D_BrushKey)
         Dim limit = Math.Max(0, GlobalOptions.BrushCacheLimit)
         MaxSolidBrushes = limit
         While _solidBrushes.Count > limit
             Dim victim = _solidBrushes.
-                Where(Function(kv) Not String.Equals(kv.Key, protectedKey, StringComparison.Ordinal)).
+                Where(Function(kv) Not kv.Key.Equals(protectedKey)).
                 OrderBy(Function(kv) kv.Value.LastUsed).
                 FirstOrDefault()
-            If victim.Key Is Nothing Then Exit While
+            If victim.Value Is Nothing Then Exit While
             _solidBrushes.Remove(victim.Key)
             Try : victim.Value.Brush.Dispose() : Catch : End Try
         End While
     End Sub
+
+    Private Structure D3D_BrushKey
+        Implements IEquatable(Of D3D_BrushKey)
+
+        Private ReadOnly _context As ID2D1DeviceContext
+        Private ReadOnly _generation As Integer
+        Private ReadOnly _hdrRevision As Integer
+        Private ReadOnly _mapHdr As Boolean
+        Private ReadOnly _argb As Integer
+
+        Friend Sub New(context As ID2D1DeviceContext, generation As Integer, hdrRevision As Integer, mapHdr As Boolean, argb As Integer)
+            _context = context
+            _generation = generation
+            _hdrRevision = hdrRevision
+            _mapHdr = mapHdr
+            _argb = argb
+        End Sub
+
+        Public Overloads Function Equals(other As D3D_BrushKey) As Boolean Implements IEquatable(Of D3D_BrushKey).Equals
+            Return ReferenceEquals(_context, other._context) AndAlso
+                   _generation = other._generation AndAlso _hdrRevision = other._hdrRevision AndAlso
+                   _mapHdr = other._mapHdr AndAlso _argb = other._argb
+        End Function
+
+        Public Overrides Function Equals(obj As Object) As Boolean
+            Return TypeOf obj Is D3D_BrushKey AndAlso Equals(DirectCast(obj, D3D_BrushKey))
+        End Function
+
+        Public Overrides Function GetHashCode() As Integer
+            Return HashCode.Combine(Runtime.CompilerServices.RuntimeHelpers.GetHashCode(_context), _generation, _hdrRevision, _mapHdr, _argb)
+        End Function
+    End Structure
 
     Private Function NextClock() As Long
         _clock += 1

@@ -6,7 +6,7 @@ Imports Vortice.Direct2D1
 ''' </summary>
 <DefaultEvent("ItemClicked")>
 Public Class BreadcrumbNavigationBar
-    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource
+    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource, V3_ISuperSamplingSource
 
 #Region "节点定义与集合"
     ''' <summary>
@@ -579,7 +579,7 @@ Public Class BreadcrumbNavigationBar
 
     Private 超采样倍率 As GlobalOptions.SuperSamplingScaleEnum = GlobalOptions.SuperSamplingScaleEnum.OFF
     <Category("LakeUI"), Description(GlobalOptions.超采样抗锯齿描述词), DefaultValue(GetType(GlobalOptions.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
-    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum
+    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements V3_ISuperSamplingSource.SuperSamplingScale
         Get
             Return 超采样倍率
         End Get

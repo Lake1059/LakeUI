@@ -7,7 +7,7 @@ Imports DW = Vortice.DirectWrite
 
 <DefaultEvent("ChartChanged")>
 Public Class Ultra2DChart
-    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource
+    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource, V3_ISuperSamplingSource
 
     Public Event ChartChanged As EventHandler
 
@@ -1967,7 +1967,7 @@ Public Class Ultra2DChart
 
     Private 超采样倍率 As Integer = 1
     <Category("LakeUI"), Description(GlobalOptions.超采样抗锯齿描述词), DefaultValue(GetType(GlobalOptions.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
-    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum
+    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements V3_ISuperSamplingSource.SuperSamplingScale
         Get
             Return CType(超采样倍率, GlobalOptions.SuperSamplingScaleEnum)
         End Get

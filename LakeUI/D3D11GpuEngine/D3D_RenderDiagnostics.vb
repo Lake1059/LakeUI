@@ -17,6 +17,16 @@ Friend Module D3D_RenderDiagnostics
     Private _backgroundPartialUploadBytes As Long
     Private _backgroundFullUploadBytes As Long
     Private _cacheEvictions As Long
+    Private _standardPaints As Long
+    Private _ssaaPaints As Long
+    Private _paintTargetCurrentBytes As Long
+    Private _paintTargetPeakBytes As Long
+    Private _budgetScans As Long
+    Private _backgroundTopologyHits As Long
+    Private _backgroundTopologyRebuilds As Long
+    Private _ssaaTargetAllocations As Long
+    Private _ssaaTargetCurrentBytes As Long
+    Private _ssaaTargetPeakBytes As Long
 
     Friend Property Enabled As Boolean
         Get
@@ -39,6 +49,16 @@ Friend Module D3D_RenderDiagnostics
         Interlocked.Exchange(_backgroundPartialUploadBytes, 0)
         Interlocked.Exchange(_backgroundFullUploadBytes, 0)
         Interlocked.Exchange(_cacheEvictions, 0)
+        Interlocked.Exchange(_standardPaints, 0)
+        Interlocked.Exchange(_ssaaPaints, 0)
+        Interlocked.Exchange(_paintTargetCurrentBytes, 0)
+        Interlocked.Exchange(_paintTargetPeakBytes, 0)
+        Interlocked.Exchange(_budgetScans, 0)
+        Interlocked.Exchange(_backgroundTopologyHits, 0)
+        Interlocked.Exchange(_backgroundTopologyRebuilds, 0)
+        Interlocked.Exchange(_ssaaTargetAllocations, 0)
+        Interlocked.Exchange(_ssaaTargetCurrentBytes, 0)
+        Interlocked.Exchange(_ssaaTargetPeakBytes, 0)
     End Sub
 
     Friend Function Snapshot() As D3D_RenderStatistics
@@ -53,7 +73,17 @@ Friend Module D3D_RenderDiagnostics
             .BackdropRebuilds = Interlocked.Read(_backdropRebuilds),
             .BackgroundPartialUploadBytes = Interlocked.Read(_backgroundPartialUploadBytes),
             .BackgroundFullUploadBytes = Interlocked.Read(_backgroundFullUploadBytes),
-            .CacheEvictions = Interlocked.Read(_cacheEvictions)
+            .CacheEvictions = Interlocked.Read(_cacheEvictions),
+            .StandardPaints = Interlocked.Read(_standardPaints),
+            .SsaaPaints = Interlocked.Read(_ssaaPaints),
+            .PaintTargetCurrentBytes = Interlocked.Read(_paintTargetCurrentBytes),
+            .PaintTargetPeakBytes = Interlocked.Read(_paintTargetPeakBytes),
+            .BudgetScans = Interlocked.Read(_budgetScans),
+            .BackgroundTopologyHits = Interlocked.Read(_backgroundTopologyHits),
+            .BackgroundTopologyRebuilds = Interlocked.Read(_backgroundTopologyRebuilds),
+            .SsaaTargetAllocations = Interlocked.Read(_ssaaTargetAllocations),
+            .SsaaTargetCurrentBytes = Interlocked.Read(_ssaaTargetCurrentBytes),
+            .SsaaTargetPeakBytes = Interlocked.Read(_ssaaTargetPeakBytes)
         }
     End Function
 
@@ -61,8 +91,10 @@ Friend Module D3D_RenderDiagnostics
         If _enabled Then Interlocked.Increment(_paintTargetPoolHits)
     End Sub
 
-    Friend Sub PaintTargetPoolAllocation()
-        If _enabled Then Interlocked.Increment(_paintTargetPoolAllocations)
+    Friend Sub PaintTargetPoolAllocation(Optional superSampled As Boolean = False)
+        If Not _enabled Then Return
+        Interlocked.Increment(_paintTargetPoolAllocations)
+        If superSampled Then Interlocked.Increment(_ssaaTargetAllocations)
     End Sub
 
     Friend Sub PaintTargetPoolEviction()
@@ -100,6 +132,50 @@ Friend Module D3D_RenderDiagnostics
     Friend Sub CacheEviction()
         If _enabled Then Interlocked.Increment(_cacheEvictions)
     End Sub
+
+    Friend Sub StandardPaint()
+        If _enabled Then Interlocked.Increment(_standardPaints)
+    End Sub
+
+    Friend Sub SsaaPaint()
+        If _enabled Then Interlocked.Increment(_ssaaPaints)
+    End Sub
+
+    Friend Sub PaintTargetBytesChanged(delta As Long, Optional superSampled As Boolean = False)
+        If Not _enabled OrElse delta = 0 Then Return
+        Dim current = Interlocked.Add(_paintTargetCurrentBytes, delta)
+        If current < 0 Then
+            Interlocked.Exchange(_paintTargetCurrentBytes, 0)
+            current = 0
+        End If
+        Do
+            Dim peak = Interlocked.Read(_paintTargetPeakBytes)
+            If current <= peak OrElse Interlocked.CompareExchange(_paintTargetPeakBytes, current, peak) = peak Then Exit Do
+        Loop
+        If superSampled Then
+            Dim ssaaCurrent = Interlocked.Add(_ssaaTargetCurrentBytes, delta)
+            If ssaaCurrent < 0 Then
+                Interlocked.Exchange(_ssaaTargetCurrentBytes, 0)
+                ssaaCurrent = 0
+            End If
+            Do
+                Dim peak = Interlocked.Read(_ssaaTargetPeakBytes)
+                If ssaaCurrent <= peak OrElse Interlocked.CompareExchange(_ssaaTargetPeakBytes, ssaaCurrent, peak) = peak Then Exit Do
+            Loop
+        End If
+    End Sub
+
+    Friend Sub BudgetScan()
+        If _enabled Then Interlocked.Increment(_budgetScans)
+    End Sub
+
+    Friend Sub BackgroundTopologyHit()
+        If _enabled Then Interlocked.Increment(_backgroundTopologyHits)
+    End Sub
+
+    Friend Sub BackgroundTopologyRebuild()
+        If _enabled Then Interlocked.Increment(_backgroundTopologyRebuilds)
+    End Sub
 End Module
 
 Friend Structure D3D_RenderStatistics
@@ -114,4 +190,14 @@ Friend Structure D3D_RenderStatistics
     Public BackgroundPartialUploadBytes As Long
     Public BackgroundFullUploadBytes As Long
     Public CacheEvictions As Long
+    Public StandardPaints As Long
+    Public SsaaPaints As Long
+    Public PaintTargetCurrentBytes As Long
+    Public PaintTargetPeakBytes As Long
+    Public BudgetScans As Long
+    Public BackgroundTopologyHits As Long
+    Public BackgroundTopologyRebuilds As Long
+    Public SsaaTargetAllocations As Long
+    Public SsaaTargetCurrentBytes As Long
+    Public SsaaTargetPeakBytes As Long
 End Structure

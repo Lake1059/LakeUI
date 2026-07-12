@@ -6,7 +6,6 @@ Partial Class MemberWall
     Protected Overrides Sub Dispose(disposing As Boolean)
         Try
             If disposing Then
-                _scrollBar.DisposeBrushes()
                 If components IsNot Nothing Then
                     components.Dispose()
                 End If

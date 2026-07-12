@@ -12,6 +12,7 @@ Public NotInheritable Class D3D_RenderCore
     Private Shared ReadOnly _deviceManager As New D3D_DeviceManager()
     Private Shared ReadOnly _compositorsLock As New Object()
     Private Shared ReadOnly _compositors As New Dictionary(Of Form, D3D_WindowCompositor)()
+    Private Shared _suppressDeviceLostRender As Integer
 
     Shared Sub New()
         AddHandler _deviceManager.DeviceLost, AddressOf HandleProcessDeviceLost
@@ -130,7 +131,7 @@ Public NotInheritable Class D3D_RenderCore
 
     Friend Shared Function CleanupD2DResources(level As D3DCacheCleanupLevel,
                                                Optional owner As Control = Nothing,
-                                               Optional invalidateAfterCleanup As Boolean = True) As Integer
+                                               Optional invalidateAfterCleanup As Boolean = False) As Integer
         Dim targetForm As Form = If(level = D3DCacheCleanupLevel.ReleaseEverything, Nothing, ResolveCompositorForm(owner))
         Dim snapshot As New List(Of D3D_WindowCompositor)()
 
@@ -275,7 +276,16 @@ Public NotInheritable Class D3D_RenderCore
     ''' </summary>
     Public Shared Sub ResetRenderCore()
         CleanupD2DResources(D3DCacheCleanupLevel.ReleaseEverything, owner:=Nothing, invalidateAfterCleanup:=False)
-        _deviceManager.InvalidateDevice()
+        InvalidateDeviceForCleanup()
+    End Sub
+
+    Friend Shared Sub InvalidateDeviceForCleanup()
+        Threading.Interlocked.Increment(_suppressDeviceLostRender)
+        Try
+            _deviceManager.InvalidateDevice()
+        Finally
+            Threading.Interlocked.Decrement(_suppressDeviceLostRender)
+        End Try
     End Sub
 
     Friend Shared Sub UnregisterCompositor(form As Form, compositor As D3D_WindowCompositor)
@@ -290,12 +300,13 @@ Public NotInheritable Class D3D_RenderCore
 
     Private Shared Sub HandleProcessDeviceLost(sender As Object, e As EventArgs)
         Dim snapshot As List(Of D3D_WindowCompositor)
+        Dim requestRender As Boolean = Threading.Volatile.Read(_suppressDeviceLostRender) = 0
         SyncLock _compositorsLock
             snapshot = _compositors.Values.Where(Function(c) c IsNot Nothing).ToList()
         End SyncLock
 
         For Each compositor In snapshot
-            Try : compositor.HandleDeviceLost() : Catch : End Try
+            Try : compositor.HandleDeviceLost(requestRender) : Catch : End Try
         Next
     End Sub
 End Class

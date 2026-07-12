@@ -6,12 +6,7 @@ Imports Vortice.DirectWrite
 Imports Vortice.DXGI
 
 ''' <summary>
-''' Direct2D / DirectWrite 全局共享层（V3 兼容层的共享基座）。
-'''
-''' 旧兼容模块原本同时承担：①全局工厂与质量策略 / 类型转换 / 资源缓存
-''' （进程级，跨控件复用），②控件级 <c>PaintScope</c> 渲染管线（含 SSAA BitmapRT 缓存）。
-''' 兼容窗口级合成器（<see cref="D3D_SurfaceCompositor"/> / <see cref="D3D_PaintScope"/>）已完全取代后者，
-''' 因此本文件只保留①里的"全局基座"，控件级 PaintScope 已从代码库移除。
+''' Direct2D / DirectWrite 全局共享基座，只负责工厂、质量策略、类型转换和测量辅助资源。
 '''
 ''' 全局设置项集中放在 <see cref="GlobalOptions"/>；本模块只负责执行 D2D / DWrite 资源创建、
 ''' 类型转换、上传缓存与把当前全局设置应用到 RenderTarget。
@@ -300,8 +295,6 @@ Public Module D3D_D2DInterop
     Private _roundStrokeStyle As ID2D1StrokeStyle
     Private _roundStrokeStyleWithDashCap As ID2D1StrokeStyle
     Private ReadOnly _strokeStyles As New Dictionary(Of Integer, ID2D1StrokeStyle)()
-    Private ReadOnly _bitmapCacheRegistry As New List(Of WeakReference(Of D2DBitmapCache))()
-    Private ReadOnly _bitmapCacheRegistryLock As New Object()
 
     Friend Sub CleanupD2DResources(level As D3DCacheCleanupLevel)
         Select Case level
@@ -318,11 +311,9 @@ Public Module D3D_D2DInterop
                  D3DCacheCleanupLevel.ReleaseRenderTargets,
                  D3DCacheCleanupLevel.RecreateDevice
                 InvalidateOutlineRenderingParams()
-                InvalidateRegisteredBitmapCaches()
                 ClearFontResolveCache()
 
             Case Else
-                InvalidateRegisteredBitmapCaches()
                 ClearFontResolveCache()
                 ReleaseFactoryResources()
         End Select
@@ -349,47 +340,6 @@ Public Module D3D_D2DInterop
                 _dwFactory = Nothing
             End If
         End SyncLock
-    End Sub
-
-    Private Sub RegisterBitmapCache(cache As D2DBitmapCache)
-        If cache Is Nothing Then Return
-        SyncLock _bitmapCacheRegistryLock
-            CompactBitmapCacheRegistryNoLock()
-            _bitmapCacheRegistry.Add(New WeakReference(Of D2DBitmapCache)(cache))
-        End SyncLock
-    End Sub
-
-    Private Sub TrimRegisteredBitmapCaches()
-        SyncLock _bitmapCacheRegistryLock
-            For Each wr In _bitmapCacheRegistry
-                Dim cache As D2DBitmapCache = Nothing
-                If wr.TryGetTarget(cache) AndAlso cache IsNot Nothing Then
-                    Try : cache.TrimToCurrentBudget() : Catch : End Try
-                End If
-            Next
-            CompactBitmapCacheRegistryNoLock()
-        End SyncLock
-    End Sub
-
-    Private Sub InvalidateRegisteredBitmapCaches()
-        SyncLock _bitmapCacheRegistryLock
-            For Each wr In _bitmapCacheRegistry
-                Dim cache As D2DBitmapCache = Nothing
-                If wr.TryGetTarget(cache) AndAlso cache IsNot Nothing Then
-                    Try : cache.Invalidate() : Catch : End Try
-                End If
-            Next
-            CompactBitmapCacheRegistryNoLock()
-        End SyncLock
-    End Sub
-
-    Private Sub CompactBitmapCacheRegistryNoLock()
-        For i As Integer = _bitmapCacheRegistry.Count - 1 To 0 Step -1
-            Dim cache As D2DBitmapCache = Nothing
-            If Not _bitmapCacheRegistry(i).TryGetTarget(cache) OrElse cache Is Nothing Then
-                _bitmapCacheRegistry.RemoveAt(i)
-            End If
-        Next
     End Sub
 
     ''' <summary>进程级 <see cref="ID2D1Factory"/> 单例（SingleThreaded）。不要 Dispose。</summary>
@@ -502,31 +452,11 @@ Public Module D3D_D2DInterop
 
 #End Region
 
-#Region "DC 渲染目标"
-
-    ''' <summary>
-    ''' 创建一个未绑定 DC 的 <see cref="ID2D1DCRenderTarget"/>。
-    ''' 像素格式：B8G8R8A8_UNorm，AlphaMode = Ignore（与 GDI HDC 兼容）。
-    ''' 兼容层由 <see cref="D3D_SurfaceCompositor"/> 共享一份；外部不再需要直接调用本函数。
-    ''' </summary>
-    Public Function CreateDCRenderTarget() As ID2D1DCRenderTarget
-        Dim rtp As New RenderTargetProperties(
-            RenderTargetType.Default,
-            New Vortice.DCommon.PixelFormat(Format.B8G8R8A8_UNorm, Vortice.DCommon.AlphaMode.Ignore),
-            96.0F, 96.0F,
-            RenderTargetUsage.None,
-            Vortice.Direct2D1.FeatureLevel.Default)
-        Return GetD2DFactory().CreateDCRenderTarget(rtp)
-    End Function
-
-#End Region
-
 #Region "Bitmap 上传"
 
     ''' <summary>
     ''' 把 GDI <see cref="Image"/> 上传为 <see cref="ID2D1Bitmap"/>（Premultiplied BGRA）。
-    ''' 调用方负责 Dispose。仅适合一次性上传；每帧使用的图标 / 背景图应通过
-    ''' <see cref="D2DBitmapCache.GetBitmap"/> 复用。
+    ''' 调用方负责 Dispose。V3 每帧图片上传应通过 <see cref="D3D_ImageCache"/> 复用。
     ''' </summary>
     Public Function CreateBitmapFromImage(rt As ID2D1RenderTarget, img As Image) As ID2D1Bitmap
         If rt Is Nothing OrElse img Is Nothing Then Return Nothing
@@ -587,157 +517,6 @@ Public Module D3D_D2DInterop
 #End Region
 
 #Region "缓存：Bitmap / Brush / TextFormat"
-
-    ''' <summary>
-    ''' 缓存一个 GDI <see cref="Image"/> 上传得到的 <see cref="ID2D1Bitmap"/>，避免每帧重新上传。
-    ''' 仅当源 Image 引用或目标 RT 发生变化时重新上传；缓存项不强持有源 Image。
-    ''' </summary>
-    ''' <remarks>
-    ''' 资源所有权：
-    ''' • 调用方拥有 D2DBitmapCache 实例，通常挂在 <see cref="D3D_SurfaceCompositor"/> 的 Image 索引里。
-    ''' • cache 内部按 RenderTarget 持有 ID2D1Bitmap；RenderTarget 被释放时，compositor 必须调用
-    '''   <see cref="InvalidateFor"/> 清掉对应条目。
-    ''' • cache 不强持有源 Image，但 D3D_SurfaceCompositor 的索引字典会强持有 Image key；临时 Bitmap
-    '''   不要进入该索引，否则会活到 LRU 清理或 Form Dispose。
-    '''
-    ''' 坑点：
-    ''' • D2D bitmap 与创建它的 RenderTarget 绑定，不能跨 DC RT / SSAA RT / D2D 1.1 DeviceContext 复用。
-    ''' • 预算按“同一个 Image 在不同 RT 上的上传副本”估算，不包含源 Image 自身的 RAM。
-    ''' </remarks>
-    Public Class D2DBitmapCache
-        Implements IDisposable, D3D_IRenderCacheOwner
-
-        Private NotInheritable Class Entry
-            Public Bitmap As ID2D1Bitmap
-            Public SourceRef As WeakReference(Of Image)
-            Public RenderTarget As ID2D1RenderTarget
-            Public Bytes As Long
-            Public LastUsed As Long
-        End Class
-
-        Private ReadOnly _entries As New Dictionary(Of ID2D1RenderTarget, Entry)()
-        Private _bytes As Long
-
-        Public Sub New()
-            RegisterBitmapCache(Me)
-            D3D_GpuCache.Register(Me)
-        End Sub
-
-        Public Function GetBitmap(rt As ID2D1RenderTarget, src As Image) As ID2D1Bitmap
-            If src Is Nothing OrElse rt Is Nothing Then
-                Invalidate()
-                Return Nothing
-            End If
-            Dim entry As Entry = Nothing
-            If _entries.TryGetValue(rt, entry) Then
-                Dim entrySource As Image = Nothing
-                If entry.SourceRef IsNot Nothing AndAlso
-                   entry.SourceRef.TryGetTarget(entrySource) AndAlso
-                   entrySource Is src AndAlso
-                   entry.Bitmap IsNot Nothing Then
-                    entry.LastUsed = D3D_GpuCache.NextTick()
-                    Return entry.Bitmap
-                End If
-                RemoveEntry(rt)
-            End If
-
-            Dim bmp = CreateBitmapFromImage(rt, src)
-            If bmp Is Nothing Then Return Nothing
-
-            entry = New Entry With {
-                .Bitmap = bmp,
-                .SourceRef = New WeakReference(Of Image)(src),
-                .RenderTarget = rt,
-                .Bytes = EstimateBytes(src),
-                .LastUsed = D3D_GpuCache.NextTick()
-            }
-            _entries(rt) = entry
-            _bytes += entry.Bytes
-            D3D_GpuCache.TrimToBudget(Me)
-            Return bmp
-        End Function
-
-        Public Sub Invalidate()
-            For Each entry In _entries.Values
-                Try : entry.Bitmap.Dispose() : Catch : End Try
-            Next
-            _entries.Clear()
-            _bytes = 0
-        End Sub
-
-        Public Sub InvalidateSource(src As Image)
-            If src Is Nothing Then Return
-            For Each kv In _entries.ToArray()
-                Dim entrySource As Image = Nothing
-                If kv.Value.SourceRef Is Nothing OrElse
-                   Not kv.Value.SourceRef.TryGetTarget(entrySource) OrElse
-                   entrySource Is src Then
-                    RemoveEntry(kv.Key)
-                End If
-            Next
-        End Sub
-
-        Public Sub InvalidateFor(rt As ID2D1RenderTarget)
-            If rt Is Nothing Then Return
-            RemoveEntry(rt)
-        End Sub
-
-        Private Shared Function EstimateBytes(src As Image) As Long
-            If src Is Nothing Then Return 0
-            Return CLng(Math.Max(1, src.Width)) * CLng(Math.Max(1, src.Height)) * 4L
-        End Function
-
-        Private Sub RemoveEntry(rt As ID2D1RenderTarget)
-            Dim entry As Entry = Nothing
-            If Not _entries.TryGetValue(rt, entry) Then Return
-            _entries.Remove(rt)
-            _bytes -= entry.Bytes
-            If _bytes < 0 Then _bytes = 0
-            Try : entry.Bitmap.Dispose() : Catch : End Try
-        End Sub
-
-        Friend Sub TrimToCurrentBudget()
-            D3D_GpuCache.TrimToBudget()
-        End Sub
-
-        Public ReadOnly Property CacheBytes As Long Implements D3D_IRenderCacheOwner.CacheBytes
-            Get
-                Return _bytes
-            End Get
-        End Property
-
-        Public ReadOnly Property OldestUseTick As Long Implements D3D_IRenderCacheOwner.OldestUseTick
-            Get
-                Dim oldest As Long = Long.MaxValue
-                For Each entry In _entries.Values
-                    If entry IsNot Nothing AndAlso entry.LastUsed < oldest Then oldest = entry.LastUsed
-                Next
-                Return oldest
-            End Get
-        End Property
-
-        Public Function TrimOldest() As Boolean Implements D3D_IRenderCacheOwner.TrimOldest
-            Dim oldestRt As ID2D1RenderTarget = Nothing
-            Dim oldestEntry As Entry = Nothing
-            For Each kv In _entries
-                If oldestEntry Is Nothing OrElse kv.Value.LastUsed < oldestEntry.LastUsed Then
-                    oldestRt = kv.Key
-                    oldestEntry = kv.Value
-                End If
-            Next
-            If oldestRt Is Nothing Then Return False
-            RemoveEntry(oldestRt)
-            Return True
-        End Function
-
-        Public Sub ReleaseAll() Implements D3D_IRenderCacheOwner.ReleaseAll
-            Invalidate()
-        End Sub
-
-        Public Sub Dispose() Implements IDisposable.Dispose
-            Invalidate()
-        End Sub
-    End Class
 
     Friend Structure ResolvedTextFont
         Public Family As String

@@ -28,8 +28,8 @@ Imports Vortice.Direct2D1
 '''   End If
 '''
 ''' === 注意 ===
-''' • source 自身若是纯透明转发面板，会先解析到最终真实 source，再按该 canonical source 共享 CPU backing
-'''   与 D2D 整源上传；Demo 中多个透明页面透出的 Form1 因此命中同一份缓存。
+''' • source 自身若是纯透明 ModernPanel，或无背景图、无边框的透明原版 Panel，会先解析到最终真实 source，
+'''   再按该 canonical source 共享 CPU backing 与 D2D 整源上传；转发节点不会创建独立背景位图。
 ''' • D2D 共享上传缓存接入 <see cref="GlobalOptions.GpuCacheBudgetBytes"/>；CPU backing bitmap 接入
 '''   <see cref="GlobalOptions.CpuCacheBudgetBytes"/>。source 离开可见控件链后仍会主动释放整份背景采样缓存。
 ''' • <see cref="Invalidate"/> 用于换主题等需要立即重采的极端场景，常规情况下不需要手动调用。
@@ -98,10 +98,23 @@ Public Module D3D_BackgroundPenetration
         Public DisposeAfterDraw As Boolean
     End Structure
 
+    Private NotInheritable Class ResolvedConsumerMapping
+        Public RequestedSource As Control
+        Public CanonicalSource As Control
+        Public Offset As Point
+        Public ChildSize As Size
+        Public SourceMappings As List(Of KeyValuePair(Of Control, Rectangle))
+        Public TopologyNodes As List(Of Control)
+    End Class
+
     Private ReadOnly _cache As New Dictionary(Of Control, Entry)
     Private ReadOnly _ancestorSubscriptionRefs As New Dictionary(Of Control, Integer)
+    Private ReadOnly _ancestorSources As New Dictionary(Of Control, HashSet(Of Control))()
     Private ReadOnly _topologySubscriptionRefs As New Dictionary(Of Control, Integer)
     Private ReadOnly _consumerLifecycleSubscriptions As New HashSet(Of Control)
+    Private ReadOnly _resolvedConsumerMappings As New Dictionary(Of Control, ResolvedConsumerMapping)()
+    Private ReadOnly _consumerSources As New Dictionary(Of Control, HashSet(Of Control))()
+    Private ReadOnly _topologyConsumers As New Dictionary(Of Control, HashSet(Of Control))()
     Private _sourceBitmapBytes As Long
     Private _sharedUploadBytes As Long
     Private ReadOnly _cpuOwner As New CpuBudgetOwner()
@@ -187,34 +200,14 @@ Public Module D3D_BackgroundPenetration
 #Region "公开 API"
 
     ''' <summary>
-    ''' 把 <paramref name="source"/> 在 <paramref name="child"/> 所在区域的内容采样后画到
-    ''' <c>scope.BackgroundLayer</c>。
+    ''' 把 <paramref name="source"/> 在 <paramref name="child"/> 所在区域的内容采样到当前 V3 绘制上下文。
     ''' </summary>
     ''' <param name="child">透明控件本人。决定采样目标矩形（child.Width × child.Height）。</param>
-    ''' <param name="scope">当前兼容绘制作用域，背景层来自 <see cref="D3D_PaintScope.BackgroundLayer"/>。</param>
+    ''' <param name="context">当前 V3 GPU 绘制上下文。</param>
     ''' <param name="source">
     ''' 显式背景源。<c>Nothing</c> 或已 Dispose 时本方法直接返回，背景层将保持上一次状态（通常是清空）。
     ''' V3 不再隐式回退到 <c>child.Parent</c>。
     ''' </param>
-    Public Sub PaintBackground(child As Control, scope As D3D_PaintScope, source As Control)
-        If scope Is Nothing Then Return
-        PaintBackgroundCore(
-            child,
-            source,
-            scope.ClipRectangle,
-            scope.BackgroundLayer,
-            Sub(rt, destRect, solidColor)
-                Dim brushCache = scope.Compositor?.BrushCache
-                If brushCache IsNot Nothing Then
-                    rt.FillRectangle(D3D_D2DInterop.ToD2DRect(destRect), brushCache.Get(rt, solidColor))
-                Else
-                    Using b = rt.CreateSolidColorBrush(D3D_D2DInterop.ToColor4(solidColor))
-                        rt.FillRectangle(D3D_D2DInterop.ToD2DRect(destRect), b)
-                    End Using
-                End If
-            End Sub)
-    End Sub
-
     Public Sub PaintBackground(child As Control,
                                context As D3D_PaintContext,
                                source As Control,
@@ -224,7 +217,7 @@ Public Module D3D_BackgroundPenetration
         If clipRect.Width <= 0 OrElse clipRect.Height <= 0 Then
             clipRect = New Rectangle(Point.Empty, If(child IsNot Nothing, child.Size, Size.Empty))
         End If
-        clipRect = IntersectWithDirtyRegion(clipRect, context.DirtyRegion)
+        clipRect = Rectangle.Intersect(clipRect, context.DirtyRectangle)
         If clipRect.Width <= 0 OrElse clipRect.Height <= 0 Then Return
 
         PaintBackgroundCore(
@@ -237,27 +230,6 @@ Public Module D3D_BackgroundPenetration
                 context.DeviceContext.FillRectangle(D3D_PaintContext.ToRawRect(destRect), brush)
             End Sub)
     End Sub
-
-    Private Function IntersectWithDirtyRegion(rect As Rectangle, dirtyRegion As IReadOnlyList(Of Rectangle)) As Rectangle
-        If rect.Width <= 0 OrElse rect.Height <= 0 Then Return Rectangle.Empty
-        If dirtyRegion Is Nothing OrElse dirtyRegion.Count = 0 Then Return rect
-
-        Dim hasIntersection As Boolean
-        Dim union As Rectangle = Rectangle.Empty
-        For Each dirty In dirtyRegion
-            Dim clipped = Rectangle.Intersect(rect, dirty)
-            If clipped.Width <= 0 OrElse clipped.Height <= 0 Then Continue For
-            If hasIntersection Then
-                union = Rectangle.Union(union, clipped)
-            Else
-                union = clipped
-                hasIntersection = True
-            End If
-        Next
-
-        If hasIntersection Then Return union
-        Return Rectangle.Empty
-    End Function
 
     Private Delegate Sub SolidBackgroundPainter(rt As ID2D1RenderTarget, destRect As Rectangle, solidColor As Color)
 
@@ -279,11 +251,12 @@ Public Module D3D_BackgroundPenetration
         Dim destRect As Rectangle = Rectangle.Intersect(childBounds, clipRect)
         If destRect.Width <= 0 OrElse destRect.Height <= 0 Then Return
 
-        Dim sourceForSampling As Control = source
-        Dim offset As Point = ComputeOffset(child, sourceForSampling)
-        Dim sourceMappings As New List(Of KeyValuePair(Of Control, Rectangle))()
-        Dim topologyNodes As New List(Of Control)()
-        If Not ResolveTransparentSourceChain(childBounds, sourceForSampling, offset, sourceMappings, topologyNodes) Then Return
+        Dim resolved = GetOrResolveConsumerMapping(child, source, childBounds)
+        If resolved Is Nothing Then Return
+        Dim sourceForSampling = resolved.CanonicalSource
+        Dim offset = resolved.Offset
+        Dim sourceMappings = resolved.SourceMappings
+        Dim topologyNodes = resolved.TopologyNodes
         sw = sourceForSampling.Width
         sh = sourceForSampling.Height
         Dim srcRect As New Rectangle(offset.X + destRect.X, offset.Y + destRect.Y, destRect.Width, destRect.Height)
@@ -292,9 +265,7 @@ Public Module D3D_BackgroundPenetration
         Dim isSolid As Boolean
         Dim solidColor As Color = Color.Empty
         Dim acquired As New BitmapAcquireResult()
-        If Not TryAcquireContainedStockPanelBackgroundBitmap(sourceForSampling, child, rt, srcRect, destRect, acquired) Then
-            acquired = AcquireD2DBitmap(sourceForSampling, rt, srcRect, isSolid, solidColor)
-        End If
+        acquired = AcquireD2DBitmap(sourceForSampling, rt, srcRect, isSolid, solidColor)
         Try
             RegisterConsumerMappings(child, sourceMappings, childBounds, topologyNodes)
             If isSolid Then
@@ -381,6 +352,9 @@ Public Module D3D_BackgroundPenetration
     ''' </summary>
     Public Function SetBackgroundSource(owner As Control, oldSource As Control, newSource As Control) As Control
         If owner IsNot Nothing Then
+            SyncLock _cache
+                _resolvedConsumerMappings.Remove(owner)
+            End SyncLock
             DetachConsumerLifecycle(owner)
             If oldSource IsNot newSource Then
                 UnregisterSingleConsumer(owner, Nothing)
@@ -416,6 +390,7 @@ Public Module D3D_BackgroundPenetration
 
         Dim stillMapped As Boolean
         SyncLock _cache
+            _resolvedConsumerMappings.Remove(child)
             For Each kv In _cache.ToArray()
                 If source IsNot Nothing AndAlso kv.Key IsNot source Then Continue For
                 RemoveConsumerNoLock(kv.Key, kv.Value, child)
@@ -446,6 +421,8 @@ Public Module D3D_BackgroundPenetration
         Try : AddHandler owner.Disposed, AddressOf OnConsumerDisposed : Catch : End Try
         Try : AddHandler owner.VisibleChanged, AddressOf OnConsumerVisibleChanged : Catch : End Try
         Try : AddHandler owner.ParentChanged, AddressOf OnConsumerParentChanged : Catch : End Try
+        Try : AddHandler owner.LocationChanged, AddressOf OnConsumerGeometryChanged : Catch : End Try
+        Try : AddHandler owner.Resize, AddressOf OnConsumerGeometryChanged : Catch : End Try
     End Sub
 
     Private Sub DetachConsumerLifecycle(owner As Control)
@@ -457,6 +434,8 @@ Public Module D3D_BackgroundPenetration
         Try : RemoveHandler owner.Disposed, AddressOf OnConsumerDisposed : Catch : End Try
         Try : RemoveHandler owner.VisibleChanged, AddressOf OnConsumerVisibleChanged : Catch : End Try
         Try : RemoveHandler owner.ParentChanged, AddressOf OnConsumerParentChanged : Catch : End Try
+        Try : RemoveHandler owner.LocationChanged, AddressOf OnConsumerGeometryChanged : Catch : End Try
+        Try : RemoveHandler owner.Resize, AddressOf OnConsumerGeometryChanged : Catch : End Try
     End Sub
 
     Private Sub OnConsumerHandleDestroyed(sender As Object, e As EventArgs)
@@ -482,6 +461,14 @@ Public Module D3D_BackgroundPenetration
         Dim owner = TryCast(sender, Control)
         If owner Is Nothing Then Return
         UnregisterBackgroundConsumer(owner)
+    End Sub
+
+    Private Sub OnConsumerGeometryChanged(sender As Object, e As EventArgs)
+        Dim owner = TryCast(sender, Control)
+        If owner Is Nothing Then Return
+        SyncLock _cache
+            _resolvedConsumerMappings.Remove(owner)
+        End SyncLock
     End Sub
 
     Friend Sub CleanupD2DResources(level As D3DCacheCleanupLevel, Optional owner As Control = Nothing)
@@ -562,10 +549,14 @@ Public Module D3D_BackgroundPenetration
         SyncLock _cache
             ' 一个 child 同一时刻只注册到 canonical source。透明转发面板只作为 topology 节点，
             ' 用于坐标/层级变化时触发重算，不参与像素缓存，也不监听其 Invalidated。
-            For Each kv In _cache.ToArray()
-                If MappingContainsSource(mappings, kv.Key) Then Continue For
-                RemoveConsumerNoLock(kv.Key, kv.Value, child)
-            Next
+            Dim existingSources As HashSet(Of Control) = Nothing
+            If _consumerSources.TryGetValue(child, existingSources) Then
+                For Each existingSource In existingSources.ToArray()
+                    If MappingContainsSource(mappings, existingSource) Then Continue For
+                    Dim existingEntry As Entry = Nothing
+                    If _cache.TryGetValue(existingSource, existingEntry) Then RemoveConsumerNoLock(existingSource, existingEntry, child)
+                Next
+            End If
 
             For Each mapping In mappings
                 Dim source = mapping.Key
@@ -573,6 +564,12 @@ Public Module D3D_BackgroundPenetration
                 Dim entry = EnsureEntryNoLock(source)
                 If entry Is Nothing Then Continue For
                 AddOrUpdateConsumerNoLock(entry, child, mapping.Value, destRect, topologyNodes)
+                Dim registeredSources As HashSet(Of Control) = Nothing
+                If Not _consumerSources.TryGetValue(child, registeredSources) Then
+                    registeredSources = New HashSet(Of Control)()
+                    _consumerSources(child) = registeredSources
+                End If
+                registeredSources.Add(source)
             Next
         End SyncLock
     End Sub
@@ -597,6 +594,8 @@ Public Module D3D_BackgroundPenetration
                 ReleaseConsumerTopology(consumer)
                 entry.Consumers.RemoveAt(i)
             ElseIf existingChild Is child Then
+                If consumer.SourceRect = sourceRect AndAlso consumer.DestRect = destRect AndAlso
+                   TopologyMatches(consumer.TopologyRefs, topologyNodes) Then Return
                 ReleaseConsumerTopology(consumer)
                 consumer.SourceRect = sourceRect
                 consumer.DestRect = destRect
@@ -616,6 +615,16 @@ Public Module D3D_BackgroundPenetration
         entry.Consumers.Add(newConsumer)
     End Sub
 
+    Private Function TopologyMatches(existing As List(Of Control), current As List(Of Control)) As Boolean
+        Dim existingCount = If(existing Is Nothing, 0, existing.Count)
+        Dim currentCount = If(current Is Nothing, 0, current.Count)
+        If existingCount <> currentCount Then Return False
+        For i = 0 To existingCount - 1
+            If existing(i) IsNot current(i) Then Return False
+        Next
+        Return True
+    End Function
+
     Private Sub RemoveConsumerNoLock(source As Control, entry As Entry, child As Control)
         If source Is Nothing OrElse entry Is Nothing OrElse child Is Nothing Then Return
 
@@ -630,6 +639,11 @@ Public Module D3D_BackgroundPenetration
 
         If entry.Consumers.Count = 0 Then
             RemoveSourceEntryNoLock(source, entry)
+        End If
+        Dim sources As HashSet(Of Control) = Nothing
+        If _consumerSources.TryGetValue(child, sources) Then
+            sources.Remove(source)
+            If sources.Count = 0 Then _consumerSources.Remove(child)
         End If
     End Sub
 
@@ -729,8 +743,15 @@ Public Module D3D_BackgroundPenetration
     Private Function TryForwardTransparentSource(source As Control, ByRef forwardedSource As Control) As Boolean
         forwardedSource = Nothing
         Dim panel = TryCast(source, ModernPanel)
-        If panel Is Nothing OrElse panel.IsDisposed Then Return False
-        If Not panel.TryGetTransparentBackgroundForward(forwardedSource) Then Return False
+        If panel IsNot Nothing AndAlso Not panel.IsDisposed Then
+            If Not panel.TryGetTransparentBackgroundForward(forwardedSource) Then Return False
+        Else
+            Dim stockPanel = TryCast(source, Panel)
+            If stockPanel Is Nothing OrElse stockPanel.IsDisposed OrElse Not IsPlainWinFormsPanel(stockPanel) Then Return False
+            If stockPanel.Parent Is Nothing OrElse stockPanel.BackColor.A <> 0 Then Return False
+            If stockPanel.BackgroundImage IsNot Nothing OrElse stockPanel.BorderStyle <> BorderStyle.None OrElse stockPanel.AutoScroll Then Return False
+            forwardedSource = stockPanel.Parent
+        End If
         If forwardedSource Is Nothing OrElse forwardedSource.IsDisposed OrElse forwardedSource Is source Then
             forwardedSource = Nothing
             Return False
@@ -920,7 +941,6 @@ Public Module D3D_BackgroundPenetration
                 Dim ownerAlive As Boolean = upload.D2DOwnerRT IsNot Nothing AndAlso ReferenceEquals(upload.D2DOwnerRT.Target, rt)
                 If ownerAlive AndAlso upload.Width = uploadWidth AndAlso upload.Height = uploadHeight AndAlso upload.Version = entry.Version Then
                     upload.LastUsed = D3D_GpuCache.NextTick()
-                    D3D_GpuCache.TrimToBudget(_gpuOwner)
                     Return New BitmapAcquireResult With {.Bitmap = upload.D2DBmp, .SourceRect = sourceRect}
                 End If
             Next
@@ -944,45 +964,6 @@ Public Module D3D_BackgroundPenetration
         entry.SharedUploads.Add(newUpload)
         D3D_GpuCache.TrimToBudget(_gpuOwner)
         Return New BitmapAcquireResult With {.Bitmap = newUpload.D2DBmp, .SourceRect = sourceRect}
-    End Function
-
-    Private Function TryAcquireContainedStockPanelBackgroundBitmap(source As Control, consumer As Control,
-                                                                   rt As ID2D1RenderTarget, sourceRect As Rectangle,
-                                                                   destRect As Rectangle,
-                                                                   ByRef acquired As BitmapAcquireResult) As Boolean
-        acquired = Nothing
-        If source Is Nothing OrElse consumer Is Nothing OrElse rt Is Nothing Then Return False
-        If Not IsPlainWinFormsPanel(source) Then Return False
-        If Not ContainsControl(source, consumer) Then Return False
-        If sourceRect.Width <= 0 OrElse sourceRect.Height <= 0 Then Return False
-
-        Dim sourceBounds As New Rectangle(0, 0, source.Width, source.Height)
-        Dim srcIntersection = Rectangle.Intersect(sourceBounds, sourceRect)
-        If srcIntersection.Width <= 0 OrElse srcIntersection.Height <= 0 Then Return False
-
-        Using bmp As New Bitmap(sourceRect.Width, sourceRect.Height, PixelFormat.Format32bppPArgb)
-            Using bg = Graphics.FromImage(bmp)
-                bg.CompositingMode = Drawing2D.CompositingMode.SourceCopy
-                bg.Clear(Color.Transparent)
-                bg.CompositingMode = Drawing2D.CompositingMode.SourceOver
-                bg.TranslateTransform(-sourceRect.X, -sourceRect.Y)
-                bg.SetClip(srcIntersection)
-                Using pea As New PaintEventArgs(bg, srcIntersection)
-                    InvokePaintBackgroundProxy(source, pea)
-                End Using
-            End Using
-            Dim validRect As New Rectangle(srcIntersection.X - sourceRect.X, srcIntersection.Y - sourceRect.Y,
-                                           srcIntersection.Width, srcIntersection.Height)
-            ForceOpaqueAlpha(bmp, {validRect})
-            acquired = New BitmapAcquireResult With {
-                .Bitmap = D3D_D2DInterop.CreateBitmapFromGdi(rt, bmp),
-                .SourceRect = New Rectangle(0, 0, sourceRect.Width, sourceRect.Height),
-                .DrawDestRect = destRect,
-                .DisposeAfterDraw = True
-            }
-        End Using
-
-        Return acquired.Bitmap IsNot Nothing
     End Function
 
     Private Function GetOldestSharedUploadTick() As Long
@@ -1053,7 +1034,7 @@ Public Module D3D_BackgroundPenetration
 
     Private Sub RemoveSourceEntryNoLock(source As Control, entry As Entry)
         If source Is Nothing OrElse entry Is Nothing Then Return
-        ClearAncestorSubscriptions(entry)
+        ClearAncestorSubscriptions(source, entry)
         ClearConsumerTopologies(entry)
         Try : RemoveHandler source.Disposed, AddressOf OnSourceDisposed : Catch : End Try
         Try : RemoveHandler source.HandleDestroyed, AddressOf OnSourceHandleDestroyed : Catch : End Try
@@ -1220,6 +1201,41 @@ Public Module D3D_BackgroundPenetration
         End Try
     End Sub
 
+    Private Function GetOrResolveConsumerMapping(child As Control, requestedSource As Control,
+                                                 childBounds As Rectangle) As ResolvedConsumerMapping
+        SyncLock _cache
+            Dim cached As ResolvedConsumerMapping = Nothing
+            If _resolvedConsumerMappings.TryGetValue(child, cached) AndAlso
+               cached IsNot Nothing AndAlso cached.RequestedSource Is requestedSource AndAlso
+               cached.ChildSize = childBounds.Size AndAlso cached.CanonicalSource IsNot Nothing AndAlso
+               Not cached.CanonicalSource.IsDisposed Then
+                D3D_RenderDiagnostics.BackgroundTopologyHit()
+                Return cached
+            End If
+            _resolvedConsumerMappings.Remove(child)
+        End SyncLock
+
+        Dim canonicalSource = requestedSource
+        Dim offset = ComputeOffset(child, canonicalSource)
+        Dim mappings As New List(Of KeyValuePair(Of Control, Rectangle))()
+        Dim topologyNodes As New List(Of Control)()
+        If Not ResolveTransparentSourceChain(childBounds, canonicalSource, offset, mappings, topologyNodes) Then Return Nothing
+
+        Dim resolved As New ResolvedConsumerMapping With {
+            .RequestedSource = requestedSource,
+            .CanonicalSource = canonicalSource,
+            .Offset = offset,
+            .ChildSize = childBounds.Size,
+            .SourceMappings = mappings,
+            .TopologyNodes = topologyNodes
+        }
+        SyncLock _cache
+            _resolvedConsumerMappings(child) = resolved
+        End SyncLock
+        D3D_RenderDiagnostics.BackgroundTopologyRebuild()
+        Return resolved
+    End Function
+
     Private Function CopyBitmapDirtyRectToUpload(upload As ID2D1Bitmap,
                                                   bitmapData As BitmapData,
                                                   dirtyRect As Rectangle) As Boolean
@@ -1377,16 +1393,20 @@ Public Module D3D_BackgroundPenetration
                 affectedSources.Add(changed)
             End If
 
-            For Each kv In _cache
-                If kv.Key Is changed Then Continue For
-                If kv.Value IsNot Nothing AndAlso kv.Value.AncestorSubscriptions.Contains(changed) Then
-                    affectedSources.Add(kv.Key)
-                End If
-            Next
+            Dim indexedSources As HashSet(Of Control) = Nothing
+            If _ancestorSources.TryGetValue(changed, indexedSources) Then
+                For Each source In indexedSources
+                    If source IsNot changed AndAlso Not affectedSources.Contains(source) Then affectedSources.Add(source)
+                Next
+            End If
 
             For Each source In affectedSources
                 If source Is Nothing Then Continue For
                 If Not _cache.TryGetValue(source, entry) Then Continue For
+                For Each consumer In entry.Consumers
+                    Dim child = TryCast(consumer.ChildRef.Target, Control)
+                    If child IsNot Nothing Then _resolvedConsumerMappings.Remove(child)
+                Next
                 If IsRenderableControl(source) Then
                     RefreshAncestorSubscriptions(source, entry)
                     entry.FullDirty = True
@@ -1424,15 +1444,19 @@ Public Module D3D_BackgroundPenetration
 
         Dim invalidations As New List(Of ConsumerInvalidation)()
         SyncLock _cache
-            For Each kv In _cache.ToArray()
-                Dim source = kv.Key
-                Dim entry = kv.Value
-                If entry Is Nothing Then Continue For
+            Dim indexedConsumers As HashSet(Of Control) = Nothing
+            Dim affectedChildren = If(_topologyConsumers.TryGetValue(changed, indexedConsumers), indexedConsumers.ToArray(), Array.Empty(Of Control)())
+            For Each child In affectedChildren
+                _resolvedConsumerMappings.Remove(child)
+                Dim sources As HashSet(Of Control) = Nothing
+                If Not _consumerSources.TryGetValue(child, sources) Then Continue For
+                For Each source In sources.ToArray()
+                    Dim entry As Entry = Nothing
+                    If Not _cache.TryGetValue(source, entry) OrElse entry Is Nothing Then Continue For
                 For i As Integer = entry.Consumers.Count - 1 To 0 Step -1
                     Dim consumer = entry.Consumers(i)
                     If Not ConsumerUsesTopology(consumer, changed) Then Continue For
 
-                    Dim child = TryCast(consumer.ChildRef.Target, Control)
                     If child Is Nothing OrElse child.IsDisposed OrElse changed.IsDisposed OrElse Not IsRenderableControl(changed) Then
                         ReleaseConsumerTopology(consumer)
                         entry.Consumers.RemoveAt(i)
@@ -1441,6 +1465,7 @@ Public Module D3D_BackgroundPenetration
                     End If
                 Next
                 If entry.Consumers.Count = 0 Then RemoveSourceEntryNoLock(source, entry)
+                Next
             Next
         End SyncLock
 
@@ -1495,22 +1520,22 @@ Public Module D3D_BackgroundPenetration
 
     Private Sub RefreshAncestorSubscriptions(source As Control, entry As Entry)
         If entry Is Nothing Then Return
-        ClearAncestorSubscriptions(entry)
+        ClearAncestorSubscriptions(source, entry)
         If source Is Nothing OrElse source.IsDisposed Then Return
 
         Dim current = source.Parent
         While current IsNot Nothing
-            AddAncestorSubscription(entry, current)
+            AddAncestorSubscription(source, entry, current)
             current = current.Parent
         End While
     End Sub
 
-    Private Sub ClearAncestorSubscriptions(entry As Entry)
+    Private Sub ClearAncestorSubscriptions(source As Control, entry As Entry)
         If entry Is Nothing OrElse entry.AncestorSubscriptions.Count = 0 Then Return
 
         For Each ancestor In entry.AncestorSubscriptions
             If ancestor Is Nothing Then Continue For
-            ReleaseAncestorSubscription(ancestor)
+            ReleaseAncestorSubscription(source, ancestor)
         Next
         entry.AncestorSubscriptions.Clear()
     End Sub
@@ -1528,15 +1553,30 @@ Public Module D3D_BackgroundPenetration
 
     Private Sub AcquireConsumerTopology(consumer As Entry.ConsumerEntry)
         If consumer Is Nothing OrElse consumer.TopologyRefs Is Nothing Then Return
+        Dim child = TryCast(consumer.ChildRef?.Target, Control)
         For Each node In consumer.TopologyRefs
             AddTopologySubscription(node)
+            If child IsNot Nothing Then
+                Dim consumers As HashSet(Of Control) = Nothing
+                If Not _topologyConsumers.TryGetValue(node, consumers) Then
+                    consumers = New HashSet(Of Control)()
+                    _topologyConsumers(node) = consumers
+                End If
+                consumers.Add(child)
+            End If
         Next
     End Sub
 
     Private Sub ReleaseConsumerTopology(consumer As Entry.ConsumerEntry)
         If consumer Is Nothing OrElse consumer.TopologyRefs Is Nothing Then Return
+        Dim child = TryCast(consumer.ChildRef?.Target, Control)
         For Each node In consumer.TopologyRefs
             ReleaseTopologySubscription(node)
+            Dim consumers As HashSet(Of Control) = Nothing
+            If child IsNot Nothing AndAlso _topologyConsumers.TryGetValue(node, consumers) Then
+                consumers.Remove(child)
+                If consumers.Count = 0 Then _topologyConsumers.Remove(node)
+            End If
         Next
         consumer.TopologyRefs = Nothing
     End Sub
@@ -1565,11 +1605,14 @@ Public Module D3D_BackgroundPenetration
             _topologySubscriptionRefs(node) = refCount + 1
         Else
             _topologySubscriptionRefs(node) = 1
+            AddHandler node.BackColorChanged, AddressOf OnForwarderTopologyChanged
+            AddHandler node.BackgroundImageChanged, AddressOf OnForwarderTopologyChanged
             AddHandler node.Disposed, AddressOf OnForwarderTopologyChanged
             AddHandler node.HandleDestroyed, AddressOf OnForwarderTopologyChanged
             AddHandler node.LocationChanged, AddressOf OnForwarderTopologyChanged
             AddHandler node.ParentChanged, AddressOf OnForwarderTopologyChanged
             AddHandler node.Resize, AddressOf OnForwarderTopologyChanged
+            AddHandler node.StyleChanged, AddressOf OnForwarderTopologyChanged
             AddHandler node.VisibleChanged, AddressOf OnForwarderTopologyChanged
         End If
     End Sub
@@ -1586,16 +1629,26 @@ Public Module D3D_BackgroundPenetration
         End If
 
         _topologySubscriptionRefs.Remove(node)
+        Try : RemoveHandler node.BackColorChanged, AddressOf OnForwarderTopologyChanged : Catch : End Try
+        Try : RemoveHandler node.BackgroundImageChanged, AddressOf OnForwarderTopologyChanged : Catch : End Try
         Try : RemoveHandler node.Disposed, AddressOf OnForwarderTopologyChanged : Catch : End Try
         Try : RemoveHandler node.HandleDestroyed, AddressOf OnForwarderTopologyChanged : Catch : End Try
         Try : RemoveHandler node.LocationChanged, AddressOf OnForwarderTopologyChanged : Catch : End Try
         Try : RemoveHandler node.ParentChanged, AddressOf OnForwarderTopologyChanged : Catch : End Try
         Try : RemoveHandler node.Resize, AddressOf OnForwarderTopologyChanged : Catch : End Try
+        Try : RemoveHandler node.StyleChanged, AddressOf OnForwarderTopologyChanged : Catch : End Try
         Try : RemoveHandler node.VisibleChanged, AddressOf OnForwarderTopologyChanged : Catch : End Try
     End Sub
 
-    Private Sub AddAncestorSubscription(entry As Entry, ancestor As Control)
-        If entry Is Nothing OrElse ancestor Is Nothing Then Return
+    Private Sub AddAncestorSubscription(source As Control, entry As Entry, ancestor As Control)
+        If source Is Nothing OrElse entry Is Nothing OrElse ancestor Is Nothing Then Return
+
+        Dim sources As HashSet(Of Control) = Nothing
+        If Not _ancestorSources.TryGetValue(ancestor, sources) Then
+            sources = New HashSet(Of Control)()
+            _ancestorSources(ancestor) = sources
+        End If
+        sources.Add(source)
 
         Dim refCount As Integer = 0
         If _ancestorSubscriptionRefs.TryGetValue(ancestor, refCount) Then
@@ -1613,8 +1666,14 @@ Public Module D3D_BackgroundPenetration
         entry.AncestorSubscriptions.Add(ancestor)
     End Sub
 
-    Private Sub ReleaseAncestorSubscription(ancestor As Control)
+    Private Sub ReleaseAncestorSubscription(source As Control, ancestor As Control)
         If ancestor Is Nothing Then Return
+
+        Dim sources As HashSet(Of Control) = Nothing
+        If _ancestorSources.TryGetValue(ancestor, sources) Then
+            sources.Remove(source)
+            If sources.Count = 0 Then _ancestorSources.Remove(ancestor)
+        End If
 
         Dim refCount As Integer = 0
         If Not _ancestorSubscriptionRefs.TryGetValue(ancestor, refCount) Then Return

@@ -6,7 +6,7 @@ Imports Vortice.DirectWrite
 
 <DefaultEvent("SelectedIndexChanged")>
 Public Class ModernListBox
-    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource
+    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource, V3_ISuperSamplingSource
 
     Public Event SelectedIndexChanged As EventHandler
     Public Event ItemClick As EventHandler(Of ItemEventArgs)
@@ -1148,7 +1148,7 @@ Public Class ModernListBox
 
     Private 超采样倍率 As Integer = 1
     <Category("LakeUI"), Description(GlobalOptions.超采样抗锯齿描述词), DefaultValue(GetType(GlobalOptions.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
-    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum
+    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements V3_ISuperSamplingSource.SuperSamplingScale
         Get
             Return 超采样倍率
         End Get

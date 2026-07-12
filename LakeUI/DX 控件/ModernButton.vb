@@ -5,7 +5,7 @@ Imports Vortice.DirectWrite
 
 <DefaultEvent("Click")>
 Public Class ModernButton
-    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource
+    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource, V3_ISuperSamplingSource
 
     Public Sub New()
         InitializeComponent()
@@ -615,7 +615,7 @@ Public Class ModernButton
 
     Private 超采样倍率 As Integer = 1
     <Category("LakeUI"), Description(GlobalOptions.超采样抗锯齿描述词), DefaultValue(GetType(GlobalOptions.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
-    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum
+    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements V3_ISuperSamplingSource.SuperSamplingScale
         Get
             Return 超采样倍率
         End Get
@@ -650,7 +650,7 @@ Public Class ModernButton
     ''' <summary>
     ''' 背景采样源（超容器背景映射）。透明背景模式下，控件会调用此控件的绘制流程取像素作为底图，
     ''' 从而实现跨越任意层级的"穿透显示"效果。
-    ''' 为 Nothing 时自动沿祖先链查找首个不透明祖先（默认行为）。
+    ''' 为 Nothing 时不进行背景采样，透明 BackColor 交由 WinForms 原生透明背景流程处理。
     ''' </summary>
     <Category("LakeUI"),
      Description("背景采样源。设置后记录关联源控件；V3 渲染由窗口合成器统一调度。"),

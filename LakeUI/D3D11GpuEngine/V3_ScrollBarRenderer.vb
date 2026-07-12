@@ -1,7 +1,7 @@
 Imports Vortice.Direct2D1
 
 ''' <summary>
-''' 可复用的自定义滚动条渲染器，统一管理布局计算、D2D 绘制以及鼠标交互状态。
+''' 可复用的自定义滚动条渲染器，统一管理布局计算与鼠标交互状态。
 ''' 一个实例同时支持竖向或横向使用（取决于调用的 ComputeLayout / Draw 方法对）。
 ''' </summary>
 ''' <remarks>
@@ -11,7 +11,7 @@ Imports Vortice.Direct2D1
 ''' 调用契约：
 ''' • 每次绘制前先调用 ComputeLayout / ComputeHorizontalLayout；不要把旧布局拿到 resize 后继续用。
 ''' • 鼠标命中和拖拽都基于最近一次布局产生的 ThumbRect / TrackRect，外层控件负责在滚动偏移变化后重绘。
-''' • Draw_D2D 的 rt 应来自当前 D3D_PaintScope.GraphicsLayer；如果开启 SSAA，滚动条也会和其他图形一起回采。
+''' • 宿主通过 D3D_PaintContext 绘制最近一次布局产生的矩形。
 '''
 ''' 缓存与坑点：
 ''' • 调用方已经有 scope.Compositor.BrushCache 时应传入它，让窗口级缓存统一管理。
@@ -239,136 +239,5 @@ Public Class V3_ScrollBarRenderer
 
 #End Region
 
-#Region "D2D 渲染"
-
-    ''' <summary>兼容旧调用点；本类已不再持有 D2D 画刷。</summary>
-    Public Sub DisposeBrushes()
-    End Sub
-
-    Private Shared Function RentBrush(rt As ID2D1RenderTarget, color As Color,
-                                      brushCache As D3D_D2DInterop.SolidColorBrushCache,
-                                      ByRef ownsBrush As Boolean) As ID2D1SolidColorBrush
-        ownsBrush = False
-        If brushCache IsNot Nothing Then Return brushCache.Get(rt, color)
-        ownsBrush = True
-        Return rt.CreateSolidColorBrush(D3D_D2DInterop.ToColor4(color))
-    End Function
-
-    ''' <summary>
-    ''' 当存在圆角边框时，PushLayer 一个对应几何掩膜，避免滚动条溢出圆角外。
-    ''' 返回的 layer/clipGeo 由调用方在 Finally 中释放。
-    ''' </summary>
-    Private Shared Sub PushClipLayerIfNeeded(rt As ID2D1RenderTarget,
-                                              containerW As Integer, containerH As Integer,
-                                              borderWidth As Integer, borderRadius As Integer,
-                                              ByRef clipPushed As Boolean,
-                                              ByRef clipGeo As Vortice.Direct2D1.ID2D1Geometry)
-        clipPushed = False
-        If borderRadius <= 0 Then Return
-        Dim clipRect As New RectangleF(0, 0, containerW, containerH)
-        If borderWidth > 0 Then
-            Dim half As Single = borderWidth / 2.0F
-            clipRect.Inflate(-half, -half)
-        End If
-        clipGeo = D3D_RectangleRenderer.创建圆角矩形几何(clipRect, borderRadius)
-        D3D_D2DInterop.PushGeometryClip(rt, clipGeo, New RectangleF(0, 0, containerW, containerH))
-        clipPushed = True
-    End Sub
-
-    ''' <summary>D2D 版竖向滚动条绘制。调用前需先调用 <see cref="ComputeLayout"/> 计算布局。</summary>
-    Public Sub Draw_D2D(rt As ID2D1RenderTarget,
-                         containerW As Integer, containerH As Integer,
-                         borderWidth As Integer, borderRadius As Integer,
-                         scrollBarWidth As Integer,
-                         trackColor As Color, thumbColor As Color, thumbHoverColor As Color,
-                         Optional brushCache As D3D_D2DInterop.SolidColorBrushCache = Nothing)
-        If TrackRect.IsEmpty Then Return
-        If TrackRect.Width < 1 OrElse TrackRect.Height < 1 OrElse scrollBarWidth < 1 Then Return
-
-        Dim clipPushed As Boolean = False
-        Dim clipGeo As ID2D1Geometry = Nothing
-        PushClipLayerIfNeeded(rt, containerW, containerH, borderWidth, borderRadius, clipPushed, clipGeo)
-        Dim trackBrush As ID2D1SolidColorBrush = Nothing
-        Dim thumbBrush As ID2D1SolidColorBrush = Nothing
-        Dim ownsTrackBrush As Boolean = False
-        Dim ownsThumbBrush As Boolean = False
-        Try
-            Dim sbH As Integer = TrackRect.Height
-            ' 轨道（A=0 表示完全透明，直接跳过以节省一次填充）
-            If trackColor.A > 0 Then
-                Dim trackRadius As Integer = Math.Min(scrollBarWidth \ 2, sbH \ 2)
-                Dim trackArea As New RectangleF(VisualLeft, TrackRect.Y, scrollBarWidth, sbH)
-                trackBrush = RentBrush(rt, trackColor, brushCache, ownsTrackBrush)
-                Using geo = D3D_RectangleRenderer.创建圆角矩形几何(trackArea, trackRadius)
-                    rt.FillGeometry(geo, trackBrush)
-                End Using
-            End If
-
-            ' 滑块；悬停或拖拽时使用 hover 色
-            Dim useHoverColor As Boolean = IsDragging OrElse IsHover
-            thumbBrush = RentBrush(rt, If(useHoverColor, thumbHoverColor, thumbColor), brushCache, ownsThumbBrush)
-            Dim thumbH As Integer = ThumbRect.Height
-            Dim thumbRadius As Integer = Math.Min(scrollBarWidth \ 2, thumbH \ 2)
-            Dim thumbArea As New RectangleF(VisualLeft, ThumbRect.Y, scrollBarWidth, thumbH)
-            Using geo = D3D_RectangleRenderer.创建圆角矩形几何(thumbArea, thumbRadius)
-                rt.FillGeometry(geo, thumbBrush)
-            End Using
-        Finally
-            If ownsTrackBrush Then Try : trackBrush?.Dispose() : Catch : End Try
-            If ownsThumbBrush Then Try : thumbBrush?.Dispose() : Catch : End Try
-            If clipPushed Then
-                rt.PopLayer()
-            End If
-            clipGeo?.Dispose()
-        End Try
-    End Sub
-
-    ''' <summary>D2D 版横向滚动条绘制。调用前需先调用 <see cref="ComputeHorizontalLayout"/> 计算布局。</summary>
-    Public Sub DrawHorizontal_D2D(rt As ID2D1RenderTarget,
-                                   containerW As Integer, containerH As Integer,
-                                   borderWidth As Integer, borderRadius As Integer,
-                                   scrollBarHeight As Integer,
-                                   trackColor As Color, thumbColor As Color, thumbHoverColor As Color,
-                                   Optional brushCache As D3D_D2DInterop.SolidColorBrushCache = Nothing)
-        If TrackRect.IsEmpty Then Return
-        If TrackRect.Width < 1 OrElse TrackRect.Height < 1 OrElse scrollBarHeight < 1 Then Return
-
-        Dim clipPushed As Boolean = False
-        Dim clipGeo As ID2D1Geometry = Nothing
-        PushClipLayerIfNeeded(rt, containerW, containerH, borderWidth, borderRadius, clipPushed, clipGeo)
-        Dim trackBrush As ID2D1SolidColorBrush = Nothing
-        Dim thumbBrush As ID2D1SolidColorBrush = Nothing
-        Dim ownsTrackBrush As Boolean = False
-        Dim ownsThumbBrush As Boolean = False
-        Try
-            Dim sbW As Integer = TrackRect.Width
-            If trackColor.A > 0 Then
-                Dim trackRadius As Integer = Math.Min(scrollBarHeight \ 2, sbW \ 2)
-                Dim trackArea As New RectangleF(TrackRect.X, VisualTop, sbW, scrollBarHeight)
-                trackBrush = RentBrush(rt, trackColor, brushCache, ownsTrackBrush)
-                Using geo = D3D_RectangleRenderer.创建圆角矩形几何(trackArea, trackRadius)
-                    rt.FillGeometry(geo, trackBrush)
-                End Using
-            End If
-
-            Dim useHoverColor As Boolean = IsDragging OrElse IsHover
-            thumbBrush = RentBrush(rt, If(useHoverColor, thumbHoverColor, thumbColor), brushCache, ownsThumbBrush)
-            Dim thumbW As Integer = ThumbRect.Width
-            Dim thumbRadius As Integer = Math.Min(scrollBarHeight \ 2, thumbW \ 2)
-            Dim thumbArea As New RectangleF(ThumbRect.X, VisualTop, thumbW, scrollBarHeight)
-            Using geo = D3D_RectangleRenderer.创建圆角矩形几何(thumbArea, thumbRadius)
-                rt.FillGeometry(geo, thumbBrush)
-            End Using
-        Finally
-            If ownsTrackBrush Then Try : trackBrush?.Dispose() : Catch : End Try
-            If ownsThumbBrush Then Try : thumbBrush?.Dispose() : Catch : End Try
-            If clipPushed Then
-                rt.PopLayer()
-            End If
-            clipGeo?.Dispose()
-        End Try
-    End Sub
-
-#End Region
 
 End Class

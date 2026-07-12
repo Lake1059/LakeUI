@@ -10,7 +10,7 @@ Imports Vortice.DirectWrite
 ''' </summary>
 <DefaultEvent("SelectedIndexChanged")>
 Public Class ModernTabListControl
-    Implements IOuterToInnerRefreshFilter, V3_IGpuRenderable, V3_IGpuInvalidationSource
+    Implements IOuterToInnerRefreshFilter, V3_IGpuRenderable, V3_IGpuInvalidationSource, V3_ISuperSamplingSource
 
     ''' <summary>
     ''' 表示 <see cref="ModernTabListControl"/> 中的一个选项卡项。
@@ -224,9 +224,20 @@ Public Class ModernTabListControl
     ''' </summary>
     Private Class 透明内容面板
         Inherits Panel
-        Implements V3_IGpuRenderable, V3_IGpuInvalidationSource
+        Implements V3_IGpuRenderable, V3_IGpuInvalidationSource, V3_ISuperSamplingSource
 
+        Private _ownerControl As ModernTabListControl
         Private _backgroundSource As Control
+
+        Friend Sub SetOwnerControl(value As ModernTabListControl)
+            _ownerControl = value
+        End Sub
+
+        Private ReadOnly Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements V3_ISuperSamplingSource.SuperSamplingScale
+            Get
+                Return If(_ownerControl Is Nothing, GlobalOptions.SuperSamplingScaleEnum.OFF, _ownerControl.SuperSamplingScale)
+            End Get
+        End Property
 
         Public Sub New()
             SetStyle(ControlStyles.SupportsTransparentBackColor Or
@@ -237,7 +248,8 @@ Public Class ModernTabListControl
             UpdateStyles()
         End Sub
         Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
-            ' V3-only: pixels are emitted by RenderGpu.
+            If _backgroundSource IsNot Nothing Then Return
+            MyBase.OnPaintBackground(e)
         End Sub
 
         Protected Overrides Sub OnPaint(e As PaintEventArgs)
@@ -418,6 +430,7 @@ Public Class ModernTabListControl
         SetStyle(ControlStyles.SupportsTransparentBackColor, True)
         DoubleBuffered = True
 
+        _内容面板.SetOwnerControl(Me)
         _内容面板.Dock = DockStyle.None
         _内容面板.BackColor = 获取内容面板有效背景色()
         Me.Controls.Add(_内容面板)
@@ -1106,13 +1119,9 @@ Public Class ModernTabListControl
 
 #Region "绘制"
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
-        ' V3-only: pixels are emitted by RenderGpu.
+        If _backgroundSource IsNot Nothing Then Return
+        MyBase.OnPaintBackground(e)
     End Sub
-
-    Private Function 获取控件背景源() As Control
-        If MyBase.BackColor.A < 255 Then Return Me.Parent
-        Return Nothing
-    End Function
 
     Private Function 获取内容面板有效背景色() As Color
         ' Panel 不支持完全透明的 BackColor 显示，需要使用 Transparent 触发透明背景路径。
@@ -1128,9 +1137,8 @@ Public Class ModernTabListControl
         确保Owner()
         If Me.Width <= 0 OrElse Me.Height <= 0 Then Return
 
-        Dim backgroundSource = If(_backgroundSource, 获取控件背景源())
-        If backgroundSource IsNot Nothing Then
-            context.DrawBackgroundSource(Me, backgroundSource, New RectangleF(0, 0, Me.Width, Me.Height))
+        If _backgroundSource IsNot Nothing Then
+            context.DrawBackgroundSource(Me, _backgroundSource, New RectangleF(0, 0, Me.Width, Me.Height))
         ElseIf MyBase.BackColor.A > 0 Then
             context.FillRectangle(New RectangleF(0, 0, Me.Width, Me.Height), MyBase.BackColor)
         End If
@@ -2093,7 +2101,7 @@ Public Class ModernTabListControl
 
     Private 超采样倍率 As Integer = 1
     <Category("LakeUI"), Description(GlobalOptions.超采样抗锯齿描述词), DefaultValue(GetType(GlobalOptions.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
-    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum
+    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements V3_ISuperSamplingSource.SuperSamplingScale
         Get
             Return 超采样倍率
         End Get

@@ -8,6 +8,7 @@ Imports Vortice.Direct2D1
 <ProvideProperty("EnableMenu", GetType(Control))>
 Public Class ModernContextMenu
     Inherits Component
+    Implements V3_ISuperSamplingSource
     Implements IExtenderProvider
 
     Public Enum BackdropModeEnum
@@ -293,7 +294,7 @@ Public Class ModernContextMenu
 
     Private 超采样倍率 As Integer = 1
     <Category("LakeUI"), Description(GlobalOptions.超采样抗锯齿描述词), DefaultValue(GetType(GlobalOptions.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
-    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum
+    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements V3_ISuperSamplingSource.SuperSamplingScale
         Get
             Return 超采样倍率
         End Get
@@ -558,9 +559,15 @@ Public Class ModernContextMenu
 
     Friend Class MenuPopupForm
         Inherits PopupForm
-        Implements IMessageFilter, V3_IGpuRenderable, V3_IGpuInvalidationSource
+        Implements IMessageFilter, V3_IGpuRenderable, V3_IGpuInvalidationSource, V3_ISuperSamplingSource
 
         Private ReadOnly 菜单 As ModernContextMenu
+
+        Private ReadOnly Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements V3_ISuperSamplingSource.SuperSamplingScale
+            Get
+                Return If(菜单 Is Nothing, GlobalOptions.SuperSamplingScaleEnum.OFF, 菜单.SuperSamplingScale)
+            End Get
+        End Property
         Private ReadOnly 父弹窗 As MenuPopupForm
         Private 悬停索引 As Integer = -1
         Private 子菜单弹窗 As MenuPopupForm = Nothing

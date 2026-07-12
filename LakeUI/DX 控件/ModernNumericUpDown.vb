@@ -5,7 +5,7 @@ Imports Vortice.Direct2D1
 
 <DefaultEvent("ValueChanged")>
 Public Class ModernNumericUpDown
-    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource
+    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource, V3_ISuperSamplingSource
 
     Public Event ValueChanged As EventHandler
     Public Shadows Event TextChanged As EventHandler
@@ -376,7 +376,7 @@ Public Class ModernNumericUpDown
 
     Private 超采样倍率 As Integer = 1
     <Category("LakeUI"), Description(GlobalOptions.超采样抗锯齿描述词), DefaultValue(GetType(GlobalOptions.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
-    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum
+    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements V3_ISuperSamplingSource.SuperSamplingScale
         Get
             Return 超采样倍率
         End Get
@@ -684,7 +684,7 @@ Public Class ModernNumericUpDown
 
     Private Sub 绘制背景_GPU(context As D3D_PaintContext, hasRadius As Boolean, sourceRect As RectangleF, boundsRect As RectangleF, bgClr As Color, bgClr2 As Color)
         Dim backColorMask As Color = MyBase.BackColor
-        Dim hasMask As Boolean = backColorMask.A > 0 AndAlso backColorMask.A < 255
+        Dim hasMask As Boolean = _backgroundSource Is Nothing AndAlso backColorMask.A > 0 AndAlso backColorMask.A < 255
         Dim fillColor As Color = If(bgClr.A > 0, bgClr, bgClr2)
         Dim hasFill As Boolean = fillColor.A > 0
         Dim hasBackgroundSource As Boolean = _backgroundSource IsNot Nothing

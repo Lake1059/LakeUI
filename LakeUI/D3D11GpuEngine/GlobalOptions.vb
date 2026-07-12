@@ -11,9 +11,9 @@ Public Class GlobalOptions
     ''' SSAA 超采样倍率。
     ''' </summary>
     ''' <remarks>
-    ''' <para>数值同时表示图形层离屏渲染的宽高放大倍数：x2 = 2 倍宽高，x3 = 3 倍宽高，x4 = 4 倍宽高。</para>
+    ''' <para>数值表示整个控件离屏渲染的宽高放大倍数：x2 = 2 倍宽高，x3 = 3 倍宽高，x4 = 4 倍宽高。</para>
     ''' <para>实际像素数、离屏 RT 显存与一次回采的像素量约按倍率平方增长：x2 约 4 倍，x3 约 9 倍，x4 约 16 倍。</para>
-    ''' <para>影响对象是控件自己绘制的 D2D 图形层，例如圆角、边框、线条、路径和填充；不代表 Image 图片会以更高分辨率重新解码，也不改变 Image 图片缓存预算。</para>
+    ''' <para>图形、文字、图片和背景一起参与下采样；源 Image 不会以更高分辨率重新解码。</para>
     ''' <para>OFF 的底层值为 1，表示不做全局强制，控件仍可使用自己的 SuperSamplingScale 设置。</para>
     ''' </remarks>
     Public Enum SuperSamplingScaleEnum
@@ -27,7 +27,7 @@ Public Class GlobalOptions
         x4 = 4
     End Enum
 
-    Public Const 超采样抗锯齿描述词 As String = "使用 SSAA 超采样抗锯齿显著改善控件自己绘制的 D2D 图形边缘，例如线条、圆角、弧线、路径、边框和填充形状；x2/x3/x4 的离屏像素量约为 4/9/16 倍，因此会按平方级增加显存、填充率和回采开销。该设置只作用于控件图形层，不是 Image 图片解码倍率，也不改变图标、背景图片、Markdown 图片等 Image 图片缓存；文字层和背景穿透层保持 1x，以避免 ClearType/DirectWrite 与第三方文字渲染兼容问题。"
+    Public Const 超采样抗锯齿描述词 As String = "对整个控件启用 SSAA 超采样后再统一下采样，可改善图形、文字和图片边缘；x2/x3/x4 的临时离屏像素量约为 4/9/16 倍，会按平方级增加显存、填充率和回采开销。默认 OFF 时不会创建 SSAA 目标或保留 SSAA 显存；该设置不会提高源图片解码分辨率。"
 
     ''' <summary>
     ''' 全局 SSAA 倍率。
@@ -35,7 +35,7 @@ Public Class GlobalOptions
     ''' <remarks>
     ''' <para>默认值：OFF。</para>
     ''' <para>范围：OFF、x2、x3、x4。OFF 表示不强制全局倍率；x2/x3/x4 会在下一次控件重绘时作为全局 SSAA 设置参与计算。</para>
-    ''' <para>影响范围：控件自己绘制的图形层，主要是代码绘制出来的圆角、边框、路径、线条、填充、阴影等 D2D 图形。多数控件会取控件自身 SuperSamplingScale 与 GlobalSSAA 中较高的倍率；少数特化控件可能只读取全局值或明确不参与全局 SSAA。</para>
+    ''' <para>影响范围：整个 V3 控件绘制；控件自身 SuperSamplingScale 与 GlobalSSAA 取较高倍率。</para>
     ''' <para>不影响范围：不改变 System.Drawing.Image / Bitmap 的原始尺寸、解码方式、RAM 常驻，也不改变 Image -&gt; D2D Bitmap 上传缓存预算；图片只是作为内容被绘制到当前图形层中。</para>
     ''' <para>性能影响：x2/x3/x4 的图形层离屏像素数约为 4/9/16 倍。</para>
     ''' </remarks>
@@ -146,14 +146,14 @@ Public Class GlobalOptions
     ''' <para>默认值：256 MiB。用于统一约束 SSAA RT、Image D2D 上传、背景穿透 D2D 上传、Backdrop GPU 目标与 Markdown D2D 图片缓存。</para>
     ''' <para>预算按进程总量计算，不再按窗口、图片或背景源分别设置。</para>
     ''' </remarks>
-    Public Shared Property GpuCacheBudgetBytes As Long = 256L * 1024L * 1024L
+    Public Shared Property GpuCacheBudgetBytes As Long = 128L * 1024L * 1024L
 
     ''' <summary>进程级 CPU 位图缓存总预算。</summary>
     ''' <remarks>
     ''' <para>默认值：128 MiB。用于统一约束背景穿透 backing bitmap、Markdown 已加载 Image 和 Backdrop 抓屏/当前/备用帧。</para>
     ''' <para>预算按进程总量计算，清理到预算内时按全局 LRU 释放可重建条目。</para>
     ''' </remarks>
-    Public Shared Property CpuCacheBudgetBytes As Long = 128L * 1024L * 1024L
+    Public Shared Property CpuCacheBudgetBytes As Long = 96L * 1024L * 1024L
 
     ''' <summary>纯色 D2D 画刷缓存条目上限。</summary>
     ''' <remarks>默认值：256。可靠字节估算不可得，因此画刷仍按条目数限制。</remarks>

@@ -15,10 +15,7 @@ Friend Module D3D_GpuCache
     Private _tick As Long
 
     Friend Function NextTick() As Long
-        SyncLock _lock
-            _tick += 1
-            Return _tick
-        End SyncLock
+        Return Threading.Interlocked.Increment(_tick)
     End Function
 
     Friend Sub Register(owner As D3D_IRenderCacheOwner)
@@ -38,6 +35,7 @@ Friend Module D3D_GpuCache
     End Sub
 
     Private Sub TrimToBudget(budget As Long, protectedOwner As D3D_IRenderCacheOwner)
+        D3D_RenderDiagnostics.BudgetScan()
         Dim guard As Integer = 0
         Do
             Dim total As Long = 0
@@ -100,10 +98,7 @@ Friend Module D3D_CpuCache
     Private _tick As Long
 
     Friend Function NextTick() As Long
-        SyncLock _lock
-            _tick += 1
-            Return _tick
-        End SyncLock
+        Return Threading.Interlocked.Increment(_tick)
     End Function
 
     Friend Sub Register(owner As D3D_IRenderCacheOwner)
@@ -123,6 +118,7 @@ Friend Module D3D_CpuCache
     End Sub
 
     Private Sub TrimToBudget(budget As Long, protectedOwner As D3D_IRenderCacheOwner)
+        D3D_RenderDiagnostics.BudgetScan()
         Dim guard As Integer = 0
         Do
             Dim total As Long = 0

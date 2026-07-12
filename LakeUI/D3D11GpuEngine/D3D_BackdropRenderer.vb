@@ -28,11 +28,11 @@ Public NotInheritable Class D3D_BackdropRenderer
 
     Private _offscreenContext As ID2D1DeviceContext
     Private _offscreenGeneration As Integer = -1
-    Private _sourceTarget As ID2D1Bitmap1
     Private _outputTarget As ID2D1Bitmap1
     Private _targetSize As Size = Size.Empty
     Private _blurEffect As ID2D1Effect
-    Private _blurCacheKey As String
+    Private _blurCacheKey As D3D_BlurCacheKey
+    Private _hasBlurCacheKey As Boolean
     Private _lastBlurUseTick As Long
     Private _frameUseDepth As Integer
     Private _trimPending As Boolean
@@ -60,7 +60,6 @@ Public NotInheritable Class D3D_BackdropRenderer
     Private ReadOnly Property CacheBytes As Long Implements D3D_IRenderCacheOwner.CacheBytes
         Get
             Dim total As Long
-            If _sourceTarget IsNot Nothing Then total += CLng(Math.Max(1, _targetSize.Width)) * CLng(Math.Max(1, _targetSize.Height)) * 4L
             If _outputTarget IsNot Nothing Then total += CLng(Math.Max(1, _targetSize.Width)) * CLng(Math.Max(1, _targetSize.Height)) * 4L
             If _noiseD2DBitmap IsNot Nothing AndAlso _noiseBitmap IsNot Nothing Then total += CLng(_noiseBitmap.Width) * CLng(_noiseBitmap.Height) * 4L
             Return total
@@ -139,6 +138,7 @@ Public NotInheritable Class D3D_BackdropRenderer
     Public Sub DrawImageBackdrop(context As D3D_PaintContext, bounds As RectangleF)
         If context Is Nothing OrElse Mode <> D3D_BackdropMode.Image OrElse _image Is Nothing Then Return
         If bounds.Width <= 0 OrElse bounds.Height <= 0 Then Return
+        context.BeginBackdropUse()
 
         Try
             Dim image = _image
@@ -222,16 +222,19 @@ Public NotInheritable Class D3D_BackdropRenderer
 
         EnsureOffscreenContext(context.DeviceGeneration)
         EnsureBlurTargets(size)
-        If _offscreenContext Is Nothing OrElse _sourceTarget Is Nothing OrElse _outputTarget Is Nothing Then Return False
+        If _offscreenContext Is Nothing OrElse _outputTarget Is Nothing Then Return False
 
         Dim sourceRect = ComputeCoverSourceRect(image, bounds)
         Dim cacheKey = BuildBlurCacheKey(image, bounds, size, context.DeviceGeneration)
-        If String.Equals(_blurCacheKey, cacheKey, StringComparison.Ordinal) Then
+        If _hasBlurCacheKey AndAlso _blurCacheKey.Equals(cacheKey) Then
             D3D_RenderDiagnostics.BackdropCacheHit()
         Else
-            RenderSourceToOffscreen(bitmap, sourceRect, size)
-            RenderBlurToOffscreen(size)
+            Using sourceTarget = CreateBlurTarget(size)
+                RenderSourceToOffscreen(sourceTarget, bitmap, sourceRect, size)
+                RenderBlurToOffscreen(sourceTarget, size)
+            End Using
             _blurCacheKey = cacheKey
+            _hasBlurCacheKey = True
             D3D_RenderDiagnostics.BackdropRebuild()
         End If
         _lastBlurUseTick = D3D_GpuCache.NextTick()
@@ -242,19 +245,11 @@ Public NotInheritable Class D3D_BackdropRenderer
         Return True
     End Function
 
-    Private Function BuildBlurCacheKey(image As Image, bounds As RectangleF, size As Size, deviceGeneration As Integer) As String
-        Return RuntimeHelpers.GetHashCode(image).ToString(Globalization.CultureInfo.InvariantCulture) & ":" &
-               image.Width.ToString(Globalization.CultureInfo.InvariantCulture) & "x" &
-               image.Height.ToString(Globalization.CultureInfo.InvariantCulture) & ":" &
-               D3D_HdrOutput.ImageRevision.ToString(Globalization.CultureInfo.InvariantCulture) & ":" &
-               BlurRadius.ToString(Globalization.CultureInfo.InvariantCulture) & ":" &
-               BlurPasses.ToString(Globalization.CultureInfo.InvariantCulture) & ":" &
-               DownsampleFactor.ToString(Globalization.CultureInfo.InvariantCulture) & ":" &
-               size.Width.ToString(Globalization.CultureInfo.InvariantCulture) & "x" &
-               size.Height.ToString(Globalization.CultureInfo.InvariantCulture) & ":" &
-               BitConverter.SingleToInt32Bits(bounds.Width).ToString("X8", Globalization.CultureInfo.InvariantCulture) & ":" &
-               BitConverter.SingleToInt32Bits(bounds.Height).ToString("X8", Globalization.CultureInfo.InvariantCulture) & ":" &
-               deviceGeneration.ToString(Globalization.CultureInfo.InvariantCulture)
+    Private Function BuildBlurCacheKey(image As Image, bounds As RectangleF, size As Size, deviceGeneration As Integer) As D3D_BlurCacheKey
+        Return New D3D_BlurCacheKey(image, image.Width, image.Height, D3D_HdrOutput.ImageRevision,
+                                    BlurRadius, BlurPasses, DownsampleFactor, size,
+                                    BitConverter.SingleToInt32Bits(bounds.Width), BitConverter.SingleToInt32Bits(bounds.Height),
+                                    deviceGeneration)
     End Function
 
     Private Sub EnsureOffscreenContext(deviceGeneration As Integer)
@@ -266,7 +261,7 @@ Public NotInheritable Class D3D_BackdropRenderer
     End Sub
 
     Private Sub EnsureBlurTargets(size As Size)
-        If _sourceTarget IsNot Nothing AndAlso _outputTarget IsNot Nothing AndAlso _targetSize = size Then Return
+        If _outputTarget IsNot Nothing AndAlso _targetSize = size Then Return
 
         DisposeBlurTargets()
         _targetSize = Size.Empty
@@ -277,13 +272,19 @@ Public NotInheritable Class D3D_BackdropRenderer
             96.0F,
             BitmapOptions.Target)
 
-        _sourceTarget = _offscreenContext.CreateBitmap(New SizeI(size.Width, size.Height), IntPtr.Zero, 0UI, props)
         _outputTarget = _offscreenContext.CreateBitmap(New SizeI(size.Width, size.Height), IntPtr.Zero, 0UI, props)
         _targetSize = size
     End Sub
 
-    Private Sub RenderSourceToOffscreen(sourceBitmap As ID2D1Bitmap1, sourceRect As RectangleF, size As Size)
-        RenderOffscreenTarget(_sourceTarget,
+    Private Function CreateBlurTarget(size As Size) As ID2D1Bitmap1
+        Dim props As New BitmapProperties1(
+            New Vortice.DCommon.PixelFormat(Vortice.DXGI.Format.B8G8R8A8_UNorm, Vortice.DCommon.AlphaMode.Premultiplied),
+            96.0F, 96.0F, BitmapOptions.Target)
+        Return _offscreenContext.CreateBitmap(New SizeI(size.Width, size.Height), IntPtr.Zero, 0UI, props)
+    End Function
+
+    Private Sub RenderSourceToOffscreen(sourceTarget As ID2D1Bitmap1, sourceBitmap As ID2D1Bitmap1, sourceRect As RectangleF, size As Size)
+        RenderOffscreenTarget(sourceTarget,
             Sub()
                 _offscreenContext.Clear(New Color4(0, 0, 0, 0))
                 Dim dst As Vortice.RawRectF? = New Vortice.RawRectF(0, 0, size.Width, size.Height)
@@ -292,11 +293,11 @@ Public NotInheritable Class D3D_BackdropRenderer
             End Sub)
     End Sub
 
-    Private Sub RenderBlurToOffscreen(size As Size)
+    Private Sub RenderBlurToOffscreen(sourceTarget As ID2D1Bitmap1, size As Size)
         RenderOffscreenTarget(_outputTarget,
             Sub()
                 _offscreenContext.Clear(New Color4(0, 0, 0, 0))
-                Dim output = GetBlurOutput()
+                Dim output = GetBlurOutput(sourceTarget)
                 If output Is Nothing Then Return
                 Try
                     _offscreenContext.DrawImage(output,
@@ -335,14 +336,14 @@ Public NotInheritable Class D3D_BackdropRenderer
         End Try
     End Sub
 
-    Private Function GetBlurOutput() As ID2D1Image
-        If _sourceTarget Is Nothing Then Return Nothing
+    Private Function GetBlurOutput(sourceTarget As ID2D1Bitmap1) As ID2D1Image
+        If sourceTarget Is Nothing Then Return Nothing
 
         If _blurEffect Is Nothing Then
             _blurEffect = _offscreenContext.CreateEffect(EffectGuids.GaussianBlur)
         End If
 
-        _blurEffect.SetInput(0UI, _sourceTarget, True)
+        _blurEffect.SetInput(0UI, sourceTarget, True)
 
         Dim down = Math.Max(1, DownsampleFactor)
         Dim radius = Math.Max(0.1F, BlurRadius / CSng(down))
@@ -558,10 +559,6 @@ Public NotInheritable Class D3D_BackdropRenderer
 
     Private Sub DisposeBlurTargets()
         DisposeBlurEffect()
-        If _sourceTarget IsNot Nothing Then
-            Try : _sourceTarget.Dispose() : Catch : End Try
-            _sourceTarget = Nothing
-        End If
         If _outputTarget IsNot Nothing Then
             Try : _outputTarget.Dispose() : Catch : End Try
             _outputTarget = Nothing
@@ -571,9 +568,58 @@ Public NotInheritable Class D3D_BackdropRenderer
     End Sub
 
     Private Sub InvalidateBlurCache()
-        _blurCacheKey = Nothing
+        _hasBlurCacheKey = False
         _lastBlurUseTick = 0
     End Sub
+
+    Private Structure D3D_BlurCacheKey
+        Implements IEquatable(Of D3D_BlurCacheKey)
+
+        Private ReadOnly _image As Image
+        Private ReadOnly _imageWidth As Integer
+        Private ReadOnly _imageHeight As Integer
+        Private ReadOnly _imageRevision As Integer
+        Private ReadOnly _radius As Integer
+        Private ReadOnly _passes As Integer
+        Private ReadOnly _downsample As Integer
+        Private ReadOnly _size As Size
+        Private ReadOnly _boundsWidthBits As Integer
+        Private ReadOnly _boundsHeightBits As Integer
+        Private ReadOnly _generation As Integer
+
+        Friend Sub New(image As Image, imageWidth As Integer, imageHeight As Integer, imageRevision As Integer,
+                       radius As Integer, passes As Integer, downsample As Integer, size As Size,
+                       boundsWidthBits As Integer, boundsHeightBits As Integer, generation As Integer)
+            _image = image
+            _imageWidth = imageWidth
+            _imageHeight = imageHeight
+            _imageRevision = imageRevision
+            _radius = radius
+            _passes = passes
+            _downsample = downsample
+            _size = size
+            _boundsWidthBits = boundsWidthBits
+            _boundsHeightBits = boundsHeightBits
+            _generation = generation
+        End Sub
+
+        Public Overloads Function Equals(other As D3D_BlurCacheKey) As Boolean Implements IEquatable(Of D3D_BlurCacheKey).Equals
+            Return ReferenceEquals(_image, other._image) AndAlso _imageWidth = other._imageWidth AndAlso
+                   _imageHeight = other._imageHeight AndAlso _imageRevision = other._imageRevision AndAlso
+                   _radius = other._radius AndAlso _passes = other._passes AndAlso _downsample = other._downsample AndAlso
+                   _size = other._size AndAlso _boundsWidthBits = other._boundsWidthBits AndAlso
+                   _boundsHeightBits = other._boundsHeightBits AndAlso _generation = other._generation
+        End Function
+
+        Public Overrides Function Equals(obj As Object) As Boolean
+            Return TypeOf obj Is D3D_BlurCacheKey AndAlso Equals(DirectCast(obj, D3D_BlurCacheKey))
+        End Function
+
+        Public Overrides Function GetHashCode() As Integer
+            Dim hash = HashCode.Combine(RuntimeHelpers.GetHashCode(_image), _imageWidth, _imageHeight, _imageRevision, _radius, _passes)
+            Return HashCode.Combine(hash, _downsample, _size, _boundsWidthBits, _boundsHeightBits, _generation)
+        End Function
+    End Structure
 
     Private Sub DisposeBlurEffect()
         If _blurEffect IsNot Nothing Then

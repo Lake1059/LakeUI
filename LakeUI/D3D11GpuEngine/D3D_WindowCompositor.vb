@@ -15,8 +15,9 @@ Public NotInheritable Class D3D_WindowCompositor
     Private _deviceContextGeneration As Integer
     Private _deviceContextInUse As Boolean
     Private _disposed As Boolean
-    Private ReadOnly _paintTargets As New Dictionary(Of String, D3D_PaintTargetEntry)(StringComparer.Ordinal)
+    Private ReadOnly _paintTargets As New List(Of D3D_PaintTargetEntry)()
     Private _paintTargetBytes As Long
+    Private _ssaaIdleTimer As Timer
 
     Public Sub New(form As Form, deviceManager As D3D_DeviceManager)
         If form Is Nothing Then Throw New ArgumentNullException(NameOf(form))
@@ -30,7 +31,7 @@ Public NotInheritable Class D3D_WindowCompositor
         TextureCache = New D3D_TextureCache()
         ImageCache = New D3D_ImageCache(TextureCache)
         TextRenderer = New D3D_TextRenderer(_deviceManager)
-        D3D_BackdropSurfaceRenderer = New D3D_BackdropRenderer(ImageCache, _deviceManager)
+        BackdropRenderer = New D3D_BackdropRenderer(ImageCache, _deviceManager)
         D3D_GpuCache.Register(Me)
 
         AddHandler _form.HandleDestroyed, AddressOf OnFormHandleDestroyed
@@ -72,7 +73,7 @@ Public NotInheritable Class D3D_WindowCompositor
     Public ReadOnly Property TextureCache As D3D_TextureCache
     Public ReadOnly Property ImageCache As D3D_ImageCache
     Public ReadOnly Property TextRenderer As D3D_TextRenderer
-    Public ReadOnly Property D3D_BackdropSurfaceRenderer As D3D_BackdropRenderer
+    Public ReadOnly Property BackdropRenderer As D3D_BackdropRenderer
 
     Public Property TextQuality As D3D_TextQualityMode = D3D_TextQualityMode.Auto
 
@@ -85,15 +86,15 @@ Public NotInheritable Class D3D_WindowCompositor
     Private ReadOnly Property OldestUseTick As Long Implements D3D_IRenderCacheOwner.OldestUseTick
         Get
             If _paintTargets.Count = 0 Then Return Long.MaxValue
-            Return _paintTargets.Values.Min(Function(entry) entry.LastUsed)
+            Return _paintTargets.Min(Function(entry) entry.LastUsed)
         End Get
     End Property
 
     Private Function TrimOldest() As Boolean Implements D3D_IRenderCacheOwner.TrimOldest
         If _deviceContextInUse OrElse _paintTargets.Count = 0 Then Return False
-        Dim victim = _paintTargets.Values.OrderBy(Function(entry) entry.LastUsed).FirstOrDefault()
+        Dim victim = _paintTargets.OrderBy(Function(entry) entry.LastUsed).FirstOrDefault()
         If victim Is Nothing Then Return False
-        RemovePaintTarget(victim.Key, victim, reportEviction:=True)
+        RemovePaintTarget(victim, reportEviction:=True)
         Return True
     End Function
 
@@ -102,6 +103,10 @@ Public NotInheritable Class D3D_WindowCompositor
     End Sub
 
     Public Sub HandleDeviceLost()
+        HandleDeviceLost(requestRender:=True)
+    End Sub
+
+    Friend Sub HandleDeviceLost(requestRender As Boolean)
         If _disposed Then Return
 
         ReleaseDeviceContextNoThrow()
@@ -111,8 +116,8 @@ Public NotInheritable Class D3D_WindowCompositor
         TextureCache.ReleaseAll()
         ImageCache.Invalidate()
         TextRenderer.Invalidate()
-        D3D_BackdropSurfaceRenderer.Invalidate()
-        RequestFullFormRender()
+        BackdropRenderer.Invalidate()
+        If requestRender Then RequestFullFormRender()
     End Sub
 
     Friend Function CleanupD2DResources(level As D3DCacheCleanupLevel) As Boolean
@@ -154,7 +159,7 @@ Public NotInheritable Class D3D_WindowCompositor
 
     Private Sub ReleaseVolatileCachesNoThrow()
         Try : BrushCache.Invalidate() : Catch : End Try
-        Try : D3D_BackdropSurfaceRenderer.Invalidate() : Catch : End Try
+        Try : BackdropRenderer.Invalidate() : Catch : End Try
         Try : TextureCache.TrimToBudget(force:=False) : Catch : End Try
         Try : D3D_GpuCache.TrimToBudget() : Catch : End Try
     End Sub
@@ -167,98 +172,162 @@ Public NotInheritable Class D3D_WindowCompositor
         Try : TextureCache.ReleaseAll() : Catch : End Try
         Try : ImageCache.Invalidate() : Catch : End Try
         Try : TextRenderer.Invalidate() : Catch : End Try
-        Try : D3D_BackdropSurfaceRenderer.Invalidate() : Catch : End Try
+        Try : BackdropRenderer.Invalidate() : Catch : End Try
         Try : ReleasePaintTargetsNoThrow() : Catch : End Try
     End Sub
 
     ''' <summary>
-    ''' 租借当前窗体/设备专属的 GDI-compatible target。空闲池每个 64px 桶最多保留一个，
-    ''' 因而不改变控件独立绘制模型，也不会累积 N 个控件对应的常驻 target。
+    ''' 租借当前窗体/设备专属的 scratch target。1× GDI target 最多保留两张空闲项；
+    ''' SSAA target 最多保留一张，并在空闲两秒后主动释放。
     ''' </summary>
     Friend Function RentGpuPaintTarget(context As ID2D1DeviceContext,
                                        width As Integer,
                                        height As Integer,
                                        generation As Integer,
+                                       superSampled As Boolean,
                                        ByRef rentedWidth As Integer,
                                        ByRef rentedHeight As Integer) As ID2D1Bitmap1
         rentedWidth = RoundPaintTargetDimension(width)
         rentedHeight = RoundPaintTargetDimension(height)
         If _disposed OrElse context Is Nothing OrElse generation <> _deviceManager.DeviceGeneration Then Return Nothing
 
-        Dim key = BuildPaintTargetKey(generation, rentedWidth, rentedHeight)
-        Dim entry As D3D_PaintTargetEntry = Nothing
-        If _paintTargets.TryGetValue(key, entry) Then
-            _paintTargets.Remove(key)
-            _paintTargetBytes -= entry.Bytes
-            If _paintTargetBytes < 0 Then _paintTargetBytes = 0
+        Dim requiredWidth = rentedWidth
+        Dim requiredHeight = rentedHeight
+
+        Dim entry = _paintTargets.
+            Where(Function(item) item.Generation = generation AndAlso item.SuperSampled = superSampled AndAlso
+                                      item.Width >= requiredWidth AndAlso item.Height >= requiredHeight).
+            OrderBy(Function(item) CLng(item.Width) * CLng(item.Height)).
+            FirstOrDefault()
+        If entry IsNot Nothing Then
+            _paintTargets.Remove(entry)
+            rentedWidth = entry.Width
+            rentedHeight = entry.Height
             D3D_RenderDiagnostics.PaintTargetPoolHit()
             Return entry.Target
         End If
 
         Dim props As New BitmapProperties1(
-            New Vortice.DCommon.PixelFormat(Vortice.DXGI.Format.B8G8R8A8_UNorm, Vortice.DCommon.AlphaMode.Ignore),
+            New Vortice.DCommon.PixelFormat(
+                Vortice.DXGI.Format.B8G8R8A8_UNorm,
+                If(superSampled, Vortice.DCommon.AlphaMode.Premultiplied, Vortice.DCommon.AlphaMode.Ignore)),
             96.0F,
             96.0F,
-            BitmapOptions.Target Or BitmapOptions.GdiCompatible)
-        D3D_RenderDiagnostics.PaintTargetPoolAllocation()
-        Return context.CreateBitmap(New Vortice.Mathematics.SizeI(rentedWidth, rentedHeight), IntPtr.Zero, 0UI, props)
+            If(superSampled, BitmapOptions.Target, BitmapOptions.Target Or BitmapOptions.GdiCompatible))
+        D3D_RenderDiagnostics.PaintTargetPoolAllocation(superSampled)
+        Dim target = context.CreateBitmap(New Vortice.Mathematics.SizeI(rentedWidth, rentedHeight), IntPtr.Zero, 0UI, props)
+        Dim targetBytes = EstimatePaintTargetBytes(rentedWidth, rentedHeight)
+        _paintTargetBytes += targetBytes
+        D3D_RenderDiagnostics.PaintTargetBytesChanged(targetBytes, superSampled)
+        D3D_GpuCache.TrimToBudget()
+        Return target
     End Function
 
     Friend Sub ReturnGpuPaintTarget(target As ID2D1Bitmap1,
                                     rentedWidth As Integer,
                                     rentedHeight As Integer,
-                                    generation As Integer)
+                                    generation As Integer,
+                                    superSampled As Boolean)
         If target Is Nothing Then Return
         If _disposed OrElse generation <> _deviceManager.DeviceGeneration OrElse rentedWidth <= 0 OrElse rentedHeight <= 0 Then
-            Try : target.Dispose() : Catch : End Try
+            DiscardGpuPaintTarget(target, rentedWidth, rentedHeight, superSampled)
             Return
         End If
 
-        Dim key = BuildPaintTargetKey(generation, rentedWidth, rentedHeight)
-        Dim existing As D3D_PaintTargetEntry = Nothing
-        If _paintTargets.TryGetValue(key, existing) Then RemovePaintTarget(key, existing, reportEviction:=True)
-
         Dim entry As New D3D_PaintTargetEntry With {
-            .Key = key,
             .Target = target,
-            .Bytes = CLng(rentedWidth) * CLng(rentedHeight) * 4L,
+            .Width = rentedWidth,
+            .Height = rentedHeight,
+            .Generation = generation,
+            .SuperSampled = superSampled,
+            .Bytes = EstimatePaintTargetBytes(rentedWidth, rentedHeight),
             .LastUsed = D3D_GpuCache.NextTick()
         }
-        _paintTargets(key) = entry
-        _paintTargetBytes += entry.Bytes
+        _paintTargets.Add(entry)
+        TrimIdlePaintTargets(superSampled)
+        If superSampled Then RestartSsaaIdleTimer()
+    End Sub
+
+    Friend Sub DiscardGpuPaintTarget(target As ID2D1Bitmap1, rentedWidth As Integer, rentedHeight As Integer, superSampled As Boolean)
+        If target Is Nothing Then Return
+        Dim bytes = EstimatePaintTargetBytes(rentedWidth, rentedHeight)
+        _paintTargetBytes = Math.Max(0L, _paintTargetBytes - bytes)
+        D3D_RenderDiagnostics.PaintTargetBytesChanged(-bytes, superSampled)
+        Try : target.Dispose() : Catch : End Try
     End Sub
 
     Private Shared Function RoundPaintTargetDimension(value As Integer) As Integer
-        Const bucket As Integer = 64
         value = Math.Max(1, value)
+        Dim bucket = If(value <= 256, 16, If(value <= 1024, 32, 64))
         Return Math.Max(bucket, CInt(Math.Ceiling(value / CDbl(bucket))) * bucket)
     End Function
 
-    Private Shared Function BuildPaintTargetKey(generation As Integer, width As Integer, height As Integer) As String
-        Return generation.ToString(Globalization.CultureInfo.InvariantCulture) & ":" &
-               width.ToString(Globalization.CultureInfo.InvariantCulture) & "x" &
-               height.ToString(Globalization.CultureInfo.InvariantCulture)
+    Private Shared Function EstimatePaintTargetBytes(width As Integer, height As Integer) As Long
+        Return CLng(Math.Max(1, width)) * CLng(Math.Max(1, height)) * 4L
     End Function
 
     Private Sub ReleasePaintTargetsNoThrow()
-        For Each entry In _paintTargets.Values.ToArray()
+        StopSsaaIdleTimer()
+        Dim standardReleasedBytes = _paintTargets.Where(Function(entry) Not entry.SuperSampled).Sum(Function(entry) entry.Bytes)
+        Dim ssaaReleasedBytes = _paintTargets.Where(Function(entry) entry.SuperSampled).Sum(Function(entry) entry.Bytes)
+        Dim releasedBytes = standardReleasedBytes + ssaaReleasedBytes
+        For Each entry In _paintTargets.ToArray()
             Try : entry.Target.Dispose() : Catch : End Try
         Next
         _paintTargets.Clear()
-        _paintTargetBytes = 0
+        _paintTargetBytes = Math.Max(0L, _paintTargetBytes - releasedBytes)
+        D3D_RenderDiagnostics.PaintTargetBytesChanged(-standardReleasedBytes, superSampled:=False)
+        D3D_RenderDiagnostics.PaintTargetBytesChanged(-ssaaReleasedBytes, superSampled:=True)
     End Sub
 
-    Private Sub RemovePaintTarget(key As String, entry As D3D_PaintTargetEntry, reportEviction As Boolean)
-        If entry Is Nothing OrElse Not _paintTargets.Remove(key) Then Return
+    Private Sub RemovePaintTarget(entry As D3D_PaintTargetEntry, reportEviction As Boolean)
+        If entry Is Nothing OrElse Not _paintTargets.Remove(entry) Then Return
         _paintTargetBytes -= entry.Bytes
         If _paintTargetBytes < 0 Then _paintTargetBytes = 0
         Try : entry.Target.Dispose() : Catch : End Try
         If reportEviction Then D3D_RenderDiagnostics.PaintTargetPoolEviction()
+        D3D_RenderDiagnostics.PaintTargetBytesChanged(-entry.Bytes, entry.SuperSampled)
+    End Sub
+
+    Private Sub TrimIdlePaintTargets(superSampled As Boolean)
+        Dim limit = If(superSampled, 1, 2)
+        Do
+            Dim matching = _paintTargets.Where(Function(item) item.SuperSampled = superSampled).ToArray()
+            If matching.Length <= limit Then Exit Do
+            RemovePaintTarget(matching.OrderBy(Function(item) item.LastUsed).First(), reportEviction:=True)
+        Loop
+    End Sub
+
+    Private Sub RestartSsaaIdleTimer()
+        If _ssaaIdleTimer Is Nothing Then
+            _ssaaIdleTimer = New Timer() With {.Interval = 2000}
+            AddHandler _ssaaIdleTimer.Tick, AddressOf OnSsaaIdleTimerTick
+        End If
+        _ssaaIdleTimer.Stop()
+        _ssaaIdleTimer.Start()
+    End Sub
+
+    Private Sub StopSsaaIdleTimer()
+        If _ssaaIdleTimer Is Nothing Then Return
+        _ssaaIdleTimer.Stop()
+        RemoveHandler _ssaaIdleTimer.Tick, AddressOf OnSsaaIdleTimerTick
+        _ssaaIdleTimer.Dispose()
+        _ssaaIdleTimer = Nothing
+    End Sub
+
+    Private Sub OnSsaaIdleTimerTick(sender As Object, e As EventArgs)
+        If _ssaaIdleTimer IsNot Nothing Then _ssaaIdleTimer.Stop()
+        For Each entry In _paintTargets.Where(Function(item) item.SuperSampled).ToArray()
+            RemovePaintTarget(entry, reportEviction:=True)
+        Next
     End Sub
 
     Private NotInheritable Class D3D_PaintTargetEntry
-        Public Key As String
         Public Target As ID2D1Bitmap1
+        Public Width As Integer
+        Public Height As Integer
+        Public Generation As Integer
+        Public SuperSampled As Boolean
         Public Bytes As Long
         Public LastUsed As Long
     End Class
@@ -386,7 +455,7 @@ Public NotInheritable Class D3D_WindowCompositor
 
         ReleaseDeviceContextNoThrow()
         ReleasePaintTargetsNoThrow()
-        Try : D3D_BackdropSurfaceRenderer.Dispose() : Catch : End Try
+        Try : BackdropRenderer.Dispose() : Catch : End Try
         Try : TextRenderer.Dispose() : Catch : End Try
         Try : ImageCache.Dispose() : Catch : End Try
         Try : TextureCache.Dispose() : Catch : End Try

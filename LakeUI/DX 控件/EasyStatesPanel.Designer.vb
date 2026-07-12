@@ -7,7 +7,6 @@ Partial Class EasyStatesPanel
     Protected Overrides Sub Dispose(ByVal disposing As Boolean)
         Try
             If disposing Then
-                _scrollBar.DisposeBrushes()
                 _scrollAnimationHelper.Dispose()
                 ReleaseSubTextFont()
                 If components IsNot Nothing Then

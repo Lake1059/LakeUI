@@ -11,7 +11,7 @@ Imports Vortice.Direct2D1
 ''' 性能说明：当 Text 不包含 '&lt;' 与 '&amp;' 字符时自动走纯文本快速渲染路径，与原生 Label 等同；含标记时再走完整 HTML 解析与排版流程。解析、布局、字体均带缓存，仅在依赖项变化时失效。
 ''' </summary>
 Public Class HtmlColorLabel
-    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource
+    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource, V3_ISuperSamplingSource
 
 #Region "构造"
 
@@ -932,7 +932,7 @@ Public Class HtmlColorLabel
     Private 超采样倍率 As Integer = 1
     ''' <summary>超采样抗锯齿倍率；仅影响控件背景与边框绘制。</summary>
     <Category("LakeUI"), Description(GlobalOptions.超采样抗锯齿描述词), DefaultValue(GetType(GlobalOptions.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
-    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum
+    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements V3_ISuperSamplingSource.SuperSamplingScale
         Get
             Return 超采样倍率
         End Get

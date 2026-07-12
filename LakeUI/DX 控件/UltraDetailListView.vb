@@ -6,7 +6,7 @@ Imports Vortice.Direct2D1
 
 <DefaultEvent("SelectedIndexChanged")>
 Public Class UltraDetailListView
-    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource
+    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource, V3_ISuperSamplingSource
 
     Public Event SelectedIndexChanged As EventHandler
     Public Event ItemClick As EventHandler(Of ListItemEventArgs)
@@ -1746,7 +1746,7 @@ Public Class UltraDetailListView
 
     Private 超采样倍率 As Integer = 1
     <Category("LakeUI"), Description(GlobalOptions.超采样抗锯齿描述词), DefaultValue(GetType(GlobalOptions.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
-    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum
+    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements V3_ISuperSamplingSource.SuperSamplingScale
         Get
             Return 超采样倍率
         End Get
@@ -2300,6 +2300,11 @@ Public Class UltraDetailListView
 
 #Region "绘制"
 
+    Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
+        If _backgroundSource IsNot Nothing Then Return
+        MyBase.OnPaintBackground(e)
+    End Sub
+
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
         If Not D3D_PaintBridge.PaintRenderable(e, Me, Me) Then MyBase.OnPaint(e)
     End Sub
@@ -2400,6 +2405,9 @@ Public Class UltraDetailListView
             boundsRect.Inflate(-half, -half)
         End If
         Dim radius As Single = If(边框圆角半径 > 0, 边框圆角半径 * s, 0.0F)
+        If _backgroundSource IsNot Nothing Then
+            context.DrawBackgroundSource(Me, _backgroundSource, New RectangleF(0, 0, Me.Width, Me.Height))
+        End If
         填充圆角矩形_GPU(context, boundsRect, radius, 背景颜色)
         If 边框颜色.A > 0 AndAlso 边框宽度 > 0 Then
             绘制圆角边框_GPU(context, boundsRect, radius, 边框颜色, 边框宽度 * s)

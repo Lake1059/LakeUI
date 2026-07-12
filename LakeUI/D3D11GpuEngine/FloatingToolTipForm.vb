@@ -267,40 +267,8 @@ Public NotInheritable Class FloatingToolTipForm
 
     Private Function MeasureWrappedText(text As String, font As Font, contentW As Integer) As Size
         If String.IsNullOrEmpty(text) Then Return Size.Empty
-        Dim textFormatCache = D3D_PaintBridge.GetCompositor(_owner)?.TextFormatCache
-        Return D3D_TextMeasureHelper.MeasureWrappedText_D2D(text, font, contentW, OwnerDpiScale(), textFormatCache)
+        Return D3D_TextMeasureHelper.MeasureWrappedText_D2D(text, font, contentW, OwnerDpiScale(), Nothing)
     End Function
-
-    Private Sub DrawSelection_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache, textRect As RectangleF)
-        If Not IsSelectableCopyEnabled() Then Return
-        Dim length As Integer = SelectionLength()
-        If rt Is Nothing OrElse length <= 0 OrElse textRect.Width <= 0 OrElse textRect.Height <= 0 Then Return
-
-        Dim start As Integer = SelectionStart()
-        Using fmt = CreateTipTextFormat()
-            If fmt Is Nothing Then Return
-            Using layout = D3D_D2DInterop.GetDWriteFactory().CreateTextLayout(_tipText, fmt,
-                                                                          Math.Max(1.0F, textRect.Width),
-                                                                          Math.Max(1.0F, textRect.Height))
-                Dim metrics(Math.Max(1, length + 1) - 1) As HitTestMetrics
-                Dim actual As UInteger = 0
-                Try
-                    layout.HitTestTextRange(CUInt(start), CUInt(length), textRect.X, textRect.Y, metrics, actual)
-                Catch
-                    Return
-                End Try
-                If actual <= 0 Then Return
-
-                Dim selectionBrush = brushCache.Get(rt, EffectiveSelectionFocusColor())
-                Dim count As Integer = Math.Min(metrics.Length, CInt(actual))
-                For i As Integer = 0 To count - 1
-                    Dim m = metrics(i)
-                    If m.Width <= 0.0F OrElse m.Height <= 0.0F Then Continue For
-                    rt.FillRectangle(New Vortice.Mathematics.Rect(m.Left, m.Top, m.Width, m.Height), selectionBrush)
-                Next
-            End Using
-        End Using
-    End Sub
 
     Private Sub DrawSelection_GPU(context As D3D_PaintContext, textRect As RectangleF)
         If Not IsSelectableCopyEnabled() Then Return
@@ -521,46 +489,6 @@ Public NotInheritable Class FloatingToolTipForm
         If Not _messageFilterInstalled Then Return
         Application.RemoveMessageFilter(Me)
         _messageFilterInstalled = False
-    End Sub
-
-    Private Sub DrawBackground_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache,
-                                   bw As Integer, w As Integer, h As Integer, fillBackground As Boolean)
-        Dim radius As Single = BorderRadius()
-        Dim fillColor As Color = ToolTipFillColor()
-
-        If radius > 0 Then
-            Dim boundsRect As New RectangleF(0, 0, Math.Max(1, w), Math.Max(1, h))
-            If bw > 0 Then
-                Dim half As Single = bw / 2.0F
-                boundsRect.Inflate(-half, -half)
-            End If
-            Using geo = D3D_RectangleRenderer.创建圆角矩形几何(boundsRect, radius)
-                If fillBackground Then rt.FillGeometry(geo, brushCache.Get(rt, fillColor))
-                If bw > 0 AndAlso _style.BorderColor.A > 0 Then rt.DrawGeometry(geo, brushCache.Get(rt, _style.BorderColor), bw)
-            End Using
-            Return
-        End If
-
-        If fillBackground Then
-            rt.FillRectangle(New Vortice.Mathematics.Rect(0, 0, w, h), brushCache.Get(rt, fillColor))
-        End If
-        If bw > 0 AndAlso _style.BorderColor.A > 0 Then DrawSquareBorder_D2D(rt, brushCache, w, h, bw)
-    End Sub
-
-    Private Sub DrawSquareBorder_D2D(rt As ID2D1RenderTarget, brushCache As D3D_D2DInterop.SolidColorBrushCache,
-                                     w As Integer, h As Integer, bw As Integer)
-        Dim border As Integer = Math.Min(bw, Math.Min(w, h))
-        If border <= 0 Then Return
-
-        Dim br = brushCache.Get(rt, _style.BorderColor)
-        rt.FillRectangle(New Vortice.Mathematics.Rect(0, 0, w, border), br)
-        If h > border Then rt.FillRectangle(New Vortice.Mathematics.Rect(0, h - border, w, border), br)
-
-        Dim middleHeight As Integer = h - border * 2
-        If middleHeight > 0 Then
-            rt.FillRectangle(New Vortice.Mathematics.Rect(0, border, border, middleHeight), br)
-            If w > border Then rt.FillRectangle(New Vortice.Mathematics.Rect(w - border, border, border, middleHeight), br)
-        End If
     End Sub
 
     Private Sub DrawBackground_GPU(context As D3D_PaintContext, bw As Integer, w As Integer, h As Integer, fillBackground As Boolean)

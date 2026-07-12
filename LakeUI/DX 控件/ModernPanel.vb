@@ -11,7 +11,7 @@ Imports Vortice.Direct2D1
 <Docking(DockingBehavior.Ask)>
 <DefaultEvent("Scroll")>
 Public Class ModernPanel
-    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource
+    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource, V3_ISuperSamplingSource
 
     ''' <summary>
     ''' 滚动策略枚举。
@@ -730,10 +730,10 @@ Public Class ModernPanel
     ''' 从而实现跨越任意层级的"穿透显示"效果。
     ''' 典型场景：当本控件位于一个不透明的祖先（如 ModernTabListControl 的 BoundControl 独立窗体）内，
     ''' 但希望透出更外层（如顶层窗体）的内容时，将其设置为目标控件即可。
-    ''' 为 Nothing 时自动沿祖先链查找首个不透明祖先（默认行为）。
+    ''' 为 Nothing 时不进行背景采样，透明 BackColor 交由 WinForms 原生透明背景流程处理。
     ''' </summary>
     <Category("LakeUI"),
-     Description("背景采样源（超容器背景映射）。设置后将跨越任意层级直接采样此控件的绘制内容作为透明背景；为空时自动选择首个不透明祖先。"),
+     Description("背景采样源（超容器背景映射）。设置后将跨越任意层级直接采样此控件的绘制内容作为透明背景；为空时不进行背景采样。"),
      DefaultValue(GetType(Control), Nothing), Browsable(True)>
     Public Property BackgroundSource As Control
         Get
@@ -845,7 +845,7 @@ Public Class ModernPanel
 
     Private 超采样倍率 As Integer = 1
     <Category("LakeUI"), Description(GlobalOptions.超采样抗锯齿描述词), DefaultValue(GetType(GlobalOptions.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
-    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum
+    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements V3_ISuperSamplingSource.SuperSamplingScale
         Get
             Return 超采样倍率
         End Get
@@ -1163,7 +1163,7 @@ Public Class ModernPanel
 
         绘制背景源_GPU(context, boundsRect)
 
-        If backColorMask.A > 0 AndAlso backColorMask.A < 255 Then
+        If _backgroundSource Is Nothing AndAlso backColorMask.A > 0 AndAlso backColorMask.A < 255 Then
             填充形状_GPU(context, boundsRect, geo, backColorMask)
         End If
         If 背景颜色.A > 0 Then

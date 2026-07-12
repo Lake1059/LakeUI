@@ -44,7 +44,6 @@ Public Class ModernColorDialog
 
     Private ReadOnly _chromaticityBitmapLock As New Object()
     Private _chromaticityBitmap As Bitmap
-    Private ReadOnly _chromaticityBitmapCache As New D3D_D2DInterop.D2DBitmapCache()
     Private _markerX As Double = 0.3127
     Private _markerY As Double = 0.329
     Private _renderCts As CancellationTokenSource
@@ -144,7 +143,6 @@ Public Class ModernColorDialog
         SyncLock _chromaticityBitmapLock
             oldBitmap = _chromaticityBitmap
             _chromaticityBitmap = Nothing
-            _chromaticityBitmapCache.Dispose()
         End SyncLock
         oldBitmap?.Dispose()
 
@@ -258,7 +256,6 @@ Public Class ModernColorDialog
                             Dim old As Bitmap = Nothing
                             SyncLock _chromaticityBitmapLock
                                 old = _chromaticityBitmap
-                                _chromaticityBitmapCache.Invalidate()
                                 _chromaticityBitmap = bmp
                             End SyncLock
                             old?.Dispose()

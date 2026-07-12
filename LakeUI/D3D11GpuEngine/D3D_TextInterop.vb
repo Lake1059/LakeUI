@@ -1,95 +1,13 @@
 Imports Vortice.Direct2D1
 Imports Vortice.DirectWrite
 
-''' <summary>
-''' 控件层走 D2D + DirectWrite 绘制文字时的最小封装。把 WinForms 的 (Font, Color, Rectangle, TextFormatFlags)
-''' 调用约定映射到 DirectWrite TextFormat / TextLayout，再交给当前 RT 的 DrawTextLayout。
-'''
-''' === 用法（兼容绘制路径内）===
-'''   D3D_TextInterop.DrawText(
-'''       scope.TextLayer,
-'''       "你好世界",
-'''       Me.Font, textRect, Me.ForeColor,
-'''       TextFormatFlags.Left Or TextFormatFlags.VerticalCenter Or TextFormatFlags.EndEllipsis,
-'''       DpiScale(),
-'''       scope.Compositor.TextFormatCache,
-'''       scope.Compositor.BrushCache)
-'''
-''' === 约束 ===
-''' • 必须传入正确的 <paramref name="dpiScale"/>（控件 DpiScale），否则在 HighDPI 下与
-'''   GDI TextRenderer 的实际像素尺寸不一致（D2D DC RT 默认按 96 DPI 映射）。
-'''   DirectWrite 字号统一由 D3D_D2DInterop.GetDWriteFontSizePx 推断，避免 WinForms 已自动缩放的字体再次乘 DPI。
-''' • 文本应绘制在 D3D_PaintScope.TextLayer（= DC RT），以利用 GDI HDC 的子像素抗锯齿。
-''' • 默认 <see cref="WordWrapping.NoWrap"/>；需要换行的传 <see cref="TextFormatFlags.WordBreak"/>。
-''' • TextLayout 是一次性资源（按字符串/字号变化），无法跨帧复用；TextFormat 由 cache 复用。
-''' </summary>
+''' <summary>公开 DirectWrite 文本测量服务；V3 绘制统一由 D3D_TextRenderer 完成。</summary>
+''' <remarks>
+''' 本模块只提供测量与布局计算，不包含 RenderTarget、画刷或文字绘制 API。
+''' </remarks>
 Public Module D3D_TextInterop
 
     Private Const UnboundedLayoutExtent As Single = 100000.0F
-
-    ''' <summary>
-    ''' 在 <paramref name="rt"/> 上按 (Font, Rectangle, Color, Flags) 绘制单行（或带 WordBreak 时多行）文本。
-    ''' </summary>
-    Public Sub DrawText(rt As ID2D1RenderTarget, text As String, font As Font, rect As RectangleF, color As Color,
-                       flags As TextFormatFlags, dpiScale As Single,
-                       textFormatCache As D3D_D2DInterop.TextFormatCache,
-                       brushCache As D3D_D2DInterop.SolidColorBrushCache)
-        If rt Is Nothing OrElse String.IsNullOrEmpty(text) OrElse font Is Nothing Then Return
-        If color.A = 0 Then Return
-        If rect.Width <= 0 OrElse rect.Height <= 0 Then Return
-
-        Dim ownsFormat As Boolean = False
-        Dim fmt = AcquireTextFormat(font, dpiScale, flags, textFormatCache, ownsFormat)
-        If fmt Is Nothing Then Return
-        Dim brush = If(brushCache IsNot Nothing,
-                       DirectCast(brushCache.[Get](rt, color), ID2D1Brush),
-                       DirectCast(rt.CreateSolidColorBrush(D3D_D2DInterop.ToColor4(color)), ID2D1Brush))
-        Dim ownsBrush As Boolean = (brushCache Is Nothing)
-        Try
-            rt.DrawText(text, fmt, D3D_D2DInterop.ToD2DRect(rect), brush, DrawTextOptions.Clip)
-        Finally
-            If ownsBrush AndAlso brush IsNot Nothing Then
-                Try : brush.Dispose() : Catch : End Try
-            End If
-            If ownsFormat AndAlso fmt IsNot Nothing Then
-                Try : fmt.Dispose() : Catch : End Try
-            End If
-        End Try
-    End Sub
-
-    Public Sub DrawText(rt As ID2D1RenderTarget, text As String, font As Font, rect As Rectangle, color As Color,
-                       flags As TextFormatFlags, dpiScale As Single,
-                       textFormatCache As D3D_D2DInterop.TextFormatCache,
-                       brushCache As D3D_D2DInterop.SolidColorBrushCache)
-        DrawText(rt, text, font, CType(rect, RectangleF), color, flags, dpiScale, textFormatCache, brushCache)
-    End Sub
-
-    ''' <summary>左上角对齐 + NoPadding 的便捷重载（用于已自行算好坐标的场景）。</summary>
-    Public Sub DrawTextAt(rt As ID2D1RenderTarget, text As String, font As Font, x As Single, y As Single, color As Color,
-                          dpiScale As Single,
-                          textFormatCache As D3D_D2DInterop.TextFormatCache,
-                          brushCache As D3D_D2DInterop.SolidColorBrushCache)
-        If rt Is Nothing OrElse String.IsNullOrEmpty(text) OrElse font Is Nothing Then Return
-        If color.A = 0 Then Return
-        Dim flags As TextFormatFlags = TextFormatFlags.Left Or TextFormatFlags.Top Or TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine
-        Dim ownsFormat As Boolean = False
-        Dim fmt = AcquireTextFormat(font, dpiScale, flags, textFormatCache, ownsFormat)
-        If fmt Is Nothing Then Return
-        Dim brush = If(brushCache IsNot Nothing,
-                       DirectCast(brushCache.[Get](rt, color), ID2D1Brush),
-                       DirectCast(rt.CreateSolidColorBrush(D3D_D2DInterop.ToColor4(color)), ID2D1Brush))
-        Dim ownsBrush As Boolean = (brushCache Is Nothing)
-        Try
-            rt.DrawText(text, fmt, New Vortice.Mathematics.Rect(x, y, 100000.0F, 100000.0F), brush)
-        Finally
-            If ownsBrush AndAlso brush IsNot Nothing Then
-                Try : brush.Dispose() : Catch : End Try
-            End If
-            If ownsFormat AndAlso fmt IsNot Nothing Then
-                Try : fmt.Dispose() : Catch : End Try
-            End If
-        End Try
-    End Sub
 
     ''' <summary>按与 DrawText 相同的 DirectWrite 格式测量文本布局尺寸。</summary>
     Public Function MeasureText(text As String, font As Font, proposedSize As Size, flags As TextFormatFlags,

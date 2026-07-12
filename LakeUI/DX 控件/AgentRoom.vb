@@ -11,7 +11,7 @@ Imports Vortice.Direct2D1
 <DefaultEvent("LinkClicked")>
 Public Class AgentRoom
     Inherits Control
-    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource
+    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource, V3_ISuperSamplingSource
 
 #Region "枚举与项类型"
     Public Enum ChatItemKind
@@ -398,7 +398,7 @@ Public Class AgentRoom
 #Region "属性"
     Friend _superSamplingScale As GlobalOptions.SuperSamplingScaleEnum = GlobalOptions.SuperSamplingScaleEnum.OFF
     <Category("LakeUI"), Description(GlobalOptions.超采样抗锯齿描述词), DefaultValue(GetType(GlobalOptions.SuperSamplingScaleEnum), "OFF")>
-    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum
+    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements V3_ISuperSamplingSource.SuperSamplingScale
         Get
             Return _superSamplingScale
         End Get
@@ -2206,7 +2206,9 @@ Public Class AgentRoom
         End If
 
         Dim backColorMask As Color = MyBase.BackColor
-        If backColorMask.A > 0 AndAlso backColorMask.A < 255 Then FillRoundedRect_GPU(context, bgRect, borderRadius, backColorMask)
+        If _backgroundSource Is Nothing AndAlso backColorMask.A > 0 AndAlso backColorMask.A < 255 Then
+            FillRoundedRect_GPU(context, bgRect, borderRadius, backColorMask)
+        End If
         If _backColor1.A > 0 Then FillRoundedRect_GPU(context, bgRect, borderRadius, _backColor1)
 
         Dim area As Rectangle = GetContentArea()

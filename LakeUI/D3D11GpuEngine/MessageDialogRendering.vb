@@ -324,79 +324,6 @@ Friend Module MessageDialogRendering
         button.PressedBorderColor = Color.Empty
     End Sub
 
-    Public Sub FillRectangle(rt As ID2D1RenderTarget,
-                             brushCache As D3D_D2DInterop.SolidColorBrushCache,
-                             rect As RectangleF,
-                             color As Color)
-        If rt Is Nothing OrElse brushCache Is Nothing OrElse color.A = 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
-        rt.FillRectangle(D3D_D2DInterop.ToD2DRect(rect), brushCache.Get(rt, color))
-    End Sub
-
-    Public Sub DrawRectangle(rt As ID2D1RenderTarget,
-                             brushCache As D3D_D2DInterop.SolidColorBrushCache,
-                             rect As RectangleF,
-                             color As Color,
-                             width As Single)
-        If rt Is Nothing OrElse brushCache Is Nothing OrElse color.A = 0 OrElse width <= 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
-        rt.DrawRectangle(D3D_D2DInterop.ToD2DRect(rect), brushCache.Get(rt, color), width)
-    End Sub
-
-    Public Sub DrawText(rt As ID2D1RenderTarget,
-                        compositor As D3D_SurfaceCompositor,
-                        text As String,
-                        font As Font,
-                        rect As RectangleF,
-                        color As Color,
-                        flags As TextFormatFlags,
-                        dpiScale As Single)
-        If String.IsNullOrEmpty(text) OrElse font Is Nothing OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
-        D3D_TextInterop.DrawText(rt, text, font, rect, color, flags, dpiScale,
-                                 compositor.TextFormatCache, compositor.BrushCache)
-    End Sub
-
-    Public Sub DrawImage(rt As ID2D1RenderTarget,
-                         compositor As D3D_SurfaceCompositor,
-                         image As Image,
-                         rect As RectangleF)
-        If rt Is Nothing OrElse compositor Is Nothing OrElse image Is Nothing OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
-        Dim sourceRect As New Vortice.Mathematics.Rect(0, 0, image.Width, image.Height)
-        Dim cache = compositor.GetBitmapCache(image)
-        Dim bitmap = cache?.GetBitmap(rt, image)
-        If bitmap Is Nothing Then
-            Using directBitmap = D3D_D2DInterop.CreateBitmapFromImage(rt, image)
-                If directBitmap Is Nothing Then Return
-                rt.DrawBitmap(directBitmap, D3D_D2DInterop.ToD2DRect(rect), 1.0F, BitmapInterpolationMode.Linear, sourceRect)
-            End Using
-            Return
-        End If
-        rt.DrawBitmap(bitmap, D3D_D2DInterop.ToD2DRect(rect), 1.0F, BitmapInterpolationMode.Linear, sourceRect)
-    End Sub
-
-    Public Sub DrawCloseButton(rt As ID2D1RenderTarget,
-                               brushCache As D3D_D2DInterop.SolidColorBrushCache,
-                               rect As RectangleF,
-                               hovered As Boolean,
-                               pressed As Boolean,
-                               normalForeColor As Color,
-                               hoverForeColor As Color,
-                               hoverBackColor As Color,
-                               dpiScale As Single)
-        If pressed Then
-            FillRectangle(rt, brushCache, rect, Color.FromArgb(180, hoverBackColor))
-        ElseIf hovered Then
-            FillRectangle(rt, brushCache, rect, hoverBackColor)
-        End If
-
-        Dim glyphColor = If(hovered OrElse pressed, hoverForeColor, normalForeColor)
-        Dim cx = rect.X + rect.Width / 2.0F
-        Dim cy = rect.Y + rect.Height / 2.0F
-        Dim half = 5.0F * dpiScale
-        Dim width = Math.Max(1.0F, 1.2F * dpiScale)
-        Dim brush = brushCache.Get(rt, glyphColor)
-        rt.DrawLine(New Vector2(cx - half, cy - half), New Vector2(cx + half, cy + half), brush, width)
-        rt.DrawLine(New Vector2(cx + half, cy - half), New Vector2(cx - half, cy + half), brush, width)
-    End Sub
-
     Public Function DrawBackdrop(context As D3D_PaintContext,
                                  bounds As RectangleF,
                                  Optional controller As MessageDialogBackdropController = Nothing) As Boolean
@@ -410,14 +337,14 @@ Friend Module MessageDialogRendering
         If MessageDialogOptions.BackdropMode <> PopupBackdropMode.Image OrElse
            MessageDialogOptions.BackdropImage Is Nothing Then Return False
 
-        context.Compositor.D3D_BackdropSurfaceRenderer.SetImage(MessageDialogOptions.BackdropImage)
-        context.Compositor.D3D_BackdropSurfaceRenderer.ApplyParameters(MessageDialogOptions.BackdropBlurRadius,
+        context.Compositor.BackdropRenderer.SetImage(MessageDialogOptions.BackdropImage)
+        context.Compositor.BackdropRenderer.ApplyParameters(MessageDialogOptions.BackdropBlurRadius,
                                                                        MessageDialogOptions.BackdropBlurPasses,
                                                                        MessageDialogOptions.BackdropDownsampleFactor,
                                                                        MessageDialogOptions.BackdropNoiseScale)
-        context.Compositor.D3D_BackdropSurfaceRenderer.TintColor = MessageDialogOptions.BackdropTintColor
-        context.Compositor.D3D_BackdropSurfaceRenderer.NoiseOpacity = MessageDialogOptions.BackdropNoiseOpacity
-        context.Compositor.D3D_BackdropSurfaceRenderer.DrawImageBackdrop(context, bounds)
+        context.Compositor.BackdropRenderer.TintColor = MessageDialogOptions.BackdropTintColor
+        context.Compositor.BackdropRenderer.NoiseOpacity = MessageDialogOptions.BackdropNoiseOpacity
+        context.Compositor.BackdropRenderer.DrawImageBackdrop(context, bounds)
         Return True
     End Function
 

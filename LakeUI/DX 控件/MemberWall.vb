@@ -9,7 +9,7 @@ Imports Vortice.DirectWrite
 <DefaultEvent("ItemClick")>
 <DefaultProperty("Items")>
 Partial Public Class MemberWall
-    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource
+    Implements V3_IGpuRenderable, V3_IGpuInvalidationSource, V3_ISuperSamplingSource
 
 #Region "数据模型"
 
@@ -418,7 +418,7 @@ Partial Public Class MemberWall
 
     Private _superSamplingScale As GlobalOptions.SuperSamplingScaleEnum = GlobalOptions.SuperSamplingScaleEnum.OFF
     <Category("LakeUI"), Description(GlobalOptions.超采样抗锯齿描述词), DefaultValue(GetType(GlobalOptions.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
-    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum
+    Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements V3_ISuperSamplingSource.SuperSamplingScale
         Get
             Return _superSamplingScale
         End Get
@@ -892,7 +892,9 @@ Partial Public Class MemberWall
         If _backgroundSource IsNot Nothing Then
             context.DrawBackgroundSource(Me, _backgroundSource, New RectangleF(0, 0, Width, Height))
         End If
-        If backColorMask.A > 0 AndAlso backColorMask.A < 255 Then FillRoundedRect_GPU(context, rect, radius, backColorMask)
+        If _backgroundSource Is Nothing AndAlso backColorMask.A > 0 AndAlso backColorMask.A < 255 Then
+            FillRoundedRect_GPU(context, rect, radius, backColorMask)
+        End If
         If _backColor1.A > 0 Then FillRoundedRect_GPU(context, rect, radius, _backColor1)
         If _borderSize > 0 AndAlso _borderColor.A > 0 Then DrawRoundedBorder_GPU(context, rect, radius, _borderColor, _borderSize * s)
     End Sub
