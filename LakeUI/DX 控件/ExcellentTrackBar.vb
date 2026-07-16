@@ -1126,7 +1126,9 @@ Public Class ExcellentTrackBar
     Protected Overrides Sub OnMouseWheel(e As MouseEventArgs)
         MyBase.OnMouseWheel(e)
         If Not Enabled Then Return
-        Value = Math.Max(最小值, Math.Min(最大值, 当前值 + If(e.Delta > 0, 小步进值, -小步进值)))
+        Dim delta As Double = If(e.Delta > 0, 小步进值, -小步进值)
+        Dim nextValue As Double = NumericValuePrecision.RemoveStepNoise(NumericValuePrecision.AddStep(当前值, delta), 最小值, Math.Abs(delta))
+        Value = Math.Max(最小值, Math.Min(最大值, nextValue))
     End Sub
 
     Private Sub 更新值从坐标(point As Point)
@@ -1140,7 +1142,7 @@ Public Class ExcellentTrackBar
             ratio = (trackRect.Bottom - point.Y) / trackRect.Height
         End If
         Dim rawVal As Double = 最小值 + Math.Max(0.0, Math.Min(1.0, ratio)) * range
-        Value = Math.Round((rawVal - 最小值) / 小步进值) * 小步进值 + 最小值
+        Value = NumericValuePrecision.SnapToIncrement(rawVal, 最小值, 小步进值)
     End Sub
 
     Protected Overrides Sub OnKeyDown(e As KeyEventArgs)
@@ -1148,16 +1150,16 @@ Public Class ExcellentTrackBar
         If Not Enabled Then Return
         Select Case e.KeyCode
             Case Keys.Right, Keys.Up
-                Value = Math.Min(最大值, 当前值 + 小步进值)
+                Value = Math.Min(最大值, NumericValuePrecision.RemoveStepNoise(NumericValuePrecision.AddStep(当前值, 小步进值), 最小值, 小步进值))
                 e.Handled = True
             Case Keys.Left, Keys.Down
-                Value = Math.Max(最小值, 当前值 - 小步进值)
+                Value = Math.Max(最小值, NumericValuePrecision.RemoveStepNoise(NumericValuePrecision.AddStep(当前值, -小步进值), 最小值, 小步进值))
                 e.Handled = True
             Case Keys.PageUp
-                Value = Math.Min(最大值, 当前值 + 大步进值)
+                Value = Math.Min(最大值, NumericValuePrecision.RemoveStepNoise(NumericValuePrecision.AddStep(当前值, 大步进值), 最小值, 大步进值))
                 e.Handled = True
             Case Keys.PageDown
-                Value = Math.Max(最小值, 当前值 - 大步进值)
+                Value = Math.Max(最小值, NumericValuePrecision.RemoveStepNoise(NumericValuePrecision.AddStep(当前值, -大步进值), 最小值, 大步进值))
                 e.Handled = True
             Case Keys.Home
                 Value = 最小值

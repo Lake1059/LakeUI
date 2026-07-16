@@ -7,11 +7,11 @@
     <Title>LakeUI</Title>
     <Authors>1059 Studio</Authors>
     <GeneratePackageOnBuild>True</GeneratePackageOnBuild>
-    <Description>湖界 LakeUI 是专为 WinForms 设计的一套精致交互控件，主打简单易用、精致美观、高度定制、高效性能，新手强烈推荐。主要面向个人项目提供。</Description>
+    <Description>湖界 LakeUI v3 使用 D3D11/D2D1.1 来将全量 GPU 加速带入 WinForms，独特超容器背景映射、可调毛玻璃、高精计时器动画、高 DPI 内部自适应、HDR 等现代化视觉效果让 WinForms 在堆控件的基础上与主流 UI 框架上桌打牌；封装程度极高，像原生控件一样添加，没有复杂的名称和机制，以最低的成本迁移您的 WinForms 项目；价格亲民，买断制永久许可。</Description>
     <PackageReadmeFile>README.md</PackageReadmeFile>
-    <AssemblyVersion>3.8</AssemblyVersion>
-    <FileVersion>3.8</FileVersion>
-	<Version>3.8</Version>
+    <AssemblyVersion>3.9</AssemblyVersion>
+    <FileVersion>3.9</FileVersion>
+	<Version>3.9</Version>
     <PackageRequireLicenseAcceptance>True</PackageRequireLicenseAcceptance>
     <PackageLicenseExpression>GPL-3.0-only</PackageLicenseExpression>
     <Copyright>Copyright © 1059 Studio</Copyright>

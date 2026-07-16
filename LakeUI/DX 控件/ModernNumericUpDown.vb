@@ -1059,13 +1059,8 @@ Public Class ModernNumericUpDown
     End Sub
 
     Private Sub StepValue(delta As Double)
-        Dim nextValue As Double
-        Try
-            nextValue = CDbl(CDec(当前值) + CDec(delta))
-        Catch
-            nextValue = 当前值 + delta
-        End Try
-        SetValueCore(nextValue, True, False)
+        Dim nextValue As Double = NumericValuePrecision.AddStep(当前值, delta)
+        SetValueCore(NumericValuePrecision.RemoveStepNoise(nextValue, 最小值, Math.Abs(delta)), True, False)
         请求V3渲染()
     End Sub
 
