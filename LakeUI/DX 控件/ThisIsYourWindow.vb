@@ -31,6 +31,10 @@ Public Class ThisIsYourWindow
     Private Const WM_PAINT As Integer = &HF
     Private Const WM_ERASEBKGND As Integer = &H14
 
+    Private Const TPM_LEFTALIGN As Integer = &H0
+    Private Const TPM_TOPALIGN As Integer = &H0
+    Private Const TPM_RETURNCMD As Integer = &H100
+
     Private Const SC_MINIMIZE As Integer = &HF020
     Private Const SC_MAXIMIZE As Integer = &HF030
     Private Const SC_RESTORE As Integer = &HF120
@@ -127,6 +131,19 @@ Public Class ThisIsYourWindow
 
     <DllImport("user32.dll")>
     Private Shared Function ValidateRect(hWnd As IntPtr, lpRect As IntPtr) As <MarshalAs(UnmanagedType.Bool)> Boolean
+    End Function
+
+    <DllImport("user32.dll")>
+    Private Shared Function GetSystemMenu(hWnd As IntPtr, bRevert As Boolean) As IntPtr
+    End Function
+
+    <DllImport("user32.dll")>
+    Private Shared Function TrackPopupMenuEx(hMenu As IntPtr, uFlags As UInteger, X As Integer, Y As Integer,
+                                               hWnd As IntPtr, lptpm As IntPtr) As Integer
+    End Function
+
+    <DllImport("user32.dll")>
+    Private Shared Function SendMessage(hWnd As IntPtr, msg As Integer, wParam As IntPtr, lParam As IntPtr) As IntPtr
     End Function
 
     <DllImport("user32.dll")>
@@ -2460,7 +2477,17 @@ Public Class ThisIsYourWindow
         Else
             style = style And Not CLng(WS_CAPTION)
         End If
-        style = style Or WS_THICKFRAME Or WS_MINIMIZEBOX Or WS_MAXIMIZEBOX Or WS_SYSMENU
+        style = style Or WS_THICKFRAME Or WS_SYSMENU
+        If targetForm.MinimizeBox Then
+            style = style Or WS_MINIMIZEBOX
+        Else
+            style = style And Not CLng(WS_MINIMIZEBOX)
+        End If
+        If targetForm.MaximizeBox Then
+            style = style Or WS_MAXIMIZEBOX
+        Else
+            style = style And Not CLng(WS_MAXIMIZEBOX)
+        End If
         SetWindowLongPtr(hWnd, GWL_STYLE, New IntPtr(style))
 
         ' ── 第三步：DWM 属性 ──
@@ -2617,7 +2644,17 @@ Public Class ThisIsYourWindow
         Else
             style = style And Not CLng(WS_CAPTION)
         End If
-        style = style Or WS_THICKFRAME Or WS_MINIMIZEBOX Or WS_MAXIMIZEBOX Or WS_SYSMENU
+        style = style Or WS_THICKFRAME Or WS_SYSMENU
+        If targetForm.MinimizeBox Then
+            style = style Or WS_MINIMIZEBOX
+        Else
+            style = style And Not CLng(WS_MINIMIZEBOX)
+        End If
+        If targetForm.MaximizeBox Then
+            style = style Or WS_MAXIMIZEBOX
+        Else
+            style = style And Not CLng(WS_MAXIMIZEBOX)
+        End If
         SetWindowLongPtr(hWnd, GWL_STYLE, New IntPtr(style))
 
         ' ── 重新应用 DWM 属性 ──
@@ -2691,12 +2728,27 @@ Public Class ThisIsYourWindow
         Return result
     End Function
 
+    Private Sub ShowSystemMenuAtIcon(s As PerFormState)
+        If s Is Nothing OrElse s.HostForm Is Nothing OrElse s.HostForm.IsDisposed OrElse s.IconRect.IsEmpty Then Return
+
+        Dim hWnd As IntPtr = s.HostForm.Handle
+        Dim systemMenu As IntPtr = GetSystemMenu(hWnd, False)
+        If systemMenu = IntPtr.Zero Then Return
+
+        Dim anchor As Point = s.HostForm.PointToScreen(New Point(s.IconRect.Left, s.IconRect.Bottom))
+        Dim command As Integer = TrackPopupMenuEx(systemMenu,
+                                                   CUInt(TPM_LEFTALIGN Or TPM_TOPALIGN Or TPM_RETURNCMD),
+                                                   anchor.X, anchor.Y, hWnd, IntPtr.Zero)
+        If command <> 0 Then SendMessage(hWnd, WM_SYSCOMMAND, New IntPtr(command), IntPtr.Zero)
+    End Sub
+
 #End Region
 
 #Region "NativeWindow 消息拦截器"
 
     Private Const WM_NCLBUTTONDOWN As Integer = &HA1
     Private Const WM_NCLBUTTONUP As Integer = &HA2
+    Private Const WM_NCLBUTTONDBLCLK As Integer = &HA3
     Private Const WM_NCMOUSELEAVE As Integer = &H2A2
     Private Const WM_MOUSEMOVE As Integer = &H200
     Private Const WM_LBUTTONUP As Integer = &H202
@@ -2882,11 +2934,22 @@ Public Class ThisIsYourWindow
 
                 Case WM_NCLBUTTONDOWN
                     Dim htDown As Integer = CInt(m.WParam.ToInt64())
+                    If htDown = HTSYSMENU Then
+                        _owner.ShowSystemMenuAtIcon(_state)
+                        Return
+                    End If
                     If htDown = HTCLOSE OrElse htDown = HTMAXBUTTON OrElse htDown = HTMINBUTTON Then
                         _state.PressedHit = htDown
                         _state.HoverHit = htDown
                         _owner.InvalidateCaption(_state.HostForm)
                         SetCapture(_state.HostForm.Handle)
+                        Return
+                    End If
+                    MyBase.WndProc(m)
+                    Return
+
+                Case WM_NCLBUTTONDBLCLK
+                    If CInt(m.WParam.ToInt64()) = HTCAPTION AndAlso Not _state.HostForm.MaximizeBox Then
                         Return
                     End If
                     MyBase.WndProc(m)

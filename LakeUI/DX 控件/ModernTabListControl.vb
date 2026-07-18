@@ -1255,8 +1255,10 @@ Public Class ModernTabListControl
     Private Sub 绘制分割线_GPU(context As D3D_PaintContext, index As Integer)
         Dim bounds = 获取标签页项矩形(index)
         If bounds.Width <= 0 OrElse bounds.Height <= 0 Then Return
-        Dim lineH As Single = Math.Max(1, DpiScale())
-        Dim lineY As Single = bounds.Y + (bounds.Height - lineH) / 2.0F
+        ' Keep the DPI-scaled thickness, but align its origin to the physical pixel
+        ' grid so fractional layout coordinates cannot antialias separators differently.
+        Dim lineH As Single = Math.Max(1.0F, DpiScale())
+        Dim lineY As Single = CSng(Math.Round(bounds.Y + (bounds.Height - lineH) / 2.0F))
         context.FillRectangle(New RectangleF(bounds.X, lineY, bounds.Width, lineH), 分割线颜色值)
     End Sub
 
