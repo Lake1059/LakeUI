@@ -339,6 +339,8 @@ Public Class ModernTabListControl
     Private _布局有滚动条 As Boolean
     Private _布局标签栏矩形 As Rectangle
     Private _布局内容区矩形 As Rectangle
+    ' Items 作为普通 List 暴露，设计器会直接增删元素而不会调用 RefreshItems。
+    Private _布局项目数量 As Integer = -1
     Private _布局已生成 As Boolean = False
 
     Protected Overrides Sub OnHandleCreated(e As EventArgs)
@@ -1451,7 +1453,8 @@ Public Class ModernTabListControl
 #Region "布局"
     ''' <summary>按显式失效重建布局，后续几何查询直接复用数组。</summary>
     Private Sub 确保布局缓存()
-        If _布局已生成 Then Return
+        ' 直接增删 Items 时没有集合变更事件；项目数量不匹配即表示缓存已过期。
+        If _布局已生成 AndAlso _布局项目数量 = 项目列表.Count Then Return
 
         Dim s As Single = DpiScale()
         Dim count As Integer = 项目列表.Count
@@ -1527,12 +1530,14 @@ Public Class ModernTabListControl
         _布局项X = x
         _布局项W = Math.Max(0, itemW)
 
+        _布局项目数量 = count
         _布局已生成 = True
     End Sub
 
     ''' <summary>使布局缓存立即失效（增删项、项内 IsSeparator/IsDescription 变更等）。</summary>
     Private Sub 失效布局缓存()
         _布局已生成 = False
+        _布局项目数量 = -1
     End Sub
 
     Private Function 项目是否可见(index As Integer) As Boolean

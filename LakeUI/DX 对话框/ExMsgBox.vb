@@ -623,11 +623,12 @@ Friend Class ExMsgBoxForm
         Dim 图标占宽 As Integer = If(有图标, 图标尺寸 + 图标间距, 0)
         Dim 最大文本宽 As Integer = 最大宽度 - 内边距 * 2 - 图标占宽
 
-        ' 测量文本
-        Dim 文本尺寸 = TextRenderer.MeasureText(
+        ' 使用与 GPU 绘制相同的 DirectWrite 度量，避免最后一行因行高差异被裁剪。
+        Dim 消息文本格式 = TextFormatFlags.WordBreak Or TextFormatFlags.Left Or TextFormatFlags.Top Or TextFormatFlags.NoPadding
+        Dim 文本尺寸 = D3D_TextInterop.MeasureText(
             消息标签.Text, 消息字体,
             New Size(最大文本宽, Integer.MaxValue),
-            TextFormatFlags.WordBreak Or TextFormatFlags.TextBoxControl)
+            消息文本格式, SC)
 
         ' 计算宽度
         Dim 按钮宽合计 As Integer = 0
@@ -641,10 +642,10 @@ Friend Class ExMsgBoxForm
 
         ' 用实际宽度重新测量
         Dim 实际文本宽 As Integer = 窗体宽度 - 内边距 * 2 - 图标占宽
-        文本尺寸 = TextRenderer.MeasureText(
+        文本尺寸 = D3D_TextInterop.MeasureText(
             消息标签.Text, 消息字体,
             New Size(实际文本宽, Integer.MaxValue),
-            TextFormatFlags.WordBreak Or TextFormatFlags.TextBoxControl)
+            消息文本格式, SC)
 
         ' 高度
         Dim 内容高度 As Integer = Math.Max(最小内容高, Math.Max(文本尺寸.Height, If(有图标, 图标尺寸, 0)))

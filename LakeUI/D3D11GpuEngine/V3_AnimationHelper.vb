@@ -232,6 +232,12 @@ Friend Class V3_AnimationHelper
 
     Public Sub AnimateTo(target As Single)
         If _disposed Then Return
+
+        ' High-frequency producers may retarget an animation many times between frames.
+        ' The scheduler will sample the latest target on its next due frame, so restarting
+        ' an already-running segment for the same target only adds scheduling overhead.
+        If _animationRunning AndAlso Math.Abs(_target - target) < ProgressEpsilon Then Return
+
         _target = target
         If Not _owner.IsHandleCreated OrElse _duration <= 0 Then
             StopAnimation()
@@ -255,8 +261,6 @@ Friend Class V3_AnimationHelper
         If Not _animationRunning Then
             _animationRunning = True
             CurrentScheduler(_owner).Register(Me)
-        Else
-            CurrentScheduler(_owner).Reconfigure()
         End If
     End Sub
 
