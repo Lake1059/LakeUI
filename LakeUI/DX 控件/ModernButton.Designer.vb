@@ -7,6 +7,7 @@ Partial Class ModernButton
     Protected Overrides Sub Dispose(disposing As Boolean)
         Try
             If disposing Then
+                释放次文本字体()
                 助记键触发计时器?.Dispose()
                 动画助手?.Dispose()
                 长按动画助手?.Dispose()

@@ -7,6 +7,7 @@ Partial Class ModernCheckBox
     Protected Overrides Sub Dispose(ByVal disposing As Boolean)
         Try
             If disposing Then
+                释放次文本字体()
                 动画助手?.Dispose()
                 If components IsNot Nothing Then
                     components.Dispose()

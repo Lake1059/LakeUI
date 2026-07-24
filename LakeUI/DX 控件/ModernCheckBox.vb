@@ -6,6 +6,27 @@ Imports Vortice.Direct2D1
 Public Class ModernCheckBox
     Implements V3_IGpuRenderable, V3_IGpuInvalidationSource, V3_ISuperSamplingSource
 
+    Private _subTextFontCache As Font
+    Private _subTextFontCacheKey As String
+
+    Private Function 获取次文本字体() As Font
+        Dim size As Single = Math.Max(1.0F, 次要文本字号)
+        Dim key As String = Me.Font.FontFamily.Name & "|" & size.ToString(Globalization.CultureInfo.InvariantCulture)
+        If _subTextFontCache IsNot Nothing AndAlso _subTextFontCacheKey = key Then Return _subTextFontCache
+        释放次文本字体()
+        _subTextFontCache = New Font(Me.Font.FontFamily, size, FontStyle.Regular, GraphicsUnit.Point)
+        _subTextFontCacheKey = key
+        Return _subTextFontCache
+    End Function
+
+    Private Sub 释放次文本字体()
+        If _subTextFontCache IsNot Nothing Then
+            Try : _subTextFontCache.Dispose() : Catch : End Try
+            _subTextFontCache = Nothing
+        End If
+        _subTextFontCacheKey = Nothing
+    End Sub
+
     Public Sub New()
         InitializeComponent()
         SetStyle(ControlStyles.StandardDoubleClick, False)
@@ -109,47 +130,26 @@ Public Class ModernCheckBox
         Dim 总长度 As Single = 段1长 + 段2长
         If 总长度 < 0.01F Then Return
 
-        Dim path As ID2D1PathGeometry = D3D_RenderCore.DeviceManager.D2DFactory.CreatePathGeometry()
-        Dim sink As ID2D1GeometrySink = path.Open()
-        Try
-            Dim 可见长度 As Single = 总长度 * progress
-            sink.BeginFigure(New Vector2(x1, y1), FigureBegin.Hollow)
-            If 可见长度 <= 段1长 Then
-                Dim t As Single = If(段1长 > 0, 可见长度 / 段1长, 0F)
-                sink.AddLine(New Vector2(x1 + (x2 - x1) * t, y1 + (y2 - y1) * t))
-            Else
-                sink.AddLine(New Vector2(x2, y2))
-                Dim 剩余 As Single = 可见长度 - 段1长
-                Dim t As Single = If(段2长 > 0, 剩余 / 段2长, 0F)
-                sink.AddLine(New Vector2(x2 + (x3 - x2) * t, y2 + (y3 - y2) * t))
-            End If
-            sink.EndFigure(FigureEnd.Open)
-            sink.Close()
-        Finally
-            sink.Dispose()
-        End Try
-
-        Try
-            Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, 当前勾号色, context.DeviceGeneration)
-            Using strokeStyle As ID2D1StrokeStyle = 创建圆头描边样式_GPU()
-                context.DeviceContext.DrawGeometry(path, brush, 勾号线宽 * s, strokeStyle)
-            End Using
-        Finally
-            path.Dispose()
-        End Try
+        Dim 可见长度 As Single = 总长度 * progress
+        Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, 当前勾号色, context.DeviceGeneration)
+        Dim strokeStyle = D3D_D2DInterop.GetRoundStrokeStyle()
+        Dim strokeWidth = 勾号线宽 * s
+        If 可见长度 <= 段1长 Then
+            Dim t As Single = If(段1长 > 0, 可见长度 / 段1长, 0F)
+            context.DeviceContext.DrawLine(
+                New Vector2(x1, y1),
+                New Vector2(x1 + (x2 - x1) * t, y1 + (y2 - y1) * t),
+                brush, strokeWidth, strokeStyle)
+        Else
+            context.DeviceContext.DrawLine(New Vector2(x1, y1), New Vector2(x2, y2), brush, strokeWidth, strokeStyle)
+            Dim 剩余 As Single = 可见长度 - 段1长
+            Dim t As Single = If(段2长 > 0, 剩余 / 段2长, 0F)
+            context.DeviceContext.DrawLine(
+                New Vector2(x2, y2),
+                New Vector2(x2 + (x3 - x2) * t, y2 + (y3 - y2) * t),
+                brush, strokeWidth, strokeStyle)
+        End If
     End Sub
-
-    Private Shared Function 创建圆头描边样式_GPU() As ID2D1StrokeStyle
-        Return D3D_RenderCore.DeviceManager.D2DFactory.CreateStrokeStyle(
-            New StrokeStyleProperties With {
-                .StartCap = CapStyle.Round,
-                .EndCap = CapStyle.Round,
-                .DashCap = CapStyle.Flat,
-                .LineJoin = LineJoin.Round,
-                .DashStyle = DashStyle.Solid,
-                .MiterLimit = 10.0F
-            })
-    End Function
 
     Private Sub 绘制圆框_GPU(context As D3D_PaintContext, 框区域 As RectangleF, 背景色 As Color, 边框色 As Color, 边框宽 As Single, s As Single)
         填充椭圆_GPU(context, 框区域, 背景色)
@@ -187,9 +187,10 @@ Public Class ModernCheckBox
             Dim subH As Single = 获取次文本行高()
             Dim gap As Single = 主次文本间距 * s
             context.DrawText(mainText, Me.Font, 文本颜色, New RectangleF(文本X, mainY, 文本可用宽度, mainH), Vortice.DirectWrite.TextAlignment.Leading, Vortice.DirectWrite.ParagraphAlignment.Near)
-            Using subFont As New Font(Me.Font.FontFamily, 次要文本字号, FontStyle.Regular)
+            Dim subFont = 获取次文本字体()
+            If subFont IsNot Nothing Then
                 context.DrawText(次要文本, subFont, 次要文本颜色, New RectangleF(文本X, mainY + mainH + gap, 文本可用宽度, subH), Vortice.DirectWrite.TextAlignment.Leading, Vortice.DirectWrite.ParagraphAlignment.Near)
-            End Using
+            End If
         Else
             Dim mainH As Single = 获取主文本行高()
             context.DrawText(mainText, Me.Font, 文本颜色, New RectangleF(文本X, mainY, 文本可用宽度, mainH), Vortice.DirectWrite.TextAlignment.Leading, Vortice.DirectWrite.ParagraphAlignment.Near)
@@ -426,9 +427,7 @@ Public Class ModernCheckBox
 
     Private Function 获取次文本行高() As Integer
         If _缓存次文本行高 < 0 AndAlso Not String.IsNullOrEmpty(次要文本) Then
-            Using f As New Font(Me.Font.FontFamily, 次要文本字号, FontStyle.Regular)
-                _缓存次文本行高 = TextRenderer.MeasureText("A", f).Height
-            End Using
+            _缓存次文本行高 = TextRenderer.MeasureText("A", 获取次文本字体()).Height
         End If
         Return _缓存次文本行高
     End Function
@@ -707,8 +706,12 @@ Public Class ModernCheckBox
             Return 次要文本字号
         End Get
         Set(value As Integer)
+            value = Math.Max(1, value)
+            If 次要文本字号 = value Then Return
             _缓存次文本行高 = -1
-            SetValue(次要文本字号, value)
+            次要文本字号 = value
+            释放次文本字体()
+            请求V3渲染()
         End Set
     End Property
 
@@ -860,13 +863,14 @@ Public Class ModernCheckBox
         Dim 新宽度 As Integer = CInt(Me.Padding.Left + 边框额外 + 框尺寸 + 间距) + 主文本尺寸.Width + Me.Padding.Right
         Dim 新高度 As Integer
         If Not String.IsNullOrEmpty(次要文本) Then
-            Using 次要文本字体 As New Font(Me.Font.FontFamily, 次要文本字号, FontStyle.Regular)
+            Dim 次要文本字体 = 获取次文本字体()
+            If 次要文本字体 IsNot Nothing Then
                 Dim 次文本尺寸 As Size = TextRenderer.MeasureText(次要文本, 次要文本字体, New Size(Integer.MaxValue, Integer.MaxValue), 文本格式)
                 Dim _主次间距 As Integer = CInt(Math.Round(主次文本间距 * s))
                 Dim 文本总高度 As Integer = 主文本尺寸.Height + _主次间距 + 次文本尺寸.Height
                 新高度 = Math.Max(CInt(框尺寸 + 边框额外), 文本总高度) + Me.Padding.Vertical
                 新宽度 = Math.Max(新宽度, CInt(Me.Padding.Left + 边框额外 + 框尺寸 + 间距) + 次文本尺寸.Width + Me.Padding.Right)
-            End Using
+            End If
         Else
             新高度 = Math.Max(CInt(框尺寸 + 边框额外), 主文本尺寸.Height) + Me.Padding.Vertical
         End If
@@ -893,6 +897,7 @@ Public Class ModernCheckBox
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
         MyBase.OnFontChanged(e)
+        释放次文本字体()
         重置文本行高缓存()
         更新自动尺寸()
         请求V3渲染()

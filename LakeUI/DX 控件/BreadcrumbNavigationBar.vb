@@ -935,35 +935,12 @@ Public Class BreadcrumbNavigationBar
             p2 = New System.Numerics.Vector2(cx + hh, cy)
             p3 = New System.Numerics.Vector2(cx - hh, cy + half)
         End If
-        Dim path = D3D_RenderCore.DeviceManager.D2DFactory.CreatePathGeometry()
-        Try
-            Using sink = path.Open()
-                sink.BeginFigure(p1, FigureBegin.Hollow)
-                sink.AddLine(p2)
-                sink.AddLine(p3)
-                sink.EndFigure(FigureEnd.Open)
-                sink.Close()
-            End Using
-            Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, c, context.DeviceGeneration)
-            Using strokeStyle = 创建圆头描边样式_GPU()
-                context.DeviceContext.DrawGeometry(path, brush, 箭头线宽 * s, strokeStyle)
-            End Using
-        Finally
-            path.Dispose()
-        End Try
+        Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, c, context.DeviceGeneration)
+        Dim strokeStyle = D3D_D2DInterop.GetRoundStrokeStyle(True)
+        Dim strokeWidth = 箭头线宽 * s
+        context.DeviceContext.DrawLine(p1, p2, brush, strokeWidth, strokeStyle)
+        context.DeviceContext.DrawLine(p2, p3, brush, strokeWidth, strokeStyle)
     End Sub
-
-    Private Shared Function 创建圆头描边样式_GPU() As ID2D1StrokeStyle
-        Return D3D_RenderCore.DeviceManager.D2DFactory.CreateStrokeStyle(
-            New StrokeStyleProperties With {
-                .StartCap = CapStyle.Round,
-                .EndCap = CapStyle.Round,
-                .DashCap = CapStyle.Round,
-                .LineJoin = LineJoin.Round,
-                .DashStyle = DashStyle.Solid,
-                .MiterLimit = 10.0F
-            })
-    End Function
 
 #End Region
 

@@ -759,15 +759,17 @@ Public Class ModernNumericUpDown
     End Sub
 
     Private Sub 绘制圆角三角形_GPU(context As D3D_PaintContext, center As PointF, up As Boolean, color As Color)
-        Dim path = 创建圆角三角形几何(center, up)
+        Dim path = 获取圆角三角形几何_GPU(context, center, up)
         If path Is Nothing Then Return
-        Try
-            Dim br = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
-            If br IsNot Nothing Then context.DeviceContext.FillGeometry(path, br)
-        Finally
-            path.Dispose()
-        End Try
+        Dim br = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
+        If br IsNot Nothing Then context.DeviceContext.FillGeometry(path, br)
     End Sub
+
+    Private Function 获取圆角三角形几何_GPU(context As D3D_PaintContext, center As PointF, up As Boolean) As ID2D1Geometry
+        Dim scaledArrow As Single = 箭头大小 * DpiScale()
+        Dim key = $"modern-numeric-arrow:{If(up, 1, 0)}:{BitConverter.SingleToInt32Bits(center.X)}:{BitConverter.SingleToInt32Bits(center.Y)}:{BitConverter.SingleToInt32Bits(scaledArrow)}"
+        Return context.Compositor.GeometryCache.GetOrCreateGeometry(key, Function() 创建圆角三角形几何(center, up))
+    End Function
 
     Private Function 创建圆角三角形几何(center As PointF, up As Boolean) As ID2D1PathGeometry
         Dim scaledArrow As Single = 箭头大小 * DpiScale()

@@ -76,10 +76,20 @@ Public NotInheritable Class D3D_PaintContext
         Return DirtyRectangle.IntersectsWith(rect)
     End Function
 
+    Private Function CanCullOutsideDirty(rect As RectangleF, Optional inflate As Single = 0.0F) As Boolean
+        If rect.Width <= 0.0F OrElse rect.Height <= 0.0F Then Return True
+        ' 控件传入的边界使用本地坐标。调用方临时改写 Transform（例如旋转图表文字）时，
+        ' 无法用未变换边界可靠裁剪，因此保守放行。
+        If DeviceContext Is Nothing OrElse DeviceContext.Transform <> LocalToWindowTransform Then Return False
+        If inflate > 0.0F Then rect.Inflate(inflate, inflate)
+        Return Not IntersectsDirty(rect)
+    End Function
+
     ''' <summary>
     ''' 绘制填充矩形。调用方只传业务颜色；D3D_BrushCache 负责跨帧 brush 生命周期。
     ''' </summary>
     Public Sub FillRectangle(rect As RectangleF, color As System.Drawing.Color)
+        If color.A = 0 OrElse CanCullOutsideDirty(rect) Then Return
         Dim brush = Compositor.BrushCache.GetSolidBrush(DeviceContext, color, DeviceGeneration)
         DeviceContext.FillRectangle(ToRawRect(rect), brush)
     End Sub
@@ -88,27 +98,42 @@ Public NotInheritable Class D3D_PaintContext
     ''' 绘制矩形边框。该方法使用窗口级 brush cache，不在控件内创建长期画刷。
     ''' </summary>
     Public Sub DrawRectangle(rect As RectangleF, color As System.Drawing.Color, Optional strokeWidth As Single = 1.0F)
+        If color.A = 0 OrElse strokeWidth <= 0.0F OrElse CanCullOutsideDirty(rect, Math.Max(0.1F, strokeWidth) / 2.0F) Then Return
         Dim brush = Compositor.BrushCache.GetSolidBrush(DeviceContext, color, DeviceGeneration)
         DeviceContext.DrawRectangle(ToRawRect(rect), brush, Math.Max(0.1F, strokeWidth))
     End Sub
 
     Public Sub FillRoundedRectangle(rect As RectangleF, radius As Single, color As System.Drawing.Color)
-        If color.A = 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        If color.A = 0 OrElse CanCullOutsideDirty(rect) Then Return
         Dim brush = Compositor.BrushCache.GetSolidBrush(DeviceContext, color, DeviceGeneration)
         FillRoundedRectangle(rect, radius, DirectCast(brush, ID2D1Brush))
     End Sub
 
     Public Sub FillRoundedRectangle(rect As RectangleF, radius As Single, brush As ID2D1Brush)
-        If brush Is Nothing OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        If brush Is Nothing OrElse CanCullOutsideDirty(rect) Then Return
         radius = NormalizeRoundedRadius(rect, radius)
         If radius <= 0 Then
             DeviceContext.FillRectangle(ToRawRect(rect), brush)
             Return
         End If
 
-        ' The Vortice 3.8 VB projection exposes an ambiguous by-ref FillRoundedRectangle overload.
-        ' Keep dynamic rounded rectangles out of the window geometry cache; their transient geometry is
-        ' released before returning from this draw call.
+        If TypeOf brush Is ID2D1SolidColorBrush Then
+            ' 纯色不受坐标平移影响：缓存原点几何，仅用当前变换平移到目标位置。
+            ' key 不包含 X/Y，滚动中的卡片不会按每个位置污染几何缓存。
+            Dim localRect As New RectangleF(0.0F, 0.0F, rect.Width, rect.Height)
+            Dim geometry = GetRoundedRectangleGeometry(localRect, radius)
+            If geometry Is Nothing Then Return
+            Dim oldTransform = DeviceContext.Transform
+            Try
+                DeviceContext.Transform = Matrix3x2.CreateTranslation(rect.X, rect.Y) * oldTransform
+                DeviceContext.FillGeometry(geometry, brush)
+            Finally
+                DeviceContext.Transform = oldTransform
+            End Try
+            Return
+        End If
+
+        ' 渐变画刷使用目标坐标，不能通过平移规范化；只为这类少量路径保留临时几何。
         Using geometry = D3D_RenderCore.DeviceManager.D2DFactory.CreateRoundedRectangleGeometry(New RoundedRectangle(rect, radius, radius))
             DeviceContext.FillGeometry(geometry, brush)
         End Using
@@ -125,13 +150,13 @@ Public NotInheritable Class D3D_PaintContext
     End Function
 
     Public Sub DrawRoundedRectangle(rect As RectangleF, radius As Single, color As System.Drawing.Color, Optional strokeWidth As Single = 1.0F)
-        If color.A = 0 OrElse strokeWidth <= 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        If color.A = 0 OrElse strokeWidth <= 0 OrElse CanCullOutsideDirty(rect, Math.Max(0.1F, strokeWidth) / 2.0F) Then Return
         Dim brush = Compositor.BrushCache.GetSolidBrush(DeviceContext, color, DeviceGeneration)
         DrawRoundedRectangle(rect, radius, DirectCast(brush, ID2D1Brush), strokeWidth)
     End Sub
 
     Public Sub DrawRoundedRectangle(rect As RectangleF, radius As Single, brush As ID2D1Brush, Optional strokeWidth As Single = 1.0F)
-        If brush Is Nothing OrElse strokeWidth <= 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        If brush Is Nothing OrElse strokeWidth <= 0 OrElse CanCullOutsideDirty(rect, Math.Max(0.1F, strokeWidth) / 2.0F) Then Return
         radius = NormalizeRoundedRadius(rect, radius)
         If radius <= 0 Then
             DeviceContext.DrawRectangle(ToRawRect(rect), brush, Math.Max(0.1F, strokeWidth))
@@ -142,6 +167,54 @@ Public NotInheritable Class D3D_PaintContext
     End Sub
 
     ''' <summary>
+    ''' 获取由现有 GPU 总预算管理的两色线性渐变画刷。停止点和画刷跨帧复用，
+    ''' 起止坐标按本次目标矩形更新；调用方不得 Dispose 返回值。
+    ''' </summary>
+    Public Function GetLinearGradientBrush(bounds As RectangleF,
+                                           startColor As System.Drawing.Color,
+                                           endColor As System.Drawing.Color,
+                                           direction As System.Windows.Forms.Orientation,
+                                           Optional reverse As Boolean = False) As ID2D1LinearGradientBrush
+        If bounds.Width <= 0.0F OrElse bounds.Height <= 0.0F Then Return Nothing
+        BeginTextureUse()
+        Dim key As New D3D_LinearGradientCacheKey(DeviceContext,
+                                                  DeviceGeneration,
+                                                  D3D_HdrOutput.VectorColorRevision,
+                                                  startColor.ToArgb(),
+                                                  endColor.ToArgb(),
+                                                  direction,
+                                                  reverse)
+        Dim brush = Compositor.TextureCache.AcquireTexture(
+            key,
+            DeviceGeneration,
+            512L,
+            Function()
+                Dim stops() As GradientStop = {
+                    New GradientStop With {.Position = 0.0F, .Color = ToColor4(startColor)},
+                    New GradientStop With {.Position = 1.0F, .Color = ToColor4(endColor)}}
+                Using stopCollection = DeviceContext.CreateGradientStopCollection(stops)
+                    Return DeviceContext.CreateLinearGradientBrush(
+                        New LinearGradientBrushProperties(Vector2.Zero, Vector2.One),
+                        stopCollection)
+                End Using
+            End Function)
+        If brush Is Nothing Then Return Nothing
+
+        Dim startPoint As Vector2
+        Dim endPoint As Vector2
+        If direction = System.Windows.Forms.Orientation.Vertical Then
+            startPoint = New Vector2(bounds.X, If(reverse, bounds.Bottom, bounds.Y))
+            endPoint = New Vector2(bounds.X, If(reverse, bounds.Y, bounds.Bottom))
+        Else
+            startPoint = New Vector2(If(reverse, bounds.Right, bounds.X), bounds.Y)
+            endPoint = New Vector2(If(reverse, bounds.X, bounds.Right), bounds.Y)
+        End If
+        brush.StartPoint = startPoint
+        brush.EndPoint = endPoint
+        Return brush
+    End Function
+
+    ''' <summary>
     ''' 绘制图片，图片上传和缩放策略由 D3D_ImageCache 处理；控件不得缓存预缩放 CPU bitmap。
     ''' </summary>
     Public Sub DrawImage(image As Image,
@@ -150,6 +223,7 @@ Public NotInheritable Class D3D_PaintContext
                          Optional opacity As Single = 1.0F,
                          Optional frameIndex As Integer = 0,
                          Optional interpolation As InterpolationMode = InterpolationMode.Linear)
+        If image Is Nothing OrElse opacity <= 0.0F OrElse CanCullOutsideDirty(destination) Then Return
         Compositor.ImageCache.DrawImage(Me, image, destination, source, opacity, frameIndex, interpolation)
     End Sub
 
@@ -179,6 +253,7 @@ Public NotInheritable Class D3D_PaintContext
                         Optional hAlign As Vortice.DirectWrite.TextAlignment = Vortice.DirectWrite.TextAlignment.Leading,
                         Optional vAlign As Vortice.DirectWrite.ParagraphAlignment = Vortice.DirectWrite.ParagraphAlignment.Near,
                         Optional wordWrap As Boolean = False)
+        If CanCullOutsideDirty(layoutRect) Then Return
         Compositor.TextRenderer.DrawText(Me, text, font, color, layoutRect, hAlign, vAlign, wordWrap)
     End Sub
 
@@ -187,6 +262,7 @@ Public NotInheritable Class D3D_PaintContext
                         color As System.Drawing.Color,
                         layoutRect As RectangleF,
                         flags As TextFormatFlags)
+        If CanCullOutsideDirty(layoutRect) Then Return
         Compositor.TextRenderer.DrawText(Me, text, font, color, layoutRect, flags)
     End Sub
 
@@ -229,6 +305,58 @@ Public NotInheritable Class D3D_PaintContext
             SingleToKey(rect.Height) & ":" &
             SingleToKey(radius)
     End Function
+
+    Private Structure D3D_LinearGradientCacheKey
+        Implements IEquatable(Of D3D_LinearGradientCacheKey)
+
+        Private ReadOnly _context As ID2D1DeviceContext
+        Private ReadOnly _generation As Integer
+        Private ReadOnly _hdrRevision As Integer
+        Private ReadOnly _startArgb As Integer
+        Private ReadOnly _endArgb As Integer
+        Private ReadOnly _direction As System.Windows.Forms.Orientation
+        Private ReadOnly _reverse As Boolean
+
+        Friend Sub New(context As ID2D1DeviceContext,
+                       generation As Integer,
+                       hdrRevision As Integer,
+                       startArgb As Integer,
+                       endArgb As Integer,
+                       direction As System.Windows.Forms.Orientation,
+                       reverse As Boolean)
+            _context = context
+            _generation = generation
+            _hdrRevision = hdrRevision
+            _startArgb = startArgb
+            _endArgb = endArgb
+            _direction = direction
+            _reverse = reverse
+        End Sub
+
+        Public Overloads Function Equals(other As D3D_LinearGradientCacheKey) As Boolean Implements IEquatable(Of D3D_LinearGradientCacheKey).Equals
+            Return ReferenceEquals(_context, other._context) AndAlso
+                   _generation = other._generation AndAlso
+                   _hdrRevision = other._hdrRevision AndAlso
+                   _startArgb = other._startArgb AndAlso
+                   _endArgb = other._endArgb AndAlso
+                   _direction = other._direction AndAlso
+                   _reverse = other._reverse
+        End Function
+
+        Public Overrides Function Equals(obj As Object) As Boolean
+            Return TypeOf obj Is D3D_LinearGradientCacheKey AndAlso Equals(DirectCast(obj, D3D_LinearGradientCacheKey))
+        End Function
+
+        Public Overrides Function GetHashCode() As Integer
+            Dim hash = HashCode.Combine(Runtime.CompilerServices.RuntimeHelpers.GetHashCode(_context),
+                                        _generation,
+                                        _hdrRevision,
+                                        _startArgb,
+                                        _endArgb,
+                                        CInt(_direction))
+            Return HashCode.Combine(hash, _reverse)
+        End Function
+    End Structure
 
     Private Shared Function SingleToKey(value As Single) As String
         Return BitConverter.SingleToInt32Bits(value).ToString("X8", CultureInfo.InvariantCulture)

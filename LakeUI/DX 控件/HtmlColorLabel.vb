@@ -422,6 +422,9 @@ Public Class HtmlColorLabel
         ElseIf MyBase.BackColor.A > 0 Then
             填充圆角矩形_GPU(context, 极限矩形区域, r, MyBase.BackColor)
         End If
+        If 背景基础颜色 <> Color.Empty AndAlso 背景基础颜色.A > 0 Then
+            填充圆角矩形_GPU(context, 极限矩形区域, r, 背景基础颜色)
+        End If
         If 边框颜色.A > 0 AndAlso 边框宽度 > 0 Then
             绘制圆角边框_GPU(context, 极限矩形区域, r, 边框颜色, 边框宽度 * s)
         End If
@@ -429,7 +432,14 @@ Public Class HtmlColorLabel
 
     Private Sub 绘制文本内容_GPU(context As D3D_PaintContext, 内容矩形区域 As RectangleF)
         _infoIconBounds = Rectangle.Empty
-        Dim 内容区域 As Rectangle = Rectangle.Round(内容矩形区域)
+        ' 自动尺寸按边框的向上取整物理厚度预留空间；内容尺寸应向下取整，
+        ' 避免半像素边框使 Rectangle.Round 多出 1px，从而让 Top/Middle/Bottom
+        ' 在没有实际剩余空间时仍出现不同的 Y 坐标。
+        Dim 内容区域 As New Rectangle(
+            CInt(Math.Round(内容矩形区域.X)),
+            CInt(Math.Round(内容矩形区域.Y)),
+            Math.Max(0, CInt(Math.Floor(内容矩形区域.Width))),
+            Math.Max(0, CInt(Math.Floor(内容矩形区域.Height))))
         Dim 原始文本 = MyBase.Text
         If Not ShouldShowInfoIcon() AndAlso Not String.IsNullOrEmpty(原始文本) AndAlso 是否纯文本(原始文本) Then
             绘制纯文本_GPU(context, 原始文本, 内容区域)
@@ -960,6 +970,18 @@ Public Class HtmlColorLabel
         End Set
     End Property
 
+    Private 背景基础颜色 As Color = Color.Empty
+    ''' <summary>主体背景颜色；未设置时使用 <see cref="Control.BackColor"/>。</summary>
+    <Category("LakeUI"), Description("背景基础颜色；Empty 时使用 BackColor"), DefaultValue(GetType(Color), ""), Browsable(True)>
+    Public Property BackColor1 As Color
+        Get
+            Return 背景基础颜色
+        End Get
+        Set(value As Color)
+            SetValue(背景基础颜色, value)
+        End Set
+    End Property
+
     Private 启用自动尺寸 As Boolean = False
     Private 自动尺寸前的大小 As Size = Size.Empty
     ''' <summary>是否启用自动尺寸；为 True 时控件会根据文本与 <see cref="Control.MaximumSize"/> 调整大小。</summary>
@@ -987,7 +1009,11 @@ Public Class HtmlColorLabel
     ''' <summary>依据文本、内边距与边框计算控件的最佳尺寸；仅在 <see cref="AutoSize"/> 开启时计算文本占用。</summary>
     Public Overrides Function GetPreferredSize(proposedSize As Size) As Size
         If Not 启用自动尺寸 Then Return Me.Size
-        Dim 边框额外 As Integer = CInt(Math.Ceiling(CSng(边框宽度))) + 1
+        ' RenderGpu 仅在存在边框时将内容区域向内收缩；自动尺寸必须使用同一物理厚度，
+        ' 否则 BorderSize = 0 也会多出 1px，导致 Padding.Top 在视觉上偏大。
+        Dim 边框额外 As Integer = If(边框宽度 > 0,
+                                    CInt(Math.Ceiling(边框宽度 * DpiScale())),
+                                    0)
         Dim 最大约束宽度 As Integer
         If Me.MaximumSize.Width > 0 Then
             最大约束宽度 = Me.MaximumSize.Width - Me.Padding.Horizontal - 边框额外

@@ -122,9 +122,7 @@ Public Class ProgressRing
 
         Using geo = 创建圆弧几何(绘制矩形, startAngle, sweepAngle)
             Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, 圆弧颜色, context.DeviceGeneration)
-            Using strokeStyle = 创建圆头描边样式_GPU()
-                context.DeviceContext.DrawGeometry(geo, brush, 画笔宽度, strokeStyle)
-            End Using
+            context.DeviceContext.DrawGeometry(geo, brush, 画笔宽度, D3D_D2DInterop.GetRoundStrokeStyle())
         End Using
     End Sub
 
@@ -287,18 +285,6 @@ Public Class ProgressRing
             动画调度器.StopFrameLoop()
         End If
     End Sub
-
-    Private Shared Function 创建圆头描边样式_GPU() As ID2D1StrokeStyle
-        Return D3D_RenderCore.DeviceManager.D2DFactory.CreateStrokeStyle(
-            New StrokeStyleProperties With {
-                .StartCap = CapStyle.Round,
-                .EndCap = CapStyle.Round,
-                .DashCap = CapStyle.Flat,
-                .LineJoin = LineJoin.Round,
-                .DashStyle = DashStyle.Solid,
-                .MiterLimit = 10.0F
-            })
-    End Function
 
     Private Sub 释放描边样式()
     End Sub

@@ -18,6 +18,8 @@
 '''
 ''' 坑点：
 ''' • 本模块不是布局系统，不会调用 PerformLayout；它只是延迟和排序 Invalidate。
+''' • 外层容器先于内层子控件派发是背景穿透、超容器背景映射等连带视觉效果的正确性约束，
+'''   不是可调整的性能策略。任何优化都必须保留按控件树深度从外到内的顺序，不能并行、倒序或跳层派发。
 ''' • WinForms 的 InvalidateChildren 会把刷新扩散到子控件。为了保持外到内顺序，本模块把子树
 '''   展开成独立请求并按树深排序，而不是直接把 True 传给父控件 Invalidate。
 ''' • 如果在 flush 过程中又排入请求，会进入下一轮 flush，避免递归重入 Paint。
@@ -192,18 +194,24 @@ Public Module OuterToInnerRefreshScheduler
 
         Try
             Do
-                Dim pending As List(Of KeyValuePair(Of Control, PendingEntry)) = Nothing
+                Dim batch As Dictionary(Of Control, PendingEntry) = Nothing
                 SyncLock _lock
                     If _pending.Count = 0 Then Exit Do
-                    pending = New List(Of KeyValuePair(Of Control, PendingEntry))(_pending)
+                    batch = New Dictionary(Of Control, PendingEntry)(_pending)
                     _pending.Clear()
                 End SyncLock
 
+                ' 子树必须在排序前展开到当前批次。旧实现把子控件重新写回 _pending，导致父子本来
+                ' 已同时待刷新时，子控件在下一轮再次失效；合并到本批既消除重复，又不改变外到内顺序。
+                ExpandVisibleChildrenIntoBatch(batch)
+
+                Dim pending As New List(Of KeyValuePair(Of Control, PendingEntry))(batch)
                 Dim depths As New Dictionary(Of Control, Integer)(pending.Count)
                 For Each item In pending
                     depths(item.Key) = GetTreeDepth(item.Key)
                 Next
 
+                ' 正确性约束：深度小的容器必须先派发，同层才按请求顺序排列。
                 pending.Sort(
                     Function(a, b)
                         Dim da = depths(a.Key)
@@ -228,9 +236,7 @@ Public Module OuterToInnerRefreshScheduler
 
                     Try
                         ctrl.Invalidate(rect, False)
-                        If entry.InvalidateChildren AndAlso Not entry.FromChildrenExpansion Then
-                            QueueVisibleChildren(ctrl, entry.Immediate)
-                        End If
+                        RemovePendingRequestCoveredByCurrentDispatch(ctrl, rect, entry)
                         If entry.Immediate AndAlso CanUpdateImmediately(ctrl) Then ctrl.Update()
                     Catch
                     End Try
@@ -249,45 +255,95 @@ Public Module OuterToInnerRefreshScheduler
         End Try
     End Sub
 
-    Private Sub QueueVisibleChildren(parent As Control, immediate As Boolean)
-        If parent Is Nothing OrElse parent.IsDisposed Then Return
-        Try
-            For Each child As Control In parent.Controls
-                QueueChildForExpansion(child, immediate)
-            Next
-        Catch
-        End Try
+    Private Sub RemovePendingRequestCoveredByCurrentDispatch(control As Control,
+                                                             dispatchedRect As Rectangle,
+                                                             dispatchedEntry As PendingEntry)
+        ' 父容器 Invalidate 会同步触发背景穿透消费者再次 Request。若目标稍后已在本批完整派发，
+        ' 保留该请求只会在下一轮重复一次 GPU/HDC 合成；覆盖范围不足时则绝不能合并。
+        SyncLock _lock
+            Dim queued As PendingEntry = Nothing
+            If Not _pending.TryGetValue(control, queued) Then Return
+            If queued.Immediate AndAlso Not dispatchedEntry.Immediate Then Return
+
+            Dim subtreeCovered = dispatchedEntry.InvalidateChildren OrElse dispatchedEntry.FromChildrenExpansion
+            If queued.InvalidateChildren AndAlso Not subtreeCovered Then Return
+
+            Dim regionCovered As Boolean
+            If dispatchedEntry.HasFull Then
+                regionCovered = True
+            ElseIf queued.HasFull Then
+                regionCovered = False
+            Else
+                regionCovered = dispatchedRect.Contains(queued.Rect)
+            End If
+            If regionCovered Then _pending.Remove(control)
+        End SyncLock
     End Sub
 
-    Private Sub QueueChildForExpansion(child As Control, immediate As Boolean)
+    Private Sub ExpandVisibleChildrenIntoBatch(batch As Dictionary(Of Control, PendingEntry))
+        If batch Is Nothing OrElse batch.Count = 0 Then Return
+
+        Dim expansionRoots As New List(Of KeyValuePair(Of Control, PendingEntry))()
+        Dim nextSequence As Long = 0
+        For Each item In batch
+            If item.Value.Sequence > nextSequence Then nextSequence = item.Value.Sequence
+            If item.Value.InvalidateChildren AndAlso Not item.Value.FromChildrenExpansion Then
+                expansionRoots.Add(item)
+            End If
+        Next
+        expansionRoots.Sort(Function(a, b) a.Value.Sequence.CompareTo(b.Value.Sequence))
+
+        For Each item In expansionRoots
+            Dim parent = item.Key
+            If parent Is Nothing OrElse parent.IsDisposed OrElse Not parent.IsHandleCreated Then Continue For
+            Dim parentRect = If(item.Value.HasFull,
+                                parent.ClientRectangle,
+                                Rectangle.Intersect(parent.ClientRectangle, item.Value.Rect))
+            If parentRect.Width <= 0 OrElse parentRect.Height <= 0 Then Continue For
+            If ShouldSuppressRefresh(parent,
+                                     parentRect,
+                                     item.Value.HasFull,
+                                     item.Value.InvalidateChildren,
+                                     item.Value.FromChildrenExpansion) Then Continue For
+            Try
+                For Each child As Control In parent.Controls
+                    AddVisibleSubtreeToBatch(child, item.Value.Immediate, batch, nextSequence)
+                Next
+            Catch
+            End Try
+        Next
+    End Sub
+
+    Private Sub AddVisibleSubtreeToBatch(child As Control,
+                                         immediate As Boolean,
+                                         batch As Dictionary(Of Control, PendingEntry),
+                                         ByRef nextSequence As Long)
         If child Is Nothing OrElse child.IsDisposed OrElse Not child.Visible Then Return
         Dim shouldQueue As Boolean = child.Width > 0 AndAlso child.Height > 0
         If shouldQueue Then
             If ShouldSuppressRefresh(child, child.ClientRectangle, True, False, True) Then Return
-            SyncLock _lock
-                Dim entry As PendingEntry = Nothing
-                If _pending.TryGetValue(child, entry) Then
-                    entry.HasFull = True
-                    entry.Rect = Rectangle.Empty
-                    entry.Immediate = entry.Immediate OrElse immediate
-                    _pending(child) = entry
-                Else
-                    _sequence += 1
-                    _pending(child) = New PendingEntry With {
-                        .HasFull = True,
-                        .Rect = Rectangle.Empty,
-                        .InvalidateChildren = False,
-                        .FromChildrenExpansion = True,
-                        .Immediate = immediate,
-                        .Sequence = _sequence
-                    }
-                End If
-            End SyncLock
+            Dim entry As PendingEntry = Nothing
+            If batch.TryGetValue(child, entry) Then
+                entry.HasFull = True
+                entry.Rect = Rectangle.Empty
+                entry.Immediate = entry.Immediate OrElse immediate
+                batch(child) = entry
+            Else
+                nextSequence += 1
+                batch(child) = New PendingEntry With {
+                    .HasFull = True,
+                    .Rect = Rectangle.Empty,
+                    .InvalidateChildren = False,
+                    .FromChildrenExpansion = True,
+                    .Immediate = immediate,
+                    .Sequence = nextSequence
+                }
+            End If
         End If
 
         Try
             For Each grandChild As Control In child.Controls
-                QueueChildForExpansion(grandChild, immediate)
+                AddVisibleSubtreeToBatch(grandChild, immediate, batch, nextSequence)
             Next
         Catch
         End Try

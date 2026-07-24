@@ -533,6 +533,7 @@ Public Class UltraDetailListView
     Private _rowBottoms As Integer() = Array.Empty(Of Integer)()
 
     Private Sub 重建显示列表()
+        隐藏截断提示()
         取消标签编辑等待()
         If _editTextBox IsNot Nothing Then 结束标签编辑(True)
 
@@ -1767,7 +1768,7 @@ Public Class UltraDetailListView
         End Get
         Set(value As Color)
             提示背景颜色 = value
-            If _truncTooltip IsNot Nothing AndAlso Not _truncTooltip.IsDisposed AndAlso _truncTooltip.Visible Then 更新截断提示(PointToClient(Cursor.Position), True)
+            刷新可见截断提示样式()
         End Set
     End Property
 
@@ -1779,7 +1780,7 @@ Public Class UltraDetailListView
         End Get
         Set(value As Color)
             提示文本颜色 = value
-            If _truncTooltip IsNot Nothing AndAlso Not _truncTooltip.IsDisposed AndAlso _truncTooltip.Visible Then 更新截断提示(PointToClient(Cursor.Position), True)
+            刷新可见截断提示样式()
         End Set
     End Property
 
@@ -1791,7 +1792,7 @@ Public Class UltraDetailListView
         End Get
         Set(value As Color)
             提示边框颜色 = value
-            If _truncTooltip IsNot Nothing AndAlso Not _truncTooltip.IsDisposed AndAlso _truncTooltip.Visible Then 更新截断提示(PointToClient(Cursor.Position), True)
+            刷新可见截断提示样式()
         End Set
     End Property
 
@@ -1803,7 +1804,7 @@ Public Class UltraDetailListView
         End Get
         Set(value As Integer)
             提示边框宽度 = Math.Max(0, value)
-            If _truncTooltip IsNot Nothing AndAlso Not _truncTooltip.IsDisposed AndAlso _truncTooltip.Visible Then 更新截断提示(PointToClient(Cursor.Position), True)
+            刷新可见截断提示样式()
         End Set
     End Property
 
@@ -1815,7 +1816,7 @@ Public Class UltraDetailListView
         End Get
         Set(value As Integer)
             提示圆角半径 = Math.Max(0, value)
-            If _truncTooltip IsNot Nothing AndAlso Not _truncTooltip.IsDisposed AndAlso _truncTooltip.Visible Then 更新截断提示(PointToClient(Cursor.Position), True)
+            刷新可见截断提示样式()
         End Set
     End Property
 
@@ -1827,7 +1828,7 @@ Public Class UltraDetailListView
         End Get
         Set(value As Padding)
             提示内边距 = value
-            If _truncTooltip IsNot Nothing AndAlso Not _truncTooltip.IsDisposed AndAlso _truncTooltip.Visible Then 更新截断提示(PointToClient(Cursor.Position), True)
+            刷新可见截断提示样式()
         End Set
     End Property
 
@@ -1839,7 +1840,26 @@ Public Class UltraDetailListView
         End Get
         Set(value As Integer)
             提示最大宽度 = Math.Max(50, value)
-            If _truncTooltip IsNot Nothing AndAlso Not _truncTooltip.IsDisposed AndAlso _truncTooltip.Visible Then 更新截断提示(PointToClient(Cursor.Position), True)
+            刷新可见截断提示样式()
+        End Set
+    End Property
+
+    Private 提示出现等待秒数 As Double = 0.5R
+    <Category("LakeUI"), Description("鼠标停留在被截断文本上后，显示工具提示前等待的秒数；0 表示立即显示"), DefaultValue(0.5R), Browsable(True)>
+    Public Property ToolTipShowDelaySeconds As Double
+        Get
+            Return 提示出现等待秒数
+        End Get
+        Set(value As Double)
+            If Double.IsNaN(value) OrElse Double.IsInfinity(value) Then value = 0.5R
+            value = Math.Max(0R, Math.Min(60R, value))
+            If 提示出现等待秒数 = value Then Return
+            提示出现等待秒数 = value
+            取消待显示截断提示()
+            If IsHandleCreated Then
+                Dim pointer = PointToClient(Cursor.Position)
+                If ClientRectangle.Contains(pointer) Then 更新截断提示(pointer)
+            End If
         End Set
     End Property
 
@@ -1930,7 +1950,15 @@ Public Class UltraDetailListView
     Private _mouseDownPos As Point
     Private _isDragSelecting As Boolean = False
     Private _dragCurrent As Point
+    ' 本次框选开始前的快照；Ctrl 框选在此基础上累加，不受当前视口影响。
     Private _dragPreSelectedIndices As New HashSet(Of Integer)
+    ' 框选使用内容坐标而不是屏幕坐标。滚动时屏幕上的同一个指针位置
+    ' 对应的内容行会改变，保存内容坐标可以避免已选项被当前视口覆盖。
+    Private _dragStartDocumentX As Integer
+    Private _dragStartDocumentY As Integer
+    Private _dragCurrentDocumentX As Integer
+    Private _dragCurrentDocumentY As Integer
+    Private _dragCtrlHeld As Boolean
     Private Const DragThreshold As Integer = 4
     Private _updateCount As Integer = 0
 
@@ -1951,8 +1979,10 @@ Public Class UltraDetailListView
 
     Private _truncTooltip As FloatingToolTipForm
     Private _truncTooltipText As String = ""
-    Private _truncTooltipActive As Boolean = False
     Private _truncTooltipSourceScreenRect As Rectangle = Rectangle.Empty
+    Private _truncTooltipShowTimer As Timer
+    Private _pendingTruncTooltipText As String = ""
+    Private _pendingTruncTooltipSourceScreenRect As Rectangle = Rectangle.Empty
     Private Const TruncationSuffix As String = " ..."
 
     <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
@@ -2659,7 +2689,9 @@ Public Class UltraDetailListView
             If colIdx = 0 AndAlso hasIcon AndAlso item.Icon IsNot Nothing Then
                 Dim iconX As Integer = cellRect.X
                 Dim iconY As Integer = rowRect.Y + scaledPadding.Top + (upperPartH - scaledIconSize.Height) \ 2
-                context.DrawImage(item.Icon, New RectangleF(iconX, iconY, scaledIconSize.Width, scaledIconSize.Height))
+                context.DrawImage(item.Icon,
+                                  New RectangleF(iconX, iconY, scaledIconSize.Width, scaledIconSize.Height),
+                                  interpolation:=Vortice.Direct2D1.InterpolationMode.HighQualityCubic)
                 cellRect = New Rectangle(cellRect.X + iconAreaW, cellRect.Y, cellRect.Width - iconAreaW, cellRect.Height)
             End If
 
@@ -2847,8 +2879,10 @@ Public Class UltraDetailListView
 
         If _scrollBar.IsDragging Then
             隐藏截断提示()
+            _dragCurrent = e.Location
             Dim visCount = 估算可见行数()
             _scrollOffset = _scrollBar.DragMove(e.Y, _displayRows.Count, visCount)
+            If _isDragSelecting Then 更新拖选坐标并应用选择(_dragCurrent)
             Dim hitRow = 命中测试行(e.Location)
             更新悬停(hitRow)
             请求V3渲染()
@@ -2857,9 +2891,11 @@ Public Class UltraDetailListView
 
         If _hScrollBar.IsDragging Then
             隐藏截断提示()
+            _dragCurrent = e.Location
             Dim totalW = 获取总列宽()
             Dim visibleW = 获取可见列宽()
             _hScrollOffset = _hScrollBar.DragMoveHorizontal(e.X, totalW, visibleW)
+            If _isDragSelecting Then 更新拖选坐标并应用选择(_dragCurrent)
             请求V3渲染()
             Return
         End If
@@ -2885,8 +2921,7 @@ Public Class UltraDetailListView
                 If Math.Abs(e.X - _mouseDownPos.X) > DragThreshold OrElse Math.Abs(e.Y - _mouseDownPos.Y) > DragThreshold Then
                     取消标签编辑等待()
                     If 应该拖选() Then
-                        _isDragSelecting = True
-                        _dragPreSelectedIndices = New HashSet(Of Integer)(_selectedIndices)
+                        开始框选()
                     ElseIf 允许拖动排序 AndAlso _dragReorderSourceIndex >= 0 AndAlso
                            _dragReorderSourceIndex < _displayRows.Count AndAlso
                            _displayRows(_dragReorderSourceIndex).Type = DisplayRowType.Item Then
@@ -2915,15 +2950,14 @@ Public Class UltraDetailListView
                         请求V3渲染()
                         Return
                     ElseIf 允许多选 Then
-                        _isDragSelecting = True
-                        _dragPreSelectedIndices = New HashSet(Of Integer)(_selectedIndices)
+                        开始框选()
                     End If
                 End If
             End If
             If _isDragSelecting Then
                 隐藏截断提示()
                 _dragCurrent = e.Location
-                更新拖选(e)
+                更新拖选坐标并应用选择(e.Location)
                 请求V3渲染()
                 Return
             End If
@@ -2958,6 +2992,7 @@ Public Class UltraDetailListView
     Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
         MyBase.OnMouseDown(e)
 
+        隐藏截断提示()
         取消标签编辑等待()
         If _editTextBox IsNot Nothing Then 结束标签编辑(False)
 
@@ -3082,6 +3117,7 @@ Public Class UltraDetailListView
                 Dim newHOff = V3_ScrollBarRenderer.HandleHorizontalWheel(e.Delta, _hScrollOffset, totalW, visibleW)
                 If newHOff <> _hScrollOffset Then
                     _hScrollOffset = newHOff
+                    If _isDragSelecting Then 更新拖选坐标并应用选择(_dragCurrent)
                     请求V3渲染()
                 End If
             End If
@@ -3092,6 +3128,7 @@ Public Class UltraDetailListView
         Dim newOff = V3_ScrollBarRenderer.HandleWheel(e.Delta, _scrollOffset, _displayRows.Count, visCount, 3)
         If newOff <> _scrollOffset Then
             _scrollOffset = newOff
+            If _isDragSelecting Then 更新拖选坐标并应用选择(_dragCurrent)
             Dim hitRow = 命中测试行(e.Location)
             更新悬停(hitRow)
             请求V3渲染()
@@ -3187,6 +3224,7 @@ Public Class UltraDetailListView
 
     Protected Overrides Sub OnKeyDown(e As KeyEventArgs)
         MyBase.OnKeyDown(e)
+        隐藏截断提示()
         If _displayRows.Count = 0 Then Return
         Dim shiftHeld = (e.Modifiers And Keys.Shift) = Keys.Shift
 
@@ -3308,32 +3346,67 @@ Public Class UltraDetailListView
         Return New Rectangle(x1, y1, x2 - x1, y2 - y1)
     End Function
 
-    Private Sub 更新拖选(e As MouseEventArgs)
-        If Not 允许多选 Then
-            Dim hitRow = 命中测试行(e.Location)
-            If hitRow >= 0 AndAlso hitRow < _displayRows.Count AndAlso _displayRows(hitRow).Type = DisplayRowType.Item Then
-                _selectionAnchor = hitRow
-                设置选中集合({hitRow})
-            End If
+    Private Function 屏幕坐标转内容Y(clientY As Integer) As Integer
+        If _displayRows.Count = 0 OrElse _scrollOffset < 0 OrElse _scrollOffset >= _displayRows.Count Then Return clientY
+        Dim contentRect = 获取内容区域()
+        Dim hasMoreAbove As Boolean = _scrollOffset > 0
+        Dim baseY As Integer = contentRect.Y + If(hasMoreAbove, Dpi(更多指示器高度), 0) + 获取有效内容上边距()
+        Return _rowTops(_scrollOffset) + clientY - baseY
+    End Function
+
+    Private Function 屏幕坐标转内容X(clientX As Integer) As Integer
+        Dim contentRect = 获取内容区域()
+        Return clientX - contentRect.X + _hScrollOffset
+    End Function
+
+    Private Sub 开始框选()
+        _isDragSelecting = True
+        _dragPreSelectedIndices = New HashSet(Of Integer)(_selectedIndices)
+        _dragCtrlHeld = (Control.ModifierKeys And Keys.Control) = Keys.Control
+        _dragStartDocumentX = 屏幕坐标转内容X(_mouseDownPos.X)
+        _dragStartDocumentY = 屏幕坐标转内容Y(_mouseDownPos.Y)
+        _dragCurrentDocumentX = _dragStartDocumentX
+        _dragCurrentDocumentY = _dragStartDocumentY
+    End Sub
+
+    Private Sub 更新拖选坐标并应用选择(pointer As Point)
+        If Not _isDragSelecting Then Return
+        _dragCurrent = pointer
+        自动滚动框选(pointer)
+        _dragCurrentDocumentX = 屏幕坐标转内容X(pointer.X)
+        _dragCurrentDocumentY = 屏幕坐标转内容Y(pointer.Y)
+
+        Dim x1 As Integer = Math.Min(_dragStartDocumentX, _dragCurrentDocumentX)
+        Dim y1 As Integer = Math.Min(_dragStartDocumentY, _dragCurrentDocumentY)
+        Dim x2 As Integer = Math.Max(_dragStartDocumentX, _dragCurrentDocumentX)
+        Dim y2 As Integer = Math.Max(_dragStartDocumentY, _dragCurrentDocumentY)
+        Dim hits = 命中测试内容矩形(New Rectangle(x1, y1, Math.Max(1, x2 - x1), Math.Max(1, y2 - y1)))
+
+        Dim newSet As New HashSet(Of Integer)
+        If _dragCtrlHeld Then
+            newSet.UnionWith(_dragPreSelectedIndices)
+        End If
+        newSet.UnionWith(hits)
+        设置选中集合(newSet)
+    End Sub
+
+    Private Sub 自动滚动框选(pointer As Point)
+        If _displayRows.Count = 0 Then Return
+        Dim contentRect = 获取内容区域()
+        Dim topLimit As Integer = contentRect.Y + 获取有效内容上边距()
+        Dim bottomLimit As Integer = contentRect.Bottom - 获取有效内容下边距()
+        Dim nextOffset As Integer = _scrollOffset
+        If pointer.Y < topLimit Then
+            nextOffset -= 1
+        ElseIf pointer.Y > bottomLimit Then
+            nextOffset += 1
+        Else
             Return
         End If
-
-        Dim dragRect As Rectangle = 获取拖选矩形()
-        Dim ctrlHeld As Boolean = (Control.ModifierKeys And Keys.Control) = Keys.Control
-        Dim hitIndices = 命中测试矩形(dragRect)
-
-        If ctrlHeld Then
-            Dim newSet As New HashSet(Of Integer)(_dragPreSelectedIndices)
-            For Each idx In hitIndices
-                If _dragPreSelectedIndices.Contains(idx) Then
-                    newSet.Remove(idx)
-                Else
-                    newSet.Add(idx)
-                End If
-            Next
-            设置选中集合(newSet)
-        Else
-            设置选中集合(hitIndices)
+        nextOffset = Math.Max(0, Math.Min(_displayRows.Count - 1, nextOffset))
+        If nextOffset <> _scrollOffset Then
+            _scrollOffset = nextOffset
+            请求V3渲染()
         End If
     End Sub
 
@@ -3516,6 +3589,7 @@ Public Class UltraDetailListView
 
     Private Sub 开始标签编辑等待(displayRowIndex As Integer, columnIndex As Integer)
         取消标签编辑等待()
+        隐藏截断提示()
         _labelEditPendingIndex = displayRowIndex
         _labelEditPendingColumn = columnIndex
         If _labelEditTimer Is Nothing Then
@@ -3543,6 +3617,7 @@ Public Class UltraDetailListView
 
     ''' <summary>开始编辑指定行指定列的子项主文本。</summary>
     Public Sub 开始标签编辑(displayRowIndex As Integer, columnIndex As Integer)
+        隐藏截断提示()
         If _editTextBox IsNot Nothing Then 结束标签编辑(True)
         If displayRowIndex < 0 OrElse displayRowIndex >= _displayRows.Count Then Return
         If Not 列可编辑(columnIndex) Then Return
@@ -3763,21 +3838,16 @@ Public Class UltraDetailListView
         Return pt.X >= contentRect.X AndAlso pt.X < contentRect.X + itemFocusW
     End Function
 
-    Private Function 命中测试矩形(dragRect As Rectangle) As List(Of Integer)
+    Private Function 命中测试内容矩形(contentRectSelection As Rectangle) As List(Of Integer)
         Dim result As New List(Of Integer)
-        If _displayRows.Count = 0 OrElse _scrollOffset >= _displayRows.Count Then Return result
-        Dim contentRect = 获取内容区域()
-        Dim hasMoreAbove As Boolean = _scrollOffset > 0
-        Dim baseY As Integer = contentRect.Y + If(hasMoreAbove, Dpi(更多指示器高度), 0) + 获取有效内容上边距()
-        Dim bottomLimit As Integer = contentRect.Bottom - 获取有效内容下边距()
-        Dim baseTop As Integer = _rowTops(_scrollOffset)
-        Dim rowW As Integer = 获取行绘制宽度(contentRect)
-        For i As Integer = _scrollOffset To _displayRows.Count - 1
-            Dim rowScreenTop As Integer = baseY + (_rowTops(i) - baseTop)
-            Dim rowScreenBottom As Integer = baseY + (_rowBottoms(i) - baseTop)
-            If rowScreenBottom > bottomLimit Then Exit For
-            Dim rowRect As New Rectangle(contentRect.X, rowScreenTop, rowW, rowScreenBottom - rowScreenTop)
-            If dragRect.IntersectsWith(rowRect) AndAlso _displayRows(i).Type = DisplayRowType.Item Then
+        If _displayRows.Count = 0 Then Return result
+        Dim rowW As Integer = If(_columns.Count > 0, 获取总列宽(), 获取行绘制宽度(获取内容区域()))
+        Dim selectionRight As Integer = contentRectSelection.Right
+        Dim selectionBottom As Integer = contentRectSelection.Bottom
+        For i As Integer = 0 To _displayRows.Count - 1
+            If _displayRows(i).Type = DisplayRowType.Item AndAlso
+               contentRectSelection.Left < rowW AndAlso selectionRight > 0 AndAlso
+               contentRectSelection.Top < _rowBottoms(i) AndAlso selectionBottom > _rowTops(i) Then
                 result.Add(i)
             End If
         Next
@@ -3908,6 +3978,14 @@ Public Class UltraDetailListView
         _truncTooltip = New FloatingToolTipForm(Me)
     End Sub
 
+    Private Function 截断提示当前可见() As Boolean
+        Return _truncTooltip IsNot Nothing AndAlso Not _truncTooltip.IsDisposed AndAlso _truncTooltip.Visible
+    End Function
+
+    Private Sub 刷新可见截断提示样式()
+        If 截断提示当前可见() Then 更新截断提示(PointToClient(Cursor.Position), True)
+    End Sub
+
     Private Function CreateToolTipStyle() As FloatingToolTipStyle
         Return New FloatingToolTipStyle With {
             .Font = Me.Font,
@@ -3922,41 +4000,116 @@ Public Class UltraDetailListView
     End Function
 
     Private Sub 更新截断提示(pt As Point, Optional forceRefresh As Boolean = False)
+        If _labelEditPendingIndex >= 0 OrElse _editTextBox IsNot Nothing Then
+            隐藏截断提示()
+            Return
+        End If
         Dim sourceRect As Rectangle = Rectangle.Empty
         Dim text = 获取截断文本(pt, sourceRect)
-        If Not forceRefresh AndAlso
-           text = _truncTooltipText AndAlso
-           _truncTooltip IsNot Nothing AndAlso
-           Not _truncTooltip.IsDisposed AndAlso
-           _truncTooltip.Visible Then Return
         If String.IsNullOrEmpty(text) Then
+            取消待显示截断提示()
             延迟隐藏截断提示()
+            Return
+        End If
+
+        Dim sourceScreenRect = RectangleToScreen(sourceRect)
+        Dim sameVisibleTarget As Boolean = 截断提示当前可见() AndAlso
+            String.Equals(text, _truncTooltipText, StringComparison.Ordinal) AndAlso
+            sourceScreenRect = _truncTooltipSourceScreenRect
+
+        If sameVisibleTarget Then
+            取消待显示截断提示()
+            _truncTooltip.CancelScheduledClose()
+            If forceRefresh Then 显示截断提示(text, sourceScreenRect, pt)
+            Return
+        End If
+
+        If 截断提示当前可见() Then 隐藏截断提示()
+        If forceRefresh OrElse 提示出现等待秒数 <= 0R Then
+            显示截断提示(text, sourceScreenRect, pt)
         Else
-            _truncTooltipText = text
-            _truncTooltipSourceScreenRect = RectangleToScreen(sourceRect)
-            确保工具提示已初始化()
-            Dim screenPt As Point = PointToScreen(New Point(pt.X + Dpi(12), pt.Y + Dpi(20)))
-            _truncTooltip.ShowTip(text, screenPt, CreateToolTipStyle())
-            _truncTooltipActive = True
+            安排显示截断提示(text, sourceScreenRect)
         End If
     End Sub
 
+    Private Sub 安排显示截断提示(text As String, sourceScreenRect As Rectangle)
+        Dim samePendingTarget As Boolean = _truncTooltipShowTimer IsNot Nothing AndAlso
+            _truncTooltipShowTimer.Enabled AndAlso
+            String.Equals(text, _pendingTruncTooltipText, StringComparison.Ordinal) AndAlso
+            sourceScreenRect = _pendingTruncTooltipSourceScreenRect
+        If samePendingTarget Then Return
+
+        取消待显示截断提示()
+        _pendingTruncTooltipText = text
+        _pendingTruncTooltipSourceScreenRect = sourceScreenRect
+        If _truncTooltipShowTimer Is Nothing Then
+            _truncTooltipShowTimer = New Timer()
+            AddHandler _truncTooltipShowTimer.Tick, AddressOf 截断提示显示计时器触发
+        End If
+        _truncTooltipShowTimer.Interval = Math.Max(1, CInt(Math.Round(提示出现等待秒数 * 1000R)))
+        _truncTooltipShowTimer.Start()
+    End Sub
+
+    Private Sub 截断提示显示计时器触发(sender As Object, e As EventArgs)
+        If _truncTooltipShowTimer IsNot Nothing Then _truncTooltipShowTimer.Stop()
+        If IsDisposed OrElse Not Visible OrElse Not Enabled OrElse
+           _labelEditPendingIndex >= 0 OrElse _editTextBox IsNot Nothing OrElse
+           String.IsNullOrEmpty(_pendingTruncTooltipText) Then
+            取消待显示截断提示()
+            Return
+        End If
+        Dim ownerForm = FindForm()
+        If ownerForm IsNot Nothing AndAlso Not ReferenceEquals(Form.ActiveForm, ownerForm) Then
+            取消待显示截断提示()
+            Return
+        End If
+
+        Dim pointer = PointToClient(Control.MousePosition)
+        Dim currentSourceRect As Rectangle = Rectangle.Empty
+        Dim currentText = 获取截断文本(pointer, currentSourceRect)
+        Dim currentSourceScreenRect = If(currentSourceRect.IsEmpty, Rectangle.Empty, RectangleToScreen(currentSourceRect))
+        If Not String.Equals(currentText, _pendingTruncTooltipText, StringComparison.Ordinal) OrElse
+           currentSourceScreenRect <> _pendingTruncTooltipSourceScreenRect Then
+            取消待显示截断提示()
+            Return
+        End If
+
+        Dim text = _pendingTruncTooltipText
+        Dim sourceScreenRect = _pendingTruncTooltipSourceScreenRect
+        取消待显示截断提示()
+        显示截断提示(text, sourceScreenRect, pointer)
+    End Sub
+
+    Private Sub 显示截断提示(text As String, sourceScreenRect As Rectangle, clientPoint As Point)
+        If String.IsNullOrEmpty(text) OrElse sourceScreenRect.IsEmpty OrElse IsDisposed OrElse Not Visible OrElse Not Enabled Then Return
+        _truncTooltipText = text
+        _truncTooltipSourceScreenRect = sourceScreenRect
+        确保工具提示已初始化()
+        Dim screenPt As Point = PointToScreen(New Point(clientPoint.X + Dpi(12), clientPoint.Y + Dpi(20)))
+        _truncTooltip.ShowTip(text, screenPt, CreateToolTipStyle())
+    End Sub
+
+    Private Sub 取消待显示截断提示()
+        If _truncTooltipShowTimer IsNot Nothing Then _truncTooltipShowTimer.Stop()
+        _pendingTruncTooltipText = ""
+        _pendingTruncTooltipSourceScreenRect = Rectangle.Empty
+    End Sub
+
     Private Sub 隐藏截断提示()
+        取消待显示截断提示()
         _truncTooltipText = ""
         If _truncTooltip IsNot Nothing AndAlso Not _truncTooltip.IsDisposed Then
             _truncTooltip.Close()
             _truncTooltip.Dispose()
         End If
         _truncTooltip = Nothing
-        _truncTooltipActive = False
         _truncTooltipSourceScreenRect = Rectangle.Empty
     End Sub
 
     Private Sub 延迟隐藏截断提示(Optional keepOwnerBounds As Boolean = False)
-        If Not _truncTooltipActive Then Return
-        If _truncTooltip Is Nothing OrElse _truncTooltip.IsDisposed Then
+        取消待显示截断提示()
+        If Not 截断提示当前可见() Then
             _truncTooltipText = ""
-            _truncTooltipActive = False
             _truncTooltipSourceScreenRect = Rectangle.Empty
             Return
         End If
@@ -4191,6 +4344,7 @@ Public Class UltraDetailListView
 
     Protected Overrides Sub OnSizeChanged(e As EventArgs)
         MyBase.OnSizeChanged(e)
+        隐藏截断提示()
         取消标签编辑等待()
         If _editTextBox IsNot Nothing Then 结束标签编辑(True)
         If _columns.Count = 0 Then
@@ -4199,6 +4353,16 @@ Public Class UltraDetailListView
         End If
         校正横向滚动偏移()
         请求V3渲染()
+    End Sub
+
+    Protected Overrides Sub OnVisibleChanged(e As EventArgs)
+        MyBase.OnVisibleChanged(e)
+        If Not Visible Then 隐藏截断提示()
+    End Sub
+
+    Protected Overrides Sub OnEnabledChanged(e As EventArgs)
+        MyBase.OnEnabledChanged(e)
+        If Not Enabled Then 隐藏截断提示()
     End Sub
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
@@ -4240,6 +4404,11 @@ Public Class UltraDetailListView
             _labelEditTimer = Nothing
         End If
         隐藏截断提示()
+        If _truncTooltipShowTimer IsNot Nothing Then
+            RemoveHandler _truncTooltipShowTimer.Tick, AddressOf 截断提示显示计时器触发
+            _truncTooltipShowTimer.Dispose()
+            _truncTooltipShowTimer = Nothing
+        End If
         释放GDI缓存()
     End Sub
 

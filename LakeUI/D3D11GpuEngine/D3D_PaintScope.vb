@@ -36,6 +36,28 @@ Friend NotInheritable Class D3D_PaintScope
     Private _backdropFrameUseStarted As Boolean
     Private _disposed As Boolean
 
+    <StructLayout(LayoutKind.Sequential)>
+    Private Structure NativeRect
+        Public Left, Top, Right, Bottom As Integer
+    End Structure
+
+    <DllImport("user32.dll")>
+    Private Shared Function GetClientRect(hWnd As IntPtr, ByRef lpRect As NativeRect) As <MarshalAs(UnmanagedType.Bool)> Boolean
+    End Function
+
+    Private Shared Function GetNativeControlSize(control As Control) As Size
+        If control Is Nothing Then Return Size.Empty
+        If Not control.IsHandleCreated Then Return control.Size
+
+        Dim rect As NativeRect
+        If GetClientRect(control.Handle, rect) Then
+            Dim width = Math.Max(0, rect.Right - rect.Left)
+            Dim height = Math.Max(0, rect.Bottom - rect.Top)
+            If width > 0 AndAlso height > 0 Then Return New Size(width, height)
+        End If
+        Return control.Size
+    End Function
+
     Friend Sub New(compositor As D3D_WindowCompositor,
                    graphics As Graphics,
                    hdc As IntPtr,
@@ -46,8 +68,9 @@ Friend NotInheritable Class D3D_PaintScope
         _graphics = graphics
         _hdc = hdc
         _control = control
-        _width = Math.Max(1, control.Width)
-        _height = Math.Max(1, control.Height)
+        Dim nativeSize = GetNativeControlSize(control)
+        _width = Math.Max(1, nativeSize.Width)
+        _height = Math.Max(1, nativeSize.Height)
         _dirtyRect = NormalizeDirtyRect(dirtyRect, _width, _height)
         _coverage = TryCast(renderable, V3_IGpuDirtyRegionCoverage)
 

@@ -1461,16 +1461,12 @@ Public Class ModernListBox
             Case CheckStateEnum.Checked
                 Dim br = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, 复选框勾选颜色, context.DeviceGeneration)
                 If br IsNot Nothing Then
-                    Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreatePathGeometry()
-                        Using sink = geo.Open()
-                            sink.BeginFigure(New Vector2(x + inset, y + scaledSize * 0.5F), FigureBegin.Hollow)
-                            sink.AddLine(New Vector2(x + scaledSize * 0.4F, y + scaledSize - inset))
-                            sink.AddLine(New Vector2(x + scaledSize - inset, y + inset))
-                            sink.EndFigure(FigureEnd.Open)
-                            sink.Close()
-                        End Using
-                        context.DeviceContext.DrawGeometry(geo, br, scaledMarkW)
-                    End Using
+                    Dim p1 As New Vector2(x + inset, y + scaledSize * 0.5F)
+                    Dim p2 As New Vector2(x + scaledSize * 0.4F, y + scaledSize - inset)
+                    Dim p3 As New Vector2(x + scaledSize - inset, y + inset)
+                    Dim strokeStyle = D3D_D2DInterop.GetRoundStrokeStyle()
+                    context.DeviceContext.DrawLine(p1, p2, br, scaledMarkW, strokeStyle)
+                    context.DeviceContext.DrawLine(p2, p3, br, scaledMarkW, strokeStyle)
                 End If
             Case CheckStateEnum.Crossed
                 Dim br = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, 复选框叉选颜色, context.DeviceGeneration)

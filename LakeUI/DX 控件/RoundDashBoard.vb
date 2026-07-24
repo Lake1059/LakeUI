@@ -116,15 +116,14 @@ Public Class RoundDashBoard
     Private Sub 绘制圆弧_GPU(context As D3D_PaintContext, rect As RectangleF, color As Color, penWidth As Single, startAngle As Single, sweepAngle As Single)
         If context Is Nothing OrElse color.A <= 0 OrElse penWidth <= 0 OrElse sweepAngle <= 0 Then Return
         Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
-        Using strokeStyle = 创建线帽样式_GPU(CapStyle.Round, CapStyle.Round)
-            If sweepAngle >= 360 Then
-                context.DeviceContext.DrawEllipse(创建椭圆(rect), brush, penWidth, strokeStyle)
-            Else
-                Using geo = 创建圆弧几何(rect, startAngle, sweepAngle)
-                    context.DeviceContext.DrawGeometry(geo, brush, penWidth, strokeStyle)
-                End Using
-            End If
-        End Using
+        Dim strokeStyle = D3D_D2DInterop.GetRoundStrokeStyle()
+        If sweepAngle >= 360 Then
+            context.DeviceContext.DrawEllipse(创建椭圆(rect), brush, penWidth, strokeStyle)
+        Else
+            Using geo = 创建圆弧几何(rect, startAngle, sweepAngle)
+                context.DeviceContext.DrawGeometry(geo, brush, penWidth, strokeStyle)
+            End Using
+        End If
     End Sub
 
     Private Sub 绘制指针_GPU(context As D3D_PaintContext, 中心X As Single, 中心Y As Single, 外径 As Single, 画笔宽度 As Single, 角度 As Single, s As Single)
@@ -135,14 +134,12 @@ Public Class RoundDashBoard
         Dim 指针外半径 As Single = 外径 + 2
 
         Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, 指针颜色值, context.DeviceGeneration)
-        Using strokeStyle = 创建线帽样式_GPU(CapStyle.Round, CapStyle.Round)
-            context.DeviceContext.DrawLine(
-                New Vector2(中心X + cosVal * 指针内半径, 中心Y + sinVal * 指针内半径),
-                New Vector2(中心X + cosVal * 指针外半径, 中心Y + sinVal * 指针外半径),
-                brush,
-                指针宽度值 * s,
-                strokeStyle)
-        End Using
+        context.DeviceContext.DrawLine(
+            New Vector2(中心X + cosVal * 指针内半径, 中心Y + sinVal * 指针内半径),
+            New Vector2(中心X + cosVal * 指针外半径, 中心Y + sinVal * 指针外半径),
+            brush,
+            指针宽度值 * s,
+            D3D_D2DInterop.GetRoundStrokeStyle())
     End Sub
 
     Private Sub 绘制中心文字_GPU(context As D3D_PaintContext, 中心X As Single, 中心Y As Single, progress As Single)
@@ -191,12 +188,30 @@ Public Class RoundDashBoard
 
             Dim c As Color = 颜色插值(填充基础颜色, 填充渐变颜色, 渐变比例)
             Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, c, context.DeviceGeneration)
-            Using strokeStyle = 创建线帽样式_GPU(If(i = 0, CapStyle.Round, CapStyle.Flat), If(i = 段数 - 1, CapStyle.Round, CapStyle.Flat))
-                Using geo = 创建圆弧几何(rect, 段起始角, 段跨度)
-                    context.DeviceContext.DrawGeometry(geo, brush, penWidth, strokeStyle)
-                End Using
-            End Using
+            Dim strokeStyle = D3D_D2DInterop.GetStrokeStyle(If(i = 0, CapStyle.Round, CapStyle.Flat), If(i = 段数 - 1, CapStyle.Round, CapStyle.Flat))
+            绘制短弧线段_GPU(context, rect, 段起始角, 段跨度, brush, penWidth, strokeStyle)
         Next
+    End Sub
+
+    Private Shared Sub 绘制短弧线段_GPU(context As D3D_PaintContext,
+                                   rect As RectangleF,
+                                   startAngle As Single,
+                                   sweepAngle As Single,
+                                   brush As ID2D1Brush,
+                                   penWidth As Single,
+                                   strokeStyle As ID2D1StrokeStyle)
+        Dim rx As Single = rect.Width / 2.0F
+        Dim ry As Single = rect.Height / 2.0F
+        Dim cx As Single = rect.X + rx
+        Dim cy As Single = rect.Y + ry
+        Dim startRad As Double = startAngle * Math.PI / 180.0
+        Dim endRad As Double = (startAngle + sweepAngle) * Math.PI / 180.0
+        context.DeviceContext.DrawLine(
+            New Vector2(cx + CSng(Math.Cos(startRad)) * rx, cy + CSng(Math.Sin(startRad)) * ry),
+            New Vector2(cx + CSng(Math.Cos(endRad)) * rx, cy + CSng(Math.Sin(endRad)) * ry),
+            brush,
+            penWidth,
+            strokeStyle)
     End Sub
 
     Private Shared Function 创建椭圆(rect As RectangleF) As Ellipse
@@ -229,18 +244,6 @@ Public Class RoundDashBoard
             sink.Dispose()
         End Try
         Return path
-    End Function
-
-    Private Shared Function 创建线帽样式_GPU(startCap As CapStyle, endCap As CapStyle) As ID2D1StrokeStyle
-        Return D3D_RenderCore.DeviceManager.D2DFactory.CreateStrokeStyle(
-            New StrokeStyleProperties With {
-                .StartCap = startCap,
-                .EndCap = endCap,
-                .DashCap = CapStyle.Flat,
-                .LineJoin = LineJoin.Round,
-                .DashStyle = DashStyle.Solid,
-                .MiterLimit = 10.0F
-            })
     End Function
 
     Private Shared Function 颜色插值(c1 As Color, c2 As Color, t As Single) As Color

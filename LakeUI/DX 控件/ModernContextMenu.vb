@@ -960,18 +960,22 @@ Public Class ModernContextMenu
             Dim arrH As Single = arrSize
             Dim arrW As Single = CSng(arrSize * Math.Sqrt(3.0) / 2.0)
             Dim b = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, 菜单.箭头颜色, context.DeviceGeneration)
-
-            Using geo = D3D_RenderCore.DeviceManager.D2DFactory.CreatePathGeometry()
-                Using sink = geo.Open()
-                    sink.BeginFigure(New Vector2(cx - arrW / 2.0F, cy - arrH / 2.0F), FigureBegin.Filled)
-                    sink.AddLine(New Vector2(cx - arrW / 2.0F, cy + arrH / 2.0F))
-                    sink.AddLine(New Vector2(cx + arrW / 2.0F, cy))
-                    sink.EndFigure(FigureEnd.Closed)
-                    sink.Close()
-                End Using
-                context.DeviceContext.FillGeometry(geo, b)
-            End Using
+            Dim key = $"modern-context-arrow:{BitConverter.SingleToInt32Bits(cx)}:{BitConverter.SingleToInt32Bits(cy)}:{BitConverter.SingleToInt32Bits(arrSize)}"
+            Dim geo = context.Compositor.GeometryCache.GetOrCreateGeometry(key, Function() 创建箭头几何_GPU(cx, cy, arrW, arrH))
+            If geo IsNot Nothing AndAlso b IsNot Nothing Then context.DeviceContext.FillGeometry(geo, b)
         End Sub
+
+        Private Shared Function 创建箭头几何_GPU(cx As Single, cy As Single, arrW As Single, arrH As Single) As ID2D1Geometry
+            Dim geo = D3D_RenderCore.DeviceManager.D2DFactory.CreatePathGeometry()
+            Using sink = geo.Open()
+                sink.BeginFigure(New Vector2(cx - arrW / 2.0F, cy - arrH / 2.0F), FigureBegin.Filled)
+                sink.AddLine(New Vector2(cx - arrW / 2.0F, cy + arrH / 2.0F))
+                sink.AddLine(New Vector2(cx + arrW / 2.0F, cy))
+                sink.EndFigure(FigureEnd.Closed)
+                sink.Close()
+            End Using
+            Return geo
+        End Function
 
         Private Sub FillRoundedRect_GPU(context As D3D_PaintContext, rect As RectangleF, radius As Single, color As Color)
             If color.A = 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return

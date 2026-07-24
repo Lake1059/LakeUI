@@ -1307,11 +1307,16 @@ Public Class ModernComboBox
         Dim squareLeft As Single = w - aaw
         Dim centerX As Single = squareLeft + aaw / 2.0F
         Dim centerY As Single = h / 2.0F
-        Using path = 创建箭头几何(New PointF(centerX, centerY))
-            Dim br = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, effArrowClr, context.DeviceGeneration)
-            If br IsNot Nothing Then context.DeviceContext.FillGeometry(path, br)
-        End Using
+        Dim path = 获取箭头几何_GPU(context, New PointF(centerX, centerY))
+        Dim arrowBrush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, effArrowClr, context.DeviceGeneration)
+        If path IsNot Nothing AndAlso arrowBrush IsNot Nothing Then context.DeviceContext.FillGeometry(path, arrowBrush)
     End Sub
+
+    Private Function 获取箭头几何_GPU(context As D3D_PaintContext, center As PointF) As ID2D1Geometry
+        Dim scaledArrow As Single = 箭头大小 * DpiScale()
+        Dim key = $"modern-combo-arrow:{BitConverter.SingleToInt32Bits(center.X)}:{BitConverter.SingleToInt32Bits(center.Y)}:{BitConverter.SingleToInt32Bits(scaledArrow)}"
+        Return context.Compositor.GeometryCache.GetOrCreateGeometry(key, Function() 创建箭头几何(center))
+    End Function
 
     Private Function 创建箭头几何(center As PointF) As ID2D1PathGeometry
         Dim s As Single = DpiScale()
@@ -1364,23 +1369,17 @@ Public Class ModernComboBox
         If color.A = 0 AndAlso (gradientColor = Color.Empty OrElse gradientColor.A = 0) Then Return
 
         Dim brush As ID2D1Brush = Nothing
-        Dim ownsBrush As Boolean
         If gradientColor <> Color.Empty AndAlso gradientColor.A > 0 Then
             brush = 创建线性渐变画刷_GPU(context, rect, color, gradientColor, gradientDirection)
-            ownsBrush = True
         Else
             brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
         End If
 
-        Try
-            If radius <= 0 Then
-                context.DeviceContext.FillRectangle(D3D_PaintContext.ToRawRect(rect), brush)
-                Return
-            End If
-            context.FillRoundedRectangle(rect, radius, brush)
-        Finally
-            If ownsBrush Then brush.Dispose()
-        End Try
+        If radius <= 0 Then
+            context.DeviceContext.FillRectangle(D3D_PaintContext.ToRawRect(rect), brush)
+            Return
+        End If
+        context.FillRoundedRectangle(rect, radius, brush)
     End Sub
 
     Private Shared Function 创建线性渐变画刷_GPU(context As D3D_PaintContext,
@@ -1388,25 +1387,7 @@ Public Class ModernComboBox
                                              baseColor As Color,
                                              gradColor As Color,
                                              gradDir As System.Windows.Forms.Orientation) As ID2D1LinearGradientBrush
-        Dim startPt As Vector2
-        Dim endPt As Vector2
-        If gradDir = System.Windows.Forms.Orientation.Vertical Then
-            startPt = New Vector2(bounds.X, bounds.Y)
-            endPt = New Vector2(bounds.X, bounds.Bottom)
-        Else
-            startPt = New Vector2(bounds.X, bounds.Y)
-            endPt = New Vector2(bounds.Right, bounds.Y)
-        End If
-
-        Dim stops() As GradientStop = {
-            New GradientStop With {.Position = 0.0F, .Color = D3D_PaintContext.ToColor4(baseColor)},
-            New GradientStop With {.Position = 1.0F, .Color = D3D_PaintContext.ToColor4(gradColor)}}
-        Dim stopCollection = context.DeviceContext.CreateGradientStopCollection(stops)
-        Try
-            Return context.DeviceContext.CreateLinearGradientBrush(New LinearGradientBrushProperties(startPt, endPt), stopCollection)
-        Finally
-            stopCollection.Dispose()
-        End Try
+        Return context.GetLinearGradientBrush(bounds, baseColor, gradColor, gradDir)
     End Function
 
     Private Sub 绘制圆角边框_GPU(context As D3D_PaintContext, rect As RectangleF, radius As Single, color As Color, strokeWidth As Single)

@@ -5,6 +5,28 @@ Imports Vortice.Direct2D1
 Public Class QuantumSwitch
     Implements V3_IGpuRenderable, V3_IGpuInvalidationSource, V3_ISuperSamplingSource
 
+    Private _indeterminateFontCache As Font
+    Private _indeterminateFontCacheKey As Integer
+
+    Private Function 获取不确定态字体(fontSizePt As Single) As Font
+        Dim key = BitConverter.SingleToInt32Bits(fontSizePt)
+        If _indeterminateFontCache IsNot Nothing AndAlso _indeterminateFontCacheKey = key Then Return _indeterminateFontCache
+        If _indeterminateFontCache IsNot Nothing Then
+            Try : _indeterminateFontCache.Dispose() : Catch : End Try
+        End If
+        _indeterminateFontCache = New Font("Segoe UI", fontSizePt, FontStyle.Bold, GraphicsUnit.Point)
+        _indeterminateFontCacheKey = key
+        Return _indeterminateFontCache
+    End Function
+
+    Private Sub 释放不确定态字体()
+        If _indeterminateFontCache IsNot Nothing Then
+            Try : _indeterminateFontCache.Dispose() : Catch : End Try
+            _indeterminateFontCache = Nothing
+        End If
+        _indeterminateFontCacheKey = 0
+    End Sub
+
     Public Event StateChanged As EventHandler
 
     Public Sub New()
@@ -115,9 +137,8 @@ Public Class QuantumSwitch
 
         Dim 字体大小Px As Single = Math.Max(1.0F, 滑块区域.Height * 0.55F)
         Dim 字体大小Pt As Single = 字体大小Px * 72.0F / 96.0F / Math.Max(0.01F, DpiScale())
-        Using font As New Font("Segoe UI", 字体大小Pt, FontStyle.Bold, GraphicsUnit.Point)
-            context.DrawText("?", font, 不确定态轨道颜色值, 滑块区域, Vortice.DirectWrite.TextAlignment.Center, Vortice.DirectWrite.ParagraphAlignment.Center)
-        End Using
+        Dim font = 获取不确定态字体(字体大小Pt)
+        context.DrawText("?", font, 不确定态轨道颜色值, 滑块区域, Vortice.DirectWrite.TextAlignment.Center, Vortice.DirectWrite.ParagraphAlignment.Center)
     End Sub
 
     Private Function 计算当前滑块区域(极限矩形区域 As RectangleF, progress As Single) As RectangleF

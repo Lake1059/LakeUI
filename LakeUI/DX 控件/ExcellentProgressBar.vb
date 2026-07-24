@@ -62,8 +62,8 @@ Public Class ExcellentProgressBar
 
         If _backgroundSource IsNot Nothing Then
             context.DrawBackgroundSource(Me, _backgroundSource, sourceRect)
-        ElseIf MyBase.BackColor.A > 0 Then
-            context.FillRectangle(sourceRect, MyBase.BackColor)
+        ElseIf BackColor1.A > 0 Then
+            填充形状_GPU(context, bounds, If(边框圆角半径 > 0, 边框圆角半径 * scale, 0.0F), BackColor1)
         End If
         绘制图形内容_GPU(context, bounds, content)
 
@@ -84,7 +84,29 @@ Public Class ExcellentProgressBar
         Dim p As Padding = 文字边距
         Dim textRect As New RectangleF(p.Left, p.Top, Math.Max(0, Me.Width - p.Horizontal), Math.Max(0, Me.Height - p.Vertical))
         If textRect.Width < 1 OrElse textRect.Height < 1 Then Return
-        Dim flags As TextFormatFlags = TextFormatFlags.HorizontalCenter Or TextFormatFlags.VerticalCenter Or TextFormatFlags.SingleLine Or TextFormatFlags.EndEllipsis
+        Dim flags As TextFormatFlags = TextFormatFlags.SingleLine Or TextFormatFlags.EndEllipsis
+        Select Case TextAlign
+            Case ContentAlignment.TopLeft
+                flags = flags Or TextFormatFlags.Left
+            Case ContentAlignment.TopCenter
+                flags = flags Or TextFormatFlags.HorizontalCenter
+            Case ContentAlignment.TopRight
+                flags = flags Or TextFormatFlags.Right
+            Case ContentAlignment.MiddleLeft
+                flags = flags Or TextFormatFlags.Left Or TextFormatFlags.VerticalCenter
+            Case ContentAlignment.MiddleCenter
+                flags = flags Or TextFormatFlags.HorizontalCenter Or TextFormatFlags.VerticalCenter
+            Case ContentAlignment.MiddleRight
+                flags = flags Or TextFormatFlags.Right Or TextFormatFlags.VerticalCenter
+            Case ContentAlignment.BottomLeft
+                flags = flags Or TextFormatFlags.Left Or TextFormatFlags.Bottom
+            Case ContentAlignment.BottomCenter
+                flags = flags Or TextFormatFlags.HorizontalCenter Or TextFormatFlags.Bottom
+            Case ContentAlignment.BottomRight
+                flags = flags Or TextFormatFlags.Right Or TextFormatFlags.Bottom
+            Case Else
+                flags = flags Or TextFormatFlags.HorizontalCenter Or TextFormatFlags.VerticalCenter
+        End Select
         context.DrawText(Me.Text, Me.Font, Me.ForeColor, textRect, flags)
     End Sub
 
@@ -103,9 +125,44 @@ Public Class ExcellentProgressBar
 
         填充形状_GPU(context, bounds, radius, 轨道背景颜色, 轨道渐变颜色, 轨道渐变方向)
         绘制双填充区域_GPU(context, content, fillClipGeo)
+        绘制刻度线_GPU(context, content, fillClipGeo)
         If 边框颜色.A > 0 AndAlso borderWidth > 0 Then
             context.DrawRoundedRectangle(bounds, radius, 边框颜色, borderWidth)
         End If
+    End Sub
+
+    Private Sub 绘制刻度线_GPU(context As D3D_PaintContext, content As RectangleF, clipGeo As ID2D1Geometry)
+        If MarkerColor.A = 0 OrElse MarkerWidth <= 0 OrElse MarkerValue < Minimum OrElse MarkerValue > Maximum Then Return
+        If content.Width <= 0 OrElse content.Height <= 0 Then Return
+
+        Dim thickness As Single = MarkerWidth * DpiScale()
+        If thickness <= 0 Then Return
+
+        Dim ratio As Single = 计算值比例(MarkerValue)
+        Dim markerRect As RectangleF
+        If 方向 = BarOrientationEnum.Horizontal Then
+            Dim centerX As Single = content.X + content.Width * ratio
+            Dim left As Single = Math.Max(content.Left, centerX - thickness / 2.0F)
+            Dim right As Single = Math.Min(content.Right, centerX + thickness / 2.0F)
+            markerRect = New RectangleF(left, content.Top, Math.Max(0, right - left), content.Height)
+        Else
+            Dim centerY As Single = content.Bottom - content.Height * ratio
+            Dim top As Single = Math.Max(content.Top, centerY - thickness / 2.0F)
+            Dim bottom As Single = Math.Min(content.Bottom, centerY + thickness / 2.0F)
+            markerRect = New RectangleF(content.Left, top, content.Width, Math.Max(0, bottom - top))
+        End If
+        If markerRect.Width <= 0 OrElse markerRect.Height <= 0 Then Return
+
+        Dim pushedClip As Boolean
+        If clipGeo IsNot Nothing Then
+            PushGeometryClip_GPU(context, clipGeo, content)
+            pushedClip = True
+        End If
+        Try
+            context.FillRectangle(markerRect, MarkerColor)
+        Finally
+            If pushedClip Then context.DeviceContext.PopLayer()
+        End Try
     End Sub
 
     Private Shared Function 计算内容区圆角半径(bounds As RectangleF, content As RectangleF, outerRadius As Single) As Single
@@ -158,9 +215,10 @@ Public Class ExcellentProgressBar
 
         Try
             If gradColor <> Color.Empty AndAlso gradColor.A > 0 AndAlso gradientBounds.Width > 0 AndAlso gradientBounds.Height > 0 Then
-                Using brush = 创建线性渐变画刷_GPU(context, gradientBounds, baseColor, gradColor, gradDir)
+                Dim brush = 创建线性渐变画刷_GPU(context, gradientBounds, baseColor, gradColor, gradDir)
+                If brush IsNot Nothing Then
                     context.DeviceContext.FillRectangle(D3D_PaintContext.ToRawRect(fillRect), brush)
-                End Using
+                End If
             ElseIf baseColor.A > 0 Then
                 Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, baseColor, context.DeviceGeneration)
                 context.DeviceContext.FillRectangle(D3D_PaintContext.ToRawRect(fillRect), brush)
@@ -180,23 +238,17 @@ Public Class ExcellentProgressBar
         If color.A = 0 AndAlso (gradientColor = Color.Empty OrElse gradientColor.A = 0) Then Return
 
         Dim brush As ID2D1Brush = Nothing
-        Dim ownsBrush As Boolean
         If gradientColor <> Color.Empty AndAlso gradientColor.A > 0 Then
             brush = 创建线性渐变画刷_GPU(context, bounds, color, gradientColor, gradientDirection)
-            ownsBrush = True
         Else
             brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
         End If
 
-        Try
-            If radius > 0 Then
-                context.FillRoundedRectangle(bounds, radius, brush)
-            Else
-                context.DeviceContext.FillRectangle(D3D_PaintContext.ToRawRect(bounds), brush)
-            End If
-        Finally
-            If ownsBrush Then brush.Dispose()
-        End Try
+        If radius > 0 Then
+            context.FillRoundedRectangle(bounds, radius, brush)
+        Else
+            context.DeviceContext.FillRectangle(D3D_PaintContext.ToRawRect(bounds), brush)
+        End If
     End Sub
 
     Private Shared Function 创建线性渐变画刷_GPU(context As D3D_PaintContext,
@@ -204,25 +256,7 @@ Public Class ExcellentProgressBar
                                              baseColor As Color,
                                              gradColor As Color,
                                              gradDir As Orientation) As ID2D1LinearGradientBrush
-        Dim startPt As System.Numerics.Vector2
-        Dim endPt As System.Numerics.Vector2
-        If gradDir = System.Windows.Forms.Orientation.Vertical Then
-            startPt = New System.Numerics.Vector2(bounds.X, bounds.Bottom)
-            endPt = New System.Numerics.Vector2(bounds.X, bounds.Y)
-        Else
-            startPt = New System.Numerics.Vector2(bounds.X, bounds.Y)
-            endPt = New System.Numerics.Vector2(bounds.Right, bounds.Y)
-        End If
-
-        Dim stops() As GradientStop = {
-            New GradientStop With {.Position = 0.0F, .Color = D3D_PaintContext.ToColor4(baseColor)},
-            New GradientStop With {.Position = 1.0F, .Color = D3D_PaintContext.ToColor4(gradColor)}}
-        Dim stopCollection = context.DeviceContext.CreateGradientStopCollection(stops)
-        Try
-            Return context.DeviceContext.CreateLinearGradientBrush(New LinearGradientBrushProperties(startPt, endPt), stopCollection)
-        Finally
-            stopCollection.Dispose()
-        End Try
+        Return context.GetLinearGradientBrush(bounds, baseColor, gradColor, gradDir, reverse:=(gradDir = System.Windows.Forms.Orientation.Vertical))
     End Function
 
     Private Shared Sub PushGeometryClip_GPU(context As D3D_PaintContext, geo As ID2D1Geometry, bounds As RectangleF)
@@ -256,9 +290,9 @@ Public Class ExcellentProgressBar
     End Sub
 
     Private Function 计算值比例(val As Integer) As Single
-        Dim range As Integer = 最大值 - 最小值
-        If range = 0 Then Return 0.0F
-        Return (val - 最小值) / CSng(range)
+        Dim range As Double = CDbl(最大值) - CDbl(最小值)
+        If range <= 0 Then Return 0.0F
+        Return CSng(Math.Max(0.0R, Math.Min(1.0R, (CDbl(val) - CDbl(最小值)) / range)))
     End Function
 
     Private Function DpiScale() As Single
@@ -569,13 +603,77 @@ Public Class ExcellentProgressBar
     End Property
 
     Private 文字边距 As New Padding(0)
-    <Category("LakeUI"), Description("文字的内边距"), Browsable(True), DesignerSerializationVisibility(DesignerSerializationVisibility.Visible)>
+    <Category("LakeUI"), Description("文字的内边距"), DefaultValue(GetType(Padding), "0, 0, 0, 0"), Browsable(True), DesignerSerializationVisibility(DesignerSerializationVisibility.Visible)>
     Public Property TextPadding As Padding
         Get
             Return 文字边距
         End Get
         Set(value As Padding)
             SetValue(文字边距, value)
+        End Set
+    End Property
+
+    Private Function ShouldSerializeTextPadding() As Boolean
+        Return 文字边距 <> Padding.Empty
+    End Function
+
+    Private Sub ResetTextPadding()
+        TextPadding = Padding.Empty
+    End Sub
+
+    Private _backColor1 As Color = Color.FromArgb(36, 36, 36)
+    <Category("LakeUI"), Description("背景基础颜色"), DefaultValue(GetType(Color), "36, 36, 36"), Browsable(True)>
+    Public Property BackColor1 As Color
+        Get
+            Return _backColor1
+        End Get
+        Set(value As Color)
+            SetValue(_backColor1, value)
+        End Set
+    End Property
+
+    Private _markerValue As Integer = 0
+    <Category("LakeUI"), Description("显示刻度线的数值位置"), DefaultValue(0), Browsable(True)>
+    Public Property MarkerValue As Integer
+        Get
+            Return _markerValue
+        End Get
+        Set(value As Integer)
+            SetValue(_markerValue, value)
+        End Set
+    End Property
+
+    Private _markerColor As Color = Color.Empty
+    <Category("LakeUI"), Description("刻度线颜色；Empty 时不显示"), DefaultValue(GetType(Color), ""), Browsable(True)>
+    Public Property MarkerColor As Color
+        Get
+            Return _markerColor
+        End Get
+        Set(value As Color)
+            SetValue(_markerColor, value)
+        End Set
+    End Property
+
+    Private _markerWidth As Integer = 1
+    <Category("LakeUI"), Description("刻度线宽度"), DefaultValue(1), Browsable(True)>
+    Public Property MarkerWidth As Integer
+        Get
+            Return _markerWidth
+        End Get
+        Set(value As Integer)
+            SetValue(_markerWidth, Math.Max(0, value))
+        End Set
+    End Property
+
+    Private _textAlign As ContentAlignment = ContentAlignment.MiddleCenter
+    <Editor("System.Drawing.Design.ContentAlignmentEditor, System.Windows.Forms.Design", "System.Drawing.Design.UITypeEditor, System.Drawing.Design"),
+     Category("LakeUI"), Description("文字九宫格对齐方式"), DefaultValue(GetType(ContentAlignment), "MiddleCenter"), Browsable(True)>
+    Public Property TextAlign As ContentAlignment
+        Get
+            Return _textAlign
+        End Get
+        Set(value As ContentAlignment)
+            SetValue(_textAlign, value)
         End Set
     End Property
 

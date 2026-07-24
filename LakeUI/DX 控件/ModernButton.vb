@@ -7,6 +7,43 @@ Imports Vortice.DirectWrite
 Public Class ModernButton
     Implements V3_IGpuRenderable, V3_IGpuInvalidationSource, V3_ISuperSamplingSource
 
+    Private _subTextFontCache As Font
+    Private _subTextFontCacheKey As String
+    Private _mainTextHeightCacheKey As String
+    Private _subTextHeightCacheKey As String
+    Private _mainTextHeightCache As Integer
+    Private _subTextHeightCache As Integer
+
+    Private Function 获取次文本字体() As Font
+        Dim size As Single = Math.Max(1.0F, 次要文本字号)
+        Dim key As String = Me.Font.FontFamily.Name & "|" & size.ToString(Globalization.CultureInfo.InvariantCulture)
+        If _subTextFontCache IsNot Nothing AndAlso _subTextFontCacheKey = key Then Return _subTextFontCache
+        释放次文本字体()
+        _subTextFontCache = New Font(Me.Font.FontFamily, size, System.Drawing.FontStyle.Regular, GraphicsUnit.Point)
+        _subTextFontCacheKey = key
+        Return _subTextFontCache
+    End Function
+
+    Private Sub 释放次文本字体()
+        If _subTextFontCache IsNot Nothing Then
+            Try : _subTextFontCache.Dispose() : Catch : End Try
+            _subTextFontCache = Nothing
+        End If
+        _subTextFontCacheKey = Nothing
+        _subTextHeightCacheKey = Nothing
+        _subTextHeightCache = 0
+    End Sub
+
+    Private Function 获取文本高度(text As String, font As Font, ByRef cacheKey As String, ByRef cacheHeight As Integer) As Integer
+        Dim actualText = If(String.IsNullOrEmpty(text), "A", text)
+        Dim key = font.FontFamily.Name & "|" & font.SizeInPoints.ToString(Globalization.CultureInfo.InvariantCulture) & "|" & CInt(font.Style) & "|" & actualText
+        If cacheKey <> key Then
+            cacheHeight = Math.Max(1, TextRenderer.MeasureText(actualText, font).Height)
+            cacheKey = key
+        End If
+        Return cacheHeight
+    End Function
+
     Public Sub New()
         InitializeComponent()
         动画助手.DirtyProvider = AddressOf 按钮动画脏区
@@ -164,15 +201,16 @@ Public Class ModernButton
         If String.IsNullOrEmpty(mainText) AndAlso String.IsNullOrEmpty(次要文本) Then Return
 
         If Not String.IsNullOrEmpty(次要文本) Then
-            Dim mainH As Single = Math.Max(1, TextRenderer.MeasureText(If(String.IsNullOrEmpty(mainText), "A", mainText), Me.Font).Height)
-            Using subFont As New Font(Me.Font.FontFamily, 次要文本字号, System.Drawing.FontStyle.Regular)
-                Dim subH As Single = Math.Max(1, TextRenderer.MeasureText(次要文本, subFont).Height)
+            Dim mainH As Single = 获取文本高度(mainText, Me.Font, _mainTextHeightCacheKey, _mainTextHeightCache)
+            Dim subFont = 获取次文本字体()
+            If subFont IsNot Nothing Then
+                Dim subH As Single = 获取文本高度(次要文本, subFont, _subTextHeightCacheKey, _subTextHeightCache)
                 Dim gap As Single = 主次文本间距 * s
                 Dim totalH As Single = mainH + gap + subH
                 Dim startY As Single = 文本绘制区域.Y + (文本绘制区域.Height - totalH) / 2.0F
                 context.DrawText(mainText, Me.Font, 文本颜色, New RectangleF(文本绘制区域.X, startY, 文本绘制区域.Width, mainH), align, ParagraphAlignment.Near)
                 context.DrawText(次要文本, subFont, 次要文本颜色, New RectangleF(文本绘制区域.X, startY + mainH + gap, 文本绘制区域.Width, subH), align, ParagraphAlignment.Near)
-            End Using
+            End If
         Else
             context.DrawText(mainText, Me.Font, 文本颜色, 文本绘制区域, align, ParagraphAlignment.Center)
         End If
@@ -188,23 +226,17 @@ Public Class ModernButton
         If color.A = 0 AndAlso (gradientColor = Color.Empty OrElse gradientColor.A = 0) Then Return
 
         Dim brush As ID2D1Brush = Nothing
-        Dim ownsBrush As Boolean
         If gradientColor <> Color.Empty AndAlso gradientColor.A > 0 Then
             brush = 创建线性渐变画刷_GPU(context, bounds, color, gradientColor, gradientDirection)
-            ownsBrush = True
         Else
             brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
         End If
 
-        Try
-            If radius > 0 Then
-                context.FillRoundedRectangle(bounds, radius, brush)
-            Else
-                context.DeviceContext.FillRectangle(D3D_PaintContext.ToRawRect(bounds), brush)
-            End If
-        Finally
-            If ownsBrush Then brush.Dispose()
-        End Try
+        If radius > 0 Then
+            context.FillRoundedRectangle(bounds, radius, brush)
+        Else
+            context.DeviceContext.FillRectangle(D3D_PaintContext.ToRawRect(bounds), brush)
+        End If
     End Sub
 
     Private Sub 绘制形状边框_GPU(context As D3D_PaintContext, bounds As RectangleF, radius As Single, color As Color, strokeWidth As Single)
@@ -222,25 +254,7 @@ Public Class ModernButton
                                              baseColor As Color,
                                              gradColor As Color,
                                              gradDir As System.Windows.Forms.Orientation) As ID2D1LinearGradientBrush
-        Dim startPt As Vector2
-        Dim endPt As Vector2
-        If gradDir = System.Windows.Forms.Orientation.Vertical Then
-            startPt = New Vector2(bounds.X, bounds.Y)
-            endPt = New Vector2(bounds.X, bounds.Bottom)
-        Else
-            startPt = New Vector2(bounds.X, bounds.Y)
-            endPt = New Vector2(bounds.Right, bounds.Y)
-        End If
-
-        Dim stops() As GradientStop = {
-            New GradientStop With {.Position = 0.0F, .Color = D3D_PaintContext.ToColor4(baseColor)},
-            New GradientStop With {.Position = 1.0F, .Color = D3D_PaintContext.ToColor4(gradColor)}}
-        Dim stopCollection = context.DeviceContext.CreateGradientStopCollection(stops)
-        Try
-            Return context.DeviceContext.CreateLinearGradientBrush(New LinearGradientBrushProperties(startPt, endPt), stopCollection)
-        Finally
-            stopCollection.Dispose()
-        End Try
+        Return context.GetLinearGradientBrush(bounds, baseColor, gradColor, gradDir)
     End Function
 
     Private Shared Sub PushGeometryClip_GPU(context As D3D_PaintContext, geo As ID2D1Geometry, bounds As RectangleF)
@@ -798,7 +812,11 @@ Public Class ModernButton
             Return 次要文本字号
         End Get
         Set(value As Integer)
-            SetValue(次要文本字号, value)
+            value = Math.Max(1, value)
+            If 次要文本字号 = value Then Return
+            次要文本字号 = value
+            释放次文本字体()
+            请求V3渲染()
         End Set
     End Property
     Private 主次文本间距 As Integer = 1
@@ -979,6 +997,9 @@ Public Class ModernButton
 #Region "生命周期"
     Protected Overrides Sub OnFontChanged(e As EventArgs)
         MyBase.OnFontChanged(e)
+        _mainTextHeightCacheKey = Nothing
+        _mainTextHeightCache = 0
+        释放次文本字体()
         请求V3渲染()
     End Sub
 #End Region

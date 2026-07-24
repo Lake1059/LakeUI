@@ -155,6 +155,9 @@ Public NotInheritable Class FloatingToolTipForm
             _closeTimer = New Timer()
             AddHandler _closeTimer.Tick, AddressOf CloseTimerTick
         End If
+        ' 鼠标在关联区域内持续移动时，调用方可能反复请求关闭。
+        ' 已在计时则只更新关联区域，不能重新开始倒计时，否则提示可能永远不消失。
+        If _closeTimer.Enabled Then Return
         _closeTimer.Stop()
         _closeTimer.Interval = Math.Max(1, delayMs)
         _closeTimer.Start()
@@ -393,7 +396,7 @@ Public NotInheritable Class FloatingToolTipForm
         _messageFilterInstalled = True
     End Sub
 
-    Private Sub CancelScheduledClose()
+    Friend Sub CancelScheduledClose()
         If _closeTimer IsNot Nothing Then _closeTimer.Stop()
         _closeRelatedBounds = Array.Empty(Of Rectangle)()
     End Sub

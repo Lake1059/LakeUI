@@ -942,23 +942,17 @@ Public Class ExcellentTrackBar
         If color.A = 0 AndAlso (gradientColor = Color.Empty OrElse gradientColor.A = 0) Then Return
 
         Dim brush As D2D.ID2D1Brush = Nothing
-        Dim ownsBrush As Boolean
         If gradientColor <> Color.Empty AndAlso gradientColor.A > 0 Then
             brush = 创建线性渐变画刷_GPU(context, rect, color, gradientColor, gradientDirection)
-            ownsBrush = True
         Else
             brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
         End If
 
-        Try
-            If radius > 0 Then
-                context.FillRoundedRectangle(rect, radius, brush)
-            Else
-                context.DeviceContext.FillRectangle(D3D_PaintContext.ToRawRect(rect), brush)
-            End If
-        Finally
-            If ownsBrush Then brush.Dispose()
-        End Try
+        If radius > 0 Then
+            context.FillRoundedRectangle(rect, radius, brush)
+        Else
+            context.DeviceContext.FillRectangle(D3D_PaintContext.ToRawRect(rect), brush)
+        End If
     End Sub
 
     Private Sub 绘制圆角边框_GPU(context As D3D_PaintContext, rect As RectangleF, radius As Single, color As Color, strokeWidth As Single)
@@ -976,24 +970,7 @@ Public Class ExcellentTrackBar
                                              baseColor As Color,
                                              gradColor As Color,
                                              gradDir As System.Windows.Forms.Orientation) As D2D.ID2D1LinearGradientBrush
-        Dim startPt As System.Numerics.Vector2
-        Dim endPt As System.Numerics.Vector2
-        If gradDir = System.Windows.Forms.Orientation.Vertical Then
-            startPt = New System.Numerics.Vector2(bounds.X, bounds.Y)
-            endPt = New System.Numerics.Vector2(bounds.X, bounds.Bottom)
-        Else
-            startPt = New System.Numerics.Vector2(bounds.X, bounds.Y)
-            endPt = New System.Numerics.Vector2(bounds.Right, bounds.Y)
-        End If
-        Dim stops() As D2D.GradientStop = {
-            New D2D.GradientStop With {.Position = 0.0F, .Color = D3D_PaintContext.ToColor4(baseColor)},
-            New D2D.GradientStop With {.Position = 1.0F, .Color = D3D_PaintContext.ToColor4(gradColor)}}
-        Dim stopCollection = context.DeviceContext.CreateGradientStopCollection(stops)
-        Try
-            Return context.DeviceContext.CreateLinearGradientBrush(New D2D.LinearGradientBrushProperties(startPt, endPt), stopCollection)
-        Finally
-            stopCollection.Dispose()
-        End Try
+        Return context.GetLinearGradientBrush(bounds, baseColor, gradColor, gradDir)
     End Function
 
     Private Shared Sub PushGeometryClip_GPU(context As D3D_PaintContext, geo As D2D.ID2D1Geometry, bounds As RectangleF)
@@ -1127,6 +1104,7 @@ Public Class ExcellentTrackBar
         MyBase.OnMouseWheel(e)
         If Not Enabled Then Return
         Dim delta As Double = If(e.Delta > 0, 小步进值, -小步进值)
+        If 方向 = TrackOrientationEnum.Horizontal Then delta = -delta
         Dim nextValue As Double = NumericValuePrecision.RemoveStepNoise(NumericValuePrecision.AddStep(当前值, delta), 最小值, Math.Abs(delta))
         Value = Math.Max(最小值, Math.Min(最大值, nextValue))
     End Sub

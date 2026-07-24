@@ -6,9 +6,10 @@ Imports Vortice.Direct2D1
 ''' 控件不能在 RenderGpu 内创建长期 geometry，必须通过 compositor 的 D3D_GeometryCache 获取。
 ''' </summary>
 Public NotInheritable Class D3D_GeometryCache
-    Implements IDisposable
+    Implements D3D_IRenderCacheOwner, IDisposable
 
     Private Const MaxCachedGeometries As Integer = 512
+    Private Const EstimatedGeometryBytes As Long = 256L
 
     Private ReadOnly _manager As D3D_DeviceManager
     Private ReadOnly _geometries As New Dictionary(Of String, D3D_GeometryCacheEntry)(StringComparer.Ordinal)
@@ -17,6 +18,30 @@ Public NotInheritable Class D3D_GeometryCache
 
     Public Sub New(manager As D3D_DeviceManager)
         _manager = manager
+        D3D_GpuCache.Register(Me)
+    End Sub
+
+    Private ReadOnly Property CacheBytes As Long Implements D3D_IRenderCacheOwner.CacheBytes
+        Get
+            Return CLng(_geometries.Count) * EstimatedGeometryBytes
+        End Get
+    End Property
+
+    Private ReadOnly Property OldestUseTick As Long Implements D3D_IRenderCacheOwner.OldestUseTick
+        Get
+            If _geometries.Count = 0 OrElse _lruKeys.First Is Nothing Then Return Long.MaxValue
+            Return _geometries(_lruKeys.First.Value).LastUsed
+        End Get
+    End Property
+
+    Private Function TrimOldest() As Boolean Implements D3D_IRenderCacheOwner.TrimOldest
+        If _lruKeys.First Is Nothing Then Return False
+        Release(_lruKeys.First.Value)
+        Return True
+    End Function
+
+    Private Sub ReleaseAllBudgeted() Implements D3D_IRenderCacheOwner.ReleaseAll
+        Invalidate()
     End Sub
 
     Public Function GetOrCreateGeometry(key As String, factory As Func(Of ID2D1Geometry)) As ID2D1Geometry
@@ -37,8 +62,9 @@ Public NotInheritable Class D3D_GeometryCache
         Dim geometry = factory()
         If geometry Is Nothing Then Return Nothing
         Dim node = _lruKeys.AddLast(key)
-        _geometries(key) = New D3D_GeometryCacheEntry(geometry, generation, node)
+        _geometries(key) = New D3D_GeometryCacheEntry(geometry, generation, node, D3D_GpuCache.NextTick())
         TrimExcess()
+        D3D_GpuCache.TrimToBudget(Me)
         Return geometry
     End Function
 
@@ -77,6 +103,7 @@ Public NotInheritable Class D3D_GeometryCache
         If entry.LruNode Is Nothing OrElse entry.LruNode.List Is Nothing Then Return
         _lruKeys.Remove(entry.LruNode)
         _lruKeys.AddLast(entry.LruNode)
+        entry.LastUsed = D3D_GpuCache.NextTick()
     End Sub
 
     Private Sub TrimExcess()
@@ -86,14 +113,16 @@ Public NotInheritable Class D3D_GeometryCache
     End Sub
 
     Private NotInheritable Class D3D_GeometryCacheEntry
-        Public Sub New(geometry As ID2D1Geometry, generation As Integer, lruNode As LinkedListNode(Of String))
+        Public Sub New(geometry As ID2D1Geometry, generation As Integer, lruNode As LinkedListNode(Of String), lastUsed As Long)
             Me.Geometry = geometry
             Me.Generation = generation
             Me.LruNode = lruNode
+            Me.LastUsed = lastUsed
         End Sub
 
         Public ReadOnly Property Geometry As ID2D1Geometry
         Public ReadOnly Property Generation As Integer
         Public ReadOnly Property LruNode As LinkedListNode(Of String)
+        Public Property LastUsed As Long
     End Class
 End Class

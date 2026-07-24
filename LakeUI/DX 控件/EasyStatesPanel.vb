@@ -235,6 +235,7 @@ Partial Public Class EasyStatesPanel
     End Sub
 
     Friend Sub NotifyItemContentChanged()
+        _textHeightCache.Clear()
         _layoutDirty = True
         ClampScrollOffsets()
         请求V3渲染()
@@ -252,6 +253,7 @@ Partial Public Class EasyStatesPanel
 
     Private _subTextFontCache As Font
     Private _subTextFontCacheKey As String
+    Private ReadOnly _textHeightCache As New Dictionary(Of String, Integer)(StringComparer.Ordinal)
 
     Private Function GetSubTextFont() As Font
         Dim size As Single = Math.Max(1.0F, CSng(_subTextSize))
@@ -269,7 +271,19 @@ Partial Public Class EasyStatesPanel
             _subTextFontCache = Nothing
         End If
         _subTextFontCacheKey = Nothing
+        _textHeightCache.Clear()
     End Sub
+
+    Private Function GetCachedTextHeight(text As String, font As Font, prefix As String) As Single
+        If String.IsNullOrEmpty(text) OrElse font Is Nothing Then Return 0.0F
+        Dim key = prefix & "|" & font.FontFamily.Name & "|" & font.SizeInPoints.ToString(Globalization.CultureInfo.InvariantCulture) & "|" & text
+        Dim height As Integer
+        If Not _textHeightCache.TryGetValue(key, height) Then
+            height = Math.Max(1, TextRenderer.MeasureText(text, font).Height)
+            _textHeightCache(key) = height
+        End If
+        Return height
+    End Function
 
 #End Region
 
@@ -885,8 +899,8 @@ Partial Public Class EasyStatesPanel
                 Dim subText As String = If(it.SubText, "")
                 If String.IsNullOrEmpty(mainText) AndAlso String.IsNullOrEmpty(subText) Then Continue For
 
-                Dim mainH As Single = If(String.IsNullOrEmpty(mainText), 0.0F, TextRenderer.MeasureText(mainText, Font).Height)
-                Dim subH As Single = If(String.IsNullOrEmpty(subText), 0.0F, TextRenderer.MeasureText(subText, subFont).Height)
+                Dim mainH As Single = GetCachedTextHeight(mainText, Font, "main")
+                Dim subH As Single = GetCachedTextHeight(subText, subFont, "sub")
                 Dim totalH As Single = mainH + If(subH > 0, lineGap + subH, 0.0F)
                 Dim startY As Single = textRect.Y + Math.Max(0.0F, (textRect.Height - totalH) / 2.0F)
 
