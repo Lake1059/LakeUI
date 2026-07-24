@@ -2085,7 +2085,8 @@ Public Class ModernTextBox
 #End Region
 
 #Region "选区与剪贴板"
-    Private Sub SelectAll()
+    ''' <summary>选中全部文本，但不改变控件焦点。</summary>
+    Public Sub SelectAll()
         _selAnchorLine = 0
         _selAnchorCol = 0
         _caretLine = _lines.Count - 1

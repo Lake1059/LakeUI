@@ -3638,10 +3638,25 @@ Public Class UltraDetailListView
         Dim cellW = colW - scaledPadding.Horizontal - iconAreaW
         If cellW <= 20 Then Return
 
+        ' 编辑框只覆盖主文本区域。BottomLines 属于同一行的独立底部区域，
+        ' 必须从高度和背景快照中排除，否则底部文本会压到编辑框上。
+        Dim bottomLinesH As Integer = item.CachedBottomLinesHeight
+        Dim upperPartH As Integer = item.CachedUpperPartHeight
+        If bottomLinesH = 0 AndAlso upperPartH = 0 Then
+            Dim rowFullW As Integer = If(_columns.Count > 0, 获取总列宽(), 获取内容区域().Width)
+            bottomLinesH = 计算底部文本行高度(item, rowFullW)
+            upperPartH = row.Height - scaledPadding.Vertical - bottomLinesH
+        End If
+        upperPartH = Math.Max(1, upperPartH)
+        Dim editY As Integer = rowY + scaledPadding.Top
+        If editY + upperPartH > rowY + row.Height - scaledPadding.Bottom Then
+            upperPartH = Math.Max(1, rowY + row.Height - scaledPadding.Bottom - editY)
+        End If
+
         _editRowIndex = displayRowIndex
         _editColumnIndex = columnIndex
         Dim sub_ = item.SubItems(columnIndex)
-        Dim editDirtyRect As New Rectangle(cellX, rowY, cellW, row.Height)
+        Dim editDirtyRect As New Rectangle(cellX, editY, cellW, upperPartH)
         Dim editBackground As Image = 创建编辑框背景快照(editDirtyRect)
         Dim fallbackBackColor As Color = 获取编辑框回退背景颜色(displayRowIndex)
 
@@ -3656,8 +3671,8 @@ Public Class UltraDetailListView
             .BorderColor = 项高亮边框颜色,
             .BorderColorFocus = 项高亮边框颜色,
             .Padding = New Padding(2, 0, 2, 0),
-            .Location = New Point(cellX, rowY),
-            .Size = New Size(cellW, row.Height)
+            .Location = New Point(cellX, editY),
+            .Size = New Size(cellW, upperPartH)
         }
 
         ' 让 list view 的背景/文本缓存失效，避免编辑框采样时拍到旧文字。
@@ -3665,12 +3680,13 @@ Public Class UltraDetailListView
 
         Me.Controls.Add(_editTextBox)
         _editTextBox.BringToFront()
-        _editTextBox.Focus()
-        _editTextBox.[Select](0, sub_.Text.Length)
-
         AddHandler _editTextBox.PreviewKeyDown, AddressOf 编辑框预览按键
         AddHandler _editTextBox.LostFocus, AddressOf 编辑框失焦
         AddHandler _editTextBox.KeyDown, AddressOf 编辑框按键
+        ' 不要调用 Control.Select(Boolean, Boolean)：那是焦点导航重载，
+        ' 会把刚创建的编辑框焦点移走，导致编辑框立即失效。
+        _editTextBox.Focus()
+        _editTextBox.SelectAll()
     End Sub
 
     Private Function 创建编辑框背景快照(cellRect As Rectangle) As Image
@@ -3753,7 +3769,22 @@ Public Class UltraDetailListView
     End Sub
 
     Private Sub 编辑框失焦(sender As Object, e As EventArgs)
-        结束标签编辑(False)
+        Dim editBox = TryCast(sender, ModernTextBox)
+        If editBox Is Nothing OrElse IsDisposed OrElse Disposing Then Return
+
+        ' 焦点切换可能在同一条消息中短暂经过父控件。延后一拍确认，
+        ' 只有编辑框及其子控件都确实失焦时才提交编辑。
+        If Not IsHandleCreated Then Return
+        Try
+            BeginInvoke(New MethodInvoker(
+                Sub()
+                    If ReferenceEquals(_editTextBox, editBox) AndAlso Not editBox.ContainsFocus Then
+                        结束标签编辑(False)
+                    End If
+                End Sub))
+        Catch ex As InvalidOperationException
+            ' 控件正在销毁时无需再提交；释放路径会清理编辑框。
+        End Try
     End Sub
 
     Private Sub 编辑框按键(sender As Object, e As KeyEventArgs)
@@ -4058,12 +4089,6 @@ Public Class UltraDetailListView
             取消待显示截断提示()
             Return
         End If
-        Dim ownerForm = FindForm()
-        If ownerForm IsNot Nothing AndAlso Not ReferenceEquals(Form.ActiveForm, ownerForm) Then
-            取消待显示截断提示()
-            Return
-        End If
-
         Dim pointer = PointToClient(Control.MousePosition)
         Dim currentSourceRect As Rectangle = Rectangle.Empty
         Dim currentText = 获取截断文本(pointer, currentSourceRect)
