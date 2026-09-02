@@ -8,8 +8,10 @@ Public NotInheritable Class D3D_TextureCache
 
     Private ReadOnly _entries As New Dictionary(Of Object, D3D_TextureCacheEntry)()
     Private ReadOnly _retiredResources As New List(Of D3D_TextureCacheEntry)()
+    Private ReadOnly _retiredLock As New Object()
     Private _totalGpuBytes As Long
     Private _retiredGpuBytes As Long
+    Private _retiredDisposeScheduled As Integer
     Private _frameUseDepth As Integer
     Private _trimPending As Boolean
     Private _disposed As Boolean
@@ -103,15 +105,13 @@ Public NotInheritable Class D3D_TextureCache
         If _frameUseDepth > 0 Then _frameUseDepth -= 1
         If _frameUseDepth > 0 Then Return
 
-        DisposeRetiredResources()
+        ScheduleRetiredResourceRelease()
         If Not _trimPending Then Return
 
         ' Frame completion is still an animation hot path. Leave the pending
         ' flag for the next resource-creation or explicit-cleanup boundary;
         ' trimming here can synchronously Dispose several D2D resources.
         _trimPending = False
-        TrimToBudget(force:=False)
-        D3D_GpuCache.TrimToBudget(Me)
     End Sub
 
     Private Sub RequestBudgetTrim(Optional protectedKey As Object = Nothing)
@@ -217,21 +217,63 @@ Public NotInheritable Class D3D_TextureCache
     Private Sub RetireOrDispose(entry As D3D_TextureCacheEntry)
         If entry Is Nothing OrElse entry.Resource Is Nothing Then Return
         If _frameUseDepth > 0 Then
-            _retiredResources.Add(entry)
-            _retiredGpuBytes += entry.GpuBytes
+            SyncLock _retiredLock
+                _retiredResources.Add(entry)
+                _retiredGpuBytes += entry.GpuBytes
+            End SyncLock
         Else
             DisposeEntry(entry)
         End If
     End Sub
 
+    Private Sub ScheduleRetiredResourceRelease()
+        If Threading.Interlocked.CompareExchange(_retiredDisposeScheduled, 1, 0) <> 0 Then Return
+        Dim retired As D3D_TextureCacheEntry() = Nothing
+        SyncLock _retiredLock
+            If _retiredResources.Count > 0 Then
+                retired = _retiredResources.ToArray()
+                _retiredResources.Clear()
+            End If
+        End SyncLock
+        If retired Is Nothing Then
+            Threading.Interlocked.Exchange(_retiredDisposeScheduled, 0)
+            Return
+        End If
+        Threading.ThreadPool.QueueUserWorkItem(
+            Sub(state)
+                Try
+                    For Each entry In retired
+                        DisposeEntry(entry)
+                    Next
+                Finally
+                    Dim 已释放字节数 As Long = retired.Sum(Function(项) Math.Max(0L, 项.GpuBytes))
+                    SyncLock _retiredLock
+                        _retiredGpuBytes = Math.Max(0L, _retiredGpuBytes - 已释放字节数)
+                    End SyncLock
+                    Threading.Interlocked.Exchange(_retiredDisposeScheduled, 0)
+                    Dim more As Boolean
+                    SyncLock _retiredLock
+                        more = _retiredResources.Count > 0
+                    End SyncLock
+                    If more AndAlso _frameUseDepth = 0 Then ScheduleRetiredResourceRelease()
+                End Try
+            End Sub)
+    End Sub
+
     Private Sub DisposeRetiredResources()
-        If _retiredResources.Count = 0 Then Return
-        Dim retired = _retiredResources.ToArray()
-        _retiredResources.Clear()
-        _retiredGpuBytes = 0
+        Dim retired As D3D_TextureCacheEntry()
+        SyncLock _retiredLock
+            If _retiredResources.Count = 0 Then Return
+            retired = _retiredResources.ToArray()
+            _retiredResources.Clear()
+        End SyncLock
         For Each entry In retired
             DisposeEntry(entry)
         Next
+        Dim 已释放字节数 As Long = retired.Sum(Function(项) Math.Max(0L, 项.GpuBytes))
+        SyncLock _retiredLock
+            _retiredGpuBytes = Math.Max(0L, _retiredGpuBytes - 已释放字节数)
+        End SyncLock
     End Sub
 
     Private Shared Sub DisposeEntry(entry As D3D_TextureCacheEntry)

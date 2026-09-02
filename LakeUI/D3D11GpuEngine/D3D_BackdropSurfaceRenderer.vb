@@ -41,6 +41,8 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
 
     Private Shared ReadOnly _instancesLock As New Object()
     Private Shared ReadOnly _instances As New List(Of WeakReference(Of D3D_BackdropSurfaceRenderer))()
+    Private Shared ReadOnly _cpuBudgetRequestLock As New Object()
+    Private Shared _lastCpuBudgetRequestTicks As Long
 
 #Region "字段"
 
@@ -149,6 +151,8 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
     Private _lastCpuUse As Long
     Private _lastGpuUse As Long
     Private _cpuBudgetTrimScheduled As Integer
+
+    Private Const CpuBudgetTrimRequestIntervalMilliseconds As Long = 500L
 
 #End Region
 
@@ -694,6 +698,11 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
     Private Sub RequestCpuBudgetTrim()
         ' 背景 worker 每完成一帧都会到这里；预算未超限时不要向 UI 投递维护消息。
         If EstimateCpuCacheBytes() <= Math.Max(0L, GlobalOptions.CpuCacheBudgetBytes) Then Return
+        SyncLock _cpuBudgetRequestLock
+            Dim 当前时刻 = Environment.TickCount64
+            If 当前时刻 - _lastCpuBudgetRequestTicks < CpuBudgetTrimRequestIntervalMilliseconds Then Return
+            _lastCpuBudgetRequestTicks = 当前时刻
+        End SyncLock
         If Interlocked.CompareExchange(_cpuBudgetTrimScheduled, 1, 0) <> 0 Then Return
         PostBudgetTrim(
             Sub()
