@@ -35,7 +35,7 @@ Friend NotInheritable Class D3D_HwndSwapChainPresenter
     Private ReadOnly Property CacheBytes As Long Implements D3D_IRenderCacheOwner.CacheBytes
         Get
             If _size.Width <= 0 OrElse _size.Height <= 0 Then Return 0
-            ' The flip model owns two back buffers; the D2D target is a view over
+            ' 翻转模型拥有两个后备缓冲；D2D 目标是其上的视图，
             ' one of them and is therefore not counted a second time.
             Return CLng(_size.Width) * CLng(_size.Height) * 4L * BufferCount
         End Get

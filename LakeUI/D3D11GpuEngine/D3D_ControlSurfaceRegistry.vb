@@ -520,9 +520,8 @@ Friend NotInheritable Class D3D_ControlSurfaceRegistry
     End Sub
 
     Private Shared Sub 控件几何已变化(发送者 As Object, 事件参数 As EventArgs)
-        ' Geometry changes affect both this surface and every consumer that
-        ' samples it. The dependency rectangle is in the source's old
-        ' coordinate space, so consumers must be invalidated unconditionally.
+        ' 几何变化同时影响当前表面及所有采样消费者。依赖矩形位于来源的旧坐标系，
+        ' 因此必须无条件使消费者失效。
         MarkDirty(TryCast(发送者, Control), requestConsumers:=True)
     End Sub
 

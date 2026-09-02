@@ -93,7 +93,7 @@ Partial Class ModernColorDialog
         ModernContextMenu1.Items.Add(ModernMenuItem12)
         ModernContextMenu1.Items.Add(ModernMenuItem13)
         ModernContextMenu1.MenuPadding = New Padding(10)
-        ModernContextMenu1.PopupAnimationDuration = 300
+        ModernContextMenu1.AnimationDuration = 300
         ModernContextMenu1.SeparatorHeight = 20
         ' 
         ' ModernColorDialog

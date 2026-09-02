@@ -13,8 +13,8 @@ Public NotInheritable Class D3D_RenderCore
     Public Const EngineVersion As Integer = 5
 
     ''' <summary>
-    ''' Optional non-blocking DXGI frame-latency gate. Disabled by default until a host
-    ''' opts in after measuring queue depth; the gate never waits on the UI thread.
+    ''' 可选的非阻塞 DXGI 帧延迟闸门。默认关闭，宿主完成队列深度评估后再启用；
+    ''' 该闸门绝不在 UI 线程等待。
     ''' </summary>
     Friend Shared Property V5FrameLatencySchedulerEnabled As Boolean
 
@@ -115,21 +115,23 @@ Public NotInheritable Class D3D_RenderCore
     Public Shared Sub RequestRender(control As Control, dirtyRect As Rectangle)
         If control Is Nothing OrElse control.IsDisposed Then Return
 
-        Dim bounds = dirtyRect
-        If bounds.Width <= 0 OrElse bounds.Height <= 0 Then bounds = New Rectangle(Point.Empty, control.Size)
-        bounds = Rectangle.Intersect(New Rectangle(Point.Empty, control.Size), bounds)
-        If bounds.Width <= 0 OrElse bounds.Height <= 0 Then bounds = New Rectangle(Point.Empty, control.Size)
+        Dim 脏区 = dirtyRect
+        If 脏区.Width <= 0 OrElse 脏区.Height <= 0 Then
+            脏区 = New Rectangle(Point.Empty, control.Size)
+        Else
+            脏区 = Rectangle.Intersect(New Rectangle(Point.Empty, control.Size), 脏区)
+            If 脏区.Width <= 0 OrElse 脏区.Height <= 0 Then Return
+        End If
 
-        OuterToInnerRefreshScheduler.Request(control, bounds)
+        OuterToInnerRefreshScheduler.Request(control, 脏区)
 
-        NotifyControlInvalidated(control, bounds)
+        NotifyControlInvalidated(control, 脏区)
     End Sub
 
     Friend Shared Sub NotifyControlInvalidated(control As Control, dirtyRect As Rectangle)
         If control Is Nothing OrElse control.IsDisposed Then Return
 
-        ' V5 surfaces propagate invalidation through the GPU surface registry.
-        ' Do not also enqueue the legacy CPU backdrop snapshot path.
+        ' V5 表面通过 GPU 表面注册表传播失效；不要再进入旧的 CPU 背景快照路径。
         If D3D_V5Presentation.IsV5Control(control) Then Return
 
         Try : D3D_BackgroundPenetration.Invalidate(control, dirtyRect) : Catch : End Try
@@ -250,10 +252,8 @@ Public NotInheritable Class D3D_RenderCore
     Private Shared Sub RequestFullFormRender(form As Form)
         Try
             If form IsNot Nothing AndAlso Not form.IsDisposed AndAlso form.IsHandleCreated Then
-                ' Do not fan a form-level GPU/cache refresh into native child
-                ' HWNDs. Each V5 control owns its own surface and requests a
-                ' frame independently; original WinForms controls remain
-                ' entirely on their normal WM_PAINT path.
+                ' 窗体级 GPU/缓存刷新不能扩散到原生子 HWND。每个 V5 控件拥有自己的表面并独立请求帧；
+                ' 原生 WinForms 控件继续走正常 WM_PAINT 路径。
                 OuterToInnerRefreshScheduler.RequestFull(form, invalidateChildren:=False)
             End If
         Catch
@@ -352,9 +352,7 @@ Public NotInheritable Class D3D_RenderCore
     ''' </summary>
     Public Shared Sub ResetRenderCore()
         Dim recoveryForms = GetCleanupRecoveryForms()
-        ' Keep this cold-reset entry point equivalent to the public V3 cleanup
-        ' contract: clear compositor, backdrop and cache state before tearing
-        ' down either device family.
+        ' 冷重置入口保持与公开 V3 清理契约一致：销毁任一设备族之前先清理合成器、背景和缓存状态。
         D3D_PaintBridge.CleanupD2DResources(D3DCacheCleanupLevel.ReleaseEverything,
                                             owner:=Nothing,
                                             invalidateAfterCleanup:=False)
@@ -365,11 +363,10 @@ Public NotInheritable Class D3D_RenderCore
     Friend Shared Sub InvalidateDeviceForCleanup()
         Threading.Interlocked.Increment(_suppressDeviceLostRender)
         Try
-            ' Flip-model 同一 HWND 同时只能关联一个 swap-chain。必须在进程设备释放前先释放 V5 presenter，
+            ' 翻转模型下同一 HWND 同时只能关联一个 swap-chain。必须在进程设备释放前先释放 V5 presenter，
             ' 否则下一 generation 的 CreateSwapChainForHwnd 可能在 DWM 尚持有旧链路时返回 E_ACCESSDENIED。
             D3D_V5Presentation.PrepareForDeviceReset()
-            ' D3D_DeviceGlobals is retained for popup/backdrop compatibility;
-            ' both device owners must be invalidated in this one ordered path.
+            ' D3D_DeviceGlobals 为 popup/背景兼容路径保留；两个设备所有者必须在此有序入口统一失效。
             D3D_DeviceGlobals.InvalidateDevice()
             _deviceManager.InvalidateDevice()
         Finally

@@ -34,61 +34,60 @@ Friend NotInheritable Class D3D_RenderCacheBudgetCoordinator
         budget = Math.Max(0L, budget)
 
         SyncLock _trimLock
-            ' Evicting a surface can finish its frame-use scope, which may ask
-            ' the coordinator to trim again on the same UI thread. Do not recurse
-            ' into the coordinator while the outer eviction pass is still active.
+            ' 淘汰表面可能结束帧使用范围并在同一 UI 线程再次请求清理；
+            ' 外层清理尚未结束时禁止递归进入协调器。
             If _trimActive Then Return
             _trimActive = True
             Try
-            Dim failedOwners As New HashSet(Of D3D_IRenderCacheOwner)(ReferenceEqualityComparer.Instance)
-            Dim guard As Integer = 0
+            Dim 失败所有者 As New HashSet(Of D3D_IRenderCacheOwner)(ReferenceEqualityComparer.Instance)
+            Dim 守卫次数 As Integer = 0
             Do
-                Dim total As Long = 0
-                Dim oldest As D3D_IRenderCacheOwner = Nothing
-                Dim oldestTick As Long = Long.MaxValue
+                Dim 总字节数 As Long = 0
+                Dim 最旧所有者 As D3D_IRenderCacheOwner = Nothing
+                Dim 最旧时钟 As Long = Long.MaxValue
 
-                For Each owner In SnapshotOwners()
-                    Dim bytes As Long
+                For Each 所有者 In SnapshotOwners()
+                    Dim 字节数 As Long
                     Try
-                        bytes = Math.Max(0L, owner.CacheBytes)
+                        字节数 = Math.Max(0L, 所有者.CacheBytes)
                     Catch
-                        failedOwners.Add(owner)
+                        失败所有者.Add(所有者)
                         Continue For
                     End Try
-                    total = SaturatingAdd(total, bytes)
-                    If bytes <= 0 OrElse ReferenceEquals(owner, protectedOwner) OrElse failedOwners.Contains(owner) Then Continue For
+                    总字节数 = SaturatingAdd(总字节数, 字节数)
+                    If 字节数 <= 0 OrElse ReferenceEquals(所有者, protectedOwner) OrElse 失败所有者.Contains(所有者) Then Continue For
 
-                    Dim tick As Long
+                    Dim 使用时钟 As Long
                     Try
-                        tick = owner.OldestUseTick
+                        使用时钟 = 所有者.OldestUseTick
                     Catch
-                        failedOwners.Add(owner)
+                        失败所有者.Add(所有者)
                         Continue For
                     End Try
-                    If tick < oldestTick Then
-                        oldestTick = tick
-                        oldest = owner
+                    If 使用时钟 < 最旧时钟 Then
+                        最旧时钟 = 使用时钟
+                        最旧所有者 = 所有者
                     End If
                 Next
 
-                If total <= budget OrElse oldest Is Nothing Then Exit Do
+                If 总字节数 <= budget OrElse 最旧所有者 Is Nothing Then Exit Do
 
-                Dim trimmed As Boolean
+                Dim 已淘汰 As Boolean
                 Try
-                    trimmed = oldest.TrimOldest()
+                    已淘汰 = 最旧所有者.TrimOldest()
                 Catch
-                    trimmed = False
+                    已淘汰 = False
                 End Try
-                If Not trimmed Then
+                If Not 已淘汰 Then
                     ' 正在绘制或后台处理中的 owner 暂时不可回收；本轮跳过它，
                     ' 继续处理其他全局 LRU 候选项。
-                    failedOwners.Add(oldest)
+                    失败所有者.Add(最旧所有者)
                     Continue Do
                 End If
 
                 evictionCallback?.Invoke()
-                guard += 1
-            Loop While guard < 4096
+                守卫次数 += 1
+            Loop While 守卫次数 < 4096
             Finally
                 _trimActive = False
             End Try
@@ -158,17 +157,7 @@ Friend Module D3D_GpuCache
 
     Friend Sub TrimToBudget(Optional protectedOwner As D3D_IRenderCacheOwner = Nothing,
                              Optional immediate As Boolean = False)
-        ' V3 budget maintenance is opportunistic, not a per-frame synchronous
-        ' task. Present() can be called at animation rate; scanning every owner
-        ' on every frame creates periodic UI stalls once HDR adds more entries.
-        ' Explicit ReleaseAll/cleanup paths remain immediate and are not routed
-        ' through this throttle.
-        If Not immediate Then
-            Dim now = Environment.TickCount64
-            Dim last = Threading.Interlocked.Read(_lastBudgetTrimMilliseconds)
-            If now - last < BudgetTrimIntervalMilliseconds Then Return
-            If Threading.Interlocked.CompareExchange(_lastBudgetTrimMilliseconds, now, last) <> last Then Return
-        End If
+        If Not immediate AndAlso Not D3D_CacheThrottle.ShouldRun(_lastBudgetTrimMilliseconds, BudgetTrimIntervalMilliseconds) Then Return
         _coordinator.TrimToBudget(GlobalOptions.GpuCacheBudgetBytes,
                                   protectedOwner,
                                   AddressOf D3D_RenderDiagnostics.CacheEviction)
@@ -200,12 +189,7 @@ Friend Module D3D_CpuCache
 
     Friend Sub TrimToBudget(Optional protectedOwner As D3D_IRenderCacheOwner = Nothing,
                              Optional immediate As Boolean = False)
-        If Not immediate Then
-            Dim now = Environment.TickCount64
-            Dim last = Threading.Interlocked.Read(_lastBudgetTrimMilliseconds)
-            If now - last < BudgetTrimIntervalMilliseconds Then Return
-            If Threading.Interlocked.CompareExchange(_lastBudgetTrimMilliseconds, now, last) <> last Then Return
-        End If
+        If Not immediate AndAlso Not D3D_CacheThrottle.ShouldRun(_lastBudgetTrimMilliseconds, BudgetTrimIntervalMilliseconds) Then Return
         _coordinator.TrimToBudget(GlobalOptions.CpuCacheBudgetBytes,
                                   protectedOwner,
                                   AddressOf D3D_RenderDiagnostics.CacheEviction)
@@ -218,4 +202,14 @@ Friend Module D3D_CpuCache
     Friend Sub ReleaseAll()
         _coordinator.ReleaseAll()
     End Sub
+End Module
+
+''' <summary>缓存预算节流器，避免 GPU 与 CPU 模块重复实现时间窗口和并发闸门。</summary>
+Friend Module D3D_CacheThrottle
+    Friend Function ShouldRun(ByRef lastTick As Long, intervalMilliseconds As Long) As Boolean
+        Dim 当前时刻 = Environment.TickCount64
+        Dim 上次时刻 = Threading.Interlocked.Read(lastTick)
+        If 当前时刻 - 上次时刻 < intervalMilliseconds Then Return False
+        Return Threading.Interlocked.CompareExchange(lastTick, 当前时刻, 上次时刻) = 上次时刻
+    End Function
 End Module

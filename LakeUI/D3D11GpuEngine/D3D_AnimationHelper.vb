@@ -233,9 +233,8 @@ Friend Class D3D_AnimationHelper
     Public Sub AnimateTo(target As Single)
         If _disposed Then Return
 
-        ' High-frequency producers may retarget an animation many times between frames.
-        ' The scheduler will sample the latest target on its next due frame, so restarting
-        ' an already-running segment for the same target only adds scheduling overhead.
+        ' 高频调用方可能在两帧之间多次修改动画目标；调度器会在下一个到期帧采样最新目标，
+        ' 对相同目标重复启动正在运行的片段只会增加调度开销。
         If _animationRunning AndAlso Math.Abs(_target - target) < ProgressEpsilon Then Return
 
         _target = target
@@ -562,7 +561,7 @@ Friend Class D3D_AnimationHelper
         Private Function CalculateTimerIntervalMs(nowTicks As Long) As Integer
             Dim earliestTicks As Long = Long.MaxValue
 
-            ' Each helper owns its FPS gate; the shared timer only wakes for the earliest due helper.
+            ' 每个 helper 自己负责 FPS 闸门；共享计时器只需在最早到期的 helper 时刻唤醒。
             For Each helper In _helpers
                 If helper Is Nothing OrElse Not helper.IsActive Then Continue For
                 Dim dueTicks = helper.NextDispatchTicks(nowTicks)

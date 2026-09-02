@@ -316,6 +316,73 @@ Public Class ModernContextMenu
         End Set
     End Property
 
+    Private 菜单圆角半径 As Integer = 0
+    <Category("LakeUI"), Description("菜单弹出界面圆角半径，0 = 直角矩形"), DefaultValue(GetType(Integer), "0"), Browsable(True)>
+    Public Property CornerRadius As Integer
+        Get
+            Return 菜单圆角半径
+        End Get
+        Set(value As Integer)
+            value = Math.Max(0, value)
+            If 菜单圆角半径 = value Then Return
+            菜单圆角半径 = value
+            If 当前弹出窗口 IsNot Nothing AndAlso Not 当前弹出窗口.IsDisposed Then 当前弹出窗口.RefreshAppearance()
+        End Set
+    End Property
+
+    Private 菜单阴影启用 As Boolean = False
+    <Category("LakeUI - Shadow"), Description("是否显示菜单弹出界面阴影"), DefaultValue(False), Browsable(True)>
+    Public Property ShadowEnabled As Boolean
+        Get
+            Return 菜单阴影启用
+        End Get
+        Set(value As Boolean)
+            If 菜单阴影启用 = value Then Return
+            菜单阴影启用 = value
+            If 当前弹出窗口 IsNot Nothing AndAlso Not 当前弹出窗口.IsDisposed Then 当前弹出窗口.RefreshShadowSettings()
+        End Set
+    End Property
+
+    Private 菜单阴影颜色 As Color = Color.Black
+    <Category("LakeUI - Shadow"), Description("菜单弹出界面阴影颜色"), DefaultValue(GetType(Color), "Black"), Browsable(True)>
+    Public Property ShadowColor As Color
+        Get
+            Return 菜单阴影颜色
+        End Get
+        Set(value As Color)
+            If 菜单阴影颜色 = value Then Return
+            菜单阴影颜色 = value
+            If 当前弹出窗口 IsNot Nothing AndAlso Not 当前弹出窗口.IsDisposed Then 当前弹出窗口.RefreshShadowSettings()
+        End Set
+    End Property
+
+    Private 菜单阴影深度 As Integer = 12
+    <Category("LakeUI - Shadow"), Description("菜单弹出界面阴影扩展深度（逻辑像素）"), DefaultValue(12), Browsable(True)>
+    Public Property ShadowDepth As Integer
+        Get
+            Return 菜单阴影深度
+        End Get
+        Set(value As Integer)
+            value = Math.Max(0, value)
+            If 菜单阴影深度 = value Then Return
+            菜单阴影深度 = value
+            If 当前弹出窗口 IsNot Nothing AndAlso Not 当前弹出窗口.IsDisposed Then 当前弹出窗口.RefreshShadowSettings()
+        End Set
+    End Property
+
+    Private 菜单阴影不透明度 As Byte = 80
+    <Category("LakeUI - Shadow"), Description("菜单弹出界面阴影不透明度（0-255）"), DefaultValue(CByte(80)), Browsable(True)>
+    Public Property ShadowOpacity As Byte
+        Get
+            Return 菜单阴影不透明度
+        End Get
+        Set(value As Byte)
+            If 菜单阴影不透明度 = value Then Return
+            菜单阴影不透明度 = value
+            If 当前弹出窗口 IsNot Nothing AndAlso Not 当前弹出窗口.IsDisposed Then 当前弹出窗口.RefreshShadowSettings()
+        End Set
+    End Property
+
     Private 超采样倍率 As Integer = 1
     <Category("LakeUI"), Description(GlobalOptions.超采样抗锯齿描述词), DefaultValue(GetType(GlobalOptions.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
     Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements D3D_ISuperSamplingSource.SuperSamplingScale
@@ -350,27 +417,14 @@ Public Class ModernContextMenu
         End Set
     End Property
 
-    Private 悬停动画时长 As Integer = 200
-    <Category("LakeUI"), Description("悬停高亮移动动画时长（毫秒），0 = 无动画"), DefaultValue(GetType(Integer), "200"), Browsable(True)>
-    Public Property HoverAnimationDuration As Integer
+    Private 动画时长 As Integer = 300
+    <Category("LakeUI"), Description("菜单悬停、展开和关闭动画时长（毫秒），0 = 无动画"), DefaultValue(GetType(Integer), "300"), Browsable(True)>
+    Public Property AnimationDuration As Integer
         Get
-            Return 悬停动画时长
+            Return 动画时长
         End Get
         Set(value As Integer)
-            If value < 0 Then value = 0
-            SetValue(悬停动画时长, value)
-        End Set
-    End Property
-
-    Private 展开关闭动画时长 As Integer = 200
-    <Category("LakeUI"), Description("展开/关闭动画时长（毫秒），0 = 无动画"), DefaultValue(GetType(Integer), "200"), Browsable(True)>
-    Public Property PopupAnimationDuration As Integer
-        Get
-            Return 展开关闭动画时长
-        End Get
-        Set(value As Integer)
-            If value < 0 Then value = 0
-            SetValue(展开关闭动画时长, value)
+            SetValue(动画时长, Math.Max(0, value))
         End Set
     End Property
 
@@ -622,10 +676,11 @@ Public Class ModernContextMenu
         Private 展开关闭起始高度 As Single = 1.0F
         Private 展开关闭目标高度 As Single = 1.0F
         Private 展开关闭当前高度 As Single = 1.0F
-        Private 动画裁剪区域 As Region
         Private 动画裁剪高度 As Integer = -1
+        Private 动画裁剪区域 As Region
 
         Private _backdrop As D3D_PopupBackdropRenderer
+        Private _shadow As ShadowWindow
 
         Private Sub 释放D2D资源()
             If _backdrop IsNot Nothing Then
@@ -652,7 +707,10 @@ Public Class ModernContextMenu
         Protected Overrides Sub WndProc(ByRef m As Message)
             MyBase.WndProc(m)
             If m.Msg = WM_ACTIVATEAPP AndAlso m.WParam = IntPtr.Zero Then
-                If Not 正在关闭 AndAlso Not 正在关闭动画 Then BeginInvoke(Sub() 关闭全部())
+                ' 显示阶段可能收到一次应用失活消息（顶层 NOACTIVATE 弹窗常见）。
+                ' 展开动画尚未完成时不能把它当作外部关闭，否则展开计时器会被
+                ' 反向关闭逻辑抢先停止，表现为只有时长、没有展开画面。
+                If Not 正在关闭 AndAlso Not 正在关闭动画 AndAlso Not 展开关闭动画中 Then BeginInvoke(Sub() 关闭全部())
             End If
         End Sub
 
@@ -665,6 +723,13 @@ Public Class ModernContextMenu
 
             动画计时器 = 创建动画计时器(menu.动画帧率)
             展开关闭计时器 = 创建动画计时器(menu.动画帧率)
+        End Sub
+
+        Protected Overrides Sub OnHandleCreated(e As EventArgs)
+            MyBase.OnHandleCreated(e)
+            If DwmWindowStyle.IsCornerModeSupported Then
+                DwmWindowStyle.SetCornerMode(Handle, DwmWindowStyle.CornerMode.Square)
+            End If
         End Sub
 
         Private Shared Function 获取窗体回退背景色(menu As ModernContextMenu) As Color
@@ -703,16 +768,19 @@ Public Class ModernContextMenu
             If Me.Bottom > scr.Bottom Then Me.Top = y - Me.Height
             If Me.Left < scr.Left Then Me.Left = scr.Left
             If Me.Top < scr.Top Then Me.Top = scr.Top
+            应用弹出区域()
             准备毛玻璃背景()
             If 父弹窗 Is Nothing Then Application.AddMessageFilter(Me)
-            If 菜单.展开关闭动画时长 > 0 Then
+            If 菜单.动画时长 > 0 Then
                 展开关闭起始高度 = 1.0F
                 展开关闭目标高度 = 最终高度
                 展开关闭当前高度 = 展开关闭起始高度
                 展开关闭动画中 = True
                 正在关闭动画 = False
+                Me.Size = New Size(Me.Width, 最终高度)
                 设置展开关闭裁剪高度(1)
                 Me.Show()
+                更新阴影()
                 ' Show 可能触发失活回调并重入关闭；不要覆盖已经建立的关闭状态。
                 If Not 正在关闭动画 AndAlso Not 正在关闭 AndAlso Not IsDisposed Then
                     展开关闭秒表.Restart()
@@ -720,6 +788,7 @@ Public Class ModernContextMenu
                 End If
             Else
                 Me.Show()
+                更新阴影()
             End If
         End Sub
 
@@ -740,21 +809,25 @@ Public Class ModernContextMenu
             If Me.Bottom > scr.Bottom Then Me.Top = y - Me.Height
             If Me.Left < scr.Left Then Me.Left = scr.Left
             If Me.Top < scr.Top Then Me.Top = scr.Top
+            应用弹出区域()
             准备毛玻璃背景()
-            If 菜单.展开关闭动画时长 > 0 Then
+            If 菜单.动画时长 > 0 Then
                 展开关闭起始高度 = 1.0F
                 展开关闭目标高度 = 最终高度
                 展开关闭当前高度 = 展开关闭起始高度
                 展开关闭动画中 = True
                 正在关闭动画 = False
+                Me.Size = New Size(Me.Width, 最终高度)
                 设置展开关闭裁剪高度(1)
                 Me.Show()
+                更新阴影()
                 If Not 正在关闭动画 AndAlso Not 正在关闭 AndAlso Not IsDisposed Then
                     展开关闭秒表.Restart()
                     启动展开关闭驱动()
                 End If
             Else
                 Me.Show()
+                更新阴影()
             End If
         End Sub
 
@@ -877,6 +950,34 @@ Public Class ModernContextMenu
             DrawAllText_GPU(context)
         End Sub
 
+        Private Function 获取菜单圆角() As Single
+            Dim radius As Single = 菜单.菜单圆角半径 * DpiScale()
+            Return Math.Max(0.0F, Math.Min(radius, Math.Min(ClientSize.Width, ClientSize.Height) / 2.0F))
+        End Function
+
+        Private Sub 应用弹出区域(Optional clippedHeight As Integer = -1)
+            If IsDisposed OrElse Width <= 0 OrElse Height <= 0 Then Return
+            Dim oldRegion As Region = Region
+            Dim radius As Single = 获取菜单圆角()
+            Using path = D3D_RectangleRenderer.创建圆角矩形路径(New RectangleF(0, 0, Width, Height), radius)
+                Dim region As New Region(path)
+                If clippedHeight > 0 AndAlso clippedHeight < Height Then
+                    region.Intersect(New Rectangle(0, 0, Width, clippedHeight))
+                End If
+                Region = region
+            End Using
+            If oldRegion IsNot Nothing Then oldRegion.Dispose()
+        End Sub
+
+        Friend Sub RefreshAppearance()
+            应用弹出区域(If(动画裁剪高度 > 0, 动画裁剪高度, -1))
+            RequestGpuRender()
+        End Sub
+
+        Friend Sub RefreshShadowSettings()
+            更新阴影()
+        End Sub
+
         Public Function GetRenderBounds() As Rectangle Implements D3D_IGpuInvalidationSource.GetRenderBounds
             Return New Rectangle(Point.Empty, Me.Size)
         End Function
@@ -903,22 +1004,18 @@ Public Class ModernContextMenu
             Dim bounds As New RectangleF(0, 0, ClientSize.Width, ClientSize.Height)
             Dim explicitBackdrop As Boolean = 菜单.毛玻璃模式 <> BackdropModeEnum.None
 
+            Dim radius As Single = 获取菜单圆角()
             If Not hasBackdrop Then
-                If 菜单.背景底色.A > 0 Then context.FillRectangle(bounds, 菜单.背景底色)
+                If 菜单.背景底色.A > 0 Then FillRoundedRect_GPU(context, bounds, radius, 菜单.背景底色)
             ElseIf Not explicitBackdrop AndAlso 菜单.背景底色.A > 0 Then
-                context.FillRectangle(bounds, 菜单.背景底色)
+                FillRoundedRect_GPU(context, bounds, radius, 菜单.背景底色)
             End If
 
-            If 菜单.背景颜色.A > 0 Then context.FillRectangle(bounds, 菜单.背景颜色)
+            If 菜单.背景颜色.A > 0 Then FillRoundedRect_GPU(context, bounds, radius, 菜单.背景颜色)
 
             If 菜单.边框宽度 > 0 Then
                 Dim bw As Single = Math.Max(1.0F, 菜单.边框宽度 * DpiScale())
-                Dim cw As Single = ClientSize.Width - 1
-                Dim ch As Single = ClientSize.Height - 1
-                context.FillRectangle(New RectangleF(0, 0, cw, bw), 菜单.边框颜色)
-                context.FillRectangle(New RectangleF(0, ch - bw, cw, bw), 菜单.边框颜色)
-                context.FillRectangle(New RectangleF(0, bw, bw, ch - bw * 2), 菜单.边框颜色)
-                context.FillRectangle(New RectangleF(cw - bw, bw, bw, ch - bw * 2), 菜单.边框颜色)
+                context.DrawRoundedRectangle(bounds, radius, 菜单.边框颜色, bw)
             End If
 
             DrawHoverHighlight_GPU(context)
@@ -1200,7 +1297,7 @@ Public Class ModernContextMenu
                 Dim targetY As Single = rect.Y
                 Dim targetH As Single = rect.Height
 
-                If 菜单.悬停动画时长 <= 0 OrElse Not 动画显示高亮 Then
+            If 菜单.动画时长 <= 0 OrElse Not 动画显示高亮 Then
                     ' 无动画或首次出现，直接跳到目标
                     动画起始Y = targetY
                     动画目标Y = targetY
@@ -1231,7 +1328,7 @@ Public Class ModernContextMenu
         End Sub
 
         Private Sub 动画更新帧(sender As Object, e As EventArgs)
-            Dim duration = 菜单.悬停动画时长
+            Dim duration = 菜单.动画时长
             If duration <= 0 Then
                 动画当前Y = 动画目标Y
                 动画当前高度 = 动画目标高度
@@ -1268,7 +1365,7 @@ Public Class ModernContextMenu
 #Region "展开关闭动画"
 
         Private Sub 展开关闭帧更新(sender As Object, e As EventArgs)
-            Dim duration As Integer = 菜单.展开关闭动画时长
+            Dim duration As Integer = 菜单.动画时长
             If duration <= 0 Then
                 停止展开关闭驱动()
                 展开关闭动画中 = False
@@ -1287,7 +1384,8 @@ Public Class ModernContextMenu
 
             展开关闭当前高度 = 展开关闭起始高度 +
                                 (展开关闭目标高度 - 展开关闭起始高度) * eased
-            设置展开关闭裁剪高度(CInt(Math.Round(展开关闭当前高度, MidpointRounding.AwayFromZero)))
+            Dim newHeight As Integer = Math.Max(1, CInt(Math.Round(展开关闭当前高度, MidpointRounding.AwayFromZero)))
+            设置展开关闭裁剪高度(newHeight)
             RequestGpuRender()
 
             If t >= 1.0F Then
@@ -1320,18 +1418,31 @@ Public Class ModernContextMenu
         End Sub
 
         Private Sub 设置展开关闭裁剪高度(height As Integer)
-            If IsDisposed OrElse Width <= 0 OrElse 最终高度 <= 0 Then Return
+            If IsDisposed OrElse Width <= 0 OrElse Height <= 0 OrElse 最终高度 <= 0 Then Return
             Dim clippedHeight = Math.Max(1, Math.Min(最终高度, height))
+            Dim clipRect As New Rectangle(0, 0, Width, clippedHeight)
             If 动画裁剪高度 = clippedHeight AndAlso 动画裁剪区域 IsNot Nothing Then Return
 
-            ' 保持 HWND / swap chain 尺寸稳定，只裁剪可见区域；改变窗口高度会触发
-            ' swap chain 重建和文本重新栅格化，从而在动画中产生文字抖动。
-            Dim newRegion As New Region(New Rectangle(0, 0, Width, clippedHeight))
+            ' 保持 HWND / swap chain 尺寸稳定，只更新可见区域，避免动画中重建
+            ' 交换链和文字栅格造成抖动。
+            Dim radius As Single = 获取菜单圆角()
+            Dim newRegion As Region
+            If radius > 0 Then
+                Using path = D3D_RectangleRenderer.创建圆角矩形路径(New RectangleF(0, 0, Width, Height), radius)
+                    newRegion = New Region(path)
+                End Using
+                newRegion.Intersect(clipRect)
+            Else
+                newRegion = New Region(clipRect)
+            End If
+
             Dim oldRegion = 动画裁剪区域
             动画裁剪区域 = newRegion
             动画裁剪高度 = clippedHeight
             Me.Region = newRegion
             If oldRegion IsNot Nothing Then oldRegion.Dispose()
+            更新阴影()
+            RequestGpuRender()
         End Sub
 
         Private Sub 清除展开关闭裁剪()
@@ -1339,10 +1450,45 @@ Public Class ModernContextMenu
             动画裁剪区域 = Nothing
             动画裁剪高度 = -1
             Try
-                If Not IsDisposed Then Me.Region = Nothing
+                If Not IsDisposed Then
+                    Me.Region = Nothing
+                    应用弹出区域()
+                End If
             Catch
             End Try
             If oldRegion IsNot Nothing Then oldRegion.Dispose()
+            更新阴影()
+        End Sub
+
+        Private Sub 更新阴影()
+            If IsDisposed OrElse Not IsHandleCreated Then Return
+            If Not 菜单.菜单阴影启用 OrElse 菜单.菜单阴影深度 <= 0 OrElse Not Visible Then
+                If _shadow IsNot Nothing Then _shadow.SetDesktopAwareVisible(False)
+                Return
+            End If
+
+            Dim visibleHeight As Integer = If(动画裁剪高度 > 0, Math.Min(动画裁剪高度, Height), Height)
+            If visibleHeight <= 0 Then
+                If _shadow IsNot Nothing Then _shadow.SetDesktopAwareVisible(False)
+                Return
+            End If
+
+            If _shadow Is Nothing OrElse _shadow.IsDisposed Then
+                _shadow = New ShadowWindow()
+                _shadow.HostHandle = Handle
+                _shadow.ResizeWidth = 0
+                _shadow.ResizeFullArea = False
+            End If
+
+            Dim bounds As New Rectangle(Left, Top, Width, visibleHeight)
+            Dim depth As Integer = Math.Max(0, CInt(Math.Round(菜单.菜单阴影深度 * DpiScale())))
+            Dim radius As Integer = CInt(Math.Round(Math.Min(获取菜单圆角(), Math.Min(bounds.Width, bounds.Height) / 2.0F)))
+            _shadow.ShadowDepth = depth
+            _shadow.ForceReset()
+            _shadow.UpdateShadow(bounds, depth, 菜单.菜单阴影颜色, 菜单.菜单阴影不透明度, radius)
+            _shadow.SyncVirtualDesktopWithHost()
+            _shadow.PlaceBehind(Handle)
+            _shadow.SetDesktopAwareVisible(True)
         End Sub
 
 #End Region
@@ -1414,7 +1560,7 @@ Public Class ModernContextMenu
                 正在关闭子菜单弹窗.关闭自身及子菜单()
                 正在关闭子菜单弹窗 = Nothing
             End If
-            If Not 正在关闭动画 AndAlso 菜单.展开关闭动画时长 > 0 AndAlso IsHandleCreated AndAlso Not IsDisposed Then
+            If Not 正在关闭动画 AndAlso 菜单.动画时长 > 0 AndAlso IsHandleCreated AndAlso Not IsDisposed Then
                 开始关闭动画()
                 Return
             End If
@@ -1428,6 +1574,11 @@ Public Class ModernContextMenu
             停止展开关闭驱动()
             If 动画计时器 IsNot Nothing Then 动画计时器.Dispose()
             If 展开关闭计时器 IsNot Nothing Then 展开关闭计时器.Dispose()
+            If _shadow IsNot Nothing Then
+                _shadow.SetDesktopAwareVisible(False)
+                _shadow.Dispose()
+                _shadow = Nothing
+            End If
             释放D2D资源()
             If 父弹窗 Is Nothing Then
                 Application.RemoveMessageFilter(Me)
@@ -1451,7 +1602,9 @@ Public Class ModernContextMenu
 
         Protected Overrides Sub OnDeactivate(e As EventArgs)
             MyBase.OnDeactivate(e)
-            If 正在关闭 OrElse 正在关闭动画 OrElse IsDisposed OrElse Not IsHandleCreated Then Return
+            ' 展开阶段保持弹出窗稳定，避免失活回调重入关闭逻辑导致展开动画
+            ' 尚未绘制就被反向驱动，表现为只有时长、没有可见动画。
+            If 正在关闭 OrElse 正在关闭动画 OrElse 展开关闭动画中 OrElse IsDisposed OrElse Not IsHandleCreated Then Return
             Try
                 BeginInvoke(Sub()
                                 If 正在关闭 OrElse 正在关闭动画 Then Return

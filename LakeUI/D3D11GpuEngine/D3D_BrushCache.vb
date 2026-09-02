@@ -31,22 +31,22 @@ Public NotInheritable Class D3D_BrushCache
         If _disposed Then Throw New ObjectDisposedException(NameOf(D3D_BrushCache))
         If context Is Nothing Then Throw New ArgumentNullException(NameOf(context))
 
-        Dim hdrRevision = If(mapHdr, D3D_HdrOutput.VectorColorRevision, 0)
-        Dim key As New D3D_BrushKey(context, generation, hdrRevision, mapHdr, color.ToArgb())
-        Dim entry As D3D_BrushCacheEntry = Nothing
-        If _solidBrushes.TryGetValue(key, entry) Then
-            entry.LastUsed = NextClock()
-            Touch(entry)
-            Return entry.Brush
+        Dim 高动态范围版本 = If(mapHdr, D3D_HdrOutput.VectorColorRevision, 0)
+        Dim 画刷键 As New D3D_BrushKey(context, generation, 高动态范围版本, mapHdr, color.ToArgb())
+        Dim 缓存项 As D3D_BrushCacheEntry = Nothing
+        If _solidBrushes.TryGetValue(画刷键, 缓存项) Then
+            缓存项.LastUsed = NextClock()
+            Touch(缓存项)
+            Return 缓存项.Brush
         End If
 
-        Dim brushColor = If(mapHdr, D3D_HdrOutput.MapColor4(color), D3D_HdrOutput.ToRawColor4(color))
-        Dim brush = context.CreateSolidColorBrush(brushColor)
-        Dim newEntry = New D3D_BrushCacheEntry(brush, generation, NextClock())
-        newEntry.LruNode = _solidBrushLru.AddLast(key)
-        _solidBrushes(key) = newEntry
-        Trim(protectedKey:=key)
-        Return brush
+        Dim 画刷颜色 = If(mapHdr, D3D_HdrOutput.MapColor4(color), D3D_HdrOutput.ToRawColor4(color))
+        Dim 画刷 = context.CreateSolidColorBrush(画刷颜色)
+        Dim 新缓存项 = New D3D_BrushCacheEntry(画刷, generation, NextClock())
+        新缓存项.LruNode = _solidBrushLru.AddLast(画刷键)
+        _solidBrushes(画刷键) = 新缓存项
+        Trim(protectedKey:=画刷键)
+        Return 画刷
     End Function
 
     Public Sub Invalidate()
@@ -61,21 +61,22 @@ Public NotInheritable Class D3D_BrushCache
         Dim limit = Math.Max(0, GlobalOptions.BrushCacheLimit)
         MaxSolidBrushes = limit
         While _solidBrushes.Count > limit
-            Dim victimNode = _solidBrushLru.First
-            If victimNode Is Nothing Then Exit While
-            Dim victimKey = victimNode.Value
-            If victimKey.Equals(protectedKey) Then
-                victimNode = victimNode.Next
-                If victimNode Is Nothing Then Exit While
-                victimKey = victimNode.Value
-            End If
-            Dim victimEntry As D3D_BrushCacheEntry = Nothing
-            _solidBrushes.TryGetValue(victimKey, victimEntry)
-            If victimEntry Is Nothing Then Exit While
-            _solidBrushes.Remove(victimKey)
-            _solidBrushLru.Remove(victimNode)
-            victimEntry.LruNode = Nothing
-            Try : victimEntry.Brush.Dispose() : Catch : End Try
+            Dim 淘汰节点 = _solidBrushLru.First
+            If 淘汰节点 Is Nothing Then Exit While
+            Dim 候选节点 = 淘汰节点
+            Do While 候选节点 IsNot Nothing AndAlso 候选节点.Value.Equals(protectedKey)
+                候选节点 = 候选节点.Next
+            Loop
+            If 候选节点 Is Nothing Then 候选节点 = 淘汰节点
+
+            Dim 淘汰键 = 候选节点.Value
+            Dim 淘汰项 As D3D_BrushCacheEntry = Nothing
+            _solidBrushes.TryGetValue(淘汰键, 淘汰项)
+            If 淘汰项 Is Nothing Then Exit While
+            _solidBrushes.Remove(淘汰键)
+            _solidBrushLru.Remove(候选节点)
+            淘汰项.LruNode = Nothing
+            Try : 淘汰项.Brush.Dispose() : Catch : End Try
         End While
     End Sub
 
@@ -83,7 +84,7 @@ Public NotInheritable Class D3D_BrushCache
         If entry Is Nothing OrElse entry.LruNode Is Nothing Then Return
         Dim node = entry.LruNode
         _solidBrushLru.Remove(node)
-        ' Reattach the same node; AddLast(key) would allocate on every animation hit.
+        ' 重新挂接同一个节点；直接 AddLast(key) 会在每次动画命中时分配新节点。
         _solidBrushLru.AddLast(node)
     End Sub
 

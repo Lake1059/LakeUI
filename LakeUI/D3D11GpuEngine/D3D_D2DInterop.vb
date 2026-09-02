@@ -464,15 +464,14 @@ Public Module D3D_D2DInterop
         Try
             Dim sourceBitmap = TryCast(img, Bitmap)
             If sourceBitmap IsNot Nothing AndAlso sourceBitmap.PixelFormat = System.Drawing.Imaging.PixelFormat.Format32bppPArgb Then
-                ' Safe fast path: this only uploads CPU bitmap pixels into the same D2D RenderTarget.
-                ' It does not use the D2D1.1 DeviceContext path, whose resources cannot be shared
-                ' with the current DC RT stage and previously caused invisible image results.
+                ' 安全快速路径：仅将 CPU 位图像素上传到同一 D2D RenderTarget。
+                ' 不使用 D2D1.1 DeviceContext 路径，因为其资源不能与当前 DC RT 阶段共享，
+                ' 过去会导致图片不可见。
                 Dim directBitmap = CreateBitmapFromGdi(rt, sourceBitmap)
                 If directBitmap IsNot Nothing Then Return directBitmap
             End If
         Catch
-            ' Fall back to the normalization path below; some Bitmap instances can still reject
-            ' pixel-format access or LockBits because of their backing store or lifetime.
+            ' 回退到下方的规范化路径；部分 Bitmap 实例会因后备存储或生命周期拒绝像素格式访问或 LockBits。
         End Try
 
         Dim bmp As New Bitmap(img.Width, img.Height, System.Drawing.Imaging.PixelFormat.Format32bppPArgb)
@@ -835,7 +834,7 @@ Public Module D3D_D2DInterop
             End If
             Dim b = rt.CreateSolidColorBrush(ToColor4(c))
             bucket(key) = New BrushEntry With {.Brush = b, .LastUsed = NextClock()}
-            ' Animation colors can create many one-off ARGB brushes; LRU keeps exact colors without unbounded growth.
+            ' 动画颜色可能产生大量一次性 ARGB 画刷；LRU 在保持精确颜色的同时限制缓存增长。
             TrimBucket(bucket, key)
             Return b
         End Function
@@ -1016,7 +1015,7 @@ Public Module D3D_D2DInterop
                 End Try
             End If
             _map(k) = New TextFormatEntry With {.Format = fmt, .LastUsed = NextClock()}
-            ' TextLayout remains per draw; trimming only TextFormat preserves layout quality while bounding cache lifetime.
+            ' TextLayout 仍按次绘制创建；仅裁剪 TextFormat 可保持布局质量并限制缓存生命周期。
             TrimToLimit(k)
             Return fmt
         End Function

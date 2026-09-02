@@ -35,8 +35,7 @@ Partial Class ModernButton
         ' 
         AutoScaleDimensions = New SizeF(96F, 96F)
         AutoScaleMode = AutoScaleMode.Dpi
-        DoubleBuffered = True
-        Margin = New Padding(2, 2, 2, 2)
+        Margin = New Padding(2)
         Name = "ModernButton"
         Size = New Size(120, 35)
         ResumeLayout(False)

@@ -396,7 +396,23 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
             total += EstimateBitmapBytes(_mappedStaticFrame)
         End SyncLock
         total += EstimateBitmapBytes(_capturedBitmap)
+        total += If(_blurBufferA Is Nothing, 0L, CLng(_blurBufferA.Length))
+        SyncLock _sourceLock
+            total += EstimateImageBytes(_sourceImage)
+            For Each retired In _retiredSourceImages
+                total += EstimateImageBytes(retired)
+            Next
+        End SyncLock
         Return total
+    End Function
+
+    Private Shared Function EstimateImageBytes(image As Image) As Long
+        If image Is Nothing Then Return 0L
+        Try
+            Return EstimateBitmapBytes(image.Width, image.Height)
+        Catch
+            Return 0L
+        End Try
     End Function
 
     Private Function EstimateGpuCacheBytes() As Long

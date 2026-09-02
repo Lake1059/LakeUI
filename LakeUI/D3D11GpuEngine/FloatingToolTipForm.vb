@@ -69,6 +69,13 @@ Public NotInheritable Class FloatingToolTipForm
         ApplyPopupWindowState()
     End Sub
 
+    Protected Overrides Sub OnHandleCreated(e As EventArgs)
+        MyBase.OnHandleCreated(e)
+        If DwmWindowStyle.IsCornerModeSupported Then
+            DwmWindowStyle.SetCornerMode(Handle, DwmWindowStyle.CornerMode.Square)
+        End If
+    End Sub
+
     Public Sub ShowTip(text As String, screenLocation As Point, style As FloatingToolTipStyle,
                        Optional overflowFlipDistance As Integer = 0,
                        Optional preferredSide As FloatingToolTipSide = FloatingToolTipSide.Right)
@@ -495,17 +502,18 @@ Public NotInheritable Class FloatingToolTipForm
     End Sub
 
     Private Sub DrawBackground_GPU(context As D3D_PaintContext, bw As Integer, w As Integer, h As Integer, fillBackground As Boolean)
-        Dim radius As Single = BorderRadius()
+        Dim radius As Single = Math.Min(BorderRadius(), Math.Min(w, h) / 2.0F)
         Dim fillColor As Color = ToolTipFillColor()
 
         If radius > 0 Then
-            Dim boundsRect As New RectangleF(0, 0, Math.Max(1, w), Math.Max(1, h))
-            If bw > 0 Then
-                Dim half As Single = bw / 2.0F
-                boundsRect.Inflate(-half, -half)
-            End If
-            If fillBackground Then context.FillRoundedRectangle(boundsRect, radius, fillColor)
-            If bw > 0 AndAlso _style.BorderColor.A > 0 Then context.DrawRoundedRectangle(boundsRect, radius, _style.BorderColor, bw)
+            Dim outerRect As New RectangleF(0, 0, Math.Max(1, w), Math.Max(1, h))
+            Dim half As Single = bw / 2.0F
+            Dim innerRect As RectangleF = outerRect
+            If bw > 0 Then innerRect.Inflate(-half, -half)
+            Dim outerRadius As Single = Math.Min(radius, Math.Min(outerRect.Width, outerRect.Height) / 2.0F)
+            Dim innerRadius As Single = Math.Max(0.0F, Math.Min(outerRadius - half, Math.Min(innerRect.Width, innerRect.Height) / 2.0F))
+            If fillBackground Then context.FillRoundedRectangle(innerRect, innerRadius, fillColor)
+            If bw > 0 AndAlso _style.BorderColor.A > 0 Then context.DrawRoundedRectangle(outerRect, outerRadius, _style.BorderColor, bw)
             Return
         End If
 
@@ -535,7 +543,7 @@ Public NotInheritable Class FloatingToolTipForm
 
     Private Sub ApplyRoundedRegion()
         Dim oldRegion As Region = Region
-        Dim radius As Single = BorderRadius()
+        Dim radius As Single = Math.Min(BorderRadius(), Math.Min(Math.Max(1, Width), Math.Max(1, Height)) / 2.0F)
         If radius <= 0 OrElse Width <= 0 OrElse Height <= 0 Then
             Region = Nothing
         Else

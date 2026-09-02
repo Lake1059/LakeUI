@@ -2779,7 +2779,8 @@ Public Class UltraDetailListView
         Dim drawText As String = If(canWrap, text, 截断文本到宽度(text, font, rect.Width))
         context.DrawText(drawText, font, color, rect,
                          Vortice.DirectWrite.TextAlignment.Leading,
-                         Vortice.DirectWrite.ParagraphAlignment.Near)
+                         Vortice.DirectWrite.ParagraphAlignment.Near,
+                         wordWrap:=canWrap)
     End Sub
 
     Private Sub 绘制更多指示器符号_GPU(context As D3D_PaintContext, rect As Rectangle, isTop As Boolean)

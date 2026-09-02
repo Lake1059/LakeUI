@@ -122,7 +122,7 @@ Public Module D3D_PaintBridge
             If targetForm Is Nothing Then
                 ' ReleaseEverything keeps the current V5 device alive so HWND
                 ' presenters can continue using their existing device generation.
-                ' Do not dispose the shared D2D/DWrite factories underneath that
+                ' 不要在其下方释放共享 D2D/DWrite 工厂，
                 ' device; only an explicit RecreateDevice may tear them down.
                 Dim interopLevel = If(level = D3DCacheCleanupLevel.ReleaseEverything,
                                       D3DCacheCleanupLevel.ReleaseAllCaches,

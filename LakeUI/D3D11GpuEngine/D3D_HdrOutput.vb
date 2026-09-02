@@ -4,7 +4,7 @@ Imports System.Runtime.InteropServices
 Imports Vortice.Mathematics
 
 Friend Module D3D_HdrOutput
-    ' Image mapping runs on the upload path. Keep the opaque-byte LUT hot so
+    ' 图片映射发生在上传路径；保持不透明字节查找表处于热状态，
     ' large UI backgrounds do not redo three floating-point transforms per pixel.
     Private Const CurveTableSize As Integer = 4096
     Private Const CurveTableMax As Integer = CurveTableSize - 1

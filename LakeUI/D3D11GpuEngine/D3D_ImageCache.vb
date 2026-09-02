@@ -22,36 +22,33 @@ Public NotInheritable Class D3D_ImageCache
         If _disposed Then Throw New ObjectDisposedException(NameOf(D3D_ImageCache))
         If context Is Nothing Then Throw New ArgumentNullException(NameOf(context))
         If image Is Nothing Then Return Nothing
-        ' System.Drawing.Image is not thread-safe. Backdrop workers may read or
-        ' draw the same source while the UI thread uploads it, and Width/Height
-        ' themselves can throw Object-is-in-use. Serialize the complete source
-        ' snapshot and upload, not just the later DrawImage call.
+        ' System.Drawing.Image 不是线程安全类型。背景工作线程可能与 UI 线程同时读取或绘制同一源图，
+        ' Width/Height 本身也可能抛出“对象正在使用”。因此要串行化完整的源图读取和上传过程。
         SyncLock image
-            Dim width As Integer
-            Dim height As Integer
+            Dim 宽度 As Integer
+            Dim 高度 As Integer
             Try
-                width = image.Width
-                height = image.Height
+                宽度 = image.Width
+                高度 = image.Height
             Catch ex As ArgumentException
-                ' A control may release its Image while a queued GPU frame is
-                ' being drained. Treat that frame as having no image.
+                ' 控件可能在 GPU 帧排队期间释放 Image；此帧按没有图片处理。
                 Return Nothing
             Catch ex As ObjectDisposedException
                 Return Nothing
             End Try
-            If width <= 0 OrElse height <= 0 Then Return Nothing
+            If 宽度 <= 0 OrElse 高度 <= 0 Then Return Nothing
             context.BeginTextureUse()
 
-            Dim generation = context.DeviceGeneration
-            Dim key = BuildKey(image, width, height, frameIndex, generation)
-            Dim bytes = CLng(width) * CLng(height) * 4L
+            Dim 设备代号 = context.DeviceGeneration
+            Dim 缓存键 = BuildKey(image, 宽度, 高度, frameIndex, 设备代号)
+            Dim 字节数 = CLng(宽度) * CLng(高度) * 4L
 
             Try
                 Return _textureCache.AcquireTexture(Of ID2D1Bitmap1)(
-                    key,
-                    generation,
-                    bytes,
-                    Function() UploadImage(context.DeviceContext, image, width, height))
+                    缓存键,
+                    设备代号,
+                    字节数,
+                    Function() UploadImage(context.DeviceContext, image, 宽度, 高度))
             Catch ex As ArgumentException
                 Return Nothing
             Catch ex As ObjectDisposedException
@@ -70,14 +67,14 @@ Public NotInheritable Class D3D_ImageCache
                          Optional opacity As Single = 1.0F,
                          Optional frameIndex As Integer = 0,
                          Optional interpolation As InterpolationMode = InterpolationMode.Linear)
-        Dim bitmap = GetBitmap(context, image, frameIndex)
-        If bitmap Is Nothing Then Return
+        Dim 位图 = GetBitmap(context, image, frameIndex)
+        If 位图 Is Nothing Then Return
 
-        Dim dst As Vortice.RawRectF? = D3D_PaintContext.ToRawRect(destination)
-        Dim src As Vortice.RawRectF? = Nothing
-        If source.HasValue Then src = D3D_PaintContext.ToRawRect(source.Value)
+        Dim 目标区域 As Vortice.RawRectF? = D3D_PaintContext.ToRawRect(destination)
+        Dim 源区域 As Vortice.RawRectF? = Nothing
+        If source.HasValue Then 源区域 = D3D_PaintContext.ToRawRect(source.Value)
 
-        context.DeviceContext.DrawBitmap(bitmap, dst, Math.Max(0.0F, Math.Min(1.0F, opacity)), interpolation, src, Nothing)
+        context.DeviceContext.DrawBitmap(位图, 目标区域, Math.Max(0.0F, Math.Min(1.0F, opacity)), interpolation, 源区域, Nothing)
     End Sub
 
     Public Sub Invalidate()
@@ -173,10 +170,8 @@ Public NotInheritable Class D3D_ImageCache
     Public Sub Dispose() Implements IDisposable.Dispose
         If _disposed Then Return
         _disposed = True
-        ' ImageCache owns the key space inside the shared texture cache.
-        ' Release those entries here as well so standalone users do not retain
-        ' GPU bitmaps (and their source Image references) until the compositor
-        ' happens to be disposed.
+        ' ImageCache 负责共享纹理缓存中的键空间；这里同步释放相关条目，
+        ' 避免独立使用时一直保留 GPU 位图及其源 Image 引用。
         Try : Invalidate() : Catch : End Try
         GC.SuppressFinalize(Me)
     End Sub

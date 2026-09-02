@@ -246,7 +246,7 @@ Public NotInheritable Class D3D_PaintContext
            D3D_ControlSurfaceRegistry.TryDrawBackground(consumer, source, Me, destination) Then Return True
 
         ' A disposed, cyclic, non-V5 or currently unavailable explicit source must
-        ' not leave an opaque HWND with a cleared black surface. Fall back to the
+        ' 不要让不透明 HWND 留下被清成黑色的表面；回退到
         ' nearest GPU ancestor using the same cross-container coordinate mapping.
         If D3D_ControlSurfaceRegistry.TryDrawAutomaticGpuBackdrop(consumer, Me, ignoreExplicitSource:=True) Then Return True
         If consumer.BackColor.A > 0 Then

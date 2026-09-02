@@ -7,7 +7,9 @@ Public NotInheritable Class D3D_TextureCache
     Implements D3D_IRenderCacheOwner, IDisposable
 
     Private ReadOnly _entries As New Dictionary(Of Object, D3D_TextureCacheEntry)()
+    Private ReadOnly _retiredResources As New List(Of D3D_TextureCacheEntry)()
     Private _totalGpuBytes As Long
+    Private _retiredGpuBytes As Long
     Private _frameUseDepth As Integer
     Private _trimPending As Boolean
     Private _disposed As Boolean
@@ -21,13 +23,13 @@ Public NotInheritable Class D3D_TextureCache
 
     Public ReadOnly Property TotalGpuBytes As Long
         Get
-            Return _totalGpuBytes
+            Return _totalGpuBytes + _retiredGpuBytes
         End Get
     End Property
 
     Private ReadOnly Property CacheBytes As Long Implements D3D_IRenderCacheOwner.CacheBytes
         Get
-            Return _totalGpuBytes
+            Return _totalGpuBytes + _retiredGpuBytes
         End Get
     End Property
 
@@ -45,9 +47,9 @@ Public NotInheritable Class D3D_TextureCache
             Return False
         End If
         If _entries.Count = 0 Then Return False
-        Dim victim = _entries.Values.OrderBy(Function(e) e.LastUsed).FirstOrDefault()
-        If victim Is Nothing Then Return False
-        RemoveEntry(victim.Key, victim)
+        Dim 最旧项 = _entries.Values.MinBy(Function(项) 项.LastUsed)
+        If 最旧项 Is Nothing Then Return False
+        RemoveEntry(最旧项.Key, 最旧项)
         Return True
     End Function
 
@@ -99,12 +101,17 @@ Public NotInheritable Class D3D_TextureCache
 
     Friend Sub EndFrameUse()
         If _frameUseDepth > 0 Then _frameUseDepth -= 1
-        If _frameUseDepth > 0 OrElse Not _trimPending Then Return
+        If _frameUseDepth > 0 Then Return
+
+        DisposeRetiredResources()
+        If Not _trimPending Then Return
 
         ' Frame completion is still an animation hot path. Leave the pending
         ' flag for the next resource-creation or explicit-cleanup boundary;
         ' trimming here can synchronously Dispose several D2D resources.
         _trimPending = False
+        TrimToBudget(force:=False)
+        D3D_GpuCache.TrimToBudget(Me)
     End Sub
 
     Private Sub RequestBudgetTrim(Optional protectedKey As Object = Nothing)
@@ -173,21 +180,23 @@ Public NotInheritable Class D3D_TextureCache
         End If
 
         While _totalGpuBytes > BudgetBytes AndAlso _entries.Count > 0
-            Dim victim = _entries.Values.
-                Where(Function(e) Not Object.Equals(e.Key, protectedKey)).
-                OrderBy(Function(e) e.LastUsed).
-                FirstOrDefault()
-            If victim Is Nothing Then Exit While
-            RemoveEntry(victim.Key, victim)
+            Dim 最旧项 As D3D_TextureCacheEntry = Nothing
+            For Each 项 In _entries.Values
+                If Object.Equals(项.Key, protectedKey) Then Continue For
+                If 最旧项 Is Nothing OrElse 项.LastUsed < 最旧项.LastUsed Then 最旧项 = 项
+            Next
+            If 最旧项 Is Nothing Then Exit While
+            RemoveEntry(最旧项.Key, 最旧项)
         End While
     End Sub
 
     Public Sub ReleaseAll() Implements D3D_IRenderCacheOwner.ReleaseAll
         For Each entry In _entries.Values.ToArray()
-            DisposeEntry(entry)
+            RetireOrDispose(entry)
         Next
         _entries.Clear()
         _totalGpuBytes = 0
+        If _frameUseDepth = 0 Then DisposeRetiredResources()
         _trimPending = False
     End Sub
 
@@ -202,7 +211,27 @@ Public NotInheritable Class D3D_TextureCache
     Private Sub RemoveEntry(key As Object, entry As D3D_TextureCacheEntry)
         If Not _entries.Remove(key) Then Return
         _totalGpuBytes -= entry.GpuBytes
-        DisposeEntry(entry)
+        RetireOrDispose(entry)
+    End Sub
+
+    Private Sub RetireOrDispose(entry As D3D_TextureCacheEntry)
+        If entry Is Nothing OrElse entry.Resource Is Nothing Then Return
+        If _frameUseDepth > 0 Then
+            _retiredResources.Add(entry)
+            _retiredGpuBytes += entry.GpuBytes
+        Else
+            DisposeEntry(entry)
+        End If
+    End Sub
+
+    Private Sub DisposeRetiredResources()
+        If _retiredResources.Count = 0 Then Return
+        Dim retired = _retiredResources.ToArray()
+        _retiredResources.Clear()
+        _retiredGpuBytes = 0
+        For Each entry In retired
+            DisposeEntry(entry)
+        Next
     End Sub
 
     Private Shared Sub DisposeEntry(entry As D3D_TextureCacheEntry)

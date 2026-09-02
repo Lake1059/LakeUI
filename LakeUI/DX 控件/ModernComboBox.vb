@@ -209,6 +209,12 @@ Public Class ModernComboBox
     Private _mouseOverArrow As Boolean = False
     Private _itemToolTips As ToolTipEntryCollection
 
+    Private Sub RefreshDropDownShadow()
+        If _dropDownForm IsNot Nothing AndAlso Not _dropDownForm.IsDisposed Then
+            _dropDownForm.RefreshShadowSettings()
+        End If
+    End Sub
+
     ' GPU：窗口级 D3D compositor 统一持有图形资源，本控件不再持有 _dcRT / _ssaaCache。
 #End Region
 
@@ -648,6 +654,66 @@ Public Class ModernComboBox
         End Set
     End Property
 
+    Private 下拉圆角半径 As Integer = 0
+    <Category("LakeUI - DropDown"), Description("下拉列表本体圆角半径，0 = 直角矩形"), DefaultValue(GetType(Integer), "0"), Browsable(True)>
+    Public Property DropDownBorderRadius As Integer
+        Get
+            Return 下拉圆角半径
+        End Get
+        Set(value As Integer)
+            SetValue(下拉圆角半径, Math.Max(0, value))
+            RefreshDropDownShadow()
+        End Set
+    End Property
+
+    Private 下拉阴影启用 As Boolean = False
+    <Category("LakeUI - DropDown Shadow"), Description("是否显示下拉列表阴影"), DefaultValue(False), Browsable(True)>
+    Public Property DropDownShadowEnabled As Boolean
+        Get
+            Return 下拉阴影启用
+        End Get
+        Set(value As Boolean)
+            SetValue(下拉阴影启用, value)
+            RefreshDropDownShadow()
+        End Set
+    End Property
+
+    Private 下拉阴影颜色 As Color = Color.Black
+    <Category("LakeUI - DropDown Shadow"), Description("下拉列表阴影颜色"), DefaultValue(GetType(Color), "Black"), Browsable(True)>
+    Public Property DropDownShadowColor As Color
+        Get
+            Return 下拉阴影颜色
+        End Get
+        Set(value As Color)
+            SetValue(下拉阴影颜色, value)
+            RefreshDropDownShadow()
+        End Set
+    End Property
+
+    Private 下拉阴影深度 As Integer = 12
+    <Category("LakeUI - DropDown Shadow"), Description("下拉列表阴影扩展深度（逻辑像素）"), DefaultValue(12), Browsable(True)>
+    Public Property DropDownShadowDepth As Integer
+        Get
+            Return 下拉阴影深度
+        End Get
+        Set(value As Integer)
+            SetValue(下拉阴影深度, Math.Max(0, value))
+            RefreshDropDownShadow()
+        End Set
+    End Property
+
+    Private 下拉阴影不透明度 As Byte = 80
+    <Category("LakeUI - DropDown Shadow"), Description("下拉列表阴影不透明度（0-255）"), DefaultValue(CByte(80)), Browsable(True)>
+    Public Property DropDownShadowOpacity As Byte
+        Get
+            Return 下拉阴影不透明度
+        End Get
+        Set(value As Byte)
+            SetValue(下拉阴影不透明度, value)
+            RefreshDropDownShadow()
+        End Set
+    End Property
+
     Private 下拉毛玻璃模式 As PopupBackdropMode = PopupBackdropMode.None
     <Category("LakeUI - DropDown Backdrop"), Description("下拉列表毛玻璃背景模式。Auto = 展开前截取下拉所在屏幕区域；Image = 使用 DropDownBackdropImage。"), DefaultValue(GetType(PopupBackdropMode), "None"), Browsable(True)>
     Public Property DropDownBackdropMode As PopupBackdropMode
@@ -798,7 +864,7 @@ Public Class ModernComboBox
             Return 下拉项高度
         End Get
         Set(value As Integer)
-            下拉项高度 = Math.Max(10, value)
+            SetValue(下拉项高度, Math.Max(10, value))
         End Set
     End Property
 
@@ -809,7 +875,7 @@ Public Class ModernComboBox
             Return 最大下拉项数
         End Get
         Set(value As Integer)
-            最大下拉项数 = Math.Max(1, value)
+            SetValue(最大下拉项数, Math.Max(1, value))
         End Set
     End Property
 
@@ -875,7 +941,7 @@ Public Class ModernComboBox
             Return 下拉间距
         End Get
         Set(value As Integer)
-            下拉间距 = value
+            SetValue(下拉间距, value)
         End Set
     End Property
 
@@ -886,7 +952,7 @@ Public Class ModernComboBox
             Return 下拉滚动条宽度
         End Get
         Set(value As Integer)
-            下拉滚动条宽度 = Math.Max(2, value)
+            SetValue(下拉滚动条宽度, Math.Max(2, value))
         End Set
     End Property
 
@@ -957,7 +1023,7 @@ Public Class ModernComboBox
             Return 下拉内边距
         End Get
         Set(value As Padding)
-            下拉内边距 = value
+            SetValue(下拉内边距, value)
         End Set
     End Property
 
@@ -969,8 +1035,8 @@ Public Class ModernComboBox
         下拉内边距 = Padding.Empty
     End Sub
 
-    Private 下拉展开关闭动画时长 As Integer = 150
-    <Category("LakeUI - DropDown"), Description("下拉列表展开/关闭动画时长（毫秒），0 = 无动画"), DefaultValue(GetType(Integer), "150"), Browsable(True)>
+    Private 下拉展开关闭动画时长 As Integer = 300
+    <Category("LakeUI - DropDown"), Description("下拉列表展开/关闭动画时长（毫秒），0 = 无动画"), DefaultValue(GetType(Integer), "300"), Browsable(True)>
     Public Property DropDownAnimationDuration As Integer
         Get
             Return 下拉展开关闭动画时长
@@ -1096,7 +1162,7 @@ Public Class ModernComboBox
             Return 提示内边距
         End Get
         Set(value As Padding)
-            提示内边距 = value
+            SetValue(提示内边距, value)
         End Set
     End Property
 
@@ -1107,7 +1173,7 @@ Public Class ModernComboBox
             Return 提示最大宽度
         End Get
         Set(value As Integer)
-            提示最大宽度 = Math.Max(50, value)
+            SetValue(提示最大宽度, Math.Max(50, value))
         End Set
     End Property
 
@@ -1118,7 +1184,7 @@ Public Class ModernComboBox
             Return 提示间距
         End Get
         Set(value As Integer)
-            提示间距 = value
+            SetValue(提示间距, value)
         End Set
     End Property
 
@@ -1129,7 +1195,7 @@ Public Class ModernComboBox
             Return 提示默认侧
         End Get
         Set(value As ToolTipSideEnum)
-            提示默认侧 = value
+            SetValue(提示默认侧, value)
         End Set
     End Property
 
@@ -1235,7 +1301,7 @@ Public Class ModernComboBox
         SyncTextRenderer()
         _textRenderer.DrawGpu(context)
         绘制分隔线与箭头_GPU(context, w, h, bc)
-        绘制边框_GPU(context, hasRadius, GetBorderRenderRect(boundsRect), bc)
+        绘制边框_GPU(context, hasRadius, boundsRect, bc)
         If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
             填充圆角矩形_GPU(context, boundsRect, If(hasRadius, 边框圆角半径 * s, 0.0F), 禁用时遮罩颜色)
         End If
@@ -1428,11 +1494,6 @@ Public Class ModernComboBox
         Dim arrowRight As Single = fillRect.Right
         Return New RectangleF(arrowX, fillRect.Y, Math.Max(0, arrowRight - arrowX), fillRect.Height)
     End Function
-
-    Private Function GetBorderRenderRect(boundsRect As RectangleF) As RectangleF
-        Return boundsRect
-    End Function
-
 
 #End Region
 
@@ -1854,7 +1915,8 @@ Public Class ModernComboBox
 
         ' Overlay 模式
         Private _overlayMode As Boolean = False
-        Private _alignItemScreenY, _alignItemDropdownY, _closeCenterScreenY As Integer
+        Private _alignItemDropdownY As Integer
+        Private _overlayControlTop, _overlayControlBottom As Integer
 
         ' 展开/关闭动画
         Private ReadOnly 展开关闭秒表 As New Stopwatch()
@@ -1873,6 +1935,7 @@ Public Class ModernComboBox
         Private 悬停动画显示 As Boolean = False
 
         Private _backdrop As D3D_PopupBackdropRenderer
+        Private _shadow As ShadowWindow
 
         Private Structure DropDownLayout
             Public ReadOnly Bw, Inset, RightCorr, ScrollW, ItemH, VisCount, HlL, HlR As Integer
@@ -1925,7 +1988,6 @@ Public Class ModernComboBox
             _owner = owner
             Me.DoubleBuffered = True
             SetStyle(ControlStyles.AllPaintingInWmPaint Or ControlStyles.UserPaint Or ControlStyles.OptimizedDoubleBuffer, True)
-            Me.BackColor = ToOpaqueColor(_owner.下拉背景颜色)
             ApplyPopupWindowState()
             UpdateStyles()
             Me.AutoScaleMode = AutoScaleMode.Dpi
@@ -1952,20 +2014,18 @@ Public Class ModernComboBox
                 _alignItemDropdownY = bw + pad.Top + visIdx * itemH
 
                 Dim comboScreenPt As Point = owner.PointToScreen(New Point(0, 0))
-                ' Overlay 中选中项与控件主体垂直居中，收起终点也回到主体中心。
-                Dim centerOffset As Integer = Math.Max(0, (owner.Height - itemH) \ 2)
-                _alignItemScreenY = comboScreenPt.Y + centerOffset
-                _closeCenterScreenY = comboScreenPt.Y + owner.Height \ 2
-                _originPt = New Point(comboScreenPt.X, _alignItemScreenY - _alignItemDropdownY)
+                ' 选中项顶部与控件顶部对齐；动画以控件顶部到底部的完整区域为收缩范围。
+                _originPt = New Point(comboScreenPt.X, comboScreenPt.Y - _alignItemDropdownY)
 
                 If _originPt.Y < scr.WorkingArea.Top Then
                     _originPt.Y = scr.WorkingArea.Top
-                    _alignItemScreenY = _originPt.Y + _alignItemDropdownY
                 End If
                 If _originPt.Y + _finalHeight > scr.WorkingArea.Bottom Then
                     _originPt.Y = scr.WorkingArea.Bottom - _finalHeight
-                    _alignItemScreenY = _originPt.Y + _alignItemDropdownY
                 End If
+
+                _overlayControlTop = comboScreenPt.Y - _originPt.Y
+                _overlayControlBottom = _overlayControlTop + owner.Height
             Else
                 _originPt = owner.PointToScreen(New Point(0, owner.Height + owner.下拉间距))
                 If _originPt.Y + _finalHeight > scr.WorkingArea.Bottom Then
@@ -1979,6 +2039,13 @@ Public Class ModernComboBox
             _scrollBarVisible = owner._items.Count > owner.最大下拉项数
             If Not _overlayMode AndAlso owner._selectedIndex >= 0 Then
                 _scrollOffset = CalculateCenteredScrollOffset(owner._items.Count, visCount, owner._selectedIndex)
+            End If
+        End Sub
+
+        Protected Overrides Sub OnHandleCreated(e As EventArgs)
+            MyBase.OnHandleCreated(e)
+            If DwmWindowStyle.IsCornerModeSupported Then
+                DwmWindowStyle.SetCornerMode(Handle, DwmWindowStyle.CornerMode.Square)
             End If
         End Sub
 
@@ -2015,10 +2082,6 @@ Public Class ModernComboBox
             Return Color.FromArgb(255, color.R, color.G, color.B)
         End Function
 
-        Private Function ShouldCaptureTransparentBackground() As Boolean
-            Return False
-        End Function
-
         Private Function HasBackdropFrame() As Boolean
             Return _backdrop IsNot Nothing AndAlso _backdrop.HasFrame
         End Function
@@ -2047,10 +2110,6 @@ Public Class ModernComboBox
             _backdrop.Prepare(Me.Bounds, True)
         End Sub
 
-        Private Sub 绘制毛玻璃背景(g As Graphics)
-            ' GPU-only: pixels are emitted by RenderGpu.
-        End Sub
-
         Protected Overrides Sub WndProc(ByRef m As Message)
             MyBase.WndProc(m)
             If m.Msg = WM_ACTIVATEAPP AndAlso m.WParam = IntPtr.Zero Then
@@ -2065,12 +2124,12 @@ Public Class ModernComboBox
             If _owner.下拉展开关闭动画时长 > 0 Then
                 SetBoundsAndRender(_originPt, New Size(Me.Width, _finalHeight), True, True)
                 If _overlayMode Then
-                    Dim startTop = Math.Max(0, Math.Min(_finalHeight - 1, _alignItemScreenY - _originPt.Y))
-                    SetAnimationClip(New Rectangle(0, startTop, Me.Width, 1))
+                    SetAnimationClip(GetOverlayControlClip())
                 Else
                     SetAnimationClip(New Rectangle(0, 0, Me.Width, 1))
                 End If
                 Me.Show()
+                UpdateShadowForCurrentClip(_animationClipRect)
                 请求重绘(True)
                 展开关闭动画中 = True
                 正在关闭动画 = False
@@ -2079,6 +2138,7 @@ Public Class ModernComboBox
             Else
                 Me.Show()
                 请求重绘(True)
+                UpdateShadowForCurrentClip()
             End If
         End Sub
 
@@ -2158,6 +2218,11 @@ Public Class ModernComboBox
                 _backdrop.Dispose()
                 _backdrop = Nothing
             End If
+            If _shadow IsNot Nothing Then
+                _shadow.SetDesktopAwareVisible(False)
+                _shadow.Dispose()
+                _shadow = Nothing
+            End If
             Application.RemoveMessageFilter(Me)
             If Not IsDisposed Then
                 ClearAnimationClip()
@@ -2186,20 +2251,7 @@ Public Class ModernComboBox
             Dim clipRect As Rectangle
 
             If _overlayMode Then
-                If 正在关闭动画 Then
-                    Dim curTopY As Integer = CInt(_originPt.Y + (_closeCenterScreenY - _originPt.Y) * eased)
-                    Dim curH As Integer = Math.Max(1, CInt(_finalHeight * (1.0F - eased)))
-                    Dim localTop = Math.Max(0, Math.Min(_finalHeight - curH, curTopY - _originPt.Y))
-                    clipRect = New Rectangle(0, localTop, Me.Width, curH)
-                Else
-                    Dim topDist As Integer = _alignItemScreenY - _originPt.Y
-                    Dim bottomDist As Integer = _finalHeight - topDist
-                    Dim curTop As Integer = CInt(topDist * eased)
-                    Dim curBottom As Integer = CInt(bottomDist * eased)
-                    Dim curH As Integer = Math.Max(1, curTop + curBottom)
-                    Dim localTop = Math.Max(0, Math.Min(_finalHeight - curH, topDist - curTop))
-                    clipRect = New Rectangle(0, localTop, Me.Width, curH)
-                End If
+                clipRect = GetOverlayAnimationClip(eased, 正在关闭动画)
             Else
                 If 正在关闭动画 Then
                     clipRect = New Rectangle(0, 0, Me.Width, Math.Max(1, CInt(_finalHeight * (1.0F - eased))))
@@ -2224,6 +2276,28 @@ Public Class ModernComboBox
             End If
         End Sub
 
+        Private Function GetOverlayControlClip() As Rectangle
+            Dim top As Integer = Math.Max(0, Math.Min(_finalHeight - 1, _overlayControlTop))
+            Dim bottom As Integer = Math.Max(top + 1, Math.Min(_finalHeight, _overlayControlBottom))
+            Return New Rectangle(0, top, Me.Width, bottom - top)
+        End Function
+
+        Private Function GetOverlayAnimationClip(progress As Single, closing As Boolean) As Rectangle
+            Dim controlClip As Rectangle = GetOverlayControlClip()
+            Dim top As Integer
+            Dim bottom As Integer
+
+            If closing Then
+                top = CInt(controlClip.Top * progress)
+                bottom = CInt(_finalHeight + (controlClip.Bottom - _finalHeight) * progress)
+            Else
+                top = CInt(controlClip.Top * (1.0F - progress))
+                bottom = CInt(controlClip.Bottom + (_finalHeight - controlClip.Bottom) * progress)
+            End If
+
+            Return New Rectangle(0, top, Me.Width, Math.Max(1, bottom - top))
+        End Function
+
         Private Sub SetAnimationClip(rect As Rectangle)
             If IsDisposed OrElse Width <= 0 OrElse Height <= 0 Then Return
             Dim bounds = New Rectangle(0, 0, Width, Height)
@@ -2238,6 +2312,7 @@ Public Class ModernComboBox
             _animationClipRect = rect
             Me.Region = newRegion
             If oldRegion IsNot Nothing Then oldRegion.Dispose()
+            UpdateShadowForCurrentClip(rect)
         End Sub
 
         Private Sub ClearAnimationClip()
@@ -2249,6 +2324,46 @@ Public Class ModernComboBox
             Catch
             End Try
             If oldRegion IsNot Nothing Then oldRegion.Dispose()
+            UpdateShadowForCurrentClip()
+        End Sub
+
+        Friend Sub RefreshShadowSettings()
+            If IsDisposed Then Return
+            UpdateShadowForCurrentClip()
+        End Sub
+
+        Private Sub UpdateShadowForCurrentClip(Optional clipRect As Nullable(Of Rectangle) = Nothing)
+            If IsDisposed OrElse Not IsHandleCreated Then Return
+            If Not _owner.下拉阴影启用 OrElse _owner.下拉阴影深度 <= 0 OrElse Not Visible Then
+                If _shadow IsNot Nothing Then _shadow.SetDesktopAwareVisible(False)
+                Return
+            End If
+
+            Dim visibleRect As Rectangle = If(clipRect.HasValue, clipRect.Value, New Rectangle(0, 0, Width, Height))
+            If visibleRect.IsEmpty Then visibleRect = New Rectangle(0, 0, Width, Height)
+            visibleRect = Rectangle.Intersect(New Rectangle(0, 0, Width, Height), visibleRect)
+            If visibleRect.Width <= 0 OrElse visibleRect.Height <= 0 Then
+                If _shadow IsNot Nothing Then _shadow.SetDesktopAwareVisible(False)
+                Return
+            End If
+
+            If _shadow Is Nothing OrElse _shadow.IsDisposed Then
+                _shadow = New ShadowWindow()
+                _shadow.HostHandle = Handle
+                _shadow.ResizeWidth = 0
+                _shadow.ResizeFullArea = False
+            End If
+
+            Dim screenBounds As New Rectangle(Left + visibleRect.X, Top + visibleRect.Y,
+                                              visibleRect.Width, visibleRect.Height)
+            Dim depth As Integer = Math.Max(0, CInt(Math.Round(_owner.下拉阴影深度 * _owner.DpiScale())))
+            Dim radius As Integer = CInt(Math.Round(获取下拉窗口圆角半径(visibleRect.Width, visibleRect.Height)))
+            _shadow.ShadowDepth = depth
+            _shadow.ForceReset()
+            _shadow.UpdateShadow(screenBounds, depth, _owner.下拉阴影颜色, _owner.下拉阴影不透明度, radius)
+            _shadow.SyncVirtualDesktopWithHost()
+            _shadow.PlaceBehind(Handle)
+            _shadow.SetDesktopAwareVisible(True)
         End Sub
 
         Private Sub 完成关闭()
@@ -2287,11 +2402,13 @@ Public Class ModernComboBox
 
         Protected Overrides Sub OnSizeChanged(e As EventArgs)
             MyBase.OnSizeChanged(e)
+            UpdateShadowForCurrentClip()
             If Not _suppressBoundsRender Then 请求重绘()
         End Sub
 
         Protected Overrides Sub OnLocationChanged(e As EventArgs)
             MyBase.OnLocationChanged(e)
+            UpdateShadowForCurrentClip()
             If Not _suppressBoundsRender Then 请求重绘()
         End Sub
 
@@ -2336,8 +2453,7 @@ Public Class ModernComboBox
         End Function
 
         Private Function 获取下拉窗口圆角半径(w As Integer, h As Integer) As Single
-            If Not DwmWindowStyle.IsCornerModeSupported Then Return 0.0F
-            Dim radius = DwmWindowStyle.PopupCornerRadiusLogical * _owner.DpiScale()
+            Dim radius = _owner.下拉圆角半径 * _owner.DpiScale()
             Return Math.Max(0.0F, Math.Min(radius, Math.Min(w, h) / 2.0F))
         End Function
 
@@ -2595,8 +2711,6 @@ Public Class ModernComboBox
         End Sub
 
         Private _tipForm As FloatingToolTipForm = Nothing
-        Private _tipHoverIndex As Integer = -1
-
         Private Sub 更新工具提示()
             If _hoverIndex >= 0 AndAlso _hoverIndex < _owner._items.Count Then
                 Dim itemText As String = _owner._items(_hoverIndex)
@@ -2605,7 +2719,6 @@ Public Class ModernComboBox
                     If _tipForm Is Nothing OrElse _tipForm.IsDisposed Then
                         _tipForm = New FloatingToolTipForm(_owner)
                     End If
-                    _tipHoverIndex = _hoverIndex
                     Dim itemRect = GetItemRect(_hoverIndex)
                     Dim gap As Integer = _owner.ScaledToolTipGap()
                     Dim screenPt As Point = Me.PointToScreen(New Point(Me.Width + gap, CInt(itemRect.Y)))
@@ -2628,7 +2741,6 @@ Public Class ModernComboBox
         End Sub
 
         Private Sub 关闭工具提示()
-            _tipHoverIndex = -1
             If _tipForm IsNot Nothing AndAlso Not _tipForm.IsDisposed Then
                 _tipForm.Close()
                 _tipForm.Dispose()

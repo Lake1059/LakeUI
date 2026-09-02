@@ -14,11 +14,10 @@ Public Enum D3D_BackdropMode
 End Enum
 
 ''' <summary>
-''' Window-level GPU backdrop renderer used by GPU controls. Image mode runs fully through D2D:
-''' image texture -> optional Gaussian blur -> tint -> optional noise.
-''' Auto and CaptionOnly remain reserved for a future Desktop Duplication path.
-''' SetImage snapshots caller-owned images; delayed V5 paints never depend on the caller
-''' keeping a System.Drawing.Image alive after the setter returns.
+''' 供 GPU 控件使用的窗体级背景渲染器。Image 模式完全通过 D2D 执行：
+''' 图片纹理 -> 可选高斯模糊 -> 色调叠加 -> 可选噪点。
+''' Auto 和 CaptionOnly 保留给后续 Desktop Duplication 路径。
+''' SetImage 会复制调用方图片；延迟的 V5 绘制不依赖调用方在 setter 返回后继续持有 Image。
 ''' </summary>
 Public NotInheritable Class D3D_BackdropRenderer
     Implements D3D_IRenderCacheOwner, IDisposable
@@ -130,8 +129,7 @@ Public NotInheritable Class D3D_BackdropRenderer
             End If
         End SyncLock
 
-        ' The caller owns the source Image and may Dispose it immediately after
-        ' this call. V5 paints use this stable renderer-owned snapshot instead.
+        ' 调用方拥有源 Image，可在本调用返回后立即释放；V5 绘制始终使用渲染器持有的稳定快照。
         Dim snapshot As Image = Nothing
         If image IsNot Nothing Then snapshot = CreateStableImageSnapshot(image)
 

@@ -376,7 +376,7 @@ Public NotInheritable Class CodeSyntaxHighlighterRegistry
     Private NotInheritable Class JavaHighlighter
         Inherits BasicHighlighter
 
-        ' ReservedKeyword and ContextualKeyword from JLS 3.9 (Java SE 25).
+        ' 关键字集合依据 JLS 3.9（Java SE 25）定义。
         Private Shared ReadOnly Keywords As New HashSet(Of String)(StringComparer.Ordinal) From {
             "abstract", "assert", "boolean", "break", "byte", "case", "catch", "char", "class", "const",
             "continue", "default", "do", "double", "else", "enum", "extends", "final", "finally", "float",

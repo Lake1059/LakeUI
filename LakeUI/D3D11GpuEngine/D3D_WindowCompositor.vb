@@ -397,7 +397,7 @@ Public NotInheritable Class D3D_WindowCompositor
 
         Try
             If _form.IsHandleCreated Then
-                ' The form itself is not a V5 surface. Its native child HWNDs
+            ' 窗体本身不是 V5 表面；其原生子 HWND
                 ' must keep their own WinForms paint lifecycle; V5 controls
                 ' request their own surfaces through geometry/invalidation
                 ' notifications and do not need a form-wide child expansion.
