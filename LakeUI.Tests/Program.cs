@@ -16,6 +16,7 @@ static class Program
         VerifyMermaidCopyText();
         VerifyCustomHighlighterRegistration();
         VerifyAgentThinkingTagParsing();
+        VerifyModernTextBoxPaddingDpiContract();
         VerifyV5MarkerCoverage();
         VerifyBackgroundSourceControlCoverage();
         VerifyAutomaticBackdropAncestorSearch();
@@ -219,6 +220,34 @@ static class Program
         thinking.Append(tail.ThinkingText);
         Assert(visible.ToString() == "answerend", "Thinking tags must not leak into the visible answer.");
         Assert(thinking.ToString() == "firstsecond", "Thinking text must remain available for the collapsed activity.");
+    }
+
+    private static void VerifyModernTextBoxPaddingDpiContract()
+    {
+        using var textBox = new ModernTextBox
+        {
+            Width = 240,
+            Height = 100,
+            BorderSize = 0,
+            BorderRadius = 0,
+            Padding = new Padding(15)
+        };
+
+        // Simulate a 150% monitor after WinForms has already scaled Control.Padding.
+        typeof(ModernTextBox).GetField("_cachedDpiScale", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(textBox, 1.5F);
+
+        var viewport = (int)typeof(ModernTextBox)
+            .GetMethod("TextViewportHeight", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(textBox, null)!;
+        Assert(viewport == 70,
+            "ModernTextBox must use the already DPI-scaled Padding value exactly once.");
+
+        var textAreaWidth = (int)typeof(ModernTextBox)
+            .GetMethod("TextAreaWidth", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(textBox, null)!;
+        Assert(textAreaWidth == 210,
+            "ModernTextBox must apply the already DPI-scaled horizontal Padding exactly once.");
     }
 
     private static void VerifyV5MarkerCoverage()

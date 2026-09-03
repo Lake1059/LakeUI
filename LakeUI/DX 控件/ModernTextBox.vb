@@ -1168,7 +1168,7 @@ Public Class ModernTextBox
 
     Private Sub DrawTextContent_GPU(context As D3D_PaintContext, w As Integer, h As Integer)
         Dim bi As Integer = ScaledBorderWidth()
-        Dim pad As Padding = ScaledPadding()
+        Dim pad As Padding = EffectivePadding()
         Dim textTop As Integer = Math.Max(pad.Top, bi)
         Dim textBottom As Integer = Math.Max(pad.Bottom, bi)
         Dim gutterW As Integer = LineNumberGutterWidth()
@@ -1344,7 +1344,7 @@ Public Class ModernTextBox
         Dim lineY As Single
         If Not 启用多行 Then
             Dim bi2 As Integer = ScaledBorderWidth()
-            Dim pad As Padding = ScaledPadding()
+            Dim pad As Padding = EffectivePadding()
             Dim textHeight As Integer = ClientRectangle.Height - Math.Max(pad.Top, bi2) - Math.Max(pad.Bottom, bi2)
             lineY = textTop + (textHeight - _scaledLineHeight) / 2.0F
         Else
@@ -1657,7 +1657,7 @@ Public Class ModernTextBox
             _caretCol = pos.X
             _hasSelection = (_caretLine <> _selAnchorLine OrElse _caretCol <> _selAnchorCol)
             EnsureCaretVisible()
-            Dim pad As Padding = ScaledPadding()
+            Dim pad As Padding = EffectivePadding()
             If 启用多行 AndAlso (e.Y < Math.Max(pad.Top, ScaledBorderWidth()) OrElse e.Y > ClientRectangle.Height - Math.Max(pad.Bottom, ScaledBorderWidth())) Then
                 If Not _autoScrollTimer.Enabled Then _autoScrollTimer.Start()
             Else
@@ -1715,7 +1715,7 @@ Public Class ModernTextBox
     Private Function HitTest(x As Integer, y As Integer) As Point
         EnsureDpiCacheCurrent()
         Dim bi As Integer = ScaledBorderWidth()
-        Dim pad As Padding = ScaledPadding()
+        Dim pad As Padding = EffectivePadding()
         Dim gutterW As Integer = LineNumberGutterWidth()
         Dim textLeft As Integer = If(gutterW > 0, bi + gutterW + pad.Left, Math.Max(pad.Left, bi))
         Dim vi As Integer
@@ -2344,7 +2344,7 @@ Public Class ModernTextBox
 
     Private Function 滚动动画失效区域() As Rectangle
         Dim bi As Integer = ScaledBorderWidth()
-        Dim pad As Padding = ScaledPadding()
+        Dim pad As Padding = EffectivePadding()
         Dim top As Integer = Math.Max(pad.Top, bi)
         Dim bottom As Integer = ClientRectangle.Height - Math.Max(pad.Bottom, bi)
         If bottom <= top Then Return ClientRectangle
@@ -2370,7 +2370,7 @@ Public Class ModernTextBox
         Dim vl = _visualLines(vi)
         Dim wrapActive As Boolean = IsWordWrapActive()
         Dim bi As Integer = ScaledBorderWidth()
-        Dim pad As Padding = ScaledPadding()
+        Dim pad As Padding = EffectivePadding()
         Dim gutterW As Integer = LineNumberGutterWidth()
         Dim imeLeft As Integer = If(gutterW > 0, bi + gutterW + pad.Left, Math.Max(pad.Left, bi))
         Dim imeTop As Integer = Math.Max(pad.Top, bi)
@@ -2514,12 +2514,12 @@ Public Class ModernTextBox
     End Function
     Private Function TextViewportHeight() As Integer
         Dim bi As Integer = ScaledBorderWidth()
-        Dim pad As Padding = ScaledPadding()
+        Dim pad As Padding = EffectivePadding()
         Return Math.Max(0, ClientRectangle.Height - Math.Max(pad.Top, bi) - Math.Max(pad.Bottom, bi))
     End Function
     Private Function TextAreaRight() As Integer
         Dim bi As Integer = ScaledBorderWidth()
-        Dim pad As Padding = ScaledPadding()
+        Dim pad As Padding = EffectivePadding()
         Dim rightEdge As Integer = ClientRectangle.Width - Math.Max(pad.Right, bi)
         If _scrollBarVisible Then
             Dim radiusInset As Integer = If(边框圆角半径 > 0, CInt(Math.Round(边框圆角半径 * DpiScale())) \ 2, 0)
@@ -2531,18 +2531,16 @@ Public Class ModernTextBox
     End Function
     Private Function TextAreaWidth() As Integer
         Dim bi As Integer = ScaledBorderWidth()
-        Dim pad As Padding = ScaledPadding()
+        Dim pad As Padding = EffectivePadding()
         Dim gutterW As Integer = LineNumberGutterWidth()
         Dim leftUsed As Integer = If(gutterW > 0, bi + gutterW + pad.Left, Math.Max(pad.Left, bi))
         Return Math.Max(0, TextAreaRight() - leftUsed)
     End Function
-    Private Function ScaledPadding() As Padding
-        Dim s As Single = DpiScale()
-        Return New Padding(
-            CInt(Math.Round(Padding.Left * s)),
-            CInt(Math.Round(Padding.Top * s)),
-            CInt(Math.Round(Padding.Right * s)),
-            CInt(Math.Round(Padding.Bottom * s)))
+    Private Function EffectivePadding() As Padding
+        ' WinForms scales Control.Padding when AutoScaleMode is Dpi. It is already
+        ' in device pixels here, so multiplying it by DpiScale again would shrink
+        ' the usable text area at high DPI.
+        Return Padding
     End Function
     Private Function LineNumberGutterWidth() As Integer
         If Not _showLineNumbers OrElse Not 启用多行 Then Return 0
@@ -3055,7 +3053,7 @@ Public Class ModernTextBox
             Return
         End If
         Dim bi As Integer = ScaledBorderWidth()
-        Dim pad As Padding = ScaledPadding()
+        Dim pad As Padding = EffectivePadding()
         Dim textTop As Integer = Math.Max(pad.Top, bi)
         Dim textBottom As Integer = ClientRectangle.Height - Math.Max(pad.Bottom, bi)
         Dim scrollDelta As Integer
