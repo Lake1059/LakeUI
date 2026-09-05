@@ -97,6 +97,17 @@ Public Module D3D_PaintBridge
                                D3D_RenderCore.GetCleanupRecoveryForms(targetForm),
                                Array.Empty(Of Form)())
         Dim hasActivePaint = D3D_RenderCore.HasActivePaint(targetForm)
+        If hasActivePaint Then
+            Dim 恢复窗体 = D3D_RenderCore.GetCleanupRecoveryForms(targetForm).FirstOrDefault()
+            If 恢复窗体 IsNot Nothing AndAlso 恢复窗体.IsHandleCreated Then
+                Try
+                    恢复窗体.BeginInvoke(CType(Sub() CleanupD2DResources(level, owner, invalidateAfterCleanup), MethodInvoker))
+                Catch 异常 As InvalidOperationException
+                    System.Diagnostics.Debug.WriteLine(异常)
+                End Try
+            End If
+            Return 0
+        End If
         Dim cleaned = D3D_RenderCore.CleanupD2DResources(level, targetForm, invalidateAfterCleanup:=False)
 
         If Not hasActivePaint Then
@@ -108,26 +119,14 @@ Public Module D3D_PaintBridge
                 D3D_CpuCache.TrimToBudget(immediate:=True)
                 D3D_GpuCache.TrimToBudget(immediate:=True)
             ElseIf level = D3DCacheCleanupLevel.ReleaseEverything Then
-                D3D_CpuCache.ReleaseAll()
                 D3D_GpuCache.ReleaseAll()
             End If
 
-            ' ReleaseEverything follows the V3 cache cleanup path. V5 HWND swap chains
-            ' must remain on the current device; recreating them immediately on the same
-            ' child HWND can return E_ACCESSDENIED while DWM retires the old chain.
-            ' RecreateDevice is the explicit device-reset level.
-            If level = D3DCacheCleanupLevel.RecreateDevice Then
+            If level >= D3DCacheCleanupLevel.RecreateDevice Then
                 D3D_RenderCore.InvalidateDeviceForCleanup()
             End If
             If targetForm Is Nothing Then
-                ' ReleaseEverything keeps the current V5 device alive so HWND
-                ' presenters can continue using their existing device generation.
-                ' 不要在其下方释放共享 D2D/DWrite 工厂，
-                ' device; only an explicit RecreateDevice may tear them down.
-                Dim interopLevel = If(level = D3DCacheCleanupLevel.ReleaseEverything,
-                                      D3DCacheCleanupLevel.ReleaseAllCaches,
-                                      level)
-                D3D_D2DInterop.CleanupD2DResources(interopLevel)
+                D3D_D2DInterop.CleanupD2DResources(level)
             End If
         End If
 

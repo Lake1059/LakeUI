@@ -421,6 +421,7 @@ Friend Class D3D_AnimationHelper
         Private Const MaxTimerIntervalMs As Integer = 16
 
         Private ReadOnly _helpers As New List(Of D3D_AnimationHelper)()
+        Private ReadOnly _活动快照 As New List(Of D3D_AnimationHelper)()
         Private ReadOnly _timer As New PrecisionTimer()
         Private ReadOnly _invalidations As New Dictionary(Of Control, InvalidationBucket)()
         Private _syncOwner As Control
@@ -475,6 +476,8 @@ Friend Class D3D_AnimationHelper
             CleanupDeadHelpers()
             If _helpers.Count = 0 Then
                 SetDriver(DriverKind.None, 0)
+                _syncOwner = Nothing
+                _timer.SynchronizingObject = Nothing
                 Return
             End If
 
@@ -541,13 +544,14 @@ Friend Class D3D_AnimationHelper
             Try
                 _tickCount += 1
                 Dim nowTicks As Long = Stopwatch.GetTimestamp()
-                Dim snapshot = _helpers.ToArray()
-                For Each helper In snapshot
+                _活动快照.AddRange(_helpers)
+                For Each helper In _活动快照
                     If helper IsNot Nothing AndAlso helper.IsActive Then helper.Tick(nowTicks)
                 Next
                 FlushInvalidations()
                 UpdateTimerInterval(Stopwatch.GetTimestamp())
             Finally
+                _活动快照.Clear()
                 _inTick = False
                 If _reconfigurePending Then ApplyConfiguration()
             End Try

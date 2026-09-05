@@ -21,6 +21,7 @@ Public NotInheritable Class D3D_TextRenderer
 
     Private ReadOnly _manager As D3D_DeviceManager
     Private ReadOnly _formats As New Dictionary(Of D3D_TextFormatKey, D3D_TextFormatCacheEntry)()
+    Private ReadOnly _格式使用顺序 As New LinkedList(Of D3D_TextFormatKey)()
     Private _clock As Long
     Private _disposed As Boolean
 
@@ -90,6 +91,7 @@ Public NotInheritable Class D3D_TextRenderer
             Try : entry.Format.Dispose() : Catch : End Try
         Next
         _formats.Clear()
+        _格式使用顺序.Clear()
     End Sub
 
     Private Function GetTextFormat(font As Font,
@@ -107,6 +109,10 @@ Public NotInheritable Class D3D_TextRenderer
         Dim entry As D3D_TextFormatCacheEntry = Nothing
         If _formats.TryGetValue(key, entry) Then
             entry.LastUsed = NextClock()
+            If entry.使用节点 IsNot _格式使用顺序.Last Then
+                _格式使用顺序.Remove(entry.使用节点)
+                _格式使用顺序.AddLast(entry.使用节点)
+            End If
             Return entry.Format
         End If
 
@@ -122,7 +128,9 @@ Public NotInheritable Class D3D_TextRenderer
             End Try
         End If
 
-        _formats(key) = New D3D_TextFormatCacheEntry(format, generation, NextClock())
+        _formats(key) = New D3D_TextFormatCacheEntry(format, generation, NextClock()) With {
+            .使用节点 = _格式使用顺序.AddLast(key)
+        }
         TrimFormatCache()
         Return format
     End Function
@@ -162,11 +170,13 @@ Public NotInheritable Class D3D_TextRenderer
     End Function
 
     Private Sub TrimFormatCache()
-        Dim maxEntries As Integer = Math.Max(0, GlobalOptions.TextFormatCacheLimit)
+        Dim maxEntries As Integer = Math.Max(1, GlobalOptions.TextFormatCacheLimit)
         While _formats.Count > maxEntries
-            Dim victim = _formats.OrderBy(Function(kv) kv.Value.LastUsed).First()
-            _formats.Remove(victim.Key)
-            Try : victim.Value.Format.Dispose() : Catch : End Try
+            Dim 淘汰键 = _格式使用顺序.First.Value
+            Dim 淘汰项 = _formats(淘汰键)
+            _formats.Remove(淘汰键)
+            _格式使用顺序.RemoveFirst()
+            Try : 淘汰项.Format.Dispose() : Catch : End Try
         End While
     End Sub
 
@@ -234,5 +244,6 @@ Public NotInheritable Class D3D_TextRenderer
         Public ReadOnly Property Format As IDWriteTextFormat
         Public ReadOnly Property Generation As Integer
         Public Property LastUsed As Long
+        Public Property 使用节点 As LinkedListNode(Of D3D_TextFormatKey)
     End Class
 End Class

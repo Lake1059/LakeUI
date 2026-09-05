@@ -7,6 +7,7 @@ Public NotInheritable Class D3D_TextureCache
     Implements D3D_IRenderCacheOwner, IDisposable
 
     Private ReadOnly _entries As New Dictionary(Of Object, D3D_TextureCacheEntry)()
+    Private ReadOnly _使用顺序 As New LinkedList(Of D3D_TextureCacheEntry)()
     Private ReadOnly _retiredResources As New List(Of D3D_TextureCacheEntry)()
     Private ReadOnly _retiredLock As New Object()
     Private _totalGpuBytes As Long
@@ -14,6 +15,8 @@ Public NotInheritable Class D3D_TextureCache
     Private _retiredDisposeScheduled As Integer
     Private _frameUseDepth As Integer
     Private _trimPending As Boolean
+    Private _维护上下文 As Threading.SynchronizationContext
+    Private _维护已排队 As Boolean
     Private _disposed As Boolean
 
     Public Property BudgetBytes As Long = 256L * 1024L * 1024L
@@ -38,8 +41,8 @@ Public NotInheritable Class D3D_TextureCache
     Private ReadOnly Property OldestUseTick As Long Implements D3D_IRenderCacheOwner.OldestUseTick
         Get
             If _frameUseDepth > 0 Then Return Long.MaxValue
-            If _entries.Count = 0 Then Return Long.MaxValue
-            Return _entries.Values.Min(Function(e) e.LastUsed)
+            If _使用顺序.First Is Nothing Then Return Long.MaxValue
+            Return _使用顺序.First.Value.LastUsed
         End Get
     End Property
 
@@ -49,8 +52,7 @@ Public NotInheritable Class D3D_TextureCache
             Return False
         End If
         If _entries.Count = 0 Then Return False
-        Dim 最旧项 = _entries.Values.MinBy(Function(项) 项.LastUsed)
-        If 最旧项 Is Nothing Then Return False
+        Dim 最旧项 = _使用顺序.First.Value
         RemoveEntry(最旧项.Key, 最旧项)
         Return True
     End Function
@@ -80,6 +82,10 @@ Public NotInheritable Class D3D_TextureCache
         If _entries.TryGetValue(key, entry) Then
             If entry.Generation = generation AndAlso TypeOf entry.Resource Is T Then
                 entry.LastUsed = NextClock()
+                If entry.使用节点 IsNot _使用顺序.Last Then
+                    _使用顺序.Remove(entry.使用节点)
+                    _使用顺序.AddLast(entry.使用节点)
+                End If
                 Return DirectCast(entry.Resource, T)
             End If
 
@@ -91,6 +97,7 @@ Public NotInheritable Class D3D_TextureCache
 
         entry = New D3D_TextureCacheEntry(key, resource, generation, Math.Max(0, gpuBytes), NextClock())
         _entries(key) = entry
+        entry.使用节点 = _使用顺序.AddLast(entry)
         _totalGpuBytes += entry.GpuBytes
         RequestBudgetTrim(protectedKey:=key)
         Return resource
@@ -98,6 +105,9 @@ Public NotInheritable Class D3D_TextureCache
 
     Friend Sub BeginFrameUse()
         If _disposed Then Return
+        If TypeOf Threading.SynchronizationContext.Current Is WindowsFormsSynchronizationContext Then
+            _维护上下文 = Threading.SynchronizationContext.Current
+        End If
         _frameUseDepth += 1
     End Sub
 
@@ -106,12 +116,17 @@ Public NotInheritable Class D3D_TextureCache
         If _frameUseDepth > 0 Then Return
 
         ScheduleRetiredResourceRelease()
-        If Not _trimPending Then Return
+        If Not _trimPending OrElse _维护已排队 OrElse _维护上下文 Is Nothing Then Return
+        _维护已排队 = True
+        _维护上下文.Post(AddressOf 执行预算维护, Nothing)
+    End Sub
 
-        ' Frame completion is still an animation hot path. Leave the pending
-        ' flag for the next resource-creation or explicit-cleanup boundary;
-        ' trimming here can synchronously Dispose several D2D resources.
+    Private Sub 执行预算维护(状态 As Object)
+        _维护已排队 = False
+        If _disposed OrElse Not _trimPending OrElse _frameUseDepth > 0 Then Return
         _trimPending = False
+        TrimToBudget(force:=False)
+        D3D_GpuCache.TrimToBudget(Me)
     End Sub
 
     Private Sub RequestBudgetTrim(Optional protectedKey As Object = Nothing)
@@ -180,12 +195,10 @@ Public NotInheritable Class D3D_TextureCache
         End If
 
         While _totalGpuBytes > BudgetBytes AndAlso _entries.Count > 0
-            Dim 最旧项 As D3D_TextureCacheEntry = Nothing
-            For Each 项 In _entries.Values
-                If Object.Equals(项.Key, protectedKey) Then Continue For
-                If 最旧项 Is Nothing OrElse 项.LastUsed < 最旧项.LastUsed Then 最旧项 = 项
-            Next
-            If 最旧项 Is Nothing Then Exit While
+            Dim 最旧节点 = _使用顺序.First
+            If Object.Equals(最旧节点.Value.Key, protectedKey) Then 最旧节点 = 最旧节点.Next
+            If 最旧节点 Is Nothing Then Exit While
+            Dim 最旧项 = 最旧节点.Value
             RemoveEntry(最旧项.Key, 最旧项)
         End While
     End Sub
@@ -195,6 +208,7 @@ Public NotInheritable Class D3D_TextureCache
             RetireOrDispose(entry)
         Next
         _entries.Clear()
+        _使用顺序.Clear()
         _totalGpuBytes = 0
         If _frameUseDepth = 0 Then DisposeRetiredResources()
         _trimPending = False
@@ -210,6 +224,7 @@ Public NotInheritable Class D3D_TextureCache
 
     Private Sub RemoveEntry(key As Object, entry As D3D_TextureCacheEntry)
         If Not _entries.Remove(key) Then Return
+        _使用顺序.Remove(entry.使用节点)
         _totalGpuBytes -= entry.GpuBytes
         RetireOrDispose(entry)
     End Sub
@@ -302,5 +317,6 @@ Public NotInheritable Class D3D_TextureCache
         Public ReadOnly Property Generation As Integer
         Public ReadOnly Property GpuBytes As Long
         Public Property LastUsed As Long
+        Public Property 使用节点 As LinkedListNode(Of D3D_TextureCacheEntry)
     End Class
 End Class

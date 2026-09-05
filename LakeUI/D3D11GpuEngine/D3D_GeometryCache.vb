@@ -101,8 +101,10 @@ Public NotInheritable Class D3D_GeometryCache
 
     Private Sub Touch(entry As D3D_GeometryCacheEntry)
         If entry.LruNode Is Nothing OrElse entry.LruNode.List Is Nothing Then Return
-        _lruKeys.Remove(entry.LruNode)
-        _lruKeys.AddLast(entry.LruNode)
+        If entry.LruNode IsNot _lruKeys.Last Then
+            _lruKeys.Remove(entry.LruNode)
+            _lruKeys.AddLast(entry.LruNode)
+        End If
         entry.LastUsed = D3D_GpuCache.NextTick()
     End Sub
 

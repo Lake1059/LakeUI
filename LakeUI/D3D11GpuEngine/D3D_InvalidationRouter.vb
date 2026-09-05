@@ -23,7 +23,7 @@ Friend NotInheritable Class D3D_InvalidationRouter
         End If
 
         bounds = Rectangle.Intersect(New Rectangle(Point.Empty, control.Size), bounds)
-        If bounds.Width <= 0 OrElse bounds.Height <= 0 Then bounds = New Rectangle(Point.Empty, control.Size)
+        If bounds.Width <= 0 OrElse bounds.Height <= 0 Then Return
 
         OuterToInnerRefreshScheduler.Request(control, bounds)
     End Sub

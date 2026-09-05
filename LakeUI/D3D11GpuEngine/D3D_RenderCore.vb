@@ -188,6 +188,7 @@ Public NotInheritable Class D3D_RenderCore
     End Function
 
     Friend Shared Function HasActivePaint(Optional owner As Control = Nothing) As Boolean
+        If D3D_V5Presentation.IsRendering Then Return True
         Dim targetForm = ResolveCompositorForm(owner)
 
         SyncLock _compositorsLock
@@ -351,13 +352,9 @@ Public NotInheritable Class D3D_RenderCore
     ''' 下一次 RequestRender 会按新的设备代号按需重建设备和缓存。
     ''' </summary>
     Public Shared Sub ResetRenderCore()
-        Dim recoveryForms = GetCleanupRecoveryForms()
-        ' 冷重置入口保持与公开 V3 清理契约一致：销毁任一设备族之前先清理合成器、背景和缓存状态。
         D3D_PaintBridge.CleanupD2DResources(D3DCacheCleanupLevel.ReleaseEverything,
                                             owner:=Nothing,
                                             invalidateAfterCleanup:=False)
-        InvalidateDeviceForCleanup()
-        QueueCleanupRecovery(recoveryForms)
     End Sub
 
     Friend Shared Sub InvalidateDeviceForCleanup()

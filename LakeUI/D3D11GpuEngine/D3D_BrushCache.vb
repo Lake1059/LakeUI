@@ -67,7 +67,7 @@ Public NotInheritable Class D3D_BrushCache
             Do While 候选节点 IsNot Nothing AndAlso 候选节点.Value.Equals(protectedKey)
                 候选节点 = 候选节点.Next
             Loop
-            If 候选节点 Is Nothing Then 候选节点 = 淘汰节点
+            If 候选节点 Is Nothing Then Exit While
 
             Dim 淘汰键 = 候选节点.Value
             Dim 淘汰项 As D3D_BrushCacheEntry = Nothing
@@ -83,6 +83,7 @@ Public NotInheritable Class D3D_BrushCache
     Private Sub Touch(entry As D3D_BrushCacheEntry)
         If entry Is Nothing OrElse entry.LruNode Is Nothing Then Return
         Dim node = entry.LruNode
+        If node Is _solidBrushLru.Last Then Return
         _solidBrushLru.Remove(node)
         ' 重新挂接同一个节点；直接 AddLast(key) 会在每次动画命中时分配新节点。
         _solidBrushLru.AddLast(node)

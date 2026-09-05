@@ -13,17 +13,19 @@ Friend NotInheritable Class D3D_RenderCacheBudgetCoordinator
     Private ReadOnly _lock As New Object()
     Private ReadOnly _trimLock As New Object()
     Private ReadOnly _owners As New List(Of WeakReference(Of D3D_IRenderCacheOwner))()
+    Private ReadOnly _注册索引 As New Runtime.CompilerServices.ConditionalWeakTable(Of D3D_IRenderCacheOwner, WeakReference(Of D3D_IRenderCacheOwner))()
+    Private _注册版本 As Long
     Private _trimActive As Boolean
 
     Friend Sub Register(owner As D3D_IRenderCacheOwner)
         If owner Is Nothing Then Return
         SyncLock _lock
-            CompactNoLock()
-            For Each wr In _owners
-                Dim existing As D3D_IRenderCacheOwner = Nothing
-                If wr.TryGetTarget(existing) AndAlso ReferenceEquals(existing, owner) Then Return
-            Next
-            _owners.Add(New WeakReference(Of D3D_IRenderCacheOwner)(owner))
+            If _注册索引.TryGetValue(owner, Nothing) Then Return
+            Dim 弱引用 As New WeakReference(Of D3D_IRenderCacheOwner)(owner)
+            _注册索引.Add(owner, 弱引用)
+            _owners.Add(弱引用)
+            _注册版本 += 1
+            If _注册版本 Mod 64 = 0 Then CompactNoLock()
         End SyncLock
     End Sub
 
@@ -41,12 +43,15 @@ Friend NotInheritable Class D3D_RenderCacheBudgetCoordinator
             Try
             Dim 失败所有者 As New HashSet(Of D3D_IRenderCacheOwner)(ReferenceEqualityComparer.Instance)
             Dim 守卫次数 As Integer = 0
+            Dim 快照版本 As Long = -1
+            Dim 所有者快照 As List(Of D3D_IRenderCacheOwner) = Nothing
             Do
+                If 快照版本 <> Threading.Volatile.Read(_注册版本) Then 所有者快照 = SnapshotOwners(快照版本)
                 Dim 总字节数 As Long = 0
                 Dim 最旧所有者 As D3D_IRenderCacheOwner = Nothing
                 Dim 最旧时钟 As Long = Long.MaxValue
 
-                For Each 所有者 In SnapshotOwners()
+                For Each 所有者 In 所有者快照
                     Dim 字节数 As Long
                     Try
                         字节数 = Math.Max(0L, 所有者.CacheBytes)
@@ -104,9 +109,15 @@ Friend NotInheritable Class D3D_RenderCacheBudgetCoordinator
     End Sub
 
     Private Function SnapshotOwners() As List(Of D3D_IRenderCacheOwner)
+        Dim 快照版本 As Long
+        Return SnapshotOwners(快照版本)
+    End Function
+
+    Private Function SnapshotOwners(ByRef 快照版本 As Long) As List(Of D3D_IRenderCacheOwner)
         Dim result As New List(Of D3D_IRenderCacheOwner)()
         SyncLock _lock
             CompactNoLock()
+            快照版本 = _注册版本
             For Each wr In _owners
                 Dim owner As D3D_IRenderCacheOwner = Nothing
                 If wr.TryGetTarget(owner) AndAlso owner IsNot Nothing Then result.Add(owner)

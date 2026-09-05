@@ -26,13 +26,17 @@ static class Program
         VerifyModernPanelOverlayRenderingContract();
         VerifyModernButtonAnimationDefaults();
         VerifyRenderCacheBudgetCoordinator();
+        VerifyTextureCacheLifecycle();
+        VerifyZeroCapacityDrawingCaches();
+        VerifyAnimationOwnerRelease();
         VerifyVisibleControlSurfaceProtection();
         VerifyGlobalBudgetProperties();
         VerifyCleanupRecoveryTargets();
         VerifyCleanupRecoveryIncludesRegisteredSurface();
         VerifyGeometryInvalidatesBackdropConsumers();
         VerifyFullCleanupResumesVisibleControlRendering();
-        VerifyFullCleanupKeepsSharedD2DFactoryAlive();
+        VerifyFullCleanupRecreatesSharedFactories();
+        VerifyV5DirtyRetryAndResetContracts();
         VerifyBackdropImageSnapshotSurvivesCallerDispose();
         VerifyHdrImageMappingUsesCachedLookup();
         VerifyV5ProbeApi();
@@ -396,6 +400,21 @@ static class Program
             Assert(snapshot is not null && snapshot.Width == 7 && snapshot.Height == 5,
                 "Backdrop renderer must retain a stable image snapshot after the caller disposes its source.");
 
+            var CPU所有者 = (D3D_IRenderCacheOwner)renderer.GetType().GetField("_CPU缓存所有者", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(renderer)!;
+            Assert(CPU所有者.CacheBytes == 7 * 5 * 4 && CPU所有者.OldestUseTick == long.MaxValue,
+                "Backdrop CPU accounting must include and protect the authoritative source snapshot.");
+            renderer.BeginFrameUse();
+            using (var 替换源 = new Bitmap(3, 2)) renderer.SetImage(替换源);
+            Assert(CPU所有者.CacheBytes == (7 * 5 + 3 * 2) * 4,
+                "Retired source snapshots must remain in CPU accounting until the active frame ends.");
+            renderer.EndFrameUse();
+            Assert(CPU所有者.CacheBytes == 3 * 2 * 4, "Ending image use must release retired CPU snapshots.");
+            typeof(D3D_BackdropRenderer).GetMethod("EnsureNoiseBitmap", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(renderer, null);
+            Assert(CPU所有者.CacheBytes == (3 * 2 + 128 * 128) * 4 && CPU所有者.TrimOldest(),
+                "Reconstructible noise must be accounted and reclaimable without dropping the source.");
+            CPU所有者.ReleaseAll();
+            Assert(CPU所有者.CacheBytes == 3 * 2 * 4, "CPU cache release must preserve the authoritative image.");
+
             renderer.SetImage(null);
             Assert((D3D_BackdropMode)renderer.GetType().GetProperty("Mode")!.GetValue(renderer)! == D3D_BackdropMode.None,
                 "Clearing a backdrop image must release the snapshot and return to None mode.");
@@ -557,7 +576,7 @@ static class Program
         Assert(before.SubmittedFrames > 0, "Probe control must submit a frame before full cleanup.");
 
         D3D_PaintBridge.CleanupD2DResources(D3DCacheCleanupLevel.ReleaseEverything, form);
-        for (var i = 0; i < 8; i++) Application.DoEvents();
+        PumpUntil(() => D3D_PaintBridge.GetV5ProbeSnapshot().SubmittedFrames > before.SubmittedFrames);
         var after = D3D_PaintBridge.GetV5ProbeSnapshot();
         Assert(after.SubmittedFrames > before.SubmittedFrames,
             "A visible V5 control must resume frame submission after full cleanup.");
@@ -614,10 +633,14 @@ static class Program
             "A source geometry change must invalidate backdrop consumers.");
     }
 
-    private static void VerifyFullCleanupKeepsSharedD2DFactoryAlive()
+    private static void VerifyFullCleanupRecreatesSharedFactories()
     {
         using var form = new Form();
         using var panel = new ModernPanel { Dock = DockStyle.Fill };
+        using var 另一窗体 = new Form();
+        using var 另一控件 = new CountingGpuControl { Dock = DockStyle.Fill };
+        另一窗体.Controls.Add(另一控件);
+        另一窗体.Show();
         form.Controls.Add(panel);
         form.Show();
         Application.DoEvents();
@@ -626,12 +649,46 @@ static class Program
         var factoryField = interop.GetField("_d2dFactory", BindingFlags.Static | BindingFlags.NonPublic)!;
         var before = factoryField.GetValue(null);
         Assert(before is not null, "V5 rendering must initialize the shared D2D factory.");
+        var 原代次 = D3D_RenderCore.DeviceManager.DeviceGeneration;
+        var 原设备 = D3D_RenderCore.DeviceManager.D3DDevice;
+        var 文字工厂字段 = interop.GetField("_dwFactory", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var 原文字工厂 = 文字工厂字段.GetValue(null);
+        var 另一控件次数 = 另一控件.RenderCount;
+        var 原合成器 = D3D_RenderCore.GetWindowCompositor(form);
+        using (var 源图 = new Bitmap(7, 5))
+            原合成器.BackdropRenderer.SetImage(源图);
+        var 图像字段 = typeof(D3D_BackdropRenderer).GetField("_image", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var 原快照 = (Image)图像字段.GetValue(原合成器.BackdropRenderer)!;
 
         D3D_PaintBridge.CleanupD2DResources(D3DCacheCleanupLevel.ReleaseEverything, form);
-        Application.DoEvents();
-        Assert(factoryField.GetValue(null) is not null,
-            "Full cache cleanup must keep the shared D2D factory alive while the device remains active.");
+        Assert(D3D_RenderCore.DeviceManager.DeviceGeneration > 原代次,
+            "ReleaseEverything must invalidate the shared device generation.");
+        Assert(factoryField.GetValue(null) is null,
+            "ReleaseEverything must release the old D2D factory before recovery.");
+        Assert(文字工厂字段.GetValue(null) is null && 原设备.NativePointer == IntPtr.Zero,
+            "Full reset must also release DirectWrite and the old D3D device.");
+        PumpUntil(() => factoryField.GetValue(null) is not null);
+        PumpUntil(() => 另一控件.RenderCount > 另一控件次数);
+        Assert(!ReferenceEquals(before, factoryField.GetValue(null)),
+            "Recovery must create a new D2D factory rather than reuse the old resource family.");
+        Assert(文字工厂字段.GetValue(null) is not null && !ReferenceEquals(原文字工厂, 文字工厂字段.GetValue(null)),
+            "Recovery must recreate DirectWrite together with the shared resource family.");
+        Assert(ReferenceEquals(原合成器, D3D_RenderCore.GetWindowCompositor(form)) &&
+               ReferenceEquals(原快照, 图像字段.GetValue(原合成器.BackdropRenderer)) && 原快照.Width == 7,
+            "Full reset must retain the window service and its authoritative image snapshot.");
         form.Hide();
+        另一窗体.Hide();
+    }
+
+    private static void PumpUntil(Func<bool> 条件)
+    {
+        var 等待 = System.Diagnostics.Stopwatch.StartNew();
+        while (!条件() && 等待.ElapsedMilliseconds < 3000)
+        {
+            Application.DoEvents();
+            System.Threading.Thread.Sleep(10);
+        }
+        Assert(条件(), "GPU recovery did not complete within three seconds.");
     }
 
     private static void VerifyRenderCacheBudgetCoordinator()
@@ -662,6 +719,189 @@ static class Program
         protectedCoordinator.TrimToBudget(500, protectedOwner, null!);
         Assert(protectedOwner.CacheBytes == 400 && otherOwner.CacheBytes == 0,
             "The owner producing the current frame must remain protected while other caches are evicted.");
+
+        var 注册协调器 = new D3D_RenderCacheBudgetCoordinator();
+        var 第一项 = new FakeCacheOwner(400, 1);
+        var 新增项 = new FakeCacheOwner(400, 2);
+        注册协调器.Register(第一项);
+        注册协调器.Register(第一项);
+        Assert(注册协调器.TotalCacheBytes() == 400, "Registration must deduplicate by owner identity.");
+        注册协调器.TrimToBudget(0, null!, () => 注册协调器.Register(新增项));
+        Assert(第一项.TrimAttempts == 1 && 新增项.TrimAttempts == 1,
+            "Owners registered during eviction must join the same maintenance pass.");
+    }
+
+    private static void VerifyTextureCacheLifecycle()
+    {
+        var 原预算 = GlobalOptions.GpuCacheBudgetBytes;
+        using var 消息控件 = new Control();
+        _ = 消息控件.Handle;
+        using var 缓存 = new D3D_TextureCache();
+        try
+        {
+            GlobalOptions.GpuCacheBudgetBytes = long.MaxValue;
+            var 第一项 = 缓存.AcquireTexture("first", 1, 64, () => new TrackedResource());
+            var 第二项 = 缓存.AcquireTexture("second", 1, 64, () => new TrackedResource());
+            Assert(ReferenceEquals(第一项, 缓存.AcquireTexture("first", 1, 64, () => new TrackedResource())),
+                "A texture hit must retain the original resource.");
+            Assert(((D3D_IRenderCacheOwner)缓存).TrimOldest() && 第二项.DisposeCount == 1 && 第一项.DisposeCount == 0,
+                "Linked texture LRU must evict the untouched resource.");
+            var 新代次 = 缓存.AcquireTexture("first", 2, 64, () => new TrackedResource());
+            Assert(第一项.DisposeCount == 1 && 新代次.DisposeCount == 0,
+                "A generation change must replace and dispose the old resource once.");
+            缓存.ReleaseAll();
+
+            GlobalOptions.GpuCacheBudgetBytes = 64;
+            缓存.BeginFrameUse();
+            var 帧内旧项 = 缓存.AcquireTexture("older", 2, 64, () => new TrackedResource());
+            var 帧内新项 = 缓存.AcquireTexture("newer", 2, 64, () => new TrackedResource());
+            Assert(缓存.TotalGpuBytes == 128 && !((D3D_IRenderCacheOwner)缓存).TrimOldest(),
+                "Active frame resources must not be evicted.");
+            缓存.EndFrameUse();
+            Assert(缓存.TotalGpuBytes == 128, "Frame completion must not synchronously scan or trim caches.");
+            PumpUntil(() => 缓存.TotalGpuBytes == 64);
+            Assert(帧内旧项.DisposeCount == 1 && 帧内新项.DisposeCount == 0,
+                "Deferred UI maintenance must service a pending budget request in LRU order.");
+
+            缓存.BeginFrameUse();
+            缓存.Release("newer");
+            Assert(缓存.TotalGpuBytes == 64 && 帧内新项.DisposeCount == 0,
+                "Retired resources must remain counted and alive until frame completion.");
+            缓存.EndFrameUse();
+            PumpUntil(() => 缓存.TotalGpuBytes == 0);
+            Assert(帧内新项.DisposeCount == 1, "A retired resource must be disposed exactly once.");
+            var 超预算项 = 缓存.AcquireTexture("large", 2, 128, () => new TrackedResource());
+            Assert(超预算项.DisposeCount == 0, "The resource being returned must survive even when over budget.");
+            缓存.ReleaseAll();
+            Assert(超预算项.DisposeCount == 1 && ((D3D_IRenderCacheOwner)缓存).OldestUseTick == long.MaxValue,
+                "Explicit release must empty both texture storage and LRU state.");
+        }
+        finally
+        {
+            GlobalOptions.GpuCacheBudgetBytes = 原预算;
+        }
+    }
+
+    private sealed class TrackedResource : IDisposable
+    {
+        private int _释放次数;
+        public int DisposeCount => System.Threading.Volatile.Read(ref _释放次数);
+        public void Dispose() => System.Threading.Interlocked.Increment(ref _释放次数);
+    }
+
+    private static void VerifyZeroCapacityDrawingCaches()
+    {
+        var 原画刷容量 = GlobalOptions.BrushCacheLimit;
+        var 原格式容量 = GlobalOptions.TextFormatCacheLimit;
+        using var 上下文 = D3D_RenderCore.DeviceManager.CreateDeviceContext();
+        using var 画刷缓存 = new D3D_BrushCache();
+        using var 文字缓存 = new D3D_TextRenderer(D3D_RenderCore.DeviceManager);
+        using var 字体 = new Font("Segoe UI", 12);
+        try
+        {
+            GlobalOptions.BrushCacheLimit = 0;
+            GlobalOptions.TextFormatCacheLimit = 0;
+            var 第一画刷 = 画刷缓存.GetSolidBrush(上下文, Color.Red, D3D_RenderCore.DeviceManager.DeviceGeneration);
+            Assert(第一画刷.NativePointer != IntPtr.Zero, "Zero capacity must not dispose the returned brush.");
+            var 第二画刷 = 画刷缓存.GetSolidBrush(上下文, Color.Blue, D3D_RenderCore.DeviceManager.DeviceGeneration);
+            Assert(第一画刷.NativePointer == IntPtr.Zero && 第二画刷.NativePointer != IntPtr.Zero,
+                "The next brush miss must release the previously protected resource.");
+            var 获取格式 = typeof(D3D_TextRenderer).GetMethod("GetTextFormat", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            var 第一格式 = (Vortice.DirectWrite.IDWriteTextFormat)获取格式.Invoke(文字缓存,
+                new object[] { 字体, 1f, Vortice.DirectWrite.TextAlignment.Leading, Vortice.DirectWrite.ParagraphAlignment.Near, false, false })!;
+            var 第二格式 = (Vortice.DirectWrite.IDWriteTextFormat)获取格式.Invoke(文字缓存,
+                new object[] { 字体, 1f, Vortice.DirectWrite.TextAlignment.Center, Vortice.DirectWrite.ParagraphAlignment.Near, false, false })!;
+            Assert(第一格式.NativePointer == IntPtr.Zero && 第二格式.NativePointer != IntPtr.Zero,
+                "Zero-capacity text cache must retain only the format used by the current draw.");
+        }
+        finally
+        {
+            GlobalOptions.BrushCacheLimit = 原画刷容量;
+            GlobalOptions.TextFormatCacheLimit = 原格式容量;
+        }
+    }
+
+    private static void VerifyAnimationOwnerRelease()
+    {
+        using var 控件 = new Control();
+        _ = 控件.Handle;
+        using var 动画 = new D3D_AnimationHelper(控件);
+        动画.StartFrameLoop((发送者, 事件) => { });
+        动画.StopFrameLoop();
+        var 调度器 = typeof(D3D_AnimationHelper).GetField("_threadScheduler", BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null)!;
+        Assert(调度器.GetType().GetField("_syncOwner", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(调度器) is null,
+            "An idle animation scheduler must not retain its former UI owner.");
+    }
+
+    private static void VerifyV5DirtyRetryAndResetContracts()
+    {
+        using var 窗体 = new Form();
+        using var 控件 = new CountingGpuControl { Dock = DockStyle.Fill };
+        窗体.Controls.Add(控件);
+        窗体.Show();
+        Application.DoEvents();
+        var 原次数 = 控件.RenderCount;
+        var 越界区域 = new Rectangle(控件.Width + 10, 10, 5, 5);
+        D3D_InvalidationRouter.RequestRender(控件, 越界区域);
+        D3D_ControlSurfaceRegistry.MarkDirty(控件, 越界区域);
+        D3D_V5Presentation.RequestRender(控件, 越界区域);
+        Application.DoEvents();
+        Assert(!D3D_ControlSurfaceRegistry.IsDirty(控件) && 控件.RenderCount == 原次数,
+            "Completely outside dirty rectangles must be discarded by every V5 entry point.");
+        D3D_V5Presentation.RequestRender(控件, Rectangle.Empty);
+        Assert(控件.RenderCount > 原次数, "A missing dirty rectangle must still request a full render.");
+        原次数 = 控件.RenderCount;
+        typeof(D3D_V5Presentation).GetMethod("排队重试", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, new object[] { 控件 });
+        var 重试 = (IDictionary)typeof(D3D_V5Presentation).GetField("_retryTimers", BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null)!;
+        PumpUntil(() => !重试.Contains(控件));
+        Assert(控件.RenderCount == 原次数, "A presentation retry must reuse an unchanged surface.");
+
+        var 原代次 = D3D_RenderCore.DeviceManager.DeviceGeneration;
+        控件.DuringRender = 绘制上下文 =>
+        {
+            控件.DuringRender = null;
+            D3D_PaintBridge.CleanupD2DResources(D3DCacheCleanupLevel.ReleaseEverything, 窗体);
+            Assert(D3D_RenderCore.DeviceManager.DeviceGeneration == 原代次 && 绘制上下文.DeviceContext.NativePointer != IntPtr.Zero,
+                "Cleanup requested inside RenderGpu must wait until the active paint ends.");
+        };
+        D3D_V5Presentation.RequestRender(控件);
+        PumpUntil(() => D3D_RenderCore.DeviceManager.DeviceGeneration > 原代次);
+        Application.DoEvents();
+        原次数 = 控件.RenderCount;
+        原代次 = D3D_RenderCore.DeviceManager.DeviceGeneration;
+        D3D_RenderCore.DeviceManager.InvalidateDevice();
+        PumpUntil(() => 控件.RenderCount > 原次数 && !重试.Contains(控件));
+        Assert(D3D_RenderCore.DeviceManager.DeviceGeneration > 原代次,
+            "Device-lost notification must recover the visible control on a new generation.");
+        for (var 次数 = 0; 次数 < 5; 次数++)
+        {
+            控件.Hide();
+            控件.Show();
+            Application.DoEvents();
+        }
+        控件.RebuildHandle();
+        Application.DoEvents();
+        原次数 = 控件.RenderCount;
+        D3D_V5Presentation.RequestRender(控件);
+        Assert(控件.RenderCount > 原次数, "Handle recreation must restore rendering.");
+        控件.Dispose();
+        var 订阅 = typeof(D3D_V5Presentation).GetField("_已订阅控件", BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null)!;
+        Assert(!(bool)订阅.GetType().GetMethod("Contains")!.Invoke(订阅, new object[] { 控件 })!,
+            "Disposed controls must leave the presentation subscription registry.");
+        窗体.Hide();
+    }
+
+    private sealed class CountingGpuControl : Control, D3D_IGpuRenderable, V5_IGpuPresentationSource
+    {
+        public int RenderCount { get; private set; }
+        public Action<D3D_PaintContext>? DuringRender;
+        public void RebuildHandle() => RecreateHandle();
+        public void RenderGpu(D3D_PaintContext 上下文)
+        {
+            RenderCount++;
+            DuringRender?.Invoke(上下文);
+        }
+        protected override void OnPaint(PaintEventArgs 事件) => D3D_V5Presentation.Paint(this, this);
     }
 
     private static void VerifyGlobalBudgetProperties()

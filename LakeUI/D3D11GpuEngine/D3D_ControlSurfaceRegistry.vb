@@ -258,17 +258,20 @@ Friend NotInheritable Class D3D_ControlSurfaceRegistry
                                 Optional dirtyRect As Rectangle = Nothing,
                                 Optional requestConsumers As Boolean = True)
         If control Is Nothing Then Return
+        Dim 规范脏区 = dirtyRect
+        If 规范脏区.Width <= 0 OrElse 规范脏区.Height <= 0 Then
+            规范脏区 = New Rectangle(Point.Empty, control.Size)
+        Else
+            规范脏区 = Rectangle.Intersect(New Rectangle(Point.Empty, control.Size), 规范脏区)
+            If 规范脏区.Width <= 0 OrElse 规范脏区.Height <= 0 Then Return
+        End If
         Dim 项目 As Entry = Nothing
         If _entries.TryGetValue(control, 项目) Then
             项目.Dirty = True
-            Dim 边界 = dirtyRect
-            If 边界.Width <= 0 OrElse 边界.Height <= 0 Then 边界 = New Rectangle(Point.Empty, control.Size)
-            项目.PendingDirty = 合并脏区(项目.PendingDirty, 边界, control.Size)
+            项目.PendingDirty = 合并脏区(项目.PendingDirty, 规范脏区, control.Size)
         End If
         If Not requestConsumers Then Return
 
-        Dim 规范脏区 = dirtyRect
-        If 规范脏区.Width <= 0 OrElse 规范脏区.Height <= 0 Then 规范脏区 = New Rectangle(Point.Empty, control.Size)
         请求依赖消费者(control, 规范脏区)
     End Sub
 
@@ -429,7 +432,7 @@ Friend NotInheritable Class D3D_ControlSurfaceRegistry
     Private Shared Sub 分离消费者依赖(消费者 As Control)
         Dim 来源集合 As HashSet(Of Control) = Nothing
         If _consumerSources.TryGetValue(消费者, 来源集合) Then
-            For Each 来源 In 来源集合.ToArray()
+            For Each 来源 In 来源集合
                 Dim 目标集合 As HashSet(Of Control) = Nothing
                 If _consumers.TryGetValue(来源, 目标集合) Then
                     目标集合.Remove(消费者)
@@ -465,7 +468,7 @@ Friend NotInheritable Class D3D_ControlSurfaceRegistry
     Private Shared Sub 分离坐标依赖(消费者 As Control)
         Dim 监视控件集合 As HashSet(Of Control) = Nothing
         If Not _consumerCoordinateControls.TryGetValue(消费者, 监视控件集合) Then Return
-        For Each 坐标控件 In 监视控件集合.ToArray()
+        For Each 坐标控件 In 监视控件集合
             Dim 目标集合 As HashSet(Of Control) = Nothing
             If Not _coordinateConsumers.TryGetValue(坐标控件, 目标集合) Then Continue For
             目标集合.Remove(消费者)

@@ -26,6 +26,8 @@ Public NotInheritable Class D3D_BackdropRenderer
     Private ReadOnly _deviceManager As D3D_DeviceManager
     Private ReadOnly _imageSync As New Object()
     Private ReadOnly _retiredImages As New List(Of Image)()
+    Private ReadOnly _CPU缓存所有者 As CPU缓存所有者
+    Private _CPU使用时钟 As Long
     Private _imageSource As WeakReference
     Private _image As Image
     Private _disposed As Boolean
@@ -58,14 +60,79 @@ Public NotInheritable Class D3D_BackdropRenderer
         If deviceManager Is Nothing Then Throw New ArgumentNullException(NameOf(deviceManager))
         _imageCache = imageCache
         _deviceManager = deviceManager
+        _CPU缓存所有者 = New CPU缓存所有者(Me)
+        D3D_CpuCache.Register(_CPU缓存所有者)
         D3D_GpuCache.Register(Me)
+    End Sub
+
+    Private NotInheritable Class CPU缓存所有者
+        Implements D3D_IRenderCacheOwner
+
+        Private ReadOnly _渲染器 As D3D_BackdropRenderer
+
+        Public Sub New(渲染器 As D3D_BackdropRenderer)
+            _渲染器 = 渲染器
+        End Sub
+
+        Public ReadOnly Property CacheBytes As Long Implements D3D_IRenderCacheOwner.CacheBytes
+            Get
+                SyncLock _渲染器._imageSync
+                    Dim 总字节数 = 估算图片字节(_渲染器._image) + 估算图片字节(_渲染器._noiseBitmap)
+                    For Each 图片 In _渲染器._retiredImages
+                        总字节数 += 估算图片字节(图片)
+                    Next
+                    Return 总字节数
+                End SyncLock
+            End Get
+        End Property
+
+        Public ReadOnly Property OldestUseTick As Long Implements D3D_IRenderCacheOwner.OldestUseTick
+            Get
+                SyncLock _渲染器._imageSync
+                    If _渲染器._frameUseDepth > 0 OrElse _渲染器._noiseBitmap Is Nothing Then Return Long.MaxValue
+                    Return _渲染器._CPU使用时钟
+                End SyncLock
+            End Get
+        End Property
+
+        Public Function TrimOldest() As Boolean Implements D3D_IRenderCacheOwner.TrimOldest
+            Return _渲染器.尝试释放CPU噪点()
+        End Function
+
+        Public Sub ReleaseAll() Implements D3D_IRenderCacheOwner.ReleaseAll
+            _渲染器.尝试释放CPU噪点()
+        End Sub
+
+        Private Shared Function 估算图片字节(图片 As Image) As Long
+            If 图片 Is Nothing Then Return 0
+            Return CLng(图片.Width) * CLng(图片.Height) * 4L
+        End Function
+    End Class
+
+    Private Function 尝试释放CPU噪点() As Boolean
+        SyncLock _imageSync
+            If _frameUseDepth > 0 OrElse _noiseBitmap Is Nothing Then Return False
+            _noiseBitmap.Dispose()
+            _noiseBitmap = Nothing
+            Return True
+        End SyncLock
+    End Function
+
+    Friend Sub 释放CPU派生缓存()
+        If _frameUseDepth > 0 Then Return
+        SyncLock _imageSync
+            DisposeRetiredImages()
+            DisposeNoiseD2DResources()
+            _noiseBitmap?.Dispose()
+            _noiseBitmap = Nothing
+        End SyncLock
     End Sub
 
     Private ReadOnly Property CacheBytes As Long Implements D3D_IRenderCacheOwner.CacheBytes
         Get
             Dim total As Long
             If _outputTarget IsNot Nothing Then total += CLng(Math.Max(1, _targetSize.Width)) * CLng(Math.Max(1, _targetSize.Height)) * 4L
-            If _noiseD2DBitmap IsNot Nothing AndAlso _noiseBitmap IsNot Nothing Then total += CLng(_noiseBitmap.Width) * CLng(_noiseBitmap.Height) * 4L
+            If _noiseD2DBitmap IsNot Nothing Then total += 128L * 128L * 4L
             Return total
         End Get
     End Property
@@ -94,14 +161,16 @@ Public NotInheritable Class D3D_BackdropRenderer
     End Sub
 
     Friend Sub BeginFrameUse()
-        If _disposed Then Return
-        _frameUseDepth += 1
+        SyncLock _imageSync
+            If _disposed Then Return
+            _frameUseDepth += 1
+        End SyncLock
     End Sub
 
     Friend Sub EndFrameUse()
-        If _frameUseDepth > 0 Then _frameUseDepth -= 1
-        If _frameUseDepth > 0 Then Return
         SyncLock _imageSync
+            If _frameUseDepth > 0 Then _frameUseDepth -= 1
+            If _frameUseDepth > 0 Then Return
             DisposeRetiredImages()
         End SyncLock
         If _trimPending Then
@@ -464,6 +533,7 @@ Public NotInheritable Class D3D_BackdropRenderer
             bmp.UnlockBits(data)
         End Try
         _noiseBitmap = bmp
+        _CPU使用时钟 = D3D_CpuCache.NextTick()
     End Sub
 
     Private Shared Function ComputeCoverSourceRect(image As Image, destination As RectangleF) As RectangleF
@@ -740,11 +810,11 @@ Public NotInheritable Class D3D_BackdropRenderer
         DisposeGpuResources()
         SyncLock _imageSync
             DisposeRetiredImages()
+            If _noiseBitmap IsNot Nothing Then
+                Try : _noiseBitmap.Dispose() : Catch : End Try
+                _noiseBitmap = Nothing
+            End If
         End SyncLock
-        If _noiseBitmap IsNot Nothing Then
-            Try : _noiseBitmap.Dispose() : Catch : End Try
-            _noiseBitmap = Nothing
-        End If
         GC.SuppressFinalize(Me)
     End Sub
 End Class

@@ -375,8 +375,10 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
 
         If releaseCpuCaches Then
             SyncLock _frameLock
-                _currentFrame?.Dispose()
-                _currentFrame = Nothing
+                If level < D3DCacheCleanupLevel.RecreateDevice Then
+                    _currentFrame?.Dispose()
+                    _currentFrame = Nothing
+                End If
                 _spareFrame?.Dispose()
                 _spareFrame = Nothing
                 DisposeMappedStaticFrameNoLock()
@@ -388,6 +390,8 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
         If releaseCpuCaches Then
             Volatile.Write(_publishedAverage, -1)
             _blurBufferA = Nothing
+            _noiseBitmap?.Dispose()
+            _noiseBitmap = Nothing
         End If
         DisposeNoiseD2DResources()
     End Sub

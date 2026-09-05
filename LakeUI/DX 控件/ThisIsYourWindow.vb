@@ -2101,7 +2101,7 @@ Public Class ThisIsYourWindow
 
     Private Sub 更新阴影实时跟随(s As PerFormState)
         If s Is Nothing OrElse s.HostForm Is Nothing OrElse Not s.HostForm.IsHandleCreated Then Return
-        更新阴影(s, 获取窗口屏幕矩形(s.HostForm), True)
+        更新阴影(s, 获取窗口屏幕矩形(s.HostForm), False)
     End Sub
 
     Private Sub 更新阴影(s As PerFormState, boundsOverride As Rectangle, forceFullRender As Boolean)

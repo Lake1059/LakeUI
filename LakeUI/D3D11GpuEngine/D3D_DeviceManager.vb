@@ -211,6 +211,10 @@ Public NotInheritable Class D3D_DeviceManager
     Private Sub ReleaseAllNoLock()
         SafeDispose(_d2dDevice)
         SafeDispose(_dxgiDevice)
+        If _d3dDevice IsNot Nothing Then
+            _d3dDevice.ImmediateContext.ClearState()
+            _d3dDevice.ImmediateContext.Flush()
+        End If
         SafeDispose(_d3dDevice)
         SafeDispose(_dxgiFactory)
         _d2dDevice = Nothing

@@ -26,8 +26,9 @@ V5 不提供 HDC/Graphics 兼容桥；未迁移的原生控件继续使用 WinFo
 - `RenderGpu` 只能使用传入的 `D3D_PaintContext`。不要缓存 context、device context、brush、bitmap、geometry、text format。
 - 控件状态变化调用 `D3D_InvalidationRouter.RequestRender`；它会进入 `OuterToInnerRefreshScheduler` 合并并按外到内顺序刷新。不要直接 `Update`，也不要触发旧的整树刷新。
 - `D3D_WindowCompositor` 只保留 Form 级共享缓存、文字/图片/Backdrop 服务和设备失效协调，不再创建 swapchain 或渲染整窗。
-- `ReleaseEverything` 是 V3 语义的缓存清理，不是设备重建：它必须保留当前 D3D/D2D/DWrite device/factory，以及可见 V5 surface 和 HWND presenter。只有显式 `RecreateDevice` 才允许销毁共享设备/工厂并推进 generation。
-- 可见控件 surface 和已经提交的 HWND presenter 属于当前显示工作集，只能在句柄销毁、设备失效或控件释放时回收；预算清理只能收缩可重建的中间缓存。
+- `ReleaseEverything` 是完整资源重建边界，语义等同于驱动变动后的恢复：必须释放共享 D3D/D2D/DWrite/DXGI 资源、V5 surface 和 HWND presenter 的 GPU 对象，通过既有设备失效路径推进 generation，再按需重建。`RecreateDevice` 同样重建设备，但仍保留独立于设备的共享工厂；`ReleaseEverything` 还必须释放这些工厂，不得把旧设备族对象带入恢复帧。
+- 完整重建仍必须保留窗口合成器、控件注册表、背景依赖关系、控件渲染对象以及可恢复渲染所需的权威 CPU 源快照；这些是逻辑状态，不属于旧设备资源。Backdrop 的权威图片/当前 CPU 帧可以保留并重新上传，备用帧、映射帧、模糊中间结果、旧纹理、旧 geometry/brush/text format、render target 和 presenter 都不必保留。
+- 可见控件的 surface 容器和 HWND presenter 在完整重建时释放其 GPU 资源并原位恢复；预算清理则只能收缩可重建的中间缓存，不得淘汰仍可见的工作集。
 
 ## 当前核心边界
 
@@ -121,6 +122,8 @@ HDR 性能约定：
 - 同一来源控件（包括 `ThisIsYourWindow` 宿主 Form）在 `D3D_ControlSurfaceRegistry` 中只创建一个持久 GPU surface；多个 Form/控件作为消费者时直接采样该 surface，不得为每个消费者复制底图或重新执行背景合成。
 - 每个可见 HWND 的内容 surface 与 swap-chain 仍属于独立显示工作集。除非同时改变 HWND 呈现契约，否则不得把多个可见窗口的目标表面合并成一张共享 render target。
 - `D3D_TextureCache` 在帧使用期间移除的纹理先进入退役队列，退役字节继续计入 GPU 预算，帧结束后统一释放；设备代次变化和显式清理必须清空该队列。
+- 帧内新纹理触发的预算维护必须合并投递到原 WinForms UI 上下文，在绘制结束后的独立消息中执行；帧结束本身不扫描全局预算，不能直接丢弃尚未执行的维护请求。
+- 画刷和文字格式的容量为零时仍保护即将返回给当前绘制的一个资源，后续不同资源请求或显式清理再释放它；不能返回已经 Dispose 的对象。
 - 动画或窗口拖动帧结束只允许摘取退役队列并投递后台释放，不得在 UI 帧内执行全局预算扫描或批量 COM `Dispose`；预算扫描只能由新资源创建、显式清理或节流维护入口触发。
 - CPU 预算统计必须覆盖背景源快照、当前/备用帧、映射帧、截图缓冲、待释放源图和模糊读回字节数组；任何新增 CPU staging 都必须同时接入统计和淘汰路径。
 

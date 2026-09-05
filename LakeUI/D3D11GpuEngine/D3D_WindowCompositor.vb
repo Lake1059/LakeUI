@@ -138,7 +138,7 @@ Public NotInheritable Class D3D_WindowCompositor
                 ReleasePaintTargetsNoThrow()
                 ReleaseWindowCachesNoThrow(includeGeometry:=False)
 
-            Case D3DCacheCleanupLevel.RecreateDevice
+            Case D3DCacheCleanupLevel.RecreateDevice, D3DCacheCleanupLevel.ReleaseEverything
                 ReleaseDeviceContextNoThrow()
                 ReleasePaintTargetsNoThrow()
                 ReleaseWindowCachesNoThrow(includeGeometry:=True)
@@ -173,6 +173,7 @@ Public NotInheritable Class D3D_WindowCompositor
         Try : TextRenderer.Invalidate() : Catch : End Try
         Try : BackdropRenderer.Invalidate() : Catch : End Try
         Try : ReleasePaintTargetsNoThrow() : Catch : End Try
+        BackdropRenderer.释放CPU派生缓存()
     End Sub
 
     ''' <summary>

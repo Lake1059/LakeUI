@@ -9,6 +9,7 @@ Friend NotInheritable Class D3D_V5Presentation
     Private Shared ReadOnly _presenters As New Dictionary(Of Control, D3D_HwndSwapChainPresenter)()
     Private Shared ReadOnly _retryTimers As New Dictionary(Of Control, Timer)()
     Private Shared ReadOnly _bufferingDisabled As New HashSet(Of Control)()
+    Private Shared ReadOnly _已订阅控件 As New HashSet(Of Control)()
     Private Shared ReadOnly _queuedRenders As New HashSet(Of Control)()
     Private Shared ReadOnly _queuedRendersLock As New Object()
     <ThreadStatic>
@@ -49,7 +50,7 @@ Friend NotInheritable Class D3D_V5Presentation
         Dim 有效区域 = dirtyRect
         If 有效区域.Width <= 0 OrElse 有效区域.Height <= 0 Then 有效区域 = New Rectangle(Point.Empty, control.Size)
         有效区域 = Rectangle.Intersect(New Rectangle(Point.Empty, control.Size), 有效区域)
-        If 有效区域.Width <= 0 OrElse 有效区域.Height <= 0 Then 有效区域 = New Rectangle(Point.Empty, control.Size)
+        If 有效区域.Width <= 0 OrElse 有效区域.Height <= 0 Then Return
         If Not control.IsHandleCreated OrElse Not control.Visible Then
             D3D_ControlSurfaceRegistry.MarkDirty(control, 有效区域, requestConsumers:=False)
             D3D_RenderDiagnostics.V5InvisibleSkip()
@@ -114,10 +115,12 @@ Friend NotInheritable Class D3D_V5Presentation
             Dim 呈现器 = 获取或创建呈现器(控件)
             ' 映射消费者可能在来源控件收到自身渲染请求前，先完成其持久表面渲染。
             ' 因此仅凭表面为最新状态，不能证明 HWND 交换链已经包含该修订版本。
-            If 呈现器.HasPresented(控件表面) Then Return
+            If 呈现器.HasPresented(控件表面) Then
+                取消重试(控件)
+                Return
+            End If
             Dim 提交开始时间 = Stopwatch.GetTimestamp()
             If Not 呈现器.Present(控件表面) Then
-                D3D_ControlSurfaceRegistry.MarkDirty(控件, requestConsumers:=False)
                 排队重试(控件)
                 Return
             End If
@@ -142,11 +145,8 @@ Friend NotInheritable Class D3D_V5Presentation
             _renderDepth -= 1
             ' 保留 RenderGpu 内部产生的失效请求，例如布局或字体重新计算。
             ' 这些请求不能重入提交，因此在当前帧完成后再排队补交一帧。
-            If _renderDepth = 0 AndAlso D3D_ControlSurfaceRegistry.IsDirty(控件) Then
-                Try
-                    控件.BeginInvoke(CType(Sub() RequestRender(控件), System.Windows.Forms.MethodInvoker))
-                Catch
-                End Try
+            If _renderDepth = 0 AndAlso D3D_ControlSurfaceRegistry.IsDirty(控件) AndAlso Not _retryTimers.ContainsKey(控件) Then
+                排队渲染(控件)
             End If
         End Try
     End Sub
@@ -156,6 +156,7 @@ Friend NotInheritable Class D3D_V5Presentation
         If _presenters.TryGetValue(控件, 呈现器) Then Return 呈现器
         呈现器 = New D3D_HwndSwapChainPresenter(控件, D3D_RenderCore.DeviceManager)
         _presenters(控件) = 呈现器
+        If Not _已订阅控件.Add(控件) Then Return 呈现器
         AddHandler 控件.HandleDestroyed, AddressOf 句柄销毁时
         AddHandler 控件.HandleCreated, AddressOf 句柄创建时
         AddHandler 控件.SizeChanged, AddressOf 控件几何变化时
@@ -199,7 +200,11 @@ Friend NotInheritable Class D3D_V5Presentation
                     取消重试(控件)
                     Return
                 End If
-                RequestRender(控件)
+                If 控件.IsHandleCreated AndAlso 控件.Visible Then
+                    立即渲染(控件, TryCast(控件, D3D_IGpuRenderable))
+                Else
+                    取消重试(控件)
+                End If
             End Sub
         _retryTimers(控件) = 重试计时器
         重试计时器.Start()
@@ -277,7 +282,7 @@ Friend NotInheritable Class D3D_V5Presentation
     Private Shared Sub 句柄销毁时(发送者 As Object, 事件参数 As EventArgs)
         Dim 控件 = TryCast(发送者, Control)
         If 控件 Is Nothing Then Return
-        ' 句柄可以在控件未释放时重建，不能让优化状态长期持有该控件。
+        ' 句柄可以在控件未释放时重建，呈现器事件订阅保持到控件释放。
         _bufferingDisabled.Remove(控件)
         Dim 呈现器 As D3D_HwndSwapChainPresenter = Nothing
         If _presenters.TryGetValue(控件, 呈现器) Then
@@ -296,7 +301,18 @@ Friend NotInheritable Class D3D_V5Presentation
 
     Private Shared Sub 控件释放时(发送者 As Object, 事件参数 As EventArgs)
         Dim 控件 = TryCast(发送者, Control)
-        If 控件 IsNot Nothing Then _bufferingDisabled.Remove(控件)
+        If 控件 IsNot Nothing Then
+            If _已订阅控件.Remove(控件) Then
+                RemoveHandler 控件.HandleDestroyed, AddressOf 句柄销毁时
+                RemoveHandler 控件.HandleCreated, AddressOf 句柄创建时
+                RemoveHandler 控件.SizeChanged, AddressOf 控件几何变化时
+                RemoveHandler 控件.LocationChanged, AddressOf 控件几何变化时
+                RemoveHandler 控件.ParentChanged, AddressOf 控件几何变化时
+                RemoveHandler 控件.VisibleChanged, AddressOf 控件几何变化时
+                RemoveHandler 控件.Disposed, AddressOf 控件释放时
+            End If
+            _bufferingDisabled.Remove(控件)
+        End If
         If 控件 IsNot Nothing Then
             SyncLock _queuedRendersLock
                 _queuedRenders.Remove(控件)
