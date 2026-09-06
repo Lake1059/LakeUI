@@ -2,11 +2,11 @@ Imports Microsoft.Win32
 Imports Vortice.Direct2D1
 
 ''' <summary>
-''' Form 级共享 GPU 资源容器。V5 HWND presenter 与迁移期 GPU HDC scope 共用这里的
+''' Form 级共享 GPU 资源容器。V5 HWND presenter、背景采样和非 V5 绘制路径共用这里的
 ''' 文字、图片、画刷、几何及 Backdrop 缓存；交换链仍由每控件 D3D_HwndSwapChainPresenter 独立拥有。
 ''' </summary>
 Public NotInheritable Class D3D_WindowCompositor
-    Implements D3D_IRenderCacheOwner, IDisposable
+    Implements D3D_IRenderCacheOwner, D3D_IRenderCachePriority, IDisposable
 
     Private ReadOnly _form As Form
     Private ReadOnly _deviceManager As D3D_DeviceManager
@@ -79,6 +79,12 @@ Public NotInheritable Class D3D_WindowCompositor
     Private ReadOnly Property CacheBytes As Long Implements D3D_IRenderCacheOwner.CacheBytes
         Get
             Return _paintTargetBytes
+        End Get
+    End Property
+
+    Private ReadOnly Property EvictionPriority As Integer Implements D3D_IRenderCachePriority.EvictionPriority
+        Get
+            Return 30
         End Get
     End Property
 
@@ -378,7 +384,7 @@ Public NotInheritable Class D3D_WindowCompositor
         If Object.ReferenceEquals(context, _deviceContext) Then
             Try : _deviceContext.Target = Nothing : Catch : End Try
             _deviceContextInUse = False
-            ' V3 约束：上下文归还只结束使用范围，不触发进程级 LRU 扫描。
+            ' 上下文归还只结束使用范围，不触发进程级 LRU 扫描。
             ' 资源分配和显式清理入口会在安全边界执行预算维护。
         End If
     End Sub

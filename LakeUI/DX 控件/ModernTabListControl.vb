@@ -387,6 +387,7 @@ Public Class ModernTabListControl
             _内容面板.Visible = False
             解除背景穿透消费者()
             Try : D3D_BackgroundPenetration.UnregisterConsumer(_内容面板) : Catch : End Try
+            D3D_V5Presentation.ReleaseHiddenSubtreeResources(Me)
         ElseIf _宿主窗体已订阅 Is Nothing OrElse Not _宿主窗体已订阅.Disposing Then
             Using 进入切页刷新过滤()
                 切换绑定控件()
@@ -844,6 +845,7 @@ Public Class ModernTabListControl
             ctrl.Visible = False
         Catch
         End Try
+        D3D_V5Presentation.ReleaseHiddenSubtreeResources(ctrl)
         使切页背景快照失效()
     End Sub
 
@@ -857,6 +859,7 @@ Public Class ModernTabListControl
             End If
         Catch
         End Try
+        D3D_V5Presentation.ReleaseHiddenSubtreeResources(ctrl)
     End Sub
 
     Private Sub 准备窗体绑定(frm As Form)
@@ -905,9 +908,9 @@ Public Class ModernTabListControl
 
         Dim frm = TryCast(ctrl, Form)
         If frm IsNot Nothing AndAlso changed AndAlso Not firstShow Then
-            请求绑定页V3渲染(frm)
+            请求绑定页渲染(frm)
         ElseIf changed OrElse forceRefresh Then
-            请求绑定页V3渲染(ctrl)
+            请求绑定页渲染(ctrl)
         End If
 
         Return changed
@@ -939,7 +942,7 @@ Public Class ModernTabListControl
             D3D_InvalidationRouter.RequestRender(_内容面板, New Rectangle(Point.Empty, _内容面板.Size))
         End If
         If _当前绑定控件 IsNot Nothing AndAlso Not _当前绑定控件.IsDisposed Then
-            请求绑定页V3渲染(_当前绑定控件)
+            请求绑定页渲染(_当前绑定控件)
         End If
     End Sub
 
@@ -989,7 +992,7 @@ Public Class ModernTabListControl
                                       dpiChanged OrElse
                                       dpiSyncChanged
         If state IsNot Nothing Then state.ForceRefreshDuringSwitch = needsRefresh AndAlso 正在切页刷新过滤期()
-        请求绑定页V3渲染(ctrl)
+        请求绑定页渲染(ctrl)
         提交绑定页切换首帧()
         If state IsNot Nothing Then
             state.HasBeenShown = True
@@ -1191,7 +1194,7 @@ Public Class ModernTabListControl
         D3D_InvalidationRouter.RequestRender(Me, dirtyRect)
     End Sub
 
-    Private Sub 请求绑定页V3渲染(ctrl As Control)
+    Private Sub 请求绑定页渲染(ctrl As Control)
         If ctrl Is Nothing OrElse ctrl.IsDisposed Then Return
         D3D_InvalidationRouter.RequestRender(ctrl, New Rectangle(Point.Empty, ctrl.Size))
     End Sub

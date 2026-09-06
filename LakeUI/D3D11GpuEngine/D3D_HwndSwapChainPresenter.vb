@@ -8,7 +8,7 @@ Imports Vortice.DXGI
 ''' DWM 负责最终合成；交换链和绘制目标随 HWND、尺寸及设备代次重建。
 ''' </summary>
 Friend NotInheritable Class D3D_HwndSwapChainPresenter
-    Implements IDisposable, D3D_IRenderCacheOwner
+    Implements IDisposable, D3D_IRenderCacheOwner, D3D_IRenderCachePriority
 
     Private Const BufferCount As UInteger = 2UI
     Private ReadOnly _owner As Control
@@ -41,18 +41,24 @@ Friend NotInheritable Class D3D_HwndSwapChainPresenter
         End Get
     End Property
 
+    Private ReadOnly Property EvictionPriority As Integer Implements D3D_IRenderCachePriority.EvictionPriority
+        Get
+            Return 0
+        End Get
+    End Property
+
     Private ReadOnly Property OldestUseTick As Long Implements D3D_IRenderCacheOwner.OldestUseTick
         Get
             If _presenting OrElse CacheBytes <= 0 Then Return Long.MaxValue
             ' 可见交换链是最终显示工作集，只参与总量计量，不作为缓存主动淘汰。
-            If _owner IsNot Nothing AndAlso Not _owner.IsDisposed AndAlso _owner.Visible Then Return Long.MaxValue
+            If D3D_ControlTreeWalker.IsEffectivelyVisible(_owner) Then Return Long.MaxValue
             Return If(_lastUsed <= 0, Long.MaxValue - 1, _lastUsed)
         End Get
     End Property
 
     Private Function TrimOldest() As Boolean Implements D3D_IRenderCacheOwner.TrimOldest
         If _presenting OrElse CacheBytes <= 0 Then Return False
-        If _owner IsNot Nothing AndAlso Not _owner.IsDisposed AndAlso _owner.Visible Then Return False
+        If D3D_ControlTreeWalker.IsEffectivelyVisible(_owner) Then Return False
         释放设备资源()
         Return True
     End Function
@@ -63,7 +69,8 @@ Friend NotInheritable Class D3D_HwndSwapChainPresenter
 
     Friend Function Present(surface As D3D_ControlSurface) As Boolean
         If _disposed OrElse surface Is Nothing OrElse surface.Bitmap Is Nothing Then Return False
-        If _owner Is Nothing OrElse _owner.IsDisposed OrElse Not _owner.IsHandleCreated OrElse Not _owner.Visible Then Return False
+        If _owner Is Nothing OrElse _owner.IsDisposed OrElse Not _owner.IsHandleCreated OrElse
+           Not D3D_ControlTreeWalker.IsEffectivelyVisible(_owner) Then Return False
         If _owner.ClientSize.Width <= 0 OrElse _owner.ClientSize.Height <= 0 Then Return False
 
         确保资源()
@@ -109,7 +116,7 @@ Friend NotInheritable Class D3D_HwndSwapChainPresenter
             _presenting = False
         End Try
 
-        ' V3 约束：Present 只提交当前交换链，不执行进程级缓存维护。
+        ' Present 只提交当前交换链，不执行进程级缓存维护。
         ' 全局 owner 扫描/COM 释放必须由资源新增或显式清理入口触发；将其放在
         ' 动画 Present 热路径会把一次偶发的 LRU 扫描放大成周期性 UI 卡顿。
         Return presented

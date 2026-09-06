@@ -7,7 +7,7 @@ Imports Vortice.DXGI
 ''' 也可由 HWND 呈现器下采样并提交。这里没有 GDI、HDC 或 CPU 后备路线。
 ''' </summary>
 Friend NotInheritable Class D3D_ControlSurface
-    Implements IDisposable, D3D_IRenderCacheOwner
+    Implements IDisposable, D3D_IRenderCacheOwner, D3D_IRenderCachePriority
 
     Private ReadOnly _owner As Control
     Private ReadOnly _deviceManager As D3D_DeviceManager
@@ -76,20 +76,27 @@ Friend NotInheritable Class D3D_ControlSurface
         End Get
     End Property
 
+    Private ReadOnly Property EvictionPriority As Integer Implements D3D_IRenderCachePriority.EvictionPriority
+        Get
+            ' 隐藏表面可按需重建，属于最低保留级别，预算紧张时优先回收。
+            Return 0
+        End Get
+    End Property
+
     Private ReadOnly Property OldestUseTick As Long Implements D3D_IRenderCacheOwner.OldestUseTick
         Get
             If _drawing OrElse _resourceUseDepth > 0 OrElse _allocatedBytes <= 0 Then Return Long.MaxValue
-            ' V3 语义：可见控件表面属于当前显示工作集，只计入预算，
+            ' 现行语义：可见控件表面属于当前显示工作集，只计入预算，
             ' 不参加主动 LRU 淘汰。释放可见 TabList 表面会留下纯色/黑色，
             ' 后续标题栏或窗口状态重绘还可能在无效表面上继续提交。
-            If _owner IsNot Nothing AndAlso Not _owner.IsDisposed AndAlso _owner.Visible Then Return Long.MaxValue
+            If D3D_ControlTreeWalker.IsEffectivelyVisible(_owner) Then Return Long.MaxValue
             Return If(_lastUsed <= 0, Long.MaxValue - 1, _lastUsed)
         End Get
     End Property
 
     Private Function TrimOldest() As Boolean Implements D3D_IRenderCacheOwner.TrimOldest
         If _drawing OrElse _resourceUseDepth > 0 OrElse _allocatedBytes <= 0 Then Return False
-        If _owner IsNot Nothing AndAlso Not _owner.IsDisposed AndAlso _owner.Visible Then Return False
+        If D3D_ControlTreeWalker.IsEffectivelyVisible(_owner) Then Return False
         ReleaseSurfaceResources()
         Return True
     End Function
@@ -116,12 +123,36 @@ Friend NotInheritable Class D3D_ControlSurface
         _context.BeginDraw()
         _drawing = True
         Try
-            ' 当前目标按完整帧清空并重建。请求脏区继续保留在诊断与调用结构中，
-            ' 只有在视觉验证确认清除和合成契约可靠后，才启用局部渲染。
-            Dim 有效脏区 = New Rectangle(Point.Empty, 逻辑尺寸)
-            _context.Clear(New Vortice.Mathematics.Color4(0, 0, 0, 0))
-            _context.PushAxisAlignedClip(New Vortice.RawRectF(0, 0, 逻辑尺寸.Width, 逻辑尺寸.Height), AntialiasMode.Aliased)
+            Dim 全部区域 = New Rectangle(Point.Empty, 逻辑尺寸)
+            Dim 请求区域 = Rectangle.Intersect(全部区域, requestedDirty)
+            Dim 覆盖声明 = TryCast(renderable, D3D_IGpuDirtyRegionCoverage)
+            If 覆盖声明 IsNot Nothing AndAlso 请求区域.Width > 0 AndAlso 请求区域.Height > 0 AndAlso
+               请求区域 <> 全部区域 Then
+                ' 给圆角、中心线描边和图片插值留出最小抗锯齿边界，避免调用方提供的
+                ' 精确失效矩形把边缘采样截断。控件仍可通过接口自行选择整面回退。
+                请求区域.Inflate(2, 2)
+                请求区域 = Rectangle.Intersect(全部区域, 请求区域)
+            End If
+            Dim 使用局部绘制 = 请求区域.Width > 0 AndAlso 请求区域.Height > 0 AndAlso
+                               请求区域 <> 全部区域 AndAlso
+                               覆盖声明 IsNot Nothing AndAlso
+                               覆盖声明.CoversDirtyRegion(请求区域)
+            Dim 有效脏区 = If(使用局部绘制, 请求区域, 全部区域)
+            If 使用局部绘制 Then
+                D3D_RenderDiagnostics.V5PartialSurfaceRender()
+            Else
+                D3D_RenderDiagnostics.V5FullSurfaceRender()
+            End If
+
+            ' 局部路径先以 clip 限制清除，再执行与整帧相同的背景/内容顺序；
+            ' 未声明覆盖能力的控件继续整面清空，保证旧像素和透明背景语义不变。
+            _context.PushAxisAlignedClip(New Vortice.RawRectF(有效脏区.Left,
+                                                              有效脏区.Top,
+                                                              有效脏区.Right,
+                                                              有效脏区.Bottom),
+                                         AntialiasMode.Aliased)
             Try
+                _context.Clear(New Vortice.Mathematics.Color4(0, 0, 0, 0))
                 _compositor.TextRenderer.ConfigureDeviceContext(_context, _compositor.TextQuality, targetHasAlpha:=True)
                 Dim DPI信息 = D3D_DpiContext.FromControl(_owner)
                 Using 绘制上下文 As New D3D_PaintContext(
@@ -185,6 +216,7 @@ Friend NotInheritable Class D3D_ControlSurface
         _context.Target = Nothing
         If _allocatedBytes > 0 Then
             D3D_RenderDiagnostics.V5SurfaceBytesChanged(-_allocatedBytes)
+            D3D_ControlSurfaceRegistry.SurfaceBytesChanged(-_allocatedBytes)
             _allocatedBytes = 0
         End If
         安全释放(_bitmap)
@@ -201,6 +233,7 @@ Friend NotInheritable Class D3D_ControlSurface
         _bitmap = _context.CreateBitmap(New Vortice.Mathematics.SizeI(像素尺寸.Width, 像素尺寸.Height), IntPtr.Zero, 0UI, 位图属性)
         _allocatedBytes = CLng(像素尺寸.Width) * CLng(像素尺寸.Height) * 4L
         D3D_RenderDiagnostics.V5SurfaceBytesChanged(_allocatedBytes)
+        D3D_ControlSurfaceRegistry.SurfaceBytesChanged(_allocatedBytes)
         D3D_RenderDiagnostics.V5SurfaceRecreate()
     End Sub
 
@@ -271,6 +304,7 @@ Friend NotInheritable Class D3D_ControlSurface
         If _context IsNot Nothing Then _context.Target = Nothing
         If _allocatedBytes > 0 Then
             D3D_RenderDiagnostics.V5SurfaceBytesChanged(-_allocatedBytes)
+            D3D_ControlSurfaceRegistry.SurfaceBytesChanged(-_allocatedBytes)
             _allocatedBytes = 0
         End If
         安全释放(_bitmap)

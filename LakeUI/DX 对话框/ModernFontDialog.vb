@@ -7,7 +7,7 @@ Imports D2D = Vortice.Direct2D1
 Imports DW = Vortice.DirectWrite
 
 Public Class ModernFontDialog
-    Implements D3D_IGpuRenderable, D3D_IGpuInvalidationSource, V5_IGpuPresentationSource, V5_ICoalescedPresentationSource
+    Implements D3D_IGpuRenderable, D3D_IGpuInvalidationSource, V5_IGpuPresentationSource
 
     Public Sub New()
         MyBase.New()

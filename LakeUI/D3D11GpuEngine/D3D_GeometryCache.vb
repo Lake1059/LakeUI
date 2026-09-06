@@ -6,7 +6,7 @@ Imports Vortice.Direct2D1
 ''' 控件不能在 RenderGpu 内创建长期 geometry，必须通过 compositor 的 D3D_GeometryCache 获取。
 ''' </summary>
 Public NotInheritable Class D3D_GeometryCache
-    Implements D3D_IRenderCacheOwner, IDisposable
+    Implements D3D_IRenderCacheOwner, D3D_IRenderCachePriority, IDisposable
 
     Private Const MaxCachedGeometries As Integer = 512
     Private Const EstimatedGeometryBytes As Long = 256L
@@ -24,6 +24,12 @@ Public NotInheritable Class D3D_GeometryCache
     Private ReadOnly Property CacheBytes As Long Implements D3D_IRenderCacheOwner.CacheBytes
         Get
             Return CLng(_geometries.Count) * EstimatedGeometryBytes
+        End Get
+    End Property
+
+    Private ReadOnly Property EvictionPriority As Integer Implements D3D_IRenderCachePriority.EvictionPriority
+        Get
+            Return 25
         End Get
     End Property
 

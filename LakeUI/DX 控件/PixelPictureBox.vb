@@ -470,7 +470,7 @@ Public Class PixelPictureBox
     Private _backgroundSource As Control = Nothing
 
     Private Sub DisposeD2DResources()
-        ' V3: D2D 资源由窗口级 D3D compositor 统一接管，控件级 Dispose 不再需要释放
+        ' D2D 资源由窗口级 D3D compositor 统一接管，控件级 Dispose 不再需要释放。
     End Sub
 
 <Category("LakeUI"),

@@ -806,12 +806,12 @@ Public Class ThisIsYourWindow
             If includeBorders Then
                 For Each overlay In s.ChromeOverlays
                     If overlay Is Nothing OrElse overlay.IsDisposed OrElse Not overlay.Visible Then Continue For
-                    D3D_V5Presentation.RequestRender(overlay, New Rectangle(Point.Empty, overlay.ClientSize))
+                    D3D_V5Presentation.RequestRenderBatched(overlay, New Rectangle(Point.Empty, overlay.ClientSize))
                 Next
             Else
                 Dim captionOverlay = 获取CaptionOverlay(s)
                 If captionOverlay IsNot Nothing AndAlso Not captionOverlay.IsDisposed AndAlso captionOverlay.Visible Then
-                    D3D_V5Presentation.RequestRender(captionOverlay, New Rectangle(Point.Empty, captionOverlay.ClientSize))
+                    D3D_V5Presentation.RequestRenderBatched(captionOverlay, New Rectangle(Point.Empty, captionOverlay.ClientSize))
                 End If
             End If
             Return
@@ -1099,7 +1099,7 @@ Public Class ThisIsYourWindow
             If s.ChromeOverlayActive AndAlso s.ChromeOverlays IsNot Nothing Then
                 Dim captionOverlay = 获取CaptionOverlay(s)
                 If captionOverlay IsNot Nothing AndAlso captionOverlay.Visible Then
-                    D3D_V5Presentation.RequestRender(captionOverlay,
+                    D3D_V5Presentation.RequestRenderBatched(captionOverlay,
                                                       New Rectangle(Point.Empty, captionOverlay.ClientSize))
                 End If
             ElseIf TypeOf s.HostForm Is V5_IGpuPresentationSource Then
@@ -3467,7 +3467,7 @@ Public Class ThisIsYourWindow
     Friend NotInheritable Class ChromeOverlayControl
         Inherits Control
         Implements D3D_IGpuRenderable, V5_IGpuPresentationSource,
-                   V5_IGeometryUpdateSource, V5_ICoalescedPresentationSource
+                   V5_IGeometryUpdateSource
 
         Private Const WM_NCHITTEST As Integer = &H84
         Private Const WM_MOUSEACTIVATE As Integer = &H21
@@ -3514,7 +3514,7 @@ Public Class ThisIsYourWindow
                 End Try
             End If
             If changed AndAlso requestRender AndAlso IsHandleCreated Then
-                D3D_V5Presentation.RequestRender(Me, New Rectangle(Point.Empty, ClientSize))
+                D3D_V5Presentation.RequestRenderBatched(Me, New Rectangle(Point.Empty, ClientSize))
             End If
             Return changed
         End Function
@@ -3657,7 +3657,7 @@ Public Class ThisIsYourWindow
         If s.ChromeOverlayActive Then
             Dim captionOverlay = 获取CaptionOverlay(s)
             If captionOverlay IsNot Nothing AndAlso captionOverlay.Visible Then
-                D3D_V5Presentation.RequestRender(captionOverlay,
+                D3D_V5Presentation.RequestRenderBatched(captionOverlay,
                                                   New Rectangle(Point.Empty, captionOverlay.ClientSize))
             End If
         ElseIf TypeOf form Is V5_IGpuPresentationSource Then
@@ -3760,7 +3760,7 @@ Public Class ThisIsYourWindow
         If changedOverlays IsNot Nothing Then
             For Each overlay In changedOverlays
                 If overlay.IsHandleCreated AndAlso overlay.Visible Then
-                    D3D_V5Presentation.RequestRender(overlay, New Rectangle(Point.Empty, overlay.ClientSize))
+                    D3D_V5Presentation.RequestRenderBatched(overlay, New Rectangle(Point.Empty, overlay.ClientSize))
                 End If
             Next
         End If

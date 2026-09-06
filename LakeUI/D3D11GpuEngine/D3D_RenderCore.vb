@@ -1,10 +1,10 @@
 ''' <summary>
 ''' D3D_RenderCore 是 V5 GPU 核心的进程/窗口资源入口。
 ''' 它管理 D3D_DeviceManager、Form 级 D3D_WindowCompositor、设备代号和冷启动级重置；
-''' V5 控件由 D3D_V5Presentation 直接提交到自身 HWND；带删除标记的 GPU HDC 路径
-''' 仅作为顶层 chrome 兼容保护和显式 GPU 调用保留。
+''' V5 控件由 D3D_V5Presentation 直接提交到自身 HWND；Form 级 compositor
+''' 继续为背景、文字和其他非 V5 资源提供共享 GPU 缓存。
 ''' <para>
-''' 后续迁移控件不要直接使用 Graphics.GetHdc，不要自己创建 D3D 设备，只能接收 D3D_PaintContext。
+''' V5 控件不要直接使用 Graphics.GetHdc 或自己创建 D3D 设备，只能接收 D3D_PaintContext。
 ''' 设备资源跟随设备代号；跨设备代号缓存必须丢弃。
 ''' </para>
 ''' </summary>
@@ -110,7 +110,8 @@ Public NotInheritable Class D3D_RenderCore
     End Function
 
     ''' <summary>
-    ''' 控件迁移的核心失效入口。阶段 1 之后只让目标控件自己的 OnPaint 重新执行。
+    ''' 兼容性的控件失效入口。它规范脏区并交给外到内调度器，
+    ''' 不直接执行 Paint；V5 控件随后由自己的 Paint bridge 提交 GPU 表面。
     ''' </summary>
     Public Shared Sub RequestRender(control As Control, dirtyRect As Rectangle)
         If control Is Nothing OrElse control.IsDisposed Then Return
@@ -131,7 +132,7 @@ Public NotInheritable Class D3D_RenderCore
     Friend Shared Sub NotifyControlInvalidated(control As Control, dirtyRect As Rectangle)
         If control Is Nothing OrElse control.IsDisposed Then Return
 
-        ' V5 表面通过 GPU 表面注册表传播失效；不要再进入旧的 CPU 背景快照路径。
+        ' V5 表面通过 GPU 表面注册表传播失效；V5 控件不进入 CPU 背景快照路径。
         If D3D_V5Presentation.IsV5Control(control) Then Return
 
         Try : D3D_BackgroundPenetration.Invalidate(control, dirtyRect) : Catch : End Try

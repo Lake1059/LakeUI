@@ -92,10 +92,6 @@ Public Class ModernButton
             填充形状_GPU(context, 极限矩形区域, If(是否有圆角, 边框圆角半径 * s, 0.0F), 禁用时遮罩颜色)
         End If
 
-        If 长按正在进行 AndAlso 长按动画助手.Progress >= 1.0F Then
-            长按正在进行 = False
-            BeginInvoke(Sub() 触发点击事件(EventArgs.Empty))
-        End If
     End Sub
 
     Public Function GetRenderBounds() As Rectangle Implements D3D_IGpuInvalidationSource.GetRenderBounds
@@ -352,6 +348,37 @@ Public Class ModernButton
         End If
     End Sub
 
+    Private Sub 长按动画帧(sender As Object, e As EventArgs)
+        If Not 长按正在进行 OrElse Not 长按确认已启用 OrElse
+           长按动画助手.Progress < 1.0F OrElse 长按完成事件已排队 Then Return
+
+        Dim 当前长按序列 = 长按序列号
+        长按正在进行 = False
+        长按完成事件已排队 = True
+        长按动画助手.StopFrameLoop()
+        If Not IsHandleCreated Then
+            长按完成事件已排队 = False
+            长按序列号 += 1
+            Return
+        End If
+
+        Try
+            BeginInvoke(CType(
+                Sub()
+                    If 当前长按序列 <> 长按序列号 Then Return
+                    长按完成事件已排队 = False
+                    If Not IsDisposed AndAlso Enabled AndAlso 长按确认已启用 Then
+                        触发点击事件(EventArgs.Empty)
+                    End If
+                End Sub, Action))
+        Catch
+            If 当前长按序列 = 长按序列号 Then
+                长按完成事件已排队 = False
+                长按序列号 += 1
+            End If
+        End Try
+    End Sub
+
     Private Function 长按遮罩脏区(oldProgress As Single, newProgress As Single) As Rectangle
         Dim oldRect = 长按遮罩客户区矩形(oldProgress)
         Dim newRect = 长按遮罩客户区矩形(newProgress)
@@ -419,6 +446,8 @@ Public Class ModernButton
     Private ReadOnly 长按动画助手 As New D3D_AnimationHelper(Me) With {.EasingMode = D3D_AnimationHelper.EasingModeEnum.EaseInOut, .Duration = 800}
     Private ReadOnly 涟漪动画助手 As New D3D_AnimationHelper(Me) With {.EasingMode = D3D_AnimationHelper.EasingModeEnum.EaseOut, .Duration = 1200}
     Private 长按正在进行 As Boolean = False
+    Private 长按完成事件已排队 As Boolean = False
+    Private 长按序列号 As Integer
     Private 长按上次失效进度 As Single = -1.0F
     Private 颜色动画已启用 As Boolean = False
     Private 动画前背景颜色 As Color
@@ -507,8 +536,22 @@ Public Class ModernButton
     End Function
 
     Private Sub 停止长按确认()
-        If Not 长按正在进行 AndAlso 长按动画助手.Progress <= 0 Then Return
+        If Not 长按正在进行 AndAlso Not 长按完成事件已排队 AndAlso 长按动画助手.Progress <= 0 Then Return
+
+        ' 完成回调已经排队时，鼠标抬起只应结束视觉状态，不能取消这一次已完成的手势；
+        ' 新的按下或禁用路径会递增序列号，令旧回调失效。
+        If 长按完成事件已排队 Then
+            长按正在进行 = False
+            长按动画助手.StopFrameLoop()
+            长按动画助手.StopAnimation()
+            长按动画助手.SetImmediate(0)
+            Return
+        End If
+
+        长按序列号 += 1
         长按正在进行 = False
+        长按完成事件已排队 = False
+        长按动画助手.StopFrameLoop()
         长按动画助手.StopAnimation()
         长按动画助手.SetImmediate(0)
     End Sub
@@ -558,8 +601,11 @@ Public Class ModernButton
         点击后等待鼠标移动 = False
         切换鼠标颜色状态(MouseStateEnum.Pressed)
         If 长按确认已启用 Then
+            长按序列号 += 1
             长按正在进行 = True
+            长按完成事件已排队 = False
             长按动画助手.SetImmediate(0)
+            长按动画助手.StartFrameLoop(AddressOf 长按动画帧)
             长按动画助手.AnimateTo(1)
         ElseIf e.Button = MouseButtons.Left Then
             开始点击涟漪(e.Location)
@@ -578,6 +624,7 @@ Public Class ModernButton
     Protected Overrides Sub OnEnabledChanged(e As EventArgs)
         MyBase.OnEnabledChanged(e)
         If Not Enabled Then
+            长按序列号 += 1
             鼠标状态 = MouseStateEnum.Normal
             颜色动画已启用 = False
             点击后等待鼠标移动 = False
@@ -587,6 +634,7 @@ Public Class ModernButton
             助记键触发计时器?.Dispose()
             助记键触发计时器 = Nothing
             停止长按确认()
+            长按完成事件已排队 = False
         End If
         请求GPU渲染()
     End Sub

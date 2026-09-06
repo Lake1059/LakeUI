@@ -9,6 +9,14 @@ Friend Interface D3D_IRenderCacheOwner
     Sub ReleaseAll()
 End Interface
 
+''' <summary>
+''' 可选的内部淘汰优先级。数值越低越容易被回收；同一优先级内仍按原有全局 LRU
+''' 语义排序。不实现时使用基础优先级 0，不新增或改名任何 GlobalOptions。
+''' </summary>
+Friend Interface D3D_IRenderCachePriority
+    ReadOnly Property EvictionPriority As Integer
+End Interface
+
 Friend NotInheritable Class D3D_RenderCacheBudgetCoordinator
     Private ReadOnly _lock As New Object()
     Private ReadOnly _trimLock As New Object()
@@ -50,6 +58,7 @@ Friend NotInheritable Class D3D_RenderCacheBudgetCoordinator
                 Dim 总字节数 As Long = 0
                 Dim 最旧所有者 As D3D_IRenderCacheOwner = Nothing
                 Dim 最旧时钟 As Long = Long.MaxValue
+                Dim 最低优先级 As Integer = Integer.MaxValue
 
                 For Each 所有者 In 所有者快照
                     Dim 字节数 As Long
@@ -69,7 +78,14 @@ Friend NotInheritable Class D3D_RenderCacheBudgetCoordinator
                         失败所有者.Add(所有者)
                         Continue For
                     End Try
-                    If 使用时钟 < 最旧时钟 Then
+                    Dim 优先级 As Integer = 0
+                    Dim 优先级所有者 = TryCast(所有者, D3D_IRenderCachePriority)
+                    If 优先级所有者 IsNot Nothing Then
+                        优先级 = 优先级所有者.EvictionPriority
+                    End If
+                    If 优先级 < 最低优先级 OrElse
+                       (优先级 = 最低优先级 AndAlso 使用时钟 < 最旧时钟) Then
+                        最低优先级 = 优先级
                         最旧时钟 = 使用时钟
                         最旧所有者 = 所有者
                     End If

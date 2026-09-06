@@ -5,7 +5,7 @@ Imports Vortice.DirectWrite
 
 <DefaultEvent("ValueChanged")>
 Public Class RoundDashBoard
-    Implements D3D_IGpuRenderable, D3D_IGpuInvalidationSource, D3D_ISuperSamplingSource, D3D_IBackgroundSourceProvider, V5_IGpuPresentationSource
+    Implements D3D_IGpuRenderable, D3D_IGpuInvalidationSource, D3D_ISuperSamplingSource, D3D_IBackgroundSourceProvider, D3D_IGpuDirtyRegionCoverage, V5_IGpuPresentationSource
 
     Public Event ValueChanged As EventHandler
 
@@ -76,6 +76,10 @@ Public Class RoundDashBoard
 
     Public Function GetRenderBounds() As Rectangle Implements D3D_IGpuInvalidationSource.GetRenderBounds
         Return New Rectangle(Point.Empty, Me.Size)
+    End Function
+
+    Public Function CoversDirtyRegion(dirtyRegion As Rectangle) As Boolean Implements D3D_IGpuDirtyRegionCoverage.CoversDirtyRegion
+        Return dirtyRegion.Width > 0 AndAlso dirtyRegion.Height > 0
     End Function
 
     Private Function 绘制图形内容_GPU(context As D3D_PaintContext, ByRef 中心X As Single, ByRef 中心Y As Single, ByRef progress As Single) As Boolean

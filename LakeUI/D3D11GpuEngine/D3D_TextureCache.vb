@@ -4,7 +4,7 @@
 ''' 它不在正在绘制的 target 上执行 trim，调用方必须在 BeginFrame 外或确认资源不再被当前帧引用时清理。
 ''' </summary>
 Public NotInheritable Class D3D_TextureCache
-    Implements D3D_IRenderCacheOwner, IDisposable
+    Implements D3D_IRenderCacheOwner, D3D_IRenderCachePriority, IDisposable
 
     Private ReadOnly _entries As New Dictionary(Of Object, D3D_TextureCacheEntry)()
     Private ReadOnly _使用顺序 As New LinkedList(Of D3D_TextureCacheEntry)()
@@ -35,6 +35,12 @@ Public NotInheritable Class D3D_TextureCache
     Private ReadOnly Property CacheBytes As Long Implements D3D_IRenderCacheOwner.CacheBytes
         Get
             Return _totalGpuBytes + _retiredGpuBytes
+        End Get
+    End Property
+
+    Private ReadOnly Property EvictionPriority As Integer Implements D3D_IRenderCachePriority.EvictionPriority
+        Get
+            Return 20
         End Get
     End Property
 

@@ -7,7 +7,7 @@ Imports Vortice.DXGI
 ''' <summary>
 ''' D3D_DeviceManager 是新 D3D11 GPU 核心的进程级设备所有者。
 ''' 它负责创建并持有同一条 GPU 路线上的 D3D11 device、DXGI device、D2D1 device、DWrite factory 和 DXGI factory。
-''' 它不负责窗口 swapchain、控件绘制、旧 DC RenderTarget、HDC 输出或任何 WARP/CPU 回退。
+''' 它不负责窗口 swapchain、控件绘制、HDC 输出或任何 WARP/CPU 回退。
 ''' <para>
 ''' 资源生命周期：本类拥有进程级 device/factory；窗口级 target、bitmap、brush、geometry、text layer 由各自的 D3D_ 缓存或 D3D_WindowCompositor 持有。
 ''' 所有跨帧 GPU 资源都必须记录 <see cref="DeviceGeneration"/>，generation 改变后必须丢弃并重建。
@@ -21,8 +21,7 @@ Imports Vortice.DXGI
 ''' <para>
 ''' 设备丢失边界：驱动更新、TDR、显示适配器重置、休眠恢复、远程桌面切换等都按同一套 device lost 流程处理。
 ''' 本类只释放进程级资源并广播失效；窗口级资源由各自 compositor 在 UI 线程释放，随后按需重建。
-''' V5 使用 per-control HWND flip-model swapchain；标记为 V5-MIGRATION-REMOVE 的 HDC paint scope
-''' 仅保留给 ThisIsYourWindow 顶层 chrome 兼容保护和显式 GPU 调用。
+''' V5 使用 per-control HWND flip-model swapchain；V5 绘制不经过 HDC 或 CPU 备份路径。
 ''' </para>
 ''' </summary>
 Public NotInheritable Class D3D_DeviceManager

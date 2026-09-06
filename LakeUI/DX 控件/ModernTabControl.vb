@@ -686,6 +686,7 @@ Public Class ModernTabControl
             ctrl.Visible = False
         Catch
         End Try
+        D3D_V5Presentation.ReleaseHiddenSubtreeResources(ctrl)
     End Sub
 
     Private Sub 移除绑定控件(ctrl As Control)
@@ -698,6 +699,7 @@ Public Class ModernTabControl
             End If
         Catch
         End Try
+        D3D_V5Presentation.ReleaseHiddenSubtreeResources(ctrl)
     End Sub
 
     Private Sub 准备窗体绑定(frm As Form)
@@ -734,7 +736,7 @@ Public Class ModernTabControl
             D3D_InvalidationRouter.RequestRender(_内容面板, New Rectangle(Point.Empty, _内容面板.Size))
         End If
         If _当前绑定控件 IsNot Nothing AndAlso Not _当前绑定控件.IsDisposed Then
-            请求绑定页V3渲染(_当前绑定控件)
+            请求绑定页渲染(_当前绑定控件)
         End If
     End Sub
 
@@ -781,7 +783,7 @@ Public Class ModernTabControl
                                        panelChanged OrElse
                                       sizeChanged)
         If state IsNot Nothing Then state.ForceRefreshDuringSwitch = needsRefresh AndAlso 正在切页刷新过滤期()
-        If desiredPanelVisible Then 请求绑定页V3渲染(ctrl)
+        If desiredPanelVisible Then 请求绑定页渲染(ctrl)
         If desiredPanelVisible Then 提交绑定页切换首帧()
         If state IsNot Nothing AndAlso desiredPanelVisible Then
             state.HasBeenShown = True
@@ -997,7 +999,7 @@ Public Class ModernTabControl
         D3D_InvalidationRouter.RequestRender(Me, dirtyRect)
     End Sub
 
-    Private Sub 请求绑定页V3渲染(ctrl As Control)
+    Private Sub 请求绑定页渲染(ctrl As Control)
         If ctrl Is Nothing OrElse ctrl.IsDisposed Then Return
         D3D_InvalidationRouter.RequestRender(ctrl, New Rectangle(Point.Empty, ctrl.Size))
     End Sub
@@ -1627,6 +1629,7 @@ Public Class ModernTabControl
             _内容面板.Visible = False
             解除背景穿透消费者()
             Try : D3D_BackgroundPenetration.UnregisterConsumer(_内容面板) : Catch : End Try
+            D3D_V5Presentation.ReleaseHiddenSubtreeResources(Me)
         Else
             Using 进入切页刷新过滤()
                 同步内容面板布局()

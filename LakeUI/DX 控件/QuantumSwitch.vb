@@ -3,7 +3,7 @@ Imports Vortice.Direct2D1
 
 <DefaultEvent("StateChanged")>
 Public Class QuantumSwitch
-    Implements D3D_IGpuRenderable, D3D_IGpuInvalidationSource, D3D_ISuperSamplingSource, D3D_IBackgroundSourceProvider, V5_IGpuPresentationSource
+    Implements D3D_IGpuRenderable, D3D_IGpuInvalidationSource, D3D_ISuperSamplingSource, D3D_IBackgroundSourceProvider, D3D_IGpuDirtyRegionCoverage, V5_IGpuPresentationSource
 
     Private _indeterminateFontCache As Font
     Private _indeterminateFontCacheKey As Integer
@@ -112,6 +112,10 @@ Public Class QuantumSwitch
 
     Public Function GetRenderBounds() As Rectangle Implements D3D_IGpuInvalidationSource.GetRenderBounds
         Return New Rectangle(Point.Empty, Me.Size)
+    End Function
+
+    Public Function CoversDirtyRegion(dirtyRegion As Rectangle) As Boolean Implements D3D_IGpuDirtyRegionCoverage.CoversDirtyRegion
+        Return dirtyRegion.Width > 0 AndAlso dirtyRegion.Height > 0
     End Function
 
     Private Sub 绘制正常态_GPU(context As D3D_PaintContext, 极限矩形区域 As RectangleF)

@@ -20,7 +20,7 @@ End Enum
 ''' SetImage 会复制调用方图片；延迟的 V5 绘制不依赖调用方在 setter 返回后继续持有 Image。
 ''' </summary>
 Public NotInheritable Class D3D_BackdropRenderer
-    Implements D3D_IRenderCacheOwner, IDisposable
+    Implements D3D_IRenderCacheOwner, D3D_IRenderCachePriority, IDisposable
 
     Private ReadOnly _imageCache As D3D_ImageCache
     Private ReadOnly _deviceManager As D3D_DeviceManager
@@ -134,6 +134,12 @@ Public NotInheritable Class D3D_BackdropRenderer
             If _outputTarget IsNot Nothing Then total += CLng(Math.Max(1, _targetSize.Width)) * CLng(Math.Max(1, _targetSize.Height)) * 4L
             If _noiseD2DBitmap IsNot Nothing Then total += 128L * 128L * 4L
             Return total
+        End Get
+    End Property
+
+    Private ReadOnly Property EvictionPriority As Integer Implements D3D_IRenderCachePriority.EvictionPriority
+        Get
+            Return 35
         End Get
     End Property
 

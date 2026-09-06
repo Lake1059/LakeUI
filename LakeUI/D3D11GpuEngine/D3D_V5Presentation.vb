@@ -2,16 +2,28 @@ Imports System.Diagnostics
 Imports System.Reflection
 
 ''' <summary>
-''' V5 纯 GPU 呈现总入口。它直接在 UI 线程渲染并提交，不依赖 WM_PAINT 合帧；
+''' V5 纯 GPU 呈现总入口。显式请求在 UI 线程直接渲染提交，内部失效通过批次协调器
+''' 合并后按外到内顺序提交；WM_PAINT 只是生命周期桥接，批次合并不依赖其合帧行为。
 ''' 设备丢失时释放全部 HWND 独占资源，随后由下一次渲染按新设备代次重建。
 ''' </summary>
 Friend NotInheritable Class D3D_V5Presentation
+    Private NotInheritable Class RenderBatchState
+        Public ReadOnly Pending As New Dictionary(Of Control, BatchedRenderEntry)()
+        Public Posted As Boolean
+        Public Sequence As Long
+    End Class
+
+    Private Structure BatchedRenderEntry
+        Public Rect As Rectangle
+        Public Sequence As Long
+    End Structure
+
     Private Shared ReadOnly _presenters As New Dictionary(Of Control, D3D_HwndSwapChainPresenter)()
     Private Shared ReadOnly _retryTimers As New Dictionary(Of Control, Timer)()
     Private Shared ReadOnly _bufferingDisabled As New HashSet(Of Control)()
     Private Shared ReadOnly _已订阅控件 As New HashSet(Of Control)()
-    Private Shared ReadOnly _queuedRenders As New HashSet(Of Control)()
-    Private Shared ReadOnly _queuedRendersLock As New Object()
+    <ThreadStatic>
+    Private Shared _renderBatch As RenderBatchState
     <ThreadStatic>
     Private Shared _renderDepth As Integer
 
@@ -35,10 +47,15 @@ Friend NotInheritable Class D3D_V5Presentation
     End Function
 
     Friend Shared Function Paint(control As Control, renderable As D3D_IGpuRenderable,
-                                 Optional 绘制后处理 As Action(Of D3D_PaintContext) = Nothing) As Boolean
+                                 Optional 绘制后处理 As Action(Of D3D_PaintContext) = Nothing,
+                                 Optional dirtyRect As Rectangle = Nothing) As Boolean
         If Not IsV5Control(control) Then Return False
         禁用WinForms双缓冲(control)
-        立即渲染(control, renderable, 绘制后处理)
+        ' WM_PAINT 可能在同一消息循环内先于已排队的内部传播请求到达。
+        ' 当前同步绘制会消费 registry 中的合并脏区；只撤销尚未开始的批次项，
+        ' RenderGpu 期间新产生的请求仍会进入下一批。
+        移除批次请求(control)
+        立即渲染(control, renderable, 绘制后处理, dirtyRect)
         ' V5 明确禁止失败后回落到 HDC；即使设备正在重建，也由下一帧 GPU 重试。
         Return True
     End Function
@@ -51,7 +68,7 @@ Friend NotInheritable Class D3D_V5Presentation
         If 有效区域.Width <= 0 OrElse 有效区域.Height <= 0 Then 有效区域 = New Rectangle(Point.Empty, control.Size)
         有效区域 = Rectangle.Intersect(New Rectangle(Point.Empty, control.Size), 有效区域)
         If 有效区域.Width <= 0 OrElse 有效区域.Height <= 0 Then Return
-        If Not control.IsHandleCreated OrElse Not control.Visible Then
+        If Not control.IsHandleCreated OrElse Not D3D_ControlTreeWalker.IsEffectivelyVisible(control) Then
             D3D_ControlSurfaceRegistry.MarkDirty(control, 有效区域, requestConsumers:=False)
             D3D_RenderDiagnostics.V5InvisibleSkip()
             Return
@@ -63,40 +80,112 @@ Friend NotInheritable Class D3D_V5Presentation
         D3D_ControlSurfaceRegistry.MarkDirty(control, 有效区域, requestConsumers:=False)
         D3D_RenderDiagnostics.V5DirtyRequested(CLng(有效区域.Width) * CLng(有效区域.Height),
                                                CLng(Math.Max(0, control.Width)) * CLng(Math.Max(0, control.Height)))
-        If TypeOf control Is V5_ICoalescedPresentationSource Then
-            排队渲染(control)
-        Else
-            立即渲染(control, TryCast(control, D3D_IGpuRenderable))
-        End If
+        ' 内部传播请求统一走 RequestRenderBatched；显式 RequestRender 保持同步。
+        移除批次请求(control)
+        立即渲染(control, TryCast(control, D3D_IGpuRenderable))
     End Sub
 
-    Private Shared Sub 排队渲染(控件 As Control)
-        If 控件 Is Nothing OrElse 控件.IsDisposed OrElse Not 控件.IsHandleCreated Then Return
+    ''' <summary>
+    ''' 将由失效事件、背景依赖或动画 tick 产生的请求合并到当前 UI 线程的下一次提交批次。
+    ''' 显式 RequestRender 仍保留同步语义；只有内部传播路径使用此入口。
+    ''' </summary>
+    Friend Shared Sub RequestRenderBatched(control As Control, Optional dirtyRect As Rectangle = Nothing)
+        If Not IsV5Control(control) OrElse control Is Nothing OrElse control.IsDisposed Then Return
 
-        SyncLock _queuedRendersLock
-            If Not _queuedRenders.Add(控件) Then Return
-        End SyncLock
+        Dim 有效区域 = dirtyRect
+        If 有效区域.Width <= 0 OrElse 有效区域.Height <= 0 Then 有效区域 = New Rectangle(Point.Empty, control.Size)
+        有效区域 = Rectangle.Intersect(New Rectangle(Point.Empty, control.Size), 有效区域)
+        If 有效区域.Width <= 0 OrElse 有效区域.Height <= 0 Then Return
 
+        If control.InvokeRequired Then
+            Try
+                control.BeginInvoke(CType(
+                    Sub() RequestRenderBatched(control, 有效区域), Action))
+            Catch
+            End Try
+            Return
+        End If
+
+        D3D_ControlSurfaceRegistry.MarkDirty(control, 有效区域, requestConsumers:=False)
+        D3D_RenderDiagnostics.V5DirtyRequested(CLng(有效区域.Width) * CLng(有效区域.Height),
+                                               CLng(Math.Max(0, control.Width)) * CLng(Math.Max(0, control.Height)))
+        If Not control.IsHandleCreated OrElse Not D3D_ControlTreeWalker.IsEffectivelyVisible(control) Then
+            D3D_RenderDiagnostics.V5InvisibleSkip()
+            Return
+        End If
+
+        Dim state = _renderBatch
+        If state Is Nothing Then
+            state = New RenderBatchState()
+            _renderBatch = state
+        End If
+
+        Dim entry As BatchedRenderEntry = Nothing
+        If state.Pending.TryGetValue(control, entry) Then
+            entry.Rect = Rectangle.Union(entry.Rect, 有效区域)
+            state.Pending(control) = entry
+        Else
+            state.Sequence += 1
+            state.Pending(control) = New BatchedRenderEntry With {
+                .Rect = 有效区域,
+                .Sequence = state.Sequence
+            }
+        End If
+        D3D_RenderDiagnostics.V5BatchRequested()
+
+        If state.Posted Then Return
+        state.Posted = True
         Try
-            控件.BeginInvoke(CType(
-                Sub()
-                    SyncLock _queuedRendersLock
-                        _queuedRenders.Remove(控件)
-                    End SyncLock
-                    If 控件.IsDisposed OrElse Not 控件.IsHandleCreated OrElse Not 控件.Visible Then Return
-                    立即渲染(控件, TryCast(控件, D3D_IGpuRenderable))
-                End Sub, Action))
+            control.BeginInvoke(CType(Sub() FlushBatchedRenders(state), Action))
         Catch
-            SyncLock _queuedRendersLock
-                _queuedRenders.Remove(控件)
-            End SyncLock
+            state.Posted = False
         End Try
     End Sub
 
+    Private Shared Sub FlushBatchedRenders(state As RenderBatchState)
+        If state Is Nothing Then Return
+
+        state.Posted = False
+        If state.Pending.Count = 0 Then Return
+
+        Dim batch = state.Pending.ToArray()
+        state.Pending.Clear()
+        D3D_RenderDiagnostics.V5BatchFlushed(batch.Length)
+        Array.Sort(batch,
+                   Function(a, b)
+                       Dim da = 获取控件树深度(a.Key)
+                       Dim db = 获取控件树深度(b.Key)
+                       If da <> db Then Return da.CompareTo(db)
+                       Return a.Value.Sequence.CompareTo(b.Value.Sequence)
+                   End Function)
+
+        For Each item In batch
+            Dim control = item.Key
+            If control Is Nothing OrElse control.IsDisposed OrElse
+               Not control.IsHandleCreated OrElse Not D3D_ControlTreeWalker.IsEffectivelyVisible(control) Then Continue For
+            立即渲染(control,
+                    TryCast(control, D3D_IGpuRenderable),
+                    requestedDirty:=item.Value.Rect)
+        Next
+    End Sub
+
+    Private Shared Sub 移除批次请求(control As Control)
+        If control Is Nothing OrElse _renderBatch Is Nothing Then Return
+        _renderBatch.Pending.Remove(control)
+        ' 句柄销毁可能让 BeginInvoke 回调被 WinForms 丢弃；没有其他待处理项时
+        ' 允许后续批次重新投递。旧回调即使随后到达也只会看到空批次。
+        If _renderBatch.Pending.Count = 0 Then _renderBatch.Posted = False
+    End Sub
+
     Private Shared Sub 立即渲染(控件 As Control, 可渲染对象 As D3D_IGpuRenderable,
-                              Optional 绘制后处理 As Action(Of D3D_PaintContext) = Nothing)
+                              Optional 绘制后处理 As Action(Of D3D_PaintContext) = Nothing,
+        Optional requestedDirty As Rectangle = Nothing)
         If 控件 Is Nothing OrElse 可渲染对象 Is Nothing OrElse 控件.IsDisposed Then Return
         If Not 控件.IsHandleCreated OrElse 控件.ClientSize.Width <= 0 OrElse 控件.ClientSize.Height <= 0 Then Return
+        If Not D3D_ControlTreeWalker.IsEffectivelyVisible(控件) Then
+            D3D_RenderDiagnostics.V5InvisibleSkip()
+            Return
+        End If
         If _renderDepth > 0 Then
             控件.Invalidate()
             Return
@@ -108,7 +197,9 @@ Friend NotInheritable Class D3D_V5Presentation
             ' 以免打破外到内顺序或形成父子互相触发的递归。
             Dim 渲染开始时间 = Stopwatch.GetTimestamp()
             Dim 控件表面 = D3D_ControlSurfaceRegistry.RenderControl(控件, 可渲染对象,
-                                                                     New Rectangle(Point.Empty, 控件.Size),
+                                                                     If(requestedDirty.Width > 0 AndAlso requestedDirty.Height > 0,
+                                                                        requestedDirty,
+                                                                        New Rectangle(Point.Empty, 控件.Size)),
                                                                      绘制后处理)
             If 控件表面 Is Nothing Then Return
             Dim 渲染毫秒数 = Stopwatch.GetElapsedTime(渲染开始时间).TotalMilliseconds
@@ -146,7 +237,7 @@ Friend NotInheritable Class D3D_V5Presentation
             ' 保留 RenderGpu 内部产生的失效请求，例如布局或字体重新计算。
             ' 这些请求不能重入提交，因此在当前帧完成后再排队补交一帧。
             If _renderDepth = 0 AndAlso D3D_ControlSurfaceRegistry.IsDirty(控件) AndAlso Not _retryTimers.ContainsKey(控件) Then
-                排队渲染(控件)
+                RequestRenderBatched(控件)
             End If
         End Try
     End Sub
@@ -200,7 +291,7 @@ Friend NotInheritable Class D3D_V5Presentation
                     取消重试(控件)
                     Return
                 End If
-                If 控件.IsHandleCreated AndAlso 控件.Visible Then
+                If 控件.IsHandleCreated AndAlso D3D_ControlTreeWalker.IsEffectivelyVisible(控件) Then
                     立即渲染(控件, TryCast(控件, D3D_IGpuRenderable))
                 Else
                     取消重试(控件)
@@ -252,19 +343,13 @@ Friend NotInheritable Class D3D_V5Presentation
                          Not 控件.IsHandleCreated Then Return False
                       Return Object.ReferenceEquals(D3D_RenderCore.ResolveCompositorForm(控件), form)
                   End Function)
-            If control.Visible AndAlso D3D_V5Presentation.IsV5Control(control) Then targets.Add(control)
+            If D3D_ControlTreeWalker.IsEffectivelyVisible(control) AndAlso D3D_V5Presentation.IsV5Control(control) Then targets.Add(control)
         Next
         Return targets.OrderBy(Function(control) 获取控件树深度(control)).ToArray()
     End Function
 
     Private Shared Function 获取控件树深度(控件 As Control) As Integer
-        Dim 深度 As Integer
-        Dim 当前 = If(控件 Is Nothing, Nothing, 控件.Parent)
-        While 当前 IsNot Nothing
-            深度 += 1
-            当前 = 当前.Parent
-        End While
-        Return 深度
+        Return D3D_ControlTreeWalker.GetTreeDepth(控件)
     End Function
 
     Private Shared Sub 释放设备资源()
@@ -290,9 +375,7 @@ Friend NotInheritable Class D3D_V5Presentation
             _presenters.Remove(控件)
         End If
         取消重试(控件)
-        SyncLock _queuedRendersLock
-            _queuedRenders.Remove(控件)
-        End SyncLock
+        移除批次请求(控件)
         D3D_ControlSurfaceRegistry.ReleaseSurfaceResources(控件)
         If 控件.RecreatingHandle AndAlso Not 控件.IsDisposed Then
             Try : 控件.BeginInvoke(Sub() RequestRender(控件)) : Catch : End Try
@@ -314,9 +397,7 @@ Friend NotInheritable Class D3D_V5Presentation
             _bufferingDisabled.Remove(控件)
         End If
         If 控件 IsNot Nothing Then
-            SyncLock _queuedRendersLock
-                _queuedRenders.Remove(控件)
-            End SyncLock
+            移除批次请求(控件)
         End If
         句柄销毁时(发送者, 事件参数)
     End Sub
@@ -330,20 +411,34 @@ Friend NotInheritable Class D3D_V5Presentation
         If 控件 Is Nothing Then Return
         Dim 几何更新来源 = TryCast(控件, V5_IGeometryUpdateSource)
         If 几何更新来源 IsNot Nothing AndAlso 几何更新来源.IsGeometryUpdateInProgress Then Return
-        If Not 控件.Visible Then
-            Dim 呈现器 As D3D_HwndSwapChainPresenter = Nothing
-            If _presenters.TryGetValue(控件, 呈现器) Then
-                呈现器.Dispose()
-                _presenters.Remove(控件)
-            End If
-            取消重试(控件)
-            SyncLock _queuedRendersLock
-                _queuedRenders.Remove(控件)
-            End SyncLock
-            D3D_ControlSurfaceRegistry.ReleaseSurfaceResources(控件)
+        If Not D3D_ControlTreeWalker.IsEffectivelyVisible(控件) Then
+            ReleaseHiddenSubtreeResources(控件)
             Return
         End If
         RequestRender(控件)
+    End Sub
+
+    ''' <summary>
+    ''' 页面隐藏时立即释放其后代的交换链和表面；重新显示后由正常渲染路径重建。
+    ''' </summary>
+    Friend Shared Sub ReleaseHiddenSubtreeResources(root As Control)
+        If root Is Nothing OrElse IsRendering Then Return
+
+        For Each control In _presenters.Keys.ToArray()
+            If control Is Nothing OrElse control.IsDisposed OrElse
+               Not D3D_ControlTreeWalker.IsDescendantOrSelf(control, root) OrElse
+               D3D_ControlTreeWalker.IsEffectivelyVisible(control) Then Continue For
+
+            Dim presenter As D3D_HwndSwapChainPresenter = Nothing
+            If _presenters.TryGetValue(control, presenter) Then
+                presenter.Dispose()
+                _presenters.Remove(control)
+            End If
+            取消重试(control)
+            移除批次请求(control)
+        Next
+
+        D3D_ControlSurfaceRegistry.ReleaseUnreferencedSubtree(root)
     End Sub
 
     Private Shared Sub 显示设置变化时(发送者 As Object, 事件参数 As EventArgs)

@@ -26,6 +26,7 @@ static class Program
         VerifyModernPanelOverlayRenderingContract();
         VerifyModernButtonAnimationDefaults();
         VerifyRenderCacheBudgetCoordinator();
+        VerifyTreeDepthCacheInvalidation();
         VerifyTextureCacheLifecycle();
         VerifyZeroCapacityDrawingCaches();
         VerifyAnimationOwnerRelease();
@@ -37,6 +38,7 @@ static class Program
         VerifyFullCleanupResumesVisibleControlRendering();
         VerifyFullCleanupRecreatesSharedFactories();
         VerifyV5DirtyRetryAndResetContracts();
+        VerifyV5BatchCoalescingDiagnostics();
         VerifyBackdropImageSnapshotSurvivesCallerDispose();
         VerifyHdrImageMappingUsesCachedLookup();
         VerifyV5ProbeApi();
@@ -729,6 +731,32 @@ static class Program
         注册协调器.TrimToBudget(0, null!, () => 注册协调器.Register(新增项));
         Assert(第一项.TrimAttempts == 1 && 新增项.TrimAttempts == 1,
             "Owners registered during eviction must join the same maintenance pass.");
+
+        var priorityCoordinator = new D3D_RenderCacheBudgetCoordinator();
+        var rebuildableSurface = new PriorityCacheOwner(400, 1, 30);
+        var transientGeometry = new PriorityCacheOwner(400, 1000, 10);
+        priorityCoordinator.Register(rebuildableSurface);
+        priorityCoordinator.Register(transientGeometry);
+        priorityCoordinator.TrimToBudget(500, null!, null!);
+        Assert(transientGeometry.CacheBytes == 0 && rebuildableSurface.CacheBytes == 400,
+            "Cache eviction priority must be applied before LRU age without changing budget options.");
+    }
+
+    private static void VerifyTreeDepthCacheInvalidation()
+    {
+        using var root = new Panel();
+        using var parent = new Panel();
+        using var child = new Panel();
+        root.Controls.Add(parent);
+        parent.Controls.Add(child);
+        var originalDepth = D3D_ControlTreeWalker.GetTreeDepth(child);
+        Assert(originalDepth == D3D_ControlTreeWalker.GetTreeDepth(child),
+            "Tree depth cache must return a stable value for an unchanged parent chain.");
+
+        root.Controls.Add(child);
+        var reparentedDepth = D3D_ControlTreeWalker.GetTreeDepth(child);
+        Assert(reparentedDepth < originalDepth,
+            "Tree depth cache must invalidate when a control is reparented.");
     }
 
     private static void VerifyTextureCacheLifecycle()
@@ -891,6 +919,44 @@ static class Program
         窗体.Hide();
     }
 
+    private static void VerifyV5BatchCoalescingDiagnostics()
+    {
+        using var form = new Form { ClientSize = new Size(320, 180) };
+        using var control = new CountingGpuControl { Dock = DockStyle.Fill };
+        form.Controls.Add(control);
+        form.Show();
+        Application.DoEvents();
+
+        D3D_PaintBridge.ResetV5Probe();
+        D3D_PaintBridge.V5ProbeEnabled = true;
+        var before = D3D_PaintBridge.GetV5ProbeSnapshot();
+        for (var i = 0; i < 16; i++)
+            D3D_V5Presentation.RequestRenderBatched(control, new Rectangle(i, 0, 8, 8));
+
+        PumpUntil(() => D3D_PaintBridge.GetV5ProbeSnapshot().BatchFlushes > before.BatchFlushes);
+        var after = D3D_PaintBridge.GetV5ProbeSnapshot();
+        Assert(after.BatchRequests >= 1 && after.BatchFlushes >= 1 && after.BatchControls >= 1,
+            "Repeated internal V5 invalidations must be observable as one or more merged render batches.");
+        D3D_PaintBridge.V5ProbeEnabled = false;
+        form.Hide();
+
+        using var partialForm = new Form { ClientSize = new Size(320, 180) };
+        using var partialControl = new JustEmptyControl { Dock = DockStyle.Fill, BackColor = Color.FromArgb(255, 32, 48, 64) };
+        partialForm.Controls.Add(partialControl);
+        partialForm.Show();
+        Application.DoEvents();
+        D3D_PaintBridge.ResetV5Probe();
+        D3D_PaintBridge.V5ProbeEnabled = true;
+        var partialBefore = D3D_PaintBridge.GetV5ProbeSnapshot();
+        D3D_V5Presentation.RequestRenderBatched(partialControl, new Rectangle(4, 4, 24, 24));
+        PumpUntil(() => D3D_PaintBridge.GetV5ProbeSnapshot().BatchFlushes > partialBefore.BatchFlushes);
+        var partialAfter = D3D_PaintBridge.GetV5ProbeSnapshot();
+        Assert(partialAfter.PartialSurfaceRenders > 0,
+            "An audited dirty-region control must use the clipped surface render path.");
+        D3D_PaintBridge.V5ProbeEnabled = false;
+        partialForm.Hide();
+    }
+
     private sealed class CountingGpuControl : Control, D3D_IGpuRenderable, V5_IGpuPresentationSource
     {
         public int RenderCount { get; private set; }
@@ -963,6 +1029,29 @@ static class Program
         {
             CacheBytes = 0;
         }
+    }
+
+    private sealed class PriorityCacheOwner : D3D_IRenderCacheOwner, D3D_IRenderCachePriority
+    {
+        public PriorityCacheOwner(long cacheBytes, long oldestUseTick, int evictionPriority)
+        {
+            CacheBytes = cacheBytes;
+            OldestUseTick = oldestUseTick;
+            EvictionPriority = evictionPriority;
+        }
+
+        public long CacheBytes { get; private set; }
+        public long OldestUseTick { get; }
+        public int EvictionPriority { get; }
+
+        public bool TrimOldest()
+        {
+            if (CacheBytes <= 0) return false;
+            CacheBytes = 0;
+            return true;
+        }
+
+        public void ReleaseAll() => CacheBytes = 0;
     }
 
     private static void VerifyFenceParsing()

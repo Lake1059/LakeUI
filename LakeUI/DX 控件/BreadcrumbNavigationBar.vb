@@ -6,7 +6,7 @@ Imports Vortice.Direct2D1
 ''' </summary>
 <DefaultEvent("ItemClicked")>
 Public Class BreadcrumbNavigationBar
-    Implements D3D_IGpuRenderable, D3D_IGpuInvalidationSource, D3D_ISuperSamplingSource, D3D_IBackgroundSourceProvider, V5_IGpuPresentationSource
+    Implements D3D_IGpuRenderable, D3D_IGpuInvalidationSource, D3D_ISuperSamplingSource, D3D_IBackgroundSourceProvider, D3D_IGpuDirtyRegionCoverage, V5_IGpuPresentationSource
 
 #Region "节点定义与集合"
     ''' <summary>
@@ -45,7 +45,7 @@ Public Class BreadcrumbNavigationBar
         End Property
 
         Private Sub InvalidateOwner()
-            _owner?.请求GPU渲染()
+            _owner?.OnItemLayoutChanged()
         End Sub
 
         <Category("LakeUI"), Description("节点文本"), DefaultValue(GetType(String), "")>
@@ -321,6 +321,7 @@ Public Class BreadcrumbNavigationBar
         Public IsOverflow As Boolean
     End Class
     Private _layoutCache As New List(Of NodeLayout)
+    Private _layoutDirty As Boolean = True
 #End Region
 
 #Region "属性"
@@ -403,6 +404,7 @@ Public Class BreadcrumbNavigationBar
             If 溢出根文本 = v Then Return
             溢出根文本 = v
             _overflowItem.Text = v
+            InvalidateLayoutCache()
             请求GPU渲染()
         End Set
     End Property
@@ -640,10 +642,16 @@ Public Class BreadcrumbNavigationBar
     End Sub
 
     Friend Sub OnItemsChangedInternal()
+        InvalidateLayoutCache()
         _hoverNodeIndex = -2
         _pressedNodeIndex = -2
         If _selectedIndex >= _items.Count Then _selectedIndex = -1
         If _activeDropDownMenu IsNot Nothing Then CloseDropDown()
+        请求GPU渲染()
+    End Sub
+
+    Friend Sub OnItemLayoutChanged()
+        InvalidateLayoutCache()
         请求GPU渲染()
     End Sub
 #End Region
@@ -652,6 +660,10 @@ Public Class BreadcrumbNavigationBar
     Private Function DpiScale() As Single
         Return D3D_DpiContext.FromControl(Me).Scale
     End Function
+
+    Private Sub InvalidateLayoutCache()
+        _layoutDirty = True
+    End Sub
 
     Private Sub 请求GPU渲染(Optional immediate As Boolean = False)
         请求GPU渲染(New Rectangle(Point.Empty, Me.Size), immediate)
@@ -663,6 +675,7 @@ Public Class BreadcrumbNavigationBar
     End Sub
 
     Private Sub RebuildLayout()
+        If Not _layoutDirty Then Return
         _layoutCache.Clear()
         _overflowStartIndex = -1
         Dim s As Single = DpiScale()
@@ -774,6 +787,7 @@ Public Class BreadcrumbNavigationBar
             End If
             _layoutCache.Add(layout)
         Next
+        _layoutDirty = False
     End Sub
 
     Private Function HitTest(p As Point, ByRef nodeIndex As Integer, ByRef isArrow As Boolean, ByRef isOverflow As Boolean) As Boolean
@@ -835,6 +849,10 @@ Public Class BreadcrumbNavigationBar
 
     Public Function GetRenderBounds() As Rectangle Implements D3D_IGpuInvalidationSource.GetRenderBounds
         Return New Rectangle(Point.Empty, Me.Size)
+    End Function
+
+    Public Function CoversDirtyRegion(dirtyRegion As Rectangle) As Boolean Implements D3D_IGpuDirtyRegionCoverage.CoversDirtyRegion
+        Return dirtyRegion.Width > 0 AndAlso dirtyRegion.Height > 0
     End Function
 
     Private Sub DrawNodesShapes_GPU(context As D3D_PaintContext)
@@ -1135,23 +1153,33 @@ Public Class BreadcrumbNavigationBar
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
         If Not EqualityComparer(Of T).Default.Equals(field, value) Then
             field = value
+            InvalidateLayoutCache()
             请求GPU渲染()
         End If
     End Sub
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
         MyBase.OnFontChanged(e)
+        InvalidateLayoutCache()
         请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnSizeChanged(e As EventArgs)
         MyBase.OnSizeChanged(e)
+        InvalidateLayoutCache()
         If _activeDropDownMenu IsNot Nothing Then CloseDropDown()
+        请求GPU渲染()
+    End Sub
+
+    Protected Overrides Sub OnPaddingChanged(e As EventArgs)
+        MyBase.OnPaddingChanged(e)
+        InvalidateLayoutCache()
         请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
+        InvalidateLayoutCache()
         请求GPU渲染()
     End Sub
 

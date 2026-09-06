@@ -259,7 +259,7 @@ Public Module OuterToInnerRefreshScheduler
                                                              dispatchedRect As Rectangle,
                                                              dispatchedEntry As PendingEntry)
         ' 父容器 Invalidate 会同步触发背景穿透消费者再次 Request。若目标稍后已在本批完整派发，
-        ' 保留该请求只会在下一轮重复一次 GPU/HDC 合成；覆盖范围不足时则绝不能合并。
+        ' 保留该请求只会在下一轮重复一次表面合成；覆盖范围不足时则绝不能合并。
         SyncLock _lock
             Dim queued As PendingEntry = Nothing
             If Not _pending.TryGetValue(control, queued) Then Return
@@ -318,7 +318,8 @@ Public Module OuterToInnerRefreshScheduler
                                          immediate As Boolean,
                                          batch As Dictionary(Of Control, PendingEntry),
                                          ByRef nextSequence As Long)
-        If child Is Nothing OrElse child.IsDisposed OrElse Not child.Visible Then Return
+        If child Is Nothing OrElse child.IsDisposed OrElse
+           Not D3D_ControlTreeWalker.IsEffectivelyVisible(child) Then Return
         Dim shouldQueue As Boolean = child.Width > 0 AndAlso child.Height > 0
         If shouldQueue Then
             If ShouldSuppressRefresh(child, child.ClientRectangle, True, False, True) Then Return
@@ -350,13 +351,7 @@ Public Module OuterToInnerRefreshScheduler
     End Sub
 
     Private Function GetTreeDepth(ctrl As Control) As Integer
-        Dim depth As Integer = 0
-        Dim current As Control = ctrl
-        While current IsNot Nothing
-            depth += 1
-            current = current.Parent
-        End While
-        Return depth
+        Return D3D_ControlTreeWalker.GetTreeDepth(ctrl)
     End Function
 
     Private Function ShouldSuppressRefresh(control As Control,
@@ -380,7 +375,6 @@ Public Module OuterToInnerRefreshScheduler
 
     Private Function CanUpdateImmediately(control As Control) As Boolean
         If control Is Nothing OrElse control.IsDisposed Then Return False
-        If D3D_PaintBridge.IsBackgroundSamplingPaint Then Return False
         If D3D_PaintBridge.IsPainting(control) Then Return False
         Return True
     End Function

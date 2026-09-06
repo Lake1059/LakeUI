@@ -5,7 +5,7 @@ Imports System.Globalization
 Imports System.Numerics
 Imports D2D = Vortice.Direct2D1
 Public Class ModernColorDialog
-    Implements D3D_IGpuRenderable, D3D_IGpuInvalidationSource, V5_IGpuPresentationSource, V5_ICoalescedPresentationSource
+    Implements D3D_IGpuRenderable, D3D_IGpuInvalidationSource, V5_IGpuPresentationSource
 
 #Region "公共属性"
 

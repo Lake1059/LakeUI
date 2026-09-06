@@ -5,7 +5,7 @@ Imports DW = Vortice.DirectWrite
 
 <DefaultEvent("ValueChanged")>
 Public Class ExcellentTrackBar
-    Implements D3D_IGpuRenderable, D3D_IGpuInvalidationSource, D3D_ISuperSamplingSource, D3D_IBackgroundSourceProvider, V5_IGpuPresentationSource
+    Implements D3D_IGpuRenderable, D3D_IGpuInvalidationSource, D3D_ISuperSamplingSource, D3D_IBackgroundSourceProvider, D3D_IGpuDirtyRegionCoverage, V5_IGpuPresentationSource
 
 #Region "背景源"
     Private _backgroundSource As Control = Nothing
@@ -830,6 +830,10 @@ Public Class ExcellentTrackBar
 
     Public Function GetRenderBounds() As Rectangle Implements D3D_IGpuInvalidationSource.GetRenderBounds
         Return New Rectangle(Point.Empty, Me.Size)
+    End Function
+
+    Public Function CoversDirtyRegion(dirtyRegion As Rectangle) As Boolean Implements D3D_IGpuDirtyRegionCoverage.CoversDirtyRegion
+        Return dirtyRegion.Width > 0 AndAlso dirtyRegion.Height > 0
     End Function
 
     Private Sub 绘制轨道_GPU(context As D3D_PaintContext)

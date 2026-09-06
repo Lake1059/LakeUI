@@ -8,17 +8,6 @@ Public Enum D3DCacheCleanupLevel
 End Enum
 
 Public Module D3D_PaintBridge
-    <ThreadStatic>
-    Private _背景采样绘制深度 As Integer
-    <ThreadStatic>
-    Private _延迟字体刷新深度 As Integer
-
-    Friend ReadOnly Property IsBackgroundSamplingPaint As Boolean
-        Get
-            Return _背景采样绘制深度 > 0
-        End Get
-    End Property
-
     ''' <summary>
     ''' 设计器和其子树不创建 V5 GPU 资源；调用方应交回 WinForms 默认预览路径。
     ''' </summary>
@@ -33,16 +22,6 @@ Public Module D3D_PaintBridge
             current = current.Parent
         End While
         Return False
-    End Function
-
-    Friend Function EnterBackgroundSamplingPaint() As IDisposable
-        _背景采样绘制深度 += 1
-        Return New CounterScope(Sub() _背景采样绘制深度 = Math.Max(0, _背景采样绘制深度 - 1))
-    End Function
-
-    Friend Function EnterDeferredFontRefresh() As IDisposable
-        _延迟字体刷新深度 += 1
-        Return New CounterScope(Sub() _延迟字体刷新深度 = Math.Max(0, _延迟字体刷新深度 - 1))
     End Function
 
     Public Sub InvalidateTextFormatCache(control As Control)
@@ -79,7 +58,6 @@ Public Module D3D_PaintBridge
                                               Optional immediate As Boolean = True)
         InvalidateTextFormatCache(control)
         If control Is Nothing OrElse control.IsDisposed Then Return
-        If _延迟字体刷新深度 > 0 Then immediate = False
         OuterToInnerRefreshScheduler.RequestFull(control, invalidateChildren, immediate)
     End Sub
 
@@ -168,14 +146,15 @@ Public Module D3D_PaintBridge
                 D3D_V5Presentation.Paint(control, renderable,
                                          Sub(绘制上下文 As D3D_PaintContext)
                                              绘制设计时选择装饰(绘制上下文, control)
-                                         End Sub)
+                                         End Sub,
+                                         e.ClipRectangle)
             Catch
                 ' 设计器设备不可用时保留默认 WinForms 预览，不阻断设计器加载。
             End Try
             Return False
         End If
         If Not D3D_V5Presentation.IsV5Control(control) Then Return False
-        Return D3D_V5Presentation.Paint(control, renderable)
+        Return D3D_V5Presentation.Paint(control, renderable, dirtyRect:=e.ClipRectangle)
     End Function
 
     ''' <summary>
@@ -292,19 +271,4 @@ Public Module D3D_PaintBridge
         End Using
     End Sub
 
-    Private NotInheritable Class CounterScope
-        Implements IDisposable
-
-        Private _release As Action
-
-        Friend Sub New(release As Action)
-            _release = release
-        End Sub
-
-        Public Sub Dispose() Implements IDisposable.Dispose
-            Dim release = _release
-            _release = Nothing
-            release?.Invoke()
-        End Sub
-    End Class
 End Module

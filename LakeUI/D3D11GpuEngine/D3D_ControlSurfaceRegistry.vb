@@ -14,6 +14,7 @@ Friend NotInheritable Class D3D_ControlSurfaceRegistry
         Public PendingDirty As Rectangle = Rectangle.Empty
         Public Revision As Long
         Public LastUsed As Long
+        Public ReadOnly SeenSources As New HashSet(Of Control)()
 
         Public Sub New(owner As Control)
             Me.Owner = owner
@@ -28,6 +29,7 @@ Friend NotInheritable Class D3D_ControlSurfaceRegistry
     Private Shared ReadOnly _coordinateConsumers As New Dictionary(Of Control, HashSet(Of Control))()
     Private Shared ReadOnly _consumerCoordinateControls As New Dictionary(Of Control, HashSet(Of Control))()
     Private Shared _frameGeneration As Integer
+    Private Shared _allocatedSurfaceBytes As Long
     <ThreadStatic>
     Private Shared _当前渲染控件 As HashSet(Of Control)
 
@@ -39,14 +41,14 @@ Friend NotInheritable Class D3D_ControlSurfaceRegistry
     End Function
 
     Friend Shared Function GetAllocatedSurfaceBytes() As Long
-        Dim 总字节数 As Long
-        For Each 项目 In _entries.Values
-            If 项目 IsNot Nothing AndAlso 项目.Surface IsNot Nothing Then
-                总字节数 += Math.Max(0L, 项目.Surface.AllocatedBytes)
-            End If
-        Next
-        Return Math.Max(0L, 总字节数)
+        Return Math.Max(0L, Threading.Interlocked.Read(_allocatedSurfaceBytes))
     End Function
+
+    Friend Shared Sub SurfaceBytesChanged(delta As Long)
+        If delta = 0 Then Return
+        Dim current = Threading.Interlocked.Add(_allocatedSurfaceBytes, delta)
+        If current < 0 Then Threading.Interlocked.Exchange(_allocatedSurfaceBytes, 0L)
+    End Sub
 
     Friend Shared Function RenderControl(control As Control, renderable As D3D_IGpuRenderable,
                                          Optional requestedDirty As Rectangle = Nothing,
@@ -198,7 +200,7 @@ Friend NotInheritable Class D3D_ControlSurfaceRegistry
         Dim 来源 = 查找最近GPU祖先(owner)
         If 来源 Is Nothing Then Return False
         Dim 目标区域 As New RectangleF(0, 0, owner.Width, owner.Height)
-        ' V3 的 RenderGpu 只负责当前控件自身；背景来源只采样已完成的父级表面。
+        ' RenderGpu 只负责当前控件自身；背景来源只采样已完成的父级表面。
         ' 不在这里主动渲染兄弟或子树，避免启动阶段递归和重复重绘。
         Return TryDrawBackground(owner, 来源, context, 目标区域,
                                  renderSourceIfDirty:=True,
@@ -286,7 +288,7 @@ Friend NotInheritable Class D3D_ControlSurfaceRegistry
             If 来源区域.Width > 0 AndAlso 来源区域.Height > 0 AndAlso
                Not 来源区域.IntersectsWith(New RectangleF(脏区.X, 脏区.Y, 脏区.Width, 脏区.Height)) Then Continue For
             D3D_RenderDiagnostics.V5DependencyInvalidation()
-            D3D_V5Presentation.RequestRender(消费者)
+            D3D_V5Presentation.RequestRenderBatched(消费者)
         Next
     End Sub
 
@@ -301,7 +303,7 @@ Friend NotInheritable Class D3D_ControlSurfaceRegistry
                 consumer.BeginInvoke(CType(
                     Sub()
                         If consumer.IsDisposed Then Return
-                        D3D_V5Presentation.RequestRender(consumer)
+                        D3D_V5Presentation.RequestRenderBatched(consumer)
                         请求依赖消费者(consumer, New Rectangle(Point.Empty, consumer.Size))
                     End Sub, Action))
             Catch
@@ -326,15 +328,16 @@ Friend NotInheritable Class D3D_ControlSurfaceRegistry
         If _当前渲染控件 Is Nothing Then _当前渲染控件 = New HashSet(Of Control)()
         _当前渲染控件.Add(控件)
         Try
-            ' 依赖关系描述当前帧采样的像素。每次从 RenderGpu 重新构建，
-            ' 防止来源切换、裁剪变化和控件移动留下长期存活的过期失效关系。
-            分离消费者依赖(控件)
+            ' 稳定帧保留依赖事件订阅。当前帧只捕获实际使用的来源，
+            ' 来源切换或布局变化时再清理过期边，避免每帧分离/重绑整条坐标链。
+            项目.SeenSources.Clear()
             Dim 请求脏区 = 项目.PendingDirty
             ' 进入 RenderGpu 前清空请求。若控件或其依赖来源在渲染期间自行失效，
             ' MarkDirty 写入的新待处理区域必须保留到下一帧。
             项目.PendingDirty = Rectangle.Empty
             Dim 渲染成功 = 项目.Surface.Render(可渲染对象, 请求脏区, 绘制后处理)
             If 渲染成功 Then
+                清理未使用依赖(控件, 项目)
                 项目.Revision = 项目.Surface.Revision
                 项目.LastUsed = D3D_GpuCache.NextTick()
                 项目.Dirty = 项目.PendingDirty.Width > 0 AndAlso 项目.PendingDirty.Height > 0
@@ -363,7 +366,7 @@ Friend NotInheritable Class D3D_ControlSurfaceRegistry
         AddHandler 控件.SizeChanged, AddressOf 控件几何已变化
         AddHandler 控件.LocationChanged, AddressOf 控件几何已变化
         AddHandler 控件.ParentChanged, AddressOf 控件几何已变化
-        AddHandler 控件.VisibleChanged, AddressOf 控件几何已变化
+        AddHandler 控件.VisibleChanged, AddressOf 控件可见性已变化
         AddHandler 控件.HandleCreated, AddressOf 控件几何已变化
         AddHandler 控件.HandleDestroyed, AddressOf 控件句柄已销毁
         AddHandler 控件.Disposed, AddressOf 控件已释放
@@ -371,6 +374,13 @@ Friend NotInheritable Class D3D_ControlSurfaceRegistry
     End Function
 
     Private Shared Sub 注册依赖(消费者 As Control, 来源 As Control, 来源区域 As RectangleF)
+        Dim 项目 As Entry = Nothing
+        If Not _entries.TryGetValue(消费者, 项目) OrElse 项目 Is Nothing Then
+            项目 = 获取或创建项目(消费者)
+        End If
+        If 项目 Is Nothing Then Return
+        Dim 首次捕获来源 = 项目.SeenSources.Add(来源)
+
         Dim 来源消费者 As HashSet(Of Control) = Nothing
         If Not _consumers.TryGetValue(来源, 来源消费者) Then
             来源消费者 = New HashSet(Of Control)()
@@ -391,13 +401,41 @@ Friend NotInheritable Class D3D_ControlSurfaceRegistry
             _dependencySourceRects(消费者) = 按来源区域
         End If
         Dim 现有区域 As RectangleF = RectangleF.Empty
-        If 按来源区域.TryGetValue(来源, 现有区域) AndAlso 现有区域.Width > 0 AndAlso 现有区域.Height > 0 Then
+        If Not 首次捕获来源 AndAlso
+           按来源区域.TryGetValue(来源, 现有区域) AndAlso
+           现有区域.Width > 0 AndAlso 现有区域.Height > 0 Then
             按来源区域(来源) = RectangleF.Union(现有区域, 来源区域)
         Else
             按来源区域(来源) = 来源区域
         End If
 
         注册坐标依赖(消费者, 来源)
+    End Sub
+
+    Private Shared Sub 清理未使用依赖(消费者 As Control, 项目 As Entry)
+        If 消费者 Is Nothing OrElse 项目 Is Nothing Then Return
+        Dim 来源集合 As HashSet(Of Control) = Nothing
+        If Not _consumerSources.TryGetValue(消费者, 来源集合) OrElse 来源集合 Is Nothing Then Return
+
+        Dim 过期来源 = 来源集合.Where(Function(source) Not 项目.SeenSources.Contains(source)).ToArray()
+        If 过期来源.Length = 0 Then
+            D3D_RenderDiagnostics.V5DependencyTopologyHit()
+            Return
+        End If
+        D3D_RenderDiagnostics.V5DependencyTopologyRebuild()
+
+        For Each 来源 In 过期来源
+            移除来源边(消费者, 来源)
+        Next
+
+        ' 只有依赖拓扑确实变化时才重建坐标链；稳定绘制帧不会触碰事件订阅。
+        分离坐标依赖(消费者)
+        Dim 当前来源 As HashSet(Of Control) = Nothing
+        If _consumerSources.TryGetValue(消费者, 当前来源) Then
+            For Each 来源 In 当前来源
+                注册坐标依赖(消费者, 来源)
+            Next
+        End If
     End Sub
 
     Private Shared Sub 注册坐标依赖(消费者 As Control, 来源 As Control)
@@ -446,6 +484,12 @@ Friend NotInheritable Class D3D_ControlSurfaceRegistry
     End Sub
 
     Private Shared Sub 分离消费者来源(消费者 As Control, 来源 As Control)
+        移除来源边(消费者, 来源)
+        ' 坐标订阅可在来源切换后重建；稳定绘制帧不进入此路径。
+        分离坐标依赖(消费者)
+    End Sub
+
+    Private Shared Sub 移除来源边(消费者 As Control, 来源 As Control)
         Dim 来源集合 As HashSet(Of Control) = Nothing
         If _consumerSources.TryGetValue(消费者, 来源集合) Then
             来源集合.Remove(来源)
@@ -461,8 +505,6 @@ Friend NotInheritable Class D3D_ControlSurfaceRegistry
             来源区域集合.Remove(来源)
             If 来源区域集合.Count = 0 Then _dependencySourceRects.Remove(消费者)
         End If
-        ' 坐标订阅可在下一帧低成本重建，并可能由多个来源共享，因此分离完整监视集合。
-        分离坐标依赖(消费者)
     End Sub
 
     Private Shared Sub 分离坐标依赖(消费者 As Control)
@@ -490,7 +532,7 @@ Friend NotInheritable Class D3D_ControlSurfaceRegistry
         If 坐标控件 Is Nothing OrElse Not _coordinateConsumers.TryGetValue(坐标控件, 目标集合) Then Return
         For Each 消费者 In 目标集合.ToArray()
             If 消费者 Is Nothing OrElse 消费者.IsDisposed Then Continue For
-            D3D_V5Presentation.RequestRender(消费者)
+            D3D_V5Presentation.RequestRenderBatched(消费者)
         Next
     End Sub
 
@@ -505,7 +547,7 @@ Friend NotInheritable Class D3D_ControlSurfaceRegistry
                 监视控件集合.Remove(坐标控件)
                 If 监视控件集合.Count = 0 Then _consumerCoordinateControls.Remove(消费者)
             End If
-            If 消费者 IsNot Nothing AndAlso Not 消费者.IsDisposed Then D3D_V5Presentation.RequestRender(消费者)
+            If 消费者 IsNot Nothing AndAlso Not 消费者.IsDisposed Then D3D_V5Presentation.RequestRenderBatched(消费者)
         Next
     End Sub
 
@@ -515,17 +557,26 @@ Friend NotInheritable Class D3D_ControlSurfaceRegistry
         Dim 脏区 = If(失效事件 Is Nothing, Rectangle.Empty, 失效事件.InvalidRect)
         MarkDirty(控件, 脏区)
 
-        ' 大多数 V5 控件在此同步渲染，以保持父子表面由外到内的提交顺序。
-        ' 单 HWND 对话框由 D3D_V5Presentation 合并请求，因此改为在其中排队。
+        ' 失效事件只标记目标并进入 V5 批次协调器；协调器按树深度从外到内提交，
+        ' 因而不会在 Invalidated 回调中递归同步渲染。
         If D3D_V5Presentation.IsV5Control(控件) AndAlso Not D3D_V5Presentation.IsRendering Then
-            D3D_V5Presentation.RequestRender(控件, 脏区)
+            D3D_V5Presentation.RequestRenderBatched(控件, 脏区)
         End If
     End Sub
 
     Private Shared Sub 控件几何已变化(发送者 As Object, 事件参数 As EventArgs)
+        Dim 控件 = TryCast(发送者, Control)
         ' 几何变化同时影响当前表面及所有采样消费者。依赖矩形位于来源的旧坐标系，
         ' 因此必须无条件使消费者失效。
-        MarkDirty(TryCast(发送者, Control), requestConsumers:=True)
+        MarkDirty(控件, requestConsumers:=True)
+    End Sub
+
+    Private Shared Sub 控件可见性已变化(发送者 As Object, 事件参数 As EventArgs)
+        Dim 控件 = TryCast(发送者, Control)
+        MarkDirty(控件, requestConsumers:=True)
+        If 控件 IsNot Nothing AndAlso Not D3D_ControlTreeWalker.IsEffectivelyVisible(控件) Then
+            D3D_V5Presentation.ReleaseHiddenSubtreeResources(控件)
+        End If
     End Sub
 
     Friend Shared Function GetRecoveryTargets(form As Form) As Control()
@@ -534,7 +585,8 @@ Friend NotInheritable Class D3D_ControlSurfaceRegistry
         Return _entries.Keys.
             Where(Function(control)
                       If control Is Nothing OrElse control.IsDisposed OrElse
-                         Not control.IsHandleCreated OrElse Not control.Visible Then Return False
+                         Not control.IsHandleCreated OrElse
+                         Not D3D_ControlTreeWalker.IsEffectivelyVisible(control) Then Return False
                       If Not D3D_V5Presentation.IsV5Control(control) Then Return False
                       Return Object.ReferenceEquals(D3D_RenderCore.ResolveCompositorForm(control), form)
                   End Function).
@@ -543,14 +595,7 @@ Friend NotInheritable Class D3D_ControlSurfaceRegistry
     End Function
 
     Private Shared Function 获取控件树深度(control As Control) As Integer
-        Dim depth As Integer = 0
-        Dim current = control
-        Dim visited As New HashSet(Of Control)()
-        While current IsNot Nothing AndAlso visited.Add(current)
-            depth += 1
-            current = current.Parent
-        End While
-        Return depth
+        Return D3D_ControlTreeWalker.GetTreeDepth(control)
     End Function
 
     Private Shared Sub 控件句柄已销毁(发送者 As Object, 事件参数 As EventArgs)
@@ -589,7 +634,7 @@ Friend NotInheritable Class D3D_ControlSurfaceRegistry
         End If
         _consumers.Remove(控件)
         For Each 消费者 In 依赖消费者
-            If 消费者 IsNot Nothing AndAlso Not 消费者.IsDisposed Then D3D_V5Presentation.RequestRender(消费者)
+            If 消费者 IsNot Nothing AndAlso Not 消费者.IsDisposed Then D3D_V5Presentation.RequestRenderBatched(消费者)
         Next
     End Sub
 
@@ -619,12 +664,35 @@ Friend NotInheritable Class D3D_ControlSurfaceRegistry
     Friend Shared Sub ReleaseUnreferencedSurface(control As Control)
         Dim 项目 As Entry = Nothing
         If control Is Nothing OrElse Not _entries.TryGetValue(control, 项目) OrElse 项目 Is Nothing Then Return
-        ' 可见控件的表面是当前 HWND 的显示工作集。V3 保留这类表面，
+        ' 可见控件的表面是当前 HWND 的显示工作集。当前策略保留这类表面，
         ' 否则下一次窗口装饰或背景映射重绘只能看到被清空的纯色表面。
-        If Not control.IsDisposed AndAlso control.Visible Then Return
-        If 项目.Rendering OrElse _consumers.ContainsKey(control) Then Return
+        If D3D_ControlTreeWalker.IsEffectivelyVisible(control) Then Return
+        If 项目.Rendering Then Return
+
+        ' 隐藏页的后代可能仍保持本地 Visible=True。先移除只属于隐藏控件的依赖边，
+        ' 再判断来源表面是否仍被真正可见的消费者使用。
+        分离消费者依赖(control)
+        Dim consumers As HashSet(Of Control) = Nothing
+        If _consumers.TryGetValue(control, consumers) Then
+            For Each consumer In consumers.ToArray()
+                If D3D_ControlTreeWalker.IsEffectivelyVisible(consumer) Then Return
+                分离消费者来源(consumer, control)
+            Next
+        End If
         If 项目.Surface Is Nothing OrElse 项目.Surface.Bitmap Is Nothing Then Return
         项目.Surface.ReleaseSurfaceResources(markRegistryDirty:=False)
+    End Sub
+
+    Friend Shared Sub ReleaseUnreferencedSubtree(root As Control)
+        If root Is Nothing Then Return
+
+        ' WinForms 的 Visible 是每个控件的本地状态；隐藏页需要显式遍历已注册的后代。
+        For Each control In _entries.Keys.ToArray()
+            If control Is Nothing OrElse control.IsDisposed OrElse
+               Not D3D_ControlTreeWalker.IsDescendantOrSelf(control, root) OrElse
+               D3D_ControlTreeWalker.IsEffectivelyVisible(control) Then Continue For
+            ReleaseUnreferencedSurface(control)
+        Next
     End Sub
 
     Friend Shared Function GetRevision(control As Control) As Long

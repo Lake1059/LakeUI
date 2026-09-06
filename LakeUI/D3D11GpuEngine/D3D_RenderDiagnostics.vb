@@ -38,6 +38,13 @@ Friend Module D3D_RenderDiagnostics
     Private _v5FullRequestedPixels As Long
     Private _v5InvisibleSkips As Long
     Private _v5DependencyInvalidations As Long
+    Private _v5BatchRequests As Long
+    Private _v5BatchFlushes As Long
+    Private _v5BatchControls As Long
+    Private _v5PartialSurfaceRenders As Long
+    Private _v5FullSurfaceRenders As Long
+    Private _v5DependencyTopologyHits As Long
+    Private _v5DependencyTopologyRebuilds As Long
     Private _v5SurfaceRecreates As Long
     Private _v5PresenterRecreates As Long
     Private _v5DeviceLostCount As Long
@@ -140,6 +147,13 @@ Friend Module D3D_RenderDiagnostics
         Interlocked.Exchange(_v5FullRequestedPixels, 0)
         Interlocked.Exchange(_v5InvisibleSkips, 0)
         Interlocked.Exchange(_v5DependencyInvalidations, 0)
+        Interlocked.Exchange(_v5BatchRequests, 0)
+        Interlocked.Exchange(_v5BatchFlushes, 0)
+        Interlocked.Exchange(_v5BatchControls, 0)
+        Interlocked.Exchange(_v5PartialSurfaceRenders, 0)
+        Interlocked.Exchange(_v5FullSurfaceRenders, 0)
+        Interlocked.Exchange(_v5DependencyTopologyHits, 0)
+        Interlocked.Exchange(_v5DependencyTopologyRebuilds, 0)
         Interlocked.Exchange(_v5SurfaceRecreates, 0)
         Interlocked.Exchange(_v5PresenterRecreates, 0)
         Interlocked.Exchange(_v5DeviceLostCount, 0)
@@ -246,6 +260,13 @@ Friend Module D3D_RenderDiagnostics
             .V5FullRequestedPixels = Interlocked.Read(_v5FullRequestedPixels),
             .V5InvisibleSkips = Interlocked.Read(_v5InvisibleSkips),
             .V5DependencyInvalidations = Interlocked.Read(_v5DependencyInvalidations),
+            .V5BatchRequests = Interlocked.Read(_v5BatchRequests),
+            .V5BatchFlushes = Interlocked.Read(_v5BatchFlushes),
+            .V5BatchControls = Interlocked.Read(_v5BatchControls),
+            .V5PartialSurfaceRenders = Interlocked.Read(_v5PartialSurfaceRenders),
+            .V5FullSurfaceRenders = Interlocked.Read(_v5FullSurfaceRenders),
+            .V5DependencyTopologyHits = Interlocked.Read(_v5DependencyTopologyHits),
+            .V5DependencyTopologyRebuilds = Interlocked.Read(_v5DependencyTopologyRebuilds),
             .V5SurfaceRecreates = Interlocked.Read(_v5SurfaceRecreates),
             .V5PresenterRecreates = Interlocked.Read(_v5PresenterRecreates),
             .V5DeviceLostCount = Interlocked.Read(_v5DeviceLostCount),
@@ -268,6 +289,32 @@ Friend Module D3D_RenderDiagnostics
 
     Friend Sub V5DependencyInvalidation()
         If _enabled Then Interlocked.Increment(_v5DependencyInvalidations)
+    End Sub
+
+    Friend Sub V5BatchRequested()
+        If _enabled Then Interlocked.Increment(_v5BatchRequests)
+    End Sub
+
+    Friend Sub V5BatchFlushed(controlCount As Integer)
+        If Not _enabled Then Return
+        Interlocked.Increment(_v5BatchFlushes)
+        Interlocked.Add(_v5BatchControls, Math.Max(0, controlCount))
+    End Sub
+
+    Friend Sub V5PartialSurfaceRender()
+        If _enabled Then Interlocked.Increment(_v5PartialSurfaceRenders)
+    End Sub
+
+    Friend Sub V5FullSurfaceRender()
+        If _enabled Then Interlocked.Increment(_v5FullSurfaceRenders)
+    End Sub
+
+    Friend Sub V5DependencyTopologyHit()
+        If _enabled Then Interlocked.Increment(_v5DependencyTopologyHits)
+    End Sub
+
+    Friend Sub V5DependencyTopologyRebuild()
+        If _enabled Then Interlocked.Increment(_v5DependencyTopologyRebuilds)
     End Sub
 
     Friend Sub V5SurfaceRecreate()
@@ -504,6 +551,13 @@ Friend Module D3D_RenderDiagnostics
             result.PresentMillisecondsPeak = result.Render.V5PresentMillisecondsPeak
             result.DirtyRequestedPixels = result.Render.V5DirtyRequestedPixels
             result.FullRequestedPixels = result.Render.V5FullRequestedPixels
+            result.BatchRequests = result.Render.V5BatchRequests
+            result.BatchFlushes = result.Render.V5BatchFlushes
+            result.BatchControls = result.Render.V5BatchControls
+            result.PartialSurfaceRenders = result.Render.V5PartialSurfaceRenders
+            result.FullSurfaceRenders = result.Render.V5FullSurfaceRenders
+            result.DependencyTopologyHits = result.Render.V5DependencyTopologyHits
+            result.DependencyTopologyRebuilds = result.Render.V5DependencyTopologyRebuilds
             result.FrameIntervalP50 = result.Render.V5FrameIntervalMillisecondsP50
             result.FrameIntervalP95 = result.Render.V5FrameIntervalMillisecondsP95
             result.FrameIntervalP99 = result.Render.V5FrameIntervalMillisecondsP99
@@ -704,6 +758,13 @@ Public Structure D3D_V5ProbeSnapshot
     Public PresentMillisecondsPeak As Double
     Public DirtyRequestedPixels As Long
     Public FullRequestedPixels As Long
+    Public BatchRequests As Long
+    Public BatchFlushes As Long
+    Public BatchControls As Long
+    Public PartialSurfaceRenders As Long
+    Public FullSurfaceRenders As Long
+    Public DependencyTopologyHits As Long
+    Public DependencyTopologyRebuilds As Long
     Public FrameIntervalP50 As Double
     Public FrameIntervalP95 As Double
     Public FrameIntervalP99 As Double
@@ -741,6 +802,13 @@ Friend Structure D3D_RenderStatistics
     Public V5FullRequestedPixels As Long
     Public V5InvisibleSkips As Long
     Public V5DependencyInvalidations As Long
+    Public V5BatchRequests As Long
+    Public V5BatchFlushes As Long
+    Public V5BatchControls As Long
+    Public V5PartialSurfaceRenders As Long
+    Public V5FullSurfaceRenders As Long
+    Public V5DependencyTopologyHits As Long
+    Public V5DependencyTopologyRebuilds As Long
     Public V5SurfaceRecreates As Long
     Public V5PresenterRecreates As Long
     Public V5DeviceLostCount As Long
