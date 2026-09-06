@@ -2,6 +2,7 @@ using System.Drawing;
 using System.ComponentModel;
 using System.Collections;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using LakeUI;
 
@@ -39,12 +40,74 @@ static class Program
         VerifyFullCleanupRecreatesSharedFactories();
         VerifyV5DirtyRetryAndResetContracts();
         VerifyV5BatchCoalescingDiagnostics();
+        VerifyV5BatchSurvivesCallbackOwnerTeardown();
+        VerifyDxDialogsKeepCaptionHoverRendering();
         VerifyBackdropImageSnapshotSurvivesCallerDispose();
         VerifyHdrImageMappingUsesCachedLookup();
         VerifyV5ProbeApi();
         VerifyWindowCornerModeContract();
+        VerifyLiveLayerShadowResize();
         VerifyOverlayConfirmationThenOwnerClosingDoesNotDeadlock();
         Console.WriteLine("LakeUI tests passed.");
+    }
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr SendMessage(IntPtr window, int message, IntPtr first, IntPtr second);
+
+    [DllImport("user32.dll")]
+    private static extern bool SetWindowPos(IntPtr window, IntPtr after, int left, int top,
+        int width, int height, uint flags);
+
+    private static Rectangle NativeBounds(Form form) => (Rectangle)typeof(ThisIsYourWindow)
+        .GetMethod("获取窗口屏幕矩形", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, new object[] { form })!;
+
+    private static void VerifyLiveLayerShadowResize()
+    {
+        using var chrome = new ThisIsYourWindow
+        {
+            ShadowMode = ThisIsYourWindow.ShadowModeEnum.Layer,
+            LayerShadowResizeFullArea = true,
+            SizeMoveRefreshOptimization = true
+        };
+        using var form = new Form
+        {
+            StartPosition = FormStartPosition.Manual,
+            Bounds = new Rectangle(100, 100, 640, 360),
+            ShowInTaskbar = false
+        };
+        chrome.Attach(form);
+        form.Show();
+        Application.DoEvents();
+        var states = (IDictionary)typeof(ThisIsYourWindow).GetField("_forms",
+            BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(chrome)!;
+        var state = states[form.Handle]!;
+        var shadow = (Form)state.GetType().GetField("ShadowForm")!.GetValue(state)!;
+        var initialSize = shadow.Size;
+        var initialHostSize = form.Size;
+        SendMessage(form.Handle, 0x231, IntPtr.Zero, IntPtr.Zero);
+        try
+        {
+            foreach (var growth in new[] { 80, 160, 40 })
+            {
+                Assert(SetWindowPos(form.Handle, IntPtr.Zero, 120, 120,
+                    initialHostSize.Width + growth, initialHostSize.Height + growth, 0x14),
+                    "The live resize test must resize the native host window.");
+                Application.DoEvents();
+                Assert(NativeBounds(shadow).Width == initialSize.Width + growth && NativeBounds(shadow).Height == initialSize.Height + growth,
+                    $"The layered shadow must resize before WM_EXITSIZEMOVE: initial={initialSize}, actual={NativeBounds(shadow)}, host={NativeBounds(form)}, growth={growth}.");
+            }
+            var resized = NativeBounds(shadow).Size;
+            SetWindowPos(form.Handle, IntPtr.Zero, 180, 160, 0, 0, 0x15);
+            Application.DoEvents();
+            var moved = NativeBounds(shadow);
+            Assert(moved.Size == resized && moved.Left == 165 && moved.Top == 145,
+                "Moving without resizing must reuse the shadow surface and follow the host.");
+        }
+        finally
+        {
+            SendMessage(form.Handle, 0x232, IntPtr.Zero, IntPtr.Zero);
+            chrome.Detach(form);
+        }
     }
 
     private static void VerifyWindowCornerModeContract()
@@ -955,6 +1018,123 @@ static class Program
             "An audited dirty-region control must use the clipped surface render path.");
         D3D_PaintBridge.V5ProbeEnabled = false;
         partialForm.Hide();
+    }
+
+    private static void VerifyV5BatchSurvivesCallbackOwnerTeardown()
+    {
+        foreach (var teardown in new Action<BatchOnlyGpuControl>[]
+        {
+            control => control.Dispose(),
+            control => control.DestroyWindowHandle(),
+            control => control.RebuildHandle()
+        })
+        {
+            using var form = new Form { ClientSize = new Size(320, 180), ShowInTaskbar = false };
+            using var callbackOwner = new BatchOnlyGpuControl { Bounds = new Rectangle(0, 0, 100, 100) };
+            using var survivor = new BatchOnlyGpuControl { Bounds = new Rectangle(120, 0, 100, 100) };
+            form.Controls.Add(callbackOwner);
+            form.Controls.Add(survivor);
+            form.Show();
+            Application.DoEvents();
+            D3D_V5Presentation.RequestRender(callbackOwner);
+            D3D_V5Presentation.RequestRender(survivor);
+            Application.DoEvents();
+
+            D3D_V5Presentation.RequestRenderBatched(callbackOwner);
+            D3D_V5Presentation.RequestRenderBatched(survivor);
+            teardown(callbackOwner);
+
+            var before = survivor.RenderCount;
+            PumpUntil(() => survivor.RenderCount > before);
+            before = survivor.RenderCount;
+            D3D_V5Presentation.RequestRenderBatched(survivor);
+            PumpUntil(() => survivor.RenderCount > before);
+        }
+    }
+
+    private static void VerifyDxDialogsKeepCaptionHoverRendering()
+    {
+        using var chrome = new ThisIsYourWindow
+        {
+            ShadowMode = ThisIsYourWindow.ShadowModeEnum.None,
+            ShowAnimation = ThisIsYourWindow.WindowShowAnimationMode.None,
+            CloseAnimation = ThisIsYourWindow.WindowCloseAnimationMode.None
+        };
+        using var owner = new Form { ClientSize = new Size(480, 300), ShowInTaskbar = false };
+        using var peer = new Form { ClientSize = new Size(480, 300), ShowInTaskbar = false };
+        chrome.Attach(owner);
+        chrome.Attach(peer);
+        owner.Show();
+        peer.Show();
+        Application.DoEvents();
+
+        foreach (var createDialog in new Func<Form>[] { () => new ModernColorDialog(), () => new ModernFontDialog() })
+        foreach (var modal in new[] { false, true })
+        foreach (var result in new[] { DialogResult.None, DialogResult.OK, DialogResult.Cancel })
+        {
+            using var dialog = createDialog();
+            dialog.ShowInTaskbar = false;
+            chrome.Attach(dialog);
+
+            void CloseWithPendingCaptions()
+            {
+                D3D_V5Presentation.RequestRenderBatched(dialog);
+                chrome.InvalidateCaption(owner);
+                chrome.InvalidateCaption(peer);
+                dialog.DialogResult = result;
+                dialog.Close();
+            }
+
+            if (modal)
+            {
+                dialog.Shown += (_, _) => dialog.BeginInvoke((Action)CloseWithPendingCaptions);
+                dialog.ShowDialog(owner);
+            }
+            else
+            {
+                dialog.Show(owner);
+                Application.DoEvents();
+                CloseWithPendingCaptions();
+            }
+
+            dialog.Dispose();
+            Application.DoEvents();
+            VerifyCaptionHoverRendering(chrome, owner);
+            VerifyCaptionHoverRendering(chrome, peer);
+        }
+    }
+
+    private static void VerifyCaptionHoverRendering(ThisIsYourWindow chrome, Form form)
+    {
+        var states = (IDictionary)typeof(ThisIsYourWindow).GetField("_forms",
+            BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(chrome)!;
+        var state = (ThisIsYourWindow.PerFormState)states[form.Handle]!;
+        var caption = state.ChromeOverlays[0];
+
+        foreach (var (bounds, hit) in new[] { (state.CloseRect, 20), (state.MaxRect, 9), (state.MinRect, 8) })
+        {
+            var point = form.PointToScreen(new Point(bounds.Left + bounds.Width / 2, bounds.Top + bounds.Height / 2));
+            var coordinates = new IntPtr((point.X & 0xffff) | ((point.Y & 0xffff) << 16));
+            var actualHit = SendMessage(form.Handle, 0x84, IntPtr.Zero, coordinates);
+            Assert(actualHit.ToInt32() == hit && state.HoverHit == hit,
+                "Caption buttons must still receive hover hit tests after a DX dialog closes.");
+            Assert(D3D_ControlSurfaceRegistry.IsDirty(caption),
+                "Caption hover changes must queue a GPU refresh.");
+            PumpUntil(() => D3D_ControlSurfaceRegistry.HasCurrentSurface(caption));
+
+            SendMessage(form.Handle, 0x2a2, IntPtr.Zero, IntPtr.Zero);
+            Assert(state.HoverHit == 0 && D3D_ControlSurfaceRegistry.IsDirty(caption),
+                "Leaving a caption button must clear and repaint its hover state.");
+            PumpUntil(() => D3D_ControlSurfaceRegistry.HasCurrentSurface(caption));
+        }
+    }
+
+    private sealed class BatchOnlyGpuControl : Control, D3D_IGpuRenderable, V5_IGpuPresentationSource
+    {
+        public int RenderCount { get; private set; }
+        public void DestroyWindowHandle() => DestroyHandle();
+        public void RebuildHandle() => RecreateHandle();
+        public void RenderGpu(D3D_PaintContext context) => RenderCount++;
     }
 
     private sealed class CountingGpuControl : Control, D3D_IGpuRenderable, V5_IGpuPresentationSource

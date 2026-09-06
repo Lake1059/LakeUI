@@ -390,12 +390,12 @@ Friend Class ShadowWindow
         Dim shadowY As Integer = hostBounds.Y - depth
         cornerRadius = Math.Max(0, Math.Min(cornerRadius, Math.Min(hostBounds.Width, hostBounds.Height) \ 2))
 
-        If moveOnly Then
+        Dim hostSize As New Size(hostBounds.Width, hostBounds.Height)
+        If moveOnly AndAlso hostSize = _lastHostSize AndAlso cornerRadius = _lastCornerRadius Then
             MoveToPosition(shadowX, shadowY)
             Return
         End If
 
-        Dim hostSize As New Size(hostBounds.Width, hostBounds.Height)
         Dim needsRender As Boolean = (hostSize <> _lastHostSize) OrElse cornerRadius <> _lastCornerRadius
 
         If needsRender Then
@@ -480,11 +480,17 @@ Friend Class ShadowWindow
         Dim halfH As Double = hostH / 2.0R
         Dim innerHalfW As Double = Math.Max(0.0R, halfW - radius)
         Dim innerHalfH As Double = Math.Max(0.0R, halfH - radius)
+        Dim transparentLeft As Integer = depth + CInt(Math.Ceiling(radius))
+        Dim transparentRight As Integer = depth + hostW - CInt(Math.Ceiling(radius))
 
         For y As Integer = 0 To h - 1
             Dim rowOff As Integer = y * stride
             Dim py As Double = (y - depth + 0.5R) - halfH
             For x As Integer = 0 To w - 1
+                If y >= depth AndAlso y < depth + hostH AndAlso
+                    x = transparentLeft AndAlso transparentRight > transparentLeft Then
+                    x = transparentRight
+                End If
                 Dim px As Double = (x - depth + 0.5R) - halfW
                 Dim qx As Double = Math.Abs(px) - innerHalfW
                 Dim qy As Double = Math.Abs(py) - innerHalfH

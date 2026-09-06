@@ -9,6 +9,7 @@ Imports System.Reflection
 Friend NotInheritable Class D3D_V5Presentation
     Private NotInheritable Class RenderBatchState
         Public ReadOnly Pending As New Dictionary(Of Control, BatchedRenderEntry)()
+        Public ReadOnly Dispatcher As New WindowsFormsSynchronizationContext()
         Public Posted As Boolean
         Public Sequence As Long
     End Class
@@ -34,6 +35,7 @@ Friend NotInheritable Class D3D_V5Presentation
     End Property
 
     Shared Sub New()
+        AddHandler Application.ThreadExit, AddressOf UI线程退出时
         AddHandler D3D_RenderCore.DeviceManager.DeviceLost, AddressOf 设备丢失时
         AddHandler Microsoft.Win32.SystemEvents.DisplaySettingsChanged, AddressOf 显示设置变化时
     End Sub
@@ -136,7 +138,7 @@ Friend NotInheritable Class D3D_V5Presentation
         If state.Posted Then Return
         state.Posted = True
         Try
-            control.BeginInvoke(CType(Sub() FlushBatchedRenders(state), Action))
+            state.Dispatcher.Post(Sub(批次) FlushBatchedRenders(DirectCast(批次, RenderBatchState)), state)
         Catch
             state.Posted = False
         End Try
@@ -172,9 +174,10 @@ Friend NotInheritable Class D3D_V5Presentation
     Private Shared Sub 移除批次请求(control As Control)
         If control Is Nothing OrElse _renderBatch Is Nothing Then Return
         _renderBatch.Pending.Remove(control)
-        ' 句柄销毁可能让 BeginInvoke 回调被 WinForms 丢弃；没有其他待处理项时
-        ' 允许后续批次重新投递。旧回调即使随后到达也只会看到空批次。
-        If _renderBatch.Pending.Count = 0 Then _renderBatch.Posted = False
+    End Sub
+
+    Private Shared Sub UI线程退出时(发送者 As Object, 事件参数 As EventArgs)
+        _renderBatch = Nothing
     End Sub
 
     Private Shared Sub 立即渲染(控件 As Control, 可渲染对象 As D3D_IGpuRenderable,
