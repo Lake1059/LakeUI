@@ -4,6 +4,99 @@
 
 ## 主链路
 
+## 初始化与整页刷新
+
+从外到内是强制约束。`BeginRenderUpdate` 在 UI 线程累积初始化、布局和可见性变更，最外层
+作用域退出时统一派发。初始化多控件批次先按深度准备表面及交换链，再按相同顺序提交；不会并行
+执行 `RenderGpu`，也不会在后台访问控件。不要跨 `Await`、模态对话框或消息循环持有事务。
+
+```vb
+Using D3D_PaintBridge.BeginRenderUpdate(页面根控件)
+    页面根控件.SuspendLayout()
+    Try
+        ' 批量设置属性、增加控件、绑定背景和数据。
+    Finally
+        页面根控件.ResumeLayout(True)
+    End Try
+End Using
+```
+
+两个选项卡控件已自动使用事务。存在旧页时，旧页保持在新页前方，整批提交尝试完成后才
+切换层次并隐藏旧页；不截屏、不生成窗口级备份。独立 HWND 交换链不能保证同一扫描时刻
+上屏，设备丢失或交换链忙时仍由后续重试恢复。首个窗口显示和普通原生控件不属于原子呈现。
+
+`ModernTabListControl.ModernTabPage.BoundControlFactory` 仅在首次选中时创建页面，后续复用
+`BoundControl`。工厂运行于 UI 线程，读取 `BoundControl` 或遍历隐藏页不会触发构造。
+DEMO 使用该接口，启动只构造首个页面。
+
+`D3D_ImagePreparation.LoadBitmapAsync` 使用最多两个后台工作任务读取文件并将首帧解码为
+独占 PArgb 位图。返回值由调用方拥有；须在 UI 线程接收结果，并处理取消、页面释放及过期
+结果。它不上传 GPU，也不预先应用 HDR；HDR 仍按当前配置在上传时处理。动画图片沿用原有
+多帧路径。DEMO 的图片拖放展示了取消旧请求和释放旧结果的用法。
+
+短文本测量结果缓存最多 512 项，包含字体、尺寸、格式、DPI 等键，参与现有 CPU 预算和
+LRU 淘汰；格式失效与资源清理会清空缓存，不保留 Font、Control 或 COM 对象。
+
+### 验证与计时
+
+开启 `V5ProbeEnabled` 并调用 `ResetV5Probe()` 后，`GetV5RefreshTimings()` 返回有界、无控件
+强引用的分段统计。`RenderGpu`、`PresenterResources`、`DXGIPresent` 分别记录内容准备、
+呈现资源和 DXGI 调用。记录的是 CPU 墙钟时间；阶段存在包含关系，不能直接相加，提交
+时间也不代表屏幕扫描时间。`UpdateScope` 只计作用域内的变更，不包含退出时的提交。
+
+```powershell
+dotnet run --project LakeUI.Tests -c Release -- --refresh-probe
+dotnet run --project LakeUI.Tests -c Release -- --demo-refresh <LakeUI.Demo.dll路径>
+```
+
+40 控件探针比较同步逐项请求与事务合并，并输出总同步耗时及首次到末次提交跨度。
+本机实测内容绘制约 2～7ms，而逐项 DXGI 提交可累计约 320ms；只读 NVAPI 查询确认了
+NVIDIA 全局最大帧率为 120 FPS，且 DEMO 没有独立配置。
+测得总提交速率与该配置接近，但没有修改驱动作对照，不能仅凭相关性判定唯一根因。
+本次不宣称等比例缩短整页耗时，重点是减少中间状态和切页
+逐项出现。正常帧忙使用约 16ms 重试，设备故障保留 250ms 退避；重试复用已完成表面，且
+重新加入外到内批次，不按计时器顺序直接渲染。驱动或外部帧率限制仍可能影响 DXGI 调用。
+
+### 持续动画
+
+共享动画时钟保持 `PrecisionTimer.Blocking`：等待本次 UI 回调完成后再安排唤醒，
+`OverrunPolicy.Queue` 在该模式下不生效，不存在补执行过期 Tick 的队列。
+每次 Tick 先采样全部 helper，再经 `OuterToInnerRefreshScheduler.FlushPendingRequests`
+按树深派发失效，最后由 `D3D_V5Presentation.FlushPendingFrame` 按相同深度规则提交。
+这样动画不需要额外等待批次的 WinForms Timer，FPS=0 也不会只增加采样而延迟实际绘制。
+持续动画使用单遍提交，初始化事务保留两阶段准备；外到内顺序、事务屏蔽和输入处理均须保留。
+
+```powershell
+dotnet build LakeUI.Tests/LakeUI.Tests.csproj -c Release --no-restore
+dotnet LakeUI.Tests/bin/Release/net10.0-windows10.0.17763.0/LakeUI.Tests.dll --animation-probe 60
+dotnet LakeUI.Tests/bin/Release/net10.0-windows10.0.17763.0/LakeUI.Tests.dll --animation-probe 0
+```
+
+探针同时运行两种加载动画、进度条、仪表盘和按钮涟漪，使用真实消息循环，约两秒自动关闭；
+独立超时保护在十二秒后终止异常测试进程。统计区间排除初始化，输出每控件绘制/提交次数，
+以及 UI 采样观察到的最大更新间隔（后者不等于显示器扫描帧间隔）。本机在全局 120 FPS
+配置下，五个控件各约 24 FPS，与总计约 120 次提交相符。该观察不能替代呈现链路的因果
+验证；优化应首先减少多交换链串行提交中的无效工作，引擎不会修改驱动设置。
+
+### 静态内容与几何变化
+
+上下文菜单和下拉框在展开/关闭时保持完整 HWND 和 GPU 表面尺寸，只更新窗口 Region。
+完整表面已经包含全部内容，因此纯裁剪变化不再显式请求重绘或 Present。内容、字体、
+真实尺寸和背景来源变化仍通过原有失效路径更新，不冻结背景映射，不引入 CPU 截图或
+窗口级合成器。阴影只在外观配置变化时强制清空，尺寸及圆角变化继续由原有缓存检测。
+
+所有 V5 控件的位置、尺寸、父级与可见性事件统一合并到外到内提交批次。隐藏子树仍释放
+资源；几何变化仍将表面及背景坐标标脏，同一轮布局不再同步提交每个中间状态。显式
+RequestRender 的同步语义保持不变。
+
+```powershell
+dotnet LakeUI.Tests/bin/Release/net10.0-windows10.0.17763.0/LakeUI.Tests.dll --menu-animation-probe shadow
+dotnet LakeUI.Tests/bin/Release/net10.0-windows10.0.17763.0/LakeUI.Tests.dll --dropdown-animation-probe
+```
+
+两个探针均使用自动关闭及超时保护，不截图。分别验证父菜单焦点持续更新、子菜单裁剪
+完成、Classic/Overlay 裁剪完成、展开时真实内容失效仍生效，以及静态内容不逐帧重建。
+
 ## 核心整理约束（强制）
 
 - 本目录只允许保守改动：必须保持公开接口、线程模型、设备代号语义和父到子提交顺序不变；任何行为变化都必须有对应测试或明确的故障证据。

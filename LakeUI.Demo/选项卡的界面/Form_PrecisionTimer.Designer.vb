@@ -273,6 +273,8 @@ Partial Class Form_PrecisionTimer
         ' PrecisionTimer1
         ' 
         PrecisionTimer1.DispatchMode = PrecisionTimer.DispatchModeEnum.NonBlocking
+        PrecisionTimer1.OverrunPolicy = PrecisionTimer.OverrunPolicyEnum.Drop
+        PrecisionTimer1.WorkerThreadCount = 1
         PrecisionTimer1.Interval = 1
         PrecisionTimer1.SynchronizingObject = Me
         ' 

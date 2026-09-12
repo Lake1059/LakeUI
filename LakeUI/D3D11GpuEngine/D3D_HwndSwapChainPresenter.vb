@@ -4,7 +4,7 @@ Imports Vortice.Direct2D1
 Imports Vortice.DXGI
 
 ''' <summary>
-''' V5 每控件 HWND 翻转模型呈现器。Present(0) 不在 UI 动画线程等待垂直同步，
+''' V5 每控件 HWND 翻转模型呈现器。Present(0) 不指定垂直同步间隔，但驱动仍可能阻塞，
 ''' DWM 负责最终合成；交换链和绘制目标随 HWND、尺寸及设备代次重建。
 ''' </summary>
 Friend NotInheritable Class D3D_HwndSwapChainPresenter
@@ -20,6 +20,7 @@ Friend NotInheritable Class D3D_HwndSwapChainPresenter
     Private _swapChain As IDXGISwapChain1
     Private _swapChain2 As IDXGISwapChain2
     Private _frameLatencyWaitable As IntPtr
+    Private _swapChainFlags As SwapChainFlags
     Private _target As ID2D1Bitmap1
     Private _presenting As Boolean
     Private _lastUsed As Long
@@ -68,15 +69,19 @@ Friend NotInheritable Class D3D_HwndSwapChainPresenter
     End Sub
 
     Friend Function Present(surface As D3D_ControlSurface) As Boolean
+        FrameLatencyDeferred = False
         If _disposed OrElse surface Is Nothing OrElse surface.Bitmap Is Nothing Then Return False
         If _owner Is Nothing OrElse _owner.IsDisposed OrElse Not _owner.IsHandleCreated OrElse
            Not D3D_ControlTreeWalker.IsEffectivelyVisible(_owner) Then Return False
         If _owner.ClientSize.Width <= 0 OrElse _owner.ClientSize.Height <= 0 Then Return False
 
+        Dim 资源开始时间 = D3D_RefreshDiagnostics.Start()
         确保资源()
+        D3D_RefreshDiagnostics.Record(资源开始时间, "PresenterResources", _owner)
         If _context Is Nothing OrElse _target Is Nothing OrElse _swapChain Is Nothing Then Return False
         If D3D_RenderCore.V5FrameLatencySchedulerEnabled AndAlso _frameLatencyWaitable <> IntPtr.Zero Then
             If 等待单个对象(_frameLatencyWaitable, 0UI) <> WaitObject0 Then
+                FrameLatencyDeferred = True
                 D3D_RenderDiagnostics.V5FrameLatencySkip()
                 Return False
             End If
@@ -108,7 +113,11 @@ Friend NotInheritable Class D3D_HwndSwapChainPresenter
                 _context.Target = Nothing
             End Try
 
-            _swapChain.Present(0UI, PresentFlags.None)
+            Dim 提交开始时间 = D3D_RefreshDiagnostics.Start()
+            ' 保持原有提交策略。同步间隔为 0 不代表此调用绝不阻塞，
+            ' DXGIPresent 诊断单独记录驱动调用时间。
+            _swapChain.Present(0UI, PresentFlags.None).CheckError()
+            D3D_RefreshDiagnostics.Record(提交开始时间, "DXGIPresent", _owner)
             _presentedSurfaceRevision = surface.Revision
             _lastUsed = D3D_GpuCache.NextTick()
             presented = True
@@ -121,6 +130,15 @@ Friend NotInheritable Class D3D_HwndSwapChainPresenter
         ' 动画 Present 热路径会把一次偶发的 LRU 扫描放大成周期性 UI 卡顿。
         Return presented
     End Function
+
+    Friend Property FrameLatencyDeferred As Boolean
+
+    Friend Sub Prepare()
+        If _disposed OrElse _owner.IsDisposed OrElse Not _owner.IsHandleCreated Then Return
+        Dim 开始时间 = D3D_RefreshDiagnostics.Start()
+        确保资源()
+        D3D_RefreshDiagnostics.Record(开始时间, "PresenterResources", _owner)
+    End Sub
 
     Friend Function HasPresented(surface As D3D_ControlSurface) As Boolean
         Return Not _disposed AndAlso surface IsNot Nothing AndAlso surface.Bitmap IsNot Nothing AndAlso
@@ -145,7 +163,7 @@ Friend NotInheritable Class D3D_HwndSwapChainPresenter
         _context.Target = Nothing
         安全释放(_target)
         _target = Nothing
-        _swapChain.ResizeBuffers(BufferCount, CUInt(目标尺寸.Width), CUInt(目标尺寸.Height), Format.B8G8R8A8_UNorm, SwapChainFlags.None)
+        _swapChain.ResizeBuffers(BufferCount, CUInt(目标尺寸.Width), CUInt(目标尺寸.Height), Format.B8G8R8A8_UNorm, _swapChainFlags)
         _size = 目标尺寸
         创建绘制目标()
     End Sub
@@ -156,6 +174,7 @@ Friend NotInheritable Class D3D_HwndSwapChainPresenter
             Dim 交换链标志 As SwapChainFlags = If(D3D_RenderCore.V5FrameLatencySchedulerEnabled,
                                                  SwapChainFlags.FrameLatencyWaitableObject,
                                                  SwapChainFlags.None)
+            _swapChainFlags = 交换链标志
             Dim 交换链描述 As New SwapChainDescription1(
                 CUInt(目标尺寸.Width),
                 CUInt(目标尺寸.Height),

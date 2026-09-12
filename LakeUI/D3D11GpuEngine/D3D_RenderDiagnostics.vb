@@ -117,6 +117,7 @@ Friend Module D3D_RenderDiagnostics
     End Sub
 
     Friend Sub Reset()
+        D3D_RefreshDiagnostics.Reset()
         Interlocked.Exchange(_paintTargetPoolHits, 0)
         Interlocked.Exchange(_paintTargetPoolAllocations, 0)
         Interlocked.Exchange(_paintTargetPoolEvictions, 0)

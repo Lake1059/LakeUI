@@ -1,12 +1,18 @@
 Public Class Form_PrecisionTimer
-    Dim a As TimeSpan
+    Private _开始时间 As Long
+    Private _上次显示时间 As Long
     Private Sub PrecisionTimer1_Tick(sender As Object, e As EventArgs) Handles PrecisionTimer1.Tick
-        a += TimeSpan.FromMilliseconds(1)
-        Me.Label5.Text = a.ToString
+        Dim now = Stopwatch.GetTimestamp()
+        If _开始时间 = 0 Then _开始时间 = now
+        If now - _上次显示时间 < Stopwatch.Frequency \ 60 Then Return
+        _上次显示时间 = now
+        Me.Label5.Text = Stopwatch.GetElapsedTime(_开始时间).ToString()
     End Sub
 
     Private Sub ModernButton5_Click(sender As Object, e As EventArgs) Handles ModernButton5.Click
-        a = New TimeSpan
+        _开始时间 = Stopwatch.GetTimestamp()
+        _上次显示时间 = 0
+        Me.Label5.Text = TimeSpan.Zero.ToString()
         PrecisionTimer1.Start()
     End Sub
 

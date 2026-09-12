@@ -14,10 +14,10 @@ Public Module D3D_TextInterop
                                 dpiScale As Single,
                                 Optional textFormatCache As D3D_D2DInterop.TextFormatCache = Nothing) As Size
         If String.IsNullOrEmpty(text) OrElse font Is Nothing Then Return Size.Empty
-        Dim measured = MeasureSizeCore(text, font, proposedSize, flags, dpiScale, textFormatCache)
+        Dim 测量结果 = MeasureSizeCore(text, font, proposedSize, flags, dpiScale, textFormatCache)
         Return New Size(
-            CInt(Math.Ceiling(Math.Max(0.0F, measured.Width))),
-            CInt(Math.Ceiling(Math.Max(0.0F, measured.Height))))
+            CInt(Math.Ceiling(Math.Max(0.0F, 测量结果.Width))),
+            CInt(Math.Ceiling(Math.Max(0.0F, 测量结果.Height))))
     End Function
 
     ''' <summary>测量 TextLayout 的原始浮点 Metrics；适合分段布局后统一取整。</summary>
@@ -30,6 +30,14 @@ Public Module D3D_TextInterop
 
     Private Function MeasureSizeCore(text As String, font As Font, proposedSize As Size, flags As TextFormatFlags,
                                      dpiScale As Single, textFormatCache As D3D_D2DInterop.TextFormatCache) As SizeF
+        Dim 可缓存 = text.Length <= 512
+        Dim 测量键 As D3D_TextMeasurementCache.Key = Nothing
+        Dim 测量结果 As SizeF
+        If 可缓存 Then
+            测量键 = D3D_TextMeasurementCache.CreateKey(text, font, proposedSize, flags, dpiScale)
+            If D3D_TextMeasurementCache.TryGet(测量键, 测量结果) Then Return 测量结果
+        End If
+        Dim 开始时间 = D3D_RefreshDiagnostics.Start()
         Dim ownsFormat As Boolean = False
         Dim fmt = AcquireTextFormat(font, dpiScale, flags, textFormatCache, ownsFormat)
         If fmt Is Nothing Then Return SizeF.Empty
@@ -38,10 +46,12 @@ Public Module D3D_TextInterop
             Dim layoutH As Single = NormalizeLayoutExtent(proposedSize.Height)
             Using layout = D3D_D2DInterop.GetDWriteFactory().CreateTextLayout(text, fmt, layoutW, layoutH)
                 Dim m = layout.Metrics
-                Return New SizeF(Math.Max(0.0F, m.WidthIncludingTrailingWhitespace),
-                                 Math.Max(0.0F, m.Height))
+                测量结果 = New SizeF(Math.Max(0.0F, m.WidthIncludingTrailingWhitespace), Math.Max(0.0F, m.Height))
+                If 可缓存 Then D3D_TextMeasurementCache.Store(测量键, 测量结果)
+                Return 测量结果
             End Using
         Finally
+            D3D_RefreshDiagnostics.Record(开始时间, "TextMeasurement")
             If ownsFormat AndAlso fmt IsNot Nothing Then
                 Try : fmt.Dispose() : Catch : End Try
             End If

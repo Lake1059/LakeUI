@@ -65,7 +65,7 @@ Public Module OuterToInnerRefreshScheduler
     Private Sub Queue(control As Control, rect As Rectangle?, invalidateChildren As Boolean, immediate As Boolean)
         If control Is Nothing OrElse control.IsDisposed Then Return
         If ShouldSuppressRefresh(control, If(rect, Rectangle.Empty), Not rect.HasValue, invalidateChildren, False) Then Return
-        If Not GlobalOptions.OuterToInnerRefreshSchedulerEnabled Then
+        If Not GlobalOptions.OuterToInnerRefreshSchedulerEnabled AndAlso Not D3D_RenderUpdate.IsActive Then
             DirectInvalidate(control, rect, invalidateChildren, immediate)
             Return
         End If
@@ -101,13 +101,13 @@ Public Module OuterToInnerRefreshScheduler
                 _pending(control) = entry
             End If
 
-            If Not _flushScheduled AndAlso Not _isFlushing Then
+            If Not _flushScheduled AndAlso Not _isFlushing AndAlso Not D3D_RenderUpdate.IsActive Then
                 _flushScheduled = True
                 shouldSchedule = True
             End If
         End SyncLock
 
-        If immediate AndAlso CanFlushImmediately(control) Then
+        If immediate AndAlso Not D3D_RenderUpdate.IsActive AndAlso CanFlushImmediately(control) Then
             FlushNow(control)
         ElseIf shouldSchedule Then
             ScheduleFlush(control)
@@ -183,6 +183,10 @@ Public Module OuterToInnerRefreshScheduler
 
     Private Sub FlushPending()
         SyncLock _lock
+            If D3D_RenderUpdate.IsActive Then
+                _flushScheduled = False
+                Return
+            End If
             If _isFlushing Then Return
             If _pending.Count = 0 Then
                 _flushScheduled = False
@@ -203,6 +207,7 @@ Public Module OuterToInnerRefreshScheduler
 
                 ' 子树必须在排序前展开到当前批次。旧实现把子控件重新写回 _pending，导致父子本来
                 ' 已同时待刷新时，子控件在下一轮再次失效；合并到本批既消除重复，又不改变外到内顺序。
+                Dim 派发开始时间 = D3D_RefreshDiagnostics.Start()
                 ExpandVisibleChildrenIntoBatch(batch)
 
                 Dim pending As New List(Of KeyValuePair(Of Control, PendingEntry))(batch)
@@ -236,11 +241,18 @@ Public Module OuterToInnerRefreshScheduler
 
                     Try
                         ctrl.Invalidate(rect, False)
+                        ' 仅刷新事务提交时直接收集 V5 表面，避免依赖多个 WM_PAINT 逐个到达。
+                        ' 普通动画帧只走 Invalidate/OnPaint，不能同时再排一个 V5 批次。
+                        If D3D_RenderUpdate.IsCommitting AndAlso D3D_V5Presentation.IsV5Control(ctrl) AndAlso
+                           Not D3D_PaintBridge.IsDesignTimeControl(ctrl) Then
+                            D3D_V5Presentation.RequestRenderBatched(ctrl, rect)
+                        End If
                         RemovePendingRequestCoveredByCurrentDispatch(ctrl, rect, entry)
-                        If entry.Immediate AndAlso CanUpdateImmediately(ctrl) Then ctrl.Update()
+                        If entry.Immediate AndAlso Not D3D_RenderUpdate.IsCommitting AndAlso CanUpdateImmediately(ctrl) Then ctrl.Update()
                     Catch
                     End Try
                 Next
+                D3D_RefreshDiagnostics.Record(派发开始时间, "InvalidationBatch")
             Loop
         Finally
             Dim needsAnotherFlush As Boolean = False
@@ -253,6 +265,19 @@ Public Module OuterToInnerRefreshScheduler
             End SyncLock
             If needsAnotherFlush Then ScheduleFlush(Nothing)
         End Try
+    End Sub
+
+    Friend Sub ResumeAfterRenderUpdate()
+        FlushPendingRequests()
+    End Sub
+
+    ''' <summary>UI 线程上的动画采样结束后，仍按原有深度规则派发已合并请求。</summary>
+    Friend Sub FlushPendingRequests()
+        If D3D_RenderUpdate.IsActive Then Return
+        SyncLock _lock
+            If _isFlushing OrElse _pending.Count = 0 Then Return
+        End SyncLock
+        FlushPending()
     End Sub
 
     Private Sub RemovePendingRequestCoveredByCurrentDispatch(control As Control,

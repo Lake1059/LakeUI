@@ -112,7 +112,9 @@ Friend NotInheritable Class D3D_ControlSurface
 
         Dim 逻辑尺寸 = New Size(Math.Max(1, _owner.ClientSize.Width), Math.Max(1, _owner.ClientSize.Height))
         Dim 请求采样倍率 = 解析采样倍率(renderable)
+        Dim 资源开始时间 = D3D_RefreshDiagnostics.Start()
         确保资源(逻辑尺寸, 请求采样倍率)
+        D3D_RefreshDiagnostics.Record(资源开始时间, "SurfaceResources", _owner)
         If _context Is Nothing OrElse _bitmap Is Nothing OrElse _compositor Is Nothing Then Return False
 
         _textureUseStarted = False
@@ -171,8 +173,12 @@ Friend NotInheritable Class D3D_ControlSurface
                     isDirectPresentation:=True)
                     ' 强制约束：先准备当前控件所需的外层背景，再绘制当前控件自身；
                     ' RenderGpu 不得在此阶段同步驱动任何子控件或兄弟控件。
+                    Dim 背景开始时间 = D3D_RefreshDiagnostics.Start()
                     D3D_ControlSurfaceRegistry.DrawAutomaticGpuBackdrop(_owner, 绘制上下文)
+                    D3D_RefreshDiagnostics.Record(背景开始时间, "AutomaticBackdrop", _owner)
+                    Dim 内容开始时间 = D3D_RefreshDiagnostics.Start()
                     renderable.RenderGpu(绘制上下文)
+                    D3D_RefreshDiagnostics.Record(内容开始时间, "RenderGpu", _owner)
                     ' 设计器选中线框必须位于控件内容最上层，并与 GPU 表面同帧提交，
                     ' 否则交换链子窗口会覆盖 WinForms 的 GDI 设计时装饰。
                     绘制后处理?.Invoke(绘制上下文)

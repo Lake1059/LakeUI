@@ -139,6 +139,7 @@ Public NotInheritable Class D3D_RenderCore
     End Sub
 
     Public Shared Sub InvalidateExistingTextResources(control As Control)
+        D3D_TextMeasurementCache.Clear()
         Dim compositor = TryGetExistingWindowCompositor(control)
         If compositor Is Nothing Then Return
 

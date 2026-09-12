@@ -6,11 +6,43 @@ using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using LakeUI;
 
-static class Program
+static partial class Program
 {
     [STAThread]
     private static void Main(string[] args)
     {
+        if (args.Length > 0 && args[0] == "--menu-animation-probe")
+        {
+            ProbeMenuAnimations(args.Length > 1 && args[1] == "shadow");
+            return;
+        }
+        if (args.Length > 0 && args[0] == "--dropdown-animation-probe")
+        {
+            ProbeDropDownAnimation(ModernComboBox.DropDownDisplayMode.Classic);
+            ProbeDropDownAnimation(ModernComboBox.DropDownDisplayMode.Overlay);
+            return;
+        }
+        if (args.Length >= 1 && args[0] == "--animation-probe")
+        {
+            ProbeConcurrentAnimations(args.Length > 1 ? int.Parse(args[1]) : 60);
+            return;
+        }
+        if (args.Length >= 1 && args[0] == "--refresh-probe")
+        {
+            ProbeRefreshBatch();
+            return;
+        }
+        if (args.Length == 2 && args[0] == "--demo-refresh")
+        {
+            ProbeDemoRefresh(args[1]);
+            return;
+        }
+        VerifyRefreshTransactions();
+        VerifyAnimationTickCommitsAllOwners();
+        VerifyGeometryBurstCoalesces();
+        VerifyLazyPages();
+        VerifyTextMeasurementReuse();
+        VerifyBackgroundImagePreparation();
         if (args.Length == 2 && args[0] == "--demo-input")
         {
             ProbeDemoInput(args[1]);
@@ -949,7 +981,7 @@ static class Program
         D3D_V5Presentation.RequestRender(控件, Rectangle.Empty);
         Assert(控件.RenderCount > 原次数, "A missing dirty rectangle must still request a full render.");
         原次数 = 控件.RenderCount;
-        typeof(D3D_V5Presentation).GetMethod("排队重试", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, new object[] { 控件 });
+        typeof(D3D_V5Presentation).GetMethod("排队重试", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, new object[] { 控件, false });
         var 重试 = (IDictionary)typeof(D3D_V5Presentation).GetField("_retryTimers", BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null)!;
         PumpUntil(() => !重试.Contains(控件));
         Assert(控件.RenderCount == 原次数, "A presentation retry must reuse an unchanged surface.");

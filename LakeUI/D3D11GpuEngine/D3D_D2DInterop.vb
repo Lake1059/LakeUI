@@ -297,6 +297,7 @@ Public Module D3D_D2DInterop
     Private ReadOnly _strokeStyles As New Dictionary(Of Integer, ID2D1StrokeStyle)()
 
     Friend Sub CleanupD2DResources(level As D3DCacheCleanupLevel)
+        D3D_TextMeasurementCache.Clear()
         Select Case level
             Case D3DCacheCleanupLevel.TrimToBudget
                 D3D_GpuCache.TrimToBudget(immediate:=True)

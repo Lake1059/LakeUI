@@ -275,7 +275,8 @@ Public Class ProgressRing
             更新动画计时器状态()
             Return
         End If
-        请求GPU渲染()
+        ' 动画助手在回调完成后会根据 DirtyProvider 自动提交当前帧。
+        ' 此处不能再次调用 RequestRender，否则会为同一帧创建两个 V5 请求。
     End Sub
 
     Private Function 应运行动画计时器() As Boolean
@@ -418,10 +419,9 @@ Public Class ProgressRing
             Return 动画帧率值
         End Get
         Set(value As Integer)
-            动画帧率值 = Math.Max(1, value)
-            If 动画运行中 Then
-                动画调度器.FPS = 动画帧率值
-            End If
+            ' 与其他动画控件保持一致：0 表示不限制帧率。
+            动画帧率值 = Math.Max(0, value)
+            If 动画运行中 Then 更新动画计时器状态()
         End Set
     End Property
 

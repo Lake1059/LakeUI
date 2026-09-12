@@ -137,6 +137,36 @@ Public Class ModernTabListControl
         End Property
 
         Private _boundControl As Control = Nothing
+        Private _boundControlFactory As Func(Of Control)
+        Private _creatingBoundControl As Boolean
+
+        ''' <summary>首次选中时在所属 UI 线程创建页面，后续复用该实例。</summary>
+        <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+        Public Property BoundControlFactory As Func(Of Control)
+            Get
+                Return _boundControlFactory
+            End Get
+            Set(value As Func(Of Control))
+                _boundControlFactory = value
+            End Set
+        End Property
+
+        Friend Function GetOrCreateBoundControl() As Control
+            If _boundControl IsNot Nothing AndAlso Not _boundControl.IsDisposed Then Return _boundControl
+            If _boundControlFactory Is Nothing Then Return _boundControl
+            If _creatingBoundControl Then Throw New InvalidOperationException("A page factory cannot recursively select itself.")
+            _creatingBoundControl = True
+            Try
+                ' 此处已在选中切换流程内，不能再次通知 Owner 递归切页。
+                Dim created = _boundControlFactory()
+                If created Is Nothing OrElse created.IsDisposed Then Throw New InvalidOperationException("The page factory must return a live control.")
+                _boundControl = created
+                Return created
+            Finally
+                _creatingBoundControl = False
+            End Try
+        End Function
+
         <Category("LakeUI"), Description("绑定的内容控件，切换到此选项卡时将显示该控件"), DefaultValue(GetType(Control), Nothing), Browsable(True)>
         Public Property BoundControl As Control
             Get
@@ -606,7 +636,7 @@ Public Class ModernTabListControl
         If index < 0 OrElse index >= 项目列表.Count Then Return Nothing
         Dim item = 项目列表(index)
         If item Is Nothing Then Return Nothing
-        Return item.BoundDisplayControl
+        Return item.GetOrCreateBoundControl()
     End Function
 
     Private Function 获取绑定页状态(ctrl As Control) As BoundPageState
@@ -948,6 +978,12 @@ Public Class ModernTabListControl
 
     Private Sub 显示绑定控件(ctrl As Control)
         If ctrl Is Nothing Then Return
+        Using D3D_PaintBridge.BeginRenderUpdate(Me)
+            显示绑定控件核心(ctrl)
+        End Using
+    End Sub
+
+    Private Sub 显示绑定控件核心(ctrl As Control)
         Dim frm = TryCast(ctrl, Form)
         If frm IsNot Nothing Then
             准备窗体绑定(frm)
@@ -960,6 +996,7 @@ Public Class ModernTabListControl
         End If
         Dim dockChanged As Boolean = ctrl.Dock <> DockStyle.Fill
         If dockChanged Then ctrl.Dock = DockStyle.Fill
+        If _transitionCover IsNot Nothing AndAlso Not _transitionCover.IsDisposed Then _transitionCover.BringToFront()
         Dim state = 获取绑定页状态(ctrl)
         Dim formFirstShow As Boolean = frm IsNot Nothing AndAlso (state Is Nothing OrElse Not state.HasBeenShown)
         If formFirstShow AndAlso ctrl.Visible Then
@@ -968,7 +1005,7 @@ Public Class ModernTabListControl
         ctrl.Visible = True
         Dim panelWasVisible As Boolean = _内容面板.Visible
         If Not panelWasVisible Then _内容面板.Visible = True
-        If _内容面板.Controls.GetChildIndex(ctrl) <> 0 Then ctrl.BringToFront()
+        If _transitionCover Is Nothing AndAlso _内容面板.Controls.GetChildIndex(ctrl) <> 0 Then ctrl.BringToFront()
         准备绑定页渲染边界(ctrl)
         使切页背景快照失效()
         Dim currentDpi As Integer = D3D_DpiContext.FromControl(Me).Dpi
@@ -1092,6 +1129,27 @@ Public Class ModernTabListControl
     End Function
 
     Private Sub 切换绑定控件()
+        Dim previous = _当前绑定控件
+        Using D3D_PaintBridge.BeginRenderUpdate(Me)
+            _transitionCover = If(previous IsNot Nothing AndAlso Not previous.IsDisposed AndAlso previous.Visible, previous, Nothing)
+            Try
+                切换绑定控件核心()
+                Dim nextPage = _当前绑定控件
+                D3D_RenderUpdate.AfterCommit(
+                    Sub()
+                        If IsDisposed Then Return
+                        If nextPage IsNot Nothing AndAlso Not nextPage.IsDisposed AndAlso _当前绑定控件 Is nextPage Then nextPage.BringToFront()
+                        If previous IsNot Nothing AndAlso Not previous.IsDisposed AndAlso _当前绑定控件 IsNot previous Then 隐藏绑定控件(previous)
+                    End Sub)
+            Finally
+                _transitionCover = Nothing
+            End Try
+        End Using
+    End Sub
+
+    Private _transitionCover As Control
+
+    Private Sub 切换绑定控件核心()
         Dim nextControl = 获取索引绑定控件(_selectedIndex)
         If _当前绑定控件 Is nextControl Then
             If nextControl IsNot Nothing Then
@@ -1118,10 +1176,10 @@ Public Class ModernTabListControl
             Return
         End If
 
-        If _当前绑定控件 IsNot Nothing Then 隐藏绑定控件(_当前绑定控件)
+        If _当前绑定控件 IsNot Nothing AndAlso _当前绑定控件 IsNot _transitionCover Then 隐藏绑定控件(_当前绑定控件)
         For Each item In 项目列表
             Dim bound = If(item IsNot Nothing, item.BoundDisplayControl, Nothing)
-            If bound IsNot Nothing AndAlso bound IsNot nextControl AndAlso bound.Parent Is _内容面板 AndAlso bound.Visible Then
+            If bound IsNot Nothing AndAlso bound IsNot nextControl AndAlso bound IsNot _transitionCover AndAlso bound.Parent Is _内容面板 AndAlso bound.Visible Then
                 隐藏绑定控件(bound)
             End If
         Next

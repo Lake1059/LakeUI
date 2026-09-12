@@ -9,6 +9,14 @@ End Enum
 
 Public Module D3D_PaintBridge
     ''' <summary>
+    ''' 合并 UI 线程上的初始化和布局变更，须在 Await 前释放。
+    ''' 嵌套作用域由最外层统一交给现有从外到内调度器提交。
+    ''' </summary>
+    Public Function BeginRenderUpdate(root As Control) As IDisposable
+        Return D3D_RenderUpdate.Begin(root)
+    End Function
+
+    ''' <summary>
     ''' 设计器和其子树不创建 V5 GPU 资源；调用方应交回 WinForms 默认预览路径。
     ''' </summary>
     Friend Function IsDesignTimeControl(control As Control) As Boolean
@@ -48,6 +56,10 @@ Public Module D3D_PaintBridge
     Public Sub ResetV5Probe()
         D3D_RenderDiagnostics.Reset()
     End Sub
+
+    Public Function GetV5RefreshTimings() As D3D_RefreshTiming()
+        Return D3D_RefreshDiagnostics.Snapshot()
+    End Function
 
     Public Sub SetV5CrossFormProbePair(consumer As Control, source As Control)
         D3D_RenderDiagnostics.SetV5CrossFormProbePair(consumer, source)

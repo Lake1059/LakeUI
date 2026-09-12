@@ -1,92 +1,54 @@
 Public Class Form1
 
     Private Sub Form1_Load(sender As Object, e As EventArgs) Handles MyBase.Load
-        LakeUI.GlobalOptions.GlobalTextQuality = LakeUI.GlobalOptions.TextQualityMode.Outline
-        Me.ThisIsYourWindow1.Attach(Me)
+        Using D3D_PaintBridge.BeginRenderUpdate(Me)
+            LakeUI.GlobalOptions.GlobalTextQuality = LakeUI.GlobalOptions.TextQualityMode.Outline
+            Me.ThisIsYourWindow1.Attach(Me)
 
-        Me.ModernTabListControl1.Items(1).BoundControl = Form基本信息
-        绑定选项卡窗体背景透明(Form基本信息.ModernPanel1)
-        Me.ModernTabListControl1.Items(2).BoundControl = Form许可证
-        绑定选项卡窗体背景透明(Form许可证.ModernPanel1)
+            注册页面(1, Function() Form基本信息, Function(page) page.ModernPanel1)
+            注册页面(2, Function() Form许可证, Function(page) page.ModernPanel1)
 
-        Me.ModernTabListControl1.Items(5).BoundControl = Form_ModernButton
-        绑定选项卡窗体背景透明(Form_ModernButton.ModernPanel1)
-        Me.ModernTabListControl1.Items(6).BoundControl = Form_ModernTextBox
-        绑定选项卡窗体背景透明(Form_ModernTextBox.ModernPanel1)
-        Me.ModernTabListControl1.Items(7).BoundControl = Form_ModernComboBox
-        绑定选项卡窗体背景透明(Form_ModernComboBox.ModernPanel1)
-        Me.ModernTabListControl1.Items(8).BoundControl = Form_BooleanSwitch
-        绑定选项卡窗体背景透明(Form_BooleanSwitch.ModernPanel1)
-        Me.ModernTabListControl1.Items(9).BoundControl = Form_QuantumSwitch
-        绑定选项卡窗体背景透明(Form_QuantumSwitch.ModernPanel1)
-        Me.ModernTabListControl1.Items(10).BoundControl = Form_ExcellentTrackBar
-        绑定选项卡窗体背景透明(Form_ExcellentTrackBar.ModernPanel1)
-        Me.ModernTabListControl1.Items(11).BoundControl = Form_ListViewDirectReDraw
-        绑定选项卡窗体背景透明(Form_ListViewDirectReDraw.ModernPanel1)
-        Me.ModernTabListControl1.Items(12).BoundControl = Form_ReDrawContextMenuStrip
-        绑定选项卡窗体背景透明(Form_ReDrawContextMenuStrip.ModernPanel1)
-        Me.ModernTabListControl1.Items(13).BoundControl = Form_ModernContextMenu
-        绑定选项卡窗体背景透明(Form_ModernContextMenu.ModernPanel1)
-        Me.ModernTabListControl1.Items(14).BoundControl = Form_UltraDetailListView
-        绑定选项卡窗体背景透明(Form_UltraDetailListView.ModernPanel1)
-        Me.ModernTabListControl1.Items(15).BoundControl = Form_ModernTabListControl
-        绑定选项卡窗体背景透明(Form_ModernTabListControl.ModernPanel1)
-        Me.ModernTabListControl1.Items(16).BoundControl = Form_ModernTabControl
-        绑定选项卡窗体背景透明(Form_ModernTabControl.ModernPanel1)
-        Me.ModernTabListControl1.Items(17).BoundControl = Form_ModernPanel
-        绑定选项卡窗体背景透明(Form_ModernPanel.ModernPanel1)
-        Me.ModernTabListControl1.Items(18).BoundControl = Form_ModernListBox
-        绑定选项卡窗体背景透明(Form_ModernListBox.ModernPanel1)
-        Me.ModernTabListControl1.Items(19).BoundControl = Form_HtmlColorLabel
-        绑定选项卡窗体背景透明(Form_HtmlColorLabel.ModernPanel1)
-        Me.ModernTabListControl1.Items(20).BoundControl = Form_ModernFontDialog
-        绑定选项卡窗体背景透明(Form_ModernFontDialog.ModernPanel1)
-        Me.ModernTabListControl1.Items(21).BoundControl = Form_ModernColorDialog
-        绑定选项卡窗体背景透明(Form_ModernColorDialog.ModernPanel1)
-        Me.ModernTabListControl1.Items(22).BoundControl = Form_ExcellentProgressBar
-        绑定选项卡窗体背景透明(Form_ExcellentProgressBar.ModernPanel1)
-        Me.ModernTabListControl1.Items(23).BoundControl = Form_RoundDashBoard
-        绑定选项卡窗体背景透明(Form_RoundDashBoard.ModernPanel1)
-        Me.ModernTabListControl1.Items(24).BoundControl = Form_JustEmptyControl
-        绑定选项卡窗体背景透明(Form_JustEmptyControl.ModernPanel1)
-        Me.ModernTabListControl1.Items(25).BoundControl = Form_ModernCheckBox
-        绑定选项卡窗体背景透明(Form_ModernCheckBox.ModernPanel1)
-        Me.ModernTabListControl1.Items(26).BoundControl = Form_ThisIsYourWindow
-        绑定选项卡窗体背景透明(Form_ThisIsYourWindow.ModernPanel1)
-        Me.ModernTabListControl1.Items(27).BoundControl = Form_MarkDownViewer
-        绑定选项卡窗体背景透明(Form_MarkDownViewer.ModernPanel1)
-        Me.ModernTabListControl1.Items(28).BoundControl = Form_ProgressRing
-        绑定选项卡窗体背景透明(Form_ProgressRing.ModernPanel1)
-        Me.ModernTabListControl1.Items(29).BoundControl = Form_SysTaskBarProgress
-        绑定选项卡窗体背景透明(Form_SysTaskBarProgress.ModernPanel1)
-        Me.ModernTabListControl1.Items(30).BoundControl = Form_PixelPictureBox
-        绑定选项卡窗体背景透明(Form_PixelPictureBox.ModernPanel1)
-        Me.ModernTabListControl1.Items(31).BoundControl = Form_TaskbarThumbnailToolbar
-        绑定选项卡窗体背景透明(Form_TaskbarThumbnailToolbar.ModernPanel1)
-        Me.ModernTabListControl1.Items(32).BoundControl = Form_MsgBox_InputBox_Tip
-        绑定选项卡窗体背景透明(Form_MsgBox_InputBox_Tip.ModernPanel1)
-        Me.ModernTabListControl1.Items(33).BoundControl = Form_CpuMonitor
-        绑定选项卡窗体背景透明(Form_CpuMonitor.ModernPanel1)
-        Me.ModernTabListControl1.Items(34).BoundControl = Form_RamMonitor
-        绑定选项卡窗体背景透明(Form_RamMonitor.ModernPanel1)
-        Me.ModernTabListControl1.Items(35).BoundControl = Form_GpuMonitor
-        绑定选项卡窗体背景透明(Form_GpuMonitor.ModernPanel1)
-        Me.ModernTabListControl1.Items(36).BoundControl = Form_BreadcrumbNavigationBar
-        绑定选项卡窗体背景透明(Form_BreadcrumbNavigationBar.ModernPanel1)
-        Me.ModernTabListControl1.Items(37).BoundControl = Form_PrecisionTimer
-        绑定选项卡窗体背景透明(Form_PrecisionTimer.ModernPanel1)
-        Me.ModernTabListControl1.Items(38).BoundControl = Form_AgentRoom
-        绑定选项卡窗体背景透明(Form_AgentRoom.ModernPanel1)
-        Me.ModernTabListControl1.Items(39).BoundControl = Form_ModernNumericUpDown
-        绑定选项卡窗体背景透明(Form_ModernNumericUpDown.ModernPanel1)
-        Me.ModernTabListControl1.Items(40).BoundControl = Form_MemberWall
-        绑定选项卡窗体背景透明(Form_MemberWall.ModernPanel1)
-        Me.ModernTabListControl1.Items(41).BoundControl = Form_EasyStatesPanel
-        绑定选项卡窗体背景透明(Form_EasyStatesPanel.ModernPanel1)
-        Me.ModernTabListControl1.Items(42).BoundControl = Form_LakeUINotifications
-        绑定选项卡窗体背景透明(Form_LakeUINotifications.ModernPanel1)
-        Me.ModernTabListControl1.Items(43).BoundControl = Form_Ultra2DChart
-        绑定选项卡窗体背景透明(Form_Ultra2DChart.ModernPanel1)
+            注册页面(5, Function() Form_ModernButton, Function(page) page.ModernPanel1)
+            注册页面(6, Function() Form_ModernTextBox, Function(page) page.ModernPanel1)
+            注册页面(7, Function() Form_ModernComboBox, Function(page) page.ModernPanel1)
+            注册页面(8, Function() Form_BooleanSwitch, Function(page) page.ModernPanel1)
+            注册页面(9, Function() Form_QuantumSwitch, Function(page) page.ModernPanel1)
+            注册页面(10, Function() Form_ExcellentTrackBar, Function(page) page.ModernPanel1)
+            注册页面(11, Function() Form_ListViewDirectReDraw, Function(page) page.ModernPanel1)
+            注册页面(12, Function() Form_ReDrawContextMenuStrip, Function(page) page.ModernPanel1)
+            注册页面(13, Function() Form_ModernContextMenu, Function(page) page.ModernPanel1)
+            注册页面(14, Function() Form_UltraDetailListView, Function(page) page.ModernPanel1)
+            注册页面(15, Function() Form_ModernTabListControl, Function(page) page.ModernPanel1)
+            注册页面(16, Function() Form_ModernTabControl, Function(page) page.ModernPanel1)
+            注册页面(17, Function() Form_ModernPanel, Function(page) page.ModernPanel1)
+            注册页面(18, Function() Form_ModernListBox, Function(page) page.ModernPanel1)
+            注册页面(19, Function() Form_HtmlColorLabel, Function(page) page.ModernPanel1)
+            注册页面(20, Function() Form_ModernFontDialog, Function(page) page.ModernPanel1)
+            注册页面(21, Function() Form_ModernColorDialog, Function(page) page.ModernPanel1)
+            注册页面(22, Function() Form_ExcellentProgressBar, Function(page) page.ModernPanel1)
+            注册页面(23, Function() Form_RoundDashBoard, Function(page) page.ModernPanel1)
+            注册页面(24, Function() Form_JustEmptyControl, Function(page) page.ModernPanel1)
+            注册页面(25, Function() Form_ModernCheckBox, Function(page) page.ModernPanel1)
+            注册页面(26, Function() Form_ThisIsYourWindow, Function(page) page.ModernPanel1)
+            注册页面(27, Function() Form_MarkDownViewer, Function(page) page.ModernPanel1)
+            注册页面(28, Function() Form_ProgressRing, Function(page) page.ModernPanel1)
+            注册页面(29, Function() Form_SysTaskBarProgress, Function(page) page.ModernPanel1)
+            注册页面(30, Function() Form_PixelPictureBox, Function(page) page.ModernPanel1)
+            注册页面(31, Function() Form_TaskbarThumbnailToolbar, Function(page) page.ModernPanel1)
+            注册页面(32, Function() Form_MsgBox_InputBox_Tip, Function(page) page.ModernPanel1)
+            注册页面(33, Function() Form_CpuMonitor, Function(page) page.ModernPanel1)
+            注册页面(34, Function() Form_RamMonitor, Function(page) page.ModernPanel1)
+            注册页面(35, Function() Form_GpuMonitor, Function(page) page.ModernPanel1)
+            注册页面(36, Function() Form_BreadcrumbNavigationBar, Function(page) page.ModernPanel1)
+            注册页面(37, Function() Form_PrecisionTimer, Function(page) page.ModernPanel1)
+            注册页面(38, Function() Form_AgentRoom, Function(page) page.ModernPanel1)
+            注册页面(39, Function() Form_ModernNumericUpDown, Function(page) page.ModernPanel1)
+            注册页面(40, Function() Form_MemberWall, Function(page) page.ModernPanel1)
+            注册页面(41, Function() Form_EasyStatesPanel, Function(page) page.ModernPanel1)
+            注册页面(42, Function() Form_LakeUINotifications, Function(page) page.ModernPanel1)
+            注册页面(43, Function() Form_Ultra2DChart, Function(page) page.ModernPanel1)
+            Me.ModernTabListControl1.SelectedIndex = 1
+        End Using
     End Sub
 
     Private Sub Form1_Shown(sender As Object, e As EventArgs) Handles Me.Shown
@@ -96,6 +58,15 @@ Public Class Form1
 
     Private Sub Form1_FormClosing(sender As Object, e As FormClosingEventArgs) Handles Me.FormClosing
 
+    End Sub
+
+    Private Sub 注册页面(Of T As Form)(index As Integer, factory As Func(Of T), panel As Func(Of T, ModernPanel))
+        Me.ModernTabListControl1.Items(index).BoundControlFactory =
+            Function()
+                Dim page = factory()
+                绑定选项卡窗体背景透明(panel(page))
+                Return page
+            End Function
     End Sub
 
     Sub 绑定选项卡窗体背景透明(选项卡的根面板容器 As ModernPanel)

@@ -1,4 +1,6 @@
 Public Class Form_PixelPictureBox
+    Private _imageLoad As Threading.CancellationTokenSource
+    Private _loadedImage As Image
     Private Sub Form_PixelPictureBox_Load(sender As Object, e As EventArgs) Handles MyBase.Load
         PixelPictureBox1.AllowDrop = True
     End Sub
@@ -18,17 +20,42 @@ Public Class Form_PixelPictureBox
         e.Effect = DragDropEffects.Copy
     End Sub
 
-    Private Sub PixelPictureBox1_DragDrop(sender As Object, e As DragEventArgs) Handles PixelPictureBox1.DragDrop
+    Private Async Sub PixelPictureBox1_DragDrop(sender As Object, e As DragEventArgs) Handles PixelPictureBox1.DragDrop
         If e.Data.GetDataPresent(DataFormats.FileDrop) Then
             Dim files = DirectCast(e.Data.GetData(DataFormats.FileDrop), String())
             If files.Length > 0 Then
+                _imageLoad?.Cancel()
+                Dim load As New Threading.CancellationTokenSource()
+                _imageLoad = load
                 Try
-                    PixelPictureBox1.Image = Image.FromFile(files(0))
+                    Dim prepared = Await D3D_ImagePreparation.LoadBitmapAsync(files(0), load.Token)
+                    If load.IsCancellationRequested OrElse IsDisposed OrElse _imageLoad IsNot load Then
+                        prepared.Dispose()
+                        Return
+                    End If
+                    Using D3D_PaintBridge.BeginRenderUpdate(Me)
+                        Dim previous = _loadedImage
+                        _loadedImage = prepared
+                        PixelPictureBox1.Image = prepared
+                        previous?.Dispose()
+                    End Using
+                Catch ex As OperationCanceledException
                 Catch ex As Exception
-                    MessageBox.Show("无法加载图片: " & ex.Message, "错误", MessageBoxButtons.OK, MessageBoxIcon.Error)
+                    If Not IsDisposed AndAlso _imageLoad Is load Then
+                        MessageBox.Show("无法加载图片: " & ex.Message, "错误", MessageBoxButtons.OK, MessageBoxIcon.Error)
+                    End If
+                Finally
+                    If _imageLoad Is load Then _imageLoad = Nothing
+                    load.Dispose()
                 End Try
             End If
         End If
+    End Sub
+
+    Private Sub ReleaseLoadedImage(sender As Object, e As EventArgs) Handles Me.Disposed
+        _imageLoad?.Cancel()
+        _loadedImage?.Dispose()
+        _loadedImage = Nothing
     End Sub
 
     Private Sub Form_PixelPictureBox_SizeChanged(sender As Object, e As EventArgs) Handles Me.SizeChanged

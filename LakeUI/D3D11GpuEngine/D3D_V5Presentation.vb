@@ -72,6 +72,10 @@ Friend NotInheritable Class D3D_V5Presentation
                                  Optional dirtyRect As Rectangle = Nothing) As Boolean
         If Not IsV5Control(control) Then Return False
         禁用WinForms双缓冲(control)
+        If D3D_RenderUpdate.IsActive OrElse D3D_RenderUpdate.IsCommitting Then
+            RequestRenderBatched(control, dirtyRect)
+            Return True
+        End If
         ' WM_PAINT 可能在同一消息循环内先于已排队的内部传播请求到达。
         ' 当前同步绘制会消费 registry 中的合并脏区；只撤销尚未开始的批次项，
         ' RenderGpu 期间新产生的请求仍会进入下一批。
@@ -83,6 +87,10 @@ Friend NotInheritable Class D3D_V5Presentation
 
     Friend Shared Sub RequestRender(control As Control, Optional dirtyRect As Rectangle = Nothing)
         If Not IsV5Control(control) OrElse control Is Nothing OrElse control.IsDisposed Then Return
+        If D3D_RenderUpdate.IsActive OrElse D3D_RenderUpdate.IsCommitting Then
+            RequestRenderBatched(control, dirtyRect)
+            Return
+        End If
         ' 强制约束：容器层级必须严格按“外到内”提交。父容器表面未完成前，
         ' 不得先提交子控件；重入请求只能失效并排队到当前外层帧结束后处理。
         Dim 有效区域 = dirtyRect
@@ -110,7 +118,8 @@ Friend NotInheritable Class D3D_V5Presentation
     ''' 将由失效事件、背景依赖或动画 tick 产生的请求合并到当前 UI 线程的下一次提交批次。
     ''' 显式 RequestRender 仍保留同步语义；只有内部传播路径使用此入口。
     ''' </summary>
-    Friend Shared Sub RequestRenderBatched(control As Control, Optional dirtyRect As Rectangle = Nothing)
+    Friend Shared Sub RequestRenderBatched(control As Control, Optional dirtyRect As Rectangle = Nothing,
+                                          Optional markSurfaceDirty As Boolean = True)
         If Not IsV5Control(control) OrElse control Is Nothing OrElse control.IsDisposed Then Return
 
         Dim 有效区域 = dirtyRect
@@ -121,15 +130,17 @@ Friend NotInheritable Class D3D_V5Presentation
         If control.InvokeRequired Then
             Try
                 control.BeginInvoke(CType(
-                    Sub() RequestRenderBatched(control, 有效区域), Action))
+                    Sub() RequestRenderBatched(control, 有效区域, markSurfaceDirty), Action))
             Catch
             End Try
             Return
         End If
 
-        D3D_ControlSurfaceRegistry.MarkDirty(control, 有效区域, requestConsumers:=False)
-        D3D_RenderDiagnostics.V5DirtyRequested(CLng(有效区域.Width) * CLng(有效区域.Height),
-                                               CLng(Math.Max(0, control.Width)) * CLng(Math.Max(0, control.Height)))
+        If markSurfaceDirty Then
+            D3D_ControlSurfaceRegistry.MarkDirty(control, 有效区域, requestConsumers:=False)
+            D3D_RenderDiagnostics.V5DirtyRequested(CLng(有效区域.Width) * CLng(有效区域.Height),
+                                                   CLng(Math.Max(0, control.Width)) * CLng(Math.Max(0, control.Height)))
+        End If
         If Not control.IsHandleCreated OrElse Not D3D_ControlTreeWalker.IsEffectivelyVisible(control) Then
             D3D_RenderDiagnostics.V5InvisibleSkip()
             Return
@@ -154,7 +165,7 @@ Friend NotInheritable Class D3D_V5Presentation
         End If
         D3D_RenderDiagnostics.V5BatchRequested()
 
-        If state.Posted Then Return
+        If state.Posted OrElse D3D_RenderUpdate.IsActive Then Return
         state.Posted = True
         Try
             ' 普通批次同样必须让出输入优先级。Post/BeginInvoke 会优先于真实
@@ -167,14 +178,16 @@ Friend NotInheritable Class D3D_V5Presentation
         End Try
     End Sub
 
-    Private Shared Sub FlushBatchedRenders(state As RenderBatchState)
+    Private Shared Sub FlushBatchedRenders(state As RenderBatchState, Optional prepareSurfaces As Boolean = False)
         If state Is Nothing OrElse state.Disposed Then Return
 
         state.Posted = False
+        If D3D_RenderUpdate.IsActive Then Return
         If state.Pending.Count = 0 Then Return
 
         Dim batch = state.Pending.ToArray()
         state.Pending.Clear()
+        Dim 批次开始时间 = D3D_RefreshDiagnostics.Start()
         D3D_RenderDiagnostics.V5BatchFlushed(batch.Length)
         Array.Sort(batch,
                    Function(a, b)
@@ -184,14 +197,45 @@ Friend NotInheritable Class D3D_V5Presentation
                        Return a.Value.Sequence.CompareTo(b.Value.Sequence)
                    End Function)
 
+        ' 初始化事务先完成首次资源准备；持续动画单遍按外到内提交，避免重复遍历。
+        Dim 准备耗时 As Dictionary(Of Control, Double) = Nothing
+        If prepareSurfaces AndAlso batch.Length > 1 Then
+            If D3D_RenderDiagnostics.Enabled Then 准备耗时 = New Dictionary(Of Control, Double)(batch.Length)
+            For Each item In batch
+                Dim control = item.Key
+                If control Is Nothing OrElse control.IsDisposed OrElse
+                   Not control.IsHandleCreated OrElse Not D3D_ControlTreeWalker.IsEffectivelyVisible(control) Then Continue For
+                立即渲染(control, TryCast(control, D3D_IGpuRenderable),
+                         requestedDirty:=item.Value.Rect, prepareOnly:=True, 准备耗时:=准备耗时)
+            Next
+        End If
         For Each item In batch
             Dim control = item.Key
             If control Is Nothing OrElse control.IsDisposed OrElse
                Not control.IsHandleCreated OrElse Not D3D_ControlTreeWalker.IsEffectivelyVisible(control) Then Continue For
             立即渲染(control,
                     TryCast(control, D3D_IGpuRenderable),
-                    requestedDirty:=item.Value.Rect)
+                    requestedDirty:=item.Value.Rect, 准备耗时:=准备耗时)
         Next
+        D3D_RefreshDiagnostics.Record(批次开始时间, "RenderBatch")
+    End Sub
+
+    Friend Shared Sub ResumeAfterRenderUpdate()
+        FlushPendingFrame(prepareSurfaces:=True)
+    End Sub
+
+    ''' <summary>在共享动画 Tick 完成后消费已排序批次，不再等待第二个计时器。</summary>
+    Friend Shared Sub FlushPendingFrame(Optional prepareSurfaces As Boolean = False)
+        Dim state = _renderBatch
+        If state Is Nothing OrElse state.Disposed OrElse state.Pending.Count = 0 Then Return
+        If D3D_RenderUpdate.IsActive Then Return
+        If IsRendering Then
+            state.Posted = True
+            state.ContinuationTimer.Start()
+            Return
+        End If
+        state.ContinuationTimer.Stop()
+        FlushBatchedRenders(state, prepareSurfaces)
     End Sub
 
     Private Shared Sub 移除批次请求(control As Control)
@@ -206,7 +250,9 @@ Friend NotInheritable Class D3D_V5Presentation
 
     Private Shared Sub 立即渲染(控件 As Control, 可渲染对象 As D3D_IGpuRenderable,
                               Optional 绘制后处理 As Action(Of D3D_PaintContext) = Nothing,
-        Optional requestedDirty As Rectangle = Nothing)
+        Optional requestedDirty As Rectangle = Nothing,
+        Optional prepareOnly As Boolean = False,
+        Optional 准备耗时 As Dictionary(Of Control, Double) = Nothing)
         If 控件 Is Nothing OrElse 可渲染对象 Is Nothing OrElse 控件.IsDisposed Then Return
         If Not 控件.IsHandleCreated OrElse 控件.ClientSize.Width <= 0 OrElse 控件.ClientSize.Height <= 0 Then Return
         If Not D3D_ControlTreeWalker.IsEffectivelyVisible(控件) Then
@@ -231,6 +277,16 @@ Friend NotInheritable Class D3D_V5Presentation
             If 控件表面 Is Nothing Then Return
             Dim 渲染毫秒数 = Stopwatch.GetElapsedTime(渲染开始时间).TotalMilliseconds
             Dim 呈现器 = 获取或创建呈现器(控件)
+            If prepareOnly Then
+                呈现器.Prepare()
+                If 准备耗时 IsNot Nothing Then 准备耗时(控件) = 渲染毫秒数
+                Return
+            End If
+            Dim 已准备毫秒数 As Double
+            If 准备耗时 IsNot Nothing AndAlso 准备耗时.TryGetValue(控件, 已准备毫秒数) Then
+                渲染毫秒数 += 已准备毫秒数
+                准备耗时.Remove(控件)
+            End If
             ' 映射消费者可能在来源控件收到自身渲染请求前，先完成其持久表面渲染。
             ' 因此仅凭表面为最新状态，不能证明 HWND 交换链已经包含该修订版本。
             If 呈现器.HasPresented(控件表面) Then
@@ -239,10 +295,11 @@ Friend NotInheritable Class D3D_V5Presentation
             End If
             Dim 提交开始时间 = Stopwatch.GetTimestamp()
             If Not 呈现器.Present(控件表面) Then
-                排队重试(控件)
+                排队重试(控件, 呈现器.FrameLatencyDeferred)
                 Return
             End If
             Dim 提交毫秒数 = Stopwatch.GetElapsedTime(提交开始时间).TotalMilliseconds
+            D3D_RefreshDiagnostics.Record(提交开始时间, "Present", 控件)
             D3D_RenderDiagnostics.V5FrameSubmitted(渲染毫秒数,
                                                    提交毫秒数,
                                                    Stopwatch.GetTimestamp(),
@@ -307,11 +364,15 @@ Friend NotInheritable Class D3D_V5Presentation
         _bufferingDisabled.Add(控件)
     End Sub
 
-    Private Shared Sub 排队重试(控件 As Control)
+    Private Shared Sub 排队重试(控件 As Control, Optional frameLatencyDeferred As Boolean = False)
         If 控件 Is Nothing OrElse 控件.IsDisposed OrElse Not 控件.IsHandleCreated Then Return
         Dim 重试计时器 As Timer = Nothing
-        If _retryTimers.TryGetValue(控件, 重试计时器) Then Return
-        重试计时器 = New Timer() With {.Interval = 250}
+        Dim 重试间隔 = If(frameLatencyDeferred, 16, 250)
+        If _retryTimers.TryGetValue(控件, 重试计时器) Then
+            重试计时器.Interval = 重试间隔
+            Return
+        End If
+        重试计时器 = New Timer() With {.Interval = 重试间隔}
         AddHandler 重试计时器.Tick,
             Sub()
                 If 控件.IsDisposed Then
@@ -319,13 +380,20 @@ Friend NotInheritable Class D3D_V5Presentation
                     Return
                 End If
                 If 控件.IsHandleCreated AndAlso D3D_ControlTreeWalker.IsEffectivelyVisible(控件) Then
-                    立即渲染(控件, TryCast(控件, D3D_IGpuRenderable))
+                    ' 重新加入按深度排序的批次，禁止按计时器触发顺序直接提交。
+                    取消重试(控件)
+                    QueuePresentationRetry(控件)
                 Else
                     取消重试(控件)
                 End If
             End Sub
         _retryTimers(控件) = 重试计时器
         重试计时器.Start()
+    End Sub
+
+    Private Shared Sub QueuePresentationRetry(control As Control)
+        ' 帧延迟重试只需提交，保留已完成的表面，不重新标脏。
+        RequestRenderBatched(control, markSurfaceDirty:=False)
     End Sub
 
     Private Shared Sub 取消重试(控件 As Control)
@@ -442,7 +510,8 @@ Friend NotInheritable Class D3D_V5Presentation
             ReleaseHiddenSubtreeResources(控件)
             Return
         End If
-        RequestRender(控件)
+        ' 同一轮布局可连续改变尺寸、位置和父级；合并中间状态，仍标记背景坐标失效。
+        RequestRenderBatched(控件)
     End Sub
 
     ''' <summary>

@@ -742,6 +742,12 @@ Public Class ModernTabControl
 
     Private Sub 显示绑定控件(ctrl As Control)
         If ctrl Is Nothing Then Return
+        Using D3D_PaintBridge.BeginRenderUpdate(Me)
+            显示绑定控件核心(ctrl)
+        End Using
+    End Sub
+
+    Private Sub 显示绑定控件核心(ctrl As Control)
         Dim frm = TryCast(ctrl, Form)
         If frm IsNot Nothing Then
             准备窗体绑定(frm)
@@ -764,7 +770,8 @@ Public Class ModernTabControl
         Dim desiredPanelVisible As Boolean = 内容面板应显示()
         ctrl.Visible = True
         If _内容面板.Visible <> desiredPanelVisible Then _内容面板.Visible = desiredPanelVisible
-        If desiredPanelVisible AndAlso _内容面板.Controls.GetChildIndex(ctrl) <> 0 Then ctrl.BringToFront()
+        If _transitionCover IsNot Nothing AndAlso Not _transitionCover.IsDisposed Then _transitionCover.BringToFront()
+        If _transitionCover Is Nothing AndAlso desiredPanelVisible AndAlso _内容面板.Controls.GetChildIndex(ctrl) <> 0 Then ctrl.BringToFront()
         If desiredPanelVisible Then 准备绑定页渲染边界(ctrl)
 
         Dim backgroundChanged As Boolean = state Is Nothing OrElse
@@ -879,6 +886,27 @@ Public Class ModernTabControl
     End Function
 
     Private Sub 切换绑定控件()
+        Dim previous = _当前绑定控件
+        Using D3D_PaintBridge.BeginRenderUpdate(Me)
+            _transitionCover = If(previous IsNot Nothing AndAlso Not previous.IsDisposed AndAlso previous.Visible, previous, Nothing)
+            Try
+                切换绑定控件核心()
+                Dim nextPage = _当前绑定控件
+                D3D_RenderUpdate.AfterCommit(
+                    Sub()
+                        If IsDisposed Then Return
+                        If nextPage IsNot Nothing AndAlso Not nextPage.IsDisposed AndAlso _当前绑定控件 Is nextPage Then nextPage.BringToFront()
+                        If previous IsNot Nothing AndAlso Not previous.IsDisposed AndAlso _当前绑定控件 IsNot previous Then 隐藏绑定控件(previous)
+                    End Sub)
+            Finally
+                _transitionCover = Nothing
+            End Try
+        End Using
+    End Sub
+
+    Private _transitionCover As Control
+
+    Private Sub 切换绑定控件核心()
         Dim nextControl = 获取索引绑定控件(_selectedIndex)
         If _当前绑定控件 Is nextControl Then
             If nextControl IsNot Nothing Then
@@ -905,10 +933,10 @@ Public Class ModernTabControl
             Return
         End If
 
-        If _当前绑定控件 IsNot Nothing Then 隐藏绑定控件(_当前绑定控件)
+        If _当前绑定控件 IsNot Nothing AndAlso _当前绑定控件 IsNot _transitionCover Then 隐藏绑定控件(_当前绑定控件)
         For Each item In 项目列表
             Dim bound = If(item IsNot Nothing, item.BoundControl, Nothing)
-            If bound IsNot Nothing AndAlso bound IsNot nextControl AndAlso bound.Parent Is _内容面板 AndAlso bound.Visible Then
+            If bound IsNot Nothing AndAlso bound IsNot nextControl AndAlso bound IsNot _transitionCover AndAlso bound.Parent Is _内容面板 AndAlso bound.Visible Then
                 隐藏绑定控件(bound)
             End If
         Next

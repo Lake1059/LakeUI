@@ -2261,7 +2261,7 @@ Public Class ModernComboBox
             End If
             SetBoundsAndRender(targetLocation, New Size(Me.Width, _finalHeight))
             SetAnimationClip(clipRect)
-            请求重绘()
+            ' 完整尺寸表面已包含全部项目，裁剪变化无需重新栅格化和提交静态内容。
 
             If t >= 1.0F Then
                 停止展开关闭驱动()
@@ -2329,6 +2329,7 @@ Public Class ModernComboBox
 
         Friend Sub RefreshShadowSettings()
             If IsDisposed Then Return
+            _shadow?.ForceReset()
             UpdateShadowForCurrentClip()
         End Sub
 
@@ -2359,7 +2360,6 @@ Public Class ModernComboBox
             Dim depth As Integer = Math.Max(0, CInt(Math.Round(_owner.下拉阴影深度 * _owner.DpiScale())))
             Dim radius As Integer = CInt(Math.Round(获取下拉窗口圆角半径(visibleRect.Width, visibleRect.Height)))
             _shadow.ShadowDepth = depth
-            _shadow.ForceReset()
             _shadow.UpdateShadow(screenBounds, depth, _owner.下拉阴影颜色, _owner.下拉阴影不透明度, radius)
             _shadow.SyncVirtualDesktopWithHost()
             _shadow.PlaceBehind(Handle)

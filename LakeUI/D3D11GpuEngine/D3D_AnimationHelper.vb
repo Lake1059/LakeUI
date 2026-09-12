@@ -434,6 +434,8 @@ Friend Class D3D_AnimationHelper
         Private _droppedInvalidates As Long
 
         Public Sub New()
+            ' Blocking 会等待 UI 回调完成后再安排下一次唤醒，避免绘制忙时持续投递。
+            ' OverrunPolicy 仅对 NonBlocking 生效，此处不会积压 Queue Tick。
             _timer.DispatchMode = PrecisionTimer.DispatchModeEnum.Blocking
             _timer.OverrunPolicy = PrecisionTimer.OverrunPolicyEnum.Queue
             _timer.WorkerThreadCount = 1
@@ -549,6 +551,12 @@ Friend Class D3D_AnimationHelper
                     If helper IsNot Nothing AndAlso helper.IsActive Then helper.Tick(nowTicks)
                 Next
                 FlushInvalidations()
+                ' 所有 helper 已采样同一时刻，再统一按外到内派发和提交。
+                ' 不跨第二个 WM_TIMER 等待，下一次 Tick 仍由高精度时钟唤醒。
+                If Not D3D_RenderUpdate.IsActive AndAlso Not D3D_V5Presentation.IsRendering Then
+                    OuterToInnerRefreshScheduler.FlushPendingRequests()
+                    D3D_V5Presentation.FlushPendingFrame()
+                End If
                 UpdateTimerInterval(Stopwatch.GetTimestamp())
             Finally
                 _活动快照.Clear()

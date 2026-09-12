@@ -975,6 +975,7 @@ Public Class ModernContextMenu
         End Sub
 
         Friend Sub RefreshShadowSettings()
+            _shadow?.ForceReset()
             更新阴影()
         End Sub
 
@@ -1386,7 +1387,6 @@ Public Class ModernContextMenu
                                 (展开关闭目标高度 - 展开关闭起始高度) * eased
             Dim newHeight As Integer = Math.Max(1, CInt(Math.Round(展开关闭当前高度, MidpointRounding.AwayFromZero)))
             设置展开关闭裁剪高度(newHeight)
-            RequestGpuRender()
 
             If t >= 1.0F Then
                 停止展开关闭驱动()
@@ -1396,7 +1396,6 @@ Public Class ModernContextMenu
                 Else
                     展开关闭当前高度 = 展开关闭目标高度
                     清除展开关闭裁剪()
-                    RequestGpuRender()
                 End If
             End If
         End Sub
@@ -1442,7 +1441,8 @@ Public Class ModernContextMenu
             Me.Region = newRegion
             If oldRegion IsNot Nothing Then oldRegion.Dispose()
             更新阴影()
-            RequestGpuRender()
+            ' RenderGpu 已生成完整尺寸的表面。展开只改变 HWND 可见区域，
+            ' 不改变内容或背景坐标；真实内容和背景失效仍走正常刷新入口。
         End Sub
 
         Private Sub 清除展开关闭裁剪()
@@ -1484,7 +1484,6 @@ Public Class ModernContextMenu
             Dim depth As Integer = Math.Max(0, CInt(Math.Round(菜单.菜单阴影深度 * DpiScale())))
             Dim radius As Integer = CInt(Math.Round(Math.Min(获取菜单圆角(), Math.Min(bounds.Width, bounds.Height) / 2.0F)))
             _shadow.ShadowDepth = depth
-            _shadow.ForceReset()
             _shadow.UpdateShadow(bounds, depth, 菜单.菜单阴影颜色, 菜单.菜单阴影不透明度, radius)
             _shadow.SyncVirtualDesktopWithHost()
             _shadow.PlaceBehind(Handle)
