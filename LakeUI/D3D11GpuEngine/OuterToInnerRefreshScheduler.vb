@@ -245,6 +245,7 @@ Public Module OuterToInnerRefreshScheduler
                         ' 普通动画帧只走 Invalidate/OnPaint，不能同时再排一个 V5 批次。
                         If D3D_RenderUpdate.IsCommitting AndAlso D3D_V5Presentation.IsV5Control(ctrl) AndAlso
                            Not D3D_PaintBridge.IsDesignTimeControl(ctrl) Then
+                            D3D_ControlSurfaceRegistry.MarkDirty(ctrl, rect, requestConsumers:=False)
                             D3D_V5Presentation.RequestRenderBatched(ctrl, rect)
                         End If
                         RemovePendingRequestCoveredByCurrentDispatch(ctrl, rect, entry)

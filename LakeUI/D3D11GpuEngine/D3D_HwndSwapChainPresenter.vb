@@ -68,7 +68,8 @@ Friend NotInheritable Class D3D_HwndSwapChainPresenter
         If Not _presenting Then 释放设备资源()
     End Sub
 
-    Friend Function Present(surface As D3D_ControlSurface) As Boolean
+    Friend Function Present(surface As D3D_ControlSurface,
+                            Optional completion As Action(Of Boolean, Double) = Nothing) As Boolean
         FrameLatencyDeferred = False
         If _disposed OrElse surface Is Nothing OrElse surface.Bitmap Is Nothing Then Return False
         If _owner Is Nothing OrElse _owner.IsDisposed OrElse Not _owner.IsHandleCreated OrElse
@@ -114,8 +115,6 @@ Friend NotInheritable Class D3D_HwndSwapChainPresenter
             End Try
 
             Dim 提交开始时间 = D3D_RefreshDiagnostics.Start()
-            ' 保持原有提交策略。同步间隔为 0 不代表此调用绝不阻塞，
-            ' DXGIPresent 诊断单独记录驱动调用时间。
             _swapChain.Present(0UI, PresentFlags.None).CheckError()
             D3D_RefreshDiagnostics.Record(提交开始时间, "DXGIPresent", _owner)
             _presentedSurfaceRevision = surface.Revision
