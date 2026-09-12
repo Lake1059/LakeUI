@@ -11,10 +11,8 @@ Friend NotInheritable Class D3D_V5Presentation
         Implements IDisposable
 
         Public ReadOnly Pending As New Dictionary(Of Control, BatchedRenderEntry)()
-        Public ReadOnly Dispatcher As New WindowsFormsSynchronizationContext()
         Public ReadOnly ContinuationTimer As New Timer With {.Interval = 1}
         Public Posted As Boolean
-        Public Flushing As Boolean
         Public Disposed As Boolean
         Public Sequence As Long
 
@@ -30,7 +28,6 @@ Friend NotInheritable Class D3D_V5Presentation
             If Disposed Then Return
             Disposed = True
             ContinuationTimer.Dispose()
-            Dispatcher.Dispose()
             Pending.Clear()
             Posted = False
         End Sub
@@ -160,11 +157,11 @@ Friend NotInheritable Class D3D_V5Presentation
         If state.Posted Then Return
         state.Posted = True
         Try
-            If state.Flushing Then
-                state.ContinuationTimer.Start()
-            Else
-                state.Dispatcher.Post(Sub(批次) FlushBatchedRenders(DirectCast(批次, RenderBatchState)), state)
-            End If
+            ' 普通批次同样必须让出输入优先级。Post/BeginInvoke 会优先于真实
+            ' 鼠标输入派发；动画持续失效时，即使没有 Flush 内重入，也会
+            ' 连续提交批次，直到一段动画结束才处理已积压的滚轮消息。
+            ' WM_TIMER 在输入和 WM_PAINT 之后派发；Paint 仍可提前消费脏区。
+            state.ContinuationTimer.Start()
         Catch
             state.Posted = False
         End Try
@@ -187,19 +184,14 @@ Friend NotInheritable Class D3D_V5Presentation
                        Return a.Value.Sequence.CompareTo(b.Value.Sequence)
                    End Function)
 
-        state.Flushing = True
-        Try
-            For Each item In batch
-                Dim control = item.Key
-                If control Is Nothing OrElse control.IsDisposed OrElse
-                   Not control.IsHandleCreated OrElse Not D3D_ControlTreeWalker.IsEffectivelyVisible(control) Then Continue For
-                立即渲染(control,
-                        TryCast(control, D3D_IGpuRenderable),
-                        requestedDirty:=item.Value.Rect)
-            Next
-        Finally
-            state.Flushing = False
-        End Try
+        For Each item In batch
+            Dim control = item.Key
+            If control Is Nothing OrElse control.IsDisposed OrElse
+               Not control.IsHandleCreated OrElse Not D3D_ControlTreeWalker.IsEffectivelyVisible(control) Then Continue For
+            立即渲染(control,
+                    TryCast(control, D3D_IGpuRenderable),
+                    requestedDirty:=item.Value.Rect)
+        Next
     End Sub
 
     Private Shared Sub 移除批次请求(control As Control)

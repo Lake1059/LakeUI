@@ -8,8 +8,14 @@ using LakeUI;
 
 static class Program
 {
-    private static void Main()
+    [STAThread]
+    private static void Main(string[] args)
     {
+        if (args.Length == 2 && args[0] == "--demo-input")
+        {
+            ProbeDemoInput(args[1]);
+            return;
+        }
         VerifyFenceParsing();
         VerifyBuiltInHighlighters();
         VerifySyntaxIndentation();
@@ -1163,6 +1169,85 @@ static class Program
             control.DuringRender = null;
         }
     }
+
+
+    private static void ProbeDemoInput(string path)
+    {
+        // Opt-in desktop test: posted messages have higher priority than real
+        // wheel input and cannot detect this regression. Build DEMO first and
+        // pass --demo-input <path-to-LakeUI.Demo.dll> on an interactive desktop.
+        var directory = Path.GetDirectoryName(Path.GetFullPath(path))!;
+        AppDomain.CurrentDomain.AssemblyResolve += (_, e) =>
+        {
+            var candidate = Path.Combine(directory, new AssemblyName(e.Name).Name + ".dll");
+            return File.Exists(candidate) ? Assembly.LoadFrom(candidate) : null;
+        };
+        var assembly = Assembly.LoadFrom(Path.GetFullPath(path));
+        using var form = (Form)Activator.CreateInstance(assembly.GetTypes().Single(t => t.Name == "Form1"))!;
+        form.Show();
+        Application.DoEvents();
+        var tab = form.Controls.OfType<ModernTabListControl>().Single();
+        var probe = new WheelProbe();
+        probe.AssignHandle(tab.Handle);
+        var point = tab.PointToScreen(new Point(80, 200));
+        form.Activate();
+        var originalCursor = Cursor.Position;
+        Cursor.Position = point;
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        var sent = new double[12];
+        var received = new List<double>();
+        probe.Wheel = () => received.Add(watch.Elapsed.TotalMilliseconds);
+        var producer = Task.Run(() =>
+        {
+            for (var i = 0; i < sent.Length; i++)
+            {
+                Thread.Sleep(80);
+                sent[i] = watch.Elapsed.TotalMilliseconds;
+                var input = new NativeInput { Type = 0, Mouse = new NativeMouse { Data = unchecked((uint)-120), Flags = 0x0800 } };
+                Assert(SendInput(1, new[] { input }, Marshal.SizeOf<NativeInput>()) == 1,
+                    "Could not inject wheel input into the DEMO window.");
+            }
+        });
+        try
+        {
+            while (watch.ElapsedMilliseconds < 2500)
+            {
+                Application.DoEvents();
+                Thread.Sleep(1);
+            }
+            producer.GetAwaiter().GetResult();
+        }
+        finally
+        {
+            producer.GetAwaiter().GetResult();
+            probe.ReleaseHandle();
+            Cursor.Position = originalCursor;
+        }
+        Console.WriteLine($"Received {received.Count} wheels");
+        for (var i = 0; i < Math.Min(received.Count, sent.Length); i++)
+            Console.WriteLine($"Wheel {i}: sent={sent[i]:F1} received={received[i]:F1} latency={received[i]-sent[i]:F1} ms");
+        Assert(received.Count == sent.Length,
+            "Continuous animation must not defer and coalesce wheel input until each segment ends.");
+        Assert(received.Select((time, i) => time - sent[i]).Max() < 150,
+            "Wheel input must be processed while the animation is still running.");
+    }
+
+    private sealed class WheelProbe : NativeWindow
+    {
+        public Action? Wheel;
+        protected override void WndProc(ref Message m)
+        {
+            if (m.Msg == 0x20a) Wheel?.Invoke();
+            base.WndProc(ref m);
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativeMouse { public int X, Y; public uint Data, Flags, Time; public UIntPtr Extra; }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativeInput { public uint Type; public NativeMouse Mouse; }
+    [DllImport("user32.dll")]
+    private static extern uint SendInput(uint count, NativeInput[] input, int size);
 
     private sealed class BatchMessageProbeForm : Form
     {
