@@ -41,6 +41,7 @@ static class Program
         VerifyV5DirtyRetryAndResetContracts();
         VerifyV5BatchCoalescingDiagnostics();
         VerifyV5BatchSurvivesCallbackOwnerTeardown();
+        VerifyV5BatchYieldsToWindowMessages();
         VerifyDxDialogsKeepCaptionHoverRendering();
         VerifyBackdropImageSnapshotSurvivesCallerDispose();
         VerifyHdrImageMappingUsesCachedLookup();
@@ -1126,6 +1127,51 @@ static class Program
             Assert(state.HoverHit == 0 && D3D_ControlSurfaceRegistry.IsDirty(caption),
                 "Leaving a caption button must clear and repaint its hover state.");
             PumpUntil(() => D3D_ControlSurfaceRegistry.HasCurrentSurface(caption));
+        }
+    }
+
+    [DllImport("user32.dll")]
+    private static extern bool PostMessage(IntPtr window, int message, IntPtr first, IntPtr second);
+
+    private static void VerifyV5BatchYieldsToWindowMessages()
+    {
+        using var form = new BatchMessageProbeForm { ClientSize = new Size(240, 160), ShowInTaskbar = false };
+        using var control = new CountingGpuControl { Bounds = new Rectangle(0, 0, 120, 80) };
+        form.Controls.Add(control);
+        form.Show();
+        Application.DoEvents();
+        var initial = control.RenderCount;
+        var observed = -1;
+        form.MessageReceived = () => observed = control.RenderCount - initial;
+        control.DuringRender = _ =>
+        {
+            if (control.RenderCount - initial < 200)
+                D3D_V5Presentation.RequestRenderBatched(control);
+        };
+        try
+        {
+            D3D_V5Presentation.RequestRenderBatched(control);
+            Assert(PostMessage(form.Handle, BatchMessageProbeForm.ProbeMessage, IntPtr.Zero, IntPtr.Zero),
+                "Could not queue the message-loop fairness probe.");
+            PumpUntil(() => observed >= 0);
+            Assert(observed < 20,
+                $"Self-invalidating rendering starved window messages for {observed} frames.");
+            PumpUntil(() => control.RenderCount - initial >= 4);
+        }
+        finally
+        {
+            control.DuringRender = null;
+        }
+    }
+
+    private sealed class BatchMessageProbeForm : Form
+    {
+        public const int ProbeMessage = 0x8001;
+        public Action? MessageReceived;
+        protected override void WndProc(ref Message message)
+        {
+            if (message.Msg == ProbeMessage) MessageReceived?.Invoke();
+            base.WndProc(ref message);
         }
     }
 

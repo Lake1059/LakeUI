@@ -8,10 +8,32 @@ Imports System.Reflection
 ''' </summary>
 Friend NotInheritable Class D3D_V5Presentation
     Private NotInheritable Class RenderBatchState
+        Implements IDisposable
+
         Public ReadOnly Pending As New Dictionary(Of Control, BatchedRenderEntry)()
         Public ReadOnly Dispatcher As New WindowsFormsSynchronizationContext()
+        Public ReadOnly ContinuationTimer As New Timer With {.Interval = 1}
         Public Posted As Boolean
+        Public Flushing As Boolean
+        Public Disposed As Boolean
         Public Sequence As Long
+
+        Public Sub New()
+            AddHandler ContinuationTimer.Tick,
+                Sub()
+                    ContinuationTimer.Stop()
+                    FlushBatchedRenders(Me)
+                End Sub
+        End Sub
+
+        Public Sub Dispose() Implements IDisposable.Dispose
+            If Disposed Then Return
+            Disposed = True
+            ContinuationTimer.Dispose()
+            Dispatcher.Dispose()
+            Pending.Clear()
+            Posted = False
+        End Sub
     End Class
 
     Private Structure BatchedRenderEntry
@@ -138,14 +160,18 @@ Friend NotInheritable Class D3D_V5Presentation
         If state.Posted Then Return
         state.Posted = True
         Try
-            state.Dispatcher.Post(Sub(批次) FlushBatchedRenders(DirectCast(批次, RenderBatchState)), state)
+            If state.Flushing Then
+                state.ContinuationTimer.Start()
+            Else
+                state.Dispatcher.Post(Sub(批次) FlushBatchedRenders(DirectCast(批次, RenderBatchState)), state)
+            End If
         Catch
             state.Posted = False
         End Try
     End Sub
 
     Private Shared Sub FlushBatchedRenders(state As RenderBatchState)
-        If state Is Nothing Then Return
+        If state Is Nothing OrElse state.Disposed Then Return
 
         state.Posted = False
         If state.Pending.Count = 0 Then Return
@@ -161,14 +187,19 @@ Friend NotInheritable Class D3D_V5Presentation
                        Return a.Value.Sequence.CompareTo(b.Value.Sequence)
                    End Function)
 
-        For Each item In batch
-            Dim control = item.Key
-            If control Is Nothing OrElse control.IsDisposed OrElse
-               Not control.IsHandleCreated OrElse Not D3D_ControlTreeWalker.IsEffectivelyVisible(control) Then Continue For
-            立即渲染(control,
-                    TryCast(control, D3D_IGpuRenderable),
-                    requestedDirty:=item.Value.Rect)
-        Next
+        state.Flushing = True
+        Try
+            For Each item In batch
+                Dim control = item.Key
+                If control Is Nothing OrElse control.IsDisposed OrElse
+                   Not control.IsHandleCreated OrElse Not D3D_ControlTreeWalker.IsEffectivelyVisible(control) Then Continue For
+                立即渲染(control,
+                        TryCast(control, D3D_IGpuRenderable),
+                        requestedDirty:=item.Value.Rect)
+            Next
+        Finally
+            state.Flushing = False
+        End Try
     End Sub
 
     Private Shared Sub 移除批次请求(control As Control)
@@ -177,6 +208,7 @@ Friend NotInheritable Class D3D_V5Presentation
     End Sub
 
     Private Shared Sub UI线程退出时(发送者 As Object, 事件参数 As EventArgs)
+        _renderBatch?.Dispose()
         _renderBatch = Nothing
     End Sub
 

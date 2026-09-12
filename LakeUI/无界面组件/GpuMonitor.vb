@@ -423,7 +423,7 @@ Public NotInheritable Class GpuMonitor
         NvmlInterop.确保初始化()
         If NvmlInterop.可用 Then
             For Each ad In 适配器
-                Dim dev = NvmlInterop.分配设备(转无符号32位位模式(ad.Info.LuidLow), ad.Info.LuidHigh)
+                Dim dev = NvmlInterop.分配设备(转无符号32位位模式(ad.Info.LuidLow), ad.Info.LuidHigh, ad.Info.Name)
                 If dev <> IntPtr.Zero Then
                     ad.NvmlDevice = dev
                     NvmlInterop.填充静态信息(dev, ad.Info)
@@ -802,6 +802,7 @@ Friend NotInheritable Class NvmlInterop
     Private Delegate Function D_DevUtilPair(device As IntPtr, ByRef util As UInteger, ByRef sampling As UInteger) As Integer
     Private Delegate Function D_SysVer(buf As Byte(), length As UInteger) As Integer
     Private Delegate Function D_DevVer(device As IntPtr, buf As Byte(), length As UInteger) As Integer
+    Private Delegate Function D_DevName(device As IntPtr, buf As Byte(), length As UInteger) As Integer
 #End Region
 
 #Region "状态"
@@ -816,6 +817,7 @@ Friend NotInheritable Class NvmlInterop
     Private Shared p_EncUtil As D_DevUtilPair, p_DecUtil As D_DevUtilPair
     Private Shared p_DriverVer As D_SysVer
     Private Shared p_VbiosVer As D_DevVer
+    Private Shared p_DeviceName As D_DevName
 
     ' NVML 没有 GetByLuid，按 PCI 顺序与 D3DKMT 一一对应（与任务管理器一致）
     Private Shared 待分配 As Queue(Of IntPtr)
@@ -849,6 +851,7 @@ Friend NotInheritable Class NvmlInterop
             p_DecUtil = 取委托(Of D_DevUtilPair)("nvmlDeviceGetDecoderUtilization")
             p_DriverVer = 取委托(Of D_SysVer)("nvmlSystemGetDriverVersion")
             p_VbiosVer = 取委托(Of D_DevVer)("nvmlDeviceGetVbiosVersion")
+            p_DeviceName = 取委托(Of D_DevName)("nvmlDeviceGetName")
 
             If p_Init Is Nothing OrElse p_Init() <> NVML_SUCCESS Then 关闭() : Return
             构建设备队列()
@@ -870,7 +873,7 @@ Friend NotInheritable Class NvmlInterop
         p_Power = Nothing : p_PowerLimit = Nothing
         p_Clock = Nothing : p_MaxClock = Nothing : p_Util = Nothing
         p_EncUtil = Nothing : p_DecUtil = Nothing
-        p_DriverVer = Nothing : p_VbiosVer = Nothing
+        p_DriverVer = Nothing : p_VbiosVer = Nothing : p_DeviceName = Nothing
         待分配 = Nothing
         已分配.Clear()
         已初始化 = False
@@ -909,16 +912,48 @@ Friend NotInheritable Class NvmlInterop
 #End Region
 
 #Region "设备匹配 / 字段填充"
-    ''' <summary>按 LUID 分配 NVML 设备（按 PCI 顺序与 D3DKMT 一一对应；同 LUID 缓存）。</summary>
-    Public Shared Function 分配设备(luidLow As UInteger, luidHigh As Integer) As IntPtr
+    ''' <summary>按稳定的驱动描述匹配 NVML 设备；同 LUID 缓存。驱动描述无法匹配时才使用枚举顺序兜底。</summary>
+    Public Shared Function 分配设备(luidLow As UInteger, luidHigh As Integer, adapterName As String) As IntPtr
         If Not 可用 Then Return IntPtr.Zero
         Dim key = (CULng(转无符号32位位模式(luidHigh)) << 32) Or CULng(luidLow)
         Dim dev As IntPtr
         If 已分配.TryGetValue(key, dev) Then Return dev
         If 待分配 Is Nothing OrElse 待分配.Count = 0 Then Return IntPtr.Zero
-        dev = 待分配.Dequeue()
+        dev = IntPtr.Zero
+        If p_DeviceName IsNot Nothing AndAlso Not String.IsNullOrWhiteSpace(adapterName) Then
+            Dim wanted = 标准化名称(adapterName)
+            For Each candidate In 待分配
+                Dim candidateName = 读取设备名称(candidate)
+                If Not String.IsNullOrEmpty(candidateName) AndAlso
+                   (candidateName.IndexOf(wanted, StringComparison.OrdinalIgnoreCase) >= 0 OrElse wanted.IndexOf(candidateName, StringComparison.OrdinalIgnoreCase) >= 0) Then
+                    dev = candidate
+                    Exit For
+                End If
+            Next
+        End If
+        If dev = IntPtr.Zero Then dev = 待分配.Peek()
+        Dim remaining As New Queue(Of IntPtr)
+        While 待分配.Count > 0
+            Dim item = 待分配.Dequeue()
+            If item <> dev Then remaining.Enqueue(item)
+        End While
+        待分配 = remaining
         已分配(key) = dev
         Return dev
+    End Function
+
+    Public Shared Function 分配设备(luidLow As UInteger, luidHigh As Integer) As IntPtr
+        Return 分配设备(luidLow, luidHigh, "")
+    End Function
+
+    Private Shared Function 读取设备名称(device As IntPtr) As String
+        Dim buf(255) As Byte
+        If p_DeviceName Is Nothing OrElse p_DeviceName(device, buf, CUInt(buf.Length)) <> NVML_SUCCESS Then Return ""
+        Return Encoding.ASCII.GetString(buf).TrimEnd(ChrW(0)).Trim()
+    End Function
+
+    Private Shared Function 标准化名称(value As String) As String
+        Return value.Replace("NVIDIA Corporation", "", StringComparison.OrdinalIgnoreCase).Trim()
     End Function
 
     Private Shared Function 转无符号32位位模式(value As Integer) As UInteger
