@@ -837,6 +837,16 @@ Public Class Ultra2DChart
     Public Sub ResetXAxisView()
         设置X轴视图(0, 0)
     End Sub
+
+    ''' <summary>设置当前 Y 轴视图范围，并立即按该范围重绘数据。</summary>
+    Public Sub SetYAxisView(minimum As Double, maximum As Double)
+        If Double.IsNaN(minimum) OrElse Double.IsNaN(maximum) OrElse Double.IsInfinity(minimum) OrElse Double.IsInfinity(maximum) OrElse maximum <= minimum Then Return
+        Y轴范围模式 = AxisRangeModeEnum.Fixed
+        Y轴最小值 = minimum
+        Y轴最大值 = maximum
+        _layoutCache = Nothing
+        RefreshChart()
+    End Sub
 #End Region
 
 #Region "绘制"
@@ -1868,7 +1878,8 @@ Public Class Ultra2DChart
 
     Private Function 测量文本尺寸(text As String, font As Font) As Size
         If String.IsNullOrEmpty(text) Then Return Size.Empty
-        Return TextRenderer.MeasureText(text, font, New Size(Integer.MaxValue, Integer.MaxValue), TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine)
+        Dim normalized = text.Replace(vbLf, Environment.NewLine)
+        Return TextRenderer.MeasureText(normalized, font, New Size(Integer.MaxValue, Integer.MaxValue), TextFormatFlags.NoPadding Or TextFormatFlags.WordBreak)
     End Function
 
 
@@ -2992,6 +3003,24 @@ Public Class Ultra2DChart
 
 #Region "生命周期"
     Protected Overrides Sub OnMouseWheel(e As MouseEventArgs)
+        If (Control.ModifierKeys And Keys.Control) = Keys.Control Then
+            Dim layout = 获取布局()
+            If layout IsNot Nothing AndAlso layout.PlotRect.Contains(e.X, e.Y) AndAlso layout.ValueMax > layout.ValueMin Then
+                Dim oldMin = layout.ValueMin
+                Dim oldMax = layout.ValueMax
+                Dim ratio As Double = If(e.Delta > 0, 1.0 / X轴滚轮缩放比例, X轴滚轮缩放比例)
+                Dim anchor = Math.Clamp((layout.PlotRect.Bottom - e.Y) / Math.Max(1.0F, layout.PlotRect.Height), 0.0, 1.0)
+                Dim anchorValue = oldMin + anchor * (oldMax - oldMin)
+                Dim newMin = anchorValue - (anchorValue - oldMin) * ratio
+                Dim newMax = anchorValue + (oldMax - anchorValue) * ratio
+                If newMax > newMin AndAlso Not Double.IsNaN(newMin) AndAlso Not Double.IsNaN(newMax) Then
+                    SetYAxisView(newMin, newMax)
+                    Dim handled = TryCast(e, HandledMouseEventArgs)
+                    If handled IsNot Nothing Then handled.Handled = True
+                    Return
+                End If
+            End If
+        End If
         If 允许X轴缩放 Then
             Dim layout = 获取布局()
             If layout IsNot Nothing AndAlso
