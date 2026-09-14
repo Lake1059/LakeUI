@@ -11,6 +11,14 @@ static partial class Program
     [STAThread]
     private static void Main(string[] args)
     {
+        if (args.Length > 0 && args[0] == "--composition-probe")
+        {
+            Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
+            ProbeCompositionPixels();
+            ProbeMixedCompositionRates();
+            ProbeMappedCompositionRates();
+            return;
+        }
         if (args.Length > 0 && args[0] == "--menu-animation-probe")
         {
             ProbeMenuAnimations(args.Length > 1 && args[1] == "shadow");
@@ -24,7 +32,7 @@ static partial class Program
         }
         if (args.Length >= 1 && args[0] == "--animation-probe")
         {
-            ProbeConcurrentAnimations(args.Length > 1 ? int.Parse(args[1]) : 60);
+            ProbeConcurrentAnimations(args.Length > 1 ? int.Parse(args[1]) : 60, args.Length > 2 ? int.Parse(args[2]) : 2);
             return;
         }
         if (args.Length >= 1 && args[0] == "--refresh-probe")
@@ -39,6 +47,7 @@ static partial class Program
         }
         VerifyRefreshTransactions();
         VerifyAnimationTickCommitsAllOwners();
+        VerifyCompositionCommitAccounting();
         VerifyGeometryBurstCoalesces();
         VerifyLazyPages();
         VerifyTextMeasurementReuse();

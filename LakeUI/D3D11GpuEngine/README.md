@@ -1,13 +1,13 @@
 # LakeUI D3D11 GPU Engine
 
-此目录是 LakeUI V5 GPU 渲染核心的唯一实现区域；当前运行时主链路是 per-control V5 HWND swap-chain，`OnPaint` 仅负责触发首次/恢复呈现。
+此目录是 LakeUI V5 GPU 渲染核心的唯一实现区域；当前运行时主链路是每控件持久 GPU surface + HWND DirectComposition surface，同一批次由共享 composition device 一次 `Commit`。`OnPaint` 仅负责触发首次/恢复呈现。
 
 ## 主链路
 
 ## 初始化与整页刷新
 
 从外到内是强制约束。`BeginRenderUpdate` 在 UI 线程累积初始化、布局和可见性变更，最外层
-作用域退出时统一派发。初始化多控件批次先按深度准备表面及交换链，再按相同顺序提交；不会并行
+作用域退出时统一派发。初始化多控件批次先按深度准备内容表面及合成目标，再按相同顺序更新合成表面，最后统一发布；不会并行
 执行 `RenderGpu`，也不会在后台访问控件。不要跨 `Await`、模态对话框或消息循环持有事务。
 
 ```vb
@@ -22,8 +22,9 @@ End Using
 ```
 
 两个选项卡控件已自动使用事务。存在旧页时，旧页保持在新页前方，整批提交尝试完成后才
-切换层次并隐藏旧页；不截屏、不生成窗口级备份。独立 HWND 交换链不能保证同一扫描时刻
-上屏，设备丢失或交换链忙时仍由后续重试恢复。首个窗口显示和普通原生控件不属于原子呈现。
+切换层次并隐藏旧页；不截屏、不生成窗口级备份。同一 composition device 的更新通过一次事务发布，
+但 `Commit` 返回不代表已经扫描上屏；设备丢失或句柄竞态仍由后续重试恢复。首个窗口显示、
+原生控件绘制和 WinForms HWND 层次变化不属于这次合成事务。
 
 `ModernTabListControl.ModernTabPage.BoundControlFactory` 仅在首次选中时创建页面，后续复用
 `BoundControl`。工厂运行于 UI 线程，读取 `BoundControl` 或遍历隐藏页不会触发构造。
@@ -40,9 +41,12 @@ LRU 淘汰；格式失效与资源清理会清空缓存，不保留 Font、Contr
 ### 验证与计时
 
 开启 `V5ProbeEnabled` 并调用 `ResetV5Probe()` 后，`GetV5RefreshTimings()` 返回有界、无控件
-强引用的分段统计。`RenderGpu`、`PresenterResources`、`DXGIPresent` 分别记录内容准备、
-呈现资源和 DXGI 调用。记录的是 CPU 墙钟时间；阶段存在包含关系，不能直接相加，提交
-时间也不代表屏幕扫描时间。`UpdateScope` 只计作用域内的变更，不包含退出时的提交。
+强引用的分段统计。`RenderGpu`、`PresenterResources`、`Present` 分别记录内容准备、
+呈现资源和控件合成表面更新；`CompositionCommit` 记录整批发布，`CompositionPublished` 按控件
+记录成功发布次数。只有 `Commit` 成功才增加 `SubmittedFrames` 和确认控件修订号。
+这些都是 CPU 墙钟统计，不代表扫描上屏；`CompositionPublished` 的耗时共享同一次提交，不能跨控件相加。
+全局帧间隔记录不同批次的发布时间，不再把同一批次的多个控件计为相邻屏幕帧。
+`UpdateScope` 只计作用域内的变更，不包含退出时的提交。
 
 ```powershell
 dotnet run --project LakeUI.Tests -c Release -- --refresh-probe
@@ -50,12 +54,9 @@ dotnet run --project LakeUI.Tests -c Release -- --demo-refresh <LakeUI.Demo.dll�
 ```
 
 40 控件探针比较同步逐项请求与事务合并，并输出总同步耗时及首次到末次提交跨度。
-本机实测内容绘制约 2～7ms，而逐项 DXGI 提交可累计约 320ms；只读 NVAPI 查询确认了
-NVIDIA 全局最大帧率为 120 FPS，且 DEMO 没有独立配置。
-测得总提交速率与该配置接近，但没有修改驱动作对照，不能仅凭相关性判定唯一根因。
-本次不宣称等比例缩短整页耗时，重点是减少中间状态和切页
-逐项出现。正常帧忙使用约 16ms 重试，设备故障保留 250ms 退避；重试复用已完成表面，且
-重新加入外到内批次，不按计时器顺序直接渲染。驱动或外部帧率限制仍可能影响 DXGI 调用。
+旧的逐控件 DXGI Present 在本机出现总提交约 120 次/秒的瓶颈，五控件各约 24 FPS；
+新后端每批只调用一次 `Commit`。引擎不会修改驱动配置，不设置 `ALLOW_TEARING`，由 DWM 默认同步合成。
+设备故障保留 250ms 退避；重试复用已完成表面，并重新加入外到内批次。
 
 ### 持续动画
 
@@ -70,13 +71,21 @@ NVIDIA 全局最大帧率为 120 FPS，且 DEMO 没有独立配置。
 dotnet build LakeUI.Tests/LakeUI.Tests.csproj -c Release --no-restore
 dotnet LakeUI.Tests/bin/Release/net10.0-windows10.0.17763.0/LakeUI.Tests.dll --animation-probe 60
 dotnet LakeUI.Tests/bin/Release/net10.0-windows10.0.17763.0/LakeUI.Tests.dll --animation-probe 0
+dotnet LakeUI.Tests/bin/Release/net10.0-windows10.0.17763.0/LakeUI.Tests.dll --animation-probe 120 10
+dotnet LakeUI.Tests/bin/Release/net10.0-windows10.0.17763.0/LakeUI.Tests.dll --composition-probe
 ```
 
-探针同时运行两种加载动画、进度条、仪表盘和按钮涟漪，使用真实消息循环，约两秒自动关闭；
-独立超时保护在十二秒后终止异常测试进程。统计区间排除初始化，输出每控件绘制/提交次数，
-以及 UI 采样观察到的最大更新间隔（后者不等于显示器扫描帧间隔）。本机在全局 120 FPS
-配置下，五个控件各约 24 FPS，与总计约 120 次提交相符。该观察不能替代呈现链路的因果
-验证；优化应首先减少多交换链串行提交中的无效工作，引擎不会修改驱动设置。
+动画探针同时运行两种加载动画、进度条、仪表盘和按钮涟漪，使用真实消息循环，默认两秒自动关闭，
+可指定持续秒数，另有独立超时保护。输出每控件绘制/成功发布次数、发布速率和 DWM 合成刷新率。
+超过两秒的测试使用足够长的缓出动画段，避免动画结束或缓入阶段低于既有失效阈值造成主动跳帧。
+UI 的 15ms 采样只用于检测卡顿，不能用其观察次数判断 120 FPS。
+合成探针通过内部 GPU 读回验证多层及超容器背景映射、来源独立失效、几何变化和句柄/设备恢复，
+再验证 30/60/120 混合动画及五个嵌套 120 FPS 动画；不截图、不修改系统显示设置。
+控件的动画状态独立到期，背景来源变化仍可使低帧率消费者额外重绘；依赖重绘不会推进其动画状态。
+达到 120 FPS 仍要求整批绘制和合成工作能在约 8.33ms 内完成，不能保证任意数量/复杂度控件跑满。
+本机默认同步、DWM 120Hz 下，十秒测试五个真实控件各绘制并成功发布 1201 帧（各约 120.0 FPS），
+共享提交 1201 次。GPU 读回和修订号检查通过，混合帧率约 30/60/119 FPS；
+这些内部探针验证内容及成功发布，不把 DWM 刷新率或 `Commit` 返回当成逐控件扫描上屏证明。
 
 ### 静态内容与几何变化
 
@@ -109,7 +118,7 @@ dotnet LakeUI.Tests/bin/Release/net10.0-windows10.0.17763.0/LakeUI.Tests.dll --d
 
 当前有效路线是：
 
-V5 控件：`Control.OnPaint` -> `D3D_PaintBridge.PaintRenderable` -> `D3D_V5Presentation.Paint` -> `D3D_ControlSurface` -> `D3D_IGpuRenderable.RenderGpu` -> `D3D_HwndSwapChainPresenter.Present(0)`。
+V5 控件：`Control.OnPaint` -> `D3D_PaintBridge.PaintRenderable` -> `D3D_V5Presentation.Paint` -> `D3D_ControlSurface` -> `D3D_IGpuRenderable.RenderGpu` -> `D3D_HwndCompositionPresenter.Present` -> 批次末尾 `IDCompositionDevice.Commit`。
 
 V5 不提供 HDC/Graphics 兼容桥；未迁移的原生控件继续使用 WinForms 自身绘制，不会进入 GPU 引擎。
 
@@ -125,10 +134,10 @@ V5 不提供 HDC/Graphics 兼容桥；未迁移的原生控件继续使用 WinFo
 
 ## 当前核心边界
 
-- `D3D_` 类型负责 D3D11/DXGI/D2D1.1/DirectWrite、Form 级共享 GPU 缓存、文字、背景穿透、Backdrop 以及 V5 swap-chain 呈现；D3D->HDC 合成只属于兼容桥。
+- `D3D_` 类型负责 D3D11/DXGI/D2D1.1/DirectWrite、Form 级共享 GPU 缓存、文字、背景穿透、Backdrop 以及 V5 DirectComposition 呈现；D3D->HDC 合成只属于兼容桥。
 - `D3D_` 类型负责控件契约、DPI、失效路由、树遍历和 GPU 资源生命周期。
 - 已迁移控件必须在自己的 `OnPaint` 中输出像素；状态变化只请求 `Invalidate`，不主动绘制整窗。
-- 旧的窗口级 swap-chain/render-host/full-tree compositor、HDR 子交换链镜像、DirectComposition 宿主和窗口级背景 snapshot 路线已从代码中移除。
+- 旧的窗口级 swap-chain/render-host/full-tree compositor、HDR 子交换链镜像和窗口级背景 snapshot 路线不再使用。当前 DirectComposition 只为各控件 HWND 提供独立目标和表面，不建立整窗背景副本。
 
 ## 设备丢失策略
 
@@ -213,7 +222,7 @@ HDR 性能约定：
 ### 纹理共享与预算
 
 - 同一来源控件（包括 `ThisIsYourWindow` 宿主 Form）在 `D3D_ControlSurfaceRegistry` 中只创建一个持久 GPU surface；多个 Form/控件作为消费者时直接采样该 surface，不得为每个消费者复制底图或重新执行背景合成。
-- 每个可见 HWND 的内容 surface 与 swap-chain 仍属于独立显示工作集。除非同时改变 HWND 呈现契约，否则不得把多个可见窗口的目标表面合并成一张共享 render target。
+- 每个可见 HWND 的内容 surface 与 composition surface 仍属于独立显示工作集；共享的是设备和发布事务。合成表面按逻辑像素字节计量，DWM 内部额外缓冲不属于可观测缓存；不得合并成整窗背景副本。
 - `D3D_TextureCache` 在帧使用期间移除的纹理先进入退役队列，退役字节继续计入 GPU 预算，帧结束后统一释放；设备代次变化和显式清理必须清空该队列。
 - 帧内新纹理触发的预算维护必须合并投递到原 WinForms UI 上下文，在绘制结束后的独立消息中执行；帧结束本身不扫描全局预算，不能直接丢弃尚未执行的维护请求。
 - 画刷和文字格式的容量为零时仍保护即将返回给当前绘制的一个资源，后续不同资源请求或显式清理再释放它；不能返回已经 Dispose 的对象。

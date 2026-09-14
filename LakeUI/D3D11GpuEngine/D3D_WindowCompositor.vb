@@ -3,7 +3,7 @@ Imports Vortice.Direct2D1
 
 ''' <summary>
 ''' Form 级共享 GPU 资源容器。V5 HWND presenter、背景采样和非 V5 绘制路径共用这里的
-''' 文字、图片、画刷、几何及 Backdrop 缓存；交换链仍由每控件 D3D_HwndSwapChainPresenter 独立拥有。
+''' 文字、图片、画刷、几何及 Backdrop 缓存；HWND 合成表面由每控件 D3D_HwndCompositionPresenter 拥有。
 ''' </summary>
 Public NotInheritable Class D3D_WindowCompositor
     Implements D3D_IRenderCacheOwner, D3D_IRenderCachePriority, IDisposable

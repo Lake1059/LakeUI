@@ -21,7 +21,7 @@ Imports Vortice.DXGI
 ''' <para>
 ''' 设备丢失边界：驱动更新、TDR、显示适配器重置、休眠恢复、远程桌面切换等都按同一套 device lost 流程处理。
 ''' 本类只释放进程级资源并广播失效；窗口级资源由各自 compositor 在 UI 线程释放，随后按需重建。
-''' V5 使用 per-control HWND flip-model swapchain；V5 绘制不经过 HDC 或 CPU 备份路径。
+''' V5 使用每控件 HWND 合成表面和共享 DirectComposition 设备；不经过 HDC 或 CPU 备份路径。
 ''' </para>
 ''' </summary>
 Public NotInheritable Class D3D_DeviceManager
@@ -37,6 +37,17 @@ Public NotInheritable Class D3D_DeviceManager
     Private _d2dDevice As ID2D1Device
     Private _dxgiFactory As IDXGIFactory2
     Private _deviceGeneration As Integer
+    Private _compositionDevice As Vortice.DirectComposition.IDCompositionDevice
+
+    Friend ReadOnly Property CompositionDevice As Vortice.DirectComposition.IDCompositionDevice
+        Get
+            EnsureCreated()
+            If _compositionDevice Is Nothing Then
+                _compositionDevice = Vortice.DirectComposition.DComp.DCompositionCreateDevice(Of Vortice.DirectComposition.IDCompositionDevice)(_dxgiDevice)
+            End If
+            Return _compositionDevice
+        End Get
+    End Property
 
     ''' <summary>
     ''' 设备丢失或冷启动级重置时触发一次。订阅者只能释放自己持有的 GPU 资源，不要在回调中重新进入本类创建设备。
@@ -208,6 +219,8 @@ Public NotInheritable Class D3D_DeviceManager
     End Sub
 
     Private Sub ReleaseAllNoLock()
+        SafeDispose(_compositionDevice)
+        _compositionDevice = Nothing
         SafeDispose(_d2dDevice)
         SafeDispose(_dxgiDevice)
         If _d3dDevice IsNot Nothing Then

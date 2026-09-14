@@ -53,7 +53,7 @@ End Interface
 
 ''' <summary>
 ''' V5 控件在批量更新位置/尺寸时暂时抑制几何事件触发的即时呈现。
-''' 批量操作完成后由调用方提交一次最新几何帧，避免中间尺寸被交换链短暂呈现。
+''' 批量操作完成后由调用方提交一次最新几何帧，避免中间尺寸被合成目标短暂呈现。
 ''' </summary>
 Friend Interface V5_IGeometryUpdateSource
     ReadOnly Property IsGeometryUpdateInProgress As Boolean

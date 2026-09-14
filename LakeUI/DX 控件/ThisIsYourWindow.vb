@@ -828,6 +828,7 @@ Public Class ThisIsYourWindow
         If s Is Nothing OrElse s.IsFullScreen OrElse s.HostForm Is Nothing Then Return False
         ' Windows 11 在最大化/贴靠状态下不会绘制窗口圆角；GPU 自绘边框必须遵循同一规则。
         If 窗口当前已最大化(s.HostForm) Then Return False
+        If s.HostForm.Region IsNot Nothing OrElse s.HostForm.TransparencyKey <> Color.Empty Then Return False
         Return DwmWindowStyle.IsCornerModeSupported AndAlso
                DwmWindowStyle.GetCornerRadiusLogical(_窗口圆角模式) > 0.0F
     End Function
@@ -2141,7 +2142,7 @@ Public Class ThisIsYourWindow
         If _分层阴影自动颜色 AndAlso 毛玻璃当前启用(s) Then
             shadowColor = s.Renderer.DeriveShadowColor(_分层阴影颜色)
         End If
-        Dim logicalCornerRadius As Single = If(DwmWindowStyle.IsCornerModeSupported,
+        Dim logicalCornerRadius As Single = If(当前使用圆角模式(s),
                                                 DwmWindowStyle.GetCornerRadiusLogical(_窗口圆角模式),
                                                 0.0F)
         Dim shadowCornerRadius As Integer = Math.Max(0, CInt(Math.Round(缩放逻辑尺寸(s.HostForm, logicalCornerRadius))))
@@ -3347,11 +3348,18 @@ Public Class ThisIsYourWindow
         If 当前使用圆角模式(s) Then
             Dim logicalRadius As Single = DwmWindowStyle.GetCornerRadiusLogical(_窗口圆角模式)
             Dim outerRadius As Single = Math.Max(1.0F, CSng(缩放逻辑尺寸(s.HostForm, logicalRadius)))
+            outerRadius = Math.Min(outerRadius, Math.Min(w, h) / 2.0F)
             Dim stroke As Single = CSng(bdr)
+            If stroke * 2.0F >= Math.Min(w, h) Then
+                context.FillRoundedRectangle(New RectangleF(0, 0, w, h), outerRadius, bdrColor)
+                Return
+            End If
             Dim inset As Single = stroke / 2.0F
             Dim strokeRadius As Single = Math.Max(0.0F, outerRadius - inset)
-            Dim rect As New RectangleF(inset, inset, Math.Max(0.0F, w - stroke), Math.Max(0.0F, h - stroke))
-            If rect.Width > 0 AndAlso rect.Height > 0 Then context.DrawRoundedRectangle(rect, strokeRadius, bdrColor, stroke)
+            ' 细描边圆弧避开 DWM 裁切的抗锯齿带，直边位置和线宽保持不变。
+            If stroke <= 1.0F AndAlso strokeRadius > 0.0F Then strokeRadius += 0.5F
+            Dim rect As New RectangleF(inset, inset, w - stroke, h - stroke)
+            context.DrawRoundedRectangle(rect, strokeRadius, bdrColor, stroke)
             Return
         End If
 

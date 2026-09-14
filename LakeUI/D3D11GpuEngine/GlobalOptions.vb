@@ -143,9 +143,9 @@ Public Class GlobalOptions
 
     ''' <summary>进程级 GPU 缓存总预算。</summary>
     ''' <remarks>
-    ''' <para>默认值：128 MiB。用于统一约束可观测的 GPU 缓存、控件表面、交换链缓冲和离屏目标。</para>
+    ''' <para>默认值：128 MiB。用于统一约束可观测的 GPU 缓存、控件表面、合成表面和离屏目标。</para>
     ''' <para>预算按进程总量计算，不再按窗口、图片或背景源分别设置。</para>
-    ''' <para>可见交换链是必要显示工作集，只参与计量并促使其他缓存收缩，不会为满足预算而销毁。</para>
+    ''' <para>可见合成表面是必要显示工作集，只参与计量并促使其他缓存收缩，不会为满足预算而销毁。</para>
     ''' <para>不包含驱动、DWM 和 D2D 特效内部工作内存；必要、正在使用或受保护的资源可以超过预算。</para>
     ''' </remarks>
     Private Shared _gpuCacheBudgetBytes As Long = 128L * 1024L * 1024L

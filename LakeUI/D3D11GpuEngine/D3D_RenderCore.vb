@@ -12,12 +12,6 @@ Public NotInheritable Class D3D_RenderCore
     ''' <summary>当前生产渲染引擎主版本。</summary>
     Public Const EngineVersion As Integer = 5
 
-    ''' <summary>
-    ''' 可选的非阻塞 DXGI 帧延迟闸门。默认关闭，宿主完成队列深度评估后再启用；
-    ''' 该闸门绝不在 UI 线程等待。
-    ''' </summary>
-    Friend Shared Property V5FrameLatencySchedulerEnabled As Boolean
-
     Private Shared ReadOnly _deviceManager As New D3D_DeviceManager()
     Private Shared ReadOnly _compositorsLock As New Object()
     Private Shared ReadOnly _compositors As New Dictionary(Of Form, D3D_WindowCompositor)()

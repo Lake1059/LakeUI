@@ -38,7 +38,7 @@ Friend NotInheritable Class D3D_V5Presentation
         Public Sequence As Long
     End Structure
 
-    Private Shared ReadOnly _presenters As New Dictionary(Of Control, D3D_HwndSwapChainPresenter)()
+    Private Shared ReadOnly _presenters As New Dictionary(Of Control, D3D_HwndCompositionPresenter)()
     Private Shared ReadOnly _retryTimers As New Dictionary(Of Control, Timer)()
     Private Shared ReadOnly _bufferingDisabled As New HashSet(Of Control)()
     Private Shared ReadOnly _已订阅控件 As New HashSet(Of Control)()
@@ -49,7 +49,7 @@ Friend NotInheritable Class D3D_V5Presentation
 
     Friend Shared ReadOnly Property IsRendering As Boolean
         Get
-            Return _renderDepth > 0
+            Return _renderDepth > 0 OrElse D3D_HwndCompositionPresenter.IsBatchActive
         End Get
     End Property
 
@@ -209,14 +209,19 @@ Friend NotInheritable Class D3D_V5Presentation
                          requestedDirty:=item.Value.Rect, prepareOnly:=True, 准备耗时:=准备耗时)
             Next
         End If
-        For Each item In batch
-            Dim control = item.Key
-            If control Is Nothing OrElse control.IsDisposed OrElse
-               Not control.IsHandleCreated OrElse Not D3D_ControlTreeWalker.IsEffectivelyVisible(control) Then Continue For
-            立即渲染(control,
-                    TryCast(control, D3D_IGpuRenderable),
-                    requestedDirty:=item.Value.Rect, 准备耗时:=准备耗时)
-        Next
+        D3D_HwndCompositionPresenter.BeginBatch()
+        Try
+            For Each item In batch
+                Dim 控件 = item.Key
+                If 控件 Is Nothing OrElse 控件.IsDisposed OrElse
+                   Not 控件.IsHandleCreated OrElse Not D3D_ControlTreeWalker.IsEffectivelyVisible(控件) Then Continue For
+                立即渲染(控件,
+                        TryCast(控件, D3D_IGpuRenderable),
+                        requestedDirty:=item.Value.Rect, 准备耗时:=准备耗时)
+            Next
+        Finally
+            D3D_HwndCompositionPresenter.EndBatch()
+        End Try
         D3D_RefreshDiagnostics.Record(批次开始时间, "RenderBatch")
     End Sub
 
@@ -288,22 +293,17 @@ Friend NotInheritable Class D3D_V5Presentation
                 准备耗时.Remove(控件)
             End If
             ' 映射消费者可能在来源控件收到自身渲染请求前，先完成其持久表面渲染。
-            ' 因此仅凭表面为最新状态，不能证明 HWND 交换链已经包含该修订版本。
+            ' 因此仅凭表面为最新状态，不能证明 HWND 合成表面已经包含该修订版本。
             If 呈现器.HasPresented(控件表面) Then
                 取消重试(控件)
                 Return
             End If
             Dim 提交开始时间 = Stopwatch.GetTimestamp()
-            If Not 呈现器.Present(控件表面) Then
-                排队重试(控件, 呈现器.FrameLatencyDeferred)
+            If Not 呈现器.Present(控件表面, 渲染毫秒数) Then
+                排队重试(控件)
                 Return
             End If
-            Dim 提交毫秒数 = Stopwatch.GetElapsedTime(提交开始时间).TotalMilliseconds
             D3D_RefreshDiagnostics.Record(提交开始时间, "Present", 控件)
-            D3D_RenderDiagnostics.V5FrameSubmitted(渲染毫秒数,
-                                                   提交毫秒数,
-                                                   Stopwatch.GetTimestamp(),
-                                                   控件)
             取消重试(控件)
             D3D_RenderCore.NotifyControlInvalidated(控件, New Rectangle(Point.Empty, 控件.ClientSize))
         Catch 异常 As Exception
@@ -311,7 +311,7 @@ Friend NotInheritable Class D3D_V5Presentation
                 排队重试(控件)
                 Return
             End If
-            If 是交换链临时重建异常(异常) Then
+            If 是呈现目标临时重建异常(异常) Then
                 排队重试(控件)
                 Return
             End If
@@ -326,10 +326,10 @@ Friend NotInheritable Class D3D_V5Presentation
         End Try
     End Sub
 
-    Private Shared Function 获取或创建呈现器(控件 As Control) As D3D_HwndSwapChainPresenter
-        Dim 呈现器 As D3D_HwndSwapChainPresenter = Nothing
+    Private Shared Function 获取或创建呈现器(控件 As Control) As D3D_HwndCompositionPresenter
+        Dim 呈现器 As D3D_HwndCompositionPresenter = Nothing
         If _presenters.TryGetValue(控件, 呈现器) Then Return 呈现器
-        呈现器 = New D3D_HwndSwapChainPresenter(控件, D3D_RenderCore.DeviceManager)
+        呈现器 = New D3D_HwndCompositionPresenter(控件, D3D_RenderCore.DeviceManager)
         _presenters(控件) = 呈现器
         If Not _已订阅控件.Add(控件) Then Return 呈现器
         AddHandler 控件.HandleDestroyed, AddressOf 句柄销毁时
@@ -362,6 +362,10 @@ Friend NotInheritable Class D3D_V5Presentation
         End Try
 
         _bufferingDisabled.Add(控件)
+    End Sub
+
+    Friend Shared Sub RetryPresentation(控件 As Control)
+        排队重试(控件)
     End Sub
 
     Private Shared Sub 排队重试(控件 As Control, Optional frameLatencyDeferred As Boolean = False)
@@ -454,7 +458,7 @@ Friend NotInheritable Class D3D_V5Presentation
         D3D_ControlSurfaceRegistry.HandleDeviceLost()
     End Sub
 
-    Private Shared Function 是交换链临时重建异常(异常 As Exception) As Boolean
+    Private Shared Function 是呈现目标临时重建异常(异常 As Exception) As Boolean
         If 异常 Is Nothing Then Return False
         Return CUInt(CLng(异常.HResult) And &HFFFFFFFFL) = &H80070005UI
     End Function
@@ -464,7 +468,7 @@ Friend NotInheritable Class D3D_V5Presentation
         If 控件 Is Nothing Then Return
         ' 句柄可以在控件未释放时重建，呈现器事件订阅保持到控件释放。
         _bufferingDisabled.Remove(控件)
-        Dim 呈现器 As D3D_HwndSwapChainPresenter = Nothing
+        Dim 呈现器 As D3D_HwndCompositionPresenter = Nothing
         If _presenters.TryGetValue(控件, 呈现器) Then
             呈现器.Dispose()
             _presenters.Remove(控件)
@@ -515,7 +519,7 @@ Friend NotInheritable Class D3D_V5Presentation
     End Sub
 
     ''' <summary>
-    ''' 页面隐藏时立即释放其后代的交换链和表面；重新显示后由正常渲染路径重建。
+    ''' 页面隐藏时立即释放其后代的合成目标和表面；重新显示后由正常渲染路径重建。
     ''' </summary>
     Friend Shared Sub ReleaseHiddenSubtreeResources(root As Control)
         If root Is Nothing OrElse IsRendering Then Return
@@ -525,7 +529,7 @@ Friend NotInheritable Class D3D_V5Presentation
                Not D3D_ControlTreeWalker.IsDescendantOrSelf(control, root) OrElse
                D3D_ControlTreeWalker.IsEffectivelyVisible(control) Then Continue For
 
-            Dim presenter As D3D_HwndSwapChainPresenter = Nothing
+            Dim presenter As D3D_HwndCompositionPresenter = Nothing
             If _presenters.TryGetValue(control, presenter) Then
                 presenter.Dispose()
                 _presenters.Remove(control)
