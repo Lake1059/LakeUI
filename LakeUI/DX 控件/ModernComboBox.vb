@@ -1299,13 +1299,23 @@ Public Class ModernComboBox
 
         绘制背景_GPU(context, hasRadius, sourceRect, boundsRect, effBg, effBg2)
         SyncTextRenderer()
-        _textRenderer.DrawGpu(context)
+        If Not RenderCustomSelectionContentGpu(context, New RectangleF(0, 0, w, h)) Then
+            _textRenderer.DrawGpu(context)
+        End If
         绘制分隔线与箭头_GPU(context, w, h, bc)
         绘制边框_GPU(context, hasRadius, boundsRect, bc)
         If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
             填充圆角矩形_GPU(context, boundsRect, If(hasRadius, 边框圆角半径 * s, 0.0F), 禁用时遮罩颜色)
         End If
     End Sub
+
+    Protected Overridable Function RenderCustomSelectionContentGpu(context As D3D_PaintContext, bounds As RectangleF) As Boolean
+        Return False
+    End Function
+
+    Protected Friend Overridable Function RenderCustomDropDownItemGpu(context As D3D_PaintContext, itemIndex As Integer, itemRect As RectangleF, textColor As Color) As Boolean
+        Return False
+    End Function
 
     Public Function GetRenderBounds() As Rectangle Implements D3D_IGpuInvalidationSource.GetRenderBounds
         Return New Rectangle(Point.Empty, Me.Size)
@@ -2527,9 +2537,11 @@ Public Class ModernComboBox
                     Dim textColor As Color = If(idx = _owner._selectedIndex AndAlso _owner.下拉选中文字颜色 <> Color.Empty,
                         _owner.下拉选中文字颜色,
                         _owner.ForeColor)
-                    context.DrawText(_owner._items(idx), _owner.Font, textColor, layout.TextRect(itemRect),
-                                     Vortice.DirectWrite.TextAlignment.Leading,
-                                     Vortice.DirectWrite.ParagraphAlignment.Center)
+                    If Not _owner.RenderCustomDropDownItemGpu(context, idx, itemRect, textColor) Then
+                        context.DrawText(_owner._items(idx), _owner.Font, textColor, layout.TextRect(itemRect),
+                                         Vortice.DirectWrite.TextAlignment.Leading,
+                                         Vortice.DirectWrite.ParagraphAlignment.Center)
+                    End If
                 Next
             End Using
         End Sub
