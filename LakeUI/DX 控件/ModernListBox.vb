@@ -13,6 +13,21 @@ Public Class ModernListBox
     Public Event ItemDoubleClick As EventHandler(Of ItemEventArgs)
     Public Event ItemCheckStateChanged As EventHandler(Of ItemEventArgs)
     Public Event ItemOrderChanged As EventHandler
+    ' 按当前索引动态提供文字颜色，支持选中、悬停及拖动排序后的重新绘制。
+    Public Event ItemForeColorNeeded As EventHandler(Of ItemForeColorEventArgs)
+
+    Public Class ItemForeColorEventArgs
+        Inherits ItemEventArgs
+
+        Public ReadOnly Property ItemText As String
+        Public Property ForeColor As Color
+
+        Public Sub New(index As Integer, itemText As String, foreColor As Color)
+            MyBase.New(index)
+            Me.ItemText = itemText
+            Me.ForeColor = foreColor
+        End Sub
+    End Class
 
     Public Class ItemEventArgs
         Inherits EventArgs
@@ -1445,7 +1460,9 @@ Public Class ModernListBox
             Dim textRight As Integer = contentRect.X + availW - scaledPadL
             Dim textWidth As Integer = textRight - textX
             If textWidth > 0 Then
-                context.DrawText(itemText, Font, ForeColor, New RectangleF(textX, itemY, textWidth, scaledH), TextAlignment.Leading, ParagraphAlignment.Center)
+                Dim colorArgs As New ItemForeColorEventArgs(idx, itemText, ForeColor)
+                RaiseEvent ItemForeColorNeeded(Me, colorArgs)
+                context.DrawText(itemText, Font, If(colorArgs.ForeColor.IsEmpty, ForeColor, colorArgs.ForeColor), New RectangleF(textX, itemY, textWidth, scaledH), TextAlignment.Leading, ParagraphAlignment.Center)
             End If
         Next
     End Sub
