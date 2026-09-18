@@ -65,6 +65,7 @@ static partial class Program
         VerifyCustomHighlighterRegistration();
         VerifyAgentThinkingTagParsing();
         VerifyModernTextBoxPaddingDpiContract();
+        VerifyModernTextBoxImeSupport();
         VerifyV5MarkerCoverage();
         VerifyBackgroundSourceControlCoverage();
         VerifyAutomaticBackdropAncestorSearch();
@@ -337,6 +338,26 @@ static partial class Program
         thinking.Append(tail.ThinkingText);
         Assert(visible.ToString() == "answerend", "Thinking tags must not leak into the visible answer.");
         Assert(thinking.ToString() == "firstsecond", "Thinking text must remain available for the collapsed activity.");
+    }
+
+    private sealed class ImeTextBoxProbe : ModernTextBox
+    {
+        public bool SupportsIme => CanEnableIme;
+    }
+
+    private static void VerifyModernTextBoxImeSupport()
+    {
+        using var textBox = new ImeTextBoxProbe();
+        Assert(textBox.SupportsIme,
+            "The self-drawn text box must override ContainerControl's IME restriction.");
+        Assert(textBox.ImeMode == ImeMode.NoControl,
+            "The text box must preserve the current IME mode by default.");
+        textBox.ImeMode = ImeMode.On;
+        Assert(textBox.SupportsIme && textBox.ImeMode == ImeMode.On,
+            "An explicit IME mode must remain supported by the text box.");
+        textBox.ResetImeMode();
+        Assert(textBox.ImeMode == ImeMode.NoControl,
+            "ResetImeMode must restore preservation of the current IME mode.");
     }
 
     private static void VerifyModernTextBoxPaddingDpiContract()

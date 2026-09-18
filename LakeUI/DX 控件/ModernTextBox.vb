@@ -156,6 +156,19 @@ Public Class ModernTextBox
 #End Region
 
 #Region "属性"
+    Protected Overrides ReadOnly Property CanEnableIme As Boolean
+        Get
+            ' ContainerControl 默认禁止自身使用 IME，但本控件直接处理文本输入。
+            Return True
+        End Get
+    End Property
+
+    Protected Overrides ReadOnly Property DefaultImeMode As ImeMode
+        Get
+            Return ImeMode.NoControl
+        End Get
+    End Property
+
     <Category("LakeUI"), Description("主要文本"), DefaultValue(GetType(String), ""), Browsable(True),
      DesignerSerializationVisibility(DesignerSerializationVisibility.Visible)>
     Public Overrides Property Text As String
@@ -1038,7 +1051,6 @@ Public Class ModernTextBox
     Protected Overrides Sub OnHandleCreated(e As EventArgs)
         MyBase.OnHandleCreated(e)
         UpdateDpiCache()
-        ImeHelper.AssociateDefault(Handle)
         RefreshVisualLayout(True)
         ' 仅在已聚焦时才启动光标闪烁；未聚焦时启动会让控件即使无操作也每 530ms 触发一次重绘。
         If Me.Focused Then
@@ -3099,7 +3111,7 @@ Public Class ModernTextBox
     Protected Overrides Sub OnGotFocus(e As EventArgs)
         MyBase.OnGotFocus(e)
         If IsHandleCreated Then
-            ImeHelper.AssociateDefault(Handle)
+            ' 由 WinForms 管理 IME 上下文；重新关联默认上下文会覆盖当前输入法状态。
             UpdateImeWindow()
         End If
         _caretVisible = True
