@@ -290,6 +290,7 @@ Friend Class ExInputBoxForm
     Private Const L_标题左边距 As Integer = 14
     Private Const L_输入框高度 As Integer = 30
     Private Const L_提示与输入间距 As Integer = 12
+    Private Const 提示文本格式 As TextFormatFlags = TextFormatFlags.WordBreak Or TextFormatFlags.Left Or TextFormatFlags.Top Or TextFormatFlags.NoPadding
 
 #End Region
 
@@ -530,11 +531,11 @@ Friend Class ExInputBoxForm
     Private Sub 计算布局(xPos As Integer, yPos As Integer)
         Dim 最大文本宽 As Integer = 窗体宽度 - 内边距 * 2
 
-        ' 测量提示文本
-        Dim 文本尺寸 = TextRenderer.MeasureText(
+        ' 使用与 GPU 绘制相同的 DirectWrite 度量，避免不同字体的行高和换行差异导致裁剪。
+        Dim 文本尺寸 = D3D_TextInterop.MeasureText(
             提示标签.Text, 提示字体,
             New Size(最大文本宽, Integer.MaxValue),
-            TextFormatFlags.WordBreak Or TextFormatFlags.TextBoxControl)
+            提示文本格式, SC)
 
         Dim 提示高度 As Integer = Math.Max(文本尺寸.Height, CInt(20 * SC))
 
@@ -620,7 +621,7 @@ Friend Class ExInputBoxForm
                                                主题.CloseButtonHoverBackColor, SC)
 
         MessageDialogRendering.DrawText(context, 提示标签.Text, 提示字体, 提示标签.Bounds,
-            主题.MessageForeColor, TextFormatFlags.WordBreak Or TextFormatFlags.Left Or TextFormatFlags.Top Or TextFormatFlags.NoPadding, SC)
+            主题.MessageForeColor, 提示文本格式, SC)
 
         MessageDialogRendering.DrawRoundedRectangle(context,
             New RectangleF(0, 0, ClientSize.Width, ClientSize.Height),
