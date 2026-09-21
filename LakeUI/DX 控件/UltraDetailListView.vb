@@ -2,6 +2,7 @@ Imports System.Collections.ObjectModel
 Imports System.ComponentModel
 Imports System.Drawing.Design
 Imports System.Drawing.Drawing2D
+Imports System.Globalization
 Imports Vortice.Direct2D1
 
 <DefaultEvent("SelectedIndexChanged")>
@@ -650,9 +651,7 @@ Public Class UltraDetailListView
     End Sub
 
     ''' <summary>计算每行 Top/Spacing 并填充 _rowTops/_rowBottoms 数组。
-    ''' Top 表示"行内容（不含前 spacing）"相对内容区域上沿（已减去 _scrollOffset 的 0 起点）的位置，
-    ''' 因为 Spacing 与 _scrollOffset 相关，重建显示行布局() 必须在 _scrollOffset 变化后再次调用以更新偏移敏感的 spacing。
-    ''' 但为了能进行二分查找，我们选择"假设 _scrollOffset = 0"的稳定坐标系，命中测试时再加上当前 _scrollOffset 决定的偏移量。</summary>
+    ''' 使用不随滚动变化的内容坐标；绘制和命中测试时再减去首个可见行的 Top。</summary>
     Private Sub 重建显示行布局()
         Dim n = _displayRows.Count
         If _rowTops.Length < n Then
@@ -689,9 +688,36 @@ Public Class UltraDetailListView
             _scrollOffset = 0
             Return
         End If
-        Dim maxOff As Integer = Math.Max(0, _displayRows.Count - 1)
+        Dim maxOff As Integer = 获取最大滚动偏移()
         _scrollOffset = Math.Max(0, Math.Min(_scrollOffset, maxOff))
     End Sub
+
+    Private Function 获取最大滚动偏移() As Integer
+        Dim count = _displayRows.Count
+        If count = 0 Then Return 0
+        Dim availableHeight = 获取内容区域().Height - 获取有效内容上边距() - 获取有效内容下边距()
+        Dim bottom = _rowBottoms(count - 1)
+        If bottom <= availableHeight Then Return 0
+
+        ' Find the first row of the last full page, including variable row heights and spacing.
+        availableHeight = Math.Max(0, availableHeight - Dpi(更多指示器高度))
+        Dim targetTop = bottom - availableHeight
+        Dim low = 0
+        Dim high = count - 1
+        While low < high
+            Dim mid = low + (high - low) \ 2
+            If _rowTops(mid) < targetTop Then
+                low = mid + 1
+            Else
+                high = mid
+            End If
+        End While
+        Return low
+    End Function
+
+    Private Function 获取滚动条可见行数() As Integer
+        Return Math.Max(1, _displayRows.Count - 获取最大滚动偏移())
+    End Function
 
 #End Region
 
@@ -1078,17 +1104,11 @@ Public Class UltraDetailListView
         Return range
     End Function
 
-    ''' <summary>取/创建 D2D Solid 画刷（仅在当前 RT 上使用，复用按颜色键）。</summary>
-
     Private Function 获取项焦点圆角半径(rect As RectangleF) As Single
         If 项焦点圆角半径 <= 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return 0.0F
         Dim radius As Single = 项焦点圆角半径 * DpiScale()
         Return Math.Min(radius, Math.Min(rect.Width, rect.Height) / 2.0F)
     End Function
-
-    ''' <summary>D2D 绘制列标题背景与分隔线（不绘文字）。</summary>
-
-    ''' <summary>D2D 绘制分组行背景、贝塞尔三角箭头、底部分隔线（不绘组名文字）。</summary>
 
     ''' <summary>把 GDI+ GraphicsPath 转换为 D2D PathGeometry。仅支持线段与三次贝塞尔，足够本控件使用。</summary>
     Private Shared Function 路径转D2D几何(path As GraphicsPath) As Vortice.Direct2D1.ID2D1PathGeometry
@@ -1147,7 +1167,6 @@ Public Class UltraDetailListView
         Return geo
     End Function
 
-    ''' <summary>D2D 绘制更多指示器形状。当前仅保留符号层，背景保持透明。</summary>
 
     ''' <summary>D2D 绘制拖选框（半透明填充 + 边框）。</summary>
 
@@ -1987,6 +2006,7 @@ Public Class UltraDetailListView
 
     ' 标签编辑状态
     Private _labelEditTimer As Timer
+    Private _suppressLabelEditForClick As Boolean
     Private _labelEditPendingIndex As Integer = -1
     Private _labelEditPendingItem As ListItem = Nothing
     Private _labelEditPendingSubItem As ListSubItem = Nothing
@@ -2440,12 +2460,72 @@ Public Class UltraDetailListView
         context.DrawRoundedRectangle(rect, radius, br, strokeWidth)
     End Sub
 
+    Private Function 获取选中项圆角(rowIndex As Integer) As (Top As Boolean, Bottom As Boolean)
+        Dim joinsPrevious = rowIndex > 0 AndAlso
+            _displayRows(rowIndex - 1).Type = DisplayRowType.Item AndAlso _selectedIndices.Contains(rowIndex - 1)
+        Dim joinsNext = rowIndex + 1 < _displayRows.Count AndAlso
+            _displayRows(rowIndex + 1).Type = DisplayRowType.Item AndAlso _selectedIndices.Contains(rowIndex + 1)
+        Return (Not joinsPrevious, Not joinsNext)
+    End Function
+
+    Private Shared Function 创建项焦点路径(rect As RectangleF, radius As Single,
+                                        roundTop As Boolean, roundBottom As Boolean) As GraphicsPath
+        Dim path As New GraphicsPath()
+        Dim topRadius = If(roundTop, radius, 0.0F)
+        Dim bottomRadius = If(roundBottom, radius, 0.0F)
+        path.AddLine(rect.Left + topRadius, rect.Top, rect.Right - topRadius, rect.Top)
+        If topRadius > 0 Then path.AddArc(rect.Right - 2 * topRadius, rect.Top, 2 * topRadius, 2 * topRadius, 270, 90)
+        path.AddLine(rect.Right, rect.Top + topRadius, rect.Right, rect.Bottom - bottomRadius)
+        If bottomRadius > 0 Then path.AddArc(rect.Right - 2 * bottomRadius, rect.Bottom - 2 * bottomRadius, 2 * bottomRadius, 2 * bottomRadius, 0, 90)
+        path.AddLine(rect.Right - bottomRadius, rect.Bottom, rect.Left + bottomRadius, rect.Bottom)
+        If bottomRadius > 0 Then path.AddArc(rect.Left, rect.Bottom - 2 * bottomRadius, 2 * bottomRadius, 2 * bottomRadius, 90, 90)
+        path.AddLine(rect.Left, rect.Bottom - bottomRadius, rect.Left, rect.Top + topRadius)
+        If topRadius > 0 Then path.AddArc(rect.Left, rect.Top, 2 * topRadius, 2 * topRadius, 180, 90)
+        path.CloseFigure()
+        Return path
+    End Function
+
     Private Sub 绘制项焦点区域_GPU(context As D3D_PaintContext, rect As RectangleF,
-                              fillColor As Color, borderColor As Color, borderWidth As Single)
+                              fillColor As Color, borderColor As Color, borderWidth As Single,
+                              Optional roundTop As Boolean = True, Optional roundBottom As Boolean = True)
         If rect.Width <= 0 OrElse rect.Height <= 0 Then Return
+        If fillColor.A = 0 AndAlso (borderColor.A = 0 OrElse borderWidth <= 0) Then Return
         Dim radius As Single = 获取项焦点圆角半径(rect)
+        If Not roundTop AndAlso Not roundBottom Then radius = 0
+        If radius > 0 AndAlso roundTop <> roundBottom Then
+            Dim key = String.Format(CultureInfo.InvariantCulture, "udlv:focus:{0:R}:{1:R}:{2:R}:{3}:{4}",
+                                    rect.Width, rect.Height, radius, roundTop, roundBottom)
+            Dim geo = context.Compositor.GeometryCache.GetOrCreateGeometry(key,
+                Function()
+                    Using path = 创建项焦点路径(New RectangleF(0, 0, rect.Width, rect.Height), radius, roundTop, roundBottom)
+                        Return 路径转D2D几何(path)
+                    End Using
+                End Function)
+            绘制缓存几何_GPU(context, geo, rect.Location, fillColor, borderColor, borderWidth)
+            Return
+        End If
         If fillColor.A > 0 Then 填充圆角矩形_GPU(context, rect, radius, fillColor)
         If borderColor.A > 0 AndAlso borderWidth > 0 Then 绘制圆角边框_GPU(context, rect, radius, borderColor, borderWidth)
+    End Sub
+
+    Private Sub 绘制缓存几何_GPU(context As D3D_PaintContext, geometry As ID2D1Geometry, location As PointF,
+                              fillColor As Color, Optional borderColor As Color = Nothing, Optional borderWidth As Single = 0)
+        If geometry Is Nothing Then Return
+        ' Cache origin-based geometry in the compositor; scrolling only changes its translation.
+        Dim oldTransform = context.DeviceContext.Transform
+        Try
+            context.DeviceContext.Transform = System.Numerics.Matrix3x2.CreateTranslation(location.X, location.Y) * oldTransform
+            If fillColor.A > 0 Then
+                Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, fillColor, context.DeviceGeneration)
+                context.DeviceContext.FillGeometry(geometry, brush)
+            End If
+            If borderColor.A > 0 AndAlso borderWidth > 0 Then
+                Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, borderColor, context.DeviceGeneration)
+                context.DeviceContext.DrawGeometry(geometry, brush, borderWidth)
+            End If
+        Finally
+            context.DeviceContext.Transform = oldTransform
+        End Try
     End Sub
 
     Private Sub 绘制背景与边框_GPU(context As D3D_PaintContext)
@@ -2507,14 +2587,16 @@ Public Class UltraDetailListView
         Dim arrowX As Integer = rect.X + arrowMargin
         Dim arrowY As Integer = rect.Y + (rect.Height - arrowSize) \ 2
         Dim effectiveColor As Color = If(grp.ForeColor <> Color.Empty, grp.ForeColor, 分组文字颜色)
-        Using path As GraphicsPath = 创建圆角箭头路径(arrowX, arrowY, arrowSize, grp.IsCollapsed)
-            Using geo = 路径转D2D几何(path)
-                If geo IsNot Nothing Then
-                    Dim br = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, effectiveColor, context.DeviceGeneration)
-                    If br IsNot Nothing Then context.DeviceContext.FillGeometry(geo, br)
-                End If
-            End Using
-        End Using
+        If effectiveColor.A > 0 Then
+            Dim key = String.Format(CultureInfo.InvariantCulture, "udlv:arrow:{0}:{1}", arrowSize, grp.IsCollapsed)
+            Dim geo = context.Compositor.GeometryCache.GetOrCreateGeometry(key,
+                Function()
+                    Using path = 创建圆角箭头路径(0, 0, arrowSize, grp.IsCollapsed)
+                        Return 路径转D2D几何(path)
+                    End Using
+                End Function)
+            绘制缓存几何_GPU(context, geo, New PointF(arrowX, arrowY), effectiveColor)
+        End If
 
         绘制水平线_GPU(context, rect.X, rect.Right, rect.Bottom - 1, 分组分隔线颜色, 1.0F)
     End Sub
@@ -2589,7 +2671,10 @@ Public Class UltraDetailListView
                 绘制分组标题行形状_GPU(context, row.Group, itemFocusRect)
             Else
                 If _selectedIndices.Contains(i) Then
-                    绘制项焦点区域_GPU(context, itemFocusRect, 项选中背景颜色, Color.Empty, 0)
+                    If 项选中背景颜色.A > 0 Then
+                        Dim corners = If(项焦点圆角半径 > 0, 获取选中项圆角(i), (Top:=False, Bottom:=False))
+                        绘制项焦点区域_GPU(context, itemFocusRect, 项选中背景颜色, Color.Empty, 0, corners.Top, corners.Bottom)
+                    End If
                 ElseIf i = _hoverRowIndex AndAlso Not _hoverAnimActive Then
                     绘制项焦点区域_GPU(context, itemFocusRect, 项悬停背景颜色, Color.Empty, 0)
                 End If
@@ -2609,6 +2694,7 @@ Public Class UltraDetailListView
             Dim x As Integer = _columnXCache(i)
             Dim pad As Padding = Dpi(col.HeaderPadding)
             Dim textRect As New RectangleF(x + pad.Left, headerRect.Y + pad.Top, col.Width - pad.Horizontal, headerRect.Height - pad.Vertical)
+            If Not context.IntersectsDirty(textRect) Then Continue For
             Dim drawText As String = 截断文本到宽度(col.Text, Me.Font, CInt(textRect.Width))
             context.DrawText(drawText, Me.Font, 列标题文字颜色, textRect,
                              Vortice.DirectWrite.TextAlignment.Leading,
@@ -2673,6 +2759,7 @@ Public Class UltraDetailListView
         Dim arrowX As Integer = rect.X + arrowMargin
         Dim textX As Integer = arrowX + arrowSize + Dpi(6)
         Dim textRect As New RectangleF(textX, rect.Y, rect.Right - textX - Dpi(4), rect.Height)
+        If Not context.IntersectsDirty(textRect) Then Return
         Dim drawText As String = 截断文本到宽度(grp.Text, Me.Font, CInt(textRect.Width))
         context.DrawText(drawText, Me.Font, effectiveColor, textRect,
                          Vortice.DirectWrite.TextAlignment.Leading,
@@ -2774,6 +2861,7 @@ Public Class UltraDetailListView
     Private Sub 绘制可能截断文本_GPU(context As D3D_PaintContext, text As String, font As Font,
                                    rect As Rectangle, color As Color, flags As TextFormatFlags)
         If String.IsNullOrEmpty(text) OrElse rect.Width <= 0 OrElse rect.Height <= 0 OrElse color.A = 0 Then Return
+        If Not context.IntersectsDirty(rect) Then Return
         Dim canWrap As Boolean = (flags And TextFormatFlags.WordBreak) = TextFormatFlags.WordBreak AndAlso
                                  (flags And TextFormatFlags.SingleLine) <> TextFormatFlags.SingleLine
         Dim drawText As String = If(canWrap, text, 截断文本到宽度(text, font, rect.Width))
@@ -2804,7 +2892,7 @@ Public Class UltraDetailListView
             _scrollBar.VisualLeft = Me.Width
             Return
         End If
-        Dim visCount As Integer = 估算可见行数()
+        Dim visCount As Integer = 获取滚动条可见行数()
         If _displayRows.Count > visCount OrElse _scrollOffset > 0 Then
             Dim contentRect = 获取内容区域()
             Dim inset As Integer = 获取边框内边距()
@@ -2906,7 +2994,7 @@ Public Class UltraDetailListView
         If _scrollBar.IsDragging Then
             隐藏截断提示()
             _dragCurrent = e.Location
-            Dim visCount = 估算可见行数()
+            Dim visCount = 获取滚动条可见行数()
             _scrollOffset = _scrollBar.DragMove(e.Y, _displayRows.Count, visCount)
             If _isDragSelecting Then 更新拖选坐标并应用选择(_dragCurrent)
             Dim hitRow = 命中测试行(e.Location)
@@ -3016,6 +3104,8 @@ Public Class UltraDetailListView
     End Sub
 
     Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
+        ' A click that commits the current editor must not reopen it on MouseUp.
+        _suppressLabelEditForClick = e.Clicks > 1 OrElse _editTextBox IsNot Nothing
         MyBase.OnMouseDown(e)
 
         隐藏截断提示()
@@ -3027,7 +3117,7 @@ Public Class UltraDetailListView
 
         If _scrollBar.BeginDrag(e.Location, _scrollOffset) Then Return
         If Not _scrollBar.TrackRect.IsEmpty Then
-            Dim visCount = 估算可见行数()
+            Dim visCount = 获取滚动条可见行数()
             Dim newOff = _scrollBar.TrackClick(e.Location, _scrollOffset, _displayRows.Count, visCount)
             If newOff <> _scrollOffset Then
                 _scrollOffset = newOff
@@ -3150,7 +3240,7 @@ Public Class UltraDetailListView
             Return
         End If
         If _displayRows.Count = 0 Then Return
-        Dim visCount = 估算可见行数()
+        Dim visCount = 获取滚动条可见行数()
         Dim newOff = D3D_ScrollBarRenderer.HandleWheel(e.Delta, _scrollOffset, _displayRows.Count, visCount, 3)
         If newOff <> _scrollOffset Then
             _scrollOffset = newOff
@@ -3206,7 +3296,7 @@ Public Class UltraDetailListView
 
         ' 慢速点击编辑检测
         Dim clickedCol As Integer = 命中测试列(e.Location)
-        If wasOnlySelected AndAlso 列可编辑(clickedCol) Then
+        If wasOnlySelected AndAlso Not _suppressLabelEditForClick AndAlso 列可编辑(clickedCol) Then
             开始标签编辑等待(hitRow, clickedCol)
         Else
             取消标签编辑等待()
@@ -3220,6 +3310,8 @@ Public Class UltraDetailListView
 #Region "双击与键盘交互"
 
     Protected Overrides Sub OnMouseDoubleClick(e As MouseEventArgs)
+        ' MouseUp follows this event and must not restart the rename timer.
+        _suppressLabelEditForClick = True
         MyBase.OnMouseDoubleClick(e)
         取消标签编辑等待()
         Dim hitRow = 命中测试行(e.Location)
@@ -3429,7 +3521,7 @@ Public Class UltraDetailListView
         Else
             Return
         End If
-        nextOffset = Math.Max(0, Math.Min(_displayRows.Count - 1, nextOffset))
+        nextOffset = Math.Max(0, Math.Min(获取最大滚动偏移(), nextOffset))
         If nextOffset <> _scrollOffset Then
             _scrollOffset = nextOffset
             请求GPU渲染()
@@ -4465,6 +4557,7 @@ Public Class UltraDetailListView
             重建显示列表()
         End If
         校正横向滚动偏移()
+        校正滚动偏移()
         请求GPU渲染()
     End Sub
 
