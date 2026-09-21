@@ -2,8 +2,6 @@
 
 ![](https://img.shields.io/github/stars/Lake1059/LakeUI?label=星标) ![GitHub License](https://img.shields.io/github/license/Lake1059/LakeUI?label=许可证) ![](https://img.shields.io/github/downloads/Lake1059/LakeUI/total?label=Github%20下载量) ![](https://img.shields.io/nuget/dt/LakeUI?label=NuGet%20下载量)
 
-> 什么叫新时代 WinForms 交互设计啊（战术后仰.gif）
-
 LakeUI（官方中文名称“湖界”）是一套面向现代 .NET WinForms 的交互控件库。它保留了 WinForms 拖放即用、所见即所得的开发方式，同时把高 DPI、动画、透明背景、DirectWrite 文字和 GPU 加速渲染带进传统桌面应用，让开发者不必更换技术栈，也能构建细腻、流畅且高度可定制的界面。
 
 LakeUI 从 v1 的 GDI+ 全量绘制起步，在 v2 引入由 [Vortice.Windows](https://github.com/amerkoleci/Vortice.Windows) 提供支持的 Direct2D、Direct3D 与 DirectWrite，并在 v3 打通 GPU 到 DWM 的最终呈现链路、加入 HDR 输出。一路演进的目标始终没变：在不破坏 WinForms 原生开发体验的前提下，把更多图形工作交给 GPU，以更低的综合开销换来更稳定的高帧率动画和更丰富的视觉效果。
