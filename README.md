@@ -4,7 +4,7 @@
 
 > 仅支持 .NET 8+，请注意核对项目框架
 
-> 让 WinForm 再次伟大！
+> 让 WinForms 再次伟大！
 
 LakeUI 全球首创在 WinForms 上的全 GPU 链路渲染管线，让这个传统的框架迈入 WinUI + GPU 时代，基于  [Vortice.Windows](https://github.com/amerkoleci/Vortice.Windows)，使用 Direct2D1、Direct3D11、DirectWrite 呈现。
 
