@@ -779,7 +779,7 @@ Public Class ThisIsYourWindow
                 Dim captionBottom = owner.取缩放标题栏总高度(form)
                 Dim captionOnly = dirtyRect.Width > 0 AndAlso dirtyRect.Height > 0 AndAlso
                                   dirtyRect.Top < captionBottom AndAlso dirtyRect.Bottom <= captionBottom
-                owner.请求Chrome渲染(state, includeBorders:=Not captionOnly)
+                owner.请求Chrome渲染(state, includeBorders:=Not captionOnly, immediate:=immediate)
                 Return
             End If
         End If
@@ -800,18 +800,26 @@ Public Class ThisIsYourWindow
         Next
     End Sub
 
-    Private Sub 请求Chrome渲染(s As PerFormState, includeBorders As Boolean)
+    Private Sub 请求Chrome渲染(s As PerFormState, includeBorders As Boolean, Optional immediate As Boolean = False)
         If s Is Nothing OrElse s.HostForm Is Nothing OrElse s.HostForm.IsDisposed Then Return
         If s.ChromeOverlayActive AndAlso s.ChromeOverlays IsNot Nothing Then
             If includeBorders Then
                 For Each overlay In s.ChromeOverlays
                     If overlay Is Nothing OrElse overlay.IsDisposed OrElse Not overlay.Visible Then Continue For
-                    D3D_V5Presentation.RequestRenderBatched(overlay, New Rectangle(Point.Empty, overlay.ClientSize))
+                    If immediate Then
+                        D3D_V5Presentation.RequestRender(overlay, New Rectangle(Point.Empty, overlay.ClientSize))
+                    Else
+                        D3D_V5Presentation.RequestRenderBatched(overlay, New Rectangle(Point.Empty, overlay.ClientSize))
+                    End If
                 Next
             Else
                 Dim captionOverlay = 获取CaptionOverlay(s)
                 If captionOverlay IsNot Nothing AndAlso Not captionOverlay.IsDisposed AndAlso captionOverlay.Visible Then
-                    D3D_V5Presentation.RequestRenderBatched(captionOverlay, New Rectangle(Point.Empty, captionOverlay.ClientSize))
+                    If immediate Then
+                        D3D_V5Presentation.RequestRender(captionOverlay, New Rectangle(Point.Empty, captionOverlay.ClientSize))
+                    Else
+                        D3D_V5Presentation.RequestRenderBatched(captionOverlay, New Rectangle(Point.Empty, captionOverlay.ClientSize))
+                    End If
                 End If
             End If
             Return
@@ -4248,6 +4256,12 @@ Public Class ThisIsYourWindow
                     Return
 
                 Case WM_NCCALCSIZE
+                    If m.WParam <> IntPtr.Zero AndAlso Not _state.IsFullScreen AndAlso IsZoomed(_state.HostForm.Handle) Then
+                        Dim scr = Screen.FromHandle(_state.HostForm.Handle)
+                        Dim wa = scr.WorkingArea
+                        Dim r As RECT : r.Left = wa.Left : r.Top = wa.Top : r.Right = wa.Right : r.Bottom = wa.Bottom
+                        Marshal.StructureToPtr(r, m.LParam, True)
+                    End If
                     m.Result = IntPtr.Zero
                     Return
 
@@ -4289,7 +4303,10 @@ Public Class ThisIsYourWindow
                     If minimizedNow Then
                         ' 最小化阶段没有可见客户区，避免把一次隐藏态 WM_SIZE 扩散成全量重绘。
                     ElseIf Not _owner.可跳过WMSize客户区刷新(_state, clientSizeChanged) Then
-                        请求GPU渲染(_state.HostForm, ThisIsYourWindow.获取真实客户区矩形(_state.HostForm))
+                        Dim windowStateChanged As Boolean = m.WParam.ToInt32() = 2 OrElse m.WParam.ToInt32() = 0
+                        请求GPU渲染(_state.HostForm,
+                                    ThisIsYourWindow.获取真实客户区矩形(_state.HostForm),
+                                    immediate:=windowStateChanged)
                     Else
                         _owner.InvalidateCaption(_state.HostForm)
                     End If
@@ -4447,7 +4464,6 @@ Public Class ThisIsYourWindow
                                         ' WS_POPUP 被系统按普通最大化重新定位，可能移到屏幕顶部之外。
                                         ' 最大化在该状态下没有语义，因此保持全屏边界不变。
                                         If _state.IsFullScreen Then Return
-                                        _owner.切换动画样式(_state.HostForm.Handle, True)
                                         _state.HostForm.WindowState = If(_state.HostForm.WindowState = FormWindowState.Maximized,
                                                                          FormWindowState.Normal, FormWindowState.Maximized)
                                     End If
@@ -4596,7 +4612,7 @@ Public Class ThisIsYourWindow
                         m.Result = IntPtr.Zero
                         Return
                     End If
-                    If cmd = SC_MINIMIZE OrElse cmd = SC_MAXIMIZE OrElse cmd = SC_RESTORE Then
+                    If cmd = SC_MINIMIZE Then
                         _owner.切换动画样式(_state.HostForm.Handle, True)
                     End If
                     MyBase.WndProc(m)

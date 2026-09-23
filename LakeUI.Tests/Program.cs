@@ -75,10 +75,11 @@ static class Program
             out var nativeFrame, Marshal.SizeOf<NativeRect>());
         Assert(result == 0, "DWM must provide the visible frame bounds for the test window.");
         var actual = nativeFrame.ToRectangle();
-        Assert(actual.Left <= workingArea.Left && actual.Top <= workingArea.Top &&
-               actual.Right >= workingArea.Right && actual.Bottom >= workingArea.Bottom &&
-               actual.Width - workingArea.Width <= 20 && actual.Height - workingArea.Height <= 20,
-            $"Maximize cycle {cycle} must cover the working area without extending beyond the native resize-frame inset. Expected {workingArea}; got {actual}.");
+        Assert(Math.Abs(actual.Left - workingArea.Left) <= 2 &&
+               Math.Abs(actual.Top - workingArea.Top) <= 2 &&
+               Math.Abs(actual.Right - workingArea.Right) <= 2 &&
+               Math.Abs(actual.Bottom - workingArea.Bottom) <= 2,
+            $"Maximize cycle {cycle} must align the visible window frame with the working area. Expected {workingArea}; got {actual}.");
     }
 
     private static void Assert(bool condition, string message)
