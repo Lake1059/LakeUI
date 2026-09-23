@@ -61,6 +61,7 @@ static partial class Program
         VerifyBuiltInHighlighters();
         VerifySyntaxIndentation();
         VerifyRenderedIndentationOffset();
+        VerifyCodeBlockWrapping();
         VerifyMermaidCopyText();
         VerifyCustomHighlighterRegistration();
         VerifyAgentThinkingTagParsing();
@@ -1571,6 +1572,35 @@ static partial class Program
         var firstX = (int)xField.GetValue(firstFragments[0])!;
         var nestedX = (int)xField.GetValue(nestedFragments![0])!;
         Assert(nestedX > firstX, "Syntax indentation must change the rendered fragment X position.");
+    }
+
+    private static void VerifyCodeBlockWrapping()
+    {
+        using var viewer = new MarkdownViewerCore { EmbeddedContentMode = true, Width = 180 };
+        var field = typeof(MarkdownViewerCore).GetField("_visualLines", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        foreach (var (language, code) in new[]
+        {
+            ("text", "abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz"),
+            ("csharp", "public class ExtremelyLongIdentifierThatMustWrapAcrossSeveralVisualLines { }")
+        })
+        {
+            viewer.SetMarkdownImmediate($"```{language}\n{code}\n```");
+            var lines = (IList)field.GetValue(viewer)!;
+            Assert(lines.Count > 1, "Long code lines must wrap into multiple visual lines.");
+            var rendered = new System.Text.StringBuilder();
+            foreach (var line in lines)
+            {
+                var fragments = (IList)line!.GetType().GetField("Fragments")!.GetValue(line)!;
+                foreach (var fragment in fragments)
+                {
+                    var type = fragment!.GetType();
+                    rendered.Append((string)type.GetField("Text")!.GetValue(fragment)!);
+                    var x = (int)type.GetField("X")!.GetValue(fragment)!;
+                    Assert(x < viewer.Width, "Code fragments must remain within the viewer width.");
+                }
+            }
+            Assert(rendered.ToString() == code, "Wrapping must preserve all code and syntax-highlighted fragments.");
+        }
     }
 
     private static void VerifyMermaidCopyText()

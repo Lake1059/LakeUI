@@ -2594,15 +2594,20 @@ Public Class MarkdownViewerCore
         tailOffset = If(tailOffset < 0, 0, tailOffset + 1)
         Dim tailText = newText.Substring(Math.Min(tailOffset, newText.Length))
 
-        Dim y = lastVisual.Y
-        _visualLines.RemoveAt(lastVisualIndex)
         Dim codeFont = GetCodeFont()
-        Dim codeLines = tailText.Split(ControlChars.Lf)
         Dim scale = DpiScale()
         Dim padLeft = CInt(代码块内边距.Left * scale)
         Dim padRight = CInt(代码块内边距.Right * scale)
-        Dim padBottom = CInt(代码块内边距.Bottom * scale)
         Dim fontHeight = GetLayoutLineHeight(codeFont)
+        If oldText.Substring(tailOffset).Length > FindFitLength(oldText, tailOffset, oldText.Length, codeFont, areaW - padLeft - padRight, fontHeight) Then Return False
+        For Each codeLine In tailText.Split(ControlChars.Lf)
+            If codeLine.Length > FindFitLength(codeLine, codeFont, areaW - padLeft - padRight, fontHeight) Then Return False
+        Next
+
+        Dim y = lastVisual.Y
+        _visualLines.RemoveAt(lastVisualIndex)
+        Dim codeLines = tailText.Split(ControlChars.Lf)
+        Dim padBottom = CInt(代码块内边距.Bottom * scale)
         For lineIndex As Integer = 0 To codeLines.Length - 1
             Dim codeText = codeLines(lineIndex)
             Dim lineHeight = If(lineIndex < codeLines.Length - 1, fontHeight + 行内行距, fontHeight)
@@ -2982,8 +2987,6 @@ Public Class MarkdownViewerCore
                     codeX += MeasureTextWidthCached(New String(" "c, indentChars), cFont, fontH)
                 End If
             End If
-            Dim lineH As Integer = If(cli < codeLines.Length - 1, fontH + 行内行距, fontH)
-            Dim fragments As New List(Of VisualFragment)
             Dim tokens As List(Of CodeSyntaxToken) = Nothing
             If _textBoxSyntaxHighlighter IsNot Nothing Then
                 Dim result = _textBoxSyntaxHighlighter.HighlightLine(cli, cText, previousState)
@@ -2994,26 +2997,41 @@ Public Class MarkdownViewerCore
                 tokens = result.Tokens
                 previousState = result.EndState
             End If
-            If tokens Is Nothing OrElse tokens.Count = 0 Then
-                fragments.Add(New VisualFragment With {.InlineIndex = 0, .CharStart = 0, .CharLength = displayText.Length, .X = codeX, .Width = Math.Max(0, areaW - codeX - padR), .Text = displayText, .UseFont = cFont, .ForeColor = 代码块文字颜色, .BackColor = 代码块背景颜色, .Kind = InlineKind.Code, .TableColIndex = -1})
-            Else
-                Dim pos As Integer = 0
-                For Each token In tokens.OrderBy(Function(t) t.StartCol)
-                    Dim startCol = Math.Max(pos, token.StartCol)
-                    Dim endCol = Math.Min(displayText.Length, token.StartCol + token.Length)
-                    If endCol <= startCol Then Continue For
-                    If startCol > pos Then AddCodeFragment(fragments, displayText, pos, startCol - pos, codeX, areaW - codeX - padR, cFont, 代码块文字颜色)
-                    AddCodeFragment(fragments, displayText, startCol, endCol - startCol, codeX, areaW - codeX - padR, cFont, token.ForeColor)
-                    pos = endCol
-                Next
-                If pos < displayText.Length Then AddCodeFragment(fragments, displayText, pos, displayText.Length - pos, codeX, areaW - codeX - padR, cFont, 代码块文字颜色)
-            End If
-            _visualLines.Add(New VisualLine With {
-                .BlockIndex = bi, .Y = y, .Height = lineH,
-                .Fragments = fragments,
-                .TableRowIndex = -1
-            })
-            y += lineH
+            If tokens IsNot Nothing Then tokens = tokens.OrderBy(Function(t) t.StartCol).ToList()
+            codeX = Math.Min(codeX, Math.Max(0, areaW - padR - 1))
+            Dim startCol As Integer = 0
+            Do
+                Dim availableWidth = Math.Max(1, areaW - codeX - padR)
+                Dim fitLength = FindFitLength(displayText, startCol, displayText.Length, cFont, availableWidth, fontH)
+                If startCol < displayText.Length Then fitLength = Math.Max(1, fitLength)
+                Dim endCol = startCol + fitLength
+                Dim segment = displayText.Substring(startCol, fitLength)
+                Dim fragments As New List(Of VisualFragment)
+                If tokens Is Nothing OrElse tokens.Count = 0 Then
+                    fragments.Add(New VisualFragment With {.InlineIndex = 0, .CharStart = startCol, .CharLength = fitLength, .X = codeX, .Width = availableWidth, .Text = segment, .UseFont = cFont, .ForeColor = 代码块文字颜色, .BackColor = 代码块背景颜色, .Kind = InlineKind.Code, .TableColIndex = -1})
+                Else
+                    Dim pos As Integer = startCol
+                    For Each token In tokens
+                        Dim tokenStart = Math.Max(pos, token.StartCol)
+                        Dim tokenEnd = Math.Min(endCol, token.StartCol + token.Length)
+                        If tokenEnd <= tokenStart Then Continue For
+                        If tokenStart > pos Then AddCodeFragment(fragments, segment, pos - startCol, tokenStart - pos, codeX, availableWidth, cFont, 代码块文字颜色)
+                        AddCodeFragment(fragments, segment, tokenStart - startCol, tokenEnd - tokenStart, codeX, availableWidth, cFont, token.ForeColor)
+                        pos = tokenEnd
+                    Next
+                    If pos < endCol Then AddCodeFragment(fragments, segment, pos - startCol, endCol - pos, codeX, availableWidth, cFont, 代码块文字颜色)
+                    For fragmentIndex As Integer = 0 To fragments.Count - 1
+                        Dim fragment = fragments(fragmentIndex)
+                        fragment.CharStart += startCol
+                        fragments(fragmentIndex) = fragment
+                    Next
+                End If
+                Dim lineH = fontH + If(endCol < displayText.Length OrElse cli < codeLines.Length - 1, 行内行距, 0)
+                _visualLines.Add(New VisualLine With {.BlockIndex = bi, .Y = y, .Height = lineH, .Fragments = fragments, .TableRowIndex = -1})
+                y += lineH
+                startCol = endCol
+                codeX = padL
+            Loop While startCol < displayText.Length
         Next
         Return y + padB
     End Function
@@ -3783,7 +3801,8 @@ Public Class MarkdownViewerCore
                     End If
                     DrawText_GPU(context, frag.Text, frag.UseFont, frag.ForeColor, New RectangleF(fragX, drawY, cellW, vl.Height), align, True)
                 Else
-                    DrawText_GPU(context, frag.Text, frag.UseFont, frag.ForeColor, New RectangleF(fragX, drawY, Short.MaxValue, vl.Height), D2DTextAlign.Left, True)
+                    Dim textWidth = If(blockKind = BlockKind.CodeBlock, Math.Max(0, TextAreaWidth() - frag.X), CInt(Short.MaxValue))
+                    DrawText_GPU(context, frag.Text, frag.UseFont, frag.ForeColor, New RectangleF(fragX, drawY, textWidth, vl.Height), D2DTextAlign.Left, True)
                 End If
             End If
 
