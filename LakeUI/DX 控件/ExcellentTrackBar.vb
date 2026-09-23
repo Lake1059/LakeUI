@@ -1,5 +1,6 @@
 Imports System.Collections.ObjectModel
 Imports System.ComponentModel
+Imports System.Numerics
 Imports D2D = Vortice.Direct2D1
 Imports DW = Vortice.DirectWrite
 
@@ -39,6 +40,7 @@ Public Class ExcellentTrackBar
         动画助手.DirtyProvider = AddressOf 滑块动画脏区
         标签列表 = New TrackLabelCollection(Me)
         字符串集合 = New StringItemCollection(Me)
+        章节标记列表 = New ChapterMarkerCollection(Me)
     End Sub
 
 #Region "内部类型"
@@ -116,6 +118,99 @@ Public Class ExcellentTrackBar
         Protected Overrides Sub ClearItems()
             MyBase.ClearItems()
             InvalidateOwner()
+        End Sub
+    End Class
+
+    Public Class ChapterMarker
+        Implements INotifyPropertyChanged
+
+        Private _position As Double
+        Private _text As String = ""
+        Private _side As LabelSideEnum = LabelSideEnum.BottomOrRight
+
+        Public Event PropertyChanged As PropertyChangedEventHandler Implements INotifyPropertyChanged.PropertyChanged
+
+        <DefaultValue(0.0)>
+        Public Property Position As Double
+            Get
+                Return _position
+            End Get
+            Set(value As Double)
+                If _position = value Then Return
+                _position = value
+                RaiseEvent PropertyChanged(Me, New PropertyChangedEventArgs(NameOf(Position)))
+            End Set
+        End Property
+
+        <DefaultValue("")>
+        Public Property Text As String
+            Get
+                Return _text
+            End Get
+            Set(value As String)
+                If _text = value Then Return
+                _text = value
+                RaiseEvent PropertyChanged(Me, New PropertyChangedEventArgs(NameOf(Text)))
+            End Set
+        End Property
+
+        <DefaultValue(GetType(LabelSideEnum), "BottomOrRight")>
+        Public Property Side As LabelSideEnum
+            Get
+                Return _side
+            End Get
+            Set(value As LabelSideEnum)
+                If _side = value Then Return
+                _side = value
+                RaiseEvent PropertyChanged(Me, New PropertyChangedEventArgs(NameOf(Side)))
+            End Set
+        End Property
+
+        Public Overrides Function ToString() As String
+            Return $"[{Position}] {Text} · {Side}"
+        End Function
+    End Class
+
+    Public Class ChapterMarkerCollection
+        Inherits Collection(Of ChapterMarker)
+
+        Private ReadOnly _owner As ExcellentTrackBar
+
+        Friend Sub New(owner As ExcellentTrackBar)
+            _owner = owner
+        End Sub
+
+        Private Sub MarkerChanged(sender As Object, e As PropertyChangedEventArgs)
+            _owner.刷新章节标记()
+        End Sub
+
+        Protected Overrides Sub InsertItem(index As Integer, item As ChapterMarker)
+            If item Is Nothing Then Throw New ArgumentNullException(NameOf(item))
+            MyBase.InsertItem(index, item)
+            AddHandler item.PropertyChanged, AddressOf MarkerChanged
+            _owner.刷新章节标记()
+        End Sub
+
+        Protected Overrides Sub SetItem(index As Integer, item As ChapterMarker)
+            If item Is Nothing Then Throw New ArgumentNullException(NameOf(item))
+            RemoveHandler Me(index).PropertyChanged, AddressOf MarkerChanged
+            MyBase.SetItem(index, item)
+            AddHandler item.PropertyChanged, AddressOf MarkerChanged
+            _owner.刷新章节标记()
+        End Sub
+
+        Protected Overrides Sub RemoveItem(index As Integer)
+            RemoveHandler Me(index).PropertyChanged, AddressOf MarkerChanged
+            MyBase.RemoveItem(index)
+            _owner.刷新章节标记()
+        End Sub
+
+        Protected Overrides Sub ClearItems()
+            For Each marker As ChapterMarker In Me
+                RemoveHandler marker.PropertyChanged, AddressOf MarkerChanged
+            Next
+            MyBase.ClearItems()
+            _owner.刷新章节标记()
         End Sub
     End Class
 
@@ -676,6 +771,95 @@ Public Class ExcellentTrackBar
     Public Sub ClearLabels()
         标签列表.Clear()
     End Sub
+
+    Private 章节标记列表 As ChapterMarkerCollection
+    Private 章节标记颜色 As Color = Color.White
+    Private 章节标记尺寸 As Size = New Size(10, 8)
+    Private 章节标记边距 As Integer = 2
+    Private 章节标记圆角强度 As Single = 0.0F
+    Private 章节提示内边距 As Padding = New Padding(10, 10, 10, 10)
+    Private 章节提示 As FloatingToolTipForm
+    Private 当前提示标记 As ChapterMarker
+
+    <Category("LakeUI"), Description("指定值上的章节三角形标记；文字在鼠标悬停时显示"), Browsable(True),
+     DesignerSerializationVisibility(DesignerSerializationVisibility.Content),
+     Editor("System.ComponentModel.Design.CollectionEditor, System.Windows.Forms.Design", GetType(System.Drawing.Design.UITypeEditor))>
+    Public ReadOnly Property ChapterMarkers As ChapterMarkerCollection
+        Get
+            Return 章节标记列表
+        End Get
+    End Property
+
+    <Category("LakeUI"), Description("章节标记颜色"), DefaultValue(GetType(Color), "White")>
+    Public Property ChapterMarkerColor As Color
+        Get
+            Return 章节标记颜色
+        End Get
+        Set(value As Color)
+            SetValue(章节标记颜色, value)
+        End Set
+    End Property
+
+    <Category("LakeUI"), Description("章节标记的宽和高（逻辑像素）"), DefaultValue(GetType(Size), "10, 8")>
+    Public Property ChapterMarkerSize As Size
+        Get
+            Return 章节标记尺寸
+        End Get
+        Set(value As Size)
+            Dim normalized As New Size(Math.Max(0, value.Width), Math.Max(0, value.Height))
+            If 章节标记尺寸 <> normalized Then 隐藏章节提示()
+            SetValue(章节标记尺寸, normalized)
+        End Set
+    End Property
+
+    <Category("LakeUI"), Description("章节标记距离控件上/下或左/右边缘的距离（不受 Padding 影响）"), DefaultValue(2)>
+    Public Property ChapterMarkerEdgeDistance As Integer
+        Get
+            Return 章节标记边距
+        End Get
+        Set(value As Integer)
+            Dim normalized As Integer = Math.Max(0, value)
+            If 章节标记边距 <> normalized Then 隐藏章节提示()
+            SetValue(章节标记边距, normalized)
+        End Set
+    End Property
+
+    <Category("LakeUI"), Description("三角形角落的贝塞尔圆滑强度，0 到 1"), DefaultValue(0.0F)>
+    Public Property ChapterMarkerCornerStrength As Single
+        Get
+            Return 章节标记圆角强度
+        End Get
+        Set(value As Single)
+            If Single.IsNaN(value) Then value = 0.0F
+            SetValue(章节标记圆角强度, Math.Max(0.0F, Math.Min(1.0F, value)))
+        End Set
+    End Property
+
+    <Category("LakeUI - ToolTip"), Description("章节标记悬停工具提示的内边距"), DefaultValue(GetType(Padding), "10, 10, 10, 10")>
+    Public Property ChapterMarkerToolTipPadding As Padding
+        Get
+            Return 章节提示内边距
+        End Get
+        Set(value As Padding)
+            If 章节提示内边距 = value Then Return
+            章节提示内边距 = New Padding(Math.Max(0, value.Left), Math.Max(0, value.Top),
+                                       Math.Max(0, value.Right), Math.Max(0, value.Bottom))
+            隐藏章节提示()
+        End Set
+    End Property
+
+    Public Sub AddChapterMarker(position As Double, text As String, side As LabelSideEnum)
+        章节标记列表.Add(New ChapterMarker With {.Position = position, .Text = text, .Side = side})
+    End Sub
+
+    Public Sub ClearChapterMarkers()
+        章节标记列表.Clear()
+    End Sub
+
+    Private Sub 刷新章节标记()
+        隐藏章节提示()
+        请求GPU渲染()
+    End Sub
 #End Region
 
 #Region "布局计算"
@@ -779,6 +963,21 @@ Public Class ExcellentTrackBar
         End If
     End Function
 
+    Private Function 计算章节标记区域(marker As ChapterMarker) As RectangleF
+        Dim scale As Single = DpiScale()
+        Dim width As Single = 章节标记尺寸.Width * scale
+        Dim height As Single = 章节标记尺寸.Height * scale
+        Dim distance As Single = 章节标记边距 * scale
+        Dim coordinate As Single = 计算值对应轨道坐标(marker.Position)
+        If 方向 = TrackOrientationEnum.Horizontal Then
+            Return New RectangleF(coordinate - width / 2.0F,
+                                  If(marker.Side = LabelSideEnum.TopOrLeft, distance, Me.Height - distance - height),
+                                  width, height)
+        End If
+        Return New RectangleF(If(marker.Side = LabelSideEnum.TopOrLeft, distance, Me.Width - distance - width),
+                              coordinate - height / 2.0F, width, height)
+    End Function
+
     Private Function 计算鼠标响应区域() As RectangleF
         Dim s As Single = DpiScale()
         Dim _滑块宽度 As Single = 滑块宽度 * s
@@ -819,6 +1018,7 @@ Public Class ExcellentTrackBar
         Dim thumbRect As RectangleF = 计算滑块矩形()
         绘制轨道_GPU(context)
         绘制标签连线_GPU(context)
+        绘制章节标记_GPU(context)
         绘制滑块_GPU(context, thumbRect)
         绘制标签文字_GPU(context)
         绘制滑块文字_GPU(context, thumbRect)
@@ -879,6 +1079,60 @@ Public Class ExcellentTrackBar
         Dim borderWidth As Single = 滑块边框宽度 * s
         填充圆角矩形_GPU(context, thumbRect, radius, 获取当前滑块颜色(), 滑块渐变颜色, System.Windows.Forms.Orientation.Vertical)
         绘制圆角边框_GPU(context, thumbRect, radius, 获取当前滑块边框颜色(), borderWidth)
+    End Sub
+
+    Private Sub 绘制章节标记_GPU(context As D3D_PaintContext)
+        If 章节标记颜色.A = 0 OrElse 章节标记尺寸.Width = 0 OrElse 章节标记尺寸.Height = 0 Then Return
+        Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, 章节标记颜色, context.DeviceGeneration)
+        For Each marker In 章节标记列表
+            If Double.IsNaN(marker.Position) OrElse marker.Position < 最小值 OrElse marker.Position > 最大值 Then Continue For
+            Dim rect As RectangleF = 计算章节标记区域(marker)
+            Dim vertices(2) As Vector2
+            If 方向 = TrackOrientationEnum.Horizontal Then
+                Dim tipY As Single = If(marker.Side = LabelSideEnum.TopOrLeft, rect.Bottom, rect.Top)
+                Dim baseY As Single = If(marker.Side = LabelSideEnum.TopOrLeft, rect.Top, rect.Bottom)
+                vertices(0) = New Vector2(rect.Left, baseY)
+                vertices(1) = New Vector2(rect.Right, baseY)
+                vertices(2) = New Vector2(rect.Left + rect.Width / 2.0F, tipY)
+            Else
+                Dim tipX As Single = If(marker.Side = LabelSideEnum.TopOrLeft, rect.Right, rect.Left)
+                Dim baseX As Single = If(marker.Side = LabelSideEnum.TopOrLeft, rect.Left, rect.Right)
+                vertices(0) = New Vector2(baseX, rect.Top)
+                vertices(1) = New Vector2(baseX, rect.Bottom)
+                vertices(2) = New Vector2(tipX, rect.Top + rect.Height / 2.0F)
+            End If
+
+            Using geometry = D3D_RenderCore.DeviceManager.D2DFactory.CreatePathGeometry()
+                Using sink = geometry.Open()
+                    If 章节标记圆角强度 = 0.0F Then
+                        sink.BeginFigure(vertices(0), D2D.FigureBegin.Filled)
+                        sink.AddLine(vertices(1))
+                        sink.AddLine(vertices(2))
+                    Else
+                        Dim radius As Single = Math.Min(rect.Width, rect.Height) * 章节标记圆角强度 / 2.0F
+                        For index As Integer = 0 To 2
+                            Dim vertex As Vector2 = vertices(index)
+                            Dim previous As Vector2 = vertices((index + 2) Mod 3)
+                            Dim following As Vector2 = vertices((index + 1) Mod 3)
+                            Dim incoming As Vector2 = vertex + Vector2.Normalize(previous - vertex) * Math.Min(radius, Vector2.Distance(previous, vertex) / 2.0F)
+                            Dim outgoing As Vector2 = vertex + Vector2.Normalize(following - vertex) * Math.Min(radius, Vector2.Distance(following, vertex) / 2.0F)
+                            If index = 0 Then
+                                sink.BeginFigure(incoming, D2D.FigureBegin.Filled)
+                            Else
+                                sink.AddLine(incoming)
+                            End If
+                            sink.AddBezier(New D2D.BezierSegment With {
+                                .Point1 = incoming + (vertex - incoming) * (2.0F / 3.0F),
+                                .Point2 = outgoing + (vertex - outgoing) * (2.0F / 3.0F),
+                                .Point3 = outgoing})
+                        Next
+                    End If
+                    sink.EndFigure(D2D.FigureEnd.Closed)
+                    sink.Close()
+                End Using
+                context.DeviceContext.FillGeometry(geometry, brush)
+            End Using
+        Next
     End Sub
 
     Private Sub 绘制标签连线_GPU(context As D3D_PaintContext)
@@ -1066,6 +1320,41 @@ Public Class ExcellentTrackBar
     Private 正在拖动 As Boolean = False
     Private 拖动偏移 As Integer = 0
 
+    Private Sub 隐藏章节提示()
+        当前提示标记 = Nothing
+        If 章节提示 IsNot Nothing Then
+            章节提示.Close()
+            章节提示 = Nothing
+        End If
+    End Sub
+
+    Private Sub 更新章节提示(location As Point)
+        If 正在拖动 OrElse Not Enabled OrElse Not ClientRectangle.Contains(location) Then
+            隐藏章节提示()
+            Return
+        End If
+
+        Dim hovered As ChapterMarker = Nothing
+        For index As Integer = 章节标记列表.Count - 1 To 0 Step -1
+            Dim marker As ChapterMarker = 章节标记列表(index)
+            If Double.IsNaN(marker.Position) OrElse marker.Position < 最小值 OrElse marker.Position > 最大值 Then Continue For
+            If 计算章节标记区域(marker).Contains(location) Then
+                hovered = marker
+                Exit For
+            End If
+        Next
+        If hovered Is Nothing OrElse String.IsNullOrEmpty(hovered.Text) Then
+            隐藏章节提示()
+        ElseIf hovered IsNot 当前提示标记 OrElse 章节提示 Is Nothing OrElse 章节提示.IsDisposed Then
+            隐藏章节提示()
+            章节提示 = New FloatingToolTipForm(Me)
+            Dim scale As Single = DpiScale()
+            章节提示.ShowTip(hovered.Text, PointToScreen(New Point(location.X + CInt(12 * scale), location.Y + CInt(16 * scale))),
+                             New FloatingToolTipStyle With {.Font = Me.Font, .Padding = 章节提示内边距})
+            当前提示标记 = hovered
+        End If
+    End Sub
+
     Protected Overrides Sub OnMouseEnter(e As EventArgs)
         MyBase.OnMouseEnter(e)
         鼠标状态 = MouseStateEnum.Hover
@@ -1074,12 +1363,14 @@ Public Class ExcellentTrackBar
 
     Protected Overrides Sub OnMouseLeave(e As EventArgs)
         MyBase.OnMouseLeave(e)
+        隐藏章节提示()
         If Not 正在拖动 Then 鼠标状态 = MouseStateEnum.Normal
         请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
         MyBase.OnMouseDown(e)
+        隐藏章节提示()
         If Not Enabled OrElse e.Button <> MouseButtons.Left Then Return
 
         Dim responseRect As RectangleF = 计算鼠标响应区域()
@@ -1107,6 +1398,7 @@ Public Class ExcellentTrackBar
 
     Protected Overrides Sub OnMouseMove(e As MouseEventArgs)
         MyBase.OnMouseMove(e)
+        更新章节提示(e.Location)
         If Not Enabled OrElse Not 正在拖动 Then Return
         Dim pt As Point = If(方向 = TrackOrientationEnum.Horizontal,
                              New Point(e.X - 拖动偏移, e.Y),
@@ -1121,6 +1413,7 @@ Public Class ExcellentTrackBar
         拖动偏移 = 0
         If Me.Capture Then Me.Capture = False
         鼠标状态 = If(ClientRectangle.Contains(e.Location), MouseStateEnum.Hover, MouseStateEnum.Normal)
+        更新章节提示(e.Location)
         请求GPU渲染()
     End Sub
 
@@ -1258,11 +1551,13 @@ Public Class ExcellentTrackBar
 
     Protected Overrides Sub OnResize(e As EventArgs)
         MyBase.OnResize(e)
+        隐藏章节提示()
         请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnEnabledChanged(e As EventArgs)
         MyBase.OnEnabledChanged(e)
+        If Not Enabled Then 隐藏章节提示()
         请求GPU渲染()
     End Sub
 

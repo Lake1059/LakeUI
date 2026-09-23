@@ -4248,22 +4248,16 @@ Public Class ThisIsYourWindow
                     Return
 
                 Case WM_NCCALCSIZE
-                    If m.WParam <> IntPtr.Zero AndAlso Not _state.IsFullScreen AndAlso IsZoomed(_state.HostForm.Handle) Then
-                        Dim scr = Screen.FromHandle(_state.HostForm.Handle)
-                        Dim wa = scr.WorkingArea
-                        Dim r As RECT : r.Left = wa.Left : r.Top = wa.Top : r.Right = wa.Right : r.Bottom = wa.Bottom
-                        Marshal.StructureToPtr(r, m.LParam, True)
-                    End If
                     m.Result = IntPtr.Zero
                     Return
 
                 Case WM_GETMINMAXINFO
                     MyBase.WndProc(m)
                     Dim scr = Screen.FromHandle(_state.HostForm.Handle)
-                    Dim wa = scr.WorkingArea, sb = scr.Bounds
                     Dim info = Marshal.PtrToStructure(Of MINMAXINFO)(m.LParam)
-                    info.ptMaxPosition = New Point(wa.X - sb.X, wa.Y - sb.Y)
-                    info.ptMaxSize = New Point(wa.Width, wa.Height)
+                    info.ptMaxPosition = New Point(scr.WorkingArea.X - scr.Bounds.X,
+                                                   scr.WorkingArea.Y - scr.Bounds.Y)
+                    info.ptMaxSize = New Point(scr.WorkingArea.Width, scr.WorkingArea.Height)
                     Marshal.StructureToPtr(info, m.LParam, True)
                     Return
 
