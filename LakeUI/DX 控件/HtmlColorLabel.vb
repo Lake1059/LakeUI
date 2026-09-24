@@ -1339,8 +1339,8 @@ Public Class HtmlColorLabel
         End Set
     End Property
 
-    Private 信息图标尺寸比例 As Single = 0.72F
-    <Category("LakeUI - Info Icon"), Description("信息图标直径相对于所在行行高的比例。"), DefaultValue(0.72F), Browsable(True)>
+    Private 信息图标尺寸比例 As Single = 1.0F
+    <Category("LakeUI - Info Icon"), Description("信息图标直径相对于所在行行高的比例。"), DefaultValue(1.0F), Browsable(True)>
     Public Property InfoIconSizeRatio As Single
         Get
             Return 信息图标尺寸比例
@@ -1350,8 +1350,8 @@ Public Class HtmlColorLabel
         End Set
     End Property
 
-    Private 信息图标线条粗细 As Single = 1.2F
-    <Category("LakeUI - Info Icon"), Description("信息图标圆圈与字母 i 的线条粗细（逻辑像素）。"), DefaultValue(1.2F), Browsable(True)>
+    Private 信息图标线条粗细 As Single = 1.5F
+    <Category("LakeUI - Info Icon"), Description("信息图标圆圈与字母 i 的线条粗细（逻辑像素）。"), DefaultValue(1.5F), Browsable(True)>
     Public Property InfoIconStrokeWidth As Single
         Get
             Return 信息图标线条粗细
