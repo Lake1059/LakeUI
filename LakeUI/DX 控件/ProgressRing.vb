@@ -83,86 +83,17 @@ Public Class ProgressRing
     Private Sub 绘制Win11样式_GPU(context As D3D_PaintContext)
         Dim s As Single = DpiScale()
         Dim 绘制区域 As RectangleF = 获取内容绘制区域()
-        If 绘制区域.Width <= 0.0F OrElse 绘制区域.Height <= 0.0F Then Return
-
-        Dim 中心X As Single = 绘制区域.X + 绘制区域.Width / 2.0F
-        Dim 中心Y As Single = 绘制区域.Y + 绘制区域.Height / 2.0F
-        Dim 半径 As Single = Math.Min(绘制区域.Width, 绘制区域.Height) / 2.0F - 1
-        Dim 画笔宽度 As Single = 圆弧厚度值 * s
-        If 画笔宽度 >= 半径 Then 画笔宽度 = 半径 - 1
-        If 画笔宽度 < 0.5F Then Return
-        Dim 绘制半径 As Single = 半径 - 画笔宽度 / 2.0F
-        If 绘制半径 < 1 Then Return
-
-        Dim 绘制矩形 As New RectangleF(中心X - 绘制半径, 中心Y - 绘制半径, 绘制半径 * 2, 绘制半径 * 2)
-
-        Const minArc As Single = 15.0F
-        Const maxArc As Single = 260.0F
-        Const baseRotation As Single = 535.0F
-        Const sweepRange As Single = maxArc - minArc
-        Const totalPerCycle As Single = baseRotation + sweepRange
-
-        Dim n As Single
-        Dim t As Single
-        If DesignMode Then
-            n = 0 : t = 0.15F
-        ElseIf Not 动画运行中 Then
-            n = 0 : t = 0.0F
-        Else
-            Dim cycles As Double = 秒表.Elapsed.TotalMilliseconds / 动画周期时长
-            Dim reduced As Double = cycles Mod 6.0
-            n = CSng(Math.Floor(reduced))
-            t = CSng(reduced - Math.Floor(reduced))
-        End If
-
-        Dim sweepAngle As Single
-        Dim sweepOffset As Single = 0
-        If t < 0.5F Then
-            Dim p As Single = 缓动(t * 2.0F)
-            sweepAngle = minArc + sweepRange * p
-        Else
-            Dim p As Single = 缓动((t - 0.5F) * 2.0F)
-            sweepAngle = maxArc - sweepRange * p
-            sweepOffset = maxArc - sweepAngle
-        End If
-
-        Dim startAngle As Single = n * totalPerCycle + baseRotation * t + sweepOffset - 90.0F
-        If sweepAngle <= 0.05F Then Return
-
-        Using geo = 创建圆弧几何(绘制矩形, startAngle, sweepAngle)
-            Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, 圆弧颜色, context.DeviceGeneration)
-            context.DeviceContext.DrawGeometry(geo, brush, 画笔宽度, D3D_D2DInterop.GetRoundStrokeStyle())
-        End Using
+        ProgressRingRenderer.RenderWin11(context, 绘制区域, 圆弧颜色, 圆弧厚度值 * s,
+                                       动画运行中, 秒表.Elapsed.TotalMilliseconds,
+                                       DesignMode, 动画周期时长)
     End Sub
 
     Private Sub 绘制Win10样式_GPU(context As D3D_PaintContext)
         Dim s As Single = DpiScale()
         Dim 绘制区域 As RectangleF = 获取内容绘制区域()
-        If 绘制区域.Width <= 0.0F OrElse 绘制区域.Height <= 0.0F Then Return
-
-        Dim 中心X As Single = 绘制区域.X + 绘制区域.Width / 2.0F
-        Dim 中心Y As Single = 绘制区域.Y + 绘制区域.Height / 2.0F
-        Dim 半径 As Single = Math.Min(绘制区域.Width, 绘制区域.Height) / 2.0F - 1
-        Dim 点直径 As Single = 圆弧厚度值 * s
-        If 点直径 >= 半径 Then 点直径 = 半径 - 1
-        If 点直径 < 1 Then Return
-        Dim 轨道半径 As Single = 半径 - 点直径 / 2.0F
-        If 轨道半径 < 1 Then Return
-
-        Dim t As Double = 获取动画进度()
-        Const 点数量 As Integer = 5
-        Const 相位跨度 As Double = 0.25
-        Const A As Double = 0.75
-
-        Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, 圆弧颜色, context.DeviceGeneration)
-        Dim 点半径 As Single = 点直径 / 2.0F
-        For i As Integer = 0 To 点数量 - 1
-            Dim p As Double = (t + CDbl(i) / (点数量 - 1) * 相位跨度) Mod 1.0
-            Dim 角度 As Double = (720.0 * p - (180.0 * A / Math.PI) * Math.Sin(4.0 * Math.PI * p) - 90.0) * Math.PI / 180.0
-            Dim 点X As Single = 中心X + CSng(Math.Cos(角度)) * 轨道半径
-            Dim 点Y As Single = 中心Y + CSng(Math.Sin(角度)) * 轨道半径
-            context.DeviceContext.FillEllipse(New Ellipse(New Vector2(点X, 点Y), 点半径, 点半径), brush)
-        Next
+        ProgressRingRenderer.RenderWin10(context, 绘制区域, 圆弧颜色, 圆弧厚度值 * s,
+                                              动画运行中, 秒表.Elapsed.TotalMilliseconds,
+                                              DesignMode, 动画周期时长)
     End Sub
 
     Private Function 获取内容绘制区域() As RectangleF
@@ -173,50 +104,6 @@ Public Class ProgressRing
             Math.Max(0.0F, CSng(Me.Height - Padding.Vertical)))
     End Function
 
-    Private Shared Function 创建圆弧几何(rect As RectangleF, startAngle As Single, sweepAngle As Single) As ID2D1PathGeometry
-        Dim rx As Single = rect.Width / 2.0F
-        Dim ry As Single = rect.Height / 2.0F
-        Dim cx As Single = rect.X + rx
-        Dim cy As Single = rect.Y + ry
-        Dim startRad As Double = startAngle * Math.PI / 180.0
-        Dim endRad As Double = (startAngle + sweepAngle) * Math.PI / 180.0
-        Dim startPoint As New Vector2(cx + CSng(Math.Cos(startRad)) * rx, cy + CSng(Math.Sin(startRad)) * ry)
-        Dim endPoint As New Vector2(cx + CSng(Math.Cos(endRad)) * rx, cy + CSng(Math.Sin(endRad)) * ry)
-
-        Dim path As ID2D1PathGeometry = D3D_RenderCore.DeviceManager.D2DFactory.CreatePathGeometry()
-        Dim sink As ID2D1GeometrySink = path.Open()
-        Try
-            sink.BeginFigure(startPoint, FigureBegin.Hollow)
-            sink.AddArc(New ArcSegment With {
-                .Point = endPoint,
-                .Size = New Vortice.Mathematics.Size(rx, ry),
-                .RotationAngle = 0,
-                .SweepDirection = SweepDirection.Clockwise,
-                .ArcSize = If(sweepAngle > 180.0F, ArcSize.Large, ArcSize.Small)})
-            sink.EndFigure(FigureEnd.Open)
-            sink.Close()
-        Finally
-            sink.Dispose()
-        End Try
-        Return path
-    End Function
-
-    Private Shared Function 缓动(t As Single) As Single
-        ' EaseInOut 三次方缓动
-        If t < 0.5F Then
-            Return 4.0F * t * t * t
-        Else
-            Return 1.0F - CSng(Math.Pow(-2.0 * t + 2.0, 3) / 2.0)
-        End If
-    End Function
-
-    Private Function 获取动画进度() As Single
-        If DesignMode Then Return 0.15F
-        If Not 动画运行中 Then Return 0.0F
-        Dim elapsed As Double = 秒表.Elapsed.TotalMilliseconds
-        Dim t As Single = CSng((elapsed Mod 动画周期时长) / 动画周期时长)
-        Return t
-    End Function
 #End Region
 
 #Region "通用"

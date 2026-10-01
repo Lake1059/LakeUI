@@ -421,6 +421,10 @@ Public Class AgentRoom
     Private ReadOnly _itemLayoutTops As New List(Of Integer)()
     Private _measureVersion As Integer
     Private ReadOnly _textWidthCache As New Dictionary(Of TextWidthKey, Integer)(512)
+    Private ReadOnly _textFormatCache As New D3D_D2DInterop.TextFormatCache()
+    Private _cachedLineHeight As Integer = -1
+    Private _cachedLineHeightFontHash As Integer = Integer.MinValue
+    Private _cachedLineHeightDpiScale As Single = -1.0F
     Private Const MaxTextWidthCacheEntries As Integer = 4096
     Private ReadOnly _streamLayoutTimer As New Timer() With {.Interval = 50}
     Private Const StreamIdleSettleMilliseconds As Integer = 1000
@@ -552,6 +556,8 @@ Public Class AgentRoom
             For Each it In _items
                 ReleaseMarkdownRenderer(it)
             Next
+
+            _textFormatCache.Dispose()
 
         End If
         MyBase.Dispose(disposing)
@@ -2301,7 +2307,7 @@ Public Class AgentRoom
     End Function
 
     Private Function GetTextFormatCacheForMeasure() As D3D_D2DInterop.TextFormatCache
-        Return Nothing
+        Return _textFormatCache
     End Function
 
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
@@ -2342,7 +2348,18 @@ Public Class AgentRoom
 
     Private Function GetLineHeight(font As Font) As Integer
         If font Is Nothing Then Return Dpi(18)
-        Return D3D_TextMeasureHelper.GetLineHeightPx(font, DpiScale())
+        Dim scale = DpiScale()
+        Dim fontHash = GetFontMeasureHash(font)
+        If _cachedLineHeight >= 0 AndAlso
+           _cachedLineHeightFontHash = fontHash AndAlso
+           _cachedLineHeightDpiScale = scale Then
+            Return _cachedLineHeight
+        End If
+
+        _cachedLineHeight = D3D_TextMeasureHelper.GetLineHeightPx(font, scale)
+        _cachedLineHeightFontHash = fontHash
+        _cachedLineHeightDpiScale = scale
+        Return _cachedLineHeight
     End Function
 
     Private Sub InvalidateMarkdownRenderers()
@@ -3306,6 +3323,11 @@ Public Class AgentRoom
 
         Dim textX As Integer = areaItemRect.X + it.TextOriginX
         Dim textY As Integer = areaItemRect.Y + it.TextOriginY - If(it.Kind = ChatItemKind.ToolCall, it.DetailScrollOffset, 0)
+        If context.DirtyRectangle.Width > 0 AndAlso context.DirtyRectangle.Height > 0 Then
+            Dim textWidth As Integer = Math.Max(1, it.BubbleRect.Right - (it.TextOriginX - it.BubbleRect.Left))
+            Dim textHeight As Integer = Math.Max(lineHeight, it.LineRanges.Count * lineHeight)
+            If Not context.IntersectsDirty(New Rectangle(textX, textY, textWidth, textHeight)) Then Return
+        End If
         If it.Kind = ChatItemKind.ToolCall Then
             Dim clipRect = OffsetRectangle(it.DetailViewportRect, areaItemRect.Location)
             If clipRect.IsEmpty Then Return
@@ -3329,6 +3351,8 @@ Public Class AgentRoom
         For li = 0 To it.LineRanges.Count - 1
             Dim lineY = textY + li * lineHeight
             If Not clipRect.IsEmpty AndAlso (lineY + lineHeight < clipRect.Top OrElse lineY > clipRect.Bottom) Then Continue For
+            If context.DirtyRectangle.Width > 0 AndAlso context.DirtyRectangle.Height > 0 AndAlso
+               (lineY + lineHeight < context.DirtyRectangle.Top OrElse lineY > context.DirtyRectangle.Bottom) Then Continue For
             Dim lr = it.LineRanges(li)
             Dim lineS As Integer = lr.Start, lineE As Integer = lr.Start + lr.Length
             Dim a As Integer = Math.Max(selStart, lineS)
@@ -3401,9 +3425,17 @@ Public Class AgentRoom
                                        lineHeight As Integer,
                                        foreColor As Color,
                                        clipRect As Rectangle)
+        Dim dirty = context.DirtyRectangle
+        Dim textWidth As Integer = Math.Max(1, it.BubbleRect.Right - (it.TextOriginX - it.BubbleRect.Left))
+        Dim textHeight As Integer = Math.Max(lineHeight, it.LineRanges.Count * lineHeight)
+        If dirty.Width > 0 AndAlso dirty.Height > 0 AndAlso
+           Not context.IntersectsDirty(New Rectangle(textX, textY, textWidth, textHeight)) Then Return
+
         For li = 0 To it.LineRanges.Count - 1
             Dim lineY = textY + li * lineHeight
             If Not clipRect.IsEmpty AndAlso (lineY + lineHeight < clipRect.Top OrElse lineY > clipRect.Bottom) Then Continue For
+            If dirty.Width > 0 AndAlso dirty.Height > 0 AndAlso
+               (lineY + lineHeight < dirty.Top OrElse lineY > dirty.Bottom) Then Continue For
             Dim lr = it.LineRanges(li)
             Dim line As String = it.Text.Substring(lr.Start, lr.Length)
             DrawLineWithLinks_GPU(context, it, line, lr.Start, textX, lineY, font, lineHeight, foreColor)
@@ -3421,6 +3453,15 @@ Public Class AgentRoom
         Dim visibleLocalTop As Integer = Math.Max(0, viewportRect.Top - origin.Y)
         Dim visibleLocalBottom As Integer = Math.Min(renderer.ContentHeight, viewportRect.Bottom - origin.Y)
         If visibleLocalBottom <= visibleLocalTop Then Return
+
+        Dim contentRect As New Rectangle(origin.X, origin.Y, Math.Max(1, renderer.Width), Math.Max(1, renderer.ContentHeight))
+        If Not context.IntersectsDirty(contentRect) Then Return
+
+        If context.DirtyRectangle.Width > 0 AndAlso context.DirtyRectangle.Height > 0 Then
+            visibleLocalTop = Math.Max(visibleLocalTop, context.DirtyRectangle.Top - origin.Y)
+            visibleLocalBottom = Math.Min(visibleLocalBottom, context.DirtyRectangle.Bottom - origin.Y)
+            If visibleLocalBottom <= visibleLocalTop Then Return
+        End If
 
         Dim clipSize As New Size(Math.Max(1, renderer.Width), Math.Max(1, renderer.ContentHeight))
         renderer.DrawEmbeddedContent_GPU(context, origin, clipSize, drawBackground:=False,

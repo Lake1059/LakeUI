@@ -1062,13 +1062,25 @@ Public Class ModernListBox
     End Property
 
     Private 拖选区域宽度 As Integer = 30
-    <Category("LakeUI"), Description("同时启用多选和拖动排序时，控件右侧强制框选区域的宽度"), DefaultValue(GetType(Integer), "30"), Browsable(True)>
+    <Category("LakeUI"), Description("同时启用多选和拖动排序时，控件右侧强制框选区域的宽度（96 DPI 逻辑像素；DragSelectZoneRatio 为 0 时生效）"), DefaultValue(GetType(Integer), "30"), Browsable(True)>
     Public Property DragSelectZoneWidth As Integer
         Get
             Return 拖选区域宽度
         End Get
         Set(value As Integer)
             拖选区域宽度 = Math.Max(0, value)
+        End Set
+    End Property
+
+    Private 拖选区域比例 As Single = 0.0F
+    <Category("LakeUI"), Description("右侧强制框选区域占可见内容宽度的比例（0 到 1）；0 使用 DragSelectZoneWidth，0.5 表示左右各半，自动适应尺寸和 DPI"), DefaultValue(0.0F), Browsable(True)>
+    Public Property DragSelectZoneRatio As Single
+        Get
+            Return 拖选区域比例
+        End Get
+        Set(value As Single)
+            If Single.IsNaN(value) Then value = 0.0F
+            拖选区域比例 = Math.Max(0.0F, Math.Min(1.0F, value))
         End Set
     End Property
 
@@ -1284,7 +1296,9 @@ Public Class ModernListBox
         Dim contentRect = 获取内容区域()
         Dim inset As Integer = 获取边框内边距()
         Dim scrollW As Integer = If(Not _scrollBar.TrackRect.IsEmpty, Width - inset - _scrollBar.VisualLeft, 0)
-        Dim zoneLeft As Integer = contentRect.Right - scrollW - CInt(Math.Round(拖选区域宽度 * DpiScale()))
+        Dim visibleWidth = Math.Max(0, contentRect.Width - scrollW)
+        Dim zoneWidth = If(拖选区域比例 > 0.0F, CInt(visibleWidth * 拖选区域比例), CInt(Math.Round(拖选区域宽度 * DpiScale())))
+        Dim zoneLeft As Integer = contentRect.Left + visibleWidth - zoneWidth
         Return mouseX >= zoneLeft
     End Function
 

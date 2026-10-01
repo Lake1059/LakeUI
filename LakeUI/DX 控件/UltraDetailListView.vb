@@ -1934,13 +1934,25 @@ Public Class UltraDetailListView
     End Property
 
     Private 拖选区域宽度 As Integer = 30
-    <Category("LakeUI"), Description("同时启用多选和拖动排序时，控件右侧强制框选区域的宽度"), DefaultValue(GetType(Integer), "30"), Browsable(True)>
+    <Category("LakeUI"), Description("同时启用多选和拖动排序时，控件右侧强制框选区域的宽度（96 DPI 逻辑像素；DragSelectZoneRatio 为 0 时生效）"), DefaultValue(GetType(Integer), "30"), Browsable(True)>
     Public Property DragSelectZoneWidth As Integer
         Get
             Return 拖选区域宽度
         End Get
         Set(value As Integer)
             SetValue(拖选区域宽度, Math.Max(0, value))
+        End Set
+    End Property
+
+    Private 拖选区域比例 As Single = 0.0F
+    <Category("LakeUI"), Description("右侧强制框选区域占可见内容宽度的比例（0 到 1）；0 使用 DragSelectZoneWidth，0.5 表示左右各半，自动适应尺寸和 DPI"), DefaultValue(0.0F), Browsable(True)>
+    Public Property DragSelectZoneRatio As Single
+        Get
+            Return 拖选区域比例
+        End Get
+        Set(value As Single)
+            If Single.IsNaN(value) Then value = 0.0F
+            SetValue(拖选区域比例, Math.Max(0.0F, Math.Min(1.0F, value)))
         End Set
     End Property
 
@@ -3536,7 +3548,10 @@ Public Class UltraDetailListView
         If Not 允许多选 Then Return False
         If Not 允许拖动排序 Then Return True
         Dim contentRect = 获取内容区域()
-        Dim zoneLeft = contentRect.Right - 获取垂直滚动条占位宽度() - Dpi(拖选区域宽度)
+        Dim visibleWidth = Math.Max(0, contentRect.Width - 获取垂直滚动条占位宽度())
+        ' 可见内容已是设备像素，比例宽度不能再次按 DPI 缩放。
+        Dim zoneWidth = If(拖选区域比例 > 0.0F, CInt(visibleWidth * 拖选区域比例), Dpi(拖选区域宽度))
+        Dim zoneLeft = contentRect.Left + visibleWidth - zoneWidth
         Return mouseX >= zoneLeft
     End Function
 
