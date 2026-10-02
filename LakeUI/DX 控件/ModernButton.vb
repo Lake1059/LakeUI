@@ -46,6 +46,7 @@ Public Class ModernButton
 
     Public Sub New()
         InitializeComponent()
+        _toolTip = New FloatingToolTipController(Me, AddressOf GetToolTipTarget, AddressOf CreateToolTipStyle)
         动画助手.DirtyProvider = AddressOf 按钮动画脏区
         长按动画助手.DirtyProvider = AddressOf 按钮动画脏区
         涟漪动画助手.DirtyProvider = AddressOf 按钮动画脏区
@@ -460,6 +461,7 @@ Public Class ModernButton
 
     Private Sub 触发点击事件(e As EventArgs)
         If Not Enabled OrElse IsDisposed Then Return
+        _toolTip?.Hide()
 
         Dim 点击期间进入嵌套消息循环 As Boolean = False
         Dim 嵌套消息循环探测计时器 As New Timer() With {.Interval = 1}
@@ -576,12 +578,14 @@ Public Class ModernButton
     End Sub
     Protected Overrides Sub OnMouseEnter(e As EventArgs)
         MyBase.OnMouseEnter(e)
+        _toolTip?.Update(PointToClient(Cursor.Position))
         If Not Enabled Then Return
         If 点击后仍在等待同一鼠标位置() Then Return
         切换鼠标颜色状态(MouseStateEnum.Hover)
     End Sub
     Protected Overrides Sub OnMouseMove(e As MouseEventArgs)
         MyBase.OnMouseMove(e)
+        _toolTip?.Update(e.Location)
         If Not Enabled Then Return
         If 点击后仍在等待同一鼠标位置() Then Return
         If 鼠标状态 = MouseStateEnum.Normal AndAlso ClientRectangle.Contains(e.Location) Then
@@ -590,6 +594,7 @@ Public Class ModernButton
     End Sub
     Protected Overrides Sub OnMouseLeave(e As EventArgs)
         MyBase.OnMouseLeave(e)
+        _toolTip?.Leave()
         If Not Enabled Then Return
         点击后等待鼠标移动 = False
         切换鼠标颜色状态(MouseStateEnum.Normal)
@@ -597,6 +602,7 @@ Public Class ModernButton
     End Sub
     Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
         MyBase.OnMouseDown(e)
+        _toolTip?.Hide()
         If Not Enabled Then Return
         点击后等待鼠标移动 = False
         切换鼠标颜色状态(MouseStateEnum.Pressed)
@@ -1135,6 +1141,140 @@ Public Class ModernButton
             SetValue(点击涟漪颜色, value)
         End Set
     End Property
+#End Region
+
+#Region "工具提示"
+    Private _toolTip As FloatingToolTipController
+    Private _toolTipText As String = ""
+    Private _toolTipBackColor As Color = Color.FromArgb(50, 50, 50)
+    Private _toolTipForeColor As Color = Color.Silver
+    Private _toolTipBorderColor As Color = Color.Gray
+    Private _toolTipBorderSize As Integer = 1
+    Private _toolTipBorderRadius As Integer
+    Private _toolTipPadding As New Padding(10)
+    Private _toolTipMaxWidth As Integer = 300
+    Private _toolTipShowDelaySeconds As Double = 0.5R
+
+    <Category("LakeUI"), Description("鼠标悬停时显示的工具提示文本；空文本不显示提示。"), DefaultValue(""), Browsable(True)>
+    Public Property ToolTipText As String
+        Get
+            Return _toolTipText
+        End Get
+        Set(value As String)
+            value = If(value, "")
+            If String.Equals(_toolTipText, value, StringComparison.Ordinal) Then Return
+            _toolTipText = value
+            _toolTip?.Hide()
+            If IsHandleCreated Then _toolTip?.Update(PointToClient(Cursor.Position))
+        End Set
+    End Property
+
+    <Category("LakeUI"), Description("工具提示背景颜色"), DefaultValue(GetType(Color), "50,50,50"), Browsable(True)>
+    Public Property ToolTipBackColor As Color
+        Get
+            Return _toolTipBackColor
+        End Get
+        Set(value As Color)
+            _toolTipBackColor = value
+            _toolTip?.RefreshStyle()
+        End Set
+    End Property
+
+    <Category("LakeUI"), Description("工具提示文本颜色"), DefaultValue(GetType(Color), "Silver"), Browsable(True)>
+    Public Property ToolTipForeColor As Color
+        Get
+            Return _toolTipForeColor
+        End Get
+        Set(value As Color)
+            _toolTipForeColor = value
+            _toolTip?.RefreshStyle()
+        End Set
+    End Property
+
+    <Category("LakeUI"), Description("工具提示边框颜色"), DefaultValue(GetType(Color), "Gray"), Browsable(True)>
+    Public Property ToolTipBorderColor As Color
+        Get
+            Return _toolTipBorderColor
+        End Get
+        Set(value As Color)
+            _toolTipBorderColor = value
+            _toolTip?.RefreshStyle()
+        End Set
+    End Property
+
+    <Category("LakeUI"), Description("工具提示边框宽度"), DefaultValue(GetType(Integer), "1"), Browsable(True)>
+    Public Property ToolTipBorderSize As Integer
+        Get
+            Return _toolTipBorderSize
+        End Get
+        Set(value As Integer)
+            _toolTipBorderSize = Math.Max(0, value)
+            _toolTip?.RefreshStyle()
+        End Set
+    End Property
+
+    <Category("LakeUI"), Description("工具提示圆角半径"), DefaultValue(GetType(Integer), "0"), Browsable(True)>
+    Public Property ToolTipBorderRadius As Integer
+        Get
+            Return _toolTipBorderRadius
+        End Get
+        Set(value As Integer)
+            _toolTipBorderRadius = Math.Max(0, value)
+            _toolTip?.RefreshStyle()
+        End Set
+    End Property
+
+    <Category("LakeUI"), Description("工具提示内边距"), DefaultValue(GetType(Padding), "10, 10, 10, 10"), Browsable(True)>
+    Public Property ToolTipPadding As Padding
+        Get
+            Return _toolTipPadding
+        End Get
+        Set(value As Padding)
+            _toolTipPadding = value
+            _toolTip?.RefreshStyle()
+        End Set
+    End Property
+
+    <Category("LakeUI"), Description("工具提示最大宽度"), DefaultValue(GetType(Integer), "300"), Browsable(True)>
+    Public Property ToolTipMaxWidth As Integer
+        Get
+            Return _toolTipMaxWidth
+        End Get
+        Set(value As Integer)
+            _toolTipMaxWidth = Math.Max(50, value)
+            _toolTip?.RefreshStyle()
+        End Set
+    End Property
+
+    <Category("LakeUI"), Description("鼠标停留在按钮上后，显示工具提示前等待的秒数；0 表示立即显示"), DefaultValue(0.5R), Browsable(True)>
+    Public Property ToolTipShowDelaySeconds As Double
+        Get
+            Return _toolTipShowDelaySeconds
+        End Get
+        Set(value As Double)
+            If Double.IsNaN(value) OrElse Double.IsInfinity(value) Then value = 0.5R
+            _toolTipShowDelaySeconds = Math.Clamp(value, 0R, 60R)
+            If _toolTip IsNot Nothing Then _toolTip.InitialDelay = CInt(Math.Round(_toolTipShowDelaySeconds * 1000R))
+        End Set
+    End Property
+
+    Private Function GetToolTipTarget(pointer As Point) As FloatingToolTipTarget
+        If Not ClientRectangle.Contains(pointer) OrElse String.IsNullOrEmpty(_toolTipText) Then Return Nothing
+        Return New FloatingToolTipTarget(_toolTipText, ClientRectangle)
+    End Function
+
+    Private Function CreateToolTipStyle() As FloatingToolTipStyle
+        Return New FloatingToolTipStyle With {
+            .Font = Me.Font,
+            .BackColor = _toolTipBackColor,
+            .ForeColor = _toolTipForeColor,
+            .BorderColor = _toolTipBorderColor,
+            .BorderSize = _toolTipBorderSize,
+            .BorderRadius = _toolTipBorderRadius,
+            .Padding = _toolTipPadding,
+            .MaxWidth = _toolTipMaxWidth
+        }
+    End Function
 #End Region
 
 #Region "生命周期"

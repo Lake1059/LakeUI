@@ -864,7 +864,7 @@ Public Class AgentDialogueList
     Private ReadOnly _unassignedFolder As AgentDialogueFolder
     Private ReadOnly _rows As New List(Of LayoutRow)()
     Private ReadOnly _scrollBar As New D3D_ScrollBarRenderer()
-    Private ReadOnly _toolTip As New ToolTip()
+    Private ReadOnly _toolTip As FloatingToolTipController
     Private ReadOnly _progressAnimation As New D3D_AnimationHelper(Me)
     Private ReadOnly _progressStopwatch As New Stopwatch()
     Private _progressAnimationRunning As Boolean
@@ -948,12 +948,7 @@ Public Class AgentDialogueList
         _unassignedFolder.IsBuiltInUnassigned = True
         _unassignedFolder.OwnerList = Me
         _unassignedFolder.IsExpanded = True
-        _toolTip.ShowAlways = True
-        _toolTip.BackColor = _toolTipBackColor
-        _toolTip.ForeColor = _toolTipForeColor
-        _toolTip.InitialDelay = 500
-        _toolTip.AutoPopDelay = 10000
-        _toolTip.ReshowDelay = 100
+        _toolTip = New FloatingToolTipController(Me, AddressOf GetToolTipTarget, AddressOf CreateToolTipStyle) With {.AutoPopDelay = 10000}
     End Sub
 
     <Category("LakeUI"), Description("项目文件夹集合。对话内容不由控件承载。"),
@@ -1695,6 +1690,7 @@ Public Class AgentDialogueList
         MyBase.OnMouseMove(e)
         EnsureLayout()
         If _scrollBar.IsDragging Then
+            _toolTip.Hide()
             Dim totalPixels = GetContentHeightPixels()
             Dim viewportPixels = GetViewportHeightPixels()
             _scrollOffset = _scrollBar.DragMove(e.Y, totalPixels, viewportPixels)
@@ -1713,6 +1709,7 @@ Public Class AgentDialogueList
             End If
         End If
         If _isDragging Then
+            _toolTip.Hide()
             UpdateDropTarget(e.Location)
             RequestRender()
             Return
@@ -1724,21 +1721,34 @@ Public Class AgentDialogueList
         If Not Object.ReferenceEquals(_hoverRow, row) OrElse Not Object.ReferenceEquals(_hoverButton, button) Then
             _hoverRow = row
             _hoverButton = button
-            UpdateToolTip(row, button)
             RequestRender()
         End If
+        _toolTip.Update(e.Location)
         If _scrollBar.UpdateHover(e.Location) Then RequestRender()
     End Sub
 
-    Private Sub UpdateToolTip(row As LayoutRow, button As AgentDialogueActionButton)
+    Private Function GetToolTipTarget(pointer As Point) As FloatingToolTipTarget
+        If _isDragging OrElse _scrollBar.IsDragging Then Return Nothing
+        EnsureLayout()
+        Dim row As LayoutRow = Nothing
+        Dim button As AgentDialogueActionButton = Nothing
+        HitTest(pointer, row, button)
+        If row Is Nothing Then Return Nothing
         Dim text = ""
+        Dim bounds = Rectangle.Ceiling(row.Bounds)
         If button IsNot Nothing Then
             text = button.ToolTipText
-        ElseIf row IsNot Nothing Then
+            Dim index = row.ButtonItems.IndexOf(button)
+            If index >= 0 Then bounds = Rectangle.Ceiling(row.ButtonBounds(index))
+        Else
             text = If(row.Kind = RowKind.Folder, row.Folder.ToolTipText, row.Dialogue.ToolTipText)
         End If
-        _toolTip.SetToolTip(Me, If(text, ""))
-    End Sub
+        Return New FloatingToolTipTarget(text, bounds)
+    End Function
+
+    Private Function CreateToolTipStyle() As FloatingToolTipStyle
+        Return New FloatingToolTipStyle With {.Font = Me.Font, .BackColor = _toolTipBackColor, .ForeColor = _toolTipForeColor}
+    End Function
 
     Private Sub RaiseRightClick(e As MouseEventArgs)
         Dim row As LayoutRow = Nothing
@@ -1767,10 +1777,10 @@ Public Class AgentDialogueList
 
     Protected Overrides Sub OnMouseLeave(e As EventArgs)
         MyBase.OnMouseLeave(e)
+        _toolTip.Leave()
         If Not _isDragging Then
             _hoverRow = Nothing
             _hoverButton = Nothing
-            _toolTip.SetToolTip(Me, "")
             _scrollBar.ResetHover()
             RequestRender()
         End If
@@ -1778,6 +1788,7 @@ Public Class AgentDialogueList
 
     Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
         MyBase.OnMouseDown(e)
+        _toolTip.Hide()
         If e.Button <> MouseButtons.Left Then Return
         Focus()
         EnsureLayout()
@@ -1894,6 +1905,7 @@ Public Class AgentDialogueList
 
     Protected Overrides Sub OnMouseWheel(e As MouseEventArgs)
         MyBase.OnMouseWheel(e)
+        _toolTip.Hide()
         EnsureLayout()
         Dim maxOffset = Math.Max(0, GetContentHeightPixels() - GetViewportHeightPixels())
         If maxOffset <= 0 Then Return
@@ -2247,7 +2259,7 @@ Public Class AgentDialogueList
         End Get
         Set(value As Color)
             _toolTipBackColor = value
-            If _toolTip IsNot Nothing Then _toolTip.BackColor = value
+            _toolTip?.RefreshStyle()
         End Set
     End Property
 
@@ -2258,7 +2270,7 @@ Public Class AgentDialogueList
         End Get
         Set(value As Color)
             _toolTipForeColor = value
-            If _toolTip IsNot Nothing Then _toolTip.ForeColor = value
+            _toolTip?.RefreshStyle()
         End Set
     End Property
 
@@ -2404,6 +2416,7 @@ Public Class AgentDialogueList
     End Property
 
     Private Sub LayoutChanged()
+        _toolTip?.Hide()
         _layoutDirty = True
         RequestRender()
     End Sub

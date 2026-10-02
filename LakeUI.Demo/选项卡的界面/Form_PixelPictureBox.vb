@@ -1,61 +1,61 @@
+Imports System.Threading
+
 Public Class Form_PixelPictureBox
-    Private _imageLoad As Threading.CancellationTokenSource
-    Private _loadedImage As Image
+    Private Const SampleEdge As Long = 262144
+    Private ReadOnly _sampleEncoding As New PixelPictureColorEncoding(PixelPictureColorSpace.ScRgb, PixelPictureTransferFunction.Linear)
+    Private _sampleSource As PixelPictureTiledSource
+
     Private Sub Form_PixelPictureBox_Load(sender As Object, e As EventArgs) Handles MyBase.Load
-        PixelPictureBox1.AllowDrop = True
+        PixelPictureBox1.AllowDrop = False
+        _sampleSource = New PixelPictureTiledSource(SampleEdge, SampleEdge, AddressOf ProvideSampleTile, _sampleEncoding,
+            frameDelaysMilliseconds:=Enumerable.Repeat(100, 12))
+        PixelPictureBox1.Source = _sampleSource
+        Label6.Text = "262144 × 262144 HDR 动图：滚轮连续缩放、左键拖动、右键框选。控件外按需生成 tile，不解码文件。"
     End Sub
 
     Private Sub PixelPictureBox1_SelectionChanged(sender As Object, e As EventArgs) Handles PixelPictureBox1.SelectionChanged
-        PictureBox1.Image = Nothing
-        PictureBox2.Image = Nothing
-        PictureBox3.Image = Nothing
-        PictureBox4.Image = Nothing
-        PictureBox1.Image = PixelPictureBox1.GetCornerMagnifier(PixelPictureBox.SelectionCorner.TopLeft, 5, 10)
-        PictureBox2.Image = PixelPictureBox1.GetCornerMagnifier(PixelPictureBox.SelectionCorner.TopRight, 5, 10)
-        PictureBox3.Image = PixelPictureBox1.GetCornerMagnifier(PixelPictureBox.SelectionCorner.BottomLeft, 5, 10)
-        PictureBox4.Image = PixelPictureBox1.GetCornerMagnifier(PixelPictureBox.SelectionCorner.BottomRight, 5, 10)
+        Label6.Text = $"选择区域：{PixelPictureBox1.SelectionRect}；原始像素值由 Source 提供，不读取屏幕颜色。"
     End Sub
 
     Private Sub PixelPictureBox1_DragEnter(sender As Object, e As DragEventArgs) Handles PixelPictureBox1.DragEnter
-        e.Effect = DragDropEffects.Copy
+        e.Effect = If(e.Data.GetDataPresent(DataFormats.FileDrop), DragDropEffects.Copy, DragDropEffects.None)
     End Sub
 
-    Private Async Sub PixelPictureBox1_DragDrop(sender As Object, e As DragEventArgs) Handles PixelPictureBox1.DragDrop
+    Private Sub PixelPictureBox1_DragDrop(sender As Object, e As DragEventArgs) Handles PixelPictureBox1.DragDrop
         If e.Data.GetDataPresent(DataFormats.FileDrop) Then
-            Dim files = DirectCast(e.Data.GetData(DataFormats.FileDrop), String())
-            If files.Length > 0 Then
-                _imageLoad?.Cancel()
-                Dim load As New Threading.CancellationTokenSource()
-                _imageLoad = load
-                Try
-                    Dim prepared = Await D3D_ImagePreparation.LoadBitmapAsync(files(0), load.Token)
-                    If load.IsCancellationRequested OrElse IsDisposed OrElse _imageLoad IsNot load Then
-                        prepared.Dispose()
-                        Return
-                    End If
-                    Using D3D_PaintBridge.BeginRenderUpdate(Me)
-                        Dim previous = _loadedImage
-                        _loadedImage = prepared
-                        PixelPictureBox1.Image = prepared
-                        previous?.Dispose()
-                    End Using
-                Catch ex As OperationCanceledException
-                Catch ex As Exception
-                    If Not IsDisposed AndAlso _imageLoad Is load Then
-                        MessageBox.Show("无法加载图片: " & ex.Message, "错误", MessageBoxButtons.OK, MessageBoxIcon.Error)
-                    End If
-                Finally
-                    If _imageLoad Is load Then _imageLoad = Nothing
-                    load.Dispose()
-                End Try
-            End If
+            Label6.Text = "PixelPictureBox 只负责 GPU 呈现；请在控件外将文件解码为 IPixelPictureSource，再赋给 Source。"
         End If
     End Sub
 
     Private Sub ReleaseLoadedImage(sender As Object, e As EventArgs) Handles Me.Disposed
-        _imageLoad?.Cancel()
-        _loadedImage?.Dispose()
-        _loadedImage = Nothing
+        _sampleSource?.Dispose()
+    End Sub
+
+    Private Function ProvideSampleTile(request As PixelPictureTileRequest, cancellationToken As CancellationToken) As Task(Of PixelPictureTile)
+        Dim width = CInt(Math.Min(request.TileSize, Math.Ceiling(SampleEdge / request.Scale) - request.Column * request.TileSize))
+        Dim height = CInt(Math.Min(request.TileSize, Math.Ceiling(SampleEdge / request.Scale) - request.Row * request.TileSize))
+        Dim pixels(width * height * 4 - 1) As Single
+        Dim phase = request.FrameIndex / 12.0 * Math.PI * 2
+        For row As Integer = 0 To height - 1
+            cancellationToken.ThrowIfCancellationRequested()
+            Dim imageY = (request.Row * request.TileSize + row) * request.Scale / SampleEdge
+            For column As Integer = 0 To width - 1
+                Dim imageX = (request.Column * request.TileSize + column) * request.Scale / SampleEdge
+                Dim pulse = 0.5 + 0.5 * Math.Sin(imageX * Math.PI * 8 + phase)
+                Dim offset = (row * width + column) * 4
+                pixels(offset) = CSng(imageX * 4)
+                pixels(offset + 1) = CSng(imageY * 2)
+                pixels(offset + 2) = CSng(pulse * 3)
+                pixels(offset + 3) = 1
+            Next
+        Next
+        Return Task.FromResult(New PixelPictureTile(width, height, pixels, _sampleEncoding))
+    End Function
+
+    Private Sub PixelPictureBox1_PixelHovered(sender As Object, e As PixelPicturePixelEventArgs) Handles PixelPictureBox1.PixelHovered
+        If Not e.HasPixel Then Return
+        Dim pixel = e.Pixel
+        Label1.Text = $"({pixel.X}, {pixel.Y}) · linear scRGB = ({pixel.Red:F3}, {pixel.Green:F3}, {pixel.Blue:F3}, {pixel.Alpha:F3})"
     End Sub
 
     Private Sub Form_PixelPictureBox_SizeChanged(sender As Object, e As EventArgs) Handles Me.SizeChanged

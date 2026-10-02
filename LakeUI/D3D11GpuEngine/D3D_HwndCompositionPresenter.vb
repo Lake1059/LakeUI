@@ -13,6 +13,7 @@ Friend NotInheritable Class D3D_HwndCompositionPresenter
     Private ReadOnly _deviceManager As D3D_DeviceManager
     Private _handle As IntPtr
     Private _size As Size
+    Private _surfaceFormat As Format = Format.B8G8R8A8_UNorm
     Private _generation As Integer = -1
     Private _context As ID2D1DeviceContext
     Private _target As IDCompositionTarget
@@ -78,7 +79,7 @@ Friend NotInheritable Class D3D_HwndCompositionPresenter
 
     Private ReadOnly Property CacheBytes As Long Implements D3D_IRenderCacheOwner.CacheBytes
         Get
-            Return CLng(_size.Width) * CLng(_size.Height) * 4L
+            Return CLng(_size.Width) * CLng(_size.Height) * If(_surfaceFormat = Format.R16G16B16A16_Float, 8L, 4L)
         End Get
     End Property
 
@@ -119,7 +120,7 @@ Friend NotInheritable Class D3D_HwndCompositionPresenter
             Try
                 Using 更新表面
                     Dim 位图属性 As New BitmapProperties1(
-                        New Vortice.DCommon.PixelFormat(Format.B8G8R8A8_UNorm, Vortice.DCommon.AlphaMode.Ignore),
+                        New Vortice.DCommon.PixelFormat(_surfaceFormat, Vortice.DCommon.AlphaMode.Ignore),
                         96.0F, 96.0F, BitmapOptions.Target Or BitmapOptions.CannotDraw)
                     Using 目标位图 = _context.CreateBitmapFromDxgiSurface(更新表面, 位图属性)
                         _context.Target = 目标位图
@@ -190,10 +191,13 @@ Friend NotInheritable Class D3D_HwndCompositionPresenter
                 Throw
             End Try
         End If
-        If 目标尺寸 <> _size OrElse _surface Is Nothing Then
+        Dim floatSource = TryCast(_owner, D3D_IFloatPresentationSource)
+        Dim requestedFormat = If(floatSource IsNot Nothing AndAlso floatSource.UseFloatPresentation, Format.R16G16B16A16_Float, Format.B8G8R8A8_UNorm)
+        If 目标尺寸 <> _size OrElse _surface Is Nothing OrElse requestedFormat <> _surfaceFormat Then
             Dim 新表面 As IDCompositionSurface = Nothing
             _deviceManager.CompositionDevice.CreateSurface(CUInt(目标尺寸.Width), CUInt(目标尺寸.Height),
-                Format.B8G8R8A8_UNorm, AlphaMode.Ignore, 新表面).CheckError()
+                requestedFormat, AlphaMode.Ignore, 新表面).CheckError()
+            _surfaceFormat = requestedFormat
             ' 新尺寸完成绘制后再替换 visual 内容，失败重试期间保留原来的可见内容。
             _surface?.Dispose()
             _surface = 新表面

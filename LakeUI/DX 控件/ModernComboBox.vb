@@ -47,7 +47,7 @@ Public Class ModernComboBox
             MyBase.RemoveItem(index)
             If _owner._selectedIndex = index Then
                 _owner._selectedIndex = -1
-                _owner._textRenderer.SetText(String.Empty, 0, True, False)
+                _owner.SetDisplayedText(String.Empty)
                 _owner.OnItemsTextChanged()
             ElseIf _owner._selectedIndex > index Then
                 _owner._selectedIndex -= 1
@@ -61,7 +61,7 @@ Public Class ModernComboBox
             Dim hadSelection As Boolean = _owner._selectedIndex >= 0
             _owner._selectedIndex = -1
             If hadSelection Then
-                _owner._textRenderer.SetText(String.Empty, 0, True, False)
+                _owner.SetDisplayedText(String.Empty)
                 _owner.OnItemsTextChanged()
             End If
             If hadItems Then
@@ -73,7 +73,7 @@ Public Class ModernComboBox
         Protected Overrides Sub SetItem(index As Integer, item As String)
             MyBase.SetItem(index, item)
             If _owner._selectedIndex = index Then
-                _owner._textRenderer.SetText(item, item.Length, True, False)
+                _owner.SetDisplayedText(item)
             End If
             InvalidateOwner()
         End Sub
@@ -133,7 +133,7 @@ Public Class ModernComboBox
         Public Overloads Sub AddRange(collection As IEnumerable(Of ToolTipEntry))
             If collection Is Nothing Then Return
             For Each entry In collection
-                If entry IsNot Nothing Then MyBase.Add(entry)
+                AddEntry(entry)
             Next
             RebuildDictionary()
         End Sub
@@ -141,21 +141,21 @@ Public Class ModernComboBox
         Public Overloads Sub AddRange(entries As IEnumerable(Of KeyValuePair(Of String, String)))
             If entries Is Nothing Then Return
             For Each kv In entries
-                MyBase.Add(New ToolTipEntry(kv.Key, kv.Value))
+                AddEntry(New ToolTipEntry(kv.Key, kv.Value))
             Next
             RebuildDictionary()
         End Sub
 
         Public Overloads Sub AddRange(ParamArray entries As ToolTipEntry())
-            If entries Is Nothing Then Return
-            For Each entry In entries
-                If entry IsNot Nothing Then MyBase.Add(entry)
-            Next
-            RebuildDictionary()
+            AddRange(DirectCast(entries, IEnumerable(Of ToolTipEntry)))
         End Sub
 
         Public Overloads Sub Add(itemText As String, toolTipText As String)
             MyBase.Add(New ToolTipEntry(itemText, toolTipText))
+        End Sub
+
+        Private Sub AddEntry(entry As ToolTipEntry)
+            If entry IsNot Nothing Then MyBase.Add(entry)
         End Sub
 
         Private Sub RebuildDictionary()
@@ -209,6 +209,10 @@ Public Class ModernComboBox
     Private _mouseOverArrow As Boolean = False
     Private _itemToolTips As ToolTipEntryCollection
 
+    Private 前置文本 As String = String.Empty
+    Private 前置文本颜色 As Color = Color.Silver
+    Private 前置文本间距 As Integer = 0
+
     Private Sub RefreshDropDownShadow()
         If _dropDownForm IsNot Nothing AndAlso Not _dropDownForm.IsDisposed Then
             _dropDownForm.RefreshShadowSettings()
@@ -219,13 +223,10 @@ Public Class ModernComboBox
 #End Region
 
 #Region "单行文本内核适配"
-    Private Property _text As String
+    Private ReadOnly Property _text As String
         Get
             Return _textRenderer.Text
         End Get
-        Set(value As String)
-            _textRenderer.SetText(value, _textRenderer.CaretColumn, False, False)
-        End Set
     End Property
 
 #End Region
@@ -245,7 +246,7 @@ Public Class ModernComboBox
             If Not textChanged AndAlso Not selectedIndexChanged Then Return
 
             If textChanged Then
-                _textRenderer.SetText(v, 0, True, False)
+                SetDisplayedText(v)
             End If
             _selectedIndex = matchIndex
             请求GPU渲染()
@@ -457,6 +458,7 @@ Public Class ModernComboBox
             If 启用编辑 = value Then Return
             启用编辑 = value
             _textRenderer.Editable = value
+            EnsureCaretVisible()
             请求GPU渲染()
         End Set
     End Property
@@ -473,7 +475,10 @@ Public Class ModernComboBox
             Return 文本对齐
         End Get
         Set(value As TextAlignMode)
-            SetValue(文本对齐, value)
+            If 文本对齐 = value Then Return
+            文本对齐 = value
+            EnsureCaretVisible()
+            请求GPU渲染()
         End Set
     End Property
 
@@ -496,6 +501,44 @@ Public Class ModernComboBox
         End Get
         Set(value As Color)
             SetValue(水印颜色, value)
+        End Set
+    End Property
+
+    <Category("LakeUI"), Description("始终绘制在 Text 文本之前的独立前置文本"), DefaultValue(GetType(String), ""), Browsable(True)>
+    Public Property PrefixText As String
+        Get
+            Return 前置文本
+        End Get
+        Set(value As String)
+            Dim v As String = If(value, String.Empty)
+            If 前置文本 = v Then Return
+            前置文本 = v
+            EnsureCaretVisible()
+            请求GPU渲染()
+        End Set
+    End Property
+
+    <Category("LakeUI"), Description("前置文本颜色"), DefaultValue(GetType(Color), "Silver"), Browsable(True)>
+    Public Property PrefixForeColor As Color
+        Get
+            Return 前置文本颜色
+        End Get
+        Set(value As Color)
+            SetValue(前置文本颜色, value)
+        End Set
+    End Property
+
+    <Category("LakeUI"), Description("前置文本与 Text 文本之间的距离（96 DPI 像素，随 DPI 缩放）"), DefaultValue(GetType(Integer), "0"), Browsable(True)>
+    Public Property PrefixGap As Integer
+        Get
+            Return 前置文本间距
+        End Get
+        Set(value As Integer)
+            Dim v As Integer = Math.Max(0, value)
+            If 前置文本间距 = v Then Return
+            前置文本间距 = v
+            EnsureCaretVisible()
+            请求GPU渲染()
         End Set
     End Property
 
@@ -1229,6 +1272,9 @@ Public Class ModernComboBox
 #Region "初始化"
     Public Sub New()
         _textRenderer = New SingleLineTextBoxRenderer(Me)
+        _textRenderer.Editable = 启用编辑
+        _textRenderer.TextAreaProvider = AddressOf 获取文本区域
+        _textRenderer.DpiScaleProvider = AddressOf DpiScale
         AddHandler _textRenderer.TextChanged, Sub() NotifyTextChanged()
         InitializeComponent()
         _items = New ItemCollection(Me)
@@ -1299,9 +1345,8 @@ Public Class ModernComboBox
 
         绘制背景_GPU(context, hasRadius, sourceRect, boundsRect, effBg, effBg2)
         SyncTextRenderer()
-        If Not RenderCustomSelectionContentGpu(context, New RectangleF(0, 0, w, h)) Then
-            _textRenderer.DrawGpu(context)
-        End If
+        If Not RenderCustomSelectionContentGpu(context, New RectangleF(0, 0, w, h)) Then _textRenderer.DrawGpu(context)
+        绘制前置文本_GPU(context)
         绘制分隔线与箭头_GPU(context, w, h, bc)
         绘制边框_GPU(context, hasRadius, boundsRect, bc)
         If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
@@ -1529,7 +1574,8 @@ Public Class ModernComboBox
                     If (lp And GCS_RESULTSTR) <> 0 Then
                         Dim result As String = ImeHelper.GetResultString(Handle)
                         If result IsNot Nothing Then
-                            InsertTextCore(result)
+                            SyncTextRenderer()
+                            _textRenderer.InsertText(result)
                         End If
                     Else
                         MyBase.WndProc(m)
@@ -1549,105 +1595,79 @@ Public Class ModernComboBox
 
 #Region "字符输入 (WM_CHAR)"
     Private Sub HandleWmChar(charCode As Integer)
+        SyncTextRenderer()
         Select Case charCode
             Case 1  ' Ctrl+A
                 SelectAll()
             Case 3  ' Ctrl+C
-                CopySelection()
+                _textRenderer.CopySelection()
             Case 22 ' Ctrl+V
-                If 启用编辑 Then PasteText()
+                If 启用编辑 Then _textRenderer.PasteText()
             Case 24 ' Ctrl+X
-                If 启用编辑 Then CutSelection()
+                If 启用编辑 Then _textRenderer.CutSelection()
             Case 8  ' Backspace
-                If 启用编辑 Then HandleBackspace()
+                If 启用编辑 Then _textRenderer.HandleBackspace()
             Case Else
                 If 启用编辑 Then
                     Dim ch As Char = ChrW(charCode)
                     If Not Char.IsControl(ch) Then
-                        InsertTextCore(ch.ToString())
+                        _textRenderer.InsertText(ch.ToString())
                     End If
                 End If
         End Select
-        ResetCaretBlink()
+        _textRenderer.ResetCaretBlink()
     End Sub
 #End Region
 
 #Region "键盘导航 (OnKeyDown)"
     Protected Overrides Sub OnKeyDown(e As KeyEventArgs)
         MyBase.OnKeyDown(e)
-        If Not 启用编辑 Then
-            Select Case e.KeyCode
-                Case Keys.Down
-                    If Not _droppedDown Then
-                        OpenDropDown()
-                    Else
-                        If _selectedIndex < _items.Count - 1 Then
-                            SetSelectedIndexFromUser(_selectedIndex + 1)
-                        End If
-                    End If
-                    e.Handled = True
-                Case Keys.Up
-                    If _droppedDown Then
-                        If _selectedIndex > 0 Then
-                            SetSelectedIndexFromUser(_selectedIndex - 1)
-                        End If
-                    End If
-                    e.Handled = True
-                Case Keys.Enter, Keys.Space
-                    If _droppedDown Then
-                        CloseDropDown()
-                    Else
-                        OpenDropDown()
-                    End If
-                    e.Handled = True
-                Case Keys.Escape
-                    If _droppedDown Then CloseDropDown()
-                    e.Handled = True
-            End Select
-            Return
-        End If
-        Dim shift As Boolean = e.Shift
-        Dim ctrl As Boolean = e.Control
         Select Case e.KeyCode
-            Case Keys.Left
-                If ctrl Then MoveCaretWordLeft(shift) Else MoveCaret(-1, shift)
-                e.Handled = True
-            Case Keys.Right
-                If ctrl Then MoveCaretWordRight(shift) Else MoveCaret(1, shift)
-                e.Handled = True
-            Case Keys.Home
-                MoveCaretHome(shift)
-                e.Handled = True
-            Case Keys.End
-                MoveCaretEnd(shift)
-                e.Handled = True
-            Case Keys.Delete
-                HandleDelete()
-                e.Handled = True
             Case Keys.Down
                 If Not _droppedDown Then
                     OpenDropDown()
-                Else
-                    If _selectedIndex < _items.Count - 1 Then
-                        SetSelectedIndexFromUser(_selectedIndex + 1)
-                    End If
+                ElseIf _selectedIndex < _items.Count - 1 Then
+                    SetSelectedIndexFromUser(_selectedIndex + 1)
                 End If
                 e.Handled = True
             Case Keys.Up
-                If _droppedDown Then
-                    If _selectedIndex > 0 Then
-                        SetSelectedIndexFromUser(_selectedIndex - 1)
-                    End If
-                End If
+                If _droppedDown AndAlso _selectedIndex > 0 Then SetSelectedIndexFromUser(_selectedIndex - 1)
                 e.Handled = True
             Case Keys.Escape
                 If _droppedDown Then CloseDropDown()
                 e.Handled = True
             Case Keys.Enter
-                If _droppedDown Then CloseDropDown()
+                If 启用编辑 Then
+                    If _droppedDown Then CloseDropDown()
+                Else
+                    DroppedDown = Not _droppedDown
+                End If
+                e.Handled = True
+            Case Keys.Space
+                If Not 启用编辑 Then
+                    DroppedDown = Not _droppedDown
+                    e.Handled = True
+                End If
+            Case Else
+                If Not 启用编辑 Then Return
+                SyncTextRenderer()
+                Select Case e.KeyCode
+                    Case Keys.Left
+                        If e.Control Then _textRenderer.MoveCaretWordLeft(e.Shift) Else _textRenderer.MoveCaret(-1, e.Shift)
+                    Case Keys.Right
+                        If e.Control Then _textRenderer.MoveCaretWordRight(e.Shift) Else _textRenderer.MoveCaret(1, e.Shift)
+                    Case Keys.Home
+                        _textRenderer.MoveCaretHome(e.Shift)
+                    Case Keys.End
+                        _textRenderer.MoveCaretEnd(e.Shift)
+                    Case Keys.Delete
+                        _textRenderer.HandleDelete()
+                    Case Else
+                        Return
+                End Select
                 e.Handled = True
         End Select
-        If e.Handled Then ResetCaretBlink()
+        If 启用编辑 AndAlso e.Handled Then _textRenderer.ResetCaretBlink()
     End Sub
 
     Protected Overrides Function IsInputKey(keyData As Keys) As Boolean
@@ -1685,33 +1705,28 @@ Public Class ModernComboBox
         Focus()
         鼠标状态 = MouseStateEnum.Pressed
         If e.Button = MouseButtons.Left Then
-            Dim aaw As Integer = ArrowAreaWidth
-            Dim arrowRect As New Rectangle(ClientRectangle.Width - aaw, 0, aaw, ClientRectangle.Height)
-            If arrowRect.Contains(e.Location) OrElse Not 启用编辑 Then
-                If _droppedDown Then
-                    CloseDropDown()
-                Else
-                    OpenDropDown()
-                End If
+            If 获取箭头区域().Contains(e.Location) OrElse Not 启用编辑 Then
+                DroppedDown = Not _droppedDown
                 请求GPU渲染()
                 Return
             End If
+            Dim textArea As RectangleF = 获取文本区域()
+            If textArea.Width <= 0 OrElse Not textArea.Contains(e.Location) Then Return
             _mouseDownSelecting = True
             SyncTextRenderer()
             _textRenderer.BeginMouseSelection(e.X)
-            ResetCaretBlink()
+            _textRenderer.ResetCaretBlink()
             请求GPU渲染()
         End If
     End Sub
 
     Protected Overrides Sub OnMouseMove(e As MouseEventArgs)
         MyBase.OnMouseMove(e)
-        Dim aaw As Integer = ArrowAreaWidth
-        Dim arrowRect As New Rectangle(ClientRectangle.Width - aaw, 0, aaw, ClientRectangle.Height)
         Dim prevOverArrow As Boolean = _mouseOverArrow
-        _mouseOverArrow = arrowRect.Contains(e.Location)
+        _mouseOverArrow = 获取箭头区域().Contains(e.Location)
         If 启用编辑 Then
-            Cursor = If(_mouseOverArrow, Cursors.Default, Cursors.IBeam)
+            Dim textArea As RectangleF = 获取文本区域()
+            Cursor = If(Not _mouseOverArrow AndAlso textArea.Contains(e.Location), Cursors.IBeam, Cursors.Default)
         Else
             Cursor = Cursors.Default
         End If
@@ -1730,90 +1745,12 @@ Public Class ModernComboBox
         请求GPU渲染()
     End Sub
 
-    Private Function HitTestCol(x As Integer) As Integer
-        SyncTextRenderer()
-        Return _textRenderer.HitTestColumn(x)
-    End Function
 #End Region
-
-#Region "光标移动"
-    Private Sub MoveCaret(deltaCol As Integer, extend As Boolean)
-        SyncTextRenderer()
-        _textRenderer.MoveCaret(deltaCol, extend)
-    End Sub
-
-    Private Sub MoveCaretHome(extend As Boolean)
-        SyncTextRenderer()
-        _textRenderer.MoveCaretHome(extend)
-    End Sub
-
-    Private Sub MoveCaretEnd(extend As Boolean)
-        SyncTextRenderer()
-        _textRenderer.MoveCaretEnd(extend)
-    End Sub
-
-    Private Sub MoveCaretWordLeft(extend As Boolean)
-        SyncTextRenderer()
-        _textRenderer.MoveCaretWordLeft(extend)
-    End Sub
-
-    Private Sub MoveCaretWordRight(extend As Boolean)
-        SyncTextRenderer()
-        _textRenderer.MoveCaretWordRight(extend)
-    End Sub
-
-    Private Sub EnsureCaretVisible()
-        SyncTextRenderer()
-        _textRenderer.EnsureCaretVisible()
-    End Sub
-#End Region
-
-#Region "文本编辑核心"
-    Private Sub InsertTextCore(text As String)
-        SyncTextRenderer()
-        _textRenderer.InsertText(text)
-    End Sub
-
-    Private Sub HandleBackspace()
-        SyncTextRenderer()
-        _textRenderer.HandleBackspace()
-    End Sub
-
-    Private Sub HandleDelete()
-        SyncTextRenderer()
-        _textRenderer.HandleDelete()
-    End Sub
-
-#End Region
-
 #Region "选区"
     Public Sub SelectAll()
         _textRenderer.SelectAll()
     End Sub
 
-    Private Sub ClearSelection()
-        _textRenderer.ClearSelection()
-    End Sub
-
-    Private Function GetSelectedText() As String
-        Return _textRenderer.GetSelectedText()
-    End Function
-#End Region
-
-#Region "剪贴板"
-    Private Sub CopySelection()
-        _textRenderer.CopySelection()
-    End Sub
-
-    Private Sub CutSelection()
-        _textRenderer.Editable = 启用编辑
-        _textRenderer.CutSelection()
-    End Sub
-
-    Private Sub PasteText()
-        _textRenderer.Editable = 启用编辑
-        _textRenderer.PasteText()
-    End Sub
 #End Region
 
 #Region "查找"
@@ -2784,7 +2721,54 @@ Public Class ModernComboBox
         _textRenderer.WaterTextForeColor = 水印颜色
         _textRenderer.TextAlign = CType(文本对齐, SingleLineTextBoxRenderer.TextAlignMode)
         _textRenderer.BorderSize = 边框宽度
-        _textRenderer.RightReservedWidth = ArrowAreaWidth
+        _textRenderer.EnsureCaretVisible()
+    End Sub
+
+    Private Sub SetDisplayedText(value As String)
+        SyncTextRenderer()
+        _textRenderer.SetText(If(value, String.Empty), 0, True, False)
+    End Sub
+
+    Private Function 获取未偏移文本区域() As RectangleF
+        Dim bi As Integer = CInt(边框宽度 * DpiScale())
+        Dim textLeft As Integer = Math.Max(Padding.Left, bi)
+        Dim textTop As Integer = Math.Max(Padding.Top, bi)
+        Dim textRight As Integer = Math.Max(Padding.Right, bi)
+        Dim textBottom As Integer = Math.Max(Padding.Bottom, bi)
+        ' 没有分隔线时，文本只需避开箭头图形；编辑模式保留整个箭头点击区域。
+        Dim rightEdge As Single = If(启用编辑 OrElse 显示分隔线,
+                                     ClientRectangle.Width - ArrowAreaWidth,
+                                     ClientRectangle.Width - ArrowAreaWidth / 2.0F - 箭头大小 * DpiScale() / 2.0F - textRight)
+        rightEdge = Math.Min(rightEdge, ClientRectangle.Width - textRight)
+        Return New RectangleF(
+            textLeft,
+            textTop,
+            Math.Max(0, rightEdge - textLeft),
+            Math.Max(0, ClientRectangle.Height - textTop - textBottom))
+    End Function
+
+    Private Function 获取前置文本宽度() As Integer
+        If String.IsNullOrEmpty(前置文本) Then Return 0
+        Return D3D_TextInterop.MeasureWidth(前置文本, Font, DpiScale())
+    End Function
+
+    Private Function 获取文本区域() As RectangleF
+        Dim area As RectangleF = 获取未偏移文本区域()
+        Dim prefixOffset As Single = If(String.IsNullOrEmpty(前置文本), 0.0F,
+                                        Math.Min(area.Width, 获取前置文本宽度() + 前置文本间距 * DpiScale()))
+        Return New RectangleF(area.X + prefixOffset, area.Y,
+                              Math.Max(0, area.Width - prefixOffset), area.Height)
+    End Function
+
+    Private Sub 绘制前置文本_GPU(context As D3D_PaintContext)
+        If context Is Nothing OrElse String.IsNullOrEmpty(前置文本) OrElse 前置文本颜色.A = 0 Then Return
+        Dim area As RectangleF = 获取未偏移文本区域()
+        If area.Width <= 0 OrElse area.Height <= 0 Then Return
+        Using context.PushClip(area)
+            context.DrawText(前置文本, Font, 前置文本颜色, area,
+                             Vortice.DirectWrite.TextAlignment.Leading,
+                             Vortice.DirectWrite.ParagraphAlignment.Center)
+        End Using
     End Sub
 
     Private ReadOnly Property ArrowAreaWidth As Integer
@@ -2847,7 +2831,7 @@ Public Class ModernComboBox
         If Not selectedIndexChanged AndAlso Not textChanged Then Return
 
         _selectedIndex = value
-        _textRenderer.SetText(newText, newText.Length, True, False)
+        SetDisplayedText(newText)
         请求GPU渲染()
         If textChanged Then RaiseEvent textChanged(Me, EventArgs.Empty)
         If selectedIndexChanged Then RaiseSelectedIndexChanged(deferSelectedIndexChanged)
@@ -2877,8 +2861,12 @@ Public Class ModernComboBox
         RaiseEvent SelectedIndexChanged(Me, EventArgs.Empty)
     End Sub
 
-    Private Sub ResetCaretBlink()
-        _textRenderer.ResetCaretBlink()
+    Private Function 获取箭头区域() As Rectangle
+        Return New Rectangle(ClientRectangle.Width - ArrowAreaWidth, 0, ArrowAreaWidth, ClientRectangle.Height)
+    End Function
+
+    Private Sub EnsureCaretVisible()
+        SyncTextRenderer()
     End Sub
 
     Private Sub SetValue(Of T)(ByRef field As T, value As T)
@@ -2906,6 +2894,12 @@ Public Class ModernComboBox
 
     Protected Overrides Sub OnSizeChanged(e As EventArgs)
         MyBase.OnSizeChanged(e)
+        EnsureCaretVisible()
+        请求GPU渲染()
+    End Sub
+
+    Protected Overrides Sub OnPaddingChanged(e As EventArgs)
+        MyBase.OnPaddingChanged(e)
         EnsureCaretVisible()
         请求GPU渲染()
     End Sub
@@ -2942,6 +2936,7 @@ Public Class ModernComboBox
 
     Protected Overrides Sub OnDpiChangedAfterParent(e As EventArgs)
         MyBase.OnDpiChangedAfterParent(e)
+        EnsureCaretVisible()
         请求GPU渲染()
     End Sub
 #End Region

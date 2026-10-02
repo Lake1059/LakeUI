@@ -192,7 +192,7 @@ Partial Class Form_PixelPictureBox
         Label6.Padding = New Padding(0, 20, 0, 10)
         Label6.Size = New Size(463, 50)
         Label6.TabIndex = 38
-        Label6.Text = "可直接拖入 .NET 原生支持的图片格式，体验像素级框选与预览。"
+        Label6.Text = "PixelPictureBox 只负责 GPU 呈现；请在控件外将解码结果作为 IPixelPictureSource 提供。"
         ' 
         ' Panel1
         ' 

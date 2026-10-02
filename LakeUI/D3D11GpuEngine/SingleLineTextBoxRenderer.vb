@@ -12,8 +12,7 @@ Imports Vortice.Direct2D1
 ''' • 所有成员都假定在 UI 线程使用；内部的光标闪烁 Timer 也是 WinForms UI Timer。
 ''' • 外层控件必须在 Dispose 时调用本类 Dispose，否则 Timer 与 owner 事件订阅会继续持有控件。
 ''' • <see cref="TextAreaProvider"/> 应返回文本可绘制区域，坐标为 owner 客户区逻辑像素。
-''' • 文本测量走 DirectWrite，并使用 owner 所属 Form 的 <see cref="D3D_D2DInterop.TextFormatCache"/>；
-'''   字体、DPI 或文本变化时会清理前缀宽度缓存。
+''' • 文本测量与绘制均走 DirectWrite；字体、DPI 或文本变化时会清理前缀宽度缓存。
 '''
 ''' 坑点：
 ''' • 光标/选区列索引按 .NET 字符索引处理，不做 grapheme cluster 分割；组合 emoji、复杂脚本
@@ -376,6 +375,10 @@ Public Class SingleLineTextBoxRenderer
     End Sub
 
     Public Sub EnsureCaretVisible()
+        If Not Editable Then
+            _scrollXOffset = 0
+            Return
+        End If
         Dim area As RectangleF = GetTextArea()
         Dim areaW As Integer = CInt(area.Width)
         If areaW <= 0 Then Return
@@ -502,7 +505,7 @@ Public Class SingleLineTextBoxRenderer
     Private Function GetTextArea() As RectangleF
         If TextAreaProvider IsNot Nothing Then
             Dim provided = TextAreaProvider.Invoke()
-            If provided.Width > 0 AndAlso provided.Height > 0 Then Return provided
+            Return New RectangleF(provided.X, provided.Y, Math.Max(0, provided.Width), Math.Max(0, provided.Height))
         End If
 
         Dim bi As Integer = CInt(BorderSize * DpiScale())
@@ -537,7 +540,7 @@ Public Class SingleLineTextBoxRenderer
 
     Private Function MeasureWidth(text As String) As Integer
         If String.IsNullOrEmpty(text) Then Return 0
-        Return System.Windows.Forms.TextRenderer.MeasureText(text, _owner.Font, New Size(Integer.MaxValue, Integer.MaxValue), TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine).Width
+        Return D3D_TextInterop.MeasureWidth(text, _owner.Font, DpiScale())
     End Function
 
     Private Function MeasurePrefixWidth(length As Integer) As Integer

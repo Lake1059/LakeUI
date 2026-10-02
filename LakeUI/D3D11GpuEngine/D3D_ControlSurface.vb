@@ -22,6 +22,13 @@ Friend NotInheritable Class D3D_ControlSurface
     Private _textureUseStarted As Boolean
     Private _backdropUseStarted As Boolean
     Private _allocatedBytes As Long
+    Private _surfaceFormat As Format = Format.B8G8R8A8_UNorm
+
+    Friend ReadOnly Property SurfaceFormat As Format
+        Get
+            Return _surfaceFormat
+        End Get
+    End Property
     Private _drawing As Boolean
     Private _resourceUseDepth As Integer
     Private _lastUsed As Long
@@ -217,7 +224,9 @@ Friend NotInheritable Class D3D_ControlSurface
         If _compositor Is Nothing OrElse _compositor.IsDisposed Then
             _compositor = D3D_RenderCore.GetWindowCompositor(_owner)
         End If
-        If _bitmap IsNot Nothing AndAlso 逻辑尺寸 = _logicalSize AndAlso 像素尺寸 = _pixelSize AndAlso 采样倍率 = _sampleScale Then Return
+        Dim floatSource = TryCast(_owner, D3D_IFloatPresentationSource)
+        Dim requestedFormat = If(floatSource IsNot Nothing AndAlso floatSource.UseFloatPresentation, Format.R16G16B16A16_Float, Format.B8G8R8A8_UNorm)
+        If _bitmap IsNot Nothing AndAlso 逻辑尺寸 = _logicalSize AndAlso 像素尺寸 = _pixelSize AndAlso 采样倍率 = _sampleScale AndAlso requestedFormat = _surfaceFormat Then Return
 
         _context.Target = Nothing
         If _allocatedBytes > 0 Then
@@ -230,14 +239,15 @@ Friend NotInheritable Class D3D_ControlSurface
         _logicalSize = 逻辑尺寸
         _pixelSize = 像素尺寸
         _sampleScale = 采样倍率
+        _surfaceFormat = requestedFormat
 
         Dim 位图属性 As New BitmapProperties1(
-            New Vortice.DCommon.PixelFormat(Format.B8G8R8A8_UNorm, Vortice.DCommon.AlphaMode.Premultiplied),
+            New Vortice.DCommon.PixelFormat(_surfaceFormat, Vortice.DCommon.AlphaMode.Premultiplied),
             96.0F,
             96.0F,
             BitmapOptions.Target)
         _bitmap = _context.CreateBitmap(New Vortice.Mathematics.SizeI(像素尺寸.Width, 像素尺寸.Height), IntPtr.Zero, 0UI, 位图属性)
-        _allocatedBytes = CLng(像素尺寸.Width) * CLng(像素尺寸.Height) * 4L
+        _allocatedBytes = CLng(像素尺寸.Width) * CLng(像素尺寸.Height) * If(_surfaceFormat = Format.R16G16B16A16_Float, 8L, 4L)
         D3D_RenderDiagnostics.V5SurfaceBytesChanged(_allocatedBytes)
         D3D_ControlSurfaceRegistry.SurfaceBytesChanged(_allocatedBytes)
         D3D_RenderDiagnostics.V5SurfaceRecreate()

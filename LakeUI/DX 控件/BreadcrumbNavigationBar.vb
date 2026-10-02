@@ -302,9 +302,7 @@ Public Class BreadcrumbNavigationBar
     ' 选中节点索引
     Private _selectedIndex As Integer = -1
 
-    ' ToolTip 组件
-    Private _toolTip As ToolTip
-    Private _lastToolTipIndex As Integer = -2  ' -2 表示尚未设置过
+    Private _toolTip As FloatingToolTipController
 
     ' 溢出折叠：当布局总宽超过控件宽度时，把左侧若干节点折叠到一个 "..." 根。
     ' _overflowStartIndex < 0 表示没有折叠；否则 [0, _overflowStartIndex) 的节点被折叠。
@@ -617,6 +615,7 @@ Public Class BreadcrumbNavigationBar
     Public Sub New()
         InitializeComponent()
         _items = New BreadcrumbItemCollection(Me)
+        _toolTip = New FloatingToolTipController(Me, AddressOf GetToolTipTarget, Function() New FloatingToolTipStyle With {.Font = Me.Font})
         SetStyle(ControlStyles.OptimizedDoubleBuffer Or
                  ControlStyles.AllPaintingInWmPaint Or
                  ControlStyles.UserPaint Or
@@ -628,6 +627,7 @@ Public Class BreadcrumbNavigationBar
     End Sub
 
     Protected Overrides Sub OnHandleDestroyed(e As EventArgs)
+        _toolTip?.Hide()
         ' 句柄销毁时不能再走动画路径，避免 ObjectDisposed
         ImmediatelyDisposeDropDown()
         MyBase.OnHandleDestroyed(e)
@@ -642,6 +642,7 @@ Public Class BreadcrumbNavigationBar
     End Sub
 
     Friend Sub OnItemsChangedInternal()
+        _toolTip?.Hide()
         InvalidateLayoutCache()
         _hoverNodeIndex = -2
         _pressedNodeIndex = -2
@@ -651,6 +652,7 @@ Public Class BreadcrumbNavigationBar
     End Sub
 
     Friend Sub OnItemLayoutChanged()
+        _toolTip?.Hide()
         InvalidateLayoutCache()
         请求GPU渲染()
     End Sub
@@ -982,26 +984,25 @@ Public Class BreadcrumbNavigationBar
             请求GPU渲染()
         End If
 
-        ' 更新 ToolTip
-        UpdateToolTipForHit(hit, idx, isOverflow)
+        _toolTip?.Update(e.Location)
     End Sub
 
-    Private Sub UpdateToolTipForHit(hit As Boolean, idx As Integer, isOverflow As Boolean)
-        If _toolTip Is Nothing Then
-            _toolTip = New ToolTip()
-        End If
-        Dim newTipIndex As Integer = If(hit AndAlso Not isOverflow, idx, -1)
-        If newTipIndex = _lastToolTipIndex Then Return
-        _lastToolTipIndex = newTipIndex
-        If newTipIndex >= 0 AndAlso newTipIndex < _items.Count Then
-            Dim it = _items(newTipIndex)
-            If it IsNot Nothing AndAlso Not String.IsNullOrEmpty(it.ToolTip) Then
-                _toolTip.SetToolTip(Me, it.ToolTip)
-                Return
-            End If
-        End If
-        _toolTip.SetToolTip(Me, String.Empty)
-    End Sub
+    Private Function GetToolTipTarget(pointer As Point) As FloatingToolTipTarget
+        Dim index As Integer
+        Dim isArrow As Boolean
+        Dim isOverflow As Boolean
+        If Not HitTest(pointer, index, isArrow, isOverflow) OrElse isOverflow OrElse index < 0 OrElse index >= _items.Count Then Return Nothing
+        Dim item = _items(index)
+        If item Is Nothing OrElse String.IsNullOrEmpty(item.ToolTip) Then Return Nothing
+        For Each node In _layoutCache
+            If node.Index <> index Then Continue For
+            Dim bounds = node.TextRect
+            If node.HasArrow Then bounds = Rectangle.Union(bounds, node.ArrowRect)
+            If node.HasIcon Then bounds = Rectangle.Union(bounds, node.IconRect)
+            Return New FloatingToolTipTarget(item.ToolTip, bounds)
+        Next
+        Return Nothing
+    End Function
 
     Protected Overrides Sub OnMouseLeave(e As EventArgs)
         MyBase.OnMouseLeave(e)
@@ -1011,14 +1012,12 @@ Public Class BreadcrumbNavigationBar
             Cursor = Cursors.Default
             请求GPU渲染()
         End If
-        If _toolTip IsNot Nothing Then
-            _toolTip.SetToolTip(Me, String.Empty)
-            _lastToolTipIndex = -2
-        End If
+        _toolTip?.Leave()
     End Sub
 
     Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
         MyBase.OnMouseDown(e)
+        _toolTip?.Hide()
         If Not Enabled OrElse e.Button <> MouseButtons.Left Then Return
         Dim idx As Integer
         Dim isArrow As Boolean

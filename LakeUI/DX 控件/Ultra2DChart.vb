@@ -698,8 +698,6 @@ Public Class Ultra2DChart
         Public Point As PointF
         Public Color As Color
         Public TooltipText As String
-        Public TooltipRect As RectangleF
-        Public TextRect As RectangleF
     End Structure
 #End Region
 
@@ -717,6 +715,9 @@ Public Class Ultra2DChart
     Private _panStartMouseX As Integer
     Private _panStartViewStart As Integer
     Private _hasHoverPoint As Boolean
+    Private _lineToolTip As FloatingToolTipForm
+    Private _lineToolTipSeriesIndex As Integer = -1
+    Private _lineToolTipCategoryIndex As Integer = -1
     Private _hoverClientPoint As Point
     Private _geometryCachePrefix As String
 
@@ -1054,10 +1055,6 @@ Public Class Ultra2DChart
             绘制文本_GPU(context, label.Text, 获取值标签字体(), label.Color, label.Rect, DW.TextAlignment.Center, DW.ParagraphAlignment.Center)
         Next
 
-        Dim hoverTarget = 获取折线悬停目标(layout)
-        If hoverTarget.HasTarget Then
-            绘制文本_GPU(context, hoverTarget.TooltipText, 获取悬停提示字体(), 折线悬停提示文字颜色, hoverTarget.TextRect, DW.TextAlignment.Leading, DW.ParagraphAlignment.Center)
-        End If
     End Sub
 
     Private Sub 绘制折线悬停十字线_GPU(context As D3D_PaintContext, layout As ChartLayoutInfo, s As Single)
@@ -1078,10 +1075,6 @@ Public Class Ultra2DChart
         If highlightBrush IsNot Nothing Then context.DeviceContext.FillEllipse(ellipse, highlightBrush)
         If borderBrush IsNot Nothing AndAlso 折线悬停吸附点边框粗细 > 0 Then context.DeviceContext.DrawEllipse(ellipse, borderBrush, 折线悬停吸附点边框粗细 * s)
 
-        If 折线悬停提示背景颜色.A > 0 Then context.FillRectangle(hoverTarget.TooltipRect, 折线悬停提示背景颜色)
-        If 折线悬停提示边框颜色.A > 0 AndAlso 折线悬停提示边框粗细 > 0 Then
-            context.DrawRectangle(hoverTarget.TooltipRect, 折线悬停提示边框颜色, 折线悬停提示边框粗细 * s)
-        End If
     End Sub
 
     Private Sub 绘制图例_GPU(context As D3D_PaintContext, layout As ChartLayoutInfo)
@@ -1779,18 +1772,6 @@ Public Class Ultra2DChart
         If bestSeries Is Nothing Then Return result
 
         Dim text = 格式化悬停提示文本(bestSeries, bestCategoryIndex, bestValue)
-        Dim font = 获取悬停提示字体()
-        Dim textSize = 测量文本尺寸(text, font)
-        Dim padding As Single = 折线悬停提示内边距 * layout.Scale
-        Dim gap As Single = 折线悬停提示间距 * layout.Scale
-        Dim tooltipW As Single = Math.Max(1.0F, textSize.Width + padding * 2)
-        Dim tooltipH As Single = Math.Max(1.0F, textSize.Height + padding * 2)
-
-        Dim tooltipX As Single = If(bestPoint.X + gap + tooltipW <= plot.Right, bestPoint.X + gap, bestPoint.X - gap - tooltipW)
-        Dim tooltipY As Single = bestPoint.Y - gap - tooltipH
-        If tooltipY < plot.Top Then tooltipY = bestPoint.Y + gap
-        If tooltipY + tooltipH > plot.Bottom Then tooltipY = Math.Max(plot.Top, plot.Bottom - tooltipH)
-        tooltipX = Math.Max(plot.Left, Math.Min(plot.Right - tooltipW, tooltipX))
 
         result.HasTarget = True
         result.SeriesIndex = bestSeriesIndex
@@ -1799,8 +1780,6 @@ Public Class Ultra2DChart
         result.Point = bestPoint
         result.Color = bestColor
         result.TooltipText = text
-        result.TooltipRect = New RectangleF(tooltipX, tooltipY, tooltipW, tooltipH)
-        result.TextRect = New RectangleF(tooltipX + padding, tooltipY + padding, Math.Max(1.0F, tooltipW - padding * 2), Math.Max(1.0F, tooltipH - padding * 2))
         Return result
     End Function
 
@@ -1946,12 +1925,14 @@ Public Class Ultra2DChart
 
 #Region "变更通知"
     Friend Sub NotifyDataChanged()
+        HideLineToolTip()
         _dataVersion += 1
         _layoutCache = Nothing
         标记图表变化()
     End Sub
 
     Friend Sub NotifyStyleChanged()
+        HideLineToolTip()
         _styleVersion += 1
         _layoutCache = Nothing
         标记图表变化()
@@ -3051,6 +3032,7 @@ Public Class Ultra2DChart
 
     Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
         MyBase.OnMouseDown(e)
+        HideLineToolTip()
         If e.Button <> MouseButtons.Left Then Return
         Focus()
 
@@ -3092,7 +3074,7 @@ Public Class Ultra2DChart
     Protected Overrides Sub OnMouseLeave(e As EventArgs)
         MyBase.OnMouseLeave(e)
         If _isPanningXAxis AndAlso Not Capture Then 结束X轴拖动()
-        清除折线悬停点()
+        清除折线悬停点(True)
     End Sub
 
     Private Sub 结束X轴拖动()
@@ -3112,13 +3094,66 @@ Public Class Ultra2DChart
         If _hasHoverPoint AndAlso _hoverClientPoint = location Then Return
         _hasHoverPoint = True
         _hoverClientPoint = location
+        UpdateLineToolTip(layout)
         请求GPU渲染()
     End Sub
 
-    Private Sub 清除折线悬停点()
+    Private Sub 清除折线悬停点(Optional delayToolTipClose As Boolean = False)
+        If delayToolTipClose AndAlso _lineToolTip IsNot Nothing AndAlso Not _lineToolTip.IsDisposed Then
+            _lineToolTip.ScheduleCloseIfPointerOutside(180, RectangleToScreen(ClientRectangle))
+        Else
+            HideLineToolTip()
+        End If
         If Not _hasHoverPoint Then Return
         _hasHoverPoint = False
         请求GPU渲染()
+    End Sub
+
+    Private Sub UpdateLineToolTip(layout As ChartLayoutInfo)
+        Dim target = 获取折线悬停目标(layout)
+        If Not target.HasTarget OrElse Not Enabled OrElse Not Visible OrElse Capture OrElse Control.MouseButtons <> MouseButtons.None Then
+            HideLineToolTip()
+            Return
+        End If
+        If _lineToolTip IsNot Nothing AndAlso Not _lineToolTip.IsDisposed AndAlso _lineToolTip.Visible AndAlso
+            target.SeriesIndex = _lineToolTipSeriesIndex AndAlso target.CategoryIndex = _lineToolTipCategoryIndex Then
+            _lineToolTip.CancelScheduledClose()
+            Return
+        End If
+        If _lineToolTip Is Nothing OrElse _lineToolTip.IsDisposed Then _lineToolTip = New FloatingToolTipForm(Me)
+        _lineToolTipSeriesIndex = target.SeriesIndex
+        _lineToolTipCategoryIndex = target.CategoryIndex
+        Dim gap = CInt(Math.Round(折线悬停提示间距 * layout.Scale))
+        Dim location = PointToScreen(New Point(CInt(target.Point.X) + gap, CInt(target.Point.Y) + gap))
+        Dim style As New FloatingToolTipStyle With {
+            .Font = 获取悬停提示字体(),
+            .BackColor = 折线悬停提示背景颜色,
+            .ForeColor = 折线悬停提示文字颜色,
+            .BorderColor = 折线悬停提示边框颜色,
+            .BorderSize = Math.Max(0, CInt(Math.Round(折线悬停提示边框粗细))),
+            .Padding = New Padding(Math.Max(0, CInt(Math.Round(折线悬停提示内边距))))
+        }
+        _lineToolTip.ShowTip(target.TooltipText, location, style)
+    End Sub
+
+    Private Sub HideLineToolTip()
+        If _lineToolTip IsNot Nothing AndAlso Not _lineToolTip.IsDisposed Then
+            _lineToolTip.Close()
+            _lineToolTip.Dispose()
+        End If
+        _lineToolTip = Nothing
+        _lineToolTipSeriesIndex = -1
+        _lineToolTipCategoryIndex = -1
+    End Sub
+
+    Protected Overrides Sub OnHandleDestroyed(e As EventArgs)
+        HideLineToolTip()
+        MyBase.OnHandleDestroyed(e)
+    End Sub
+
+    Protected Overrides Sub OnVisibleChanged(e As EventArgs)
+        MyBase.OnVisibleChanged(e)
+        If Not Visible Then 清除折线悬停点()
     End Sub
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
@@ -3143,6 +3178,7 @@ Public Class Ultra2DChart
 
     Protected Overrides Sub OnEnabledChanged(e As EventArgs)
         MyBase.OnEnabledChanged(e)
+        If Not Enabled Then 清除折线悬停点()
         请求GPU渲染()
     End Sub
 

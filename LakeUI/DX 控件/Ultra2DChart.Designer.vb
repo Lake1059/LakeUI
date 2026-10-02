@@ -7,6 +7,7 @@ Partial Class Ultra2DChart
     Protected Overrides Sub Dispose(disposing As Boolean)
         Try
             If disposing Then
+                HideLineToolTip()
                 If components IsNot Nothing Then
                     components.Dispose()
                 End If
