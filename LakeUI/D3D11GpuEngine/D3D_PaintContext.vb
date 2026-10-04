@@ -55,6 +55,16 @@ Public NotInheritable Class D3D_PaintContext
 
     Public ReadOnly Property Compositor As D3D_WindowCompositor
     Public ReadOnly Property DeviceContext As ID2D1DeviceContext
+    Friend Property UseLinearColors As Boolean
+    Friend Property BackdropColorTransfer As D3D_BitmapColorTransfer
+
+    Friend Sub DrawBackdropBitmap(bitmap As ID2D1Bitmap1, destination As Vortice.RawRectF, source As Vortice.RawRectF)
+        If BackdropColorTransfer IsNot Nothing Then
+            BackdropColorTransfer.Draw(bitmap, destination, source, InterpolationMode.Linear, UseLinearColors)
+        Else
+            DeviceContext.DrawBitmap(bitmap, destination, 1.0F, InterpolationMode.Linear, source, New Nullable(Of Matrix4x4)())
+        End If
+    End Sub
     Public ReadOnly Property LocalToWindowTransform As Matrix3x2
     Public ReadOnly Property ClipBounds As RectangleF
     Public ReadOnly Property DpiScale As Single
@@ -94,7 +104,7 @@ Public NotInheritable Class D3D_PaintContext
     ''' </summary>
     Public Sub FillRectangle(rect As RectangleF, color As System.Drawing.Color)
         If color.A = 0 OrElse CanCullOutsideDirty(rect) Then Return
-        Dim brush = Compositor.BrushCache.GetSolidBrush(DeviceContext, color, DeviceGeneration)
+        Dim brush = GetSolidBrush(color)
         DeviceContext.FillRectangle(ToRawRect(rect), brush)
     End Sub
 
@@ -103,13 +113,13 @@ Public NotInheritable Class D3D_PaintContext
     ''' </summary>
     Public Sub DrawRectangle(rect As RectangleF, color As System.Drawing.Color, Optional strokeWidth As Single = 1.0F)
         If color.A = 0 OrElse strokeWidth <= 0.0F OrElse CanCullOutsideDirty(rect, Math.Max(0.1F, strokeWidth) / 2.0F) Then Return
-        Dim brush = Compositor.BrushCache.GetSolidBrush(DeviceContext, color, DeviceGeneration)
+        Dim brush = GetSolidBrush(color)
         DeviceContext.DrawRectangle(ToRawRect(rect), brush, Math.Max(0.1F, strokeWidth))
     End Sub
 
     Public Sub FillRoundedRectangle(rect As RectangleF, radius As Single, color As System.Drawing.Color)
         If color.A = 0 OrElse CanCullOutsideDirty(rect) Then Return
-        Dim brush = Compositor.BrushCache.GetSolidBrush(DeviceContext, color, DeviceGeneration)
+        Dim brush = GetSolidBrush(color)
         FillRoundedRectangle(rect, radius, DirectCast(brush, ID2D1Brush))
     End Sub
 
@@ -155,7 +165,7 @@ Public NotInheritable Class D3D_PaintContext
 
     Public Sub DrawRoundedRectangle(rect As RectangleF, radius As Single, color As System.Drawing.Color, Optional strokeWidth As Single = 1.0F)
         If color.A = 0 OrElse strokeWidth <= 0 OrElse CanCullOutsideDirty(rect, Math.Max(0.1F, strokeWidth) / 2.0F) Then Return
-        Dim brush = Compositor.BrushCache.GetSolidBrush(DeviceContext, color, DeviceGeneration)
+        Dim brush = GetSolidBrush(color)
         DrawRoundedRectangle(rect, radius, DirectCast(brush, ID2D1Brush), strokeWidth)
     End Sub
 
@@ -169,6 +179,10 @@ Public NotInheritable Class D3D_PaintContext
 
         DeviceContext.DrawRoundedRectangle(New RoundedRectangle(rect, radius, radius), brush, Math.Max(0.1F, strokeWidth))
     End Sub
+
+    Private Function GetSolidBrush(color As System.Drawing.Color) As ID2D1SolidColorBrush
+        Return If(UseLinearColors, Compositor.BrushCache.GetLinearSolidBrush(DeviceContext, color, DeviceGeneration), Compositor.BrushCache.GetSolidBrush(DeviceContext, color, DeviceGeneration))
+    End Function
 
     ''' <summary>
     ''' 获取由现有 GPU 总预算管理的两色线性渐变画刷。停止点和画刷跨帧复用，

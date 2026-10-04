@@ -24,15 +24,20 @@ Public NotInheritable Class D3D_BrushCache
         Return GetSolidBrushCore(context, color, generation, mapHdr:=False)
     End Function
 
+    Friend Function GetLinearSolidBrush(context As ID2D1DeviceContext, color As System.Drawing.Color, generation As Integer) As ID2D1SolidColorBrush
+        Return GetSolidBrushCore(context, color, generation, mapHdr:=False, linearColor:=True)
+    End Function
+
     Private Function GetSolidBrushCore(context As ID2D1DeviceContext,
                                        color As System.Drawing.Color,
                                        generation As Integer,
-                                       mapHdr As Boolean) As ID2D1SolidColorBrush
+                                       mapHdr As Boolean,
+                                       Optional linearColor As Boolean = False) As ID2D1SolidColorBrush
         If _disposed Then Throw New ObjectDisposedException(NameOf(D3D_BrushCache))
         If context Is Nothing Then Throw New ArgumentNullException(NameOf(context))
 
         Dim 高动态范围版本 = If(mapHdr, D3D_HdrOutput.VectorColorRevision, 0)
-        Dim 画刷键 As New D3D_BrushKey(context, generation, 高动态范围版本, mapHdr, color.ToArgb())
+        Dim 画刷键 As New D3D_BrushKey(context, generation, 高动态范围版本, mapHdr, color.ToArgb(), linearColor)
         Dim 缓存项 As D3D_BrushCacheEntry = Nothing
         If _solidBrushes.TryGetValue(画刷键, 缓存项) Then
             缓存项.LastUsed = NextClock()
@@ -41,12 +46,19 @@ Public NotInheritable Class D3D_BrushCache
         End If
 
         Dim 画刷颜色 = If(mapHdr, D3D_HdrOutput.MapColor4(color), D3D_HdrOutput.ToRawColor4(color))
+        If linearColor Then
+            画刷颜色 = New Vortice.Mathematics.Color4(DecodeSrgb(画刷颜色.R), DecodeSrgb(画刷颜色.G), DecodeSrgb(画刷颜色.B), 画刷颜色.A)
+        End If
         Dim 画刷 = context.CreateSolidColorBrush(画刷颜色)
         Dim 新缓存项 = New D3D_BrushCacheEntry(画刷, generation, NextClock())
         新缓存项.LruNode = _solidBrushLru.AddLast(画刷键)
         _solidBrushes(画刷键) = 新缓存项
         Trim(protectedKey:=画刷键)
         Return 画刷
+    End Function
+
+    Private Shared Function DecodeSrgb(encoded As Single) As Single
+        Return If(encoded <= 0.04045F, encoded / 12.92F, MathF.Pow((encoded + 0.055F) / 1.055F, 2.4F))
     End Function
 
     Public Sub Invalidate()
@@ -97,19 +109,21 @@ Public NotInheritable Class D3D_BrushCache
         Private ReadOnly _hdrRevision As Integer
         Private ReadOnly _mapHdr As Boolean
         Private ReadOnly _argb As Integer
+        Private ReadOnly _linearColor As Boolean
 
-        Friend Sub New(context As ID2D1DeviceContext, generation As Integer, hdrRevision As Integer, mapHdr As Boolean, argb As Integer)
+        Friend Sub New(context As ID2D1DeviceContext, generation As Integer, hdrRevision As Integer, mapHdr As Boolean, argb As Integer, linearColor As Boolean)
             _context = context
             _generation = generation
             _hdrRevision = hdrRevision
             _mapHdr = mapHdr
             _argb = argb
+            _linearColor = linearColor
         End Sub
 
         Public Overloads Function Equals(other As D3D_BrushKey) As Boolean Implements IEquatable(Of D3D_BrushKey).Equals
             Return ReferenceEquals(_context, other._context) AndAlso
                    _generation = other._generation AndAlso _hdrRevision = other._hdrRevision AndAlso
-                   _mapHdr = other._mapHdr AndAlso _argb = other._argb
+                   _mapHdr = other._mapHdr AndAlso _argb = other._argb AndAlso _linearColor = other._linearColor
         End Function
 
         Public Overrides Function Equals(obj As Object) As Boolean
@@ -117,7 +131,7 @@ Public NotInheritable Class D3D_BrushCache
         End Function
 
         Public Overrides Function GetHashCode() As Integer
-            Return HashCode.Combine(Runtime.CompilerServices.RuntimeHelpers.GetHashCode(_context), _generation, _hdrRevision, _mapHdr, _argb)
+            Return HashCode.Combine(Runtime.CompilerServices.RuntimeHelpers.GetHashCode(_context), _generation, _hdrRevision, _mapHdr, _argb, _linearColor)
         End Function
     End Structure
 

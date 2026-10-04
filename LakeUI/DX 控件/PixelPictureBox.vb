@@ -6,11 +6,15 @@ Imports D2D = Vortice.Direct2D1
 <DefaultEvent("SelectionChanged")>
 Public Class PixelPictureBox
     Inherits UserControl
-    Implements D3D_IGpuRenderable, D3D_IGpuInvalidationSource, D3D_IBackgroundSourceProvider, V5_IGpuPresentationSource, D3D_IFloatPresentationSource
+    Implements D3D_IGpuRenderable, D3D_IGpuInvalidationSource, D3D_IBackgroundSourceProvider, V5_IGpuPresentationSource, D3D_IFloatPresentationSource, D3D_IFloatRenderingSource, D3D_IBackgroundOpacitySource
 
+    ''' <summary>选区被程序设置、清空或鼠标完成绘制、移动、缩放后触发；交互过程可通过 SelectionRect 查询实时结果。</summary>
     Public Event SelectionChanged As EventHandler
+    ''' <summary>图像源更换且视图、帧索引和选区完成重置后触发。</summary>
     Public Event SourceChanged As EventHandler
+    ''' <summary>鼠标对应的原始像素或动图帧变化时触发；离开图片时 HasPixel 为 False。</summary>
     Public Event PixelHovered As EventHandler(Of PixelPicturePixelEventArgs)
+    ''' <summary>当前实际缩放倍率变化时触发；平滑缩放期间可以多次触发。</summary>
     Public Event ZoomChanged As EventHandler
 
     Public Sub New()
@@ -88,6 +92,7 @@ Public Class PixelPictureBox
         HandlePosition.BottomLeft, HandlePosition.BottomCenter, HandlePosition.BottomRight}
 
     Private _backColor1 As Color = Color.FromArgb(36, 36, 36)
+    ''' <summary>获取或设置控件底色，可带透明度；未指定 BackgroundSource 时覆盖在父级 GPU 背景上，图片留白区使用此颜色。</summary>
     <Category("LakeUI"), DefaultValue(GetType(Color), "36, 36, 36")>
     Public Property BackColor1 As Color
         Get
@@ -97,47 +102,53 @@ Public Class PixelPictureBox
             If _backColor1 = value Then Return
             _backColor1 = value
             RequestRender()
-            RequestRender()
         End Set
     End Property
 
     Private _borderColor As Color = Color.Gray
+    ''' <summary>获取或设置控件外边框颜色。</summary>
     <Category("LakeUI"), DefaultValue(GetType(Color), "Gray")>
     Public Property BorderColor As Color
         Get
             Return _borderColor
         End Get
         Set(value As Color)
+            If _borderColor = value Then Return
             _borderColor = value
             RequestRender()
         End Set
     End Property
 
     Private _borderSize As Integer = 1
+    ''' <summary>获取或设置控件外边框宽度；单位为逻辑像素，0 表示不绘制。</summary>
     <Category("LakeUI"), DefaultValue(1)>
     Public Property BorderSize As Integer
         Get
             Return _borderSize
         End Get
         Set(value As Integer)
+            If _borderSize = Math.Max(0, value) Then Return
             _borderSize = Math.Max(0, value)
             RequestRender()
         End Set
     End Property
 
     Private _scrollBarWidth As Integer = 10
+    ''' <summary>获取或设置滚动条宽度；单位为逻辑像素，绘制时按控件 DPI 缩放。</summary>
     <Category("LakeUI"), DefaultValue(10)>
     Public Property ScrollBarWidth As Integer
         Get
             Return _scrollBarWidth
         End Get
         Set(value As Integer)
+            If _scrollBarWidth = Math.Max(1, value) Then Return
             _scrollBarWidth = Math.Max(1, value)
             RequestRender()
         End Set
     End Property
 
     Private _scrollBarTrackColor As Color = Color.FromArgb(20, 20, 20)
+    ''' <summary>获取或设置滚动条轨道颜色，支持透明度。</summary>
     <Category("LakeUI")>
     <DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
     Public Property ScrollBarTrackColor As Color
@@ -145,12 +156,14 @@ Public Class PixelPictureBox
             Return _scrollBarTrackColor
         End Get
         Set(value As Color)
+            If _scrollBarTrackColor = value Then Return
             _scrollBarTrackColor = value
             RequestRender()
         End Set
     End Property
 
     Private _scrollBarThumbColor As Color = Color.FromArgb(80, 80, 80)
+    ''' <summary>获取或设置滚动条滑块的正常颜色。</summary>
     <Category("LakeUI")>
     <DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
     Public Property ScrollBarThumbColor As Color
@@ -158,12 +171,14 @@ Public Class PixelPictureBox
             Return _scrollBarThumbColor
         End Get
         Set(value As Color)
+            If _scrollBarThumbColor = value Then Return
             _scrollBarThumbColor = value
             RequestRender()
         End Set
     End Property
 
     Private _scrollBarThumbHoverColor As Color = Color.FromArgb(120, 120, 120)
+    ''' <summary>获取或设置滚动条滑块悬停或拖动时的颜色。</summary>
     <Category("LakeUI")>
     <DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
     Public Property ScrollBarThumbHoverColor As Color
@@ -171,12 +186,14 @@ Public Class PixelPictureBox
             Return _scrollBarThumbHoverColor
         End Get
         Set(value As Color)
+            If _scrollBarThumbHoverColor = value Then Return
             _scrollBarThumbHoverColor = value
             RequestRender()
         End Set
     End Property
 
     Private _selectionBorderColor As Color = Color.FromArgb(200, 60, 60)
+    ''' <summary>获取或设置像素选区的边框颜色。</summary>
     <Category("LakeUI")>
     <DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
     Public Property SelectionBorderColor As Color
@@ -184,24 +201,28 @@ Public Class PixelPictureBox
             Return _selectionBorderColor
         End Get
         Set(value As Color)
+            If _selectionBorderColor = value Then Return
             _selectionBorderColor = value
             RequestRender()
         End Set
     End Property
 
     Private _selectionBorderSize As Integer = 2
+    ''' <summary>获取或设置选区边框的绘制宽度；单位为控件客户区像素。</summary>
     <Category("LakeUI"), DefaultValue(2)>
     Public Property SelectionBorderSize As Integer
         Get
             Return _selectionBorderSize
         End Get
         Set(value As Integer)
+            If _selectionBorderSize = Math.Max(1, value) Then Return
             _selectionBorderSize = Math.Max(1, value)
             RequestRender()
         End Set
     End Property
 
     Private _selectionFillColor As Color = Color.FromArgb(30, 200, 60, 60)
+    ''' <summary>获取或设置选区内部填充颜色，支持透明度；不会修改源图像像素。</summary>
     <Category("LakeUI")>
     <DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
     Public Property SelectionFillColor As Color
@@ -209,12 +230,14 @@ Public Class PixelPictureBox
             Return _selectionFillColor
         End Get
         Set(value As Color)
+            If _selectionFillColor = value Then Return
             _selectionFillColor = value
             RequestRender()
         End Set
     End Property
 
     Private _handleColor As Color = Color.White
+    ''' <summary>获取或设置选区八个缩放手柄的填充颜色。</summary>
     <Category("LakeUI")>
     <DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
     Public Property HandleColor As Color
@@ -222,12 +245,14 @@ Public Class PixelPictureBox
             Return _handleColor
         End Get
         Set(value As Color)
+            If _handleColor = value Then Return
             _handleColor = value
             RequestRender()
         End Set
     End Property
 
     Private _handleBorderColor As Color = Color.FromArgb(200, 60, 60)
+    ''' <summary>获取或设置选区缩放手柄的边框颜色。</summary>
     <Category("LakeUI")>
     <DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
     Public Property HandleBorderColor As Color
@@ -235,94 +260,112 @@ Public Class PixelPictureBox
             Return _handleBorderColor
         End Get
         Set(value As Color)
+            If _handleBorderColor = value Then Return
             _handleBorderColor = value
             RequestRender()
         End Set
     End Property
 
     Private _handleSize As Integer = 10
+    ''' <summary>获取或设置缩放手柄的屏幕边长；单位为控件客户区像素，不随图像缩放。</summary>
     <Category("LakeUI"), DefaultValue(10)>
     Public Property HandleSize As Integer
         Get
             Return _handleSize
         End Get
         Set(value As Integer)
+            If _handleSize = Math.Max(1, value) Then Return
             _handleSize = Math.Max(1, value)
             RequestRender()
         End Set
     End Property
 
     Private _handleHitTolerance As Integer = 6
+    ''' <summary>获取或设置手柄可点击范围向外扩展的距离；单位为控件客户区像素。</summary>
     <Category("LakeUI"), DefaultValue(6)>
     Public Property HandleHitTolerance As Integer
         Get
             Return _handleHitTolerance
         End Get
         Set(value As Integer)
+            If _handleHitTolerance = Math.Max(0, value) Then Return
             _handleHitTolerance = Math.Max(0, value)
         End Set
     End Property
 
     Private _borderHitTolerance As Integer = 6
+    ''' <summary>获取或设置选区边框可拖动范围向内和向外扩展的距离；单位为控件客户区像素。</summary>
     <Category("LakeUI"), DefaultValue(6)>
     Public Property BorderHitTolerance As Integer
         Get
             Return _borderHitTolerance
         End Get
         Set(value As Integer)
+            If _borderHitTolerance = Math.Max(1, value) Then Return
             _borderHitTolerance = Math.Max(1, value)
         End Set
     End Property
 
     Private _showSelection As Boolean = True
+    ''' <summary>获取或设置是否绘制和允许操作像素选区；右键绘制，左键拖动边框或缩放手柄。</summary>
     <Category("LakeUI"), DefaultValue(True)>
     Public Property ShowSelection As Boolean
         Get
             Return _showSelection
         End Get
         Set(value As Boolean)
+            If _showSelection = value Then Return
             _showSelection = value
+            If Not value Then Cursor = Cursors.Default
             RequestRender()
         End Set
     End Property
 
     Private _selectionAspectRatio As Single
+    ''' <summary>获取或设置绘制和缩放选区的宽高比；0 表示自由比例，正值表示宽度除以高度。</summary>
     <Category("LakeUI"), DefaultValue(0.0F)>
     Public Property SelectionAspectRatio As Single
         Get
             Return _selectionAspectRatio
         End Get
         Set(value As Single)
+            If _selectionAspectRatio = Math.Max(0, value) Then Return
             _selectionAspectRatio = Math.Max(0, value)
         End Set
     End Property
 
     Private _selectionForceCenter As Boolean
+    ''' <summary>获取或设置是否强制将选区置于源图像中心；启用后禁止通过边框移动选区，仍可缩放。</summary>
     <Category("LakeUI"), DefaultValue(False)>
     Public Property SelectionForceCenter As Boolean
         Get
             Return _selectionForceCenter
         End Get
         Set(value As Boolean)
+            If _selectionForceCenter = value Then Return
             _selectionForceCenter = value
             If value Then _selectionRect = CenterSelection(_selectionRect)
+            If _pointerInside Then UpdateInteractionCursor(_pointerLocation)
             RequestRender()
         End Set
     End Property
 
     Private _maxPixelSize As Integer = 64
+    ''' <summary>获取或设置最大图像缩放倍率；单位为单个源像素对应的客户区像素边长，最小为 1。</summary>
     <Category("LakeUI"), Description("最大缩放倍率对应的像素屏幕边长"), DefaultValue(64)>
     Public Property MaxPixelSize As Integer
         Get
             Return _maxPixelSize
         End Get
         Set(value As Integer)
+            If _maxPixelSize = Math.Max(1, value) Then Return
             _maxPixelSize = Math.Max(1, value)
             UpdateZoomRange()
             RequestRender()
         End Set
     End Property
 
+    ''' <summary>获取或设置由调用方提供的已解码图像源；控件仅呈现，不解码也不释放源。更换源会重置选区、帧索引和视图。</summary>
     <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
     Public Property Source As IPixelPictureSource
         Get
@@ -334,6 +377,7 @@ Public Class PixelPictureBox
             StopMotion()
             If _sourceNotification IsNot Nothing Then RemoveHandler _sourceNotification.ContentChanged, AddressOf SourceContentChanged
             _source = value
+            Cursor = Cursors.Default
             _sourceNotification = TryCast(value, IPixelPictureInvalidationSource)
             If _sourceNotification IsNot Nothing Then AddHandler _sourceNotification.ContentChanged, AddressOf SourceContentChanged
             _frameIndex = 0
@@ -341,6 +385,7 @@ Public Class PixelPictureBox
             _animationEnded = False
             _lastPixelKey = Nothing
             _selectionRect = Rectangle.Empty
+            Cursor = Cursors.Default
             _zoom = 0
             _targetZoom = 0
             _scrollX = 0
@@ -354,6 +399,7 @@ Public Class PixelPictureBox
         End Set
     End Property
 
+    ''' <summary>获取源图像的原始宽度，单位为像素；没有源时返回 0，使用 Long 支持巨幅图像。</summary>
     <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
     Public ReadOnly Property ImageWidth As Long
         Get
@@ -361,6 +407,7 @@ Public Class PixelPictureBox
         End Get
     End Property
 
+    ''' <summary>获取源图像的原始高度，单位为像素；没有源时返回 0，使用 Long 支持巨幅图像。</summary>
     <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
     Public ReadOnly Property ImageHeight As Long
         Get
@@ -368,6 +415,7 @@ Public Class PixelPictureBox
         End Get
     End Property
 
+    ''' <summary>获取源 RGB 数值的色域声明；色域与动态范围独立，scRGB 和宽色域本身不代表 HDR。</summary>
     <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
     Public ReadOnly Property ColorSpace As PixelPictureColorSpace
         Get
@@ -375,6 +423,7 @@ Public Class PixelPictureBox
         End Get
     End Property
 
+    ''' <summary>获取源数据是否声明为 HDR；PQ/HLG 为 HDR，线性数据由提供方显式声明，不依据浮点格式或宽色域推断。</summary>
     <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
     Public ReadOnly Property IsHdr As Boolean
         Get
@@ -382,13 +431,23 @@ Public Class PixelPictureBox
         End Get
     End Property
 
+    ''' <summary>获取是否要求最终 HWND 合成表面使用线性 scRGB FP16；仅 HDR 图片启用，SDR 图片输出为 sRGB BGRA8。</summary>
     <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
     Public ReadOnly Property UseFloatPresentation As Boolean Implements D3D_IFloatPresentationSource.UseFloatPresentation
+        Get
+            Return IsHdr
+        End Get
+    End Property
+
+    ''' <summary>获取是否要求内部渲染表面使用线性 FP16；有图片时启用以保留色彩精度，不代表最终输出为 HDR。</summary>
+    <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+    Public ReadOnly Property UseFloatRendering As Boolean Implements D3D_IFloatRenderingSource.UseFloatRendering
         Get
             Return _source IsNot Nothing
         End Get
     End Property
 
+    ''' <summary>获取当前动图帧的零基索引；没有源或源为静态图片时为 0。</summary>
     <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
     Public ReadOnly Property FrameIndex As Integer
         Get
@@ -396,6 +455,7 @@ Public Class PixelPictureBox
         End Get
     End Property
 
+    ''' <summary>获取连续缩放动画的目标倍率；动画未结束时可与当前 Zoom 不同。</summary>
     <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
     Public ReadOnly Property TargetZoom As Double
         Get
@@ -404,12 +464,14 @@ Public Class PixelPictureBox
     End Property
 
     Private _animationDuration As Integer = 300
+    ''' <summary>获取或设置缩放阻尼的响应时长，单位为毫秒；0 表示立即缩放，连续操作会保留运动速度并更新目标。</summary>
     <Category("LakeUI"), DefaultValue(300), Description(GlobalOptions.动画时长描述词)>
     Public Property AnimationDuration As Integer
         Get
             Return _animationDuration
         End Get
         Set(value As Integer)
+            If _animationDuration = Math.Max(0, value) Then Return
             _animationDuration = Math.Max(0, value)
             If _animationDuration = 0 AndAlso _zoomRunning Then
                 ApplyZoom(_targetZoom)
@@ -420,6 +482,7 @@ Public Class PixelPictureBox
         End Set
     End Property
 
+    ''' <summary>获取或设置缩放和动图呈现共用的动画调度帧率；0 表示使用动画调度器的不限帧模式。</summary>
     <Category("LakeUI"), DefaultValue(120), Description(GlobalOptions.动画帧率描述词)>
     Public Property AnimationFPS As Integer
         Get
@@ -431,17 +494,20 @@ Public Class PixelPictureBox
     End Property
 
     Private _playAnimation As Boolean = True
+    ''' <summary>获取或设置是否播放源的动图帧；暂停不影响缩放动画，源的帧间隔和循环次数决定播放节奏。</summary>
     <Category("LakeUI"), DefaultValue(True)>
     Public Property PlayAnimation As Boolean
         Get
             Return _playAnimation
         End Get
         Set(value As Boolean)
+            If _playAnimation = value Then Return
             _playAnimation = value
             UpdateMotionState()
         End Set
     End Property
 
+    ''' <summary>获取当前实际缩放倍率；1 表示单个源像素对应一个客户区像素，动画中实时更新。</summary>
     <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
     Public ReadOnly Property Zoom As Double
         Get
@@ -449,18 +515,23 @@ Public Class PixelPictureBox
         End Get
     End Property
 
+    ''' <summary>获取或设置源图像像素坐标中的整数选区；右侧和底部为不包含边界，设置时裁剪到图像范围并应用居中约束。</summary>
     <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
     Public Property SelectionRect As Rectangle
         Get
             Return _selectionRect
         End Get
         Set(value As Rectangle)
-            _selectionRect = CenterSelection(ClampSelection(value))
+            Dim clamped = CenterSelection(ClampSelection(value))
+            If _selectionRect = clamped Then Return
+            _selectionRect = clamped
+            If _pointerInside Then UpdateInteractionCursor(_pointerLocation)
             RequestRender()
             RaiseEvent SelectionChanged(Me, EventArgs.Empty)
         End Set
     End Property
 
+    ''' <summary>获取或设置选区的原始像素尺寸；通过 SelectionRect 应用图像范围和居中约束。</summary>
     <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
     Public Property SelectionSize As Size
         Get
@@ -480,10 +551,12 @@ Public Class PixelPictureBox
 
     Public Sub ClearSelection()
         _selectionRect = Rectangle.Empty
+        Cursor = Cursors.Default
         RequestRender()
         RaiseEvent SelectionChanged(Me, EventArgs.Empty)
     End Sub
 
+    ''' <summary>获取鼠标当前位置对应的原始源像素及编码信息；鼠标在图片外或源无法提供像素时返回 Nothing，不读取屏幕颜色。</summary>
     <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
     Public ReadOnly Property CurrentPixel As PixelPicturePixel?
         Get
@@ -493,6 +566,7 @@ Public Class PixelPictureBox
         End Get
     End Property
 
+    ''' <summary>获取或设置显式 GPU 背景来源；指定后直接采样该来源，不叠加 BackColor1。Nothing 时使用自动父级背景和 BackColor1。</summary>
     <DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
     Public Property BackgroundSource As Control
         Get
@@ -505,6 +579,12 @@ Public Class PixelPictureBox
         End Set
     End Property
 
+    Private ReadOnly Property IsBackgroundOpaque As Boolean Implements D3D_IBackgroundOpacitySource.IsBackgroundOpaque
+        Get
+            Return _backColor1.A = 255
+        End Get
+    End Property
+
     Public Function TryGetBackgroundSource(ByRef source As Control) As Boolean Implements D3D_IBackgroundSourceProvider.TryGetBackgroundSource
         source = _backgroundSource
         Return source IsNot Nothing
@@ -514,11 +594,15 @@ Public Class PixelPictureBox
         SourceContentChanged(Me, EventArgs.Empty)
     End Sub
 
+    ''' <summary>设置缩放目标倍率；连续调用会保留阻尼运动的速度，并围绕指定客户区位置缩放。</summary>
+    ''' <param name="value">目标倍率，自动限制在适应视口倍率与 MaxPixelSize 之间。</param>
+    ''' <param name="anchor">缩放锚点的客户区坐标；Nothing 表示客户区中心。</param>
     Public Sub SetZoom(value As Double, Optional anchor As Point? = Nothing)
         If _source Is Nothing Then Return
         ZoomTo(value, If(anchor.HasValue, anchor.Value, New Point(ClientSize.Width \ 2, ClientSize.Height \ 2)))
     End Sub
 
+    ''' <summary>将图像缩放目标重置为适应视口的最小倍率。</summary>
     Public Sub ResetZoom()
         SetZoom(_minZoom)
     End Sub
@@ -532,11 +616,17 @@ Public Class PixelPictureBox
 
     Public Sub RenderGpu(context As D3D_PaintContext) Implements D3D_IGpuRenderable.RenderGpu
         If context Is Nothing OrElse Width <= 0 OrElse Height <= 0 Then Return
-        UpdateScrollRegion()
-        DrawBackground(context)
-        If _source IsNot Nothing Then DrawSource(context)
-        DrawSelection(context)
-        DrawScrollBars(context)
+        Dim originalLinearColors = context.UseLinearColors
+        context.UseLinearColors = UseFloatRendering
+        Try
+            UpdateScrollRegion()
+            DrawBackground(context)
+            If _source IsNot Nothing Then DrawSource(context)
+            DrawSelection(context)
+            DrawScrollBars(context)
+        Finally
+            context.UseLinearColors = originalLinearColors
+        End Try
     End Sub
 
     Public Function GetRenderBounds() As Rectangle Implements D3D_IGpuInvalidationSource.GetRenderBounds
@@ -707,6 +797,7 @@ Public Class PixelPictureBox
         Return New RectangleF(full.X, full.Y, Math.Max(0, full.Width - If(_showVerticalScroll, reserve, 0)), Math.Max(0, full.Height - If(_showHorizontalScroll, reserve, 0)))
     End Function
 
+    ''' <summary>获取视口中可见的源图像区域；单位为原始像素，使用双精度表示以支持巨幅图像和分块请求。</summary>
     <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
     Public ReadOnly Property VisibleRegion As PixelPictureRegion
         Get
@@ -728,6 +819,7 @@ Public Class PixelPictureBox
         Return ImageToClient(New PixelPictureRegion(imageRect.X, imageRect.Y, imageRect.Width, imageRect.Height))
     End Function
 
+    ''' <summary>将原始图像像素区域转换为客户区矩形，应用实时缩放、居中和滚动偏移。</summary>
     Public Function ImageToClient(imageRect As PixelPictureRegion) As RectangleF
         Dim viewport = ViewportBounds()
         Dim imageWidth = If(_source Is Nothing, 0, _source.Width * _zoom)
@@ -737,6 +829,7 @@ Public Class PixelPictureBox
         Return New RectangleF(CSng(viewport.X + offsetX + imageRect.X * _zoom - _scrollX), CSng(viewport.Y + offsetY + imageRect.Y * _zoom - _scrollY), CSng(imageRect.Width * _zoom), CSng(imageRect.Height * _zoom))
     End Function
 
+    ''' <summary>将客户区坐标转换为原始图像像素坐标；无源时返回 (-1, -1)，图片外坐标不钳制。</summary>
     Public Function ClientToImage(client As Point) As PixelPicturePoint
         If _source Is Nothing OrElse _zoom <= 0 Then Return New PixelPicturePoint(-1, -1)
         Dim viewport = ViewportBounds()
@@ -831,26 +924,79 @@ Public Class PixelPictureBox
         Return New RectangleF(x - half, y - half, _handleSize, _handleSize)
     End Function
 
-    Private Function HitHandle(location As Point) As HandlePosition
+    Private Function SelectionClientBounds() As RectangleF
+        If Not _showSelection OrElse _selectionRect.Width <= 0 OrElse _selectionRect.Height <= 0 Then Return RectangleF.Empty
+        Return ImageToClient(New RectangleF(_selectionRect.X, _selectionRect.Y, _selectionRect.Width, _selectionRect.Height))
+    End Function
+
+    Private Function HitHandle(location As Point, screen As RectangleF) As HandlePosition
         If Not _showSelection OrElse _selectionRect.Width <= 0 Then Return HandlePosition.None
-        Dim screen = ImageToClient(New RectangleF(_selectionRect.X, _selectionRect.Y, _selectionRect.Width, _selectionRect.Height))
-        For Each h In HandleList
-            Dim bounds = HandleBounds(h, screen)
+        For Each position In HandleList
+            Dim bounds = HandleBounds(position, screen)
             bounds.Inflate(_handleHitTolerance, _handleHitTolerance)
-            If bounds.Contains(location) Then Return Handle
+            If bounds.Contains(location) Then Return position
         Next
         Return HandlePosition.None
     End Function
 
-    Private Function HitSelectionBorder(location As Point) As Boolean
+    Private Function HitSelectionBorder(location As Point, screen As RectangleF) As Boolean
         If Not _showSelection OrElse _selectionRect.Width <= 0 Then Return False
-        Dim screen = ImageToClient(New RectangleF(_selectionRect.X, _selectionRect.Y, _selectionRect.Width, _selectionRect.Height))
         Dim outer = screen
         outer.Inflate(_borderHitTolerance, _borderHitTolerance)
         Dim inner = screen
         inner.Inflate(-_borderHitTolerance, -_borderHitTolerance)
         Return outer.Contains(location) AndAlso Not inner.Contains(location)
     End Function
+
+    Private Function CursorForHandle(handle As HandlePosition) As Cursor
+        Select Case handle
+            Case HandlePosition.TopLeft, HandlePosition.BottomRight
+                Return Cursors.SizeNWSE
+            Case HandlePosition.TopRight, HandlePosition.BottomLeft
+                Return Cursors.SizeNESW
+            Case HandlePosition.TopCenter, HandlePosition.BottomCenter
+                Return Cursors.SizeNS
+            Case HandlePosition.MiddleLeft, HandlePosition.MiddleRight
+                Return Cursors.SizeWE
+            Case Else
+                Return Cursors.Default
+        End Select
+    End Function
+
+    Private Sub UpdateInteractionCursor(location As Point)
+        If _dragMode <> DragMode.None Then
+            Select Case _dragMode
+                Case DragMode.ResizeSelection
+                    Cursor = CursorForHandle(_activeHandle)
+                Case DragMode.MoveSelection, DragMode.Pan
+                    Cursor = Cursors.SizeAll
+                Case DragMode.DrawSelection
+                    Cursor = Cursors.Cross
+                Case DragMode.VerticalScroll
+                    Cursor = Cursors.SizeNS
+                Case DragMode.HorizontalScroll
+                    Cursor = Cursors.SizeWE
+                Case Else
+                    Cursor = Cursors.Default
+            End Select
+            Return
+        End If
+
+        If Not _pointerInside OrElse _source Is Nothing OrElse Not _showSelection Then
+            Cursor = Cursors.Default
+            Return
+        End If
+
+        Dim selection = SelectionClientBounds()
+        Dim handle = HitHandle(location, selection)
+        If handle <> HandlePosition.None Then
+            Cursor = CursorForHandle(handle)
+        ElseIf HitSelectionBorder(location, selection) AndAlso Not _selectionForceCenter Then
+            Cursor = Cursors.SizeAll
+        Else
+            Cursor = Cursors.Default
+        End If
+    End Sub
 
     Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
         MyBase.OnMouseDown(e)
@@ -874,11 +1020,12 @@ Public Class PixelPictureBox
                 RequestRender()
                 Return
             Else
-                Dim position = HitHandle(e.Location)
+                Dim selection = SelectionClientBounds()
+                Dim position = HitHandle(e.Location, selection)
                 If position <> HandlePosition.None Then
                     _dragMode = DragMode.ResizeSelection
                     _activeHandle = position
-                ElseIf HitSelectionBorder(e.Location) AndAlso Not _selectionForceCenter Then
+                ElseIf HitSelectionBorder(e.Location, selection) AndAlso Not _selectionForceCenter Then
                     _dragMode = DragMode.MoveSelection
                 Else
                     _dragMode = DragMode.Pan
@@ -889,6 +1036,7 @@ Public Class PixelPictureBox
             _dragScrollY = _scrollY
             _dragSelectionStart = _selectionRect
             Capture = True
+            UpdateInteractionCursor(e.Location)
         ElseIf e.Button = MouseButtons.Right AndAlso _showSelection Then
             _dragMode = DragMode.DrawSelection
             _dragStart = e.Location
@@ -896,6 +1044,7 @@ Public Class PixelPictureBox
             _dragSelectionStart = New Rectangle(CInt(Math.Max(0, Math.Min(_source.Width - 1, Math.Floor(imagePoint.X)))), CInt(Math.Max(0, Math.Min(_source.Height - 1, Math.Floor(imagePoint.Y)))), 0, 0)
             _selectionRect = _dragSelectionStart
             Capture = True
+            UpdateInteractionCursor(e.Location)
             RequestRender()
         End If
     End Sub
@@ -904,6 +1053,7 @@ Public Class PixelPictureBox
         MyBase.OnMouseMove(e)
         _pointerLocation = e.Location
         _pointerInside = ClientRectangle.Contains(e.Location)
+        UpdateInteractionCursor(e.Location)
         Select Case _dragMode
             Case DragMode.Pan
                 _scrollX = _dragScrollX - (e.X - _dragStart.X)
@@ -938,12 +1088,16 @@ Public Class PixelPictureBox
         _dragMode = DragMode.None
         _activeHandle = HandlePosition.None
         Capture = False
+        _pointerLocation = e.Location
+        _pointerInside = ClientRectangle.Contains(e.Location)
+        UpdateInteractionCursor(e.Location)
         If mode = DragMode.MoveSelection OrElse mode = DragMode.ResizeSelection OrElse mode = DragMode.DrawSelection Then RaiseEvent SelectionChanged(Me, EventArgs.Empty)
     End Sub
 
     Protected Overrides Sub OnMouseLeave(e As EventArgs)
         MyBase.OnMouseLeave(e)
         _pointerInside = False
+        If Not Capture Then Cursor = Cursors.Default
         UpdatePixelUnderPointer()
     End Sub
 
@@ -1049,7 +1203,11 @@ Public Class PixelPictureBox
 
     Protected Overrides Sub OnMouseCaptureChanged(args As EventArgs)
         MyBase.OnMouseCaptureChanged(args)
-        If Not Capture Then _dragMode = DragMode.None
+        If Not Capture Then
+            _dragMode = DragMode.None
+            _activeHandle = HandlePosition.None
+            Cursor = Cursors.Default
+        End If
     End Sub
 
     Protected Overrides Sub OnKeyDown(args As KeyEventArgs)

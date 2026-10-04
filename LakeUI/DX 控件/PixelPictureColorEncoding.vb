@@ -3,7 +3,8 @@ Public NotInheritable Class PixelPictureColorEncoding
     Public Sub New(Optional colorSpace As PixelPictureColorSpace = PixelPictureColorSpace.SRgb,
                    Optional transferFunction As PixelPictureTransferFunction = PixelPictureTransferFunction.SRgb,
                    Optional referenceWhiteNits As Single = 80.0F,
-                   Optional hlgPeakNits As Single = 1000.0F)
+                   Optional hlgPeakNits As Single = 1000.0F,
+                   Optional isHdr As Boolean = False)
         If Not Single.IsFinite(referenceWhiteNits) OrElse referenceWhiteNits <= 0 Then Throw New ArgumentOutOfRangeException(NameOf(referenceWhiteNits))
         If Not Single.IsFinite(hlgPeakNits) OrElse hlgPeakNits < 400 Then Throw New ArgumentOutOfRangeException(NameOf(hlgPeakNits))
         If colorSpace = PixelPictureColorSpace.Unknown Then Throw New ArgumentException("必须声明像素色域。", NameOf(colorSpace))
@@ -12,17 +13,19 @@ Public NotInheritable Class PixelPictureColorEncoding
         Me.TransferFunction = transferFunction
         Me.ReferenceWhiteNits = referenceWhiteNits
         Me.HlgPeakNits = hlgPeakNits
+        Me.IsHdr = isHdr OrElse transferFunction = PixelPictureTransferFunction.Pq OrElse transferFunction = PixelPictureTransferFunction.Hlg OrElse colorSpace = PixelPictureColorSpace.Hdr10 OrElse colorSpace = PixelPictureColorSpace.Hlg
     End Sub
 
+    ''' <summary>获取源 RGB 数值的色域声明；色域与动态范围独立，scRGB 和宽色域本身不代表 HDR。</summary>
     Public ReadOnly Property ColorSpace As PixelPictureColorSpace
+    ''' <summary>获取源 RGB 分量的传递函数，用于区分线性、sRGB、Gamma、PQ 和 HLG 数值。</summary>
     Public ReadOnly Property TransferFunction As PixelPictureTransferFunction
+    ''' <summary>获取线性或常规 RGB 的参考白亮度，单位为尼特；80 尼特对应线性 scRGB 的 1，PQ 使用绝对亮度。</summary>
     Public ReadOnly Property ReferenceWhiteNits As Single
+    ''' <summary>获取 HLG 显示峰值亮度，单位为尼特；用于系统伽马和亮度换算，最小为 400。</summary>
     Public ReadOnly Property HlgPeakNits As Single
+    ''' <summary>获取源数据是否声明为 HDR；PQ/HLG 为 HDR，线性数据由提供方显式声明，不依据浮点格式或宽色域推断。</summary>
     Public ReadOnly Property IsHdr As Boolean
-        Get
-            Return TransferFunction = PixelPictureTransferFunction.Pq OrElse TransferFunction = PixelPictureTransferFunction.Hlg OrElse ColorSpace = PixelPictureColorSpace.ScRgb
-        End Get
-    End Property
 
     Friend Function ToLinearScRgb(red As Single, green As Single, blue As Single) As System.Numerics.Vector3
         Dim linearRed = Decode(red)
@@ -90,8 +93,11 @@ Public NotInheritable Class PixelPictureTile
         _pixels = DirectCast(pixels.Clone(), Single())
     End Sub
 
+    ''' <summary>获取原始图像或区域的宽度，单位为原始像素。</summary>
     Public ReadOnly Property Width As Integer
+    ''' <summary>获取原始图像或区域的高度，单位为原始像素。</summary>
     Public ReadOnly Property Height As Integer
+    ''' <summary>获取此分块直通 RGBA 数值的色彩编码；必须与所属图像源的编码和 HDR 声明一致。</summary>
     Public ReadOnly Property Encoding As PixelPictureColorEncoding
 
     Friend Function Sample(x As Integer, y As Integer, imageX As Long, imageY As Long) As PixelPicturePixel

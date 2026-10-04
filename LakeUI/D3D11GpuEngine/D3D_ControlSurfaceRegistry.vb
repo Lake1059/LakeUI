@@ -168,13 +168,10 @@ Friend NotInheritable Class D3D_ControlSurfaceRegistry
             裁剪来源区域.Bottom * 采样倍率)
         项目.Surface.BeginResourceUse()
         Try
-            context.DeviceContext.DrawBitmap(
+            context.DrawBackdropBitmap(
                 位图,
                 D3D_PaintContext.ToRawRect(绘制目标),
-                1.0F,
-                InterpolationMode.Linear,
-                物理来源区域,
-                Nothing)
+                物理来源区域)
         Finally
             项目.Surface.EndResourceUse()
         End Try
@@ -190,7 +187,9 @@ Friend NotInheritable Class D3D_ControlSurfaceRegistry
         ' 这里绝不能主动绘制兄弟或子树，否则会破坏外到内顺序并造成递归。
         ' 只有透明或半透明控件需要向父级查找背景。完全不透明的控件
         ' 自身已经覆盖整个客户区，跳过父级和同级遍历可避免启动阶段重复合成。
-        If Not ignoreExplicitSource AndAlso owner.BackColor.A >= 255 Then Return False
+        Dim opacitySource = TryCast(owner, D3D_IBackgroundOpacitySource)
+        Dim backgroundOpaque = If(opacitySource IsNot Nothing, opacitySource.IsBackgroundOpaque, owner.BackColor.A >= 255)
+        If Not ignoreExplicitSource AndAlso backgroundOpaque Then Return False
         If Not ignoreExplicitSource Then
             Dim 来源提供者 = TryCast(owner, D3D_IBackgroundSourceProvider)
             Dim 显式来源 As Control = Nothing

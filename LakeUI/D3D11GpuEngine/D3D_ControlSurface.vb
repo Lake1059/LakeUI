@@ -13,6 +13,7 @@ Friend NotInheritable Class D3D_ControlSurface
     Private ReadOnly _deviceManager As D3D_DeviceManager
     Private _compositor As D3D_WindowCompositor
     Private _context As ID2D1DeviceContext
+    Private _backdropColorTransfer As D3D_BitmapColorTransfer
     Private _bitmap As ID2D1Bitmap1
     Private _logicalSize As Size
     Private _pixelSize As Size
@@ -178,6 +179,8 @@ Friend NotInheritable Class D3D_ControlSurface
                     beginTextureUse:=AddressOf 开始使用本帧纹理,
                     beginBackdropUse:=AddressOf 开始使用本帧背景,
                     isDirectPresentation:=True)
+                    绘制上下文.UseLinearColors = _surfaceFormat = Format.R16G16B16A16_Float
+                    绘制上下文.BackdropColorTransfer = _backdropColorTransfer
                     ' 强制约束：先准备当前控件所需的外层背景，再绘制当前控件自身；
                     ' RenderGpu 不得在此阶段同步驱动任何子控件或兄弟控件。
                     Dim 背景开始时间 = D3D_RefreshDiagnostics.Start()
@@ -219,13 +222,15 @@ Friend NotInheritable Class D3D_ControlSurface
 
         If _context Is Nothing Then
             _context = _deviceManager.CreateDeviceContext()
+            _backdropColorTransfer = New D3D_BitmapColorTransfer(_context)
             _generation = 设备代次
         End If
         If _compositor Is Nothing OrElse _compositor.IsDisposed Then
             _compositor = D3D_RenderCore.GetWindowCompositor(_owner)
         End If
         Dim floatSource = TryCast(_owner, D3D_IFloatPresentationSource)
-        Dim requestedFormat = If(floatSource IsNot Nothing AndAlso floatSource.UseFloatPresentation, Format.R16G16B16A16_Float, Format.B8G8R8A8_UNorm)
+        Dim floatRenderingSource = TryCast(_owner, D3D_IFloatRenderingSource)
+        Dim requestedFormat = If((floatRenderingSource IsNot Nothing AndAlso floatRenderingSource.UseFloatRendering) OrElse (floatSource IsNot Nothing AndAlso floatSource.UseFloatPresentation), Format.R16G16B16A16_Float, Format.B8G8R8A8_UNorm)
         If _bitmap IsNot Nothing AndAlso 逻辑尺寸 = _logicalSize AndAlso 像素尺寸 = _pixelSize AndAlso 采样倍率 = _sampleScale AndAlso requestedFormat = _surfaceFormat Then Return
 
         _context.Target = Nothing
@@ -324,6 +329,8 @@ Friend NotInheritable Class D3D_ControlSurface
             _allocatedBytes = 0
         End If
         安全释放(_bitmap)
+        安全释放(_backdropColorTransfer)
+        _backdropColorTransfer = Nothing
         安全释放(_context)
         _bitmap = Nothing
         _context = Nothing

@@ -16,6 +16,7 @@ Friend NotInheritable Class D3D_HwndCompositionPresenter
     Private _surfaceFormat As Format = Format.B8G8R8A8_UNorm
     Private _generation As Integer = -1
     Private _context As ID2D1DeviceContext
+    Private _sdrColorTransform As D3D_BitmapColorTransfer
     Private _target As IDCompositionTarget
     Private _visual As IDCompositionVisual
     Private _surface As IDCompositionSurface
@@ -27,6 +28,8 @@ Friend NotInheritable Class D3D_HwndCompositionPresenter
     Private _pendingRenderMilliseconds As Double
     Private _pendingUpdateMilliseconds As Double
     Private _disposed As Boolean
+
+    Friend Property SurfaceProbe As Action(Of ID2D1DeviceContext, ID2D1Bitmap1, Rectangle)
 
     Friend Sub New(owner As Control, deviceManager As D3D_DeviceManager)
         _owner = owner
@@ -135,7 +138,11 @@ Friend NotInheritable Class D3D_HwndCompositionPresenter
                             _context.PushAxisAlignedClip(目标区域, AntialiasMode.Aliased)
                             Try
                                 _context.Clear(New Vortice.Mathematics.Color4(0, 0, 0, 1))
-                                _context.DrawBitmap(surface.Bitmap, 目标区域, 1.0F, InterpolationMode.HighQualityCubic, 来源区域, Nothing)
+                                If surface.SurfaceFormat = Format.R16G16B16A16_Float AndAlso _surfaceFormat = Format.B8G8R8A8_UNorm Then
+                                    DrawSdrSurface(surface.Bitmap, 来源区域)
+                                Else
+                                    _context.DrawBitmap(surface.Bitmap, 目标区域, 1.0F, InterpolationMode.HighQualityCubic, 来源区域, New Nullable(Of System.Numerics.Matrix4x4)())
+                                End If
                             Finally
                                 _context.PopAxisAlignedClip()
                             End Try
@@ -146,6 +153,7 @@ Friend NotInheritable Class D3D_HwndCompositionPresenter
                                 _context.Target = Nothing
                             End Try
                         End Try
+                        SurfaceProbe?.Invoke(_context, 目标位图, New Rectangle(更新偏移.X, 更新偏移.Y, _size.Width, _size.Height))
                     End Using
                 End Using
             Finally
@@ -211,6 +219,12 @@ Friend NotInheritable Class D3D_HwndCompositionPresenter
         D3D_RefreshDiagnostics.Record(开始时间, "PresenterResources", _owner)
     End Sub
 
+    Private Sub DrawSdrSurface(bitmap As ID2D1Bitmap1, sourceRegion As Vortice.RawRectF)
+        If _sdrColorTransform Is Nothing Then _sdrColorTransform = New D3D_BitmapColorTransfer(_context)
+        Dim destination As New Vortice.RawRectF(0, 0, _size.Width, _size.Height)
+        _sdrColorTransform.Draw(bitmap, destination, sourceRegion, InterpolationMode.HighQualityCubic, linearOutput:=False)
+    End Sub
+
     Friend Function HasPresented(surface As D3D_ControlSurface) As Boolean
         Return Not _disposed AndAlso surface IsNot Nothing AndAlso surface.Bitmap IsNot Nothing AndAlso
             _surface IsNot Nothing AndAlso _generation = surface.DeviceGeneration AndAlso
@@ -228,6 +242,8 @@ Friend NotInheritable Class D3D_HwndCompositionPresenter
         _surface?.Dispose()
         _visual?.Dispose()
         _target?.Dispose()
+        _sdrColorTransform?.Dispose()
+        _sdrColorTransform = Nothing
         _context?.Dispose()
         _surface = Nothing
         _surfaceNeedsBinding = False

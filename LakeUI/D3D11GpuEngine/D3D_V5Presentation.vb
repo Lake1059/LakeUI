@@ -53,6 +53,12 @@ Friend NotInheritable Class D3D_V5Presentation
         End Get
     End Property
 
+    Friend Shared Function GetPresenterForDiagnostics(control As Control) As D3D_HwndCompositionPresenter
+        Dim presenter As D3D_HwndCompositionPresenter = Nothing
+        _presenters.TryGetValue(control, presenter)
+        Return presenter
+    End Function
+
     Shared Sub New()
         AddHandler Application.ThreadExit, AddressOf UI线程退出时
         AddHandler D3D_RenderCore.DeviceManager.DeviceLost, AddressOf 设备丢失时

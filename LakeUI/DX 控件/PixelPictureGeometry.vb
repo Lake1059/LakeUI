@@ -4,7 +4,9 @@ Public Structure PixelPicturePoint
         Me.Y = y
     End Sub
 
+    ''' <summary>获取原始图像像素坐标中的横坐标。</summary>
     Public ReadOnly Property X As Double
+    ''' <summary>获取原始图像像素坐标中的纵坐标。</summary>
     Public ReadOnly Property Y As Double
 End Structure
 
@@ -16,15 +18,21 @@ Public Structure PixelPictureRegion
         Me.Height = height
     End Sub
 
+    ''' <summary>获取原始图像像素坐标中的横坐标。</summary>
     Public ReadOnly Property X As Double
+    ''' <summary>获取原始图像像素坐标中的纵坐标。</summary>
     Public ReadOnly Property Y As Double
+    ''' <summary>获取原始图像或区域的宽度，单位为原始像素。</summary>
     Public ReadOnly Property Width As Double
+    ''' <summary>获取原始图像或区域的高度，单位为原始像素。</summary>
     Public ReadOnly Property Height As Double
+    ''' <summary>获取区域右侧的原始像素边界，等于 X 加 Width；该边界不包含在区域中。</summary>
     Public ReadOnly Property Right As Double
         Get
             Return X + Width
         End Get
     End Property
+    ''' <summary>获取区域底部的原始像素边界，等于 Y 加 Height；该边界不包含在区域中。</summary>
     Public ReadOnly Property Bottom As Double
         Get
             Return Y + Height
@@ -43,7 +51,13 @@ End Interface
 
 ''' <summary>要求控件及其 HWND 合成表面使用线性 scRGB FP16，避免 HDR 值被 8 位表面截断。</summary>
 Public Interface D3D_IFloatPresentationSource
+    ''' <summary>获取是否要求最终 HWND 合成表面使用线性 scRGB FP16；仅 HDR 图片启用，SDR 图片输出为 sRGB BGRA8。</summary>
     ReadOnly Property UseFloatPresentation As Boolean
+End Interface
+
+Public Interface D3D_IFloatRenderingSource
+    ''' <summary>获取是否要求内部渲染表面使用线性 FP16；有图片时启用以保留色彩精度，不代表最终输出为 HDR。</summary>
+    ReadOnly Property UseFloatRendering As Boolean
 End Interface
 
 Friend NotInheritable Class PixelPictureZoomMotion

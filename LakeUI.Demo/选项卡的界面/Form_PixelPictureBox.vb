@@ -2,7 +2,7 @@ Imports System.Threading
 
 Public Class Form_PixelPictureBox
     Private Const SampleEdge As Long = 262144
-    Private ReadOnly _sampleEncoding As New PixelPictureColorEncoding(PixelPictureColorSpace.ScRgb, PixelPictureTransferFunction.Linear)
+    Private ReadOnly _sampleEncoding As New PixelPictureColorEncoding(PixelPictureColorSpace.ScRgb, PixelPictureTransferFunction.Linear, isHdr:=True)
     Private _sampleSource As PixelPictureTiledSource
 
     Private Sub Form_PixelPictureBox_Load(sender As Object, e As EventArgs) Handles MyBase.Load

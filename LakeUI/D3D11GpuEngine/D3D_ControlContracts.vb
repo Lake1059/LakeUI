@@ -38,6 +38,12 @@ Public Interface D3D_IGpuInvalidationSource
     Function GetRenderBounds() As Rectangle
 End Interface
 
+''' <summary>以实际 GPU 底色判断是否需要自动父级背景，不依赖 WinForms BackColor 的透明度。</summary>
+Friend Interface D3D_IBackgroundOpacitySource
+    ''' <summary>实际底色完全覆盖客户区时返回 True。</summary>
+    ReadOnly Property IsBackgroundOpaque As Boolean
+End Interface
+
 Public Interface D3D_IBackgroundSourceProvider
     ''' <summary>获取显式 GPU 背景来源；返回 <c>False</c> 或空来源表示使用自动祖先解析。</summary>
     ''' <param name="source">输出背景来源控件；返回 <c>False</c> 时必须设为 <c>Nothing</c>。</param>
