@@ -3,6 +3,7 @@ Imports System.Diagnostics
 Imports System.Drawing
 Imports D2D = Vortice.Direct2D1
 
+''' <summary>使用 GPU 呈现已解码图像，支持像素查询、平滑缩放、滚动、动图播放和像素选区。</summary>
 <DefaultEvent("SelectionChanged")>
 Public Class PixelPictureBox
     Inherits UserControl
@@ -17,6 +18,7 @@ Public Class PixelPictureBox
     ''' <summary>当前实际缩放倍率变化时触发；平滑缩放期间可以多次触发。</summary>
     Public Event ZoomChanged As EventHandler
 
+    ''' <summary>初始化图像控件及缩放、动图共用的动画调度器。</summary>
     Public Sub New()
         InitializeComponent()
         SetStyle(ControlStyles.UserPaint Or ControlStyles.AllPaintingInWmPaint Or ControlStyles.OptimizedDoubleBuffer Or ControlStyles.ResizeRedraw Or ControlStyles.Selectable, True)
@@ -93,7 +95,7 @@ Public Class PixelPictureBox
 
     Private _backColor1 As Color = Color.FromArgb(36, 36, 36)
     ''' <summary>获取或设置控件底色，可带透明度；未指定 BackgroundSource 时覆盖在父级 GPU 背景上，图片留白区使用此颜色。</summary>
-    <Category("LakeUI"), DefaultValue(GetType(Color), "36, 36, 36")>
+    <Category("LakeUI"), Description("控件底色，支持透明度；未指定 BackgroundSource 时覆盖在父级 GPU 背景上。"), DefaultValue(GetType(Color), "36, 36, 36")>
     Public Property BackColor1 As Color
         Get
             Return _backColor1
@@ -107,7 +109,7 @@ Public Class PixelPictureBox
 
     Private _borderColor As Color = Color.Gray
     ''' <summary>获取或设置控件外边框颜色。</summary>
-    <Category("LakeUI"), DefaultValue(GetType(Color), "Gray")>
+    <Category("LakeUI"), Description("控件外边框颜色。"), DefaultValue(GetType(Color), "Gray")>
     Public Property BorderColor As Color
         Get
             Return _borderColor
@@ -121,7 +123,7 @@ Public Class PixelPictureBox
 
     Private _borderSize As Integer = 1
     ''' <summary>获取或设置控件外边框宽度；单位为逻辑像素，0 表示不绘制。</summary>
-    <Category("LakeUI"), DefaultValue(1)>
+    <Category("LakeUI"), Description("控件外边框宽度，单位为逻辑像素；0 表示不绘制。"), DefaultValue(1)>
     Public Property BorderSize As Integer
         Get
             Return _borderSize
@@ -135,7 +137,7 @@ Public Class PixelPictureBox
 
     Private _scrollBarWidth As Integer = 10
     ''' <summary>获取或设置滚动条宽度；单位为逻辑像素，绘制时按控件 DPI 缩放。</summary>
-    <Category("LakeUI"), DefaultValue(10)>
+    <Category("LakeUI"), Description("滚动条宽度，单位为逻辑像素，绘制时按控件 DPI 缩放；最小为 1。"), DefaultValue(10)>
     Public Property ScrollBarWidth As Integer
         Get
             Return _scrollBarWidth
@@ -149,8 +151,7 @@ Public Class PixelPictureBox
 
     Private _scrollBarTrackColor As Color = Color.FromArgb(20, 20, 20)
     ''' <summary>获取或设置滚动条轨道颜色，支持透明度。</summary>
-    <Category("LakeUI")>
-    <DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+    <Category("LakeUI"), Description("滚动条轨道颜色，支持透明度。"), DefaultValue(GetType(Color), "20, 20, 20")>
     Public Property ScrollBarTrackColor As Color
         Get
             Return _scrollBarTrackColor
@@ -164,8 +165,7 @@ Public Class PixelPictureBox
 
     Private _scrollBarThumbColor As Color = Color.FromArgb(80, 80, 80)
     ''' <summary>获取或设置滚动条滑块的正常颜色。</summary>
-    <Category("LakeUI")>
-    <DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+    <Category("LakeUI"), Description("滚动条滑块的正常颜色。"), DefaultValue(GetType(Color), "80, 80, 80")>
     Public Property ScrollBarThumbColor As Color
         Get
             Return _scrollBarThumbColor
@@ -179,8 +179,7 @@ Public Class PixelPictureBox
 
     Private _scrollBarThumbHoverColor As Color = Color.FromArgb(120, 120, 120)
     ''' <summary>获取或设置滚动条滑块悬停或拖动时的颜色。</summary>
-    <Category("LakeUI")>
-    <DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+    <Category("LakeUI"), Description("滚动条滑块悬停或拖动时的颜色。"), DefaultValue(GetType(Color), "120, 120, 120")>
     Public Property ScrollBarThumbHoverColor As Color
         Get
             Return _scrollBarThumbHoverColor
@@ -194,8 +193,7 @@ Public Class PixelPictureBox
 
     Private _selectionBorderColor As Color = Color.FromArgb(200, 60, 60)
     ''' <summary>获取或设置像素选区的边框颜色。</summary>
-    <Category("LakeUI")>
-    <DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+    <Category("LakeUI"), Description("像素选区的边框颜色。"), DefaultValue(GetType(Color), "200, 60, 60")>
     Public Property SelectionBorderColor As Color
         Get
             Return _selectionBorderColor
@@ -209,7 +207,7 @@ Public Class PixelPictureBox
 
     Private _selectionBorderSize As Integer = 2
     ''' <summary>获取或设置选区边框的绘制宽度；单位为控件客户区像素。</summary>
-    <Category("LakeUI"), DefaultValue(2)>
+    <Category("LakeUI"), Description("选区边框宽度，单位为控件客户区像素；最小为 1。"), DefaultValue(2)>
     Public Property SelectionBorderSize As Integer
         Get
             Return _selectionBorderSize
@@ -223,8 +221,7 @@ Public Class PixelPictureBox
 
     Private _selectionFillColor As Color = Color.FromArgb(30, 200, 60, 60)
     ''' <summary>获取或设置选区内部填充颜色，支持透明度；不会修改源图像像素。</summary>
-    <Category("LakeUI")>
-    <DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+    <Category("LakeUI"), Description("选区内部填充颜色，支持透明度；不会修改源图像像素。"), DefaultValue(GetType(Color), "30, 200, 60, 60")>
     Public Property SelectionFillColor As Color
         Get
             Return _selectionFillColor
@@ -238,8 +235,7 @@ Public Class PixelPictureBox
 
     Private _handleColor As Color = Color.White
     ''' <summary>获取或设置选区八个缩放手柄的填充颜色。</summary>
-    <Category("LakeUI")>
-    <DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+    <Category("LakeUI"), Description("选区八个缩放手柄的填充颜色。"), DefaultValue(GetType(Color), "White")>
     Public Property HandleColor As Color
         Get
             Return _handleColor
@@ -253,8 +249,7 @@ Public Class PixelPictureBox
 
     Private _handleBorderColor As Color = Color.FromArgb(200, 60, 60)
     ''' <summary>获取或设置选区缩放手柄的边框颜色。</summary>
-    <Category("LakeUI")>
-    <DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+    <Category("LakeUI"), Description("选区缩放手柄的边框颜色。"), DefaultValue(GetType(Color), "200, 60, 60")>
     Public Property HandleBorderColor As Color
         Get
             Return _handleBorderColor
@@ -268,7 +263,7 @@ Public Class PixelPictureBox
 
     Private _handleSize As Integer = 10
     ''' <summary>获取或设置缩放手柄的屏幕边长；单位为控件客户区像素，不随图像缩放。</summary>
-    <Category("LakeUI"), DefaultValue(10)>
+    <Category("LakeUI"), Description("缩放手柄的屏幕边长，单位为控件客户区像素，不随图像缩放；最小为 1。"), DefaultValue(10)>
     Public Property HandleSize As Integer
         Get
             Return _handleSize
@@ -282,7 +277,7 @@ Public Class PixelPictureBox
 
     Private _handleHitTolerance As Integer = 6
     ''' <summary>获取或设置手柄可点击范围向外扩展的距离；单位为控件客户区像素。</summary>
-    <Category("LakeUI"), DefaultValue(6)>
+    <Category("LakeUI"), Description("手柄可点击范围向外扩展的距离，单位为控件客户区像素；最小为 0。"), DefaultValue(6)>
     Public Property HandleHitTolerance As Integer
         Get
             Return _handleHitTolerance
@@ -295,7 +290,7 @@ Public Class PixelPictureBox
 
     Private _borderHitTolerance As Integer = 6
     ''' <summary>获取或设置选区边框可拖动范围向内和向外扩展的距离；单位为控件客户区像素。</summary>
-    <Category("LakeUI"), DefaultValue(6)>
+    <Category("LakeUI"), Description("选区边框可拖动范围向内和向外扩展的距离，单位为控件客户区像素；最小为 1。"), DefaultValue(6)>
     Public Property BorderHitTolerance As Integer
         Get
             Return _borderHitTolerance
@@ -308,7 +303,7 @@ Public Class PixelPictureBox
 
     Private _showSelection As Boolean = True
     ''' <summary>获取或设置是否绘制和允许操作像素选区；右键绘制，左键拖动边框或缩放手柄。</summary>
-    <Category("LakeUI"), DefaultValue(True)>
+    <Category("LakeUI"), Description("是否绘制并允许操作像素选区；右键绘制，左键拖动边框或缩放手柄。"), DefaultValue(True)>
     Public Property ShowSelection As Boolean
         Get
             Return _showSelection
@@ -323,7 +318,7 @@ Public Class PixelPictureBox
 
     Private _selectionAspectRatio As Single
     ''' <summary>获取或设置绘制和缩放选区的宽高比；0 表示自由比例，正值表示宽度除以高度。</summary>
-    <Category("LakeUI"), DefaultValue(0.0F)>
+    <Category("LakeUI"), Description("绘制和缩放选区的宽高比；0 表示自由比例，正值表示宽度除以高度。"), DefaultValue(0.0F)>
     Public Property SelectionAspectRatio As Single
         Get
             Return _selectionAspectRatio
@@ -336,7 +331,7 @@ Public Class PixelPictureBox
 
     Private _selectionForceCenter As Boolean
     ''' <summary>获取或设置是否强制将选区置于源图像中心；启用后禁止通过边框移动选区，仍可缩放。</summary>
-    <Category("LakeUI"), DefaultValue(False)>
+    <Category("LakeUI"), Description("是否强制将选区置于源图像中心；启用后禁止通过边框移动选区，仍可缩放。"), DefaultValue(False)>
     Public Property SelectionForceCenter As Boolean
         Get
             Return _selectionForceCenter
@@ -495,7 +490,7 @@ Public Class PixelPictureBox
 
     Private _playAnimation As Boolean = True
     ''' <summary>获取或设置是否播放源的动图帧；暂停不影响缩放动画，源的帧间隔和循环次数决定播放节奏。</summary>
-    <Category("LakeUI"), DefaultValue(True)>
+    <Category("LakeUI"), Description("是否播放源的动图帧；暂停不影响缩放动画，帧间隔和循环次数由图像源决定。"), DefaultValue(True)>
     Public Property PlayAnimation As Boolean
         Get
             Return _playAnimation
@@ -542,13 +537,19 @@ Public Class PixelPictureBox
         End Set
     End Property
 
+    ''' <summary>标识像素选区的四个角。</summary>
     Public Enum SelectionCorner
+        ''' <summary>选区左上角。</summary>
         TopLeft
+        ''' <summary>选区右上角。</summary>
         TopRight
+        ''' <summary>选区左下角。</summary>
         BottomLeft
+        ''' <summary>选区右下角。</summary>
         BottomRight
     End Enum
 
+    ''' <summary>清空像素选区，恢复默认鼠标指针并触发 SelectionChanged 事件。</summary>
     Public Sub ClearSelection()
         _selectionRect = Rectangle.Empty
         Cursor = Cursors.Default
@@ -567,7 +568,8 @@ Public Class PixelPictureBox
     End Property
 
     ''' <summary>获取或设置显式 GPU 背景来源；指定后直接采样该来源，不叠加 BackColor1。Nothing 时使用自动父级背景和 BackColor1。</summary>
-    <DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+    <Category("LakeUI"), Description("显式 GPU 背景来源；指定后直接采样该来源，不叠加 BackColor1。Nothing 时使用父级背景和 BackColor1。"),
+     DefaultValue(GetType(Control), Nothing), Browsable(True)>
     Public Property BackgroundSource As Control
         Get
             Return _backgroundSource
@@ -585,11 +587,15 @@ Public Class PixelPictureBox
         End Get
     End Property
 
+    ''' <summary>查询显式设置的 GPU 背景来源。</summary>
+    ''' <param name="source">返回显式背景来源；未指定时为 Nothing。</param>
+    ''' <returns>已指定显式背景来源时为 True。</returns>
     Public Function TryGetBackgroundSource(ByRef source As Control) As Boolean Implements D3D_IBackgroundSourceProvider.TryGetBackgroundSource
         source = _backgroundSource
         Return source IsNot Nothing
     End Function
 
+    ''' <summary>通知控件图像源内容已变化并请求刷新；可从后台线程调用。</summary>
     Public Sub RequestSourceRefresh()
         SourceContentChanged(Me, EventArgs.Empty)
     End Sub
@@ -614,6 +620,8 @@ Public Class PixelPictureBox
         D3D_PaintBridge.PaintRenderable(e, Me, Me)
     End Sub
 
+    ''' <summary>在 GPU 绘制上下文中呈现背景、图像、选区和滚动条。</summary>
+    ''' <param name="context">当前帧的 GPU 绘制上下文。</param>
     Public Sub RenderGpu(context As D3D_PaintContext) Implements D3D_IGpuRenderable.RenderGpu
         If context Is Nothing OrElse Width <= 0 OrElse Height <= 0 Then Return
         Dim originalLinearColors = context.UseLinearColors
@@ -629,6 +637,7 @@ Public Class PixelPictureBox
         End Try
     End Sub
 
+    ''' <summary>获取 GPU 重绘范围，即控件客户区。</summary>
     Public Function GetRenderBounds() As Rectangle Implements D3D_IGpuInvalidationSource.GetRenderBounds
         Return ClientRectangle
     End Function
@@ -793,7 +802,10 @@ Public Class PixelPictureBox
 
     Private Function ViewportBounds() As RectangleF
         Dim full = FullViewportBounds()
-        Dim reserve = _scrollBarWidth * DpiScale() + 2
+        ' Keep the scrollbar inset from the viewport and the outer edge symmetric.
+        ' The track is placed two pixels after the viewport, so reserve the same
+        ' two-pixel inset after the track as well.
+        Dim reserve = _scrollBarWidth * DpiScale() + 4
         Return New RectangleF(full.X, full.Y, Math.Max(0, full.Width - If(_showVerticalScroll, reserve, 0)), Math.Max(0, full.Height - If(_showHorizontalScroll, reserve, 0)))
     End Function
 
@@ -851,7 +863,7 @@ Public Class PixelPictureBox
             Return False
         End If
         Dim full = FullViewportBounds()
-        Dim reserve = _scrollBarWidth * DpiScale() + 2
+        Dim reserve = _scrollBarWidth * DpiScale() + 4
         _showVerticalScroll = _source.Height * _zoom > full.Height + 0.001
         _showHorizontalScroll = _source.Width * _zoom > full.Width + 0.001
         If _showVerticalScroll AndAlso _source.Width * _zoom > full.Width - reserve Then _showHorizontalScroll = True
@@ -884,6 +896,10 @@ Public Class PixelPictureBox
         End If
     End Sub
 
+    ''' <summary>查询客户区指定位置对应的当前帧原始像素；位于视口或图像外、没有源或源无法提供像素时返回 False。</summary>
+    ''' <param name="location">控件客户区坐标。</param>
+    ''' <param name="pixel">查询成功时返回源像素及编码信息；失败时为默认值。</param>
+    ''' <returns>图像源成功提供像素时为 True。</returns>
     Public Function TryGetPixelAt(location As Point, ByRef pixel As PixelPicturePixel) As Boolean
         pixel = Nothing
         If _source Is Nothing OrElse Not ViewportBounds().Contains(location) Then Return False

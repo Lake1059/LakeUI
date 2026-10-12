@@ -219,13 +219,36 @@ Public Class UltraDetailListView
         <DefaultValue(False), Description("是否高亮（绘制高亮边框）")>
         Public Property Checked As Boolean = False
 
+        Friend Property Owner As UltraDetailListView
+        Private _selected As Boolean
+
+        ''' <summary>项的选中状态，与鼠标、键盘及列表级选择 API 同步；分组折叠时保留。</summary>
+        <DefaultValue(False), Description("是否选中此项")>
+        Public Property Selected As Boolean
+            Get
+                Return _selected
+            End Get
+            Set(value As Boolean)
+                If _selected = value Then Return
+                If Owner Is Nothing Then
+                    _selected = value
+                Else
+                    Owner.设置项选中(Me, value)
+                End If
+            End Set
+        End Property
+
+        Friend Sub 设置选中状态(value As Boolean)
+            _selected = value
+        End Sub
+
         <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
         Public Property Tag As Object = Nothing
 
-        ''' <summary>底部附加文本行，无视列宽与图标，以整行宽度显示在所有子项内容下方。</summary>
+        ''' <summary>底部附加文本行跨越所有列，不受图标影响，宽度限制为列宽总和。</summary>
         <DesignerSerializationVisibility(DesignerSerializationVisibility.Content),
          Editor(GetType(Design.CollectionEditor), GetType(UITypeEditor)),
-         Description("底部附加文本行，以整行宽度显示在所有内容下方")>
+         Description("底部附加文本行，在所有内容下方跨列显示，宽度不超过列宽总和")>
         Public Property BottomLines As New List(Of TextLine)
 
         Friend CachedHeight As Integer = -1
@@ -541,16 +564,9 @@ Public Class UltraDetailListView
             If Object.ReferenceEquals(changedSubItem, _editSubItem) Then 结束标签编辑(True)
         End If
 
-        ' 记录当前选中的项引用，用于重建后重新映射
-        Dim prevSelectedItems As List(Of ListItem) = Nothing
+        ' 记录当前锚点项引用；选中状态由项本身保存，折叠分组也不会丢失。
         Dim prevAnchorItem As ListItem = Nothing
-        If _selectedIndices.Count > 0 OrElse _selectionAnchor >= 0 Then
-            prevSelectedItems = New List(Of ListItem)(_selectedIndices.Count)
-            For Each idx In _selectedIndices
-                If idx >= 0 AndAlso idx < _displayRows.Count AndAlso _displayRows(idx).Type = DisplayRowType.Item Then
-                    prevSelectedItems.Add(_displayRows(idx).Item)
-                End If
-            Next
+        If _selectionAnchor >= 0 Then
             If _selectionAnchor >= 0 AndAlso _selectionAnchor < _displayRows.Count AndAlso
                _displayRows(_selectionAnchor).Type = DisplayRowType.Item Then
                 prevAnchorItem = _displayRows(_selectionAnchor).Item
@@ -618,27 +634,16 @@ Public Class UltraDetailListView
         ' 重建 (Spacing/Top) 布局缓存 —— 命中测试与可见行估算依赖此结构
         重建显示行布局()
 
-        ' 重新映射选中索引：用 Item -> 显示行索引 一次性查询表，避免 O(N²)
-        _selectedIndices.Clear()
-        _selectedMin = -1
-        If prevSelectedItems IsNot Nothing AndAlso (prevSelectedItems.Count > 0 OrElse prevAnchorItem IsNot Nothing) Then
-            Dim itemToRow As New Dictionary(Of ListItem, Integer)(_displayRows.Count)
+        ' 从项状态重建可见行索引，包括批量更新期间设置的初始选择。
+        重建选中索引()
+        _selectionAnchor = -1
+        If prevAnchorItem IsNot Nothing Then
             For i As Integer = 0 To _displayRows.Count - 1
-                If _displayRows(i).Type = DisplayRowType.Item Then itemToRow(_displayRows(i).Item) = i
-            Next
-            For Each it In prevSelectedItems
-                Dim ri As Integer
-                If itemToRow.TryGetValue(it, ri) Then
-                    If _selectedIndices.Add(ri) Then
-                        If _selectedMin = -1 OrElse ri < _selectedMin Then _selectedMin = ri
-                    End If
+                If _displayRows(i).Type = DisplayRowType.Item AndAlso _displayRows(i).Item Is prevAnchorItem Then
+                    _selectionAnchor = i
+                    Exit For
                 End If
             Next
-            _selectionAnchor = -1
-            If prevAnchorItem IsNot Nothing Then
-                Dim ai As Integer
-                If itemToRow.TryGetValue(prevAnchorItem, ai) Then _selectionAnchor = ai
-            End If
         End If
 
         校正滚动偏移()
@@ -844,6 +849,12 @@ Public Class UltraDetailListView
 
     Private Function AttachItem(item As ListItem) As Boolean
         If item Is Nothing Then Return False
+        item.Owner = Me
+        If Not 允许多选 AndAlso item.Selected Then
+            For Each other In _items
+                If other IsNot item Then other.设置选中状态(False)
+            Next
+        End If
         Dim changed As Boolean = False
         For Each subItem In item.SubItems
             changed = AttachSubItem(subItem) OrElse changed
@@ -863,6 +874,7 @@ Public Class UltraDetailListView
 
     Private Sub DetachItem(item As ListItem)
         If item Is Nothing Then Return
+        item.Owner = Nothing
         For Each subItem In item.SubItems
             DetachSubItem(subItem)
         Next
@@ -1058,6 +1070,7 @@ Public Class UltraDetailListView
 
     Private Function 计算底部文本行高度(item As ListItem, rowWidth As Integer) As Integer
         If item.BottomLines.Count = 0 Then Return 0
+        If _columns.Count > 0 Then rowWidth = 获取总列宽()
         Dim blW As Integer = rowWidth - Dpi(项内边距).Horizontal
         Dim flags As TextFormatFlags = 获取文本格式标志()
         Dim proposed As New Size(Math.Max(1, blW), Integer.MaxValue)
@@ -1067,6 +1080,15 @@ Public Class UltraDetailListView
             h += 测量文本行高度缓存(bl, proposed.Width, flags)
         Next
         Return h
+    End Function
+
+    Private Function 获取底部文本区域(rowRect As Rectangle, upperPartHeight As Integer) As Rectangle
+        确保列X缓存()
+        Dim pad = Dpi(项内边距)
+        Dim width = If(_columns.Count > 0, 获取总列宽(), rowRect.Width)
+        Dim y = rowRect.Y + pad.Top + upperPartHeight + Dpi(底部文本行间距)
+        Return New Rectangle(_columnXCache(0) + pad.Left, y,
+                             Math.Max(0, width - pad.Horizontal), Math.Max(0, rowRect.Bottom - pad.Bottom - y))
     End Function
 
     Private Function 测量文本行高度缓存(line As TextLine, width As Integer, flags As TextFormatFlags) As Integer
@@ -1911,13 +1933,16 @@ Public Class UltraDetailListView
         Set(value As Boolean)
             If 允许多选 = value Then Return
             允许多选 = value
-            If Not value AndAlso _selectedIndices.Count > 1 Then
-                Dim first = _selectedMin
-                _selectedIndices.Clear()
-                _selectedIndices.Add(first)
-                _selectedMin = first
-                请求GPU渲染()
-                RaiseEvent SelectedIndexChanged(Me, EventArgs.Empty)
+            If Not value Then
+                Dim selected = SelectedItems
+                If selected.Count > 1 Then
+                    For i = 1 To selected.Count - 1
+                        selected(i).设置选中状态(False)
+                    Next
+                    重建选中索引()
+                    请求GPU渲染()
+                    RaiseEvent SelectedIndexChanged(Me, EventArgs.Empty)
+                End If
             End If
         End Set
     End Property
@@ -2051,6 +2076,7 @@ Public Class UltraDetailListView
                 _selectedMin = value
                 _selectionAnchor = value
             End If
+            同步项选中状态()
             请求GPU渲染()
             RaiseEvent SelectedIndexChanged(Me, EventArgs.Empty)
         End Set
@@ -2079,9 +2105,9 @@ Public Class UltraDetailListView
         Get
             Dim n = _selectedIndices.Count
             Dim result As New List(Of ListItem)(n)
-            If n = 0 Then Return result
+            Dim visibleSelected As New HashSet(Of ListItem)
             ' 用一个数组排序避免 OrderBy 的 IEnumerable 分配
-            Dim arr(n - 1) As Integer
+            Dim arr As Integer() = If(n = 0, Array.Empty(Of Integer)(), New Integer(n - 1) {})
             Dim i As Integer = 0
             For Each idx In _selectedIndices
                 arr(i) = idx
@@ -2091,8 +2117,14 @@ Public Class UltraDetailListView
             For Each idx In arr
                 If idx >= 0 AndAlso idx < _displayRows.Count Then
                     Dim row = _displayRows(idx)
-                    If row.Type = DisplayRowType.Item Then result.Add(row.Item)
+                    If row.Type = DisplayRowType.Item AndAlso row.Item.Selected Then
+                        result.Add(row.Item)
+                        visibleSelected.Add(row.Item)
+                    End If
                 End If
+            Next
+            For Each item In _items
+                If item.Selected AndAlso Not visibleSelected.Contains(item) Then result.Add(item)
             Next
             Return result
         End Get
@@ -2139,10 +2171,60 @@ Public Class UltraDetailListView
             Next
             changed = True
         End If
+        changed = 同步项选中状态() OrElse changed
         If changed Then
             请求GPU渲染()
             RaiseEvent SelectedIndexChanged(Me, EventArgs.Empty)
         End If
+    End Sub
+
+    Private Sub 重建选中索引()
+        _selectedIndices.Clear()
+        _selectedMin = -1
+        For i = 0 To _displayRows.Count - 1
+            Dim row = _displayRows(i)
+            If row.Type = DisplayRowType.Item AndAlso row.Item.Selected Then
+                _selectedIndices.Add(i)
+                If _selectedMin = -1 Then _selectedMin = i
+            End If
+        Next
+    End Sub
+
+    Private Function 同步项选中状态() As Boolean
+        Dim selected As New HashSet(Of ListItem)
+        For Each index In _selectedIndices
+            If index >= 0 AndAlso index < _displayRows.Count AndAlso _displayRows(index).Type = DisplayRowType.Item Then
+                selected.Add(_displayRows(index).Item)
+            End If
+        Next
+        Dim changed = False
+        For Each item In _items
+            Dim value = selected.Contains(item)
+            If item.Selected <> value Then
+                item.设置选中状态(value)
+                changed = True
+            End If
+        Next
+        Return changed
+    End Function
+
+    Private _itemSelectionChanged As Boolean
+
+    Private Sub 设置项选中(item As ListItem, value As Boolean)
+        If value AndAlso Not 允许多选 Then
+            For Each other In _items
+                If other IsNot item Then other.设置选中状态(False)
+            Next
+        End If
+        item.设置选中状态(value)
+        If _updateCount > 0 Then
+            _itemSelectionChanged = True
+            Return
+        End If
+        重建选中索引()
+        _selectionAnchor = _selectedMin
+        请求GPU渲染()
+        RaiseEvent SelectedIndexChanged(Me, EventArgs.Empty)
     End Sub
 
 #End Region
@@ -2268,8 +2350,8 @@ Public Class UltraDetailListView
 #Region "布局计算"
 
     Private Function 获取边框内边距() As Integer
-        Dim s As Single = DpiScale()
-        Return CInt(Math.Max(边框宽度 * s, If(边框圆角半径 > 0, 边框圆角半径 * s / 2, 0)))
+        ' 圆角只影响外观；内容内缩由真实边框厚度和 Padding 决定。
+        Return Dpi(边框宽度)
     End Function
 
     Private Function 获取列标题区域() As Rectangle
@@ -2854,16 +2936,16 @@ Public Class UltraDetailListView
         Next
 
         If item.BottomLines.Count > 0 Then
-            Dim blX As Integer = rowRect.X + scaledPadding.Left
-            Dim blW As Integer = rowRect.Width - scaledPadding.Horizontal
-            Dim blY As Integer = rowRect.Y + scaledPadding.Top + upperPartH + Dpi(底部文本行间距)
+            Dim bottomRect = 获取底部文本区域(rowRect, upperPartH)
+            Dim blW As Integer = bottomRect.Width
+            Dim blY As Integer = bottomRect.Y
             For Each bl In item.BottomLines
                 blY += Dpi(文本行间距)
                 Dim lf As Font = If(bl.Font, Me.Font)
                 Dim lc As Color = If(bl.ForeColor <> Color.Empty, bl.ForeColor, 项文本颜色)
                 Dim lh As Integer = 测量文本行高度缓存(bl, blW, flags)
                 If Not String.IsNullOrEmpty(bl.Text) Then
-                    绘制可能截断文本_GPU(context, bl.Text, lf, New Rectangle(blX, blY, blW, lh), lc, flags)
+                    绘制可能截断文本_GPU(context, bl.Text, lf, New Rectangle(bottomRect.X, blY, blW, lh), lc, flags)
                 End If
                 blY += lh
             Next
@@ -3331,11 +3413,8 @@ Public Class UltraDetailListView
             Dim row = _displayRows(hitRow)
             If row.Type = DisplayRowType.Item Then
                 RaiseEvent ItemDoubleClick(Me, New ListItemEventArgs(row.Item, hitRow, 命中测试列(e.Location)))
-            ElseIf row.Type = DisplayRowType.GroupHeader Then
-                row.Group.IsCollapsed = Not row.Group.IsCollapsed
-                重建显示列表()
-                请求GPU渲染()
             End If
+            ' 分组已在 MouseDown 中切换，双击通知不能在抬起阶段再次切换。
         End If
     End Sub
 
@@ -3658,6 +3737,7 @@ Public Class UltraDetailListView
             End If
         Next
         _selectionAnchor = _selectedMin
+        同步项选中状态()
         RaiseEvent ItemOrderChanged(Me, EventArgs.Empty)
         RaiseEvent SelectedIndexChanged(Me, EventArgs.Empty)
     End Sub
@@ -4138,6 +4218,10 @@ Public Class UltraDetailListView
             _updateCount = 0
             重建显示列表()
             请求GPU渲染()
+            If _itemSelectionChanged Then
+                _itemSelectionChanged = False
+                RaiseEvent SelectedIndexChanged(Me, EventArgs.Empty)
+            End If
         End If
     End Sub
 
@@ -4446,19 +4530,20 @@ Public Class UltraDetailListView
                 lineY += lh
             Next
 
-            Return ""
+            Exit For
         Next
 
         ' 检测底部附加文本行区域
         If item.BottomLines.Count > 0 Then
-            Dim blW = rowRect.Width - scaledPadding.Horizontal
-            Dim blY = rowRect.Y + scaledPadding.Top + upperPartH + Dpi(底部文本行间距)
+            Dim bottomRect = 获取底部文本区域(rowRect, upperPartH)
+            Dim blW = bottomRect.Width
+            Dim blY = bottomRect.Y
             For Each bl In item.BottomLines
                 blY += Dpi(文本行间距)
                 Dim lf = If(bl.Font, Me.Font)
                 Dim lh = 测量文本行高度缓存(bl, blW, 获取文本格式标志())
-                If pt.Y >= blY AndAlso pt.Y < blY + lh Then
-                    Dim textRect As New Rectangle(rowRect.X + scaledPadding.Left, blY, blW, lh)
+                Dim textRect As New Rectangle(bottomRect.X, blY, blW, lh)
+                If textRect.Contains(pt) Then
                     Dim truncated = 检测文本截断(bl.Text, lf, blW, 获取文本格式标志())
                     If Not String.IsNullOrEmpty(truncated) Then sourceRect = textRect
                     Return truncated

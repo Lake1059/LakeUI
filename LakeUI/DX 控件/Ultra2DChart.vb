@@ -394,6 +394,19 @@ Public Class Ultra2DChart
             End Set
         End Property
 
+        Private _connectMissingValues As Boolean = False
+        <DefaultValue(False), Description("折线是否跨过缺失值连接有效数据点。")>
+        Public Property ConnectMissingValues As Boolean
+            Get
+                Return _connectMissingValues
+            End Get
+            Set(value As Boolean)
+                If _connectMissingValues = value Then Return
+                _connectMissingValues = value
+                NotifyDataChanged()
+            End Set
+        End Property
+
         <DefaultValue(""), Description("该系列值标签格式；为空时使用控件 ValueLabelFormat。")>
         Public Property ValueLabelFormat As String
             Get
@@ -1351,6 +1364,7 @@ Public Class Ultra2DChart
                 Dim currentSegment As New List(Of PointF)()
                 For i As Integer = layout.ViewStartIndex To layout.ViewEndIndex - 1
                     If i >= ser.Points.Count OrElse ser.Points(i) Is Nothing OrElse Not 是有效数值(ser.Points(i).Value) Then
+                        If ser.ConnectMissingValues Then Continue For
                         If currentSegment.Count > 0 Then
                             draw.LineSegments.Add(currentSegment)
                             currentSegment = New List(Of PointF)()
@@ -1784,6 +1798,10 @@ Public Class Ultra2DChart
     End Function
 
     Private Function 格式化悬停提示文本(series As ChartSeries, categoryIndex As Integer, value As Double) As String
+        If LineHoverTooltipFormatter IsNot Nothing Then
+            Dim customText = LineHoverTooltipFormatter.Invoke(series, categoryIndex, value)
+            If customText IsNot Nothing Then Return customText
+        End If
         Dim valueText = 格式化数值(value, If(String.IsNullOrEmpty(折线悬停值格式), If(String.IsNullOrEmpty(series.ValueLabelFormat), 值标签格式, series.ValueLabelFormat), 折线悬停值格式))
         Dim categoryText = 获取分类标签(categoryIndex)
 
@@ -2943,6 +2961,9 @@ Public Class Ultra2DChart
             SetValue(折线悬停值格式, If(value, ""))
         End Set
     End Property
+
+    <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+    Public Property LineHoverTooltipFormatter As Func(Of ChartSeries, Integer, Double, String)
 
     Private 折线悬停提示格式 As String = ""
     <Category("LakeUI"), Description("折线悬停提示格式。可用 {0}=系列名，{1}=分类标签，{2}=原始值，{3}=格式化值。"), DefaultValue(""), Browsable(True)>
