@@ -1,8 +1,9 @@
-Imports System.Collections.ObjectModel
+﻿Imports System.Collections.ObjectModel
 Imports System.ComponentModel
 Imports System.Drawing.Design
 Imports System.Drawing.Drawing2D
 Imports System.Globalization
+Imports System.Numerics
 Imports Vortice.Direct2D1
 
 <DefaultEvent("SelectedIndexChanged")>
@@ -10,6 +11,10 @@ Public Class UltraDetailListView
     Implements D3D_IGpuRenderable, D3D_IGpuInvalidationSource, D3D_ISuperSamplingSource, D3D_IBackgroundSourceProvider, V5_IGpuPresentationSource
 
     Public Event SelectedIndexChanged As EventHandler
+    ''' <summary>勾选状态改变前触发，可通过 NewValue 修改目标值或通过 Cancel 取消。</summary>
+    Public Event ItemCheck As EventHandler(Of ItemCheckEventArgs)
+    ''' <summary>项勾选状态实际改变后触发，包括鼠标、键盘和代码设置。</summary>
+    Public Event ItemCheckedChanged As EventHandler(Of ListItemEventArgs)
     Public Event ItemClick As EventHandler(Of ListItemEventArgs)
     Public Event ItemDoubleClick As EventHandler(Of ListItemEventArgs)
     Public Event ItemOrderChanged As EventHandler
@@ -27,6 +32,20 @@ Public Class UltraDetailListView
             Me.Item = item
             Me.DisplayRowIndex = displayRowIndex
             Me.ColumnIndex = columnIndex
+        End Sub
+    End Class
+
+    Public Class ItemCheckEventArgs
+        Inherits ListItemEventArgs
+
+        Public ReadOnly Property CurrentValue As Boolean
+        Public Property NewValue As Boolean
+        Public Property Cancel As Boolean
+
+        Public Sub New(item As ListItem, displayRowIndex As Integer, currentValue As Boolean, newValue As Boolean)
+            MyBase.New(item, displayRowIndex, 0)
+            Me.CurrentValue = currentValue
+            Me.NewValue = newValue
         End Sub
     End Class
 
@@ -199,10 +218,96 @@ Public Class UltraDetailListView
         End Function
     End Class
 
+    ''' <summary>项和分组可覆盖的复选框选中颜色；Color.Empty 表示继承上一级。</summary>
+    <TypeConverter(GetType(ExpandableObjectConverter))>
+    Public Class CheckBoxCheckedAppearance
+        Friend Property Owner As UltraDetailListView
+
+        Private _CheckBoxCheckedBackColor As Color = Color.Empty
+        <Category("LakeUI - CheckBox"), DefaultValue(GetType(Color), ""), Description("选中时操作框背景颜色，留空时继承上一级颜色")>
+        Public Property CheckBoxCheckedBackColor As Color
+            Get
+                Return _CheckBoxCheckedBackColor
+            End Get
+            Set(value As Color)
+                If _CheckBoxCheckedBackColor = value Then Return
+                _CheckBoxCheckedBackColor = value
+                If Owner IsNot Nothing Then Owner.请求GPU渲染()
+            End Set
+        End Property
+
+
+        Private _CheckBoxHoverCheckedBackColor As Color = Color.Empty
+        <Category("LakeUI - CheckBox"), DefaultValue(GetType(Color), ""), Description("鼠标移上时选中框背景颜色，留空时继承上一级颜色")>
+        Public Property CheckBoxHoverCheckedBackColor As Color
+            Get
+                Return _CheckBoxHoverCheckedBackColor
+            End Get
+            Set(value As Color)
+                If _CheckBoxHoverCheckedBackColor = value Then Return
+                _CheckBoxHoverCheckedBackColor = value
+                If Owner IsNot Nothing Then Owner.请求GPU渲染()
+            End Set
+        End Property
+
+        Private _CheckBoxPressedCheckedBackColor As Color = Color.Empty
+        <Category("LakeUI - CheckBox"), DefaultValue(GetType(Color), ""), Description("鼠标按下时选中框背景颜色，留空时继承上一级颜色")>
+        Public Property CheckBoxPressedCheckedBackColor As Color
+            Get
+                Return _CheckBoxPressedCheckedBackColor
+            End Get
+            Set(value As Color)
+                If _CheckBoxPressedCheckedBackColor = value Then Return
+                _CheckBoxPressedCheckedBackColor = value
+                If Owner IsNot Nothing Then Owner.请求GPU渲染()
+            End Set
+        End Property
+
+        Private _CheckBoxCheckMarkColor As Color = Color.Empty
+        <Category("LakeUI - CheckBox"), DefaultValue(GetType(Color), ""), Description("勾号颜色，留空时继承上一级颜色")>
+        Public Property CheckBoxCheckMarkColor As Color
+            Get
+                Return _CheckBoxCheckMarkColor
+            End Get
+            Set(value As Color)
+                If _CheckBoxCheckMarkColor = value Then Return
+                _CheckBoxCheckMarkColor = value
+                If Owner IsNot Nothing Then Owner.请求GPU渲染()
+            End Set
+        End Property
+
+        Private _CheckBoxHoverCheckMarkColor As Color = Color.Empty
+        <Category("LakeUI - CheckBox"), DefaultValue(GetType(Color), ""), Description("鼠标移上时勾号颜色，留空时继承上一级颜色")>
+        Public Property CheckBoxHoverCheckMarkColor As Color
+            Get
+                Return _CheckBoxHoverCheckMarkColor
+            End Get
+            Set(value As Color)
+                If _CheckBoxHoverCheckMarkColor = value Then Return
+                _CheckBoxHoverCheckMarkColor = value
+                If Owner IsNot Nothing Then Owner.请求GPU渲染()
+            End Set
+        End Property
+
+        Private _CheckBoxPressedCheckMarkColor As Color = Color.Empty
+        <Category("LakeUI - CheckBox"), DefaultValue(GetType(Color), ""), Description("鼠标按下时勾号颜色，留空时继承上一级颜色")>
+        Public Property CheckBoxPressedCheckMarkColor As Color
+            Get
+                Return _CheckBoxPressedCheckMarkColor
+            End Get
+            Set(value As Color)
+                If _CheckBoxPressedCheckMarkColor = value Then Return
+                _CheckBoxPressedCheckMarkColor = value
+                If Owner IsNot Nothing Then Owner.请求GPU渲染()
+            End Set
+        End Property
+    End Class
+
     ''' <summary>项 (对应一行)，与原版 ListViewItem 结构一致；
-    ''' 通过 Group 属性指定所属分组。</summary>
+    ''' 通过 GroupName 属性指定所属分组。</summary>
     <TypeConverter(GetType(ExpandableObjectConverter))>
     Public Class ListItem
+        Inherits CheckBoxCheckedAppearance
         <DesignerSerializationVisibility(DesignerSerializationVisibility.Content),
          Editor(GetType(Design.CollectionEditor), GetType(UITypeEditor)),
          Description("子项集合")>
@@ -216,10 +321,31 @@ Public Class UltraDetailListView
         <DefaultValue(GetType(Image), ""), Description("项图标")>
         Public Property Icon As Image = Nothing
 
-        <DefaultValue(False), Description("是否高亮（绘制高亮边框）")>
-        Public Property Checked As Boolean = False
+        Private _checked As Boolean
+        Private _changingChecked As Boolean
+        <DefaultValue(False), Description("复选框是否勾选")>
+        Public Property Checked As Boolean
+            Get
+                Return _checked
+            End Get
+            Set(value As Boolean)
+                If _checked = value OrElse _changingChecked Then Return
+                If Owner Is Nothing Then
+                    _checked = value
+                    Return
+                End If
+                _changingChecked = True
+                Try
+                    Owner.设置项勾选(Me, value)
+                Finally
+                    _changingChecked = False
+                End Try
+            End Set
+        End Property
 
-        Friend Property Owner As UltraDetailListView
+        Friend Sub 设置勾选状态(value As Boolean)
+            _checked = value
+        End Sub
         Private _selected As Boolean
 
         ''' <summary>项的选中状态，与鼠标、键盘及列表级选择 API 同步；分组折叠时保留。</summary>
@@ -296,6 +422,7 @@ Public Class UltraDetailListView
     ''' <summary>分组定义。项通过 ListItem.GroupName 引用此对象的 Name。</summary>
     <TypeConverter(GetType(ExpandableObjectConverter))>
     Public Class ListGroup
+        Inherits CheckBoxCheckedAppearance
         <DefaultValue(""), Description("分组名称，用于项的 GroupName 匹配")>
         Public Property Name As String = ""
 
@@ -462,18 +589,25 @@ Public Class UltraDetailListView
         End Sub
 
         Protected Overrides Sub InsertItem(index As Integer, item As ListGroup)
+            item.Owner = _owner
             MyBase.InsertItem(index, item)
             _owner.RefreshItems()
         End Sub
         Protected Overrides Sub RemoveItem(index As Integer)
+            Me(index).Owner = Nothing
             MyBase.RemoveItem(index)
             _owner.RefreshItems()
         End Sub
         Protected Overrides Sub SetItem(index As Integer, item As ListGroup)
+            Me(index).Owner = Nothing
+            item.Owner = _owner
             MyBase.SetItem(index, item)
             _owner.RefreshItems()
         End Sub
         Protected Overrides Sub ClearItems()
+            For Each group In Me
+                group.Owner = Nothing
+            Next
             MyBase.ClearItems()
             _owner.RefreshItems()
         End Sub
@@ -623,6 +757,7 @@ Public Class UltraDetailListView
                         _displayRows.Add(New DisplayRow With {
                             .Type = DisplayRowType.Item,
                             .Item = it,
+                            .Group = grp,
                             .ItemIndex = idx,
                             .Height = 计算项高度(it)
                         })
@@ -732,7 +867,7 @@ Public Class UltraDetailListView
     Private ReadOnly _groups As New ListGroupCollection(Me)
     Private ReadOnly _items As New ListItemCollection(Me)
 
-    <Category("LakeUI"), Description("列定义集合"),
+    <Category("LakeUI - Data"), Description("列定义集合"),
      DesignerSerializationVisibility(DesignerSerializationVisibility.Content),
      Editor(GetType(Design.CollectionEditor), GetType(UITypeEditor))>
     Public ReadOnly Property Columns As ListColumnCollection
@@ -741,7 +876,7 @@ Public Class UltraDetailListView
         End Get
     End Property
 
-    <Category("LakeUI"), Description("分组集合"),
+    <Category("LakeUI - Data"), Description("分组集合"),
      DesignerSerializationVisibility(DesignerSerializationVisibility.Content),
      Editor(GetType(Design.CollectionEditor), GetType(UITypeEditor))>
     Public ReadOnly Property Groups As ListGroupCollection
@@ -750,7 +885,7 @@ Public Class UltraDetailListView
         End Get
     End Property
 
-    <Category("LakeUI"), Description("项集合"),
+    <Category("LakeUI - Data"), Description("项集合"),
      DesignerSerializationVisibility(DesignerSerializationVisibility.Content),
      Editor(GetType(Design.CollectionEditor), GetType(UITypeEditor))>
     Public ReadOnly Property Items As ListItemCollection
@@ -875,6 +1010,9 @@ Public Class UltraDetailListView
     Private Sub DetachItem(item As ListItem)
         If item Is Nothing Then Return
         item.Owner = Nothing
+        Dim animation As D3D_AnimationHelper = Nothing
+        If _checkAnimations.Remove(item, animation) Then animation.Dispose()
+        If _pressedCheckItem Is item Then _pressedCheckItem = Nothing
         For Each subItem In item.SubItems
             DetachSubItem(subItem)
         Next
@@ -1068,6 +1206,15 @@ Public Class UltraDetailListView
         Return 0
     End Function
 
+    Private Function 获取复选框区域宽度() As Integer
+        If Not 显示复选框 Then Return 0
+        Return CInt(Math.Ceiling((操作框尺寸 + Math.Max(0, 框边框宽度) + 框文本间距) * DpiScale()))
+    End Function
+
+    Private Function 获取首列前缀宽度(item As ListItem) As Integer
+        Return 获取复选框区域宽度() + 获取图标区域宽度(item)
+    End Function
+
     Private Function 计算底部文本行高度(item As ListItem, rowWidth As Integer) As Integer
         If item.BottomLines.Count = 0 Then Return 0
         If _columns.Count > 0 Then rowWidth = 获取总列宽()
@@ -1189,13 +1336,6 @@ Public Class UltraDetailListView
         Return geo
     End Function
 
-
-    ''' <summary>D2D 绘制拖选框（半透明填充 + 边框）。</summary>
-
-    ''' <summary>D2D 绘制拖动排序指示线。</summary>
-
-    ''' <summary>D2D 绘制全部行的形状层（背景/选中/悬停/Checked 边框/分组背景与箭头/更多指示器渐变）。</summary>
-
     Private Sub 释放GDI缓存()
         _moreSymbolFont?.Dispose()
         _moreSymbolFont = Nothing
@@ -1234,7 +1374,7 @@ Public Class UltraDetailListView
 #Region "外观属性 - 边框"
 
     Private 边框颜色 As Color = Color.Gray
-    <Category("LakeUI"), Description("边框颜色"), DefaultValue(GetType(Color), "Gray"), Browsable(True)>
+    <Category("LakeUI - Appearance"), Description("边框颜色"), DefaultValue(GetType(Color), "Gray"), Browsable(True)>
     Public Property BorderColor As Color
         Get
             Return 边框颜色
@@ -1245,7 +1385,7 @@ Public Class UltraDetailListView
     End Property
 
     Private 边框宽度 As Integer = 1
-    <Category("LakeUI"), Description("边框宽度"), DefaultValue(GetType(Integer), "1"), Browsable(True)>
+    <Category("LakeUI - Appearance"), Description("边框宽度"), DefaultValue(GetType(Integer), "1"), Browsable(True)>
     Public Property BorderSize As Integer
         Get
             Return 边框宽度
@@ -1256,7 +1396,7 @@ Public Class UltraDetailListView
     End Property
 
     Private 边框圆角半径 As Integer = 0
-    <Category("LakeUI"), Description("边框圆角半径"), DefaultValue(GetType(Integer), "0"), Browsable(True)>
+    <Category("LakeUI - Appearance"), Description("边框圆角半径"), DefaultValue(GetType(Integer), "0"), Browsable(True)>
     Public Property BorderRadius As Integer
         Get
             Return 边框圆角半径
@@ -1271,7 +1411,7 @@ Public Class UltraDetailListView
 #Region "外观属性 - 背景"
 
     Private 背景颜色 As Color = Color.FromArgb(36, 36, 36)
-    <Category("LakeUI"), Description("背景颜色"), DefaultValue(GetType(Color), "36, 36, 36"), Browsable(True)>
+    <Category("LakeUI - Appearance"), Description("背景颜色"), DefaultValue(GetType(Color), "36, 36, 36"), Browsable(True)>
     Public Property BackgroundColor As Color
         Get
             Return 背景颜色
@@ -1286,7 +1426,7 @@ Public Class UltraDetailListView
     ''' 背景采样源（超容器背景映射）。设置后控件会通过 GPU 背景图采样此控件作为底图，
     ''' 从而实现跨越任意层级的"穿透显示"效果；为 Nothing 时不进行背景采样。
     ''' </summary>
-    <Category("LakeUI"),
+    <Category("LakeUI - Rendering"),
      Description("背景采样源（超容器背景映射）。设置后将跨越任意层级直接采样此控件的绘制内容作为透明背景；为空时不进行背景采样。"),
      DefaultValue(GetType(Control), Nothing), Browsable(True)>
     Public Property BackgroundSource As Control
@@ -1306,7 +1446,7 @@ Public Class UltraDetailListView
 #Region "外观属性 - 列标题"
 
     Private 列标题可见 As Boolean = True
-    <Category("LakeUI"), Description("是否显示列标题"), DefaultValue(True), Browsable(True)>
+    <Category("LakeUI - Header"), Description("是否显示列标题"), DefaultValue(True), Browsable(True)>
     Public Property HeaderVisible As Boolean
         Get
             Return 列标题可见
@@ -1317,7 +1457,7 @@ Public Class UltraDetailListView
     End Property
 
     Private 列标题高度 As Integer = 30
-    <Category("LakeUI"), Description("列标题高度"), DefaultValue(GetType(Integer), "30"), Browsable(True)>
+    <Category("LakeUI - Header"), Description("列标题高度"), DefaultValue(GetType(Integer), "30"), Browsable(True)>
     Public Property HeaderHeight As Integer
         Get
             Return 列标题高度
@@ -1328,7 +1468,7 @@ Public Class UltraDetailListView
     End Property
 
     Private 列标题背景颜色 As Color = Color.FromArgb(30, 30, 30)
-    <Category("LakeUI"), Description("列标题背景颜色"), DefaultValue(GetType(Color), "30, 30, 30"), Browsable(True)>
+    <Category("LakeUI - Header"), Description("列标题背景颜色"), DefaultValue(GetType(Color), "30, 30, 30"), Browsable(True)>
     Public Property HeaderBackColor As Color
         Get
             Return 列标题背景颜色
@@ -1339,7 +1479,7 @@ Public Class UltraDetailListView
     End Property
 
     Private 列标题文字颜色 As Color = Color.Silver
-    <Category("LakeUI"), Description("列标题文字颜色"), DefaultValue(GetType(Color), "Silver"), Browsable(True)>
+    <Category("LakeUI - Header"), Description("列标题文字颜色"), DefaultValue(GetType(Color), "Silver"), Browsable(True)>
     Public Property HeaderForeColor As Color
         Get
             Return 列标题文字颜色
@@ -1350,7 +1490,7 @@ Public Class UltraDetailListView
     End Property
 
     Private 列标题分隔线颜色 As Color = Color.FromArgb(60, 60, 60)
-    <Category("LakeUI"), Description("列标题分隔线颜色"), DefaultValue(GetType(Color), "60, 60, 60"), Browsable(True)>
+    <Category("LakeUI - Header"), Description("列标题分隔线颜色"), DefaultValue(GetType(Color), "60, 60, 60"), Browsable(True)>
     Public Property HeaderBorderColor As Color
         Get
             Return 列标题分隔线颜色
@@ -1361,7 +1501,7 @@ Public Class UltraDetailListView
     End Property
 
     Private 列标题分隔线宽度 As Integer = 1
-    <Category("LakeUI"), Description("列标题分隔线宽度"), DefaultValue(GetType(Integer), "1"), Browsable(True)>
+    <Category("LakeUI - Header"), Description("列标题分隔线宽度"), DefaultValue(GetType(Integer), "1"), Browsable(True)>
     Public Property HeaderBorderWidth As Integer
         Get
             Return 列标题分隔线宽度
@@ -1372,7 +1512,7 @@ Public Class UltraDetailListView
     End Property
 
     Private 允许调整列宽 As Boolean = True
-    <Category("LakeUI"), Description("是否允许用户拖动调整列宽"), DefaultValue(True), Browsable(True)>
+    <Category("LakeUI - Header"), Description("是否允许用户拖动调整列宽"), DefaultValue(True), Browsable(True)>
     Public Property AllowColumnResize As Boolean
         Get
             Return 允许调整列宽
@@ -1387,7 +1527,7 @@ Public Class UltraDetailListView
 #Region "外观属性 - 项"
 
     Private 项文本颜色 As Color = Color.Silver
-    <Category("LakeUI"), Description("项默认文本颜色"), DefaultValue(GetType(Color), "Silver"), Browsable(True)>
+    <Category("LakeUI - Item"), Description("项默认文本颜色"), DefaultValue(GetType(Color), "Silver"), Browsable(True)>
     Public Property ItemForeColor As Color
         Get
             Return 项文本颜色
@@ -1398,7 +1538,7 @@ Public Class UltraDetailListView
     End Property
 
     Private 项悬停背景颜色 As Color = Color.Empty
-    <Category("LakeUI"), Description("项鼠标悬停背景颜色"), DefaultValue(GetType(Color), ""), Browsable(True)>
+    <Category("LakeUI - Item"), Description("项鼠标悬停背景颜色"), DefaultValue(GetType(Color), ""), Browsable(True)>
     Public Property ItemHoverBackColor As Color
         Get
             Return 项悬停背景颜色
@@ -1409,7 +1549,7 @@ Public Class UltraDetailListView
     End Property
 
     Private 项选中背景颜色 As Color = Color.FromArgb(80, 80, 80)
-    <Category("LakeUI"), Description("项选中背景颜色"), DefaultValue(GetType(Color), "80, 80, 80"), Browsable(True)>
+    <Category("LakeUI - Item"), Description("项选中背景颜色"), DefaultValue(GetType(Color), "80, 80, 80"), Browsable(True)>
     Public Property ItemSelectedBackColor As Color
         Get
             Return 项选中背景颜色
@@ -1420,7 +1560,7 @@ Public Class UltraDetailListView
     End Property
 
     Private 项焦点圆角半径 As Integer = 0
-    <Category("LakeUI"), Description("项焦点背景圆角半径"), DefaultValue(GetType(Integer), "0"), Browsable(True)>
+    <Category("LakeUI - Item"), Description("项焦点背景圆角半径"), DefaultValue(GetType(Integer), "0"), Browsable(True)>
     Public Property ItemCornerRadius As Integer
         Get
             Return 项焦点圆角半径
@@ -1431,7 +1571,7 @@ Public Class UltraDetailListView
     End Property
 
     Private 项内边距 As New Padding(5)
-    <Category("LakeUI"), Description("项内部边距"), Browsable(True)>
+    <Category("LakeUI - Layout"), Description("项内部边距"), Browsable(True)>
     Public Property ItemPadding As Padding
         Get
             Return 项内边距
@@ -1446,7 +1586,7 @@ Public Class UltraDetailListView
     End Function
 
     Private 文本行间距 As Integer = 0
-    <Category("LakeUI"), Description("子项内文本行间距"), DefaultValue(GetType(Integer), "0"), Browsable(True)>
+    <Category("LakeUI - Layout"), Description("子项内文本行间距"), DefaultValue(GetType(Integer), "0"), Browsable(True)>
     Public Property TextLineSpacing As Integer
         Get
             Return 文本行间距
@@ -1457,7 +1597,7 @@ Public Class UltraDetailListView
     End Property
 
     Private 自动换行 As Boolean = True
-    <Category("LakeUI"), Description("是否自动换行"), DefaultValue(True), Browsable(True)>
+    <Category("LakeUI - Layout"), Description("是否自动换行"), DefaultValue(True), Browsable(True)>
     Public Property WordWrap As Boolean
         Get
             Return 自动换行
@@ -1468,7 +1608,7 @@ Public Class UltraDetailListView
     End Property
 
     Private 底部文本行间距 As Integer = 0
-    <Category("LakeUI"), Description("BottomLines与主体内容之间的距离"), DefaultValue(GetType(Integer), "0"), Browsable(True)>
+    <Category("LakeUI - Layout"), Description("BottomLines与主体内容之间的距离"), DefaultValue(GetType(Integer), "0"), Browsable(True)>
     Public Property BottomLinesSpacing As Integer
         Get
             Return 底部文本行间距
@@ -1479,7 +1619,7 @@ Public Class UltraDetailListView
     End Property
 
     Private 项间距 As Integer = 0
-    <Category("LakeUI"), Description("项之间的间距"), DefaultValue(GetType(Integer), "0"), Browsable(True)>
+    <Category("LakeUI - Layout"), Description("项之间的间距"), DefaultValue(GetType(Integer), "0"), Browsable(True)>
     Public Property ItemSpacing As Integer
         Get
             Return 项间距
@@ -1490,7 +1630,7 @@ Public Class UltraDetailListView
     End Property
 
     Private 内容边距 As New Padding(0, 10, 0, 10)
-    <Category("LakeUI"), Description("项列表区域的内边距（仅Top和Bottom生效）。值为-1时自动使用ItemPadding对应方向的值"), DefaultValue(GetType(Padding), "0, 10, 0, 10"), Browsable(True)>
+    <Category("LakeUI - Layout"), Description("项列表区域的内边距（仅Top和Bottom生效）。值为-1时自动使用ItemPadding对应方向的值"), DefaultValue(GetType(Padding), "0, 10, 0, 10"), Browsable(True)>
     Public Property ContentPadding As Padding
         Get
             Return 内容边距
@@ -1512,7 +1652,7 @@ Public Class UltraDetailListView
     End Function
 
     Private 图标尺寸 As New Size(32, 32)
-    <Category("LakeUI"), Description("项图标绘制尺寸"), Browsable(True)>
+    <Category("LakeUI - Layout"), Description("项图标绘制尺寸"), Browsable(True)>
     Public Property IconSize As Size
         Get
             Return 图标尺寸
@@ -1530,7 +1670,7 @@ Public Class UltraDetailListView
     End Sub
 
     Private 图标间距 As Integer = 5
-    <Category("LakeUI"), Description("项图标与文本之间的间距"), DefaultValue(GetType(Integer), "5"), Browsable(True)>
+    <Category("LakeUI - Layout"), Description("项图标与文本之间的间距"), DefaultValue(GetType(Integer), "5"), Browsable(True)>
     Public Property IconSpacing As Integer
         Get
             Return 图标间距
@@ -1542,36 +1682,289 @@ Public Class UltraDetailListView
 
 #End Region
 
-#Region "外观属性 - 项高亮边框"
-
-    Private 项高亮边框颜色 As Color = Color.CornflowerBlue
-    <Category("LakeUI"), Description("Checked=True时的高亮边框颜色"), DefaultValue(GetType(Color), "CornflowerBlue"), Browsable(True)>
-    Public Property CheckedBorderColor As Color
+#Region "复选框模式"
+    Private 显示复选框 As Boolean = False
+    <Category("LakeUI - CheckBox"), Description("全局启用复选框勾选模式"), DefaultValue(False), Browsable(True)>
+    Public Property CheckBoxVisible As Boolean
         Get
-            Return 项高亮边框颜色
+            Return 显示复选框
         End Get
-        Set(value As Color)
-            SetValue(项高亮边框颜色, value)
+        Set(value As Boolean)
+            If 显示复选框 = value Then Return
+            _pressedCheckItem = Nothing
+            _checkBoxMouseDown = False
+            Capture = False
+            For Each pair In _checkAnimations
+                pair.Value.SetImmediate(If(pair.Key.Checked, 1.0F, 0.0F))
+            Next
+            SetValueWithFullRebuild(显示复选框, value)
         End Set
     End Property
 
-    Private 项高亮边框宽度 As Integer = 1
-    <Category("LakeUI"), Description("Checked=True时的高亮边框宽度"), DefaultValue(GetType(Integer), "1"), Browsable(True)>
-    Public Property CheckedBorderWidth As Integer
+    <Browsable(False), EditorBrowsable(EditorBrowsableState.Never), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+    Public Property ShowCheckBox As Boolean
         Get
-            Return 项高亮边框宽度
+            Return CheckBoxVisible
+        End Get
+        Set(value As Boolean)
+            CheckBoxVisible = value
+        End Set
+    End Property
+
+    Private 允许任意区域点击 As Boolean = False
+    <Category("LakeUI - CheckBox"), Description("是否允许点击项任意区域切换勾选，默认仅复选框区域触发"), DefaultValue(False), Browsable(True)>
+    Public Property CheckBoxClickAnywhere As Boolean
+        Get
+            Return 允许任意区域点击
+        End Get
+        Set(value As Boolean)
+            SetValue(允许任意区域点击, value)
+        End Set
+    End Property
+#End Region
+
+#Region "操作框属性"
+    Private 操作框尺寸 As Integer = 16
+    <Category("LakeUI - CheckBox"), Description("操作框尺寸（逻辑像素）"), DefaultValue(16), Browsable(True)>
+    Public Property CheckBoxSize As Integer
+        Get
+            Return 操作框尺寸
         End Get
         Set(value As Integer)
-            SetValue(项高亮边框宽度, value)
+            SetValueWithFullRebuild(操作框尺寸, Math.Max(8, value))
         End Set
     End Property
 
+    Private 框圆角半径 As Integer = 2
+    <Category("LakeUI - CheckBox"), Description("复选框圆角半径"), DefaultValue(2), Browsable(True)>
+    Public Property CheckBoxBorderRadius As Integer
+        Get
+            Return 框圆角半径
+        End Get
+        Set(value As Integer)
+            SetValue(框圆角半径, value)
+        End Set
+    End Property
+
+    Private 框边框宽度 As Integer = 1
+    <Category("LakeUI - CheckBox"), Description("操作框边框宽度"), DefaultValue(1), Browsable(True)>
+    Public Property CheckBoxBorderSize As Integer
+        Get
+            Return 框边框宽度
+        End Get
+        Set(value As Integer)
+            SetValueWithFullRebuild(框边框宽度, value)
+        End Set
+    End Property
+
+    Private 框边框颜色值 As Color = Color.Gray
+    <Category("LakeUI - CheckBox"), Description("操作框边框颜色"), DefaultValue(GetType(Color), "Gray"), Browsable(True)>
+    Public Property CheckBoxBorderColor As Color
+        Get
+            Return 框边框颜色值
+        End Get
+        Set(value As Color)
+            SetValue(框边框颜色值, value)
+        End Set
+    End Property
+
+    Private 框文本间距 As Integer = 6
+    <Category("LakeUI - CheckBox"), Description("操作框与文本之间的间距"), DefaultValue(6), Browsable(True)>
+    Public Property CheckBoxTextSpacing As Integer
+        Get
+            Return 框文本间距
+        End Get
+        Set(value As Integer)
+            SetValueWithFullRebuild(框文本间距, value)
+        End Set
+    End Property
+
+    Private 框内边距 As Integer = 3
+    <Category("LakeUI - CheckBox"), Description("操作框内部边距，控制勾号四周的间距"), DefaultValue(3), Browsable(True)>
+    Public Property CheckBoxInnerPadding As Integer
+        Get
+            Return 框内边距
+        End Get
+        Set(value As Integer)
+            SetValue(框内边距, Math.Max(0, value))
+        End Set
+    End Property
 #End Region
+
+#Region "框背景颜色属性"
+    Private 选中时框背景颜色 As Color = Color.FromArgb(0, 120, 215)
+    <Category("LakeUI - CheckBox"), Description("选中时操作框背景颜色"), DefaultValue(GetType(Color), "0, 120, 215"), Browsable(True)>
+    Public Property CheckBoxCheckedBackColor As Color
+        Get
+            Return 选中时框背景颜色
+        End Get
+        Set(value As Color)
+            SetValue(选中时框背景颜色, value)
+        End Set
+    End Property
+
+    Private 未选中时框背景颜色 As Color = Color.FromArgb(50, 50, 50)
+    <Category("LakeUI - CheckBox"), Description("未选中时操作框背景颜色"), DefaultValue(GetType(Color), "50, 50, 50"), Browsable(True)>
+    Public Property CheckBoxUncheckedBackColor As Color
+        Get
+            Return 未选中时框背景颜色
+        End Get
+        Set(value As Color)
+            SetValue(未选中时框背景颜色, value)
+        End Set
+    End Property
+#End Region
+
+#Region "勾号/圆点属性"
+    Private 勾号颜色值 As Color = Color.White
+    <Category("LakeUI - CheckBox"), Description("勾号颜色"), DefaultValue(GetType(Color), "White"), Browsable(True)>
+    Public Property CheckBoxCheckMarkColor As Color
+        Get
+            Return 勾号颜色值
+        End Get
+        Set(value As Color)
+            SetValue(勾号颜色值, value)
+        End Set
+    End Property
+
+    Private 勾号线宽 As Single = 2.0F
+    <Category("LakeUI - CheckBox"), Description("勾号线条宽度（逻辑像素）"), DefaultValue(2.0F), Browsable(True)>
+    Public Property CheckBoxCheckMarkWidth As Single
+        Get
+            Return 勾号线宽
+        End Get
+        Set(value As Single)
+            SetValue(勾号线宽, Math.Max(0.5F, value))
+        End Set
+    End Property
+#End Region
+
+#Region "交互状态颜色属性"
+    Private 鼠标移上时选中框背景颜色 As Color = Color.Empty
+    <Category("LakeUI - CheckBox"), Description("鼠标移上时选中框背景颜色"), DefaultValue(GetType(Color), ""), Browsable(True)>
+    Public Property CheckBoxHoverCheckedBackColor As Color
+        Get
+            Return 鼠标移上时选中框背景颜色
+        End Get
+        Set(value As Color)
+            SetValue(鼠标移上时选中框背景颜色, value)
+        End Set
+    End Property
+
+    Private 鼠标移上时未选中框背景颜色 As Color = Color.Empty
+    <Category("LakeUI - CheckBox"), Description("鼠标移上时未选中框背景颜色"), DefaultValue(GetType(Color), ""), Browsable(True)>
+    Public Property CheckBoxHoverUncheckedBackColor As Color
+        Get
+            Return 鼠标移上时未选中框背景颜色
+        End Get
+        Set(value As Color)
+            SetValue(鼠标移上时未选中框背景颜色, value)
+        End Set
+    End Property
+
+    Private 鼠标移上时框边框颜色 As Color = Color.Empty
+    <Category("LakeUI - CheckBox"), Description("鼠标移上时框边框颜色"), DefaultValue(GetType(Color), ""), Browsable(True)>
+    Public Property CheckBoxHoverBorderColor As Color
+        Get
+            Return 鼠标移上时框边框颜色
+        End Get
+        Set(value As Color)
+            SetValue(鼠标移上时框边框颜色, value)
+        End Set
+    End Property
+
+    Private 鼠标移上时勾号颜色 As Color = Color.Empty
+    <Category("LakeUI - CheckBox"), Description("鼠标移上时勾号颜色"), DefaultValue(GetType(Color), ""), Browsable(True)>
+    Public Property CheckBoxHoverCheckMarkColor As Color
+        Get
+            Return 鼠标移上时勾号颜色
+        End Get
+        Set(value As Color)
+            SetValue(鼠标移上时勾号颜色, value)
+        End Set
+    End Property
+
+    Private 鼠标按下时选中框背景颜色 As Color = Color.Empty
+    <Category("LakeUI - CheckBox"), Description("鼠标按下时选中框背景颜色"), DefaultValue(GetType(Color), ""), Browsable(True)>
+    Public Property CheckBoxPressedCheckedBackColor As Color
+        Get
+            Return 鼠标按下时选中框背景颜色
+        End Get
+        Set(value As Color)
+            SetValue(鼠标按下时选中框背景颜色, value)
+        End Set
+    End Property
+
+    Private 鼠标按下时未选中框背景颜色 As Color = Color.Empty
+    <Category("LakeUI - CheckBox"), Description("鼠标按下时未选中框背景颜色"), DefaultValue(GetType(Color), ""), Browsable(True)>
+    Public Property CheckBoxPressedUncheckedBackColor As Color
+        Get
+            Return 鼠标按下时未选中框背景颜色
+        End Get
+        Set(value As Color)
+            SetValue(鼠标按下时未选中框背景颜色, value)
+        End Set
+    End Property
+
+    Private 鼠标按下时框边框颜色 As Color = Color.Empty
+    <Category("LakeUI - CheckBox"), Description("鼠标按下时框边框颜色"), DefaultValue(GetType(Color), ""), Browsable(True)>
+    Public Property CheckBoxPressedBorderColor As Color
+        Get
+            Return 鼠标按下时框边框颜色
+        End Get
+        Set(value As Color)
+            SetValue(鼠标按下时框边框颜色, value)
+        End Set
+    End Property
+
+    Private 鼠标按下时勾号颜色 As Color = Color.Empty
+    <Category("LakeUI - CheckBox"), Description("鼠标按下时勾号颜色"), DefaultValue(GetType(Color), ""), Browsable(True)>
+    Public Property CheckBoxPressedCheckMarkColor As Color
+        Get
+            Return 鼠标按下时勾号颜色
+        End Get
+        Set(value As Color)
+            SetValue(鼠标按下时勾号颜色, value)
+        End Set
+    End Property
+
+    Private 禁用时遮罩颜色 As Color = Color.FromArgb(120, 0, 0, 0)
+    <Category("LakeUI - CheckBox"), Description("禁用（Enabled = False）时覆盖在复选框区域上的遮罩颜色。"), DefaultValue(GetType(Color), "120, 0, 0, 0"), Browsable(True)>
+    Public Property CheckBoxDisabledOverlayColor As Color
+        Get
+            Return 禁用时遮罩颜色
+        End Get
+        Set(value As Color)
+            SetValue(禁用时遮罩颜色, value)
+        End Set
+    End Property
+#End Region
+
+    ' 保留旧 API 的设计器兼容性，迁移到复选框外观。
+    <Browsable(False), EditorBrowsable(EditorBrowsableState.Never), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+    Public Property CheckedBorderColor As Color
+        Get
+            Return CheckBoxCheckedBackColor
+        End Get
+        Set(value As Color)
+            CheckBoxCheckedBackColor = value
+        End Set
+    End Property
+
+    <Browsable(False), EditorBrowsable(EditorBrowsableState.Never), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
+    Public Property CheckedBorderWidth As Integer
+        Get
+            Return CheckBoxBorderSize
+        End Get
+        Set(value As Integer)
+            CheckBoxBorderSize = value
+        End Set
+    End Property
 
 #Region "外观属性 - 分组"
 
     Private 分组标题高度 As Integer = 30
-    <Category("LakeUI"), Description("分组标题高度"), DefaultValue(GetType(Integer), "30"), Browsable(True)>
+    <Category("LakeUI - Group"), Description("分组标题高度"), DefaultValue(GetType(Integer), "30"), Browsable(True)>
     Public Property GroupHeight As Integer
         Get
             Return 分组标题高度
@@ -1582,7 +1975,7 @@ Public Class UltraDetailListView
     End Property
 
     Private 分组背景颜色 As Color = Color.FromArgb(25, 25, 25)
-    <Category("LakeUI"), Description("分组标题背景颜色"), DefaultValue(GetType(Color), "25, 25, 25"), Browsable(True)>
+    <Category("LakeUI - Group"), Description("分组标题背景颜色"), DefaultValue(GetType(Color), "25, 25, 25"), Browsable(True)>
     Public Property GroupBackColor As Color
         Get
             Return 分组背景颜色
@@ -1593,7 +1986,7 @@ Public Class UltraDetailListView
     End Property
 
     Private 分组文字颜色 As Color = Color.CornflowerBlue
-    <Category("LakeUI"), Description("分组标题文字颜色"), DefaultValue(GetType(Color), "CornflowerBlue"), Browsable(True)>
+    <Category("LakeUI - Group"), Description("分组标题文字颜色"), DefaultValue(GetType(Color), "CornflowerBlue"), Browsable(True)>
     Public Property GroupForeColor As Color
         Get
             Return 分组文字颜色
@@ -1604,7 +1997,7 @@ Public Class UltraDetailListView
     End Property
 
     Private 分组分隔线颜色 As Color = Color.FromArgb(80, 80, 80)
-    <Category("LakeUI"), Description("分组标题底部分隔线颜色"), DefaultValue(GetType(Color), "80, 80, 80"), Browsable(True)>
+    <Category("LakeUI - Group"), Description("分组标题底部分隔线颜色"), DefaultValue(GetType(Color), "80, 80, 80"), Browsable(True)>
     Public Property GroupBorderColor As Color
         Get
             Return 分组分隔线颜色
@@ -1619,7 +2012,7 @@ Public Class UltraDetailListView
 #Region "外观属性 - 滚动条"
 
     Private 滚动条宽度 As Integer = 10
-    <Category("LakeUI"), Description("滚动条宽度"), DefaultValue(GetType(Integer), "10"), Browsable(True)>
+    <Category("LakeUI - ScrollBar"), Description("滚动条宽度"), DefaultValue(GetType(Integer), "10"), Browsable(True)>
     Public Property ScrollBarWidth As Integer
         Get
             Return 滚动条宽度
@@ -1631,7 +2024,7 @@ Public Class UltraDetailListView
 
     Private Shared ReadOnly 默认滚动条轨道颜色 As Color = Color.FromArgb(20, 20, 20)
     Private 滚动条轨道颜色 As Color = 默认滚动条轨道颜色
-    <Category("LakeUI"), Description("滚动条轨道颜色"), Browsable(True)>
+    <Category("LakeUI - ScrollBar"), Description("滚动条轨道颜色"), Browsable(True)>
     Public Property ScrollBarTrackColor As Color
         Get
             Return 滚动条轨道颜色
@@ -1651,7 +2044,7 @@ Public Class UltraDetailListView
 
     Private Shared ReadOnly 默认滚动条滑块颜色 As Color = Color.FromArgb(80, 80, 80)
     Private 滚动条滑块颜色 As Color = 默认滚动条滑块颜色
-    <Category("LakeUI"), Description("滚动条滑块颜色"), Browsable(True)>
+    <Category("LakeUI - ScrollBar"), Description("滚动条滑块颜色"), Browsable(True)>
     Public Property ScrollBarThumbColor As Color
         Get
             Return 滚动条滑块颜色
@@ -1671,7 +2064,7 @@ Public Class UltraDetailListView
 
     Private Shared ReadOnly 默认滚动条悬停颜色 As Color = Color.FromArgb(120, 120, 120)
     Private 滚动条悬停颜色 As Color = 默认滚动条悬停颜色
-    <Category("LakeUI"), Description("滚动条滑块悬停颜色"), Browsable(True)>
+    <Category("LakeUI - ScrollBar"), Description("滚动条滑块悬停颜色"), Browsable(True)>
     Public Property ScrollBarThumbHoverColor As Color
         Get
             Return 滚动条悬停颜色
@@ -1694,7 +2087,7 @@ Public Class UltraDetailListView
 #Region "外观属性 - 更多指示器"
 
     Private 更多指示器高度 As Integer = 20
-    <Category("LakeUI"), Description("更多内容指示器高度"), DefaultValue(GetType(Integer), "20"), Browsable(True)>
+    <Category("LakeUI - ScrollBar"), Description("更多内容指示器高度"), DefaultValue(GetType(Integer), "20"), Browsable(True)>
     Public Property MoreIndicatorHeight As Integer
         Get
             Return 更多指示器高度
@@ -1705,7 +2098,7 @@ Public Class UltraDetailListView
     End Property
 
     Private 更多指示器颜色 As Color = Color.FromArgb(120, 120, 120)
-    <Category("LakeUI"), Description("更多内容指示器文字颜色"), DefaultValue(GetType(Color), "120, 120, 120"), Browsable(True)>
+    <Category("LakeUI - ScrollBar"), Description("更多内容指示器文字颜色"), DefaultValue(GetType(Color), "120, 120, 120"), Browsable(True)>
     Public Property MoreIndicatorColor As Color
         Get
             Return 更多指示器颜色
@@ -1720,7 +2113,7 @@ Public Class UltraDetailListView
 #Region "外观属性 - 拖选框"
 
     Private 选框填充颜色 As Color = Color.FromArgb(64, 255, 255, 255)
-    <Category("LakeUI"), Description("拖选框填充颜色（半透明）"), DefaultValue(GetType(Color), "64, 255, 255, 255"), Browsable(True)>
+    <Category("LakeUI - Selection"), Description("拖选框填充颜色（半透明）"), DefaultValue(GetType(Color), "64, 255, 255, 255"), Browsable(True)>
     Public Property SelectionRectFillColor As Color
         Get
             Return 选框填充颜色
@@ -1731,7 +2124,7 @@ Public Class UltraDetailListView
     End Property
 
     Private 选框边框颜色 As Color = Color.CornflowerBlue
-    <Category("LakeUI"), Description("拖选框边框颜色"), DefaultValue(GetType(Color), "CornflowerBlue"), Browsable(True)>
+    <Category("LakeUI - Selection"), Description("拖选框边框颜色"), DefaultValue(GetType(Color), "CornflowerBlue"), Browsable(True)>
     Public Property SelectionRectBorderColor As Color
         Get
             Return 选框边框颜色
@@ -1746,7 +2139,7 @@ Public Class UltraDetailListView
 #Region "外观属性 - 拖动排序"
 
     Private 拖动排序指示线颜色 As Color = Color.CornflowerBlue
-    <Category("LakeUI"), Description("拖动排序时的插入位置指示线颜色"), DefaultValue(GetType(Color), "CornflowerBlue"), Browsable(True)>
+    <Category("LakeUI - DragReorder"), Description("拖动排序时的插入位置指示线颜色"), DefaultValue(GetType(Color), "CornflowerBlue"), Browsable(True)>
     Public Property DragReorderLineColor As Color
         Get
             Return 拖动排序指示线颜色
@@ -1757,7 +2150,7 @@ Public Class UltraDetailListView
     End Property
 
     Private 拖动排序指示线宽 As Integer = 2
-    <Category("LakeUI"), Description("拖动排序指示线宽"), DefaultValue(GetType(Integer), "2"), Browsable(True)>
+    <Category("LakeUI - DragReorder"), Description("拖动排序指示线宽"), DefaultValue(GetType(Integer), "2"), Browsable(True)>
     Public Property DragReorderLineWidth As Integer
         Get
             Return 拖动排序指示线宽
@@ -1772,7 +2165,7 @@ Public Class UltraDetailListView
 #Region "外观属性 - 动画"
 
     Private 动画时长 As Integer = 0
-    <Category("LakeUI"), Description(GlobalOptions.动画时长描述词), DefaultValue(GetType(Integer), "0"), Browsable(True)>
+    <Category("LakeUI - Animation"), Description(GlobalOptions.动画时长描述词), DefaultValue(GetType(Integer), "0"), Browsable(True)>
     Public Property AnimationDuration As Integer
         Get
             Return 动画时长
@@ -1780,16 +2173,22 @@ Public Class UltraDetailListView
         Set(value As Integer)
             动画时长 = Math.Max(0, value)
             _hoverAnim.Duration = 动画时长
+            For Each animation In _checkAnimations.Values
+                animation.Duration = 动画时长
+            Next
         End Set
     End Property
 
-    <Category("LakeUI"), Description(GlobalOptions.动画帧率描述词), DefaultValue(60), Browsable(True)>
+    <Category("LakeUI - Animation"), Description(GlobalOptions.动画帧率描述词), DefaultValue(60), Browsable(True)>
     Public Property AnimationFPS As Integer
         Get
             Return _hoverAnim.FPS
         End Get
         Set(value As Integer)
             _hoverAnim.FPS = Math.Max(0, value)
+            For Each animation In _checkAnimations.Values
+                animation.FPS = _hoverAnim.FPS
+            Next
         End Set
     End Property
 
@@ -1798,7 +2197,7 @@ Public Class UltraDetailListView
 #Region "外观属性 - SSAA"
 
     Private 超采样倍率 As Integer = 1
-    <Category("LakeUI"), Description(GlobalOptions.超采样抗锯齿描述词), DefaultValue(GetType(GlobalOptions.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
+    <Category("LakeUI - Rendering"), Description(GlobalOptions.超采样抗锯齿描述词), DefaultValue(GetType(GlobalOptions.SuperSamplingScaleEnum), "OFF"), Browsable(True)>
     Public Property SuperSamplingScale As GlobalOptions.SuperSamplingScaleEnum Implements D3D_ISuperSamplingSource.SuperSamplingScale
         Get
             Return 超采样倍率
@@ -1813,7 +2212,7 @@ Public Class UltraDetailListView
 #Region "外观属性 - 工具提示"
 
     Private 提示背景颜色 As Color = Color.FromArgb(50, 50, 50)
-    <Category("LakeUI"), Description("工具提示背景颜色"), DefaultValue(GetType(Color), "50,50,50"), Browsable(True)>
+    <Category("LakeUI - ToolTip"), Description("工具提示背景颜色"), DefaultValue(GetType(Color), "50,50,50"), Browsable(True)>
     Public Property ToolTipBackColor As Color
         Get
             Return 提示背景颜色
@@ -1825,7 +2224,7 @@ Public Class UltraDetailListView
     End Property
 
     Private 提示文本颜色 As Color = Color.Silver
-    <Category("LakeUI"), Description("工具提示文本颜色"), DefaultValue(GetType(Color), "Silver"), Browsable(True)>
+    <Category("LakeUI - ToolTip"), Description("工具提示文本颜色"), DefaultValue(GetType(Color), "Silver"), Browsable(True)>
     Public Property ToolTipForeColor As Color
         Get
             Return 提示文本颜色
@@ -1837,7 +2236,7 @@ Public Class UltraDetailListView
     End Property
 
     Private 提示边框颜色 As Color = Color.Gray
-    <Category("LakeUI"), Description("工具提示边框颜色"), DefaultValue(GetType(Color), "Gray"), Browsable(True)>
+    <Category("LakeUI - ToolTip"), Description("工具提示边框颜色"), DefaultValue(GetType(Color), "Gray"), Browsable(True)>
     Public Property ToolTipBorderColor As Color
         Get
             Return 提示边框颜色
@@ -1849,7 +2248,7 @@ Public Class UltraDetailListView
     End Property
 
     Private 提示边框宽度 As Integer = 1
-    <Category("LakeUI"), Description("工具提示边框宽度"), DefaultValue(GetType(Integer), "1"), Browsable(True)>
+    <Category("LakeUI - ToolTip"), Description("工具提示边框宽度"), DefaultValue(GetType(Integer), "1"), Browsable(True)>
     Public Property ToolTipBorderSize As Integer
         Get
             Return 提示边框宽度
@@ -1861,7 +2260,7 @@ Public Class UltraDetailListView
     End Property
 
     Private 提示圆角半径 As Integer = 0
-    <Category("LakeUI"), Description("工具提示圆角半径"), DefaultValue(GetType(Integer), "0"), Browsable(True)>
+    <Category("LakeUI - ToolTip"), Description("工具提示圆角半径"), DefaultValue(GetType(Integer), "0"), Browsable(True)>
     Public Property ToolTipBorderRadius As Integer
         Get
             Return 提示圆角半径
@@ -1873,7 +2272,7 @@ Public Class UltraDetailListView
     End Property
 
     Private 提示内边距 As New Padding(10, 10, 10, 10)
-    <Category("LakeUI"), Description("工具提示内边距"), DefaultValue(GetType(Padding), "10, 10, 10, 10"), Browsable(True)>
+    <Category("LakeUI - ToolTip"), Description("工具提示内边距"), DefaultValue(GetType(Padding), "10, 10, 10, 10"), Browsable(True)>
     Public Property ToolTipPadding As Padding
         Get
             Return 提示内边距
@@ -1885,7 +2284,7 @@ Public Class UltraDetailListView
     End Property
 
     Private 提示最大宽度 As Integer = 300
-    <Category("LakeUI"), Description("工具提示最大宽度"), DefaultValue(GetType(Integer), "300"), Browsable(True)>
+    <Category("LakeUI - ToolTip"), Description("工具提示最大宽度"), DefaultValue(GetType(Integer), "300"), Browsable(True)>
     Public Property ToolTipMaxWidth As Integer
         Get
             Return 提示最大宽度
@@ -1897,7 +2296,7 @@ Public Class UltraDetailListView
     End Property
 
     Private 提示出现等待秒数 As Double = 0.5R
-    <Category("LakeUI"), Description("鼠标停留在被截断文本上后，显示工具提示前等待的秒数；0 表示立即显示"), DefaultValue(0.5R), Browsable(True)>
+    <Category("LakeUI - ToolTip"), Description("鼠标停留在被截断文本上后，显示工具提示前等待的秒数；0 表示立即显示"), DefaultValue(0.5R), Browsable(True)>
     Public Property ToolTipShowDelaySeconds As Double
         Get
             Return 提示出现等待秒数
@@ -1925,7 +2324,7 @@ Public Class UltraDetailListView
 #Region "行为属性"
 
     Private 允许多选 As Boolean = True
-    <Category("LakeUI"), Description("是否允许多选"), DefaultValue(True), Browsable(True)>
+    <Category("LakeUI - Selection"), Description("是否允许多选"), DefaultValue(True), Browsable(True)>
     Public Property MultiSelect As Boolean
         Get
             Return 允许多选
@@ -1948,7 +2347,7 @@ Public Class UltraDetailListView
     End Property
 
     Private 允许拖动排序 As Boolean = False
-    <Category("LakeUI"), Description("是否允许拖动排序（仅在同一分组内）"), DefaultValue(False), Browsable(True)>
+    <Category("LakeUI - DragReorder"), Description("是否允许拖动排序（仅在同一分组内）"), DefaultValue(False), Browsable(True)>
     Public Property AllowDragReorder As Boolean
         Get
             Return 允许拖动排序
@@ -1959,7 +2358,7 @@ Public Class UltraDetailListView
     End Property
 
     Private 拖选区域宽度 As Integer = 30
-    <Category("LakeUI"), Description("同时启用多选和拖动排序时，控件右侧强制框选区域的宽度（96 DPI 逻辑像素；DragSelectZoneRatio 为 0 时生效）"), DefaultValue(GetType(Integer), "30"), Browsable(True)>
+    <Category("LakeUI - Selection"), Description("同时启用多选和拖动排序时，控件右侧强制框选区域的宽度（96 DPI 逻辑像素；DragSelectZoneRatio 为 0 时生效）"), DefaultValue(GetType(Integer), "30"), Browsable(True)>
     Public Property DragSelectZoneWidth As Integer
         Get
             Return 拖选区域宽度
@@ -1970,7 +2369,7 @@ Public Class UltraDetailListView
     End Property
 
     Private 拖选区域比例 As Single = 0.0F
-    <Category("LakeUI"), Description("右侧强制框选区域占可见内容宽度的比例（0 到 1）；0 使用 DragSelectZoneWidth，0.5 表示左右各半，自动适应尺寸和 DPI"), DefaultValue(0.0F), Browsable(True)>
+    <Category("LakeUI - Selection"), Description("右侧强制框选区域占可见内容宽度的比例（0 到 1）；0 使用 DragSelectZoneWidth，0.5 表示左右各半，自动适应尺寸和 DPI"), DefaultValue(0.0F), Browsable(True)>
     Public Property DragSelectZoneRatio As Single
         Get
             Return 拖选区域比例
@@ -2243,7 +2642,7 @@ Public Class UltraDetailListView
             Dim sub_ = item.SubItems(i)
             Dim colW As Integer = If(colCount > 0 AndAlso i < colCount, _columns(i).Width, contentW)
             Dim availW As Integer = colW - scaledPadding.Horizontal
-            If i = 0 Then availW -= iconAreaW
+            If i = 0 Then availW -= 获取首列前缀宽度(item)
             Dim isFixed As Boolean = (colCount > 0 AndAlso i < colCount AndAlso _columns(i).WordWrapHeightFixed)
             If Not isFixed Then
                 Dim subH As Integer = 计算子项内容高度(sub_, availW)
@@ -2256,6 +2655,7 @@ Public Class UltraDetailListView
         End If
         Dim scaledIconH As Integer = If(iconAreaW > 0, Dpi(图标尺寸).Height, 0)
         If scaledIconH > maxSubH Then maxSubH = scaledIconH
+        If 显示复选框 Then maxSubH = Math.Max(maxSubH, CInt(Math.Ceiling((操作框尺寸 + Math.Max(0, 框边框宽度)) * DpiScale())))
         Dim rowFullW As Integer = If(colCount > 0, 获取总列宽(), 获取内容区域().Width)
         Dim bottomH As Integer = 计算底部文本行高度(item, rowFullW)
         item.CachedUpperPartHeight = maxSubH
@@ -2772,9 +3172,7 @@ Public Class UltraDetailListView
                 ElseIf i = _hoverRowIndex AndAlso Not _hoverAnimActive Then
                     绘制项焦点区域_GPU(context, itemFocusRect, 项悬停背景颜色, Color.Empty, 0)
                 End If
-                If row.Item.Checked Then
-                    绘制项焦点区域_GPU(context, itemFocusRect, Color.Empty, 项高亮边框颜色, Math.Max(1.0F, 项高亮边框宽度 * dpiS))
-                End If
+                If 显示复选框 Then 绘制项复选框_GPU(context, row.Item, row.Group, rowRect, i)
             End If
             currentY += rowH
         Next
@@ -2891,6 +3289,11 @@ Public Class UltraDetailListView
             Dim cellRect As New Rectangle(
                 colX + scaledPadding.Left, rowRect.Y + scaledPadding.Top,
                 colW - scaledPadding.Horizontal, upperPartH)
+
+            If colIdx = 0 Then
+                Dim checkAreaW = 获取复选框区域宽度()
+                cellRect = New Rectangle(cellRect.X + checkAreaW, cellRect.Y, cellRect.Width - checkAreaW, cellRect.Height)
+            End If
 
             If colIdx = 0 AndAlso hasIcon AndAlso item.Icon IsNot Nothing Then
                 Dim iconX As Integer = cellRect.X
@@ -3073,11 +3476,184 @@ Public Class UltraDetailListView
         Return New PointF(a.X + dx * k, a.Y + dy * k)
     End Function
 
-    ''' <summary>D2D 文字层：列标题文本 + 列分隔线（分隔线之前已在形状层画好；这里仅文本）。</summary>
-
-    ''' <summary>D2D 文字层：行文字 + 行图标 + 分组箭头/文字 + 更多指示器符号。</summary>
 
 
+#End Region
+
+#Region "复选框绘制与交互"
+    Private ReadOnly _checkAnimations As New Dictionary(Of ListItem, D3D_AnimationHelper)
+    Private _pressedCheckItem As ListItem
+    Private _checkBoxMouseDown As Boolean
+
+    Private Sub 设置项勾选(item As ListItem, value As Boolean)
+        Dim args As New ItemCheckEventArgs(item, 查找显示行索引(item), item.Checked, value)
+        RaiseEvent ItemCheck(Me, args)
+        If args.Cancel OrElse args.NewValue = item.Checked Then Return
+        item.设置勾选状态(args.NewValue)
+        If item.Owner Is Me Then 更新项勾选(item, args.NewValue)
+    End Sub
+
+    Private Sub 更新项勾选(item As ListItem, value As Boolean)
+        Dim animation As D3D_AnimationHelper = Nothing
+        If 显示复选框 AndAlso Enabled AndAlso 动画时长 > 0 AndAlso IsHandleCreated Then
+            If Not _checkAnimations.TryGetValue(item, animation) Then
+                animation = New D3D_AnimationHelper(Me) With {.Duration = 动画时长, .FPS = AnimationFPS}
+                animation.SetImmediate(If(value, 0.0F, 1.0F))
+                animation.SetDirtyRectProvider(
+                    Function()
+                        Dim index = 查找显示行索引(item)
+                        If Not 显示复选框 OrElse index < 0 Then Return Rectangle.Empty
+                        Dim y = 获取行Y坐标(index)
+                        If y < 0 Then Return Rectangle.Empty
+                        Dim rect = 获取项复选框区域(item, y)
+                        rect.Inflate(Math.Max(0, 框边框宽度) * DpiScale() / 2.0F + 2.0F, Math.Max(0, 框边框宽度) * DpiScale() / 2.0F + 2.0F)
+                        Return Rectangle.Ceiling(rect)
+                    End Function)
+                _checkAnimations.Add(item, animation)
+            End If
+            animation.AnimateTo(If(value, 1.0F, 0.0F))
+        ElseIf _checkAnimations.TryGetValue(item, animation) Then
+            animation.SetImmediate(If(value, 1.0F, 0.0F))
+        End If
+        请求GPU渲染()
+        RaiseEvent ItemCheckedChanged(Me, New ListItemEventArgs(item, 查找显示行索引(item), 0))
+    End Sub
+
+    Private Function 获取项复选框区域(item As ListItem, rowY As Integer) As RectangleF
+        确保列X缓存()
+        计算项高度(item)
+        Dim s = DpiScale()
+        Dim padding = Dpi(项内边距)
+        Dim size = 操作框尺寸 * s
+        Dim borderOffset = Math.Max(0, 框边框宽度) * s / 2.0F
+        Dim x = If(_columnXCount > 0, _columnXCache(0), 获取内容区域().X - _hScrollOffset)
+        ' 上部内容缓存已排除 BottomLines；与图标和各列单元格使用同一垂直中心。
+        Return New RectangleF(x + padding.Left + borderOffset,
+                              rowY + padding.Top + (item.CachedUpperPartHeight - size) / 2.0F,
+                              size, size)
+    End Function
+
+    Private Function 获取复选框裁剪区域(item As ListItem, rowY As Integer) As RectangleF
+        确保列X缓存()
+        Dim padding = Dpi(项内边距)
+        Dim content = 获取内容区域()
+        Dim x = If(_columnXCount > 0, _columnXCache(0), content.X - _hScrollOffset)
+        Dim width = If(_columns.Count > 0, _columns(0).Width, 获取行绘制宽度(content))
+        Return New RectangleF(x + padding.Left, rowY + padding.Top,
+                              Math.Max(0, width - padding.Horizontal), item.CachedUpperPartHeight)
+    End Function
+
+    Private Function 命中项复选框(index As Integer, pt As Point) As Boolean
+        If Not 显示复选框 OrElse index < 0 OrElse index >= _displayRows.Count OrElse
+           _displayRows(index).Type <> DisplayRowType.Item Then Return False
+        Dim y = 获取行Y坐标(index)
+        If y < 0 Then Return False
+        Dim item = _displayRows(index).Item
+        Dim rect = 获取项复选框区域(item, y)
+        Dim offset = Math.Max(0, 框边框宽度) * DpiScale() / 2.0F
+        rect.Inflate(offset, offset)
+        rect = RectangleF.Intersect(rect, 获取复选框裁剪区域(item, y))
+        Return rect.Contains(pt)
+    End Function
+
+    Private Shared Function 获取继承勾选颜色(item As ListItem, group As ListGroup,
+                                            selector As Func(Of CheckBoxCheckedAppearance, Color), fallback As Color) As Color
+        Dim color = selector(item)
+        If color <> Color.Empty Then Return color
+        If group IsNot Nothing Then
+            color = selector(group)
+            If color <> Color.Empty Then Return color
+        End If
+        Return fallback
+    End Function
+
+    Private Shared Function 获取复选框状态颜色(normal As Color, hover As Color, pressed As Color,
+                                               isHover As Boolean, isPressed As Boolean) As Color
+        If isPressed AndAlso pressed <> Color.Empty Then Return pressed
+        If Not isPressed AndAlso isHover AndAlso hover <> Color.Empty Then Return hover
+        Return normal
+    End Function
+
+    Private Sub 绘制项复选框_GPU(context As D3D_PaintContext, item As ListItem, group As ListGroup,
+                                  rowRect As Rectangle, index As Integer)
+        Dim s = DpiScale()
+        Dim rect = 获取项复选框区域(item, rowRect.Y)
+        Dim clip = 获取复选框裁剪区域(item, rowRect.Y)
+        If clip.Width <= 0 OrElse clip.Height <= 0 Then Return
+        Dim isHover = Enabled AndAlso index = _hoverRowIndex
+        Dim isPressed = isHover AndAlso _pressedCheckItem Is item
+        Dim checkedColor = 获取继承勾选颜色(item, group, Function(a) a.CheckBoxCheckedBackColor, 选中时框背景颜色)
+        Dim checkedHover = 获取继承勾选颜色(item, group, Function(a) a.CheckBoxHoverCheckedBackColor, 鼠标移上时选中框背景颜色)
+        Dim checkedPressed = 获取继承勾选颜色(item, group, Function(a) a.CheckBoxPressedCheckedBackColor, 鼠标按下时选中框背景颜色)
+        checkedColor = 获取复选框状态颜色(checkedColor, checkedHover, checkedPressed, isHover, isPressed)
+        Dim uncheckedColor = 获取复选框状态颜色(未选中时框背景颜色, 鼠标移上时未选中框背景颜色, 鼠标按下时未选中框背景颜色, isHover, isPressed)
+        Dim borderColor = 获取复选框状态颜色(框边框颜色值, 鼠标移上时框边框颜色, 鼠标按下时框边框颜色, isHover, isPressed)
+        Dim markColor = 获取继承勾选颜色(item, group, Function(a) a.CheckBoxCheckMarkColor, 勾号颜色值)
+        Dim markHover = 获取继承勾选颜色(item, group, Function(a) a.CheckBoxHoverCheckMarkColor, 鼠标移上时勾号颜色)
+        Dim markPressed = 获取继承勾选颜色(item, group, Function(a) a.CheckBoxPressedCheckMarkColor, 鼠标按下时勾号颜色)
+        markColor = 获取复选框状态颜色(markColor, markHover, markPressed, isHover, isPressed)
+        Dim animation As D3D_AnimationHelper = Nothing
+        Dim progress = If(item.Checked, 1.0F, 0.0F)
+        If _checkAnimations.TryGetValue(item, animation) Then progress = animation.Progress
+        Using context.PushClip(clip)
+            填充圆角矩形_GPU(context, rect, 框圆角半径 * s, 颜色插值(uncheckedColor, checkedColor, progress))
+            绘制圆角边框_GPU(context, rect, 框圆角半径 * s, borderColor, 框边框宽度 * s)
+            If progress > 0.001F Then 绘制复选框勾号_GPU(context, rect, progress, s, markColor)
+            If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
+                Dim offset = Math.Max(0, 框边框宽度) * s / 2.0F
+                rect.Inflate(offset, offset)
+                填充圆角矩形_GPU(context, rect, 框圆角半径 * s + offset, 禁用时遮罩颜色)
+            End If
+        End Using
+    End Sub
+
+    Private Sub 绘制复选框勾号_GPU(context As D3D_PaintContext, 框区域 As RectangleF, progress As Single, s As Single, 当前勾号色 As Color)
+        If 当前勾号色.A <= 0 Then Return
+
+        Dim 内边距 As Single = 框内边距 * s + 框边框宽度 * s / 2.0F
+        Dim x1 As Single = 框区域.X + 内边距
+        Dim y1 As Single = 框区域.Y + 框区域.Height * 0.5F
+        Dim x2 As Single = 框区域.X + 框区域.Width * 0.4F
+        Dim y2 As Single = 框区域.Bottom - 内边距
+        Dim x3 As Single = 框区域.Right - 内边距
+        Dim y3 As Single = 框区域.Y + 内边距
+        Dim 段1长 As Single = CSng(Math.Sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1)))
+        Dim 段2长 As Single = CSng(Math.Sqrt((x3 - x2) * (x3 - x2) + (y3 - y2) * (y3 - y2)))
+        Dim 总长度 As Single = 段1长 + 段2长
+        If 总长度 < 0.01F Then Return
+
+        Dim 可见长度 As Single = 总长度 * progress
+        Dim brush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, 当前勾号色, context.DeviceGeneration)
+        Dim strokeStyle = D3D_D2DInterop.GetRoundStrokeStyle()
+        Dim strokeWidth = 勾号线宽 * s
+        If 可见长度 <= 段1长 Then
+            Dim t As Single = If(段1长 > 0, 可见长度 / 段1长, 0F)
+            context.DeviceContext.DrawLine(
+                New Vector2(x1, y1),
+                New Vector2(x1 + (x2 - x1) * t, y1 + (y2 - y1) * t),
+                brush, strokeWidth, strokeStyle)
+        Else
+            context.DeviceContext.DrawLine(New Vector2(x1, y1), New Vector2(x2, y2), brush, strokeWidth, strokeStyle)
+            Dim 剩余 As Single = 可见长度 - 段1长
+            Dim t As Single = If(段2长 > 0, 剩余 / 段2长, 0F)
+            context.DeviceContext.DrawLine(
+                New Vector2(x2, y2),
+                New Vector2(x2 + (x3 - x2) * t, y2 + (y3 - y2) * t),
+                brush, strokeWidth, strokeStyle)
+        End If
+    End Sub
+
+    Private Shared Function 颜色插值(c1 As Color, c2 As Color, t As Single) As Color
+        Return Color.FromArgb(
+            字节插值(c1.A, c2.A, t),
+            字节插值(c1.R, c2.R, t),
+            字节插值(c1.G, c2.G, t),
+            字节插值(c1.B, c2.B, t))
+    End Function
+
+    Private Shared Function 字节插值(a As Integer, b As Integer, t As Single) As Integer
+        Return Math.Clamp(CInt(a + (b - a) * t), 0, 255)
+    End Function
 #End Region
 
 #Region "鼠标交互"
@@ -3113,6 +3689,11 @@ Public Class UltraDetailListView
             Dim delta As Integer = e.X - _columnResizeStartX
             _columns(_columnResizeIndex).Width = Math.Max(30, _columnResizeStartWidth + delta)
             校正横向滚动偏移()
+            Return
+        End If
+
+        If _checkBoxMouseDown Then
+            更新悬停(命中测试行(e.Location))
             Return
         End If
 
@@ -3207,7 +3788,9 @@ Public Class UltraDetailListView
         If _editTextBox IsNot Nothing Then 结束标签编辑(False)
 
         _mouseDownInContent = False
-        If e.Button <> MouseButtons.Left Then Return
+        _pressedCheckItem = Nothing
+        _checkBoxMouseDown = False
+        If Not Enabled OrElse e.Button <> MouseButtons.Left Then Return
 
         If _scrollBar.BeginDrag(e.Location, _scrollOffset) Then Return
         If Not _scrollBar.TrackRect.IsEmpty Then
@@ -3257,6 +3840,22 @@ Public Class UltraDetailListView
             End If
         End If
 
+        If 命中项复选框(hitRow, e.Location) Then
+            _pressedCheckItem = _displayRows(hitRow).Item
+            _checkBoxMouseDown = True
+            _suppressLabelEditForClick = True
+            Capture = True
+            Focus()
+            更新悬停(hitRow)
+            请求GPU渲染()
+            Return
+        End If
+        If 显示复选框 AndAlso 允许任意区域点击 AndAlso hitRow >= 0 AndAlso _displayRows(hitRow).Type = DisplayRowType.Item Then
+            _pressedCheckItem = _displayRows(hitRow).Item
+            _suppressLabelEditForClick = True
+            请求GPU渲染()
+        End If
+
         ' 记录按下位置，用于区分点击与拖选
         _mouseDownPos = e.Location
         _mouseDownInContent = True
@@ -3268,6 +3867,20 @@ Public Class UltraDetailListView
 
     Protected Overrides Sub OnMouseUp(e As MouseEventArgs)
         MyBase.OnMouseUp(e)
+        If e.Button <> MouseButtons.Left Then Return
+        Dim pressedItem = _pressedCheckItem
+        _pressedCheckItem = Nothing
+        If _checkBoxMouseDown Then
+            _checkBoxMouseDown = False
+            Capture = False
+            Dim index = 命中测试行(e.Location)
+            If Enabled AndAlso 命中项复选框(index, e.Location) AndAlso _displayRows(index).Item Is pressedItem Then
+                pressedItem.Checked = Not pressedItem.Checked
+            End If
+            请求GPU渲染()
+            Return
+        End If
+        If pressedItem IsNot Nothing Then 请求GPU渲染()
 
         ' 完成拖动排序
         If _isDragReordering Then
@@ -3294,7 +3907,12 @@ Public Class UltraDetailListView
         If e.Button = MouseButtons.Left AndAlso _mouseDownInContent Then
             _mouseDownInContent = False
             Dim hitRow As Integer = 命中测试行(e.Location)
+            Dim toggleCheck = Enabled AndAlso 显示复选框 AndAlso 允许任意区域点击 AndAlso hitRow >= 0 AndAlso
+                              _displayRows(hitRow).Type = DisplayRowType.Item AndAlso _displayRows(hitRow).Item Is pressedItem
             处理点击选择(hitRow, e)
+            If toggleCheck AndAlso pressedItem.Owner Is Me AndAlso Enabled AndAlso 显示复选框 Then
+                pressedItem.Checked = Not pressedItem.Checked
+            End If
         Else
             _mouseDownInContent = False
         End If
@@ -3302,6 +3920,15 @@ Public Class UltraDetailListView
         _scrollBar.EndDrag()
         _hScrollBar.EndDrag()
         _columnResizeIndex = -1
+    End Sub
+
+    Protected Overrides Sub OnMouseCaptureChanged(e As EventArgs)
+        MyBase.OnMouseCaptureChanged(e)
+        If Not Capture AndAlso _checkBoxMouseDown Then
+            _checkBoxMouseDown = False
+            _pressedCheckItem = Nothing
+            请求GPU渲染()
+        End If
     End Sub
 
     Protected Overrides Sub OnMouseLeave(e As EventArgs)
@@ -3428,6 +4055,10 @@ Public Class UltraDetailListView
                 OnKeyDown(New KeyEventArgs(keyData))
                 Return True
         End Select
+        If keyData = Keys.Space AndAlso 显示复选框 Then
+            OnKeyDown(New KeyEventArgs(keyData))
+            Return True
+        End If
         Return MyBase.ProcessCmdKey(msg, keyData)
     End Function
 
@@ -3438,6 +4069,16 @@ Public Class UltraDetailListView
         Dim shiftHeld = (e.Modifiers And Keys.Shift) = Keys.Shift
 
         Select Case e.KeyCode
+            Case Keys.Space
+                If Enabled AndAlso 显示复选框 AndAlso _selectedIndices.Count > 0 Then
+                    Dim items = _selectedIndices.Select(Function(i) _displayRows(i).Item).ToArray()
+                    Dim value = Not items(0).Checked
+                    For Each item In items
+                        item.Checked = value
+                    Next
+                    e.Handled = True
+                    e.SuppressKeyPress = True
+                End If
             Case Keys.A
                 If (e.Modifiers And Keys.Control) = Keys.Control Then
                     SelectAll()
@@ -3832,8 +4473,8 @@ Public Class UltraDetailListView
             .BackColor1 = Color.Transparent,
             .BackgroundSource = Me,
             .BorderSize = 1,
-            .BorderColor = 项高亮边框颜色,
-            .BorderColorFocus = 项高亮边框颜色,
+            .BorderColor = CheckBoxCheckedBackColor,
+            .BorderColorFocus = CheckBoxCheckedBackColor,
             .BorderRadius = 0,
             .MultiLine = False,
             .TextAlign = ModernTextBox.TextAlignMode.Left,
@@ -3876,8 +4517,9 @@ Public Class UltraDetailListView
         ' 编辑器覆盖完整的主单元格；BottomLines 是跨列的独立区域，不属于该单元格。
         Dim cellHeight As Integer = row.Height
         If bottomLinesH > 0 Then cellHeight -= bottomLinesH + Dpi(项内边距).Bottom
-        Dim rawBounds As New Rectangle(_columnXCache(columnIndex), rowY,
-                                       _columns(columnIndex).Width, Math.Max(1, cellHeight))
+        Dim prefixWidth = If(columnIndex = 0 AndAlso 显示复选框, 获取首列前缀宽度(item), 0)
+        Dim rawBounds As New Rectangle(_columnXCache(columnIndex) + prefixWidth, rowY,
+                                       Math.Max(0, _columns(columnIndex).Width - prefixWidth), Math.Max(1, cellHeight))
         Dim contentRect = 获取内容区域()
         contentRect.Width = Math.Max(0, contentRect.Width - 获取垂直滚动条占位宽度())
         bounds = Rectangle.Intersect(rawBounds, contentRect)
@@ -3885,7 +4527,7 @@ Public Class UltraDetailListView
 
         Dim scaledPadding As Padding = Dpi(项内边距)
         Dim textLeft As Integer = rawBounds.Left + scaledPadding.Left
-        If columnIndex = 0 Then textLeft += 获取图标区域宽度(item)
+        If columnIndex = 0 AndAlso Not 显示复选框 Then textLeft += 获取图标区域宽度(item)
         Dim textRight As Integer = rawBounds.Right - scaledPadding.Right
         Dim scale As Single = Math.Max(0.01F, DpiScale())
         textPadding = New Padding(
@@ -4475,7 +5117,7 @@ Public Class UltraDetailListView
         Dim availW = 获取行绘制宽度(contentRect)
         Dim rowRect As New Rectangle(contentRect.X, rowY, availW, row.Height)
 
-        Dim iconAreaW = 获取图标区域宽度(item)
+        Dim iconAreaW = 获取首列前缀宽度(item)
         确保列X缓存()
         Dim scaledPadding As Padding = Dpi(项内边距)
 
@@ -4668,7 +5310,16 @@ Public Class UltraDetailListView
 
     Protected Overrides Sub OnEnabledChanged(e As EventArgs)
         MyBase.OnEnabledChanged(e)
-        If Not Enabled Then 隐藏截断提示()
+        If Not Enabled Then
+            隐藏截断提示()
+            _pressedCheckItem = Nothing
+            _checkBoxMouseDown = False
+            Capture = False
+            For Each pair In _checkAnimations
+                pair.Value.SetImmediate(If(pair.Key.Checked, 1.0F, 0.0F))
+            Next
+        End If
+        请求GPU渲染()
     End Sub
 
     Protected Overrides Sub OnFontChanged(e As EventArgs)
@@ -4696,6 +5347,10 @@ Public Class UltraDetailListView
 
     Friend Sub 释放资源()
         _hoverAnim?.Dispose()
+        For Each animation In _checkAnimations.Values
+            animation.Dispose()
+        Next
+        _checkAnimations.Clear()
         取消标签编辑等待()
         If _editTextBox IsNot Nothing Then
             RemoveHandler _editTextBox.PreviewKeyDown, AddressOf 编辑框预览按键

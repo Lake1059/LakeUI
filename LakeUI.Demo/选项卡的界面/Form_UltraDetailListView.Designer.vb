@@ -1,4 +1,4 @@
-<Global.Microsoft.VisualBasic.CompilerServices.DesignerGenerated()> _
+﻿<Global.Microsoft.VisualBasic.CompilerServices.DesignerGenerated()> _
 Partial Class Form_UltraDetailListView
     Inherits System.Windows.Forms.Form
 
@@ -111,6 +111,7 @@ Partial Class Form_UltraDetailListView
         UltraDetailListView1.AllowDragReorder = True
         UltraDetailListView1.BackgroundColor = Color.FromArgb(CByte(40), CByte(0), CByte(0), CByte(0))
         UltraDetailListView1.BottomLinesSpacing = 10
+        UltraDetailListView1.CheckBoxVisible = True
         ListColumn1.AllowLabelEdit = True
         ListColumn1.Text = "列宽会限制子项区域"
         ListColumn1.Width = 275
@@ -127,6 +128,7 @@ Partial Class Form_UltraDetailListView
         UltraDetailListView1.GroupBackColor = Color.FromArgb(CByte(20), CByte(220), CByte(220), CByte(220))
         UltraDetailListView1.GroupHeight = 35
         ListGroup1.Name = "G1"
+        ListGroup1.CheckBoxCheckedBackColor = Color.SeaGreen
         ListGroup1.Text = "分组点击切换折叠 —— 招牌特色展示"
         UltraDetailListView1.Groups.Add(ListGroup1)
         UltraDetailListView1.HeaderBackColor = Color.FromArgb(CByte(40), CByte(220), CByte(220), CByte(220))
@@ -204,6 +206,10 @@ Partial Class Form_UltraDetailListView
         ListItem9.SubItems.Add(ListSubItem25)
         ListItem9.SubItems.Add(ListSubItem26)
         ListItem9.SubItems.Add(ListSubItem27)
+        ListItem1.Checked = True
+        ListItem4.Checked = True
+        ListItem4.CheckBoxCheckedBackColor = Color.DarkOrange
+        ListItem9.Checked = True
         UltraDetailListView1.Items.Add(ListItem1)
         UltraDetailListView1.Items.Add(ListItem2)
         UltraDetailListView1.Items.Add(ListItem3)
