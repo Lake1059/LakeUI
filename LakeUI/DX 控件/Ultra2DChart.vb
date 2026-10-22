@@ -38,6 +38,11 @@ Public Class Ultra2DChart
         AutoClamped
     End Enum
 
+    Public Enum XAxisRepresentationModeEnum
+        Point
+        Interval
+    End Enum
+
     Public Enum SeriesValueLabelModeEnum
         Inherit
         Show
@@ -179,6 +184,7 @@ Public Class Ultra2DChart
     Public Class ChartSeries
         Private _name As String = "Series"
         Private _chartType As ChartSeriesTypeEnum = ChartSeriesTypeEnum.Column
+        Private _xAxisRepresentationMode As XAxisRepresentationModeEnum = XAxisRepresentationModeEnum.Point
         Private _visible As Boolean = True
         Private _color As Color = Color.Empty
         Private _gradientColor As Color = Color.Empty
@@ -237,6 +243,19 @@ Public Class Ultra2DChart
             Set(value As ChartSeriesTypeEnum)
                 If _chartType = value Then Return
                 _chartType = value
+                NotifyStyleChanged()
+            End Set
+        End Property
+
+        <DefaultValue(GetType(XAxisRepresentationModeEnum), "Point"), Description("此系列的 X 轴表示模式。Point 与刻度对齐，Interval 位于相邻刻度中央。")>
+        Public Property XAxisRepresentationMode As XAxisRepresentationModeEnum
+            Get
+                Return _xAxisRepresentationMode
+            End Get
+            Set(value As XAxisRepresentationModeEnum)
+                If Not [Enum].IsDefined(value) Then Throw New InvalidEnumArgumentException(NameOf(value), CInt(value), GetType(XAxisRepresentationModeEnum))
+                If _xAxisRepresentationMode = value Then Return
+                _xAxisRepresentationMode = value
                 NotifyStyleChanged()
             End Set
         End Property
@@ -623,19 +642,24 @@ Public Class Ultra2DChart
         Public StyleVersion As Integer
         Public PlotRect As RectangleF
         Public ChartRect As RectangleF
+        Public ContentRect As RectangleF
         Public TitleRect As RectangleF
         Public XAxisTitleRect As RectangleF
         Public YAxisTitleRect As RectangleF
         Public TotalCategoryCount As Integer
         Public CategoryCount As Integer
+        Public HasIntervalSeries As Boolean
         Public ViewStartIndex As Integer
         Public ViewEndIndex As Integer
         Public ValueMin As Double
         Public ValueMax As Double
+        Public DataMinimum As Double
+        Public DataMaximum As Double
         Public EffectiveYAxisLabelFormat As String
         Public TickValues As List(Of Double)
         Public TickLabels As List(Of TickLabelInfo)
         Public CategoryLabels As List(Of CategoryLabelInfo)
+        Public XAxisTicks As New List(Of Single)
         Public SeriesDraws As List(Of SeriesDrawInfo)
         Public LegendItems As List(Of LegendItemInfo)
         Public ValueLabels As List(Of ValueLabelInfo)
@@ -658,7 +682,21 @@ Public Class Ultra2DChart
         Public X As Single
         Public Text As String
         Public TextRect As RectangleF
+        Public Bounds As RectangleF
         Public Rotated As Boolean
+    End Structure
+
+    ' 数据位置为绘图区内的比例；Before/After 为文字、标记或线宽伸出的像素。
+    Private Structure LayoutExtent
+        Public Position As Single
+        Public Before As Single
+        Public After As Single
+
+        Public Sub New(position As Single, before As Single, after As Single)
+            Me.Position = position
+            Me.Before = before
+            Me.After = after
+        End Sub
     End Structure
 
     Private NotInheritable Class SeriesDrawInfo
@@ -667,7 +705,58 @@ Public Class Ultra2DChart
         Public Color As Color
         Public Columns As New List(Of ColumnDrawInfo)
         Public LineSegments As New List(Of List(Of PointF))
+        Public LineSegmentBounds As New List(Of RectangleF)
         Public Markers As New List(Of MarkerDrawInfo)
+    End Class
+
+    ' 每个像素保留首、最低、最高、末点，按原顺序连接；不修改原始数据和悬停索引。
+    Private NotInheritable Class PixelLineBuilder
+        Private ReadOnly _reduce As Boolean
+        Private ReadOnly _points As New List(Of PointF)
+        Private _bucket As Integer = Integer.MinValue
+        Private _first, _minimum, _maximum, _last As (Index As Integer, Point As PointF)
+        Private _index As Integer
+
+        Public Sub New(reduce As Boolean)
+            _reduce = reduce
+        End Sub
+
+        Public Sub Add(point As PointF)
+            If Not _reduce Then
+                _points.Add(point)
+                Return
+            End If
+            Dim bucket = CInt(Math.Floor(point.X))
+            Dim entry = (Index:=_index, Point:=point)
+            _index += 1
+            If bucket <> _bucket Then
+                Flush()
+                _bucket = bucket
+                _first = entry
+                _minimum = entry
+                _maximum = entry
+            Else
+                If point.Y < _minimum.Point.Y Then _minimum = entry
+                If point.Y > _maximum.Point.Y Then _maximum = entry
+            End If
+            _last = entry
+        End Sub
+
+        Private Sub Flush()
+            If _bucket = Integer.MinValue Then Return
+            Dim previousIndex = -1
+            For Each entry In {_first, _minimum, _maximum, _last}.OrderBy(Function(p) p.Index)
+                If entry.Index = previousIndex Then Continue For
+                _points.Add(entry.Point)
+                previousIndex = entry.Index
+            Next
+            _bucket = Integer.MinValue
+        End Sub
+
+        Public Function Finish() As List(Of PointF)
+            Flush()
+            Return _points
+        End Function
     End Class
 
     Private Structure ColumnDrawInfo
@@ -733,6 +822,7 @@ Public Class Ultra2DChart
     Private _lineToolTipCategoryIndex As Integer = -1
     Private _hoverClientPoint As Point
     Private _geometryCachePrefix As String
+    Private ReadOnly _textSizeCache As New Dictionary(Of (Text As String, Font As Font, Dpi As Integer), Size)
 
     Public Sub New()
         InitializeComponent()
@@ -822,7 +912,11 @@ Public Class Ultra2DChart
     End Sub
 
     Public Sub RefreshChart(Optional rebuildLayout As Boolean = True)
-        If rebuildLayout Then _layoutCache = Nothing
+        If rebuildLayout Then
+            _layoutCache = Nothing
+            ' 几何缓存同样依赖布局；不能只更新坐标轴而复用旧折线坐标。
+            _styleVersion += 1
+        End If
         请求GPU渲染()
     End Sub
 
@@ -855,11 +949,19 @@ Public Class Ultra2DChart
     ''' <summary>设置当前 Y 轴视图范围，并立即按该范围重绘数据。</summary>
     Public Sub SetYAxisView(minimum As Double, maximum As Double)
         If Double.IsNaN(minimum) OrElse Double.IsNaN(maximum) OrElse Double.IsInfinity(minimum) OrElse Double.IsInfinity(maximum) OrElse maximum <= minimum Then Return
+        Dim layout = 获取布局()
+        If layout.DataMinimum >= 0 Then
+            If maximum <= 0 Then Return
+            minimum = Math.Max(0, minimum)
+        ElseIf layout.DataMaximum <= 0 Then
+            If minimum >= 0 Then Return
+            maximum = Math.Min(0, maximum)
+        End If
         Y轴范围模式 = AxisRangeModeEnum.Fixed
         Y轴最小值 = minimum
         Y轴最大值 = maximum
-        _layoutCache = Nothing
-        RefreshChart()
+        NotifyStyleChanged()
+        If Not AutoRefresh Then 请求GPU渲染()
     End Sub
 #End Region
 
@@ -883,8 +985,12 @@ Public Class Ultra2DChart
         End If
 
         Dim layout = 获取布局()
-        绘制图形层_GPU(context, layout)
-        绘制文字层_GPU(context, layout)
+        If layout.ChartRect.Width > 0 AndAlso layout.ChartRect.Height > 0 Then
+            Using context.PushClip(layout.ChartRect)
+                绘制图形层_GPU(context, layout)
+                绘制文字层_GPU(context, layout)
+            End Using
+        End If
 
         If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
             context.FillRectangle(New RectangleF(0, 0, Me.Width, Me.Height), 禁用时遮罩颜色)
@@ -902,7 +1008,7 @@ Public Class Ultra2DChart
     End Function
 
     Private Sub 绘制图形层_GPU(context As D3D_PaintContext, layout As ChartLayoutInfo)
-        If layout Is Nothing Then Return
+        If layout Is Nothing OrElse layout.PlotRect.Width <= 0 OrElse layout.PlotRect.Height <= 0 Then Return
         Dim s As Single = layout.Scale
 
         If 绘图区背景颜色.A > 0 Then context.FillRectangle(layout.PlotRect, 绘图区背景颜色)
@@ -929,7 +1035,7 @@ Public Class Ultra2DChart
                 For segmentIndex As Integer = 0 To draw.LineSegments.Count - 1
                     Dim segment = draw.LineSegments(segmentIndex)
                     If segment.Count < 2 Then Continue For
-                    If Not context.IntersectsDirty(GetPointBounds(segment, draw.Series.LineThickness * s)) Then Continue For
+                    If Not context.IntersectsDirty(draw.LineSegmentBounds(segmentIndex)) Then Continue For
                     Dim key = geometryPrefix & ":line:" & seriesIndex.ToString(Globalization.CultureInfo.InvariantCulture) & ":" & segmentIndex.ToString(Globalization.CultureInfo.InvariantCulture)
                     Dim geo = context.Compositor.GeometryCache.GetOrCreateGeometry(key, Function() 创建折线几何(segment))
                     If geo IsNot Nothing Then context.DeviceContext.DrawGeometry(geo, lineBrush, draw.Series.LineThickness * s)
@@ -967,9 +1073,9 @@ Public Class Ultra2DChart
         If 显示垂直网格线 AndAlso 网格线颜色.A > 0 AndAlso 网格线粗细 > 0 AndAlso layout.CategoryCount > 0 Then
             Dim gridBrush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, 网格线颜色, context.DeviceGeneration)
             If gridBrush IsNot Nothing Then
-                For Each cat In layout.CategoryLabels
-                    If Not context.IntersectsDirty(New RectangleF(cat.X - 1.0F, plot.Top, 2.0F, plot.Height)) Then Continue For
-                    context.DeviceContext.DrawLine(New Vector2(cat.X, plot.Top), New Vector2(cat.X, plot.Bottom), gridBrush, 网格线粗细 * s)
+                For Each x In layout.XAxisTicks
+                    If Not context.IntersectsDirty(New RectangleF(x - 1.0F, plot.Top, 2.0F, plot.Height)) Then Continue For
+                    context.DeviceContext.DrawLine(New Vector2(x, plot.Top), New Vector2(x, plot.Bottom), gridBrush, 网格线粗细 * s)
                 Next
             End If
         End If
@@ -995,8 +1101,8 @@ Public Class Ultra2DChart
                     Next
                 End If
                 If 显示X轴刻度线 Then
-                    For Each cat In layout.CategoryLabels
-                        context.DeviceContext.DrawLine(New Vector2(cat.X, plot.Bottom), New Vector2(cat.X, plot.Bottom + tickLen), tickBrush, 坐标轴刻度线粗细 * s)
+                    For Each x In layout.XAxisTicks
+                        context.DeviceContext.DrawLine(New Vector2(x, plot.Bottom), New Vector2(x, plot.Bottom + tickLen), tickBrush, 坐标轴刻度线粗细 * s)
                     Next
                 End If
             End If
@@ -1042,7 +1148,7 @@ Public Class Ultra2DChart
 
         If 显示X轴标签 Then
             For Each cat In layout.CategoryLabels
-                If Not context.IntersectsDirty(cat.TextRect) Then Continue For
+                If Not context.IntersectsDirty(cat.Bounds) Then Continue For
                 If cat.Rotated Then
                     绘制旋转文本_GPU(context, cat.Text, 获取坐标轴标签字体(), 坐标轴标签颜色, cat.TextRect, X轴标签旋转角度)
                 Else
@@ -1116,7 +1222,7 @@ Public Class Ultra2DChart
         If String.IsNullOrEmpty(text) OrElse color.A <= 0 OrElse rect.Width <= 0 OrElse rect.Height <= 0 Then Return
         Dim oldTransform = context.DeviceContext.Transform
         Dim rad As Single = angle * CSng(Math.PI / 180.0)
-        Dim anchor As New Vector2(rect.X + rect.Width / 2.0F, rect.Y)
+        Dim anchor As New Vector2(rect.X + rect.Width / 2.0F, rect.Y + rect.Height / 2.0F)
         Try
             context.DeviceContext.Transform = Matrix3x2.CreateRotation(rad, anchor) * oldTransform
             context.DrawText(text, font, color, rect, DW.TextAlignment.Center, DW.ParagraphAlignment.Center)
@@ -1187,20 +1293,22 @@ Public Class Ultra2DChart
             .Scale = s
         }
 
-        Dim outer As New RectangleF(Padding.Left, Padding.Top, Math.Max(0, Me.Width - Padding.Horizontal), Math.Max(0, Me.Height - Padding.Vertical))
+        Dim left = Math.Min(Me.Width, Padding.Left)
+        Dim top = Math.Min(Me.Height, Padding.Top)
+        Dim outer As New RectangleF(left, top, Math.Max(0, Me.Width - left - Padding.Right), Math.Max(0, Me.Height - top - Padding.Bottom))
         layout.ChartRect = outer
-        If outer.Width <= 4 OrElse outer.Height <= 4 Then
+        If outer.Width <= 0 OrElse outer.Height <= 0 Then
             _layoutCache = layout
             Return layout
         End If
 
         Dim content = outer
-        Dim titleFont = 获取标题字体()
         If 显示标题 AndAlso Not String.IsNullOrEmpty(标题文本) Then
-            Dim titleH = 测量文本尺寸(标题文本, titleFont).Height + 标题下间距 * s
-            layout.TitleRect = New RectangleF(content.X, content.Y, content.Width, Math.Min(content.Height, titleH - 标题下间距 * s))
-            content.Y += titleH
-            content.Height -= titleH
+            Dim titleH = Math.Min(content.Height, 测量文本尺寸(标题文本, 获取标题字体()).Height)
+            layout.TitleRect = New RectangleF(content.X, content.Y, content.Width, titleH)
+            Dim reserve = Math.Min(content.Height, titleH + 标题下间距 * s)
+            content.Y += reserve
+            content.Height -= reserve
         End If
 
         Dim visibleSeries = 获取可见系列()
@@ -1208,6 +1316,12 @@ Public Class Ultra2DChart
         If 图例位置 <> LegendPositionEnum.None AndAlso visibleSeries.Count > 0 Then
             legendReserve = 预留图例区域(content, visibleSeries, s)
             content = 扣除图例区域(content, legendReserve)
+            生成图例(layout, legendReserve, visibleSeries, s)
+        End If
+        layout.ContentRect = content
+        If content.Width <= 0 OrElse content.Height <= 0 Then
+            _layoutCache = layout
+            Return layout
         End If
 
         layout.TotalCategoryCount = 获取分类数量()
@@ -1215,6 +1329,7 @@ Public Class Ultra2DChart
         layout.ViewStartIndex = viewRange.StartIndex
         layout.ViewEndIndex = viewRange.EndIndex
         layout.CategoryCount = viewRange.Count
+        layout.HasIntervalSeries = visibleSeries.Any(Function(ser) ser.XAxisRepresentationMode = XAxisRepresentationModeEnum.Interval)
 
         Dim axisLabelFont = 获取坐标轴标签字体()
         Dim axisTitleFont = 获取坐标轴标题字体()
@@ -1225,62 +1340,86 @@ Public Class Ultra2DChart
         layout.EffectiveYAxisLabelFormat = 获取有效Y轴标签格式(layout.ValueMin, layout.ValueMax, layout.TickValues)
 
         Dim yLabelW As Single = 0
+        Dim yLabelH As Single = 0
+        Dim verticalExtents As New List(Of LayoutExtent)
+        Dim horizontalExtents As New List(Of LayoutExtent)
         If 显示Y轴标签 Then
             For Each tickValue In layout.TickValues
-                yLabelW = Math.Max(yLabelW, 测量文本尺寸(格式化数值(tickValue, layout.EffectiveYAxisLabelFormat), axisLabelFont).Width)
+                Dim size = 测量文本尺寸(格式化数值(tickValue, layout.EffectiveYAxisLabelFormat), axisLabelFont)
+                yLabelW = Math.Max(yLabelW, size.Width)
+                yLabelH = Math.Max(yLabelH, size.Height)
+            Next
+            For Each tickValue In layout.TickValues
+                verticalExtents.Add(New LayoutExtent(获取Y轴比例(tickValue, layout), yLabelH / 2.0F, yLabelH / 2.0F))
             Next
         End If
-        Dim yTitleW As Single = 0
-        If Not String.IsNullOrEmpty(Y轴标题文本) Then yTitleW = 测量文本尺寸(Y轴标题文本, axisTitleFont).Height + 坐标轴标题间距 * s
-
-        Dim xLabelH As Single = 0
-        If 显示X轴标签 AndAlso layout.CategoryCount > 0 Then
-            Dim sampleH As Single = 测量文本尺寸("Ag", axisLabelFont).Height
-            xLabelH = sampleH
-            If Math.Abs(X轴标签旋转角度) > 0.1F Then
-                Dim longest As Single = 0
-                For i As Integer = layout.ViewStartIndex To layout.ViewEndIndex - 1
-                    longest = Math.Max(longest, 测量文本尺寸(获取分类标签(i), axisLabelFont).Width)
-                Next
-                xLabelH = Math.Min(Math.Max(sampleH, longest * 0.72F), X轴最大标签高度 * s)
-            End If
-        End If
-        Dim xTitleH As Single = 0
-        If Not String.IsNullOrEmpty(X轴标题文本) Then xTitleH = 测量文本尺寸(X轴标题文本, axisTitleFont).Height + 坐标轴标题间距 * s
-
+        Dim yTitleW As Single = If(String.IsNullOrEmpty(Y轴标题文本), 0, 测量文本尺寸(Y轴标题文本, axisTitleFont).Height)
+        Dim xTitleH As Single = If(String.IsNullOrEmpty(X轴标题文本), 0, 测量文本尺寸(X轴标题文本, axisTitleFont).Height)
+        Dim titleGap = 坐标轴标题间距 * s
+        Dim labelGap = 坐标轴标签间距 * s
         Dim tickLen As Single = 主要刻度长度 * s
-        Dim plotLeft As Single = content.Left + yTitleW + If(显示Y轴标签, yLabelW + 坐标轴标签间距 * s, 0) + If(显示Y轴刻度线, tickLen, 0)
-        Dim plotBottomReserve As Single = If(显示X轴刻度线, tickLen, 0) + If(显示X轴标签, xLabelH + 坐标轴标签间距 * s, 0) + xTitleH
-        Dim plotRect As New RectangleF(
-            plotLeft,
-            content.Top + 绘图区内上边距 * s,
-            Math.Max(1.0F, content.Right - plotLeft),
-            Math.Max(1.0F, content.Height - plotBottomReserve - 绘图区内上边距 * s))
-        If plotRect.Width < 1 Then plotRect.Width = 1
-        If plotRect.Height < 1 Then plotRect.Height = 1
-        layout.PlotRect = plotRect
+        Dim xTickLen As Single = If(显示X轴刻度线, tickLen, 0)
+        Dim yTickLen As Single = If(显示Y轴刻度线, tickLen, 0)
+        Dim stroke As Single = 0
+        If 绘图区边框颜色.A > 0 Then stroke = Math.Max(stroke, 绘图区边框粗细)
+        If 坐标轴线颜色.A > 0 Then stroke = Math.Max(stroke, 坐标轴线粗细)
+        If 网格线颜色.A > 0 AndAlso (显示水平网格线 OrElse 显示垂直网格线) Then stroke = Math.Max(stroke, 网格线粗细)
+        If 坐标轴刻度线颜色.A > 0 AndAlso (显示X轴刻度线 OrElse 显示Y轴刻度线) Then stroke = Math.Max(stroke, 坐标轴刻度线粗细)
+        Dim strokeHalf = stroke * s / 2.0F
+        Dim leftReserve = yTickLen + If(显示Y轴标签, yLabelW + labelGap, 0) + If(yTitleW > 0, yTitleW + titleGap, 0) + strokeHalf
+        Dim bottomReserve = xTickLen + If(xTitleH > 0, xTitleH + titleGap, 0) + strokeHalf
+        Dim xLabelH As Single = 0
+        Dim initialCategoryWidth = content.Width / 获取分类槽数量(layout)
+        Dim candidateInterval = 获取自动间隔(X轴标签间隔, initialCategoryWidth, Math.Max(1, X轴标签最小间距 * s))
+        layout.EffectiveValueLabelInterval = 获取自动间隔(1, initialCategoryWidth, 值标签最小间距 * s)
+        Dim categorySizes As New Dictionary(Of Integer, SizeF)
+        Dim maxLabelWidth As Single = 0
+        Dim candidateIndices = Enumerable.Range(0, CInt(Math.Ceiling(layout.CategoryCount / CDbl(candidateInterval)))).
+            Select(Function(i) i * candidateInterval).Append(layout.CategoryCount - 1).Distinct()
+        For Each relativeIndex In candidateIndices
+            If relativeIndex < 0 Then Continue For
+            Dim i = layout.ViewStartIndex + relativeIndex
+            Dim size = If(显示X轴标签, 获取X轴标签尺寸(获取分类标签(i), axisLabelFont, content.Size, s), SizeF.Empty)
+            categorySizes.Add(relativeIndex, size)
+            If Not 显示X轴标签 Then Continue For
+            Dim bounds = 获取旋转尺寸(size, X轴标签旋转角度)
+            xLabelH = Math.Max(xLabelH, bounds.Height)
+            maxLabelWidth = Math.Max(maxLabelWidth, bounds.Width)
+            horizontalExtents.Add(New LayoutExtent(获取分类刻度比例(relativeIndex, layout), bounds.Width / 2.0F, bounds.Width / 2.0F))
+        Next
+        If 显示X轴标签 AndAlso layout.CategoryCount > 0 Then bottomReserve += xLabelH + labelGap
 
-        Dim categoryWidth As Single = If(layout.CategoryCount > 0, plotRect.Width / layout.CategoryCount, plotRect.Width)
-        layout.EffectiveXAxisLabelInterval = 获取自动间隔(X轴标签间隔, categoryWidth, X轴标签最小间距 * s)
+        添加系列布局范围(layout, visibleSeries, horizontalExtents, verticalExtents, s)
+        Dim xAxis = 计算布局轴(content.Width, leftReserve, strokeHalf, horizontalExtents)
+        Dim yAxis = 计算布局轴(content.Height, Math.Max(绘图区内上边距 * s, strokeHalf), bottomReserve, verticalExtents)
+        layout.PlotRect = New RectangleF(content.Left + xAxis.Start, content.Top + yAxis.Start, xAxis.Length, yAxis.Length)
+        Dim plot = layout.PlotRect
+        If plot.Width <= 0 OrElse plot.Height <= 0 Then
+            _layoutCache = layout
+            Return layout
+        End If
+
+        Dim categoryWidth As Single = plot.Width / 获取分类槽数量(layout)
+        Dim labelInterval = 获取自动间隔(X轴标签间隔, categoryWidth, Math.Max(X轴标签最小间距 * s, maxLabelWidth + 8 * s))
+        ' 只选择已测量的候选刻度；最终相邻标签还会按实际旋转包围框排除重叠。
+        layout.EffectiveXAxisLabelInterval = CInt(Math.Ceiling(labelInterval / CDbl(candidateInterval))) * candidateInterval
         layout.EffectiveValueLabelInterval = 获取自动间隔(1, categoryWidth, 值标签最小间距 * s)
         layout.EffectiveDataPointInterval = 获取自动间隔(1, categoryWidth, 数据点最小间距 * s)
 
-        If Not String.IsNullOrEmpty(Y轴标题文本) Then
-            layout.YAxisTitleRect = New RectangleF(content.Left, plotRect.Top, Math.Max(1, yTitleW - 坐标轴标题间距 * s), plotRect.Height)
+        If yTitleW > 0 Then
+            layout.YAxisTitleRect = 限制矩形(New RectangleF(content.Left, plot.Top, yTitleW, plot.Height), content)
         End If
-        If Not String.IsNullOrEmpty(X轴标题文本) Then
-            layout.XAxisTitleRect = New RectangleF(plotRect.Left, plotRect.Bottom + If(显示X轴刻度线, tickLen, 0) + If(显示X轴标签, xLabelH + 坐标轴标签间距 * s, 0), plotRect.Width, Math.Max(1, xTitleH - 坐标轴标题间距 * s))
+        If xTitleH > 0 Then
+            layout.XAxisTitleRect = 限制矩形(New RectangleF(plot.Left, plot.Bottom + xTickLen + If(显示X轴标签 AndAlso layout.CategoryCount > 0, xLabelH + labelGap, 0) + titleGap, plot.Width, xTitleH), content)
         End If
 
-        生成轴标签(layout, yLabelW, xLabelH, tickLen, axisLabelFont, s)
+        生成轴标签(layout, yLabelW, yLabelH, xTickLen, yTickLen, categorySizes, s)
         生成系列绘制数据(layout, visibleSeries, s)
-        If 图例位置 <> LegendPositionEnum.None AndAlso visibleSeries.Count > 0 Then 生成图例(layout, legendReserve, visibleSeries, s)
-
         _layoutCache = layout
         Return layout
     End Function
 
-    Private Sub 生成轴标签(layout As ChartLayoutInfo, yLabelW As Single, xLabelH As Single, tickLen As Single, axisLabelFont As Font, s As Single)
+    Private Sub 生成轴标签(layout As ChartLayoutInfo, yLabelW As Single, yLabelH As Single, xTickLen As Single, yTickLen As Single, categorySizes As Dictionary(Of Integer, SizeF), s As Single)
         Dim plot = layout.PlotRect
         For Each tickValue In layout.TickValues
             Dim y = 值到Y坐标(tickValue, layout)
@@ -1288,45 +1427,160 @@ Public Class Ultra2DChart
                 .Value = tickValue,
                 .Y = y,
                 .Text = 格式化数值(tickValue, layout.EffectiveYAxisLabelFormat),
-                .TextRect = New RectangleF(plot.Left - tickLen - 坐标轴标签间距 * s - yLabelW, y - 10 * s, yLabelW, 20 * s)})
+                .TextRect = 限制矩形(New RectangleF(plot.Left - yTickLen - 坐标轴标签间距 * s - yLabelW, y - yLabelH / 2.0F, yLabelW, yLabelH), layout.ContentRect)})
         Next
         layout.ZeroY = 获取柱基线Y坐标(layout)
 
         If layout.CategoryCount <= 0 Then Return
-        Dim catW As Single = plot.Width / layout.CategoryCount
-        Dim interval As Integer = Math.Max(1, layout.EffectiveXAxisLabelInterval)
-        For i As Integer = layout.ViewStartIndex To layout.ViewEndIndex - 1
-            Dim relativeIndex = i - layout.ViewStartIndex
-            Dim x As Single = plot.Left + catW * (relativeIndex + 0.5F)
-            If Not 应显示间隔项(relativeIndex, layout.CategoryCount, interval) Then Continue For
-            Dim text = 获取分类标签(i)
-            Dim textWidth As Single = 测量文本尺寸(text, axisLabelFont).Width + 4 * s
-            Dim labelSlotWidth As Single = catW * Math.Max(1, interval) * 0.9F
-            Dim rectW As Single = Math.Max(Math.Max(1, labelSlotWidth), textWidth)
-            Dim rect As RectangleF
-            Dim rotated As Boolean = Math.Abs(X轴标签旋转角度) > 0.1F
-            If rotated Then
-                rect = New RectangleF(x - rectW / 2.0F, plot.Bottom + tickLen + 坐标轴标签间距 * s, rectW, xLabelH)
+        Dim previousRight = Single.NegativeInfinity
+        For Each relativeIndex In categorySizes.Keys.OrderBy(Function(i) i)
+            Dim i = layout.ViewStartIndex + relativeIndex
+            If Not 应显示间隔项(relativeIndex, layout.CategoryCount, layout.EffectiveXAxisLabelInterval) Then Continue For
+            Dim x As Single = plot.Left + plot.Width * 获取分类刻度比例(relativeIndex, layout)
+            Dim size = categorySizes(relativeIndex)
+            Dim boundsSize = 获取旋转尺寸(size, X轴标签旋转角度)
+            Dim bounds As New RectangleF(x - boundsSize.Width / 2.0F, plot.Bottom + xTickLen + 坐标轴标签间距 * s, boundsSize.Width, boundsSize.Height)
+            If 自动跳过过密标签 AndAlso bounds.Left < previousRight + 4 * s Then Continue For
+            previousRight = bounds.Right
+            layout.XAxisTicks.Add(x)
+            Dim rect As New RectangleF(x - size.Width / 2.0F, bounds.Top + (bounds.Height - size.Height) / 2.0F, size.Width, size.Height)
+            layout.CategoryLabels.Add(New CategoryLabelInfo With {
+                .Index = i, .X = x, .Text = 获取分类标签(i), .TextRect = rect, .Bounds = bounds,
+                .Rotated = Math.Abs(X轴标签旋转角度) > 0.1F})
+        Next
+        ' 区间系列的最后一个值也有右边界；点系列仍然与同一套分类刻度对齐。
+        If layout.HasIntervalSeries Then layout.XAxisTicks.Add(plot.Left + plot.Width * 获取分类刻度比例(layout.CategoryCount, layout))
+    End Sub
+
+    Private Shared Function 获取分类槽数量(layout As ChartLayoutInfo) As Integer
+        Return Math.Max(1, layout.CategoryCount + If(layout.HasIntervalSeries, 1, 0))
+    End Function
+
+    Private Function 获取分类刻度比例(relativeIndex As Integer, layout As ChartLayoutInfo) As Single
+        Return (relativeIndex + 0.5F) / 获取分类槽数量(layout)
+    End Function
+
+    Private Function 获取系列X比例(relativeIndex As Integer, ser As ChartSeries, layout As ChartLayoutInfo) As Single
+        Return (relativeIndex + 获取系列X偏移(ser)) / 获取分类槽数量(layout)
+    End Function
+
+    Private Shared Function 获取系列X偏移(ser As ChartSeries) As Single
+        Return If(ser.XAxisRepresentationMode = XAxisRepresentationModeEnum.Interval, 1.0F, 0.5F)
+    End Function
+
+    Private Function 获取X轴标签尺寸(text As String, font As Font, available As SizeF, s As Single) As SizeF
+        Dim measured = 测量文本尺寸(text, font)
+        Dim size As New SizeF(measured.Width + 2 * s, measured.Height)
+        ' 过长文字按单行裁剪，旋转后的矩形也必须适合标签带和容器。
+        Dim maxHeight = If(Math.Abs(X轴标签旋转角度) > 0.1F, Math.Min(available.Height, X轴最大标签高度 * s), available.Height)
+        Dim rad = Math.Abs(X轴标签旋转角度) * Math.PI / 180.0
+        Dim sin = CSng(Math.Sin(rad))
+        Dim cos = CSng(Math.Cos(rad))
+        If cos > 0.0001F Then size.Height = Math.Min(size.Height, maxHeight / cos)
+        If sin > 0.0001F Then size.Height = Math.Min(size.Height, available.Width / sin)
+        If sin > 0.0001F Then size.Width = Math.Min(size.Width, Math.Max(0, (maxHeight - size.Height * cos) / sin))
+        If cos > 0.0001F Then size.Width = Math.Min(size.Width, Math.Max(0, (available.Width - size.Height * sin) / cos))
+        size.Height = Math.Min(size.Height, Math.Min(available.Height, available.Width))
+        Return size
+    End Function
+
+    Private Shared Function 获取旋转尺寸(size As SizeF, angle As Single) As SizeF
+        Dim rad = Math.Abs(angle) * Math.PI / 180.0
+        Dim cos = CSng(Math.Abs(Math.Cos(rad)))
+        Dim sin = CSng(Math.Abs(Math.Sin(rad)))
+        Return New SizeF(size.Width * cos + size.Height * sin, size.Width * sin + size.Height * cos)
+    End Function
+
+    Private Shared Function 限制矩形(rect As RectangleF, bounds As RectangleF) As RectangleF
+        Return RectangleF.Intersect(rect, bounds)
+    End Function
+
+    Private Shared Function 计算布局轴(available As Single, before As Single, after As Single, extents As List(Of LayoutExtent)) As (Start As Single, Length As Single)
+        Dim low As Single = 0
+        Dim high As Single = Math.Max(0, available - before - after)
+        Dim start As Single = Math.Min(available, before)
+        ' 求最大可用绘图区，而不是把所有标签的最大宽高再叠加到四周。
+        For pass As Integer = 0 To 23
+            Dim length = (low + high) / 2.0F
+            Dim leading = before
+            Dim trailing = after
+            For Each extent In extents
+                leading = Math.Max(leading, extent.Before - extent.Position * length)
+                trailing = Math.Max(trailing, extent.After - (1.0F - extent.Position) * length)
+            Next
+            If leading + length + trailing <= available Then
+                low = length
+                start = leading
             Else
-                rect = New RectangleF(x - rectW / 2.0F, plot.Bottom + tickLen + 坐标轴标签间距 * s, rectW, xLabelH)
+                high = length
             End If
-            layout.CategoryLabels.Add(New CategoryLabelInfo With {.Index = i, .X = x, .Text = text, .TextRect = rect, .Rotated = rotated})
+        Next
+        Return (start, low)
+    End Function
+
+    Private Function 获取Y轴比例(value As Double, layout As ChartLayoutInfo) As Single
+        Return CSng(Math.Clamp((layout.ValueMax - value) / (layout.ValueMax - layout.ValueMin), 0.0, 1.0))
+    End Function
+
+    Private Sub 添加系列布局范围(layout As ChartLayoutInfo, visibleSeries As List(Of ChartSeries), horizontal As List(Of LayoutExtent), vertical As List(Of LayoutExtent), s As Single)
+        For Each ser In visibleSeries
+            Dim half As Single = If(ser.ChartType = ChartSeriesTypeEnum.Line, ser.LineThickness / 2.0F, ser.BorderThickness / 2.0F) * s
+            If ser.ChartType = ChartSeriesTypeEnum.Line Then
+                If ser.MarkerShape <> MarkerShapeEnum.None Then half = Math.Max(half, (ser.MarkerSize + ser.MarkerBorderThickness) * s / 2.0F)
+                If 显示折线悬停十字线 Then half = Math.Max(half, (折线悬停吸附点半径 + 折线悬停吸附点边框粗细 / 2.0F) * s)
+            End If
+            Dim firstX = Single.PositiveInfinity
+            Dim lastX = Single.NegativeInfinity
+            Dim minY = Single.PositiveInfinity
+            Dim maxY = Single.NegativeInfinity
+            For i As Integer = layout.ViewStartIndex To Math.Min(layout.ViewEndIndex, ser.Points.Count) - 1
+                Dim point = ser.Points(i)
+                If point Is Nothing OrElse Not 是有效数值(point.Value) Then Continue For
+                Dim x = 获取系列X比例(i - layout.ViewStartIndex, ser, layout)
+                Dim y = 获取Y轴比例(point.Value, layout)
+                firstX = Math.Min(firstX, x)
+                lastX = Math.Max(lastX, x)
+                minY = Math.Min(minY, y)
+                maxY = Math.Max(maxY, y)
+                If ser.ChartType = ChartSeriesTypeEnum.Column Then
+                    Dim groupHalfRatio = Math.Clamp(柱组宽度比例, 0.05F, 1.0F) / (2.0F * 获取分类槽数量(layout))
+                    firstX = Math.Min(firstX, x - groupHalfRatio)
+                    lastX = Math.Max(lastX, x + groupHalfRatio)
+                    Dim zeroY = 获取Y轴比例(Math.Clamp(0.0, layout.ValueMin, layout.ValueMax), layout)
+                    minY = Math.Min(minY, zeroY)
+                    maxY = Math.Max(maxY, zeroY)
+                End If
+                If Not 系列显示值标签(ser) OrElse Not 应显示间隔项(i - layout.ViewStartIndex, layout.CategoryCount, layout.EffectiveValueLabelInterval) Then Continue For
+                Dim format = If(String.IsNullOrEmpty(ser.ValueLabelFormat), 值标签格式, ser.ValueLabelFormat)
+                Dim size = 测量文本尺寸(格式化数值(point.Value, format), 获取值标签字体())
+                Dim labelWidth = Math.Min(layout.ContentRect.Width, size.Width + 2 * s)
+                Dim labelHeight = Math.Min(layout.ContentRect.Height, size.Height + 2 * s)
+                horizontal.Add(New LayoutExtent(x, labelWidth / 2.0F, labelWidth / 2.0F))
+                vertical.Add(New LayoutExtent(y, If(point.Value >= 0, labelHeight + 值标签偏移 * s, 0), If(point.Value < 0, labelHeight + 值标签偏移 * s, 0)))
+            Next
+            ' 同一系列的线宽/标记伸出量相同，只有坐标极值会约束四边布局。
+            If firstX <= lastX Then
+                horizontal.Add(New LayoutExtent(firstX, half, half))
+                horizontal.Add(New LayoutExtent(lastX, half, half))
+                vertical.Add(New LayoutExtent(minY, half, half))
+                vertical.Add(New LayoutExtent(maxY, half, half))
+            End If
         Next
     End Sub
 
     Private Sub 生成系列绘制数据(layout As ChartLayoutInfo, visibleSeries As List(Of ChartSeries), s As Single)
         If layout.CategoryCount <= 0 OrElse visibleSeries.Count = 0 Then Return
         Dim plot = layout.PlotRect
-        Dim catW As Single = plot.Width / layout.CategoryCount
+        Dim catW As Single = plot.Width / 获取分类槽数量(layout)
         Dim dataInterval As Integer = Math.Max(1, layout.EffectiveDataPointInterval)
-        Dim columnSeries = visibleSeries.Where(Function(x) x.ChartType = ChartSeriesTypeEnum.Column).ToList()
-        Dim columnCount As Integer = columnSeries.Count
         Dim seriesIndex As Integer = 0
 
         For Each ser In visibleSeries
             Dim color = 解析系列颜色(ser, seriesIndex)
             Dim draw As New SeriesDrawInfo With {.Series = ser, .SeriesIndex = seriesIndex, .Color = color}
             If ser.ChartType = ChartSeriesTypeEnum.Column Then
+                Dim columnSeries = visibleSeries.Where(Function(x) x.ChartType = ChartSeriesTypeEnum.Column AndAlso x.XAxisRepresentationMode = ser.XAxisRepresentationMode).ToList()
+                Dim columnCount As Integer = columnSeries.Count
                 Dim columnIndex As Integer = columnSeries.IndexOf(ser)
                 For i As Integer = layout.ViewStartIndex To layout.ViewEndIndex - 1
                     Dim relativeIndex = i - layout.ViewStartIndex
@@ -1341,8 +1595,8 @@ Public Class Ultra2DChart
                     Dim gap As Single = Math.Max(0.0F, 柱系列间距 * s)
                     If columnCount > 1 Then gap = Math.Min(gap, Math.Max(0.0F, groupW / columnCount * 0.35F))
                     Dim colW As Single = If(columnCount <= 0, groupW, (groupW - gap * (columnCount - 1)) / columnCount)
-                    colW = Math.Max(1.0F, colW)
-                    Dim groupLeft As Single = plot.Left + catW * relativeIndex + (catW - groupW) / 2.0F
+                    colW = Math.Max(0.0F, colW)
+                    Dim groupLeft As Single = plot.Left + plot.Width * 获取系列X比例(relativeIndex, ser, layout) - groupW / 2.0F
                     Dim x As Single = groupLeft + columnIndex * (colW + gap)
                     Dim yValue = 值到Y坐标(point.Value, layout)
                     Dim yZero = layout.ZeroY
@@ -1361,22 +1615,21 @@ Public Class Ultra2DChart
                     添加值标签(layout, ser, i, point.Value, New PointF(x + colW / 2.0F, If(point.Value >= 0, top, top + h)), fill, s)
                 Next
             Else
-                Dim currentSegment As New List(Of PointF)()
+                Dim reduceLine = 自动跳过过密标签 AndAlso catW < 1 AndAlso ser.MarkerShape = MarkerShapeEnum.None
+                Dim currentSegment As New PixelLineBuilder(reduceLine)
                 For i As Integer = layout.ViewStartIndex To layout.ViewEndIndex - 1
                     If i >= ser.Points.Count OrElse ser.Points(i) Is Nothing OrElse Not 是有效数值(ser.Points(i).Value) Then
                         If ser.ConnectMissingValues Then Continue For
-                        If currentSegment.Count > 0 Then
-                            draw.LineSegments.Add(currentSegment)
-                            currentSegment = New List(Of PointF)()
-                        End If
+                        添加折线段(draw, currentSegment.Finish(), ser.LineThickness * s)
+                        currentSegment = New PixelLineBuilder(reduceLine)
                         Continue For
                     End If
                     Dim relativeIndex = i - layout.ViewStartIndex
-                    Dim drawDataPoint = 应显示间隔项(relativeIndex, layout.CategoryCount, dataInterval)
+                    Dim drawDataPoint = reduceLine OrElse 应显示间隔项(relativeIndex, layout.CategoryCount, dataInterval)
                     Dim drawValueLabel = 系列显示值标签(ser) AndAlso 应显示间隔项(relativeIndex, layout.CategoryCount, layout.EffectiveValueLabelInterval)
                     If Not drawDataPoint AndAlso Not drawValueLabel Then Continue For
                     Dim point = ser.Points(i)
-                    Dim x As Single = plot.Left + catW * (relativeIndex + 0.5F)
+                    Dim x As Single = plot.Left + plot.Width * 获取系列X比例(relativeIndex, ser, layout)
                     Dim y As Single = 值到Y坐标(point.Value, layout)
                     currentSegment.Add(New PointF(x, y))
                     If ser.MarkerShape <> MarkerShapeEnum.None AndAlso ser.MarkerSize > 0 Then
@@ -1392,11 +1645,17 @@ Public Class Ultra2DChart
                     End If
                     添加值标签(layout, ser, i, point.Value, New PointF(x, y), color, s)
                 Next
-                If currentSegment.Count > 0 Then draw.LineSegments.Add(currentSegment)
+                添加折线段(draw, currentSegment.Finish(), ser.LineThickness * s)
             End If
             layout.SeriesDraws.Add(draw)
             seriesIndex += 1
         Next
+    End Sub
+
+    Private Shared Sub 添加折线段(draw As SeriesDrawInfo, points As List(Of PointF), strokeWidth As Single)
+        If points.Count = 0 Then Return
+        draw.LineSegments.Add(points)
+        draw.LineSegmentBounds.Add(GetPointBounds(points, strokeWidth))
     End Sub
 
     Private Sub 添加值标签(layout As ChartLayoutInfo, ser As ChartSeries, categoryIndex As Integer, value As Double, anchor As PointF, fallbackColor As Color, s As Single)
@@ -1408,8 +1667,12 @@ Public Class Ultra2DChart
         Dim text = 格式化数值(value, format)
         Dim size = 测量文本尺寸(text, labelFont)
         Dim yOffset As Single = 值标签偏移 * s
-        Dim rect As New RectangleF(anchor.X - size.Width / 2.0F, anchor.Y - size.Height - yOffset, size.Width + 2 * s, size.Height + 2 * s)
+        Dim width = Math.Min(layout.ContentRect.Width, size.Width + 2 * s)
+        Dim height = Math.Min(layout.ContentRect.Height, size.Height + 2 * s)
+        Dim rect As New RectangleF(anchor.X - width / 2.0F, anchor.Y - height - yOffset, width, height)
         If value < 0 Then rect.Y = anchor.Y + yOffset
+        rect.X = Math.Clamp(rect.X, layout.ContentRect.Left, layout.ContentRect.Right - width)
+        rect.Y = Math.Clamp(rect.Y, layout.ContentRect.Top, layout.ContentRect.Bottom - height)
         layout.ValueLabels.Add(New ValueLabelInfo With {
             .Text = text,
             .Rect = rect,
@@ -1421,10 +1684,10 @@ Public Class Ultra2DChart
         Dim lineH As Single = Math.Max(16 * s, 测量文本尺寸("Ag", legendFont).Height + 6 * s)
         Select Case 图例位置
             Case LegendPositionEnum.Top
-                Dim h As Single = 计算水平图例高度(content.Width, visibleSeries, lineH, s)
+                Dim h As Single = Math.Min(content.Height, 计算水平图例高度(content.Width, visibleSeries, lineH, s))
                 Return New RectangleF(content.Left, content.Top, content.Width, h)
             Case LegendPositionEnum.Bottom
-                Dim h As Single = 计算水平图例高度(content.Width, visibleSeries, lineH, s)
+                Dim h As Single = Math.Min(content.Height, 计算水平图例高度(content.Width, visibleSeries, lineH, s))
                 Return New RectangleF(content.Left, content.Bottom - h, content.Width, h)
             Case LegendPositionEnum.Left
                 Dim w As Single = 计算垂直图例宽度(content.Width, visibleSeries, s)
@@ -1442,13 +1705,15 @@ Public Class Ultra2DChart
         Dim gap As Single = 图例间距 * DpiScale()
         Select Case 图例位置
             Case LegendPositionEnum.Top
-                Return New RectangleF(content.Left, legendRect.Bottom + gap, content.Width, Math.Max(1, content.Bottom - legendRect.Bottom - gap))
+                Dim top = Math.Min(content.Bottom, legendRect.Bottom + gap)
+                Return New RectangleF(content.Left, top, content.Width, Math.Max(0, content.Bottom - top))
             Case LegendPositionEnum.Bottom
-                Return New RectangleF(content.Left, content.Top, content.Width, Math.Max(1, legendRect.Top - gap - content.Top))
+                Return New RectangleF(content.Left, content.Top, content.Width, Math.Max(0, legendRect.Top - gap - content.Top))
             Case LegendPositionEnum.Left
-                Return New RectangleF(legendRect.Right + gap, content.Top, Math.Max(1, content.Right - legendRect.Right - gap), content.Height)
+                Dim left = Math.Min(content.Right, legendRect.Right + gap)
+                Return New RectangleF(left, content.Top, Math.Max(0, content.Right - left), content.Height)
             Case LegendPositionEnum.Right
-                Return New RectangleF(content.Left, content.Top, Math.Max(1, legendRect.Left - gap - content.Left), content.Height)
+                Return New RectangleF(content.Left, content.Top, Math.Max(0, legendRect.Left - gap - content.Left), content.Height)
             Case Else
                 Return content
         End Select
@@ -1465,6 +1730,7 @@ Public Class Ultra2DChart
         Dim y As Single = legendRect.Top
         Dim seriesIndex As Integer = 0
         For Each ser In visibleSeries
+            If y >= legendRect.Bottom Then Exit For
             Dim text = If(String.IsNullOrEmpty(ser.Name), $"Series {seriesIndex + 1}", ser.Name)
             Dim textSize = 测量文本尺寸(text, legendFont)
             Dim itemW As Single = markerW + gap + textSize.Width + itemGap
@@ -1474,8 +1740,9 @@ Public Class Ultra2DChart
                     y += lineH
                 End If
             End If
-            Dim markerRect As New RectangleF(x, y + (lineH - 10 * s) / 2.0F, markerW, 10 * s)
-            Dim textRect As New RectangleF(x + markerW + gap, y, Math.Max(1, textSize.Width + 4 * s), lineH)
+            If y >= legendRect.Bottom Then Exit For
+            Dim markerRect = 限制矩形(New RectangleF(x, y + (lineH - 10 * s) / 2.0F, markerW, 10 * s), legendRect)
+            Dim textRect = 限制矩形(New RectangleF(x + markerW + gap, y, textSize.Width + 4 * s, lineH), legendRect)
             layout.LegendItems.Add(New LegendItemInfo With {
                 .Series = ser,
                 .SeriesIndex = seriesIndex,
@@ -1608,6 +1875,8 @@ Public Class Ultra2DChart
             minVal = 0
             maxVal = 1
         End If
+        layout.DataMinimum = minVal
+        layout.DataMaximum = maxVal
 
         If Y轴范围模式 = AxisRangeModeEnum.Fixed Then
             minVal = Y轴最小值
@@ -1643,6 +1912,8 @@ Public Class Ultra2DChart
         If interval <= 0 OrElse Double.IsInfinity(interval) OrElse Double.IsNaN(interval) Then interval = 1
         Dim niceMin = Math.Floor(minVal / interval) * interval
         Dim niceMax = Math.Ceiling(maxVal / interval) * interval
+        If layout.DataMinimum >= 0 Then niceMin = Math.Max(0, niceMin)
+        If layout.DataMaximum <= 0 Then niceMax = Math.Min(0, niceMax)
         If Y轴范围模式 = AxisRangeModeEnum.AutoClamped AndAlso Y轴最大值 > Y轴最小值 Then
             niceMin = Math.Min(Y轴最大值, Math.Max(Y轴最小值, niceMin))
             niceMax = Math.Min(Y轴最大值, Math.Max(Y轴最小值, niceMax))
@@ -1737,14 +2008,10 @@ Public Class Ultra2DChart
         Dim plot = layout.PlotRect
         If Not plot.Contains(_hoverClientPoint) Then Return result
 
-        Dim catW As Single = plot.Width / layout.CategoryCount
+        Dim catW As Single = plot.Width / 获取分类槽数量(layout)
         If catW <= 0 Then Return result
 
         Dim snapDistance As Single = Math.Max(1.0F, 折线悬停吸附半径 * layout.Scale)
-        Dim minRelativeIndex As Integer = Math.Max(0, CInt(Math.Floor((_hoverClientPoint.X - snapDistance - plot.Left) / catW - 0.5F)))
-        Dim maxRelativeIndex As Integer = Math.Min(layout.CategoryCount - 1, CInt(Math.Ceiling((_hoverClientPoint.X + snapDistance - plot.Left) / catW - 0.5F)))
-        If maxRelativeIndex < minRelativeIndex Then Return result
-
         Dim bestDistance As Double = Double.PositiveInfinity
         Dim bestSeries As ChartSeries = Nothing
         Dim bestSeriesIndex As Integer = -1
@@ -1757,6 +2024,9 @@ Public Class Ultra2DChart
         For seriesIndex As Integer = 0 To visibleSeries.Count - 1
             Dim ser = visibleSeries(seriesIndex)
             If ser Is Nothing OrElse ser.ChartType <> ChartSeriesTypeEnum.Line Then Continue For
+            Dim offset = 获取系列X偏移(ser)
+            Dim minRelativeIndex As Integer = Math.Max(0, CInt(Math.Floor((_hoverClientPoint.X - snapDistance - plot.Left) / catW - offset)))
+            Dim maxRelativeIndex As Integer = Math.Min(layout.CategoryCount - 1, CInt(Math.Ceiling((_hoverClientPoint.X + snapDistance - plot.Left) / catW - offset)))
 
             For relativeIndex As Integer = minRelativeIndex To maxRelativeIndex
                 Dim i As Integer = layout.ViewStartIndex + relativeIndex
@@ -1764,7 +2034,7 @@ Public Class Ultra2DChart
                 Dim point = ser.Points(i)
                 If point Is Nothing OrElse Not 是有效数值(point.Value) Then Continue For
 
-                Dim x As Single = plot.Left + catW * (relativeIndex + 0.5F)
+                Dim x As Single = plot.Left + plot.Width * 获取系列X比例(relativeIndex, ser, layout)
                 Dim y As Single = 值到Y坐标(point.Value, layout)
                 Dim dx As Double = Math.Abs(_hoverClientPoint.X - x)
                 If dx > snapDistance Then Continue For
@@ -1875,8 +2145,14 @@ Public Class Ultra2DChart
 
     Private Function 测量文本尺寸(text As String, font As Font) As Size
         If String.IsNullOrEmpty(text) Then Return Size.Empty
-        Dim normalized = text.Replace(vbLf, Environment.NewLine)
-        Return TextRenderer.MeasureText(normalized, font, New Size(Integer.MaxValue, Integer.MaxValue), TextFormatFlags.NoPadding Or TextFormatFlags.WordBreak)
+        Dim key = (Text:=text, Font:=font, Dpi:=D3D_DpiContext.FromControl(Me).Dpi)
+        Dim cached As Size
+        If _textSizeCache.TryGetValue(key, cached) Then Return cached
+        Dim normalized = text.Replace(vbCrLf, vbLf).Replace(vbLf, Environment.NewLine)
+        Dim measured = D3D_TextInterop.MeasureText(normalized, font, New Size(Integer.MaxValue, Integer.MaxValue), TextFormatFlags.NoPadding Or TextFormatFlags.SingleLine, DpiScale())
+        If _textSizeCache.Count >= 4096 Then _textSizeCache.Clear()
+        _textSizeCache(key) = measured
+        Return measured
     End Function
 
 
@@ -3005,6 +3281,7 @@ Public Class Ultra2DChart
 
 #Region "生命周期"
     Protected Overrides Sub OnMouseWheel(e As MouseEventArgs)
+        If e.Delta = 0 Then Return
         If (Control.ModifierKeys And Keys.Control) = Keys.Control Then
             Dim layout = 获取布局()
             If layout IsNot Nothing AndAlso layout.PlotRect.Contains(e.X, e.Y) AndAlso layout.ValueMax > layout.ValueMin Then
@@ -3033,13 +3310,16 @@ Public Class Ultra2DChart
                 Dim oldCount = layout.CategoryCount
                 Dim zoomRatio As Double = If(e.Delta > 0, 1.0 / X轴滚轮缩放比例, X轴滚轮缩放比例)
                 Dim newCount As Integer = CInt(Math.Round(oldCount * zoomRatio))
+                ' 四舍五入会把 2 * 1.25 留在 2；每次有效滚轮必须至少移动一个分类。
+                If e.Delta < 0 Then newCount = Math.Max(oldCount + 1, newCount)
+                If e.Delta > 0 Then newCount = Math.Min(oldCount - 1, newCount)
                 Dim minCount As Integer = Math.Min(layout.TotalCategoryCount, Math.Max(1, X轴最少可见分类数))
                 newCount = Math.Max(minCount, Math.Min(layout.TotalCategoryCount, newCount))
 
                 If newCount <> oldCount Then
                     Dim anchorRatio As Double = Math.Clamp((e.X - layout.PlotRect.Left) / Math.Max(1.0F, layout.PlotRect.Width), 0.0, 1.0)
-                    Dim anchorIndex As Double = layout.ViewStartIndex + anchorRatio * oldCount
-                    Dim newStart As Integer = CInt(Math.Round(anchorIndex - anchorRatio * newCount))
+                    Dim anchorIndex As Double = layout.ViewStartIndex + anchorRatio * 获取分类槽数量(layout)
+                    Dim newStart As Integer = CInt(Math.Round(anchorIndex - anchorRatio * (newCount + If(layout.HasIntervalSeries, 1, 0))))
                     设置X轴视图(newStart, If(newCount >= layout.TotalCategoryCount, 0, newCount))
                     Dim handled = TryCast(e, HandledMouseEventArgs)
                     If handled IsNot Nothing Then handled.Handled = True
@@ -3076,7 +3356,7 @@ Public Class Ultra2DChart
             Dim layout = 获取布局()
             If layout Is Nothing OrElse layout.CategoryCount <= 0 Then Return
 
-            Dim categoryWidth = layout.PlotRect.Width / layout.CategoryCount
+            Dim categoryWidth = layout.PlotRect.Width / 获取分类槽数量(layout)
             If categoryWidth <= 0 Then Return
 
             Dim deltaCategories As Integer = CInt(Math.Round((_panStartMouseX - e.X) / categoryWidth))

@@ -58,6 +58,7 @@ Public Class Form_Ultra2DChart
             第二柱状.ColumnCornerRadius = 4.0F
 
             Dim 折线 = Ultra2DChart1.AddSeries("满意度", Ultra2DChart.ChartSeriesTypeEnum.Line, 满意度)
+            折线.XAxisRepresentationMode = Ultra2DChart.XAxisRepresentationModeEnum.Interval
             折线.Color = Color.FromArgb(198, 120, 221)
             折线.LineThickness = 3.0F
             折线.MarkerShape = Ultra2DChart.MarkerShapeEnum.Diamond
