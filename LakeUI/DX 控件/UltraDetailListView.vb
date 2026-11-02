@@ -4064,7 +4064,13 @@ Public Class UltraDetailListView
 
     Protected Overrides Sub OnKeyDown(e As KeyEventArgs)
         MyBase.OnKeyDown(e)
-        隐藏截断提示()
+        ' 仅在导航或编辑列表时关闭；按下 Ctrl 不能提前销毁提示窗选区。
+        Select Case e.KeyCode
+            Case Keys.Up, Keys.Down, Keys.PageUp, Keys.PageDown, Keys.Home, Keys.End, Keys.F2, Keys.Escape
+                隐藏截断提示()
+            Case Keys.Space
+                If 显示复选框 Then 隐藏截断提示()
+        End Select
         If _displayRows.Count = 0 Then Return
         Dim shiftHeld = (e.Modifiers And Keys.Shift) = Keys.Shift
 

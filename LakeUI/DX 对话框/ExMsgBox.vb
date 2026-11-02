@@ -226,6 +226,20 @@ Public Module ExMsgBoxModule
         End Using
     End Function
 
+    ''' <summary>创建可由调用方非模态显示、关闭和管理生命周期的自定义消息框。须在 UI 线程调用；关闭或使用完毕后释放窗体。</summary>
+    Public Function CreateExMsgBox(prompt As String, customButtons As IEnumerable(Of ExMsgBoxButton),
+                                   Optional title As String = Nothing, Optional owner As IWin32Window = Nothing,
+                                   Optional icon As Integer = 0) As Form
+        Dim buttons = customButtons?.ToList()
+        If buttons Is Nothing OrElse buttons.Count = 0 OrElse buttons.Any(Function(button) button Is Nothing) Then
+            Throw New ArgumentException("至少需要一个有效的自定义按钮。", NameOf(customButtons))
+        End If
+        For index = 0 To buttons.Count - 1
+            buttons(index).Index = index
+        Next
+        Return New ExMsgBoxForm(If(prompt, ""), icon, If(title, Application.ProductName), ExMsgBoxTheme.Current, owner, buttons)
+    End Function
+
     Private Function 显示(owner As IWin32Window, prompt As Object, buttons As Integer, title As Object) As MsgBoxResult
         If TypeOf owner Is Control Then
             Dim ownerControl = DirectCast(owner, Control)
@@ -399,6 +413,7 @@ Friend Class ExMsgBoxForm
     Private 内容区域 As Rectangle
     Private 按钮区域 As Rectangle
     Private 图标区域 As Rectangle
+    Private 自定义按钮字体 As Font
 
     ' 控件
     Private 消息标签 As Label
@@ -835,9 +850,9 @@ Friend Class ExMsgBoxForm
             Case Keys.Enter
                 Dim 焦点按钮 = 操作按钮.FirstOrDefault(Function(b) b.Focused)
                 If 焦点按钮 IsNot Nothing Then
-                    执行关闭(焦点按钮.Tag)
+                    If 自定义按钮列表 IsNot Nothing Then 自定义按钮点击(焦点按钮, EventArgs.Empty) Else 执行关闭(焦点按钮.Tag)
                 ElseIf 默认按钮序号 >= 0 AndAlso 默认按钮序号 < 操作按钮.Count Then
-                    执行关闭(操作按钮(默认按钮序号).Tag)
+                    If 自定义按钮列表 IsNot Nothing Then 自定义按钮点击(操作按钮(默认按钮序号), EventArgs.Empty) Else 执行关闭(操作按钮(默认按钮序号).Tag)
                 End If
                 e.Handled = True
             Case Keys.Escape
@@ -901,7 +916,8 @@ Friend Class ExMsgBoxForm
         Next
         If 默认按钮序号 < 0 Then 默认按钮序号 = 自定义按钮列表.Count - 1
 
-        Dim 按钮字体 As New Font(MessageDialogRendering.ResolveDialogFontName(拥有者, Me), 9.0F)
+        自定义按钮字体 = New Font(MessageDialogRendering.ResolveDialogFontName(拥有者, Me), 9.0F)
+        Dim 按钮字体 = 自定义按钮字体
         For i = 0 To 自定义按钮列表.Count - 1
             Dim def = 自定义按钮列表(i)
             Dim 是默认 As Boolean = (i = 默认按钮序号) OrElse def.IsAccent
@@ -953,6 +969,7 @@ Friend Class ExMsgBoxForm
 
     Protected Overrides Sub Dispose(disposing As Boolean)
         If disposing Then
+            自定义按钮字体?.Dispose()
             标题字体?.Dispose()
             消息字体?.Dispose()
             消息图标位图?.Dispose()

@@ -122,6 +122,10 @@ Public Class AgentRoom
                 Dim normalized = If(value, "")
                 If _title = normalized Then Return
                 _title = normalized
+                If _kind = ChatItemKind.TurnHeader OrElse _kind = ChatItemKind.ToolCall Then
+                    OwnerRoom?.RequestViewportRefresh()
+                    Return
+                End If
                 NeedsRelayout = True
                 OwnerRoom?.NotifyItemChanged(Me)
             End Set
@@ -161,7 +165,7 @@ Public Class AgentRoom
             Set(value As Boolean)
                 If _isRunning = value Then Return
                 _isRunning = value
-                OwnerRoom?.NotifyItemChanged(Me)
+                OwnerRoom?.RequestViewportRefresh()
             End Set
         End Property
 
@@ -173,7 +177,7 @@ Public Class AgentRoom
             Set(value As Boolean)
                 If _isError = value Then Return
                 _isError = value
-                OwnerRoom?.NotifyItemChanged(Me)
+                OwnerRoom?.RequestViewportRefresh()
             End Set
         End Property
 
@@ -427,6 +431,7 @@ Public Class AgentRoom
     Private _cachedLineHeightDpiScale As Single = -1.0F
     Private Const MaxTextWidthCacheEntries As Integer = 4096
     Private ReadOnly _streamLayoutTimer As New Timer() With {.Interval = 50}
+    Private _followLatestPending As Boolean
     Private Const StreamIdleSettleMilliseconds As Integer = 1000
     Private ReadOnly _streamIdleTimer As New Timer() With {.Interval = StreamIdleSettleMilliseconds}
     Private ReadOnly _dirtyStreamItems As New HashSet(Of ChatItem)()
@@ -1899,6 +1904,7 @@ Public Class AgentRoom
         ClearSelection()
         _streamLayoutTimer.Stop()
         _streamIdleTimer.Stop()
+        _followLatestPending = False
         _dirtyStreamItems.Clear()
         _activeStreamItems.Clear()
         _items.Clear()
@@ -2045,11 +2051,26 @@ Public Class AgentRoom
 
     ''' <summary>仅在用户原本位于底部时跟随最新内容，不会打断向上浏览。</summary>
     Public Sub FollowLatestIfPinned()
-        If Not _autoScrollToBottom OrElse Not _pinnedToBottom Then Return
+        If Not _autoScrollToBottom OrElse Not _pinnedToBottom Then
+            _followLatestPending = False
+            Return
+        End If
+        If _dirtyStreamItems.Count > 0 Then
+            QueueFollowLatestIfPinned()
+            Return
+        End If
+        _followLatestPending = False
         EnsureLayout()
         Dim viewH As Integer = ContentViewportHeight()
         _滚动偏移 = Math.Max(0, _contentHeight - viewH)
         RequestViewportRefresh()
+    End Sub
+
+    ''' <summary>将跟随底部请求合并到流式布局批处理，避免每个增量都同步重建布局。</summary>
+    Public Sub QueueFollowLatestIfPinned()
+        If Not _autoScrollToBottom OrElse Not _pinnedToBottom Then Return
+        _followLatestPending = True
+        If Not _streamLayoutTimer.Enabled Then _streamLayoutTimer.Start()
     End Sub
 
     ''' <summary>立即提交并最终化最后一条流式 Markdown 消息。</summary>
@@ -2066,6 +2087,7 @@ Public Class AgentRoom
         _activeStreamItems.Remove(item)
         If _activeStreamItems.Count = 0 Then _streamIdleTimer.Stop()
         CompleteStreamingItem(item)
+        If _followLatestPending Then FollowLatestIfPinned()
     End Sub
 #End Region
 
@@ -2137,6 +2159,7 @@ Public Class AgentRoom
     Private Sub StreamLayoutTimerTick(sender As Object, e As EventArgs)
         _streamLayoutTimer.Stop()
         FlushPendingStreamItems()
+        If _followLatestPending Then FollowLatestIfPinned()
     End Sub
 
     Private Sub FlushPendingStreamItems()
