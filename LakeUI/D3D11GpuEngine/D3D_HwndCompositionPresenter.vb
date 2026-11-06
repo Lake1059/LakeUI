@@ -25,6 +25,8 @@ Friend NotInheritable Class D3D_HwndCompositionPresenter
     Private _lastUsed As Long
     Private _presentedSurfaceRevision As Long
     Private _pendingSurfaceRevision As Long
+    Private _updatedSurfaceRevision As Long
+    Private _updatedBitmap As ID2D1Bitmap1
     Private _pendingRenderMilliseconds As Double
     Private _pendingUpdateMilliseconds As Double
     Private _disposed As Boolean
@@ -119,7 +121,37 @@ Friend NotInheritable Class D3D_HwndCompositionPresenter
         _presenting = True
         Try
             Dim 更新偏移 As Vortice.Mathematics.Int2
-            Dim 更新表面 = _surface.BeginDraw(Of IDXGISurface)(Nothing, 更新偏移)
+            Dim 完整区域 As New Rectangle(Point.Empty, _size)
+            Dim 请求区域 = Rectangle.Intersect(完整区域, surface.LastRenderedDirtyRegion)
+            Dim 使用局部更新 = Not _surfaceNeedsBinding AndAlso 请求区域.Width > 0 AndAlso
+                               请求区域.Height > 0 AndAlso 请求区域 <> 完整区域 AndAlso
+                               ReferenceEquals(_updatedBitmap, surface.Bitmap) AndAlso
+                               surface.Revision = _updatedSurfaceRevision + 1
+            If 使用局部更新 Then
+                ' 下采样滤波会影响脏区边缘之外的目标像素，保留完整图像的采样边界。
+                请求区域.Inflate(2, 2)
+                请求区域 = Rectangle.Intersect(完整区域, 请求区域)
+            Else
+                请求区域 = 完整区域
+            End If
+            Dim DComp更新区域 As Nullable(Of Vortice.RawRect) = Nothing
+            If 使用局部更新 Then
+                DComp更新区域 = New Vortice.RawRect(请求区域.Left, 请求区域.Top,
+                                                     请求区域.Right, 请求区域.Bottom)
+            End If
+            ' 设备和句柄错误继续由统一恢复路径处理，不能吞掉错误后重新 BeginDraw。
+            Dim 更新表面 As IDXGISurface
+            Try
+                更新表面 = _surface.BeginDraw(Of IDXGISurface)(DComp更新区域, 更新偏移)
+            Catch 异常 As Exception
+                Dim 错误码 = CUInt(CLng(异常.HResult) And &HFFFFFFFFL)
+                If Not 使用局部更新 OrElse D3D_DeviceManager.IsDeviceLostException(异常) OrElse
+                   错误码 = &H80070005UI Then Throw
+                使用局部更新 = False
+                请求区域 = 完整区域
+                更新表面 = _surface.BeginDraw(Of IDXGISurface)(Nothing, 更新偏移)
+            End Try
+            _updatedBitmap = Nothing
             Try
                 Using 更新表面
                     Dim 位图属性 As New BitmapProperties1(
@@ -127,7 +159,8 @@ Friend NotInheritable Class D3D_HwndCompositionPresenter
                         96.0F, 96.0F, BitmapOptions.Target Or BitmapOptions.CannotDraw)
                     Using 目标位图 = _context.CreateBitmapFromDxgiSurface(更新表面, 位图属性)
                         _context.Target = 目标位图
-                        _context.Transform = Matrix3x2.CreateTranslation(更新偏移.X, 更新偏移.Y)
+                        _context.Transform = Matrix3x2.CreateTranslation(更新偏移.X - 请求区域.Left,
+                                                                           更新偏移.Y - 请求区域.Top)
                         _context.BeginDraw()
                         Try
                             Dim 目标区域 As New Vortice.RawRectF(0, 0, _size.Width, _size.Height)
@@ -135,7 +168,8 @@ Friend NotInheritable Class D3D_HwndCompositionPresenter
                                 surface.LogicalSize.Width * surface.SampleScale,
                                 surface.LogicalSize.Height * surface.SampleScale)
                             ' 合成表面可能位于共享纹理中的非零偏移；清除和绘制都限制在本控件范围。
-                            _context.PushAxisAlignedClip(目标区域, AntialiasMode.Aliased)
+                            _context.PushAxisAlignedClip(New Vortice.RawRectF(请求区域.Left, 请求区域.Top,
+                                请求区域.Right, 请求区域.Bottom), AntialiasMode.Aliased)
                             Try
                                 _context.Clear(New Vortice.Mathematics.Color4(0, 0, 0, 1))
                                 If surface.SurfaceFormat = Format.R16G16B16A16_Float AndAlso _surfaceFormat = Format.B8G8R8A8_UNorm Then
@@ -153,13 +187,18 @@ Friend NotInheritable Class D3D_HwndCompositionPresenter
                                 _context.Target = Nothing
                             End Try
                         End Try
-                        SurfaceProbe?.Invoke(_context, 目标位图, New Rectangle(更新偏移.X, 更新偏移.Y, _size.Width, _size.Height))
+                        SurfaceProbe?.Invoke(_context, 目标位图,
+                                             New Rectangle(更新偏移.X, 更新偏移.Y,
+                                                           If(使用局部更新, 请求区域.Width, _size.Width),
+                                                           If(使用局部更新, 请求区域.Height, _size.Height)))
                     End Using
                 End Using
             Finally
                 _context.Target = Nothing
                 _surface.EndDraw().CheckError()
             End Try
+            _updatedBitmap = surface.Bitmap
+            _updatedSurfaceRevision = surface.Revision
             If _surfaceNeedsBinding Then
                 _visual.SetContent(_surface).CheckError()
                 _surfaceNeedsBinding = False
@@ -237,6 +276,8 @@ Friend NotInheritable Class D3D_HwndCompositionPresenter
     End Sub
 
     Private Sub 释放设备资源()
+        _updatedBitmap = Nothing
+        _updatedSurfaceRevision = 0
         _pending.Remove(Me)
         If _context IsNot Nothing Then _context.Target = Nothing
         _surface?.Dispose()

@@ -53,6 +53,8 @@ Friend NotInheritable Class D3D_ControlSurfaceRegistry
     Friend Shared Function RenderControl(control As Control, renderable As D3D_IGpuRenderable,
                                          Optional requestedDirty As Rectangle = Nothing,
                                          Optional 绘制后处理 As Action(Of D3D_PaintContext) = Nothing) As D3D_ControlSurface
+        Dim 无渲染控件 = TryCast(control, D3D_INativeTransparentPresentationSource)
+        If 无渲染控件 IsNot Nothing AndAlso 无渲染控件.UseNativeTransparentPresentation Then Return Nothing
         Dim 项目 = 获取或创建项目(control)
         If 项目 Is Nothing Then Return Nothing
         If Not 项目.Dirty AndAlso 项目.Surface.Bitmap IsNot Nothing Then Return 项目.Surface
@@ -75,6 +77,12 @@ Friend NotInheritable Class D3D_ControlSurfaceRegistry
                                              Optional registerDependency As Boolean = True) As Boolean
         If consumer Is Nothing OrElse source Is Nothing OrElse context Is Nothing Then Return False
         If consumer.IsDisposed OrElse source.IsDisposed Then Return False
+        Dim 无渲染来源 = TryCast(source, D3D_INativeTransparentPresentationSource)
+        If 无渲染来源 IsNot Nothing AndAlso 无渲染来源.UseNativeTransparentPresentation Then
+            Dim 祖先来源 = 查找最近GPU祖先(source)
+            If 祖先来源 Is Nothing Then Return False
+            Return TryDrawBackground(consumer, 祖先来源, context, destination, renderSourceIfDirty, registerDependency)
+        End If
         ' 强制约束：背景来源只能是外层容器已经完成或正在按外到内顺序准备的表面。
         ' 禁止在子控件绘制阶段反向遍历兄弟树或重新提交当前容器。
         D3D_RenderDiagnostics.V5BackdropAttempt()
@@ -221,7 +229,9 @@ Friend NotInheritable Class D3D_ControlSurfaceRegistry
         If 所有者 Is Nothing Then Return Nothing
         Dim 当前控件 = 所有者.Parent
         While 当前控件 IsNot Nothing
+            Dim 无渲染来源 = TryCast(当前控件, D3D_INativeTransparentPresentationSource)
             If Not 当前控件.IsDisposed AndAlso
+               (无渲染来源 Is Nothing OrElse Not 无渲染来源.UseNativeTransparentPresentation) AndAlso
                ((TypeOf 当前控件 Is V5_IGpuPresentationSource AndAlso
                  TryCast(当前控件, D3D_IGpuRenderable) IsNot Nothing) OrElse
                 TypeOf 当前控件 Is Form) AndAlso
@@ -259,6 +269,11 @@ Friend NotInheritable Class D3D_ControlSurfaceRegistry
                                 Optional dirtyRect As Rectangle = Nothing,
                                 Optional requestConsumers As Boolean = True)
         If control Is Nothing Then Return
+        Dim 无渲染控件 = TryCast(control, D3D_INativeTransparentPresentationSource)
+        If 无渲染控件 IsNot Nothing AndAlso 无渲染控件.UseNativeTransparentPresentation Then
+            ' 该控件当前没有自己的 GPU 表面，失效请求不能重新进入背景依赖图。
+            Return
+        End If
         Dim 规范脏区 = dirtyRect
         If 规范脏区.Width <= 0 OrElse 规范脏区.Height <= 0 Then
             规范脏区 = New Rectangle(Point.Empty, control.Size)
@@ -287,9 +302,54 @@ Friend NotInheritable Class D3D_ControlSurfaceRegistry
             If 来源区域.Width > 0 AndAlso 来源区域.Height > 0 AndAlso
                Not 来源区域.IntersectsWith(New RectangleF(脏区.X, 脏区.Y, 脏区.Width, 脏区.Height)) Then Continue For
             D3D_RenderDiagnostics.V5DependencyInvalidation()
-            D3D_V5Presentation.RequestRenderBatched(消费者)
+            Dim 消费者脏区 As Rectangle
+            If Not TryMapDependencyDirtyRectangle(消费者, 来源, 来源区域, 脏区, 消费者脏区) Then
+                消费者脏区 = New Rectangle(Point.Empty, 消费者.ClientSize)
+            End If
+            ' 来源依赖可跨越多级显式映射；先传播逻辑失效，再由外到内批次准备来源。
+            MarkDirty(消费者, 消费者脏区)
+            D3D_V5Presentation.RequestRenderBatched(消费者, 消费者脏区, markSurfaceDirty:=False)
         Next
     End Sub
+
+    ''' <summary>
+    ''' 将来源控件坐标中的脏区转换为消费者本地坐标。
+    ''' 句柄或坐标空间不可用时返回 False，由调用方回退整控件失效。
+    ''' </summary>
+    Friend Shared Function TryMapDependencyDirtyRectangle(消费者 As Control,
+                                                            来源 As Control,
+                                                            来源区域 As RectangleF,
+                                                            脏区 As Rectangle,
+                                                            ByRef 消费者脏区 As Rectangle) As Boolean
+        消费者脏区 = Rectangle.Empty
+        If 消费者 Is Nothing OrElse 来源 Is Nothing OrElse 消费者.IsDisposed OrElse 来源.IsDisposed Then Return False
+        If Not 消费者.IsHandleCreated OrElse Not 来源.IsHandleCreated Then Return False
+        If 消费者.ClientSize.Width <= 0 OrElse 消费者.ClientSize.Height <= 0 Then Return False
+
+        Try
+            Dim 来源边界 = New RectangleF(0, 0, 来源.ClientSize.Width, 来源.ClientSize.Height)
+            Dim 有效来源区域 = If(来源区域.Width > 0 AndAlso 来源区域.Height > 0,
+                                  RectangleF.Intersect(来源边界, 来源区域),
+                                  来源边界)
+            Dim 有效脏区 = RectangleF.Intersect(有效来源区域,
+                New RectangleF(脏区.X, 脏区.Y, 脏区.Width, 脏区.Height))
+            If 有效脏区.Width <= 0 OrElse 有效脏区.Height <= 0 Then Return False
+
+            ' 与背景采样使用同一平移关系；不同 DPI 的坐标空间保留整面路径。
+            If 消费者.DeviceDpi <> 来源.DeviceDpi Then Return False
+            Dim 偏移 = 来源.PointToClient(消费者.PointToScreen(Point.Empty))
+            Dim 左 = CInt(Math.Floor(有效脏区.Left)) - 偏移.X
+            Dim 上 = CInt(Math.Floor(有效脏区.Top)) - 偏移.Y
+            Dim 右 = CInt(Math.Ceiling(有效脏区.Right)) - 偏移.X
+            Dim 下 = CInt(Math.Ceiling(有效脏区.Bottom)) - 偏移.Y
+            消费者脏区 = Rectangle.Intersect(New Rectangle(左, 上, Math.Max(0, 右 - 左), Math.Max(0, 下 - 上)),
+                                             New Rectangle(Point.Empty, 消费者.ClientSize))
+            Return 消费者脏区.Width > 0 AndAlso 消费者脏区.Height > 0
+        Catch 异常 As Exception
+            消费者脏区 = Rectangle.Empty
+            Return False
+        End Try
+    End Function
 
     Friend Shared Sub BackgroundSourceChanged(consumer As Control)
         If consumer Is Nothing Then Return
@@ -308,6 +368,16 @@ Friend NotInheritable Class D3D_ControlSurfaceRegistry
             Catch
             End Try
         End If
+    End Sub
+
+    Friend Shared Sub PresentationModeChanged(control As Control)
+        Dim 消费者集合 As HashSet(Of Control) = Nothing
+        If _consumers.TryGetValue(control, 消费者集合) Then
+            For Each 消费者 In 消费者集合.ToArray()
+                D3D_V5Presentation.RequestRenderBatched(消费者)
+            Next
+        End If
+        MarkDirty(control, requestConsumers:=False)
     End Sub
 
     Friend Shared Sub UnregisterConsumer(consumer As Control, Optional source As Control = Nothing)

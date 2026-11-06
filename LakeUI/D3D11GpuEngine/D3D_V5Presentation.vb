@@ -69,9 +69,25 @@ Friend NotInheritable Class D3D_V5Presentation
     End Sub
 
     Friend Shared Function IsV5Control(control As Control) As Boolean
-        Return control IsNot Nothing AndAlso
-               TypeOf control Is V5_IGpuPresentationSource
+        If control Is Nothing OrElse Not TypeOf control Is V5_IGpuPresentationSource Then Return False
+        Dim transparent = TryCast(control, D3D_INativeTransparentPresentationSource)
+        If transparent IsNot Nothing AndAlso transparent.UseNativeTransparentPresentation Then
+            Return False
+        End If
+        Return True
     End Function
+
+    ''' <summary>只释放当前控件的呈现资源，不影响其子树或逻辑事件订阅。</summary>
+    Friend Shared Sub SuspendPresentation(control As Control)
+        Dim 呈现器 As D3D_HwndCompositionPresenter = Nothing
+        If _presenters.TryGetValue(control, 呈现器) Then
+            _presenters.Remove(control)
+            呈现器.Dispose()
+        End If
+        移除批次请求(control)
+        取消重试(control)
+        D3D_ControlSurfaceRegistry.ReleaseSurfaceResources(control)
+    End Sub
 
     Friend Shared Function Paint(control As Control, renderable As D3D_IGpuRenderable,
                                  Optional 绘制后处理 As Action(Of D3D_PaintContext) = Nothing,
@@ -311,7 +327,7 @@ Friend NotInheritable Class D3D_V5Presentation
             End If
             D3D_RefreshDiagnostics.Record(提交开始时间, "Present", 控件)
             取消重试(控件)
-            D3D_RenderCore.NotifyControlInvalidated(控件, New Rectangle(Point.Empty, 控件.ClientSize))
+            D3D_RenderCore.NotifyControlInvalidated(控件, 控件表面.LastRenderedDirtyRegion)
         Catch 异常 As Exception
             If D3D_RenderCore.DeviceManager.HandleDeviceLost(异常) Then
                 排队重试(控件)

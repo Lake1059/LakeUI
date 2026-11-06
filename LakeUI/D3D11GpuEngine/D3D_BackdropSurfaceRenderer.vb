@@ -296,10 +296,16 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
 
     Public Sub ApplyParameters(radius As Integer, passes As Integer, downsample As Integer,
                                 noiseScale As Single)
+        radius = Math.Max(1, radius)
+        passes = Math.Max(0, Math.Min(5, passes))
+        downsample = Math.Max(1, downsample)
+        noiseScale = Math.Max(0.1F, noiseScale)
+        Dim 模糊变化 = _radius <> radius OrElse _passes <> passes OrElse _downsample <> downsample
+        _noiseScale = noiseScale
+        If Not 模糊变化 Then Return
         Volatile.Write(_radius, Math.Max(1, radius))
         Volatile.Write(_passes, Math.Max(0, Math.Min(5, passes)))
         Volatile.Write(_downsample, Math.Max(1, downsample))
-        _noiseScale = Math.Max(0.1F, noiseScale)
         Interlocked.Increment(_effectSettingsVersion)
         InvalidateDerivedFrameCaches()
     End Sub

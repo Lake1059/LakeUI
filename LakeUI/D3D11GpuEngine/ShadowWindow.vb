@@ -151,6 +151,7 @@ Friend Class ShadowWindow
     Private _globalAlpha As Byte = 255
     Private _desktopVisibilityTimer As Timer
     Private _desiredVisible As Boolean = False
+    Private _桌面管理器 As IVirtualDesktopManager
 
     ''' <summary>宿主窗口句柄，用于转发调整大小消息。</summary>
     <Browsable(False), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)>
@@ -198,28 +199,33 @@ Friend Class ShadowWindow
         ApplyDesktopAwareVisibility()
     End Sub
 
+    Private Function 获取桌面管理器() As IVirtualDesktopManager
+        If _桌面管理器 Is Nothing Then _桌面管理器 = DirectCast(New CVirtualDesktopManager(), IVirtualDesktopManager)
+        Return _桌面管理器
+    End Function
+
+    Private Sub 释放桌面管理器()
+        If _桌面管理器 Is Nothing Then Return
+        Try
+            Marshal.FinalReleaseComObject(_桌面管理器)
+        Catch
+        End Try
+        _桌面管理器 = Nothing
+    End Sub
+
     Public Sub SyncVirtualDesktopWithHost()
         If HostHandle = IntPtr.Zero Then Return
-
-        Dim shadowHandle As IntPtr = Me.Handle
-        If shadowHandle = IntPtr.Zero Then Return
-
-        Dim manager As IVirtualDesktopManager = Nothing
         Try
-            manager = DirectCast(New CVirtualDesktopManager(), IVirtualDesktopManager)
-
-            Dim desktopId As Guid = Guid.Empty
-            If manager.GetWindowDesktopId(HostHandle, desktopId) <> 0 Then Return
-
-            Dim unused = manager.MoveWindowToDesktop(shadowHandle, desktopId)
-        Catch
-        Finally
-            If manager IsNot Nothing Then
-                Try
-                    Marshal.FinalReleaseComObject(manager)
-                Catch
-                End Try
-            End If
+            Dim 管理器 = 获取桌面管理器()
+            Dim 宿主桌面 As Guid
+            Dim 阴影桌面 As Guid
+            If 管理器.GetWindowDesktopId(HostHandle, 宿主桌面) <> 0 Then Return
+            Dim 阴影句柄 = Me.Handle
+            If 管理器.GetWindowDesktopId(阴影句柄, 阴影桌面) = 0 AndAlso 阴影桌面 = 宿主桌面 Then Return
+            管理器.MoveWindowToDesktop(阴影句柄, 宿主桌面)
+        Catch 异常 As Exception
+            ' Shell 重启后重新获取 COM 对象，下一次同步继续尝试。
+            释放桌面管理器()
         End Try
     End Sub
 
@@ -258,23 +264,13 @@ Friend Class ShadowWindow
 
     Private Function IsHostOnCurrentVirtualDesktop() As Boolean
         If HostHandle = IntPtr.Zero Then Return False
-
-        Dim manager As IVirtualDesktopManager = Nothing
         Try
-            manager = DirectCast(New CVirtualDesktopManager(), IVirtualDesktopManager)
-
-            Dim onCurrentDesktop As Boolean = True
-            If manager.IsWindowOnCurrentVirtualDesktop(HostHandle, onCurrentDesktop) <> 0 Then Return True
-            Return onCurrentDesktop
-        Catch
+            Dim 当前桌面 As Boolean = True
+            If 获取桌面管理器().IsWindowOnCurrentVirtualDesktop(HostHandle, 当前桌面) <> 0 Then Return True
+            Return 当前桌面
+        Catch 异常 As Exception
+            释放桌面管理器()
             Return True
-        Finally
-            If manager IsNot Nothing Then
-                Try
-                    Marshal.FinalReleaseComObject(manager)
-                Catch
-                End Try
-            End If
         End Try
     End Function
 
@@ -283,14 +279,17 @@ Friend Class ShadowWindow
         If Not Me.IsHandleCreated Then
             Dim unused = Me.Handle
         End If
-        Dim exStyle As Long = GetWindowLongPtr(Me.Handle, GWL_EXSTYLE).ToInt64()
-        If ResizeWidth > 0 OrElse ResizeFullArea Then
-            exStyle = exStyle And Not CLng(WS_EX_TRANSPARENT)
+        Dim 窗口句柄 = Me.Handle
+        Dim 原样式 = GetWindowLongPtr(窗口句柄, GWL_EXSTYLE).ToInt64()
+        Dim 新样式 As Long
+        If ResizeWidth <= 0 AndAlso Not ResizeFullArea Then
+            新样式 = 原样式 Or WS_EX_TRANSPARENT
         Else
-            exStyle = exStyle Or WS_EX_TRANSPARENT
+            新样式 = 原样式 And Not CLng(WS_EX_TRANSPARENT)
         End If
-        SetWindowLongPtr(Me.Handle, GWL_EXSTYLE, New IntPtr(exStyle))
-        SetWindowPos(Me.Handle, IntPtr.Zero, 0, 0, 0, 0,
+        If 原样式 = 新样式 Then Return
+        SetWindowLongPtr(窗口句柄, GWL_EXSTYLE, New IntPtr(新样式))
+        SetWindowPos(窗口句柄, IntPtr.Zero, 0, 0, 0, 0,
                      SWP_FRAMECHANGED Or SWP_NOMOVE Or SWP_NOSIZE Or SWP_NOZORDER Or SWP_NOACTIVATE)
     End Sub
 
@@ -429,7 +428,10 @@ Friend Class ShadowWindow
     End Sub
 
     Protected Overrides Sub Dispose(disposing As Boolean)
-        If disposing Then StopDesktopVisibilityTimer()
+        If disposing Then
+            StopDesktopVisibilityTimer()
+            释放桌面管理器()
+        End If
         MyBase.Dispose(disposing)
     End Sub
 

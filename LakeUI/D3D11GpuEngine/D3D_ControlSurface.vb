@@ -20,6 +20,8 @@ Friend NotInheritable Class D3D_ControlSurface
     Private _sampleScale As Integer = 1
     Private _generation As Integer = -1
     Private _revision As Long
+    Private _lastRenderedDirtyRegion As Rectangle
+    Private _hasCompleteContent As Boolean
     Private _textureUseStarted As Boolean
     Private _backdropUseStarted As Boolean
     Private _allocatedBytes As Long
@@ -69,6 +71,12 @@ Friend NotInheritable Class D3D_ControlSurface
     Friend ReadOnly Property Revision As Long
         Get
             Return _revision
+        End Get
+    End Property
+
+    Friend ReadOnly Property LastRenderedDirtyRegion As Rectangle
+        Get
+            Return _lastRenderedDirtyRegion
         End Get
     End Property
 
@@ -143,7 +151,7 @@ Friend NotInheritable Class D3D_ControlSurface
                 请求区域.Inflate(2, 2)
                 请求区域 = Rectangle.Intersect(全部区域, 请求区域)
             End If
-            Dim 使用局部绘制 = 请求区域.Width > 0 AndAlso 请求区域.Height > 0 AndAlso
+            Dim 使用局部绘制 = _hasCompleteContent AndAlso 请求区域.Width > 0 AndAlso 请求区域.Height > 0 AndAlso
                                请求区域 <> 全部区域 AndAlso
                                覆盖声明 IsNot Nothing AndAlso
                                覆盖声明.CoversDirtyRegion(请求区域)
@@ -199,10 +207,13 @@ Friend NotInheritable Class D3D_ControlSurface
             _context.Transform = Matrix3x2.Identity
             _context.EndDraw()
             _drawing = False
+            _hasCompleteContent = True
+            _lastRenderedDirtyRegion = 有效脏区
             _revision += 1
             _lastUsed = D3D_GpuCache.NextTick()
             Return True
         Catch
+            _hasCompleteContent = False
             If _drawing Then
                 Try : _context.EndDraw() : Catch : End Try
                 _drawing = False
@@ -252,6 +263,7 @@ Friend NotInheritable Class D3D_ControlSurface
             96.0F,
             BitmapOptions.Target)
         _bitmap = _context.CreateBitmap(New Vortice.Mathematics.SizeI(像素尺寸.Width, 像素尺寸.Height), IntPtr.Zero, 0UI, 位图属性)
+        _hasCompleteContent = False
         _allocatedBytes = CLng(像素尺寸.Width) * CLng(像素尺寸.Height) * If(_surfaceFormat = Format.R16G16B16A16_Float, 8L, 4L)
         D3D_RenderDiagnostics.V5SurfaceBytesChanged(_allocatedBytes)
         D3D_ControlSurfaceRegistry.SurfaceBytesChanged(_allocatedBytes)
@@ -337,6 +349,8 @@ Friend NotInheritable Class D3D_ControlSurface
         _generation = -1
         _logicalSize = Size.Empty
         _pixelSize = Size.Empty
+        _lastRenderedDirtyRegion = Rectangle.Empty
+        _hasCompleteContent = False
     End Sub
 
     Private Shared Sub 安全释放(资源 As IDisposable)

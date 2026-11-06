@@ -11,7 +11,7 @@ Imports Vortice.Direct2D1
 <Docking(DockingBehavior.Ask)>
 <DefaultEvent("Scroll")>
 Public Class ModernPanel
-    Implements D3D_IGpuRenderable, D3D_IGpuInvalidationSource, D3D_ISuperSamplingSource, D3D_IBackgroundSourceProvider, V5_IGpuPresentationSource
+    Implements D3D_IGpuRenderable, D3D_IGpuInvalidationSource, D3D_ISuperSamplingSource, D3D_IBackgroundSourceProvider, V5_IGpuPresentationSource, D3D_INativeTransparentPresentationSource
 
     ''' <summary>
     ''' 滚动策略枚举。
@@ -57,6 +57,16 @@ Public Class ModernPanel
         TopDown = 1
     End Enum
 
+    ''' <summary>
+    ''' 全透明面板的呈现策略。
+    ''' </summary>
+    Public Enum TransparentRenderModeEnum
+        ''' <summary>沿用 LakeUI GPU 背景与内容呈现路径。</summary>
+        Normal = 0
+        ''' <summary>满足严格全透明条件时交回 WinForms 原生透明背景路径。</summary>
+        SkipWhenFullyTransparent = 1
+    End Enum
+
 #Region "构造"
 
     Public Sub New()
@@ -93,6 +103,33 @@ Public Class ModernPanel
 
     Private Sub 请求GPU渲染(dirtyRect As Rectangle, Optional immediate As Boolean = False)
         If Me.IsDisposed Then Return
+        Dim 无渲染 = UseNativeTransparentPresentation
+        If 无渲染 <> _已应用无渲染 Then
+            If IsHandleCreated AndAlso D3D_V5Presentation.IsRendering Then
+                ' 用户布局事件可能在绘制中修改颜色；资源释放必须等当前绘制退出。
+                Try
+                    BeginInvoke(CType(Sub() 请求GPU渲染(), MethodInvoker))
+                Catch 异常 As InvalidOperationException
+                    ' 句柄销毁后无需提交，恢复句柄时会按当前模式重新准备。
+                End Try
+                Return
+            End If
+            _已应用无渲染 = 无渲染
+            If 无渲染 Then
+                D3D_V5Presentation.SuspendPresentation(Me)
+                D3D_RenderCore.UnregisterBackgroundConsumer(Me)
+            End If
+            D3D_BackgroundPenetration.InvalidateForwarderTopology(Me)
+            D3D_ControlSurfaceRegistry.PresentationModeChanged(Me)
+            If IsHandleCreated Then UpdateStyles()
+            Parent?.Invalidate(Bounds, True)
+            Me.Invalidate(True)
+        End If
+        If 无渲染 Then
+            停止图片动画计时器(False)
+            Return
+        End If
+        If _animatedImage IsNot Nothing Then 更新图片动画运行状态()
         D3D_InvalidationRouter.RequestRender(Me, dirtyRect)
     End Sub
 
@@ -230,6 +267,49 @@ Public Class ModernPanel
 
 #Region "外观属性 - 背景"
 
+    Private _transparentRenderMode As TransparentRenderModeEnum = TransparentRenderModeEnum.Normal
+    Private _已应用无渲染 As Boolean
+    <Category("LakeUI"), Description("全透明面板的呈现策略。启用后只要所有背景颜色全透明，面板自身完全跳过呈现；内部子控件仍正常工作。"),
+     DefaultValue(GetType(TransparentRenderModeEnum), "Normal"), Browsable(True)>
+    Public Property TransparentRenderMode As TransparentRenderModeEnum
+        Get
+            Return _transparentRenderMode
+        End Get
+        Set(value As TransparentRenderModeEnum)
+            If _transparentRenderMode = value Then Return
+            _transparentRenderMode = value
+            更新透明呈现策略()
+        End Set
+    End Property
+
+    ''' <summary>当前是否已进入真正的无自绘透明模式。</summary>
+    <Browsable(False), EditorBrowsable(EditorBrowsableState.Never)>
+    Public ReadOnly Property IsTransparentNoRenderActive As Boolean
+        Get
+            Return UseNativeTransparentPresentation
+        End Get
+    End Property
+
+    Private Function 满足全透明无渲染条件() As Boolean
+        Return _transparentRenderMode = TransparentRenderModeEnum.SkipWhenFullyTransparent AndAlso
+               MyBase.BackColor.A = 0 AndAlso 背景颜色.A = 0 AndAlso 遮罩颜色.A = 0
+    End Function
+
+    Private Sub 更新透明呈现策略()
+        请求GPU渲染()
+    End Sub
+
+    Friend ReadOnly Property UseNativeTransparentPresentation As Boolean Implements D3D_INativeTransparentPresentationSource.UseNativeTransparentPresentation
+        Get
+            Return 满足全透明无渲染条件()
+        End Get
+    End Property
+
+    Protected Overrides Sub OnBackColorChanged(e As EventArgs)
+        MyBase.OnBackColorChanged(e)
+        更新透明呈现策略()
+    End Sub
+
     Private 背景颜色 As Color = Color.FromArgb(36, 36, 36)
     <Category("LakeUI"), Description("背景颜色"), DefaultValue(GetType(Color), "36, 36, 36"), Browsable(True)>
     Public Property BackColor1 As Color
@@ -258,7 +338,7 @@ Public Class ModernPanel
             停止图片动画()
             _image = value
             启动图片动画()
-            请求GPU渲染()
+            更新透明呈现策略()
         End Set
     End Property
 
@@ -434,6 +514,7 @@ Public Class ModernPanel
     End Sub
 
     Private Function 图片动画可以渲染() As Boolean
+        If UseNativeTransparentPresentation Then Return False
         If Me.IsDisposed OrElse Not Me.IsHandleCreated Then Return False
         If Me.Width <= 0 OrElse Me.Height <= 0 Then Return False
 
@@ -741,9 +822,13 @@ Public Class ModernPanel
         End Get
         Set(value As Control)
             If _backgroundSource IsNot value Then
-                _backgroundSource = D3D_BackgroundPenetration.SetBackgroundSource(Me, _backgroundSource, value)
-                D3D_BackgroundPenetration.InvalidateForwarderTopology(Me)
-                请求GPU渲染()
+                If UseNativeTransparentPresentation Then
+                    _backgroundSource = value
+                Else
+                    _backgroundSource = D3D_BackgroundPenetration.SetBackgroundSource(Me, _backgroundSource, value)
+                    D3D_BackgroundPenetration.InvalidateForwarderTopology(Me)
+                End If
+                更新透明呈现策略()
             End If
         End Set
     End Property
@@ -1065,6 +1150,7 @@ Public Class ModernPanel
         _showVScroll = needV
         _showHScroll = needH
 
+
         ' 有效视口（扣除滚动条保留区域：scrollBarWidth + Margin，内容边缘对齐滚动条视觉边缘）
         Dim viewW As Integer = Math.Max(0, fullW - If(needV, sbReserve, 0))
         Dim viewH As Integer = Math.Max(0, fullH - If(needH, sbReserve, 0))
@@ -1140,6 +1226,7 @@ Public Class ModernPanel
 #Region "绘制"
 
     Public Sub RenderGpu(context As D3D_PaintContext) Implements D3D_IGpuRenderable.RenderGpu
+        If UseNativeTransparentPresentation Then Return
         If context Is Nothing OrElse Me.Width < 1 OrElse Me.Height < 1 Then Return
 
         更新滚动区域()
@@ -1403,13 +1490,26 @@ Public Class ModernPanel
     End Function
 
     Protected Overrides Sub OnPaintBackground(e As PaintEventArgs)
+        If UseNativeTransparentPresentation Then
+            MyBase.OnPaintBackground(e)
+            Return
+        End If
         If 需要自绘背景() Then Return
         MyBase.OnPaintBackground(e)
     End Sub
 
     Protected Overrides Sub OnPaint(e As PaintEventArgs)
+        If UseNativeTransparentPresentation Then Return
         If Not D3D_PaintBridge.PaintRenderable(e, Me, Me) Then MyBase.OnPaint(e)
     End Sub
+
+    Protected Overrides ReadOnly Property CreateParams As CreateParams
+        Get
+            Dim 参数 = MyBase.CreateParams
+            If UseNativeTransparentPresentation Then 参数.ExStyle = 参数.ExStyle Or &H20
+            Return 参数
+        End Get
+    End Property
 
 #End Region
 

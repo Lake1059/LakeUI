@@ -58,6 +58,14 @@ Public Interface V5_IGpuPresentationSource
 End Interface
 
 ''' <summary>
+''' 控件可选择在满足自身透明条件时交回 WinForms 的原生透明背景路径。
+''' 该接口只控制是否创建 V5 呈现资源，不改变控件布局、输入或子控件生命周期。
+''' </summary>
+Friend Interface D3D_INativeTransparentPresentationSource
+    ReadOnly Property UseNativeTransparentPresentation As Boolean
+End Interface
+
+''' <summary>
 ''' V5 控件在批量更新位置/尺寸时暂时抑制几何事件触发的即时呈现。
 ''' 批量操作完成后由调用方提交一次最新几何帧，避免中间尺寸被合成目标短暂呈现。
 ''' </summary>
