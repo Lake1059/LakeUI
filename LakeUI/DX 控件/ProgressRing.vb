@@ -8,7 +8,6 @@ Public Class ProgressRing
     Public Sub New()
         InitializeComponent()
         动画调度器 = New D3D_AnimationHelper(Me) With {.FPS = 动画帧率值}
-        动画调度器.SetDirtyRectProvider(Function() New Rectangle(Point.Empty, Me.Size))
     End Sub
 
 #Region "背景源"

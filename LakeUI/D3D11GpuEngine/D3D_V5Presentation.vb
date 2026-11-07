@@ -11,8 +11,10 @@ Friend NotInheritable Class D3D_V5Presentation
         Implements IDisposable
 
         Public ReadOnly Pending As New Dictionary(Of Control, BatchedRenderEntry)()
+        Public ReadOnly Batch As New List(Of KeyValuePair(Of Control, BatchedRenderEntry))()
         Public ReadOnly ContinuationTimer As New Timer With {.Interval = 1}
         Public Posted As Boolean
+        Public Flushing As Boolean
         Public Disposed As Boolean
         Public Sequence As Long
 
@@ -29,6 +31,7 @@ Friend NotInheritable Class D3D_V5Presentation
             Disposed = True
             ContinuationTimer.Dispose()
             Pending.Clear()
+            If Not Flushing Then Batch.Clear()
             Posted = False
         End Sub
     End Class
@@ -36,7 +39,17 @@ Friend NotInheritable Class D3D_V5Presentation
     Private Structure BatchedRenderEntry
         Public Rect As Rectangle
         Public Sequence As Long
+        Public TreeDepth As Integer
     End Structure
+
+    Private Shared ReadOnly _batchComparer As Comparison(Of KeyValuePair(Of Control, BatchedRenderEntry)) = AddressOf CompareBatchedRenderEntries
+
+    Private Shared Function CompareBatchedRenderEntries(a As KeyValuePair(Of Control, BatchedRenderEntry),
+                                                        b As KeyValuePair(Of Control, BatchedRenderEntry)) As Integer
+        Dim depthOrder = a.Value.TreeDepth.CompareTo(b.Value.TreeDepth)
+        If depthOrder <> 0 Then Return depthOrder
+        Return a.Value.Sequence.CompareTo(b.Value.Sequence)
+    End Function
 
     Private Shared ReadOnly _presenters As New Dictionary(Of Control, D3D_HwndCompositionPresenter)()
     Private Shared ReadOnly _retryTimers As New Dictionary(Of Control, Timer)()
@@ -202,49 +215,71 @@ Friend NotInheritable Class D3D_V5Presentation
 
     Private Shared Sub FlushBatchedRenders(state As RenderBatchState, Optional prepareSurfaces As Boolean = False)
         If state Is Nothing OrElse state.Disposed Then Return
+        If state.Flushing Then Return
 
         state.Posted = False
         If D3D_RenderUpdate.IsActive Then Return
         If state.Pending.Count = 0 Then Return
 
-        Dim batch = state.Pending.ToArray()
-        state.Pending.Clear()
-        Dim 批次开始时间 = D3D_RefreshDiagnostics.Start()
-        D3D_RenderDiagnostics.V5BatchFlushed(batch.Length)
-        Array.Sort(batch,
-                   Function(a, b)
-                       Dim da = 获取控件树深度(a.Key)
-                       Dim db = 获取控件树深度(b.Key)
-                       If da <> db Then Return da.CompareTo(db)
-                       Return a.Value.Sequence.CompareTo(b.Value.Sequence)
-                   End Function)
-
-        ' 初始化事务先完成首次资源准备；持续动画单遍按外到内提交，避免重复遍历。
-        Dim 准备耗时 As Dictionary(Of Control, Double) = Nothing
-        If prepareSurfaces AndAlso batch.Length > 1 Then
-            If D3D_RenderDiagnostics.Enabled Then 准备耗时 = New Dictionary(Of Control, Double)(batch.Length)
-            For Each item In batch
-                Dim control = item.Key
-                If control Is Nothing OrElse control.IsDisposed OrElse
-                   Not control.IsHandleCreated OrElse Not D3D_ControlTreeWalker.IsEffectivelyVisible(control) Then Continue For
-                立即渲染(control, TryCast(control, D3D_IGpuRenderable),
-                         requestedDirty:=item.Value.Rect, prepareOnly:=True, 准备耗时:=准备耗时)
-            Next
-        End If
-        D3D_HwndCompositionPresenter.BeginBatch()
+        Dim batch = state.Batch
+        state.Flushing = True
         Try
-            For Each item In batch
-                Dim 控件 = item.Key
-                If 控件 Is Nothing OrElse 控件.IsDisposed OrElse
-                   Not 控件.IsHandleCreated OrElse Not D3D_ControlTreeWalker.IsEffectivelyVisible(控件) Then Continue For
-                立即渲染(控件,
-                        TryCast(控件, D3D_IGpuRenderable),
-                        requestedDirty:=item.Value.Rect, 准备耗时:=准备耗时)
+            batch.Clear()
+            For Each item In state.Pending
+                batch.Add(item)
             Next
+            state.Pending.Clear()
+            Dim 批次开始时间 = D3D_RefreshDiagnostics.Start()
+            D3D_RenderDiagnostics.V5BatchFlushed(batch.Count)
+            For i = 0 To batch.Count - 1
+                Dim item = batch(i)
+                Dim entry = item.Value
+                entry.TreeDepth = 获取控件树深度(item.Key)
+                batch(i) = New KeyValuePair(Of Control, BatchedRenderEntry)(item.Key, entry)
+            Next
+            batch.Sort(_batchComparer)
+
+            ' 初始化事务先完成首次资源准备；持续动画单遍按外到内提交，避免重复遍历。
+            Dim 准备耗时 As Dictionary(Of Control, Double) = Nothing
+            If prepareSurfaces AndAlso batch.Count > 1 Then
+                If D3D_RenderDiagnostics.Enabled Then 准备耗时 = New Dictionary(Of Control, Double)(batch.Count)
+                For Each item In batch
+                    If state.Disposed Then Exit For
+                    Dim control = item.Key
+                    If control Is Nothing OrElse control.IsDisposed OrElse
+                       Not control.IsHandleCreated OrElse Not D3D_ControlTreeWalker.IsEffectivelyVisible(control) Then Continue For
+                    立即渲染(control, TryCast(control, D3D_IGpuRenderable),
+                             requestedDirty:=item.Value.Rect, prepareOnly:=True, 准备耗时:=准备耗时)
+                Next
+            End If
+            If state.Disposed Then Return
+            D3D_HwndCompositionPresenter.BeginBatch()
+            Try
+                For Each item In batch
+                    If state.Disposed Then Exit For
+                    Dim 控件 = item.Key
+                    If 控件 Is Nothing OrElse 控件.IsDisposed OrElse
+                       Not 控件.IsHandleCreated OrElse Not D3D_ControlTreeWalker.IsEffectivelyVisible(控件) Then Continue For
+                    立即渲染(控件,
+                            TryCast(控件, D3D_IGpuRenderable),
+                            requestedDirty:=item.Value.Rect, 准备耗时:=准备耗时)
+                Next
+            Finally
+                D3D_HwndCompositionPresenter.EndBatch()
+            End Try
+            D3D_RefreshDiagnostics.Record(批次开始时间, "RenderBatch")
         Finally
-            D3D_HwndCompositionPresenter.EndBatch()
+            batch.Clear()
+            state.Flushing = False
+            If Not state.Disposed Then
+                If state.Pending.Count > 0 Then
+                    state.Posted = True
+                    Try : state.ContinuationTimer.Start() : Catch : state.Posted = False : End Try
+                Else
+                    state.Posted = False
+                End If
+            End If
         End Try
-        D3D_RefreshDiagnostics.Record(批次开始时间, "RenderBatch")
     End Sub
 
     Friend Shared Sub ResumeAfterRenderUpdate()

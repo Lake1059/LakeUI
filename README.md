@@ -2,7 +2,7 @@
 
 ![](https://img.shields.io/github/stars/Lake1059/LakeUI?label=星标) ![GitHub License](https://img.shields.io/github/license/Lake1059/LakeUI?label=许可证) ![](https://img.shields.io/github/downloads/Lake1059/LakeUI/total?label=Github%20下载量) ![](https://img.shields.io/nuget/dt/LakeUI?label=NuGet%20下载量)
 
-> 仅支持 .NET 8+，请注意核对项目框架
+> 从 5.201 版本开始仅支持 .NET 10，之前的版本还支持 .NET 8/9
 
 > 让 WinForms 再次伟大！
 

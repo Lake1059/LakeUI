@@ -85,9 +85,10 @@ Public NotInheritable Class D3D_RenderCore
         End Try
         If form Is Nothing OrElse form.IsDisposed Then Return Nothing
 
-        Dim visited As New HashSet(Of Form)()
+        Dim visited As HashSet(Of Form) = Nothing
         Do While form IsNot Nothing AndAlso Not form.IsDisposed AndAlso Not form.TopLevel AndAlso form.Parent IsNot Nothing
-            If visited.Contains(form) Then Exit Do
+            If visited IsNot Nothing AndAlso visited.Contains(form) Then Exit Do
+            If visited Is Nothing Then visited = New HashSet(Of Form)()
             visited.Add(form)
 
             Dim host As Form = Nothing

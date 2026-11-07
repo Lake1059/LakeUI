@@ -941,7 +941,6 @@ Public Class AgentDialogueList
         DoubleBuffered = False
         AllowDrop = True
         _progressAnimation.FPS = _progressRingAnimationFPS
-        _progressAnimation.SetDirtyRectProvider(Function() New Rectangle(Point.Empty, Size))
         _folders = New AgentDialogueFolderCollection(Me)
         _actionButtons = New AgentDialogueActionButtonCollection(Me)
         _unassignedFolder = New AgentDialogueFolder("No project")

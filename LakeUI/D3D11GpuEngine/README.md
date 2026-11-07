@@ -30,8 +30,8 @@ End Using
 `BoundControl`。工厂运行于 UI 线程，读取 `BoundControl` 或遍历隐藏页不会触发构造。
 DEMO 使用该接口，启动只构造首个页面。
 
-`D3D_ImagePreparation.LoadBitmapAsync` 使用最多两个后台工作任务读取文件并将首帧解码为
-独占 PArgb 位图。返回值由调用方拥有；须在 UI 线程接收结果，并处理取消、页面释放及过期
+`D3D_ImagePreparation.LoadBitmapAsync` 使用最多两个后台工作任务从文件流读取并将首帧解码为
+独占 PArgb 位图，避免同时保留整份编码文件副本。返回值由调用方拥有；须在 UI 线程接收结果，并处理取消、页面释放及过期
 结果。它不上传 GPU，也不预先应用 HDR；HDR 仍按当前配置在上传时处理。动画图片沿用原有
 多帧路径。DEMO 的图片拖放展示了取消旧请求和释放旧结果的用法。
 

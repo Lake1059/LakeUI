@@ -455,6 +455,18 @@ Public Class RamMonitor
         Public FreeBytes As ULong
     End Structure
 
+    Private Structure HistorySnapshot
+        Public Points As HistoryPoint()
+        Public Count As Integer
+    End Structure
+
+    Private _historySnapshotBuffer As HistoryPoint() = Array.Empty(Of HistoryPoint)()
+    Private _historyVersion As Long
+    Private _historySnapshotVersion As Long = Long.MinValue
+    Private _inUseTopBuffer As Vector2() = Array.Empty(Of Vector2)()
+    Private _modifiedTopBuffer As Vector2() = Array.Empty(Of Vector2)()
+    Private _standbyTopBuffer As Vector2() = Array.Empty(Of Vector2)()
+
     Private Sub 确保采样器()
         If 采样器实例 Is Nothing Then
             Try
@@ -465,6 +477,13 @@ Public Class RamMonitor
             End Try
             SyncLock 历史锁
                 历史数据.Clear()
+                历史数据.TrimExcess()
+                Threading.Interlocked.Increment(_historyVersion)
+                _historySnapshotBuffer = Array.Empty(Of HistoryPoint)()
+                _historySnapshotVersion = Long.MinValue
+                _inUseTopBuffer = Array.Empty(Of Vector2)()
+                _modifiedTopBuffer = Array.Empty(Of Vector2)()
+                _standbyTopBuffer = Array.Empty(Of Vector2)()
             End SyncLock
         End If
     End Sub
@@ -494,6 +513,7 @@ Public Class RamMonitor
                 历史数据.Add(hp)
                 Dim overflow As Integer = 历史数据.Count - 记录长度值
                 If overflow > 0 Then 历史数据.RemoveRange(0, overflow)
+                Threading.Interlocked.Increment(_historyVersion)
             End SyncLock
         End If
 
@@ -501,9 +521,19 @@ Public Class RamMonitor
         RaiseEvent SampleUpdated(Me, EventArgs.Empty)
     End Sub
 
-    Private Function 获取历史快照() As HistoryPoint()
+    Private Function 获取历史快照() As HistorySnapshot
         SyncLock 历史锁
-            Return 历史数据.ToArray()
+            Dim count = 历史数据.Count
+            If _historySnapshotBuffer.Length < count Then
+                Dim capacity = CInt(Math.Min(CLng(记录长度值), Math.Max(CLng(count), Math.Max(4L, CLng(_historySnapshotBuffer.Length) * 2L))))
+                ReDim _historySnapshotBuffer(capacity - 1)
+            End If
+            Dim version = Threading.Interlocked.Read(_historyVersion)
+            If _historySnapshotVersion <> version Then
+                历史数据.CopyTo(_historySnapshotBuffer, 0)
+                _historySnapshotVersion = version
+            End If
+            Return New HistorySnapshot With {.Points = _historySnapshotBuffer, .Count = count}
         End SyncLock
     End Function
 
@@ -521,6 +551,13 @@ Public Class RamMonitor
     Public Sub Reset()
         SyncLock 历史锁
             历史数据.Clear()
+            历史数据.TrimExcess()
+            Threading.Interlocked.Increment(_historyVersion)
+            _historySnapshotBuffer = Array.Empty(Of HistoryPoint)()
+            _historySnapshotVersion = Long.MinValue
+            _inUseTopBuffer = Array.Empty(Of Vector2)()
+            _modifiedTopBuffer = Array.Empty(Of Vector2)()
+            _standbyTopBuffer = Array.Empty(Of Vector2)()
         End SyncLock
         请求GPU渲染()
     End Sub
@@ -553,8 +590,9 @@ Public Class RamMonitor
             context.FillRectangle(New RectangleF(0, 0, Me.Width, Me.Height), MyBase.BackColor)
         End If
 
-        绘制图形内容_GPU(context)
-        绘制文字内容_GPU(context)
+        Dim history = 获取历史快照()
+        绘制图形内容_GPU(context, history)
+        绘制文字内容_GPU(context, history)
 
         If Not Enabled AndAlso 禁用时遮罩颜色.A > 0 Then
             绘制禁用遮罩_GPU(context)
@@ -565,7 +603,7 @@ Public Class RamMonitor
         Return New Rectangle(Point.Empty, Me.Size)
     End Function
 
-    Private Sub 绘制图形内容_GPU(context As D3D_PaintContext)
+    Private Sub 绘制图形内容_GPU(context As D3D_PaintContext, history As HistorySnapshot)
         Dim s As Single = DpiScale()
         Dim pad As Padding = Me.Padding
         Dim rect As New RectangleF(pad.Left * s, pad.Top * s,
@@ -594,16 +632,16 @@ Public Class RamMonitor
 
         If graphRect.Height >= 2 AndAlso graphRect.Width >= 2 Then
             Using context.PushClip(rect)
-                绘制历史图表_GPU(context, graphRect, s)
+                绘制历史图表_GPU(context, graphRect, s, history)
             End Using
         End If
     End Sub
 
-    Private Sub 绘制历史图表_GPU(context As D3D_PaintContext, rect As RectangleF, s As Single)
+    Private Sub 绘制历史图表_GPU(context As D3D_PaintContext, rect As RectangleF, s As Single, history As HistorySnapshot)
         If 图表背景颜色值.A > 0 Then context.FillRectangle(rect, 图表背景颜色值)
 
-        Dim hist = 获取历史快照()
-        Dim n As Integer = hist.Length
+        Dim hist = history.Points
+        Dim n As Integer = history.Count
         Dim cap As Integer = Math.Max(2, 记录长度值)
         _图表矩形 = rect
         _图表样本数 = n
@@ -611,9 +649,12 @@ Public Class RamMonitor
 
         Dim step_ As Single = rect.Width / CSng(cap - 1)
 
-        Dim inUseTop(n - 1) As Vector2
-        Dim modTop(n - 1) As Vector2
-        Dim standbyTop(n - 1) As Vector2
+        If _inUseTopBuffer.Length < n Then ReDim _inUseTopBuffer(history.Points.Length - 1)
+        If _modifiedTopBuffer.Length < n Then ReDim _modifiedTopBuffer(history.Points.Length - 1)
+        If _standbyTopBuffer.Length < n Then ReDim _standbyTopBuffer(history.Points.Length - 1)
+        Dim inUseTop = _inUseTopBuffer
+        Dim modTop = _modifiedTopBuffer
+        Dim standbyTop = _standbyTopBuffer
         For i As Integer = 0 To n - 1
             Dim x As Single = rect.Right - CSng(n - 1 - i) * step_
             Dim total As Double = If(hist(i).TotalBytes > 0UL, CDbl(hist(i).TotalBytes), 0.0)
@@ -632,25 +673,25 @@ Public Class RamMonitor
             standbyTop(i) = New Vector2(x, rect.Bottom - (a + bm + c) * rect.Height)
         Next
 
-        填充堆叠区_GPU(context, 备用填充颜色值, standbyTop, rect)
-        填充堆叠区_GPU(context, 已修改填充颜色值, modTop, rect)
-        填充堆叠区_GPU(context, 已用填充颜色值, inUseTop, rect)
+        填充堆叠区_GPU(context, 备用填充颜色值, standbyTop, n, rect)
+        填充堆叠区_GPU(context, 已修改填充颜色值, modTop, n, rect)
+        填充堆叠区_GPU(context, 已用填充颜色值, inUseTop, n, rect)
 
         If 图表线条颜色值.A > 0 AndAlso 图表线条粗细值 > 0 Then
             Dim b = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, 图表线条颜色值, context.DeviceGeneration)
             If b IsNot Nothing Then
                 Dim lineW As Single = 图表线条粗细值 * s
-                For i As Integer = 0 To standbyTop.Length - 2
+                For i As Integer = 0 To n - 2
                     context.DeviceContext.DrawLine(standbyTop(i), standbyTop(i + 1), b, lineW)
                 Next
             End If
         End If
     End Sub
 
-    Private Sub 填充堆叠区_GPU(context As D3D_PaintContext, color As Color, topPts As Vector2(), rect As RectangleF)
+    Private Sub 填充堆叠区_GPU(context As D3D_PaintContext, color As Color, topPts As Vector2(), pointCount As Integer, rect As RectangleF)
         If color.A = 0 Then Return
-        If topPts Is Nothing OrElse topPts.Length < 2 Then Return
-        Using geo = 创建堆叠填充几何(rect, topPts)
+        If topPts Is Nothing OrElse pointCount < 2 Then Return
+        Using geo = 创建堆叠填充几何(rect, topPts, pointCount)
             Dim b = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, color, context.DeviceGeneration)
             If b IsNot Nothing Then context.DeviceContext.FillGeometry(geo, b)
         End Using
@@ -676,7 +717,7 @@ Public Class RamMonitor
         填充圆角矩形_GPU(context, rect, 圆角半径值 * s, 禁用时遮罩颜色)
     End Sub
 
-    Private Sub 绘制文字内容_GPU(context As D3D_PaintContext)
+    Private Sub 绘制文字内容_GPU(context As D3D_PaintContext, history As HistorySnapshot)
         Dim s As Single = DpiScale()
         Dim pad As Padding = Me.Padding
         Dim rect As New RectangleF(pad.Left * s, pad.Top * s,
@@ -708,7 +749,7 @@ Public Class RamMonitor
             绘制文字_GPU(context, New RectangleF(inner.X, inner.Bottom - bottomStripH, inner.Width, bottomStripH), bottomText, s, 底部文字对齐值)
         End If
         If 启用悬停读数值 AndAlso _悬停有效 AndAlso graphRect.Height >= 2 AndAlso graphRect.Width >= 2 Then
-            绘制悬停读数_GPU(context, graphRect, s)
+            绘制悬停读数_GPU(context, graphRect, s, history)
         End If
     End Sub
 
@@ -725,9 +766,9 @@ Public Class RamMonitor
         context.DrawText(If(text, ""), Me.Font, Me.ForeColor, textRect, 转文本水平对齐(align), 转文本垂直对齐(align))
     End Sub
 
-    Private Sub 绘制悬停读数_GPU(context As D3D_PaintContext, graphRect As RectangleF, s As Single)
-        Dim hist = 获取历史快照()
-        Dim n As Integer = hist.Length
+    Private Sub 绘制悬停读数_GPU(context As D3D_PaintContext, graphRect As RectangleF, s As Single, history As HistorySnapshot)
+        Dim hist = history.Points
+        Dim n As Integer = history.Count
         If n < 1 Then Return
         Dim idx As Integer = 样本索引从X坐标(_悬停X, graphRect)
         If idx < 0 OrElse idx >= n Then Return
@@ -803,15 +844,15 @@ Public Class RamMonitor
         context.FillRoundedRectangle(rect, radius, brush)
     End Sub
 
-    Private Shared Function 创建堆叠填充几何(rect As RectangleF, topPts As Vector2()) As ID2D1PathGeometry
+    Private Shared Function 创建堆叠填充几何(rect As RectangleF, topPts As Vector2(), pointCount As Integer) As ID2D1PathGeometry
         Dim geo As ID2D1PathGeometry = D3D_RenderCore.DeviceManager.D2DFactory.CreatePathGeometry()
         Dim sink As ID2D1GeometrySink = geo.Open()
         Try
             sink.BeginFigure(topPts(0), FigureBegin.Filled)
-            For i As Integer = 1 To topPts.Length - 1
+            For i As Integer = 1 To pointCount - 1
                 sink.AddLine(topPts(i))
             Next
-            sink.AddLine(New Vector2(topPts(topPts.Length - 1).X, rect.Bottom))
+            sink.AddLine(New Vector2(topPts(pointCount - 1).X, rect.Bottom))
             sink.AddLine(New Vector2(topPts(0).X, rect.Bottom))
             sink.EndFigure(FigureEnd.Closed)
             sink.Close()
@@ -1429,7 +1470,15 @@ Public Class RamMonitor
             记录长度值 = value
             SyncLock 历史锁
                 Dim overflow As Integer = 历史数据.Count - value
-                If overflow > 0 Then 历史数据.RemoveRange(0, overflow)
+                If overflow > 0 Then
+                    历史数据.RemoveRange(0, overflow)
+                End If
+                If 历史数据.Capacity > value Then 历史数据.Capacity = Math.Max(历史数据.Count, value)
+                Threading.Interlocked.Increment(_historyVersion)
+                If _historySnapshotBuffer.Length > value Then ReDim _historySnapshotBuffer(value - 1)
+                If _inUseTopBuffer.Length > value Then ReDim _inUseTopBuffer(value - 1)
+                If _modifiedTopBuffer.Length > value Then ReDim _modifiedTopBuffer(value - 1)
+                If _standbyTopBuffer.Length > value Then ReDim _standbyTopBuffer(value - 1)
             End SyncLock
             请求GPU渲染()
         End Set

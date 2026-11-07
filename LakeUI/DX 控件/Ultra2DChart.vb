@@ -668,6 +668,7 @@ Public Class Ultra2DChart
         Public EffectiveDataPointInterval As Integer = 1
         Public ZeroY As Single
         Public Scale As Single
+        Public GeometryCachePrefix As String
     End Class
 
     Private Structure TickLabelInfo
@@ -704,9 +705,21 @@ Public Class Ultra2DChart
         Public SeriesIndex As Integer
         Public Color As Color
         Public Columns As New List(Of ColumnDrawInfo)
-        Public LineSegments As New List(Of List(Of PointF))
-        Public LineSegmentBounds As New List(Of RectangleF)
+        Public LineSegments As New List(Of LineSegmentDrawInfo)
         Public Markers As New List(Of MarkerDrawInfo)
+    End Class
+
+    Private NotInheritable Class LineSegmentDrawInfo
+        Public Sub New(points As List(Of PointF), bounds As RectangleF)
+            Me.Points = points
+            Me.Bounds = bounds
+            GeometryFactory = Function() 创建折线几何(points)
+        End Sub
+
+        Public ReadOnly Points As List(Of PointF)
+        Public ReadOnly Bounds As RectangleF
+        Public ReadOnly GeometryFactory As Func(Of D2D.ID2D1Geometry)
+        Public GeometryKey As String
     End Class
 
     ' 每个像素保留首、最低、最高、末点，按原顺序连接；不修改原始数据和悬停索引。
@@ -822,7 +835,17 @@ Public Class Ultra2DChart
     Private _lineToolTipCategoryIndex As Integer = -1
     Private _hoverClientPoint As Point
     Private _geometryCachePrefix As String
+    Private _geometryCacheOwnerId As Long
+    Private _geometryCacheDataVersion As Integer = Integer.MinValue
+    Private _geometryCacheStyleVersion As Integer = Integer.MinValue
+    Private _geometryCacheWidth As Integer = Integer.MinValue
+    Private _geometryCacheHeight As Integer = Integer.MinValue
+    Private _geometryCacheDpi As Integer = Integer.MinValue
+    Private _geometryCacheDeviceGeneration As Integer = Integer.MinValue
+    Private _geometryCacheCompositor As WeakReference(Of D3D_WindowCompositor)
     Private ReadOnly _textSizeCache As New Dictionary(Of (Text As String, Font As Font, Dpi As Integer), Size)
+
+    Private Shared _nextGeometryCacheOwnerId As Long
 
     Public Sub New()
         InitializeComponent()
@@ -1026,18 +1049,17 @@ Public Class Ultra2DChart
             End If
         Next
 
-        Dim geometryPrefix = EnsureGeometryCachePrefix(context)
+        Dim geometryPrefix = EnsureGeometryCachePrefix(context, layout)
+        EnsureGeometryCacheKeys(layout, geometryPrefix)
         For seriesIndex As Integer = 0 To layout.SeriesDraws.Count - 1
             Dim draw = layout.SeriesDraws(seriesIndex)
             If draw.Series.ChartType <> ChartSeriesTypeEnum.Line Then Continue For
             Dim lineBrush = context.Compositor.BrushCache.GetSolidBrush(context.DeviceContext, draw.Color, context.DeviceGeneration)
             If lineBrush IsNot Nothing Then
-                For segmentIndex As Integer = 0 To draw.LineSegments.Count - 1
-                    Dim segment = draw.LineSegments(segmentIndex)
-                    If segment.Count < 2 Then Continue For
-                    If Not context.IntersectsDirty(draw.LineSegmentBounds(segmentIndex)) Then Continue For
-                    Dim key = geometryPrefix & ":line:" & seriesIndex.ToString(Globalization.CultureInfo.InvariantCulture) & ":" & segmentIndex.ToString(Globalization.CultureInfo.InvariantCulture)
-                    Dim geo = context.Compositor.GeometryCache.GetOrCreateGeometry(key, Function() 创建折线几何(segment))
+                For Each segment In draw.LineSegments
+                    If segment.Points.Count < 2 Then Continue For
+                    If Not context.IntersectsDirty(segment.Bounds) Then Continue For
+                    Dim geo = context.Compositor.GeometryCache.GetOrCreateGeometry(segment.GeometryKey, segment.GeometryFactory)
                     If geo IsNot Nothing Then context.DeviceContext.DrawGeometry(geo, lineBrush, draw.Series.LineThickness * s)
                 Next
             End If
@@ -1654,8 +1676,7 @@ Public Class Ultra2DChart
 
     Private Shared Sub 添加折线段(draw As SeriesDrawInfo, points As List(Of PointF), strokeWidth As Single)
         If points.Count = 0 Then Return
-        draw.LineSegments.Add(points)
-        draw.LineSegmentBounds.Add(GetPointBounds(points, strokeWidth))
+        draw.LineSegments.Add(New LineSegmentDrawInfo(points, GetPointBounds(points, strokeWidth)))
     End Sub
 
     Private Sub 添加值标签(layout As ChartLayoutInfo, ser As ChartSeries, categoryIndex As Integer, value As Double, anchor As PointF, fallbackColor As Color, s As Single)
@@ -2188,17 +2209,62 @@ Public Class Ultra2DChart
         Return path
     End Function
 
-    Private Function EnsureGeometryCachePrefix(context As D3D_PaintContext) As String
-        Dim prefix = "chart:" & Runtime.CompilerServices.RuntimeHelpers.GetHashCode(Me).ToString(Globalization.CultureInfo.InvariantCulture) & ":" &
-                     _dataVersion.ToString(Globalization.CultureInfo.InvariantCulture) & ":" &
-                     _styleVersion.ToString(Globalization.CultureInfo.InvariantCulture) & ":" &
-                     context.DeviceGeneration.ToString(Globalization.CultureInfo.InvariantCulture)
-        If _geometryCachePrefix IsNot Nothing AndAlso Not String.Equals(_geometryCachePrefix, prefix, StringComparison.Ordinal) Then
-            context.Compositor.GeometryCache.ReleaseByPrefix(_geometryCachePrefix)
+    Private Function EnsureGeometryCachePrefix(context As D3D_PaintContext, layout As ChartLayoutInfo) As String
+        Dim previousCompositor As D3D_WindowCompositor = Nothing
+        Dim hasPreviousCompositor = _geometryCacheCompositor IsNot Nothing AndAlso
+                                    _geometryCacheCompositor.TryGetTarget(previousCompositor) AndAlso
+                                    previousCompositor IsNot Nothing
+        Dim compositorChanged = Not hasPreviousCompositor OrElse Not ReferenceEquals(previousCompositor, context.Compositor)
+        Dim cacheKeyChanged = _geometryCacheDataVersion <> layout.DataVersion OrElse
+                              _geometryCacheStyleVersion <> layout.StyleVersion OrElse
+                              _geometryCacheWidth <> layout.Width OrElse
+                              _geometryCacheHeight <> layout.Height OrElse
+                              _geometryCacheDpi <> layout.Dpi OrElse
+                              _geometryCacheDeviceGeneration <> context.DeviceGeneration
+        If Not compositorChanged AndAlso Not cacheKeyChanged Then Return _geometryCachePrefix
+
+        If _geometryCachePrefix IsNot Nothing Then
+            If hasPreviousCompositor Then
+                previousCompositor.GeometryCache.ReleaseByPrefix(_geometryCachePrefix)
+            ElseIf Not compositorChanged Then
+                context.Compositor.GeometryCache.ReleaseByPrefix(_geometryCachePrefix)
+            End If
         End If
-        _geometryCachePrefix = prefix
-        Return prefix
+
+        If _geometryCacheOwnerId = 0 Then
+            _geometryCacheOwnerId = Threading.Interlocked.Increment(_nextGeometryCacheOwnerId)
+        End If
+        _geometryCachePrefix = String.Concat(
+            "chart:", _geometryCacheOwnerId.ToString(Globalization.CultureInfo.InvariantCulture), ":",
+            layout.DataVersion.ToString(Globalization.CultureInfo.InvariantCulture), ":",
+            layout.StyleVersion.ToString(Globalization.CultureInfo.InvariantCulture), ":",
+            layout.Width.ToString(Globalization.CultureInfo.InvariantCulture), ":",
+            layout.Height.ToString(Globalization.CultureInfo.InvariantCulture), ":",
+            layout.Dpi.ToString(Globalization.CultureInfo.InvariantCulture), ":",
+            context.DeviceGeneration.ToString(Globalization.CultureInfo.InvariantCulture), ":")
+        _geometryCacheDataVersion = layout.DataVersion
+        _geometryCacheStyleVersion = layout.StyleVersion
+        _geometryCacheWidth = layout.Width
+        _geometryCacheHeight = layout.Height
+        _geometryCacheDpi = layout.Dpi
+        _geometryCacheDeviceGeneration = context.DeviceGeneration
+        _geometryCacheCompositor = New WeakReference(Of D3D_WindowCompositor)(context.Compositor)
+        Return _geometryCachePrefix
     End Function
+
+    Private Sub EnsureGeometryCacheKeys(layout As ChartLayoutInfo, prefix As String)
+        If String.Equals(layout.GeometryCachePrefix, prefix, StringComparison.Ordinal) Then Return
+
+        For Each draw In layout.SeriesDraws
+            For segmentIndex As Integer = 0 To draw.LineSegments.Count - 1
+                draw.LineSegments(segmentIndex).GeometryKey = String.Concat(
+                    prefix,
+                    "line:", draw.SeriesIndex.ToString(Globalization.CultureInfo.InvariantCulture), ":",
+                    segmentIndex.ToString(Globalization.CultureInfo.InvariantCulture))
+            Next
+        Next
+        layout.GeometryCachePrefix = prefix
+    End Sub
 
     Private Shared Function GetPointBounds(points As IList(Of PointF), strokeWidth As Single) As RectangleF
         If points Is Nothing OrElse points.Count = 0 Then Return RectangleF.Empty
@@ -3449,7 +3515,26 @@ Public Class Ultra2DChart
 
     Protected Overrides Sub OnHandleDestroyed(e As EventArgs)
         HideLineToolTip()
+        ReleaseCachedLineGeometries()
         MyBase.OnHandleDestroyed(e)
+    End Sub
+
+    Private Sub ReleaseCachedLineGeometries()
+        Dim previousCompositor As D3D_WindowCompositor = Nothing
+        If _geometryCachePrefix IsNot Nothing AndAlso
+           _geometryCacheCompositor IsNot Nothing AndAlso
+           _geometryCacheCompositor.TryGetTarget(previousCompositor) AndAlso
+           previousCompositor IsNot Nothing Then
+            Try : previousCompositor.GeometryCache.ReleaseByPrefix(_geometryCachePrefix) : Catch : End Try
+        End If
+        _geometryCachePrefix = Nothing
+        _geometryCacheCompositor = Nothing
+        _geometryCacheDataVersion = Integer.MinValue
+        _geometryCacheStyleVersion = Integer.MinValue
+        _geometryCacheWidth = Integer.MinValue
+        _geometryCacheHeight = Integer.MinValue
+        _geometryCacheDpi = Integer.MinValue
+        _geometryCacheDeviceGeneration = Integer.MinValue
     End Sub
 
     Protected Overrides Sub OnVisibleChanged(e As EventArgs)

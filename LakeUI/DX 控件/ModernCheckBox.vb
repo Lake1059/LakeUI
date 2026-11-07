@@ -30,7 +30,6 @@ Public Class ModernCheckBox
     Public Sub New()
         InitializeComponent()
         SetStyle(ControlStyles.StandardDoubleClick, False)
-        动画助手.DirtyProvider = AddressOf 勾选动画脏区
     End Sub
 
     Public Event CheckedChanged As EventHandler
@@ -401,10 +400,6 @@ Public Class ModernCheckBox
     End Sub
 
     Private ReadOnly 动画助手 As New D3D_AnimationHelper(Me)
-
-    Private Sub 勾选动画脏区(helper As D3D_AnimationHelper, owner As Control, sink As D3D_AnimationHelper.InvalidateRegionSink)
-        sink.InvalidateAll()
-    End Sub
 
     Private Function DpiScale() As Single
         Return D3D_DpiContext.FromControl(Me).Scale

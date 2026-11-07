@@ -11,6 +11,9 @@ internal static partial class Program
             CheckModernPanelTransparentMode();
             CheckDependencyDirtyMapping();
             RenderingRegression.Run();
+            LowCostOptimizationTests.Run();
+            RenderBatchRegressionTests.Run();
+            ChartCacheRegressionTests.Run();
             Console.WriteLine("LakeUI regression checks passed.");
             return 0;
         }

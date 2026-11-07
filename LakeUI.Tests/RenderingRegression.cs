@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Drawing;
+using System.Linq.Expressions;
 using System.Runtime.InteropServices;
+using System.Reflection;
 using System.Windows.Forms;
 using LakeUI;
 using Vortice.Direct2D1;
@@ -16,6 +18,7 @@ internal static class RenderingRegression
             CheckPresentation(scale, fp16, output);
         CheckBackgroundDependencies();
         CheckPanelLifecycle();
+        CheckPonderCloseButtonHoverPartialUpdate();
         WindowInitializationTests.Run();
     }
 
@@ -157,6 +160,7 @@ internal static class RenderingRegression
         D3D_V5Presentation.RequestRender(consumer, default);
         D3D_V5Presentation.RequestRender(leaf, default);
         D3D_V5Presentation.FlushPendingFrame(false);
+        CheckStableDependencyCleanupAllocations(leaf);
         var presenter = D3D_V5Presentation.GetPresenterForDiagnostics(leaf);
         Rectangle updated = default;
         byte[] pixels = [];
@@ -178,12 +182,111 @@ internal static class RenderingRegression
         Require(pixels[center] == 90 && pixels[center + 1] == 40 && pixels[center + 2] == 230,
             "末级消费者必须实际采样到来源的新颜色。");
 
+        CheckDependencyInvalidationAllocations(source, patch);
+        OuterToInnerRefreshScheduler.FlushPendingRequests();
+        D3D_V5Presentation.FlushPendingFrame(false);
+
         var previous = D3D_ControlSurfaceRegistry.GetRevision(consumer);
         second.Location = new Point(-31990, -31990);
         D3D_V5Presentation.FlushPendingFrame(false);
         Require(D3D_ControlSurfaceRegistry.GetRevision(consumer) > previous, "窗口移动必须使背景坐标失效。");
         presenter.SurfaceProbe = null;
         Console.WriteLine("cross-window/multi-level background propagation and pixel comparison passed");
+    }
+
+    private static void CheckDependencyInvalidationAllocations(Control source, Rectangle dirty)
+    {
+        for (var i = 0; i < 16; i++) D3D_ControlSurfaceRegistry.MarkDirty(source, dirty, true);
+        var start = GC.GetAllocatedBytesForCurrentThread();
+        for (var i = 0; i < 128; i++) D3D_ControlSurfaceRegistry.MarkDirty(source, dirty, true);
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - start;
+        Require(allocated <= 60000,
+            $"来源失效扇出应省去每层消费者快照，128 次实测 {allocated} B；快照基线约 65,536 B。");
+        Console.WriteLine($"dependency invalidation fan-out: 128 requests allocated {allocated} B");
+    }
+
+    private static void CheckStableDependencyCleanupAllocations(Control consumer)
+    {
+        const BindingFlags PrivateStatic = BindingFlags.NonPublic | BindingFlags.Static;
+        var registry = typeof(D3D_ControlSurfaceRegistry);
+        var entries = (System.Collections.IDictionary)registry.GetField("_entries", PrivateStatic)!.GetValue(null)!;
+        var entry = entries[consumer]!;
+        var seenSources = entry.GetType()
+            .GetField("SeenSources", BindingFlags.Instance | BindingFlags.Public)!.GetValue(entry)!;
+        var seenSourceCount = (int)seenSources.GetType().GetProperty("Count")!.GetValue(seenSources)!;
+        Require(seenSourceCount > 0, "稳定依赖分配探针必须先建立实际背景依赖。");
+
+        var cleanup = registry.GetMethod("清理未使用依赖", PrivateStatic)!;
+        var call = Expression.Lambda<Action>(Expression.Call(
+            cleanup,
+            Expression.Constant(consumer),
+            Expression.Constant(entry, cleanup.GetParameters()[1].ParameterType))).Compile();
+        for (var i = 0; i < 16; i++) call();
+        var start = GC.GetAllocatedBytesForCurrentThread();
+        for (var i = 0; i < 128; i++) call();
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - start;
+        Require(allocated <= 1024,
+            $"128 次稳定依赖拓扑检查不应分配临时过期数组，实测 {allocated} B。");
+        Console.WriteLine($"stable dependency cleanup: 128 topology hits allocated {allocated} B");
+    }
+
+    private static void CheckPonderCloseButtonHoverPartialUpdate()
+    {
+        const BindingFlags Private = BindingFlags.Instance | BindingFlags.NonPublic;
+        using var form = Host();
+        using var ponder = new Ponder { AnimationEnabled = false };
+        ponder.Items.Add(new Ponder.PonderItem { HighlightControl = form, Text = "Hover update" });
+        form.Show();
+        ponder.Start(form);
+        var overlay = (Form)typeof(Ponder).GetField("_overlay", Private)!.GetValue(ponder)!;
+        OuterToInnerRefreshScheduler.FlushPendingRequests();
+        D3D_V5Presentation.RequestRender(overlay, default);
+        D3D_V5Presentation.FlushPendingFrame(false);
+        var presenter = D3D_V5Presentation.GetPresenterForDiagnostics(overlay);
+        Require(presenter is not null, "Ponder 遮罩必须创建 GPU 呈现器。");
+
+        var buttons = (System.Collections.IDictionary)overlay.GetType().GetField("_buttons", Private)!.GetValue(overlay)!;
+        var close = (RectangleF)buttons["close"]!;
+        Rectangle updated = default;
+        Rectangle partialRegion = default;
+        byte[] pixels = [];
+        presenter!.SurfaceProbe = (context, bitmap, region) =>
+        {
+            updated = region;
+            pixels = Read(context, bitmap, region);
+        };
+        try
+        {
+            var point = Point.Round(new PointF(close.Left + close.Width / 2, close.Top + close.Height / 2));
+            var mouseMove = overlay.GetType().GetMethod("OnMouseMove", Private)!;
+            mouseMove.Invoke(overlay, [new MouseEventArgs(MouseButtons.None, 0, point.X, point.Y, 0)]);
+            OuterToInnerRefreshScheduler.FlushPendingRequests();
+            D3D_V5Presentation.FlushPendingFrame(false);
+            Require(updated.Width > 0 && (long)updated.Width * updated.Height <
+                (long)overlay.ClientSize.Width * overlay.ClientSize.Height / 4,
+                "Ponder close hover 必须局部更新而不重绘整窗。");
+            partialRegion = updated;
+
+            var surface = D3D_ControlSurfaceRegistry.RenderControl(overlay, (D3D_IGpuRenderable)overlay, default, null);
+            var dirty = surface!.LastRenderedDirtyRegion;
+            dirty.Inflate(2, 2);
+            dirty.Intersect(overlay.ClientRectangle);
+            Require(updated.Size == dirty.Size, "Ponder hover 呈现范围必须与局部内容脏区一致。");
+            var partial = pixels;
+
+            D3D_V5Presentation.RequestRender(overlay, overlay.ClientRectangle);
+            var referenceRegion = updated;
+            var reference = pixels;
+            Require(referenceRegion.Size == overlay.ClientSize, "完整参考帧必须更新整个 Ponder 遮罩。");
+            Require(partial.SequenceEqual(Crop(reference, overlay.ClientSize.Width, dirty)),
+                "Ponder 按钮局部 hover 绘制必须与完整帧一致。");
+        }
+        finally
+        {
+            presenter.SurfaceProbe = null;
+        }
+
+        Console.WriteLine($"Ponder close hover: updated {partialRegion.Width * partialRegion.Height}/{overlay.ClientSize.Width * overlay.ClientSize.Height} pixels with full-frame parity");
     }
 
     private static void CheckPanelLifecycle()

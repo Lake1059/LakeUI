@@ -294,7 +294,9 @@ Friend NotInheritable Class D3D_ControlSurfaceRegistry
     Private Shared Sub 请求依赖消费者(来源 As Control, 脏区 As Rectangle)
         Dim 目标集合 As HashSet(Of Control) = Nothing
         If 来源 Is Nothing OrElse Not _consumers.TryGetValue(来源, 目标集合) Then Return
-        For Each 消费者 In 目标集合.ToArray()
+        ' MarkDirty recursively propagates state but does not change dependency edges;
+        ' queued presentation cannot render until this UI dispatch returns.
+        For Each 消费者 In 目标集合
             If 消费者 Is Nothing OrElse 消费者.IsDisposed Then Continue For
             Dim 来源区域 As RectangleF = RectangleF.Empty
             Dim 按来源区域 As Dictionary(Of Control, RectangleF) = Nothing
@@ -486,13 +488,23 @@ Friend NotInheritable Class D3D_ControlSurfaceRegistry
         Dim 来源集合 As HashSet(Of Control) = Nothing
         If Not _consumerSources.TryGetValue(消费者, 来源集合) OrElse 来源集合 Is Nothing Then Return
 
-        Dim 过期来源 = 来源集合.Where(Function(source) Not 项目.SeenSources.Contains(source)).ToArray()
-        If 过期来源.Length = 0 Then
+        Dim 有过期来源 As Boolean
+        For Each 来源 In 来源集合
+            If Not 项目.SeenSources.Contains(来源) Then
+                有过期来源 = True
+                Exit For
+            End If
+        Next
+        If Not 有过期来源 Then
             D3D_RenderDiagnostics.V5DependencyTopologyHit()
             Return
         End If
         D3D_RenderDiagnostics.V5DependencyTopologyRebuild()
 
+        Dim 过期来源 As New List(Of Control)()
+        For Each 来源 In 来源集合
+            If Not 项目.SeenSources.Contains(来源) Then 过期来源.Add(来源)
+        Next
         For Each 来源 In 过期来源
             移除来源边(消费者, 来源)
         Next

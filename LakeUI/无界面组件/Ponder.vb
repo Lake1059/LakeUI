@@ -601,7 +601,6 @@ Friend Class PonderOverlayForm
         RefreshLayout()
         If _animation Is Nothing Then
             _animation = New D3D_AnimationHelper(Me) With {.FPS = 60, .Duration = duration}
-            _animation.SetDirtyRectProvider(Function() New Rectangle(Point.Empty, Size))
         Else
             _animation.Duration = duration
         End If
@@ -688,8 +687,21 @@ Friend Class PonderOverlayForm
 
     Protected Overrides Sub OnMouseMove(e As MouseEventArgs)
         Dim hit = HitButton(e.Location)
-        If hit <> _hoverButton Then _hoverButton = hit : RequestRender()
+        If hit <> _hoverButton Then
+            Dim oldHover = _hoverButton
+            _hoverButton = hit
+            If oldHover = "close" OrElse hit = "close" Then RequestCloseButtonRender()
+        End If
         MyBase.OnMouseMove(e)
+    End Sub
+
+    Private Sub RequestCloseButtonRender()
+        Dim closeBounds As RectangleF = RectangleF.Empty
+        If Not _buttons.TryGetValue("close", closeBounds) Then Return
+        Dim dirty = Rectangle.Ceiling(closeBounds)
+        Dim antialiasMargin = CInt(Math.Ceiling(Math.Max(1.0F, _owner.CloseButtonGlyphWidth))) + 2
+        dirty.Inflate(antialiasMargin, antialiasMargin)
+        RequestRender(Rectangle.Intersect(ClientRectangle, dirty))
     End Sub
 
     Protected Overrides Sub OnMouseDown(e As MouseEventArgs)
@@ -809,9 +821,9 @@ Friend Class PonderOverlayForm
         Return dirtyRegion.Width > 0 AndAlso dirtyRegion.Height > 0
     End Function
 
-    Private Sub RequestRender()
+    Private Sub RequestRender(Optional dirtyRect As Rectangle? = Nothing)
         If IsDisposed Then Return
-        D3D_InvalidationRouter.RequestRender(Me, New Rectangle(Point.Empty, Size))
+        D3D_InvalidationRouter.RequestRender(Me, If(dirtyRect.HasValue, dirtyRect.Value, New Rectangle(Point.Empty, Size)))
     End Sub
 
     Protected Overrides Sub Dispose(disposing As Boolean)

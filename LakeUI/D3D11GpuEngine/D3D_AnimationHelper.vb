@@ -172,6 +172,9 @@ Friend Class D3D_AnimationHelper
     ''' <summary>失效时是否同时失效子控件。默认 False。</summary>
     Public Property InvalidateChildren As Boolean = False
 
+    ''' <summary>帧回调后是否自动失效控件。回调只更新窗口属性等外部状态时可关闭。</summary>
+    Public Property FrameLoopRequestsInvalidate As Boolean = True
+
     Public ReadOnly Property Progress As Single
         Get
             Return _progress
@@ -308,7 +311,7 @@ Friend Class D3D_AnimationHelper
         If _frameLoopRunning AndAlso ShouldDispatch(nowTicks, _nextFrameLoopDispatchTicks) Then
             Try
                 _frameLoopHandler?.Invoke(Me, EventArgs.Empty)
-                updated = True
+                updated = updated OrElse FrameLoopRequestsInvalidate
             Catch
                 StopFrameLoop()
             End Try
@@ -377,7 +380,7 @@ Friend Class D3D_AnimationHelper
     End Function
 
     Private Sub RequestInvalidate()
-        CurrentScheduler(_owner).RequestInvalidate(Me)
+        CurrentScheduler(Nothing).RequestInvalidate(Me)
     End Sub
 
     Public Sub Dispose() Implements IDisposable.Dispose
@@ -419,14 +422,18 @@ Friend Class D3D_AnimationHelper
         Private Const MaxDirtyRectsPerControl As Integer = 8
         Private Const FullInvalidateAreaRatio As Double = 0.65
         Private Const MaxTimerIntervalMs As Integer = 16
+        Private Const MaxPooledInvalidationBuckets As Integer = 64
 
         Private ReadOnly _helpers As New List(Of D3D_AnimationHelper)()
         Private ReadOnly _活动快照 As New List(Of D3D_AnimationHelper)()
         Private ReadOnly _timer As New PrecisionTimer()
         Private ReadOnly _invalidations As New Dictionary(Of Control, InvalidationBucket)()
+        Private ReadOnly _pendingInvalidations As New List(Of KeyValuePair(Of Control, InvalidationBucket))()
+        Private ReadOnly _reusableInvalidationBuckets As New Stack(Of InvalidationBucket)()
         Private _syncOwner As Control
         Private _driver As DriverKind = DriverKind.None
         Private _inTick As Boolean
+        Private _flushingInvalidations As Boolean
         Private _reconfigurePending As Boolean
         Private _tickCount As Long
         Private _requestedInvalidates As Long
@@ -480,6 +487,10 @@ Friend Class D3D_AnimationHelper
                 SetDriver(DriverKind.None, 0)
                 _syncOwner = Nothing
                 _timer.SynchronizingObject = Nothing
+                If _helpers.Capacity > 64 Then _helpers.TrimExcess()
+                If _活动快照.Capacity > 64 Then _活动快照.TrimExcess()
+                If _pendingInvalidations.Capacity > 64 Then _pendingInvalidations.TrimExcess()
+                If _invalidations.Count = 0 AndAlso _invalidations.Capacity > 64 Then _invalidations.TrimExcess()
                 Return
             End If
 
@@ -561,6 +572,7 @@ Friend Class D3D_AnimationHelper
             Finally
                 _活动快照.Clear()
                 _inTick = False
+                If _invalidations.Count > 0 Then FlushInvalidations()
                 If _reconfigurePending Then ApplyConfiguration()
             End Try
         End Sub
@@ -595,41 +607,47 @@ Friend Class D3D_AnimationHelper
                 Return
             End If
 
-            Dim sink As New InvalidateRegionSink()
-            If helper.DirtyProvider Is Nothing Then
-                sink.InvalidateAll()
-            Else
+            Dim dirtyProvider = helper.DirtyProvider
+            Dim fullInvalidation As Boolean = dirtyProvider Is Nothing
+            Dim dirtyRectangles As IReadOnlyList(Of Rectangle) = Nothing
+            If Not fullInvalidation Then
+                Dim sink As New InvalidateRegionSink()
                 Try
-                    helper.DirtyProvider.Invoke(helper, owner, sink)
+                    dirtyProvider.Invoke(helper, owner, sink)
                 Catch
                     sink.InvalidateAll()
                 End Try
+                If sink.IsSuppressed Then Return
+                fullInvalidation = sink.IsFullInvalidation
+                dirtyRectangles = sink.Rectangles
             End If
 
-            If sink.IsSuppressed Then Return
-
-            Dim hasRects As Boolean = sink.Rectangles.Count > 0
-            If Not sink.IsFullInvalidation AndAlso Not hasRects Then Return
+            Dim hasRects As Boolean = dirtyRectangles IsNot Nothing AndAlso dirtyRectangles.Count > 0
+            If Not fullInvalidation AndAlso Not hasRects Then Return
 
             _requestedInvalidates += 1
 
             Dim bucket As InvalidationBucket = Nothing
             If Not _invalidations.TryGetValue(owner, bucket) Then
-                bucket = New InvalidationBucket()
+                If _reusableInvalidationBuckets.Count > 0 Then
+                    bucket = _reusableInvalidationBuckets.Pop()
+                Else
+                    bucket = New InvalidationBucket()
+                End If
                 _invalidations(owner) = bucket
             End If
 
             bucket.Children = bucket.Children OrElse helper.InvalidateChildren
-            If sink.IsFullInvalidation Then
+            If fullInvalidation Then
                 bucket.Full = True
                 bucket.Rectangles.Clear()
             ElseIf Not bucket.Full Then
-                For Each rect In sink.Rectangles
+                For Each rect In dirtyRectangles
                     AddInvalidationRect(owner, bucket, rect)
                 Next
             End If
 
-            If Not _inTick Then FlushInvalidations()
+            If Not _inTick AndAlso Not _flushingInvalidations Then FlushInvalidations()
         End Sub
 
         Private Sub AddInvalidationRect(owner As Control, bucket As InvalidationBucket, rect As Rectangle)
@@ -675,32 +693,52 @@ Friend Class D3D_AnimationHelper
         End Function
 
         Private Sub FlushInvalidations()
-            If _invalidations.Count = 0 Then Return
-            Dim pending = _invalidations.ToArray()
-            _invalidations.Clear()
+            If _invalidations.Count = 0 OrElse _flushingInvalidations Then Return
+            _flushingInvalidations = True
+            Try
+                Do
+                    _pendingInvalidations.Clear()
+                    For Each item In _invalidations
+                        _pendingInvalidations.Add(item)
+                    Next
+                    _invalidations.Clear()
 
-            For Each kv In pending
-                Dim owner = kv.Key
-                Dim bucket = kv.Value
-                If owner Is Nothing OrElse owner.IsDisposed OrElse Not owner.IsHandleCreated Then
-                    _droppedInvalidates += 1
-                    Continue For
-                End If
-                Try
-                    If bucket.Full Then
-                        D3D_InvalidationRouter.RequestRender(owner, New Rectangle(Point.Empty, owner.ClientSize))
-                        _flushedInvalidates += 1
-                    Else
-                        For Each rect In bucket.Rectangles
-                            If rect.Width <= 0 OrElse rect.Height <= 0 Then Continue For
-                            D3D_InvalidationRouter.RequestRender(owner, rect)
-                            _flushedInvalidates += 1
-                        Next
-                    End If
-                Catch
-                    _droppedInvalidates += 1
-                End Try
-            Next
+                    For Each kv In _pendingInvalidations
+                        Dim bucket = kv.Value
+                        Try
+                            Dim owner = kv.Key
+                            If owner Is Nothing OrElse owner.IsDisposed OrElse Not owner.IsHandleCreated Then
+                                _droppedInvalidates += 1
+                                Continue For
+                            End If
+                            If bucket.Full Then
+                                D3D_InvalidationRouter.RequestRender(owner, New Rectangle(Point.Empty, owner.ClientSize))
+                                _flushedInvalidates += 1
+                            Else
+                                For Each rect In bucket.Rectangles
+                                    If rect.Width <= 0 OrElse rect.Height <= 0 Then Continue For
+                                    D3D_InvalidationRouter.RequestRender(owner, rect)
+                                    _flushedInvalidates += 1
+                                Next
+                            End If
+                        Catch
+                            _droppedInvalidates += 1
+                        Finally
+                            bucket.Full = False
+                            bucket.Children = False
+                            bucket.Rectangles.Clear()
+                            If _reusableInvalidationBuckets.Count < MaxPooledInvalidationBuckets Then
+                                _reusableInvalidationBuckets.Push(bucket)
+                            End If
+                        End Try
+                    Next
+                    _pendingInvalidations.Clear()
+                    If _inTick Then Exit Do
+                Loop While _invalidations.Count > 0
+            Finally
+                _pendingInvalidations.Clear()
+                _flushingInvalidations = False
+            End Try
         End Sub
 
         Private Sub CleanupDeadHelpers()

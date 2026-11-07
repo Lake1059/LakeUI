@@ -2,6 +2,12 @@ Imports SharpGen.Runtime
 Imports Vortice.Direct2D1
 Imports Vortice.DirectWrite
 
+''' <summary>提示窗相对于锚点的优先显示方向。</summary>
+Public Enum FloatingToolTipSide
+    Left = 0
+    Right = 1
+End Enum
+
 ''' <summary>
 ''' 控件共用的自绘浮动提示窗，支持 D2D 文本、边框、圆角以及弹出层毛玻璃背景。
 ''' </summary>
@@ -20,11 +26,6 @@ Imports Vortice.DirectWrite
 '''   外层重新算窗口尺寸，不需要进测量 key。
 ''' • ShowWithoutActivation + WM_MOUSEACTIVATE 是必要组合，避免提示窗抢走原控件焦点。
 ''' </remarks>
-Public Enum FloatingToolTipSide
-    Left = 0
-    Right = 1
-End Enum
-
 Public NotInheritable Class FloatingToolTipForm
     Inherits PopupForm
     Implements IMessageFilter, D3D_IGpuRenderable, D3D_IGpuInvalidationSource, V5_IGpuPresentationSource

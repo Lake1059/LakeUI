@@ -394,8 +394,6 @@ Public Class D3D_RectangleRenderer
         Return path
     End Function
 
-    ''' <summary>D2D 圆角背景填充（支持纯色 / 双色线性渐变）。</summary>
-    ''' <param name="brushCache">可选的 SolidColorBrush 缓存；仅纯色路径复用。Nothing 时退回原逻辑。</param>
 #End Region
 
 End Class

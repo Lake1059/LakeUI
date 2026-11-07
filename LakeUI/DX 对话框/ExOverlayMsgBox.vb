@@ -645,8 +645,7 @@ Friend Class ExOverlayBackdropForm
 
     Private Sub 启动淡入动画()
         If 淡入调度器 Is Nothing Then
-            淡入调度器 = New D3D_AnimationHelper(Me) With {.FPS = 60}
-            淡入调度器.SetDirtyRectProvider(Function() New Rectangle(Point.Empty, Me.Size))
+            淡入调度器 = New D3D_AnimationHelper(Me) With {.FPS = 60, .FrameLoopRequestsInvalidate = False}
         End If
         淡入调度器.StartFrameLoop(AddressOf 淡入动画帧)
     End Sub
@@ -1154,8 +1153,7 @@ Friend Class ExOverlayMsgBoxHostForm
 
     Private Sub 启动淡入动画()
         If 淡入调度器 Is Nothing Then
-            淡入调度器 = New D3D_AnimationHelper(Me) With {.FPS = 60}
-            淡入调度器.SetDirtyRectProvider(Function() New Rectangle(Point.Empty, Me.Size))
+            淡入调度器 = New D3D_AnimationHelper(Me) With {.FPS = 60, .FrameLoopRequestsInvalidate = False}
         End If
         淡入调度器.StartFrameLoop(AddressOf 淡入动画帧)
     End Sub

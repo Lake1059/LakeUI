@@ -15,12 +15,11 @@ Public Module D3D_ImagePreparation
         ArgumentException.ThrowIfNullOrWhiteSpace(path)
         Await _workers.WaitAsync(cancellationToken).ConfigureAwait(False)
         Try
-            Dim 编码数据 = Await File.ReadAllBytesAsync(path, cancellationToken).ConfigureAwait(False)
             Return Await Task.Run(
                 Function()
                     cancellationToken.ThrowIfCancellationRequested()
                     Dim 开始时间 = D3D_RefreshDiagnostics.Start()
-                    Using 数据流 As New MemoryStream(编码数据, writable:=False), 源图 = Image.FromStream(数据流)
+                    Using 数据流 As New FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read), 源图 = Image.FromStream(数据流)
                         Dim 结果位图 As New Bitmap(源图.Width, 源图.Height, PixelFormat.Format32bppPArgb)
                         Try
                             结果位图.SetResolution(96, 96)

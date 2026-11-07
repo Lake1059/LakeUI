@@ -37,7 +37,6 @@ Public Class ExcellentTrackBar
     Public Sub New()
         InitializeComponent()
         SetStyle(ControlStyles.Selectable, True)
-        动画助手.DirtyProvider = AddressOf 滑块动画脏区
         标签列表 = New TrackLabelCollection(Me)
         字符串集合 = New StringItemCollection(Me)
         章节标记列表 = New ChapterMarkerCollection(Me)
@@ -261,10 +260,6 @@ Public Class ExcellentTrackBar
     End Sub
 
     Private ReadOnly 动画助手 As New D3D_AnimationHelper(Me) With {.Duration = 0}
-
-    Private Sub 滑块动画脏区(helper As D3D_AnimationHelper, owner As Control, sink As D3D_AnimationHelper.InvalidateRegionSink)
-        sink.InvalidateAll()
-    End Sub
 
     Private Function DpiScale() As Single
         Return D3D_DpiContext.FromControl(Me).Scale

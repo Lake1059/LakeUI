@@ -11,7 +11,6 @@ Public Class RoundDashBoard
 
     Public Sub New()
         InitializeComponent()
-        动画助手.DirtyProvider = AddressOf 表盘动画脏区
     End Sub
 
 #Region "背景源"
@@ -276,10 +275,6 @@ Public Class RoundDashBoard
     End Sub
 
     Private ReadOnly 动画助手 As New D3D_AnimationHelper(Me) With {.EasingMode = D3D_AnimationHelper.EasingModeEnum.EaseInOut}
-
-    Private Sub 表盘动画脏区(helper As D3D_AnimationHelper, owner As Control, sink As D3D_AnimationHelper.InvalidateRegionSink)
-        sink.InvalidateAll()
-    End Sub
 
     Private Function 计算值比例(val As Integer) As Single
         Dim range As Integer = 最大值 - 最小值

@@ -1515,8 +1515,6 @@ Public Class ModernTabListControl
         填充圆角或矩形_GPU(context, thumbArea, Math.Min(width / 2.0F, thumbArea.Height / 2.0F), activeColor)
     End Sub
 
-    ''' <summary>在 DC RT 上绘制所有文字（标签项 / 说明项 / "更多" 三角符号）。</summary>
-
     Private _moreIndicatorFont As Font
     Private _moreIndicatorFontKey As String
 
@@ -1534,12 +1532,6 @@ Public Class ModernTabListControl
         Return _moreIndicatorFont
     End Function
 
-    ''' <summary>DirectWrite 单行文本绘制（垂直居中、末尾省略号）。</summary>
-
-    ''' <summary>
-    ''' 缓存按 (family/sizePx/weight/style/align) 命中的 TextFormat 与 ellipsis trimming sign。
-    ''' 1 秒未使用即清扫，避免长期持有冷条目。
-    ''' </summary>
 #End Region
 
 #Region "布局"

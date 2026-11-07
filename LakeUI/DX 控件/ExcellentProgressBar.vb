@@ -9,8 +9,6 @@ Public Class ExcellentProgressBar
 
     Public Sub New()
         InitializeComponent()
-        动画助手.DirtyProvider = AddressOf 进度动画脏区
-        动画助手2.DirtyProvider = AddressOf 进度动画脏区
     End Sub
 
 #Region "背景源"
@@ -293,10 +291,6 @@ Public Class ExcellentProgressBar
 
     Private ReadOnly 动画助手 As New D3D_AnimationHelper(Me) With {.EasingMode = D3D_AnimationHelper.EasingModeEnum.EaseInOut}
     Private ReadOnly 动画助手2 As New D3D_AnimationHelper(Me) With {.EasingMode = D3D_AnimationHelper.EasingModeEnum.EaseInOut}
-
-    Private Sub 进度动画脏区(helper As D3D_AnimationHelper, owner As Control, sink As D3D_AnimationHelper.InvalidateRegionSink)
-        sink.InvalidateAll()
-    End Sub
 
     Private Function 计算值比例(val As Integer) As Single
         Dim range As Double = CDbl(最大值) - CDbl(最小值)

@@ -11,8 +11,29 @@ Imports Vortice.Mathematics
 Public NotInheritable Class D3D_ImageCache
     Implements IDisposable
 
+    ' 保留对象身份但不让 GPU cache key 延长调用方 Image 的寿命。
+    Private Shared ReadOnly _imageIdentities As New ConditionalWeakTable(Of Image, D3D_ImageIdentity)()
+    Private Shared ReadOnly _createImageIdentity As ConditionalWeakTable(Of Image, D3D_ImageIdentity).CreateValueCallback = AddressOf CreateImageIdentity
+    Private Shared _nextImageIdentity As Long
+
     Private ReadOnly _textureCache As D3D_TextureCache
     Private _disposed As Boolean
+
+    Private NotInheritable Class D3D_ImageIdentity
+        Public Sub New(value As Long)
+            Me.Value = value
+        End Sub
+
+        Public ReadOnly Property Value As Long
+    End Class
+
+    Private Shared Function GetImageIdentity(image As Image) As Long
+        Return _imageIdentities.GetValue(image, _createImageIdentity).Value
+    End Function
+
+    Private Shared Function CreateImageIdentity(image As Image) As D3D_ImageIdentity
+        Return New D3D_ImageIdentity(Threading.Interlocked.Increment(_nextImageIdentity))
+    End Function
 
     Public Sub New(textureCache As D3D_TextureCache)
         _textureCache = textureCache
@@ -83,10 +104,12 @@ Public NotInheritable Class D3D_ImageCache
 
     Public Function ReleaseImage(image As Image) As Boolean
         If image Is Nothing Then Return False
+        Dim identity As D3D_ImageIdentity = Nothing
+        If Not _imageIdentities.TryGetValue(image, identity) OrElse identity Is Nothing Then Return False
         Return _textureCache.ReleaseWhere(
             Function(key)
                 If Not TypeOf key Is D3D_ImageTextureKey Then Return False
-                Return ReferenceEquals(DirectCast(key, D3D_ImageTextureKey).Image, image)
+                Return DirectCast(key, D3D_ImageTextureKey).ImageIdentity = identity.Value
             End Function)
     End Function
 
@@ -95,21 +118,21 @@ Public NotInheritable Class D3D_ImageCache
                                      height As Integer,
                                      frameIndex As Integer,
                                      generation As Integer) As D3D_ImageTextureKey
-        Return New D3D_ImageTextureKey(image, width, height, frameIndex, D3D_HdrOutput.ImageRevision, generation)
+        Return New D3D_ImageTextureKey(GetImageIdentity(image), width, height, frameIndex, D3D_HdrOutput.ImageRevision, generation)
     End Function
 
     Private Structure D3D_ImageTextureKey
         Implements IEquatable(Of D3D_ImageTextureKey)
 
-        Friend ReadOnly Image As Image
+        Friend ReadOnly ImageIdentity As Long
         Private ReadOnly _width As Integer
         Private ReadOnly _height As Integer
         Private ReadOnly _frameIndex As Integer
         Private ReadOnly _imageRevision As Integer
         Private ReadOnly _generation As Integer
 
-        Friend Sub New(image As Image, width As Integer, height As Integer, frameIndex As Integer, imageRevision As Integer, generation As Integer)
-            Me.Image = image
+        Friend Sub New(imageIdentity As Long, width As Integer, height As Integer, frameIndex As Integer, imageRevision As Integer, generation As Integer)
+            Me.ImageIdentity = imageIdentity
             _width = width
             _height = height
             _frameIndex = frameIndex
@@ -118,7 +141,7 @@ Public NotInheritable Class D3D_ImageCache
         End Sub
 
         Public Overloads Function Equals(other As D3D_ImageTextureKey) As Boolean Implements IEquatable(Of D3D_ImageTextureKey).Equals
-            Return ReferenceEquals(Image, other.Image) AndAlso _width = other._width AndAlso _height = other._height AndAlso
+            Return ImageIdentity = other.ImageIdentity AndAlso _width = other._width AndAlso _height = other._height AndAlso
                    _frameIndex = other._frameIndex AndAlso _imageRevision = other._imageRevision AndAlso _generation = other._generation
         End Function
 
@@ -127,7 +150,7 @@ Public NotInheritable Class D3D_ImageCache
         End Function
 
         Public Overrides Function GetHashCode() As Integer
-            Return HashCode.Combine(RuntimeHelpers.GetHashCode(Image), _width, _height, _frameIndex, _imageRevision, _generation)
+            Return HashCode.Combine(ImageIdentity, _width, _height, _frameIndex, _imageRevision, _generation)
         End Function
     End Structure
 

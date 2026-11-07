@@ -236,8 +236,10 @@ Friend NotInheritable Class D3D_ControlSurface
             _backdropColorTransfer = New D3D_BitmapColorTransfer(_context)
             _generation = 设备代次
         End If
-        If _compositor Is Nothing OrElse _compositor.IsDisposed Then
-            _compositor = D3D_RenderCore.GetWindowCompositor(_owner)
+        Dim compositorForm = D3D_RenderCore.ResolveCompositorForm(_owner)
+        If _compositor Is Nothing OrElse _compositor.IsDisposed OrElse
+           Not ReferenceEquals(_compositor.Form, compositorForm) Then
+            _compositor = D3D_RenderCore.GetWindowCompositor(compositorForm)
         End If
         Dim floatSource = TryCast(_owner, D3D_IFloatPresentationSource)
         Dim floatRenderingSource = TryCast(_owner, D3D_IFloatRenderingSource)
