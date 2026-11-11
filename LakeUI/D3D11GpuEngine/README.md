@@ -69,10 +69,10 @@ dotnet run --project LakeUI.Tests -c Release -- --demo-refresh <LakeUI.Demo.dll�
 
 ```powershell
 dotnet build LakeUI.Tests/LakeUI.Tests.csproj -c Release --no-restore
-dotnet LakeUI.Tests/bin/Release/net10.0-windows10.0.17763.0/LakeUI.Tests.dll --animation-probe 60
-dotnet LakeUI.Tests/bin/Release/net10.0-windows10.0.17763.0/LakeUI.Tests.dll --animation-probe 0
-dotnet LakeUI.Tests/bin/Release/net10.0-windows10.0.17763.0/LakeUI.Tests.dll --animation-probe 120 10
-dotnet LakeUI.Tests/bin/Release/net10.0-windows10.0.17763.0/LakeUI.Tests.dll --composition-probe
+net11.0-windows10.0.17763.0
+net11.0-windows10.0.17763.0
+dotnet LakeUI.Tests/bin/Release/net11.0-windows10.0.17763.0/LakeUI.Tests.dll --animation-probe 120 10
+dotnet LakeUI.Tests/bin/Release/net11.0-windows10.0.17763.0/LakeUI.Tests.dll --composition-probe
 ```
 
 动画探针同时运行两种加载动画、进度条、仪表盘和按钮涟漪，使用真实消息循环，默认两秒自动关闭，
@@ -99,8 +99,8 @@ UI 的 15ms 采样只用于检测卡顿，不能用其观察次数判断 120 FPS
 RequestRender 的同步语义保持不变。
 
 ```powershell
-dotnet LakeUI.Tests/bin/Release/net10.0-windows10.0.17763.0/LakeUI.Tests.dll --menu-animation-probe shadow
-dotnet LakeUI.Tests/bin/Release/net10.0-windows10.0.17763.0/LakeUI.Tests.dll --dropdown-animation-probe
+dotnet LakeUI.Tests/bin/Release/net11.0-windows10.0.17763.0/LakeUI.Tests.dll --menu-animation-probe shadow
+dotnet LakeUI.Tests/bin/Release/net11.0-windows10.0.17763.0/LakeUI.Tests.dll --dropdown-animation-probe
 ```
 
 两个探针均使用自动关闭及超时保护，不截图。分别验证父菜单焦点持续更新、子菜单裁剪

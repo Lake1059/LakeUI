@@ -6,7 +6,7 @@
 
 附加回归验证图片流式快照、源 Image 在 GPU 纹理缓存保留时仍可回收、动画失效分配量与语义、稳定背景依赖零分配、Ponder 按钮局部像素等价、RamMonitor 历史工作区复用、折线几何缓存重建，以及 V5 批次顺序、缓冲复用、重入和控件引用清理。测试使用内部反射探针、CPU 分配计数与 GPU readback，不做截图或视觉判断。
 
-项目需要 Windows 和 .NET 10 SDK。
+项目需要 Windows 和 .NET 11 SDK。
 
 ```powershell
 dotnet run --project LakeUI.Tests

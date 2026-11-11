@@ -8,7 +8,7 @@
 
 ## 环境要求
 
-- 主程序目标框架必须是 Windows TFM，例如 `net10.0-windows10.0.17763.0`。
+- 主程序目标框架必须是 Windows TFM，例如 `net11.0-windows10.0.17763.0`。
 - 目标系统建议为 Windows 10 1809 及以上或 Windows 11。
 - 目标机器需要安装对应架构的 Windows App Runtime 2.1.3。
 - 未打包 WinForms 程序会在库内部执行 Windows App Runtime Bootstrap 初始化。
@@ -25,7 +25,7 @@
 主项目建议显式写平台版本：
 
 ```xml
-<TargetFramework>net10.0-windows10.0.17763.0</TargetFramework>
+<TargetFramework>net11.0-windows10.0.17763.0</TargetFramework>
 ```
 
 ## 项目文件 XML 配置
@@ -36,7 +36,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net10.0-windows10.0.17763.0</TargetFramework>
+    <TargetFramework>net11.0-windows10.0.17763.0</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
     <WindowsPackageType>None</WindowsPackageType>
   </PropertyGroup>
