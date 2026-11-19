@@ -2820,10 +2820,11 @@ Public Class MarkdownViewerCore
         Return True
     End Function
 
-    Private Sub RebuildLayout(Optional previousContentHeight As Integer = -1)
+    Private Sub RebuildLayout(Optional previousContentHeight As Integer = -1, Optional reuseTextMeasurements As Boolean = False)
         Dim oldContentHeight As Integer = If(previousContentHeight >= 0, previousContentHeight, _totalContentHeight)
-        InvalidateMeasureCache()
-        _layoutDpi = EffectiveDeviceDpi()
+        Dim dpi = EffectiveDeviceDpi()
+        If Not reuseTextMeasurements OrElse _layoutDpi <> dpi Then InvalidateMeasureCache()
+        _layoutDpi = dpi
         _visualLines.Clear()
         _tableColumnWidths.Clear()
         _blockLayoutTops.Clear()
@@ -2860,7 +2861,7 @@ Public Class MarkdownViewerCore
         Dim prevVisible As Boolean = _scrollBarVisible
         UpdateScrollBarState()
         If _scrollBarVisible <> prevVisible AndAlso _scrollBarVisible Then
-            RebuildLayout(oldContentHeight)
+            RebuildLayout(oldContentHeight, reuseTextMeasurements)
             Return
         End If
         TrimImageCacheIfNeeded()
@@ -4452,14 +4453,18 @@ Public Class MarkdownViewerCore
                  End Function)
     End Sub
 
+    Private Sub ApplyDecodedImage(url As String, img As Image)
+        StoreImageCacheEntry(url, img)
+        _imageLoadingUrls.Remove(url)
+        RebuildLayout(reuseTextMeasurements:=True)
+    End Sub
+
     Private Sub PostImageLoadResult(url As String, img As Image, loadVersion As Integer)
         If IsHandleCreated AndAlso Not IsDisposed Then
             Try
                 BeginInvoke(Sub()
                                 If loadVersion = _imageLoadVersion Then
-                                    StoreImageCacheEntry(url, img)
-                                    _imageLoadingUrls.Remove(url)
-                                    RebuildLayout()
+                                    ApplyDecodedImage(url, img)
                                     RequestGpuRender()
                                 Else
                                     img?.Dispose()
@@ -4474,9 +4479,7 @@ Public Class MarkdownViewerCore
             Try
                 target.BeginInvoke(Sub()
                                        If loadVersion = _imageLoadVersion AndAlso Not IsDisposed Then
-                                           StoreImageCacheEntry(url, img)
-                                           _imageLoadingUrls.Remove(url)
-                                           RebuildLayout()
+                                           ApplyDecodedImage(url, img)
                                            If _embeddedInvalidationTarget IsNot Nothing AndAlso Not _embeddedInvalidationTarget.IsDisposed Then
                                                RequestGpuRender(_embeddedInvalidationTarget)
                                            End If

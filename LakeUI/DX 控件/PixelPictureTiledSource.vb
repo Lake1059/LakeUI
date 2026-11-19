@@ -54,13 +54,13 @@ End Structure
 ''' 返回完整合成帧而非 GIF disposal/delta 数据。此类只管理呈现、色彩解释及缓存，不读取编码文件。
 ''' </summary>
 Public NotInheritable Class PixelPictureTiledSource
-    Implements IPixelPictureSource, IPixelPictureInvalidationSource, IDisposable
+    Implements IPixelPictureSource, IPixelPictureSource12, IPixelPictureInvalidationSource, IDisposable
 
     Public Delegate Function TileProvider(request As PixelPictureTileRequest, cancellationToken As CancellationToken) As Task(Of PixelPictureTile)
 
     Private NotInheritable Class TileEntry
         Public ReadOnly Tile As PixelPictureTile
-        Public ReadOnly Upload As Byte()
+        Public Upload As Byte()
         Public ReadOnly GpuKey As New Object()
         Public LastUse As Long
         Public Sub New(tile As PixelPictureTile, upload As Byte(), lastUse As Long)
@@ -70,7 +70,7 @@ Public NotInheritable Class PixelPictureTiledSource
         End Sub
         Public ReadOnly Property Bytes As Long
             Get
-                Return CLng(Tile.Width) * Tile.Height * 24L
+                Return CLng(Tile.Width) * Tile.Height * 16L + If(Upload Is Nothing, 0L, Upload.LongLength)
             End Get
         End Property
     End Class
@@ -250,6 +250,17 @@ Public NotInheritable Class PixelPictureTiledSource
     Public Function Present(context As D3D_PaintContext, destination As RectangleF, source As PixelPictureRegion, frameIndex As Integer,
                             interpolation As InterpolationMode) As Boolean Implements IPixelPictureSource.Present
         If context Is Nothing Then Return False
+        Return PresentVisibleTiles(destination, source, frameIndex, Function(request) DrawTile(context, request, destination, source, interpolation))
+    End Function
+
+    Public Function Present12(context As D3D12_PaintContext, destination As RectangleF, source As PixelPictureRegion,
+                              frameIndex As Integer, nearest As Boolean) As Boolean Implements IPixelPictureSource12.Present12
+        If context Is Nothing Then Return False
+        Return PresentVisibleTiles(destination, source, frameIndex, Function(request) DrawTile12(context, request, destination, source, nearest))
+    End Function
+
+    Private Function PresentVisibleTiles(destination As RectangleF, source As PixelPictureRegion, frameIndex As Integer,
+                                         draw As Func(Of PixelPictureTileRequest, Boolean)) As Boolean
         Dim requests = GetVisibleTileRequests(source, destination, frameIndex)
         If requests.Count = 0 Then Return False
         Dim overview = New PixelPictureTileRequest(_levelCount - 1, 0, 0, Math.Clamp(frameIndex, 0, FrameCount - 1), _tileSize)
@@ -270,10 +281,10 @@ Public NotInheritable Class PixelPictureTiledSource
         For Each request As PixelPictureTileRequest In requests
             EnsureRequested(request)
         Next
-        Dim drawn = DrawTile(context, overview, destination, source, interpolation)
+        Dim drawn = draw(overview)
         For Each request As PixelPictureTileRequest In requests
             If request.Equals(overview) Then Continue For
-            drawn = DrawTile(context, request, destination, source, interpolation) OrElse drawn
+            drawn = draw(request) OrElse drawn
         Next
         Return drawn
     End Function
@@ -354,6 +365,36 @@ Public NotInheritable Class PixelPictureTiledSource
     Private Function DrawTile(context As D3D_PaintContext, request As PixelPictureTileRequest, destination As RectangleF,
                               visible As PixelPictureRegion, interpolation As InterpolationMode) As Boolean
         Dim entry As TileEntry = Nothing
+        Dim target, local As RectangleF
+        If Not TryGetTileDraw(request, destination, visible, entry, target, local) Then Return False
+        context.BeginTextureUse()
+        Dim bitmap = context.Compositor.TextureCache.AcquireTexture(Of ID2D1Bitmap1)(entry.GpuKey, context.DeviceGeneration,
+            CLng(entry.Tile.Width) * entry.Tile.Height * 8L, Function() UploadTile(context.DeviceContext, request, entry))
+        SyncLock _gate
+            Dim current As TileEntry = Nothing
+            If _cache.TryGetValue(request, current) AndAlso ReferenceEquals(current, entry) AndAlso entry.Upload IsNot Nothing Then
+                _cacheBytes -= entry.Upload.LongLength
+                entry.Upload = Nothing
+            End If
+        End SyncLock
+        context.DeviceContext.DrawBitmap(bitmap, D3D_PaintContext.ToRawRect(target), 1.0F, interpolation, D3D_PaintContext.ToRawRect(local), New Nullable(Of System.Numerics.Matrix4x4)())
+        Return True
+    End Function
+
+    Private Function DrawTile12(context As D3D12_PaintContext, request As PixelPictureTileRequest, destination As RectangleF,
+                                visible As PixelPictureRegion, nearest As Boolean) As Boolean
+        Dim entry As TileEntry = Nothing
+        Dim target, local As RectangleF
+        If Not TryGetTileDraw(request, destination, visible, entry, target, local) Then Return False
+        Dim w = entry.Tile.Width
+        Dim h = entry.Tile.Height
+        Dim uv As New RectangleF(local.X / w, local.Y / h, local.Width / w, local.Height / h)
+        context.DrawLinearTile(w, h, Function() If(entry.Upload, entry.Tile.PrepareUpload()), target, uv, nearest, entry.GpuKey)
+        Return True
+    End Function
+
+    Private Function TryGetTileDraw(request As PixelPictureTileRequest, destination As RectangleF, visible As PixelPictureRegion,
+                                    ByRef entry As TileEntry, ByRef target As RectangleF, ByRef local As RectangleF) As Boolean
         SyncLock _gate
             If _disposed OrElse Not _cache.TryGetValue(request, entry) Then Return False
             _clock += 1
@@ -367,23 +408,28 @@ Public NotInheritable Class PixelPictureTiledSource
         If right <= left OrElse bottom <= top Then Return False
         Dim scaleX = destination.Width / visible.Width
         Dim scaleY = destination.Height / visible.Height
-        Dim target As New RectangleF(CSng(destination.X + (left - visible.X) * scaleX), CSng(destination.Y + (top - visible.Y) * scaleY), CSng((right - left) * scaleX), CSng((bottom - top) * scaleY))
-        Dim local As New RectangleF(CSng((left - tileRegion.X) / request.Scale), CSng((top - tileRegion.Y) / request.Scale), CSng((right - left) / request.Scale), CSng((bottom - top) / request.Scale))
-        context.BeginTextureUse()
-        Dim bitmap = context.Compositor.TextureCache.AcquireTexture(Of ID2D1Bitmap1)(entry.GpuKey, context.DeviceGeneration,
-            CLng(entry.Tile.Width) * entry.Tile.Height * 8L, Function() UploadTile(context.DeviceContext, entry))
-        context.DeviceContext.DrawBitmap(bitmap, D3D_PaintContext.ToRawRect(target), 1.0F, interpolation, D3D_PaintContext.ToRawRect(local), New Nullable(Of System.Numerics.Matrix4x4)())
+        target = New RectangleF(CSng(destination.X + (left - visible.X) * scaleX), CSng(destination.Y + (top - visible.Y) * scaleY), CSng((right - left) * scaleX), CSng((bottom - top) * scaleY))
+        local = New RectangleF(CSng((left - tileRegion.X) / request.Scale), CSng((top - tileRegion.Y) / request.Scale), CSng((right - left) / request.Scale), CSng((bottom - top) / request.Scale))
         Return True
     End Function
 
-    Private Shared Function UploadTile(context As ID2D1DeviceContext, entry As TileEntry) As ID2D1Bitmap1
-        Dim pinned = GCHandle.Alloc(entry.Upload, GCHandleType.Pinned)
-        Try
-            Dim properties As New BitmapProperties1(New Vortice.DCommon.PixelFormat(Vortice.DXGI.Format.R16G16B16A16_Float, Vortice.DCommon.AlphaMode.Premultiplied), 96, 96, BitmapOptions.None)
-            Return context.CreateBitmap(New SizeI(entry.Tile.Width, entry.Tile.Height), pinned.AddrOfPinnedObject(), CUInt(entry.Tile.Width * 8), properties)
-        Finally
-            pinned.Free()
-        End Try
+    Private Function UploadTile(context As ID2D1DeviceContext, request As PixelPictureTileRequest, entry As TileEntry) As ID2D1Bitmap1
+        SyncLock _gate
+            Dim current As TileEntry = Nothing
+            If _disposed OrElse Not _cache.TryGetValue(request, current) OrElse Not ReferenceEquals(current, entry) Then
+                Throw New OperationCanceledException("Tile was evicted before upload.")
+            End If
+            ' Keep CPU staging accounted and resident until texture-cache insertion succeeds.
+            Dim pixels = entry.Upload
+            If pixels Is Nothing Then pixels = entry.Tile.PrepareUpload()
+            Dim pinned = GCHandle.Alloc(pixels, GCHandleType.Pinned)
+            Try
+                Dim properties As New BitmapProperties1(New Vortice.DCommon.PixelFormat(Vortice.DXGI.Format.R16G16B16A16_Float, Vortice.DCommon.AlphaMode.Premultiplied), 96, 96, BitmapOptions.None)
+                Return context.CreateBitmap(New SizeI(entry.Tile.Width, entry.Tile.Height), pinned.AddrOfPinnedObject(), CUInt(entry.Tile.Width * 8), properties)
+            Finally
+                pinned.Free()
+            End Try
+        End SyncLock
     End Function
 
     Public Function TryGetPixel(x As Long, y As Long, frameIndex As Integer, ByRef pixel As PixelPicturePixel) As Boolean Implements IPixelPictureSource.TryGetPixel

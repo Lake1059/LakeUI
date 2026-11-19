@@ -65,15 +65,13 @@ Public NotInheritable Class D3D_DeviceManager
 
     Public ReadOnly Property D2DFactory As ID2D1Factory1
         Get
-            EnsureCreated()
-            Return _d2dFactory
+            Return D3D_D2DInterop.GetD2DFactory1()
         End Get
     End Property
 
     Public ReadOnly Property DWriteFactory As IDWriteFactory
         Get
-            EnsureCreated()
-            Return _dwriteFactory
+            Return D3D_D2DInterop.GetDWriteFactory()
         End Get
     End Property
 
@@ -162,7 +160,7 @@ Public NotInheritable Class D3D_DeviceManager
             hadDevice = _initialized OrElse _d3dDevice IsNot Nothing OrElse _d2dDevice IsNot Nothing
             ReleaseAllNoLock()
             _initialized = False
-            If hadDevice Then _deviceGeneration += 1
+            If hadDevice Then _deviceGeneration = RenderBackendStartup.NextGeneration()
         End SyncLock
 
         If Not hadDevice Then Return
@@ -191,6 +189,7 @@ Public NotInheritable Class D3D_DeviceManager
     End Sub
 
     Private Sub EnsureCreatedNoLock()
+        RenderBackendStartup.RequireFactory(RenderBackend.Direct3D11)
         Try
             _d2dFactory = D3D_D2DInterop.GetD2DFactory1()
             _dwriteFactory = D3D_D2DInterop.GetDWriteFactory()
@@ -210,12 +209,32 @@ Public NotInheritable Class D3D_DeviceManager
             _d3dDevice = D3D11.D3D11CreateDevice(Vortice.Direct3D.DriverType.Hardware, flags, levels)
             _dxgiDevice = _d3dDevice.QueryInterface(Of IDXGIDevice)()
             _d2dDevice = _d2dFactory.CreateDevice(_dxgiDevice)
-            _deviceGeneration += 1
-        Catch
+            _deviceGeneration = RenderBackendStartup.NextGeneration()
+        Catch ex As Exception
             ReleaseAllNoLock()
             _initialized = False
             Throw
         End Try
+    End Sub
+
+    Friend Sub DrainForSwitch()
+        If _d3dDevice IsNot Nothing Then WaitForQueue(_d3dDevice)
+    End Sub
+
+    Friend Shared Sub WaitForQueue(device As ID3D11Device)
+        Dim context = device.ImmediateContext
+        Using completed = device.CreateQuery(New QueryDescription(QueryType.Event))
+            context.End(completed)
+            context.Flush()
+            Dim start = Stopwatch.GetTimestamp()
+            Do
+                Dim status = context.GetData(completed, IntPtr.Zero, 0, AsyncGetDataFlags.DoNotFlush)
+                status.CheckError()
+                If status.Code = 0 Then Exit Do
+                If Stopwatch.GetElapsedTime(start).TotalSeconds > 2 Then Throw New TimeoutException("DX11 queue drain timed out.")
+                Threading.Thread.Sleep(1)
+            Loop
+        End Using
     End Sub
 
     Private Sub ReleaseAllNoLock()

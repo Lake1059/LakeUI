@@ -93,6 +93,10 @@ Friend NotInheritable Class MessageDialogBackdropController
         Return _backdrop.WaitForFrame(timeoutMilliseconds)
     End Function
 
+    Friend Function Draw12(context As D3D12_PaintContext, target As RectangleF) As Boolean
+        Return Enabled AndAlso _backdrop IsNot Nothing AndAlso _backdrop.Draw12(context, target)
+    End Function
+
     Public Function Draw(context As D3D_PaintContext, target As RectangleF) As Boolean
         If Not Enabled OrElse _backdrop Is Nothing Then Return False
         Return _backdrop.Draw(context, target)

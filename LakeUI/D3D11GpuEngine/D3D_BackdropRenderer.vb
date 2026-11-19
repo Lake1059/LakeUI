@@ -27,7 +27,6 @@ Public NotInheritable Class D3D_BackdropRenderer
     Private ReadOnly _imageSync As New Object()
     Private ReadOnly _retiredImages As New List(Of Image)()
     Private ReadOnly _CPU缓存所有者 As CPU缓存所有者
-    Private _CPU使用时钟 As Long
     Private _imageSource As WeakReference
     Private _image As Image
     Private _disposed As Boolean
@@ -43,7 +42,6 @@ Public NotInheritable Class D3D_BackdropRenderer
     Private _frameUseDepth As Integer
     Private _trimPending As Boolean
 
-    Private _noiseBitmap As Bitmap
     Private _noiseD2DBitmap As ID2D1Bitmap
     Private _noiseD2DBrush As ID2D1BitmapBrush
     Private _noiseOwnerContext As WeakReference
@@ -77,7 +75,7 @@ Public NotInheritable Class D3D_BackdropRenderer
         Public ReadOnly Property CacheBytes As Long Implements D3D_IRenderCacheOwner.CacheBytes
             Get
                 SyncLock _渲染器._imageSync
-                    Dim 总字节数 = 估算图片字节(_渲染器._image) + 估算图片字节(_渲染器._noiseBitmap)
+                    Dim 总字节数 = 估算图片字节(_渲染器._image)
                     For Each 图片 In _渲染器._retiredImages
                         总字节数 += 估算图片字节(图片)
                     Next
@@ -88,19 +86,15 @@ Public NotInheritable Class D3D_BackdropRenderer
 
         Public ReadOnly Property OldestUseTick As Long Implements D3D_IRenderCacheOwner.OldestUseTick
             Get
-                SyncLock _渲染器._imageSync
-                    If _渲染器._frameUseDepth > 0 OrElse _渲染器._noiseBitmap Is Nothing Then Return Long.MaxValue
-                    Return _渲染器._CPU使用时钟
-                End SyncLock
+                Return Long.MaxValue ' Only the owned recovery source and in-flight images remain.
             End Get
         End Property
 
         Public Function TrimOldest() As Boolean Implements D3D_IRenderCacheOwner.TrimOldest
-            Return _渲染器.尝试释放CPU噪点()
+            Return False
         End Function
 
         Public Sub ReleaseAll() Implements D3D_IRenderCacheOwner.ReleaseAll
-            _渲染器.尝试释放CPU噪点()
         End Sub
 
         Private Shared Function 估算图片字节(图片 As Image) As Long
@@ -109,22 +103,11 @@ Public NotInheritable Class D3D_BackdropRenderer
         End Function
     End Class
 
-    Private Function 尝试释放CPU噪点() As Boolean
-        SyncLock _imageSync
-            If _frameUseDepth > 0 OrElse _noiseBitmap Is Nothing Then Return False
-            _noiseBitmap.Dispose()
-            _noiseBitmap = Nothing
-            Return True
-        End SyncLock
-    End Function
-
     Friend Sub 释放CPU派生缓存()
         If _frameUseDepth > 0 Then Return
         SyncLock _imageSync
             DisposeRetiredImages()
             DisposeNoiseD2DResources()
-            _noiseBitmap?.Dispose()
-            _noiseBitmap = Nothing
         End SyncLock
     End Sub
 
@@ -478,16 +461,14 @@ Public NotInheritable Class D3D_BackdropRenderer
         If brush Is Nothing Then Return
 
         brush.Opacity = opacity / 255.0F
-        Dim tile = Math.Max(1.0F, _noiseBitmap.Width * NoiseScale)
+        Dim tile = Math.Max(1.0F, D3D_NoiseTexture.Edge * NoiseScale)
         brush.Transform =
-            Matrix3x2.CreateScale(tile / CSng(_noiseBitmap.Width)) *
+            Matrix3x2.CreateScale(tile / D3D_NoiseTexture.Edge) *
             Matrix3x2.CreateTranslation(bounds.X, bounds.Y)
         context.DeviceContext.FillRectangle(D3D_PaintContext.ToRawRect(bounds), brush)
     End Sub
 
     Private Function AcquireNoiseBrush(context As D3D_PaintContext) As ID2D1BitmapBrush
-        EnsureNoiseBitmap()
-        If _noiseBitmap Is Nothing Then Return Nothing
 
         Dim sameContext = _noiseOwnerContext IsNot Nothing AndAlso ReferenceEquals(_noiseOwnerContext.Target, context.DeviceContext)
         If Not sameContext OrElse _noiseGeneration <> context.DeviceGeneration Then
@@ -497,7 +478,7 @@ Public NotInheritable Class D3D_BackdropRenderer
         End If
 
         If _noiseD2DBitmap Is Nothing Then
-            _noiseD2DBitmap = D3D_D2DInterop.CreateBitmapFromGdi(context.DeviceContext, _noiseBitmap)
+            _noiseD2DBitmap = D3D_NoiseTexture.Create(context.DeviceContext)
             If _noiseD2DBitmap Is Nothing Then Return Nothing
         End If
 
@@ -512,35 +493,6 @@ Public NotInheritable Class D3D_BackdropRenderer
 
         Return _noiseD2DBrush
     End Function
-
-    Private Sub EnsureNoiseBitmap()
-        If _noiseBitmap IsNot Nothing Then Return
-
-        Const n As Integer = 128
-        Dim bmp As New Bitmap(n, n, PixelFormat.Format32bppPArgb)
-        Dim rng As New Random(1059)
-        Dim data = bmp.LockBits(New Rectangle(0, 0, n, n), ImageLockMode.WriteOnly, PixelFormat.Format32bppPArgb)
-        Try
-            Dim stride = data.Stride
-            Dim buffer(stride * n - 1) As Byte
-            For y = 0 To n - 1
-                Dim row = y * stride
-                For x = 0 To n - 1
-                    Dim v = CByte(rng.Next(0, 256))
-                    Dim offset = row + x * 4
-                    buffer(offset) = v
-                    buffer(offset + 1) = v
-                    buffer(offset + 2) = v
-                    buffer(offset + 3) = 255
-                Next
-            Next
-            Marshal.Copy(buffer, 0, data.Scan0, buffer.Length)
-        Finally
-            bmp.UnlockBits(data)
-        End Try
-        _noiseBitmap = bmp
-        _CPU使用时钟 = D3D_CpuCache.NextTick()
-    End Sub
 
     Private Shared Function ComputeCoverSourceRect(image As Image, destination As RectangleF) As RectangleF
         Dim sourceWidth = Math.Max(1, image.Width)
@@ -816,10 +768,6 @@ Public NotInheritable Class D3D_BackdropRenderer
         DisposeGpuResources()
         SyncLock _imageSync
             DisposeRetiredImages()
-            If _noiseBitmap IsNot Nothing Then
-                Try : _noiseBitmap.Dispose() : Catch : End Try
-                _noiseBitmap = Nothing
-            End If
         End SyncLock
         GC.SuppressFinalize(Me)
     End Sub

@@ -70,6 +70,7 @@ Friend NotInheritable Class D3D_PopupBackdropRenderer
         End If
 
         If _renderer Is Nothing Then _renderer = New D3D_BackdropSurfaceRenderer(_host)
+        If Mode = PopupBackdropMode.Auto Then _renderer.EnableDx12FrameProduction()
         _renderer.ApplyParameters(BlurRadius, BlurPasses, DownsampleFactor,
                                   NoiseScale)
         _renderer.SetSource(Mode = PopupBackdropMode.Image, SourceImage)
@@ -81,6 +82,16 @@ Friend NotInheritable Class D3D_PopupBackdropRenderer
     Public Function WaitForFrame(Optional timeoutMilliseconds As Integer = 500) As Boolean
         If Mode = PopupBackdropMode.None OrElse _renderer Is Nothing Then Return True
         Return _renderer.WaitForIdle(timeoutMilliseconds) AndAlso _renderer.HasFrame
+    End Function
+
+    Friend Function Draw12(context As D3D12_PaintContext, target As RectangleF) As Boolean
+        If Mode = PopupBackdropMode.None Then Return False
+        If Mode = PopupBackdropMode.Auto Then Return _renderer IsNot Nothing AndAlso _renderer.DrawTo12(context, target, TintColor, NoiseOpacity)
+        If SourceImage Is Nothing OrElse target.Width <= 0 OrElse target.Height <= 0 Then Return False
+        context.DrawBlurredBackdrop(SourceImage, target, BlurRadius, BlurPasses, DownsampleFactor)
+        context.FillRectangle(target, TintColor)
+        context.DrawNoise(target, NoiseScale, NoiseOpacity)
+        Return True
     End Function
 
     Public Function Draw(context As D3D_PaintContext, target As RectangleF) As Boolean

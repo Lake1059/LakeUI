@@ -1,5 +1,11 @@
-Public Class JustEmptyControl
+﻿Public Class JustEmptyControl
     Implements D3D_IGpuRenderable, D3D_IGpuInvalidationSource, D3D_IGpuDirtyRegionCoverage, V5_IGpuPresentationSource
+    Implements ID3D12Renderable
+
+    Public Sub RenderGpu12(context As D3D12_PaintContext) Implements ID3D12Renderable.RenderGpu12
+        If BackColor.A > 0 Then context.FillRectangle(ClientRectangle, BackColor)
+    End Sub
+
     Public Sub New()
         InitializeComponent()
         SetStyle(ControlStyles.OptimizedDoubleBuffer Or

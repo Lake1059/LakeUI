@@ -1,0 +1,30 @@
+<Project>
+  <Target Name="_ValidateLakeUIDesignerBackend"
+          BeforeTargets="PrepareForBuild"
+          Condition="'$(UseWindowsForms)' == 'true' and '$(LakeUIDesignerBackend)' != ''">
+    <Error Code="LAKEUI001"
+           Condition="'$(LakeUIDesignerBackend)' != 'DX11' and '$(LakeUIDesignerBackend)' != 'DX12'"
+           Text="LakeUIDesignerBackend must be DX11 or DX12. Received '$(LakeUIDesignerBackend)'." />
+  </Target>
+
+  <Target Name="_ConfigureLakeUIDesignerBackend"
+          BeforeTargets="_GenerateDesignerRuntimeConfigFile"
+          DependsOnTargets="_ValidateLakeUIDesignerBackend"
+          Condition="'$(UseWindowsForms)' == 'true' and '$(TargetFrameworkIdentifier)' == '.NETCoreApp'">
+    <PropertyGroup>
+      <_LakeUIDesignerInputs>$(_DesignerRuntimeConfigFilePath).lakeui.cache</_LakeUIDesignerInputs>
+    </PropertyGroup>
+    <!-- Invalidate the SDK's cached output when the property changes, including when it is removed. -->
+    <WriteLinesToFile File="$(_LakeUIDesignerInputs)" Lines="LakeUIDesignerBackend=$(LakeUIDesignerBackend)"
+                      Overwrite="true" WriteOnlyWhenDifferent="true" />
+    <PropertyGroup>
+      <MSBuildAllProjects>$(MSBuildAllProjects);$(_LakeUIDesignerInputs)</MSBuildAllProjects>
+    </PropertyGroup>
+    <ItemGroup>
+      <FileWrites Include="$(_LakeUIDesignerInputs)" />
+      <!-- The .NET SDK writes this to the designer host's runtimeconfig only. -->
+      <_DesignerHostConfigurationOption Include="LakeUI.DesignerBackend" Value="$(LakeUIDesignerBackend)"
+                                        Condition="'$(LakeUIDesignerBackend)' != ''" />
+    </ItemGroup>
+  </Target>
+</Project>

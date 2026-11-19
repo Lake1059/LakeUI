@@ -3,10 +3,17 @@ using LakeUI;
 internal static partial class Program
 {
     [STAThread]
-    private static int Main()
+    private static int Main(string[] args)
     {
         try
         {
+            if (args is ["--designer-preview", var backend])
+            {
+                DesignerPreviewTests.Run(backend);
+                return 0;
+            }
+
+            GlobalOptions.SetRenderBackendAsync(RenderBackend.Direct3D11).GetAwaiter().GetResult();
             UltraDetailListViewTests.Run();
             CheckModernPanelTransparentMode();
             CheckDependencyDirtyMapping();

@@ -71,10 +71,12 @@ Friend NotInheritable Class D3D_HwndCompositionPresenter
             Throw
         End Try
         D3D_RefreshDiagnostics.Record(开始时间, "CompositionCommit")
+        RenderBackendStartup.PublishedFrame(RenderBackend.Direct3D11)
         Dim 发布时间 = Stopwatch.GetTimestamp()
         For Each 呈现器 In _pending
             呈现器._presentedSurfaceRevision = 呈现器._pendingSurfaceRevision
             呈现器._pendingSurfaceRevision = 0
+            RenderBackendSwitching.ObservePublication(呈现器._owner)
             D3D_RefreshDiagnostics.Record(开始时间, "CompositionPublished", 呈现器._owner)
             D3D_RenderDiagnostics.V5FrameSubmitted(呈现器._pendingRenderMilliseconds,
                 呈现器._pendingUpdateMilliseconds, 发布时间, 呈现器._owner)
@@ -270,6 +272,12 @@ Friend NotInheritable Class D3D_HwndCompositionPresenter
             _handle = _owner.Handle AndAlso _size = _owner.ClientSize AndAlso
             (_presentedSurfaceRevision = surface.Revision OrElse _pendingSurfaceRevision = surface.Revision)
     End Function
+
+    Friend Sub DetachForSwitch()
+        If _target Is Nothing Then Return
+        _visual?.SetContent(Nothing).CheckError()
+        _target.SetRoot(Nothing).CheckError()
+    End Sub
 
     Friend Sub HandleDeviceLost()
         释放设备资源()

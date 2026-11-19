@@ -17,7 +17,7 @@ Public Module D3D_PaintBridge
     End Function
 
     ''' <summary>
-    ''' 设计器和其子树不创建 V5 GPU 资源；调用方应交回 WinForms 默认预览路径。
+    ''' 识别设计器及其子树（包括尚未分配 Site 的嵌套控件）。
     ''' </summary>
     Friend Function IsDesignTimeControl(control As Control) As Boolean
         If System.ComponentModel.LicenseManager.UsageMode = System.ComponentModel.LicenseUsageMode.Designtime Then Return True
@@ -149,19 +149,15 @@ Public Module D3D_PaintBridge
         If e Is Nothing OrElse control Is Nothing OrElse renderable Is Nothing Then Return False
         If control.IsDisposed OrElse control.Width <= 0 OrElse control.Height <= 0 Then Return False
         ' 设计器必须保留 WinForms 的默认绘制和设计时装饰层（选中边框、调整手柄）。
-        ' 控件外观仍由 RenderGpu 提供一帧预览，但返回 False 让调用方继续执行
-        ' MyBase.OnPaint，确保设计器的 adorners 能够叠加在控件之上。
+        ' 控件外观由项目配置的后端预览，同时让调用方继续执行 MyBase.OnPaint。
         If IsDesignTimeControl(control) Then
             Try
-                ' 设计器每次 WM_PAINT 都要重新合成装饰层，即使控件内容表面本身尚未失效。
-                D3D_ControlSurfaceRegistry.MarkDirty(control, requestConsumers:=False)
-                D3D_V5Presentation.Paint(control, renderable,
-                                         Sub(绘制上下文 As D3D_PaintContext)
-                                             绘制设计时选择装饰(绘制上下文, control)
-                                         End Sub,
-                                         e.ClipRectangle)
-            Catch
-                ' 设计器设备不可用时保留默认 WinForms 预览，不阻断设计器加载。
+                If D3D_V5Presentation.IsV5Control(control) AndAlso control.IsHandleCreated AndAlso
+                   D3D_ControlTreeWalker.IsEffectivelyVisible(control) AndAlso RenderBackendStartup.TryStartDesignerPreview() Then
+                    D3D_V5Presentation.Paint(control, renderable, control.ClientRectangle)
+                End If
+            Catch ex As Exception
+                System.Diagnostics.Debug.WriteLine(ex)
             End Try
             Return False
         End If
@@ -173,8 +169,19 @@ Public Module D3D_PaintBridge
     ''' 在 V5 表面最上层绘制设计器选中线框和调整手柄。
     ''' 交换链覆盖 WinForms GDI，所以装饰必须属于同一 GPU 帧。
     ''' </summary>
-    Private Sub 绘制设计时选择装饰(绘制上下文 As D3D_PaintContext, 控件 As Control)
-        If 绘制上下文 Is Nothing OrElse 控件 Is Nothing OrElse 控件.Site Is Nothing Then Return
+    Friend Sub 绘制设计时选择装饰(绘制上下文 As D3D_PaintContext, 控件 As Control)
+        ' SSAA 下反算线宽，保持呈现后的线框为 1 像素。
+        Dim 采样倍率 = Math.Max(1.0F, Math.Abs(绘制上下文.LocalToWindowTransform.M11))
+        绘制设计时选择装饰(控件, 1.0F / 采样倍率, AddressOf 绘制上下文.FillRectangle, AddressOf 绘制上下文.DrawRectangle)
+    End Sub
+
+    Friend Sub 绘制设计时选择装饰(绘制上下文 As D3D12_PaintContext, 控件 As Control)
+        绘制设计时选择装饰(控件, 1.0F, AddressOf 绘制上下文.FillRectangle, AddressOf 绘制上下文.DrawRectangle)
+    End Sub
+
+    Private Sub 绘制设计时选择装饰(控件 As Control, 物理一像素 As Single,
+                                  填充 As Action(Of RectangleF, Color), 描边 As Action(Of RectangleF, Color, Single))
+        If 控件.Site Is Nothing Then Return
         Dim 选择服务 As System.ComponentModel.Design.ISelectionService = Nothing
         Try
             选择服务 = TryCast(控件.Site.GetService(GetType(System.ComponentModel.Design.ISelectionService)),
@@ -190,16 +197,12 @@ Public Module D3D_PaintBridge
         Dim 高度 = 控件.ClientSize.Height
         If 宽度 <= 1 OrElse 高度 <= 1 Then Return
 
-        ' D3D 表面可能启用 SSAA；逻辑坐标乘以采样倍率后才是物理像素。
-        ' 因此线宽和手柄尺寸必须反算，保证屏幕上的线框始终为 1px。
-        Dim 采样倍率 = Math.Max(1.0F, Math.Abs(绘制上下文.LocalToWindowTransform.M11))
-        Dim 物理一像素 = 1.0F / 采样倍率
         Dim 边界 As New RectangleF(0.5F * 物理一像素,
                                   0.5F * 物理一像素,
                                   Math.Max(物理一像素, 宽度 - 物理一像素),
                                   Math.Max(物理一像素, 高度 - 物理一像素))
         Dim 线框颜色 = Color.FromArgb(235, 30, 110, 220)
-        绘制上下文.DrawRectangle(边界, 线框颜色, 物理一像素)
+        描边(边界, 线框颜色, 物理一像素)
 
         ' Dock=Fill 没有可调整的尺寸，仍显示选中线框但不绘制手柄。
         If 控件.Dock = DockStyle.Fill Then Return
@@ -239,8 +242,8 @@ Public Module D3D_PaintBridge
                 Dim 名称 = 位置名称(行, 列)
                 If 名称 = "中" OrElse Not 显示位置.Contains(名称) Then Continue For
                 Dim 手柄 As New RectangleF(点列(列) - 半尺寸, 点行(行) - 半尺寸, 手柄尺寸, 手柄尺寸)
-                绘制上下文.FillRectangle(手柄, Color.White)
-                绘制上下文.DrawRectangle(手柄, 线框颜色, 物理一像素)
+                填充(手柄, Color.White)
+                描边(手柄, 线框颜色, 物理一像素)
             Next
         Next
     End Sub

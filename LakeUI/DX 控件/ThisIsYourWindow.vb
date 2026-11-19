@@ -297,6 +297,7 @@ Public Class ThisIsYourWindow
 
     ''' <summary>每个被附加窗体的独立运行时状态。</summary>
     Friend Class PerFormState
+        Public Dx12ChromeRevision As Long
         Public ReadOnly HostForm As Form
         Public Interceptor As WindowMessageInterceptor
         Public Activated As Boolean = True
@@ -333,6 +334,7 @@ Public Class ThisIsYourWindow
         Public Renderer As D3D_BackdropSurfaceRenderer
         Public BackdropImageIdentity As WeakReference
         Public BackdropTimer As PrecisionTimer
+        Public BackdropCaptureExcluded As Boolean
         Public ChromeOverlays As List(Of ChromeOverlayControl)
         Public ChromeOverlayActive As Boolean
         Public ChromeOverlayRegions As List(Of Rectangle)
@@ -895,6 +897,7 @@ Public Class ThisIsYourWindow
     Private Sub 请求Chrome渲染(s As PerFormState, includeBorders As Boolean, Optional immediate As Boolean = False)
         If 延迟配置更新(配置变更.绘制) OrElse (s IsNot Nothing AndAlso s.Initializing) Then Return
         If s Is Nothing OrElse s.HostForm Is Nothing OrElse s.HostForm.IsDisposed Then Return
+        s.Dx12ChromeRevision += 1
         If s.ChromeOverlayActive AndAlso s.ChromeOverlays IsNot Nothing Then
             If includeBorders Then
                 For Each overlay In s.ChromeOverlays
@@ -1192,6 +1195,7 @@ Public Class ThisIsYourWindow
 
     Private Sub InvalidateTitleText(s As PerFormState, Optional immediate As Boolean = False)
         If s Is Nothing OrElse s.HostForm Is Nothing OrElse s.HostForm.IsDisposed OrElse Not s.HostForm.IsHandleCreated Then Return
+        s.Dx12ChromeRevision += 1
         RecalculateButtonBounds(s)
         Dim newDirty As Rectangle = 获取标题文字脏区(s)
         Dim dirty As Rectangle = 合并脏区(s.LastTitleTextDirtyRect, newDirty)
@@ -2555,7 +2559,9 @@ Public Class ThisIsYourWindow
         If s Is Nothing OrElse s.HostForm Is Nothing OrElse Not s.HostForm.IsHandleCreated Then Return
         Dim mode As BackdropModeEnum = _毛玻璃模式
         ' V5 backdrop 只接受显式图片源；桌面截图模式已移除。
-        Dim shouldEnable As Boolean = 毛玻璃允许用于窗体(s) AndAlso mode = BackdropModeEnum.Image
+        Dim dx12Live = RenderBackendStartup.Requested = RenderBackend.Direct3D12 AndAlso
+            (mode = BackdropModeEnum.Auto OrElse mode = BackdropModeEnum.CaptionOnly)
+        Dim shouldEnable As Boolean = 毛玻璃允许用于窗体(s) AndAlso (mode = BackdropModeEnum.Image OrElse dx12Live)
 
         If shouldEnable Then
             Dim 图片变化 = s.BackdropImageIdentity Is Nothing OrElse
@@ -2573,11 +2579,11 @@ Public Class ThisIsYourWindow
             End If
             ' SetSource / ApplyParameters 自行按版本使受影响的派生缓存失效；
             ' 这里不再为每次状态重应用清空全部 D2D/CPU/GPU 缓存。
+            If dx12Live Then s.Renderer.EnableDx12FrameProduction()
             s.Renderer.SetSource(mode = BackdropModeEnum.Image, If(mode = BackdropModeEnum.Image, _毛玻璃图片, Nothing))
             If 图片变化 Then s.BackdropImageIdentity = New WeakReference(_毛玻璃图片)
-            ' V5 不执行桌面截图；该兼容配置入口保持为空操作。
-            s.Renderer.SetTransientExcludeOnCapture(
-                (mode = BackdropModeEnum.Auto OrElse mode = BackdropModeEnum.CaptionOnly) AndAlso Not _毛玻璃排除截屏)
+            s.BackdropCaptureExcluded = s.Renderer.ConfigurePersistentCaptureExclusion(dx12Live AndAlso _毛玻璃排除截屏)
+            s.Renderer.SetTransientExcludeOnCapture(dx12Live AndAlso Not s.BackdropCaptureExcluded)
             ' 已有同源成品帧时不重复调度后台处理，尺寸和来源变化由各自入口更新。
             If 图片变化 OrElse Not s.Renderer.HasFrame Then s.Renderer.RequestFrame(获取毛玻璃捕获区域(s.HostForm), True)
             重置毛玻璃Tick(s)
@@ -2595,6 +2601,14 @@ Public Class ThisIsYourWindow
         End If
     End Sub
 
+    Friend Shared Sub RefreshBackdropBackend(form As Form)
+        Dim owner As ThisIsYourWindow = Nothing
+        If TryGetAttached(form, owner) Then
+            Dim state = owner.查找状态(form)
+            If state IsNot Nothing Then owner.应用毛玻璃状态(state)
+        End If
+    End Sub
+
     Private Sub 重置毛玻璃Tick(s As PerFormState)
         If s Is Nothing Then Return
 
@@ -2605,7 +2619,9 @@ Public Class ThisIsYourWindow
         '     而 SetWindowDisplayAffinity 的状态恢复需要数个 DWM 合成帧才能完成；高频翻转会
         '     让 DWM 长时间处于 EXCLUDE 状态，导致系统截图整体失效，违背开关初衷 ⇒ 强制纯事件驱动。
         '   - Auto + 长期 WDA + 帧率=0：用户显式选择纯事件驱动。
-        Dim needTick As Boolean = False
+        Dim needTick As Boolean = RenderBackendStartup.Requested = RenderBackend.Direct3D12 AndAlso 毛玻璃当前启用(s) AndAlso
+            (_毛玻璃模式 = BackdropModeEnum.Auto OrElse _毛玻璃模式 = BackdropModeEnum.CaptionOnly) AndAlso
+            s.BackdropCaptureExcluded AndAlso _毛玻璃帧率 > 0 AndAlso s.HostForm.Visible
 
         If Not needTick Then
             If s.BackdropTimer IsNot Nothing Then
@@ -3794,6 +3810,7 @@ Public Class ThisIsYourWindow
         If form Is Nothing OrElse form.IsDisposed OrElse Not form.IsHandleCreated Then Return
         Dim s = 查找状态(form)
         If s Is Nothing Then Return
+        s.Dx12ChromeRevision += 1
         Dim size = 获取真实客户区尺寸(form)
         Dim dirty As New Rectangle(0, 0, size.Width,
                                    Math.Min(size.Height, 取缩放标题栏总高度(form)))
@@ -3814,6 +3831,7 @@ Public Class ThisIsYourWindow
         If form Is Nothing OrElse form.IsDisposed OrElse Not form.IsHandleCreated Then Return
         Dim state = 查找状态(form)
         If state Is Nothing Then Return
+        state.Dx12ChromeRevision += 1
         Dim dirty = Rectangle.Union(获取按钮命中矩形(state, firstHit), 获取按钮命中矩形(state, secondHit))
         If dirty.IsEmpty Then Return
         D3D_ControlSurfaceRegistry.MarkDirty(form, dirty, requestConsumers:=True)

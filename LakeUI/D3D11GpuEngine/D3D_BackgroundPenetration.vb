@@ -5,6 +5,7 @@
 Public Module D3D_BackgroundPenetration
     ''' <summary>记录控件的显式背景来源并使控件表面失效。</summary>
     Public Function SetBackgroundSource(owner As Control, oldSource As Control, newSource As Control) As Control
+        If owner IsNot Nothing AndAlso RenderBackendStartup.Requested = RenderBackend.Direct3D12 Then D3D12_BackgroundDependencies.Remove(owner)
         If owner IsNot Nothing Then D3D_ControlSurfaceRegistry.BackgroundSourceChanged(owner)
         Return newSource
     End Function

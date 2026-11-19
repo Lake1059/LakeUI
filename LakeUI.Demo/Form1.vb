@@ -1,6 +1,18 @@
 Public Class Form1
 
-    Private Sub Form1_Load(sender As Object, e As EventArgs) Handles MyBase.Load
+    Private Async Sub Form1_Load(sender As Object, e As EventArgs) Handles MyBase.Load
+        Dim args = Environment.GetCommandLineArgs()
+        Dim requested = args.FirstOrDefault(Function(arg) arg.StartsWith("--render-backend=", StringComparison.OrdinalIgnoreCase))
+        If requested IsNot Nothing Then
+            Dim backend As RenderBackend
+            Select Case requested.ToLowerInvariant()
+                Case "--render-backend=dx11" : backend = RenderBackend.Direct3D11
+                Case "--render-backend=dx12" : backend = RenderBackend.Direct3D12
+                Case Else : Throw New ArgumentException(requested)
+            End Select
+            Dim selection = Await GlobalOptions.SetRenderBackendAsync(backend)
+            If selection <> BackendSelectionResult.SelectedForStartup Then Throw New InvalidOperationException(selection.ToString())
+        End If
         Using D3D_PaintBridge.BeginRenderUpdate(Me)
             LakeUI.GlobalOptions.GlobalTextQuality = LakeUI.GlobalOptions.TextQualityMode.Outline
             Me.ThisIsYourWindow1.Attach(Me)
@@ -49,11 +61,6 @@ Public Class Form1
             注册页面(43, Function() Form_Ultra2DChart, Function(page) page.ModernPanel1)
             Me.ModernTabListControl1.SelectedIndex = 1
         End Using
-    End Sub
-
-    Private Sub Form1_Shown(sender As Object, e As EventArgs) Handles Me.Shown
-        Me.ModernTabListControl1.SelectedIndex = 1
-
     End Sub
 
     Private Sub Form1_FormClosing(sender As Object, e As FormClosingEventArgs) Handles Me.FormClosing

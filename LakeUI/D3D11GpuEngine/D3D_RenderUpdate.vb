@@ -38,6 +38,7 @@ Friend NotInheritable Class D3D_RenderUpdate
         ArgumentNullException.ThrowIfNull(root)
         If root.IsDisposed Then Throw New ObjectDisposedException(root.Name)
         If root.InvokeRequired Then Throw New InvalidOperationException("Render updates must run on the owning UI thread.")
+        RenderBackendStartup.ObserveHost(root)
         If _roots Is Nothing Then _roots = New HashSet(Of Control)()
         _roots.Add(root)
         _depth += 1

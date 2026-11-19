@@ -64,7 +64,14 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
     Private Shared Function SetWindowDisplayAffinity(hWnd As IntPtr, dwAffinity As Integer) As <MarshalAs(UnmanagedType.Bool)> Boolean
     End Function
 
-    Private Const WDA_NONE As Integer = &H0
+    <DllImport("user32.dll")>
+    Private Shared Function GetWindowDisplayAffinity(hWnd As IntPtr, ByRef affinity As Integer) As <MarshalAs(UnmanagedType.Bool)> Boolean
+    End Function
+
+    <DllImport("dwmapi.dll")>
+    Private Shared Function DwmFlush() As Integer
+    End Function
+
     Private Const WDA_EXCLUDEFROMCAPTURE As Integer = &H11
     Private Const SRCCOPY As Integer = &HCC0020
 
@@ -107,6 +114,40 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
     ' ── 当前帧（双缓冲：UI 读 _currentFrame，Worker 写 _spareFrame，结束后在 _frameLock 内交换）──
     Private ReadOnly _frameLock As New Object()
     Private _currentFrame As Bitmap
+    Private _currentFrameEpoch As Integer
+    Private _dx12Snapshot As Bitmap
+    Private _dx12SnapshotVersion As Integer = -1
+    Private _dx12WorkerAllowed As Integer
+    Private _releaseCpuOnWorkerExit As Boolean
+    Private _sourceRevision As Integer
+    Private _currentFrameSourceRevision As Integer
+
+    Friend Sub EnableDx12FrameProduction()
+        Volatile.Write(_dx12WorkerAllowed, 1)
+    End Sub
+
+    Private Function CanProduceFrame() As Boolean
+        If RenderBackendSwitching.BackgroundPaused Then Return False
+        Return RenderBackendStartup.CanScheduleDx11 OrElse
+            (Volatile.Read(_dx12WorkerAllowed) <> 0 AndAlso RenderBackendStartup.Requested = RenderBackend.Direct3D12 AndAlso RenderBackendStartup.Failure Is Nothing)
+    End Function
+
+    Friend Function DrawTo12(context As D3D12_PaintContext, target As RectangleF, tint As Color, noise As Byte) As Boolean
+        If target.Width <= 0 OrElse target.Height <= 0 Then Return False
+        SyncLock _frameLock
+            If _currentFrame Is Nothing OrElse _currentFrameEpoch <> RenderBackendStartup.RouteEpoch OrElse
+               _currentFrameSourceRevision <> Volatile.Read(_sourceRevision) Then Return False
+            If _dx12SnapshotVersion <> _frameVersion Then
+                _dx12Snapshot?.Dispose()
+                _dx12Snapshot = DirectCast(_currentFrame.Clone(), Bitmap)
+                _dx12SnapshotVersion = _frameVersion
+            End If
+        End SyncLock
+        context.DrawBlurredBackdrop(_dx12Snapshot, target, Volatile.Read(_radius), Volatile.Read(_passes), Volatile.Read(_downsample))
+        context.FillRectangle(target, tint)
+        context.DrawNoise(target, _noiseScale, noise)
+        Return True
+    End Function
     Private _spareFrame As Bitmap
     ' 每次 worker 在 _frameLock 内交换 _currentFrame 时自增。UI 端 GPU 源缓存据此判断是否要重传。
     Private _frameVersion As Integer
@@ -128,18 +169,38 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
     Private _transientExcludeOnCapture As Integer
     Private ReadOnly _transientExcludeLock As New Object()
     Private _additionalTransientExcludeHandle As IntPtr
+    Private _persistentExcludedHandle As IntPtr
+    Private _priorPersistentAffinity As Integer
 
-    ' ── CPU 读取缓冲（用于平均色计算）──
-    Private _blurBufferA() As Byte
+    Friend Function ConfigurePersistentCaptureExclusion(value As Boolean) As Boolean
+        SyncLock _transientExcludeLock
+            Dim handle = If(value AndAlso _host IsNot Nothing AndAlso _host.IsHandleCreated, _host.Handle, IntPtr.Zero)
+            If _persistentExcludedHandle <> IntPtr.Zero AndAlso _persistentExcludedHandle <> handle Then
+                Dim current As Integer
+                If GetWindowDisplayAffinity(_persistentExcludedHandle, current) AndAlso current = WDA_EXCLUDEFROMCAPTURE Then
+                    SetWindowDisplayAffinity(_persistentExcludedHandle, _priorPersistentAffinity)
+                End If
+                _persistentExcludedHandle = IntPtr.Zero
+            End If
+            If handle = IntPtr.Zero Then Return False
+            If _persistentExcludedHandle = handle Then Return True
+            Dim previous As Integer
+            If Not GetWindowDisplayAffinity(handle, previous) Then Return False
+            If previous = WDA_EXCLUDEFROMCAPTURE Then Return True
+            If Not SetWindowDisplayAffinity(handle, WDA_EXCLUDEFROMCAPTURE) Then Return False
+            _persistentExcludedHandle = handle
+            _priorPersistentAffinity = previous
+            Return True
+        End SyncLock
+    End Function
 
     ' ── 平均色 ──
     Private _candidateAverage As Integer
     Private _publishedAverage As Integer = -1
 
     ' ── 噪点 ──
-    Private _noiseBitmap As Bitmap
     ' ── 噪点的 D2D 上传缓存（UI 线程独占；按 RT 失效）──
-    ' 源 _noiseBitmap 终身不变，因此只要 RT 不变就长期复用。
+    ' 纹理失效后由固定种子重建，无需保留 CPU 位图。
     ' brush 的 Wrap 模式 + ScaleTransform(tile) + Opacity 都在 DrawNoise 时按需更新，
     ' 不需要为不同 (opacity, tile) 维持多份 brush。
     Private _noiseD2DBitmap As ID2D1Bitmap
@@ -340,6 +401,7 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
             If oldImage IsNot Nothing AndAlso Not ReferenceEquals(oldImage, _sourceImage) Then QueueOrDisposeSourceImage(oldImage)
         End SyncLock
         If changed Then
+            Interlocked.Increment(_sourceRevision)
             ' 切换源后已发布的平均色不再可信
             Volatile.Write(_publishedAverage, -1)
             InvalidateMappedStaticFrameCache()
@@ -395,9 +457,6 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
         DisposeGpuResources()
         If releaseCpuCaches Then
             Volatile.Write(_publishedAverage, -1)
-            _blurBufferA = Nothing
-            _noiseBitmap?.Dispose()
-            _noiseBitmap = Nothing
         End If
         DisposeNoiseD2DResources()
     End Sub
@@ -410,7 +469,6 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
             total += EstimateBitmapBytes(_mappedStaticFrame)
         End SyncLock
         total += EstimateBitmapBytes(_capturedBitmap)
-        total += If(_blurBufferA Is Nothing, 0L, CLng(_blurBufferA.Length))
         SyncLock _sourceLock
             total += EstimateImageBytes(_sourceImage)
             For Each retired In _retiredSourceImages
@@ -436,7 +494,7 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
             total += EstimateBitmapBytes(ps.Width, ps.Height)
         End If
         If _gpuTarget IsNot Nothing Then total += EstimateBitmapBytes(_gpuTargetSize.Width, _gpuTargetSize.Height)
-        If _noiseD2DBitmap IsNot Nothing AndAlso _noiseBitmap IsNot Nothing Then total += EstimateBitmapBytes(_noiseBitmap)
+        If _noiseD2DBitmap IsNot Nothing Then total += EstimateBitmapBytes(D3D_NoiseTexture.Edge, D3D_NoiseTexture.Edge)
         Return total
     End Function
 
@@ -473,10 +531,6 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
                 Return True
             End If
         End SyncLock
-        If _blurBufferA IsNot Nothing Then
-            _blurBufferA = Nothing
-            Return True
-        End If
         Return False
     End Function
 
@@ -492,7 +546,6 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
         End SyncLock
         ReleaseCaptureBitmap()
         Volatile.Write(_publishedAverage, -1)
-        _blurBufferA = Nothing
     End Sub
 
     Private Function TrimGpuCaches() As Boolean
@@ -634,13 +687,8 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
         If Volatile.Read(_disposed) <> 0 Then Return
         ' RequestFrame is called on the UI thread; refresh the cached handle lazily
         ' because dialog renderers are often constructed before their HWND exists.
-        If _hostHandle = IntPtr.Zero Then
-            Try
-                If _host IsNot Nothing AndAlso _host.IsHandleCreated Then _hostHandle = _host.Handle
-            Catch
-            End Try
-        End If
         SyncLock _pendingLock
+            _hostHandle = If(_host IsNot Nothing AndAlso _host.IsHandleCreated, _host.Handle, IntPtr.Zero)
             _pendingX = formBounds.X
             _pendingY = formBounds.Y
             _pendingW = formBounds.Width
@@ -648,7 +696,32 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
             If commitAverage Then _pendingCommitAverage = 1
             _hasPending = 1
         End SyncLock
+        RenderBackendStartup.ObserveHost(_host)
         ScheduleWorker()
+    End Sub
+
+    Friend Shared Sub ReplayStartupRequests()
+        SyncLock _instancesLock
+            For Each reference In _instances
+                Dim renderer As D3D_BackdropSurfaceRenderer = Nothing
+                If reference.TryGetTarget(renderer) AndAlso Volatile.Read(renderer._hasPending) <> 0 Then renderer.ScheduleWorker()
+            Next
+        End SyncLock
+    End Sub
+
+    Friend Shared Sub DrainWorkersForSwitch()
+        Dim snapshot As New List(Of D3D_BackdropSurfaceRenderer)()
+        SyncLock _instancesLock
+            For Each reference In _instances
+                Dim renderer As D3D_BackdropSurfaceRenderer = Nothing
+                If reference.TryGetTarget(renderer) Then snapshot.Add(renderer)
+            Next
+        End SyncLock
+        Dim start = Stopwatch.GetTimestamp()
+        For Each renderer In snapshot
+            Dim remaining = Math.Max(0, 2000 - CInt(Stopwatch.GetElapsedTime(start).TotalMilliseconds))
+            If Not renderer.WaitForIdle(remaining) Then Throw New TimeoutException("Backdrop worker did not drain before switching.")
+        Next
     End Sub
 
     Public Function WaitForIdle(timeoutMilliseconds As Integer) As Boolean
@@ -657,9 +730,10 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
     End Function
 
     Private Sub ScheduleWorker()
+        If Not CanProduceFrame() Then Return
         If Volatile.Read(_disposed) <> 0 Then Return
         SyncLock _workerLock
-            If Volatile.Read(_disposed) <> 0 Then Return
+            If Volatile.Read(_disposed) <> 0 OrElse Not CanProduceFrame() Then Return
             If Interlocked.CompareExchange(_workerScheduled, 1, 0) <> 0 Then Return
             _workerIdle.Reset()
             ThreadPool.QueueUserWorkItem(AddressOf DrainPendingFrames)
@@ -673,35 +747,40 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
     ''' </summary>
     Private Sub DrainPendingFrames(state As Object)
         Try
-            Do While Volatile.Read(_disposed) = 0
+            Do While Volatile.Read(_disposed) = 0 AndAlso CanProduceFrame()
                 Dim bounds As Rectangle
                 Dim commitAvg As Boolean
+                Dim hwnd As IntPtr
                 SyncLock _pendingLock
                     If _hasPending = 0 Then Exit Do
                     bounds = New Rectangle(_pendingX, _pendingY, _pendingW, _pendingH)
                     commitAvg = (_pendingCommitAverage <> 0)
+                    hwnd = _hostHandle
                     _pendingCommitAverage = 0
                     _hasPending = 0
                 End SyncLock
                 Try
-                    ProcessFrame(bounds, commitAvg)
+                    ProcessFrame(bounds, commitAvg, hwnd, RenderBackendStartup.RouteEpoch, Volatile.Read(_sourceRevision))
                 Catch
                     ' 后台工作项绝不能抛出
                 End Try
             Loop
         Finally
-            Volatile.Write(_workerScheduled, 0)
-            ' 退出循环到上面 _workerScheduled=0 之间，UI 线程可能又投递了新 pending；
-            ' 不需要锁，_hasPending 这里的脏读最差只会触发一次额外的 ScheduleWorker（幂等）。
-            If Volatile.Read(_disposed) = 0 AndAlso Volatile.Read(_hasPending) <> 0 Then
-                ScheduleWorker()
-            Else
-                _workerIdle.Set()
-                SyncLock _sourceLock
-                    DisposeRetiredSourceImages()
-                End SyncLock
-                RequestCpuBudgetTrim()
-            End If
+            SyncLock _workerLock
+                Volatile.Write(_workerScheduled, 0)
+                If Volatile.Read(_disposed) <> 0 Then
+                    If _releaseCpuOnWorkerExit Then ReleaseCpuResources()
+                    _workerIdle.Set()
+                ElseIf Volatile.Read(_hasPending) <> 0 AndAlso CanProduceFrame() Then
+                    ScheduleWorker()
+                Else
+                    SyncLock _sourceLock
+                        DisposeRetiredSourceImages()
+                    End SyncLock
+                    RequestCpuBudgetTrim()
+                    _workerIdle.Set()
+                End If
+            End SyncLock
         End Try
     End Sub
 
@@ -735,7 +814,12 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
         End Try
     End Sub
 
-    Private Sub ProcessFrame(bounds As Rectangle, commitAvg As Boolean)
+    Private Shared Function TryExcludeForCapture(hwnd As IntPtr, ByRef priorAffinity As Integer) As Boolean
+        Return hwnd <> IntPtr.Zero AndAlso GetWindowDisplayAffinity(hwnd, priorAffinity) AndAlso
+            priorAffinity <> WDA_EXCLUDEFROMCAPTURE AndAlso SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE)
+    End Function
+
+    Private Sub ProcessFrame(bounds As Rectangle, commitAvg As Boolean, hwnd As IntPtr, epoch As Integer, sourceRevision As Integer)
         Dim w As Integer = bounds.Width
         Dim h As Integer = bounds.Height
         If w < 4 OrElse h < 4 Then Return
@@ -796,15 +880,11 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
                     additionalHandle = _additionalTransientExcludeHandle
                 End SyncLock
 
-                Dim selfExcluded As Boolean = False
-                Dim additionalExcluded As Boolean = False
-                If excludeSelf AndAlso _hostHandle <> IntPtr.Zero Then
-                    selfExcluded = SetWindowDisplayAffinity(_hostHandle, WDA_EXCLUDEFROMCAPTURE)
-                End If
-                If excludeSelf AndAlso additionalHandle <> IntPtr.Zero AndAlso additionalHandle <> _hostHandle Then
-                    additionalExcluded = SetWindowDisplayAffinity(additionalHandle, WDA_EXCLUDEFROMCAPTURE)
-                End If
+                Dim selfAffinity, additionalAffinity As Integer
+                Dim selfExcluded = excludeSelf AndAlso TryExcludeForCapture(hwnd, selfAffinity)
+                Dim additionalExcluded = excludeSelf AndAlso additionalHandle <> hwnd AndAlso TryExcludeForCapture(additionalHandle, additionalAffinity)
                 Try
+                    If selfExcluded OrElse additionalExcluded Then DwmFlush()
                     Using targetGraphics As Graphics = Graphics.FromImage(captured)
                         Dim screenDc As IntPtr = GetDC(IntPtr.Zero)
                         If screenDc = IntPtr.Zero Then Return
@@ -828,12 +908,13 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
                 Catch
                     Return
                 Finally
-                    If additionalExcluded Then SetWindowDisplayAffinity(additionalHandle, WDA_NONE)
-                    If selfExcluded Then SetWindowDisplayAffinity(_hostHandle, WDA_NONE)
+                    If additionalExcluded Then SetWindowDisplayAffinity(additionalHandle, additionalAffinity)
+                    If selfExcluded Then SetWindowDisplayAffinity(hwnd, selfAffinity)
                 End Try
             End If
 
             ' 3. 平均色（直接对下采样源帧采样；blur 不改变整体平均色，避免为了自动色回读 GPU。）
+            If epoch <> RenderBackendStartup.RouteEpoch OrElse sourceRevision <> Volatile.Read(_sourceRevision) OrElse Volatile.Read(_disposed) <> 0 Then Return
             Dim avg As Integer = ComputeAverage(small)
             Volatile.Write(_candidateAverage, avg)
             Dim publishedNow As Boolean = False
@@ -861,8 +942,10 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
             SyncLock _frameLock
                 Dim previousCurrent As Bitmap = _currentFrame
                 _currentFrame = small
+                _currentFrameEpoch = epoch
+                _currentFrameSourceRevision = sourceRevision
                 smallCommitted = True
-                _spareFrame = previousCurrent
+                _spareFrame = previousCurrent ' 工作缓冲不是缓存；复用它避免后台每帧分配大位图。
                 DisposeMappedStaticFrameNoLock()
                 _lastCpuUse = D3D_CpuCache.NextTick()
                 Dim newFrameVersion As Integer = Interlocked.Increment(_frameVersion)
@@ -881,9 +964,10 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
                 Dim host = _host
                 If host IsNot Nothing Then
                     host.BeginInvoke(CType(Sub()
-                                               If host.IsDisposed OrElse Not host.IsHandleCreated Then Return
+                                               If host.IsDisposed OrElse Not host.IsHandleCreated OrElse epoch <> RenderBackendStartup.RouteEpoch OrElse
+                                                  sourceRevision <> Volatile.Read(_sourceRevision) OrElse Volatile.Read(_disposed) <> 0 Then Return
                                                If publishedNow Then RaiseEvent AverageCommitted(Me, EventArgs.Empty)
-                                               OuterToInnerRefreshScheduler.RequestFull(host)
+                                               OuterToInnerRefreshScheduler.RequestFull(host, invalidateChildren:=RenderBackendStartup.Requested = RenderBackend.Direct3D12)
                                            End Sub, MethodInvoker))
                 End If
             Catch
@@ -961,11 +1045,6 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
         Dim data = bmp.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format32bppPArgb)
         Try
             Dim stride As Integer = data.Stride
-            Dim len As Integer = stride * h
-            ' 复用 _blurBufferA 作为读取缓冲：BoxBlur 结束后此数组容量必然 ≥ len。
-            If _blurBufferA Is Nothing OrElse _blurBufferA.Length < len Then ReDim _blurBufferA(len - 1)
-            Dim buf() As Byte = _blurBufferA
-            Marshal.Copy(data.Scan0, buf, 0, len)
             Dim total As Integer = w * h
             ' 像素 ≥ 4096 时步长 = 4，否则步长 = 1。32bppPArgb 字节序：B G R A
             Dim step_ As Integer = If(total >= 4096, 4, 1)
@@ -976,11 +1055,11 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
                 Dim rowOff As Integer = y * stride
                 Dim x As Integer = 0
                 Do While x < w
-                    Dim p As Integer = rowOff + x * 4
-                    sumB += buf(p)
-                    sumG += buf(p + 1)
-                    sumR += buf(p + 2)
-                    sumA += buf(p + 3)
+                    Dim pixel = Marshal.ReadInt32(data.Scan0, rowOff + x * 4)
+                    sumB += pixel And &HFF
+                    sumG += (pixel >> 8) And &HFF
+                    sumR += (pixel >> 16) And &HFF
+                    sumA += (pixel >> 24) And &HFF
                     count += 1
                     x += step_
                 Loop
@@ -1136,6 +1215,7 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
             Finally
                 uploadFrame.UnlockBits(data)
             End Try
+            If useMappedStaticFrame Then DisposeMappedStaticFrameNoLock()
         End SyncLock
 
         Return _gpuSource IsNot Nothing
@@ -1243,22 +1323,20 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
     ''' </summary>
     ''' <remarks>
     ''' 缓存策略：
-    ''' • <see cref="_noiseD2DBitmap"/> 按 RT 缓存，源 <see cref="_noiseBitmap"/> 终身不变 → 长期复用。
+    ''' • 确定性噪点仅缓存为当前 RT 的 GPU 纹理。
     ''' • <see cref="_noiseD2DBrush"/> 同 RT 内复用，每帧仅按需更新 Opacity 与 Transform(scale)。
     ''' </remarks>
     Private Sub DrawNoiseCore(rt As ID2D1RenderTarget, target As Rectangle, opacity As Byte, patternAnchor As Point)
         If rt Is Nothing OrElse opacity = 0 OrElse target.Width <= 0 OrElse target.Height <= 0 Then Return
-        EnsureNoise()
-        If _noiseBitmap Is Nothing Then Return
 
-        Dim tile As Integer = Math.Max(1, CInt(_noiseBitmap.Width * _noiseScale))
+        Dim tile As Integer = Math.Max(1, CInt(D3D_NoiseTexture.Edge * _noiseScale))
         Dim brush As ID2D1BitmapBrush = AcquireNoiseD2DBrush(rt, tile)
         If brush Is Nothing Then Return
 
         ' Opacity 走 brush.Opacity，每帧便宜地改一下；不需要为不同 opacity 维持多份 brush。
         brush.Opacity = opacity / 255.0F
         ' brush 默认在世界坐标 (0,0) 起铺；patternAnchor 决定 tile 在目标 RT 中的相位。
-        Dim t = Matrix3x2.CreateScale(tile / CSng(_noiseBitmap.Width)) *
+        Dim t = Matrix3x2.CreateScale(tile / D3D_NoiseTexture.Edge) *
                 Matrix3x2.CreateTranslation(patternAnchor.X, patternAnchor.Y)
         brush.Transform = t
         rt.FillRectangle(D3D_D2DInterop.ToD2DRect(target), brush)
@@ -1284,7 +1362,7 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
         End If
 
         If _noiseD2DBitmap Is Nothing Then
-            _noiseD2DBitmap = D3D_D2DInterop.CreateBitmapFromGdi(rt, _noiseBitmap)
+            _noiseD2DBitmap = D3D_NoiseTexture.Create(rt)
             If _noiseD2DBitmap Is Nothing Then Return Nothing
             _noiseD2DOwnerRT = New WeakReference(rt)
             _lastGpuUse = D3D_GpuCache.NextTick()
@@ -1308,30 +1386,6 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
         _lastGpuUse = D3D_GpuCache.NextTick()
         Return _noiseD2DBrush
     End Function
-
-    Private Sub EnsureNoise()
-        If _noiseBitmap IsNot Nothing Then Return
-        Const N As Integer = 128
-        Dim bmp As New Bitmap(N, N, PixelFormat.Format32bppArgb)
-        Dim rng As New Random(1059)
-        Dim data = bmp.LockBits(New Rectangle(0, 0, N, N), ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb)
-        Try
-            Dim stride As Integer = data.Stride
-            Dim buf(stride * N - 1) As Byte
-            For y As Integer = 0 To N - 1
-                Dim rowOff As Integer = y * stride
-                For x As Integer = 0 To N - 1
-                    Dim v As Byte = CByte(rng.Next(0, 256))
-                    Dim o As Integer = rowOff + x * 4
-                    buf(o) = v : buf(o + 1) = v : buf(o + 2) = v : buf(o + 3) = 255
-                Next
-            Next
-            Marshal.Copy(buf, 0, data.Scan0, buf.Length)
-        Finally
-            bmp.UnlockBits(data)
-        End Try
-        _noiseBitmap = bmp
-    End Sub
 
     Public Function GetPublishedAverageColor() As Color?
         Dim v As Integer = Volatile.Read(_publishedAverage)
@@ -1384,12 +1438,19 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
 
     Public Sub Dispose() Implements IDisposable.Dispose
         If Interlocked.Exchange(_disposed, 1) <> 0 Then Return
+        ConfigurePersistentCaptureExclusion(False)
+        DisposeGpuResources()
+        DisposeNoiseD2DResources()
         SyncLock _workerLock
+            If Volatile.Read(_workerScheduled) <> 0 Then
+                _releaseCpuOnWorkerExit = True
+            Else
+                ReleaseCpuResources()
+            End If
         End SyncLock
-        Try
-            _workerIdle.Wait(500)
-        Catch
-        End Try
+    End Sub
+
+    Private Sub ReleaseCpuResources()
         SyncLock _frameLock
             _currentFrame?.Dispose()
             _currentFrame = Nothing
@@ -1405,13 +1466,9 @@ Friend NotInheritable Class D3D_BackdropSurfaceRenderer
             DisposeRetiredSourceImages()
             _sourceIdentity = Nothing
         End SyncLock
-        DisposeGpuResources()
+        _dx12Snapshot?.Dispose()
+        _dx12Snapshot = Nothing
         ReleaseCaptureBitmap()
-        _noiseBitmap?.Dispose()
-        _noiseBitmap = Nothing
-        DisposeNoiseD2DResources()
-        _blurBufferA = Nothing
-        _workerIdle.Dispose()
     End Sub
 
 End Class

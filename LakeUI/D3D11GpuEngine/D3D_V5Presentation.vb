@@ -103,7 +103,6 @@ Friend NotInheritable Class D3D_V5Presentation
     End Sub
 
     Friend Shared Function Paint(control As Control, renderable As D3D_IGpuRenderable,
-                                 Optional 绘制后处理 As Action(Of D3D_PaintContext) = Nothing,
                                  Optional dirtyRect As Rectangle = Nothing) As Boolean
         If Not IsV5Control(control) Then Return False
         禁用WinForms双缓冲(control)
@@ -114,8 +113,15 @@ Friend NotInheritable Class D3D_V5Presentation
         ' WM_PAINT 可能在同一消息循环内先于已排队的内部传播请求到达。
         ' 当前同步绘制会消费 registry 中的合并脏区；只撤销尚未开始的批次项，
         ' RenderGpu 期间新产生的请求仍会进入下一批。
+        If RenderBackendStartup.Requested = RenderBackend.Direct3D12 AndAlso D3D12StartupDispatch.ConsumeCoveredPaint(control) Then Return True
+        If RenderBackendStartup.Requested = RenderBackend.Direct3D12 AndAlso
+           If(D3D12StartupDispatch.FindPresenter(control)?.Atlas.Count, 0) > 1 Then
+            RequestRenderBatched(control, dirtyRect)
+            Return True
+        End If
+        If RenderBackendStartup.Requested = RenderBackend.Direct3D12 Then dirtyRect = MergePendingDx12Region(control, dirtyRect)
         移除批次请求(control)
-        立即渲染(control, renderable, 绘制后处理, dirtyRect)
+        立即渲染(control, renderable, dirtyRect)
         ' V5 明确禁止失败后回落到 HDC；即使设备正在重建，也由下一帧 GPU 重试。
         Return True
     End Function
@@ -145,6 +151,12 @@ Friend NotInheritable Class D3D_V5Presentation
         D3D_RenderDiagnostics.V5DirtyRequested(CLng(有效区域.Width) * CLng(有效区域.Height),
                                                CLng(Math.Max(0, control.Width)) * CLng(Math.Max(0, control.Height)))
         ' 内部传播请求统一走 RequestRenderBatched；显式 RequestRender 保持同步。
+        If RenderBackendStartup.Requested = RenderBackend.Direct3D12 Then
+            有效区域 = MergePendingDx12Region(control, 有效区域)
+            移除批次请求(control)
+            立即渲染(control, TryCast(control, D3D_IGpuRenderable), requestedDirty:=有效区域)
+            Return
+        End If
         移除批次请求(control)
         立即渲染(control, TryCast(control, D3D_IGpuRenderable))
     End Sub
@@ -253,6 +265,8 @@ Friend NotInheritable Class D3D_V5Presentation
                 Next
             End If
             If state.Disposed Then Return
+            Dim atlasBatch = RenderBackendStartup.Requested = RenderBackend.Direct3D12
+            If atlasBatch Then D3D12StartupDispatch.BeginBatch()
             D3D_HwndCompositionPresenter.BeginBatch()
             Try
                 For Each item In batch
@@ -266,6 +280,7 @@ Friend NotInheritable Class D3D_V5Presentation
                 Next
             Finally
                 D3D_HwndCompositionPresenter.EndBatch()
+                If atlasBatch Then D3D12StartupDispatch.EndBatch()
             End Try
             D3D_RefreshDiagnostics.Record(批次开始时间, "RenderBatch")
         Finally
@@ -300,6 +315,13 @@ Friend NotInheritable Class D3D_V5Presentation
         FlushBatchedRenders(state, prepareSurfaces)
     End Sub
 
+    Private Shared Function MergePendingDx12Region(control As Control, dirty As Rectangle) As Rectangle
+        If dirty.IsEmpty OrElse _renderBatch Is Nothing Then Return dirty
+        Dim entry As BatchedRenderEntry
+        If _renderBatch.Pending.TryGetValue(control, entry) Then Return Rectangle.Union(dirty, entry.Rect)
+        Return dirty
+    End Function
+
     Private Shared Sub 移除批次请求(control As Control)
         If control Is Nothing OrElse _renderBatch Is Nothing Then Return
         _renderBatch.Pending.Remove(control)
@@ -311,23 +333,39 @@ Friend NotInheritable Class D3D_V5Presentation
     End Sub
 
     Private Shared Sub 立即渲染(控件 As Control, 可渲染对象 As D3D_IGpuRenderable,
-                              Optional 绘制后处理 As Action(Of D3D_PaintContext) = Nothing,
         Optional requestedDirty As Rectangle = Nothing,
         Optional prepareOnly As Boolean = False,
         Optional 准备耗时 As Dictionary(Of Control, Double) = Nothing)
         If 控件 Is Nothing OrElse 可渲染对象 Is Nothing OrElse 控件.IsDisposed Then Return
         If Not 控件.IsHandleCreated OrElse 控件.ClientSize.Width <= 0 OrElse 控件.ClientSize.Height <= 0 Then Return
+        RenderBackendStartup.ObserveHost(控件)
+        Dim route = RenderBackendStartup.Requested
+        If Not route.HasValue Then Return
         If Not D3D_ControlTreeWalker.IsEffectivelyVisible(控件) Then
             D3D_RenderDiagnostics.V5InvisibleSkip()
             Return
         End If
+        RenderBackendStartup.TrackThread()
         If _renderDepth > 0 Then
             控件.Invalidate()
             Return
         End If
 
+        If route.Value = RenderBackend.Direct3D12 Then
+            If Not prepareOnly Then D3D12StartupDispatch.Render(控件, requestedDirty)
+            Return
+        End If
+        Dim designerPreview = RenderBackendStartup.IsDesignerPreview
+        Dim retryDirty = True
         _renderDepth += 1
         Try
+            Dim 绘制后处理 As Action(Of D3D_PaintContext) = Nothing
+            If designerPreview Then
+                ' 选择装饰可能在 WM_PAINT 的脏区之外改变，设计时重绘整面。
+                requestedDirty = 控件.ClientRectangle
+                D3D_ControlSurfaceRegistry.MarkDirty(控件, requestedDirty, requestConsumers:=False)
+                绘制后处理 = Sub(context) D3D_PaintBridge.绘制设计时选择装饰(context, 控件)
+            End If
             ' 当前调用已经占用一个外层渲染槽。RenderGpu 内部不得同步驱动子控件，
             ' 以免打破外到内顺序或形成父子互相触发的递归。
             Dim 渲染开始时间 = Stopwatch.GetTimestamp()
@@ -372,12 +410,17 @@ Friend NotInheritable Class D3D_V5Presentation
                 排队重试(控件)
                 Return
             End If
+            If designerPreview Then
+                retryDirty = False
+                Debug.WriteLine(异常)
+                Return
+            End If
             Throw
         Finally
             _renderDepth -= 1
             ' 保留 RenderGpu 内部产生的失效请求，例如布局或字体重新计算。
             ' 这些请求不能重入提交，因此在当前帧完成后再排队补交一帧。
-            If _renderDepth = 0 AndAlso D3D_ControlSurfaceRegistry.IsDirty(控件) AndAlso Not _retryTimers.ContainsKey(控件) Then
+            If retryDirty AndAlso _renderDepth = 0 AndAlso D3D_ControlSurfaceRegistry.IsDirty(控件) AndAlso Not _retryTimers.ContainsKey(控件) Then
                 RequestRenderBatched(控件)
             End If
         End Try
@@ -469,6 +512,19 @@ Friend NotInheritable Class D3D_V5Presentation
         释放设备资源()
         For Each 控件 In _presenters.Keys.ToArray()
             排队重试(控件)
+        Next
+    End Sub
+
+    Friend Shared Sub DetachDx11ForSwitch()
+        If _presenters.Count = 0 Then Return
+        For Each presenter In _presenters.Values
+            presenter.DetachForSwitch()
+        Next
+        Dim device = D3D_RenderCore.DeviceManager.CompositionDevice
+        device.Commit().CheckError()
+        device.WaitForCommitCompletion().CheckError()
+        For Each control In _retryTimers.Keys.ToArray()
+            取消重试(control)
         Next
     End Sub
 

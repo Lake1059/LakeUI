@@ -876,7 +876,8 @@ Public Class ModernTabListControl
         Catch
         End Try
         D3D_V5Presentation.ReleaseHiddenSubtreeResources(ctrl)
-        使切页背景快照失效()
+        ' DX12 slots contain only the owner's drawing. Hiding a child after publication does not change the parent texture.
+        If RenderBackendStartup.Requested <> RenderBackend.Direct3D12 Then 使切页背景快照失效()
     End Sub
 
     Private Sub 移除绑定控件(ctrl As Control)

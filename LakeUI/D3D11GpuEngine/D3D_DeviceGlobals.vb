@@ -143,8 +143,10 @@ Public Module D3D_DeviceGlobals
     End Sub
 
     Private Sub EnsureCreatedNoLock()
-        Dim factory1 As ID2D1Factory1 = D3D_D2DInterop.GetD2DFactory1()
-        If factory1 Is Nothing Then Throw New InvalidOperationException("Direct2D factory is not available.")
+        RenderBackendStartup.RequireFactory(RenderBackend.Direct3D11, background:=True)
+        Try
+            Dim factory1 As ID2D1Factory1 = D3D_D2DInterop.GetD2DFactory1()
+            If factory1 Is Nothing Then Throw New InvalidOperationException("Direct2D factory is not available.")
 
         ' BgraSupport 是 D2D interop 的硬性要求；SingleThreaded 与 D2D Factory 单例策略保持一致。
         Dim flags As DeviceCreationFlags = DeviceCreationFlags.BgraSupport Or DeviceCreationFlags.Singlethreaded
@@ -158,11 +160,21 @@ Public Module D3D_DeviceGlobals
             Vortice.Direct3D.FeatureLevel.Level_9_1
         }
 
-        _d3dDevice = D3D11.D3D11CreateDevice(Vortice.Direct3D.DriverType.Hardware, flags, levels)
+            _d3dDevice = D3D11.D3D11CreateDevice(Vortice.Direct3D.DriverType.Hardware, flags, levels)
 
-        _dxgiDevice = _d3dDevice.QueryInterface(Of IDXGIDevice)()
-        _d2dDevice = factory1.CreateDevice(_dxgiDevice)
-        _deviceGeneration += 1
+            _dxgiDevice = _d3dDevice.QueryInterface(Of IDXGIDevice)()
+            _d2dDevice = factory1.CreateDevice(_dxgiDevice)
+            _deviceGeneration += 1
+        Catch ex As Exception
+            ReleaseAllNoLock()
+            Throw
+        End Try
+    End Sub
+
+    Friend Sub DrainForSwitch()
+        SyncLock _lock
+            If _d3dDevice IsNot Nothing Then D3D_DeviceManager.WaitForQueue(_d3dDevice)
+        End SyncLock
     End Sub
 
     Private Sub ReleaseAllNoLock()
