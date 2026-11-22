@@ -1,8 +1,137 @@
 struct VSIn { float2 position : POSITION; float coverage : COVERAGE; };
 struct VSOut { float4 position : SV_Position; float coverage : COVERAGE; };
-cbuffer DrawConstants : register(b0) { float4 startColor; float4 endColor; float gradientTop; float gradientHeight; float shapeLeft; float shapeTop; float shapeWidth; float shapeHeight; float cornerRadius; float strokeWidth; float strokeMode; float cornerMask; float horizontal; float maskRadius; float4 maskBox; float4 arc; float renderScale; };
+cbuffer DrawConstants : register(b0) {
+    float4 startColor;
+    float4 endColor;
+    float gradientTop, gradientHeight;
+    float shapeLeft, shapeTop, shapeWidth, shapeHeight;
+    float cornerRadius, strokeWidth, strokeMode, cornerMask, horizontal, maskRadius;
+    float4 maskBox;
+    float4 arc;
+    float renderScale, geometryKind;
+    float2 lineStart;
+    float2 lineEnd;
+    float2 lineJoin;
+};
+
+// D3D12_GeometryKind in D3D12_RectanglePipeline.vb.
+static const int RoundedRectangle = 1;
+static const int Ellipse = 2;
+static const int FlatLine = 3;
+static const int RoundLine = 4;
+static const int JoinedRoundLines = 5;
+
+float IntervalCoverage(float position, float lower, float upper, float pixelWidth) {
+    return saturate(0.5 + (position - lower) / pixelWidth) -
+           saturate(0.5 + (position - upper) / pixelWidth);
+}
+
+float HalfPlaneCoverage(float distance, float2 normal, float pixelWidth) {
+    // The projection of a square pixel onto an edge normal has a trapezoidal density.
+    float2 span = abs(normal) * pixelWidth;
+    float major = max(span.x, span.y);
+    float minor = min(span.x, span.y);
+    float offset = abs(distance);
+    float tail = max(0.0, (major + minor) * 0.5 - offset);
+    float area = offset <= (major - minor) * 0.5
+        ? 0.5 - offset / max(major, 0.000001)
+        : tail * tail / max(2.0 * major * minor, 0.000001);
+    return distance < 0.0 ? 1.0 - area : area;
+}
+
+float ProjectedIntervalCoverage(float position, float lower, float upper, float2 normal, float pixelWidth) {
+    return HalfPlaneCoverage(lower - position, normal, pixelWidth) -
+           HalfPlaneCoverage(upper - position, normal, pixelWidth);
+}
+
+float BoxCoverage(float2 position, float2 halfSize, float pixelWidth) {
+    return IntervalCoverage(position.x, -halfSize.x, halfSize.x, pixelWidth) *
+           IntervalCoverage(position.y, -halfSize.y, halfSize.y, pixelWidth);
+}
+
+float RoundedRectangleCoverage(float2 position, float2 halfSize, float radius, float pixelWidth) {
+    float box = BoxCoverage(position, halfSize, pixelWidth);
+    if (radius <= 0.0) return box;
+    float2 corner = max(abs(position) - (halfSize - radius), 0.0);
+    float lengthToCorner = length(corner);
+    if (lengthToCorner <= 0.0) return box;
+    float coverage = HalfPlaneCoverage(lengthToCorner - radius, corner / lengthToCorner, pixelWidth);
+    return min(box, coverage);
+}
+
+float EllipseCoverage(float2 position, float2 radii, float pixelWidth) {
+    float2 unitPosition = position / max(radii, 0.0001);
+    float norm = length(unitPosition);
+    float2 gradient = unitPosition / max(radii, 0.0001);
+    float gradientLength = length(gradient);
+    float2 normal = gradientLength > 0.0 ? gradient / max(gradientLength, 0.0001) : float2(1.0, 0.0);
+    // Convert the implicit ellipse to a signed distance around its edge.
+    float distance = (norm - 1.0) * max(norm, 0.0001) / max(gradientLength, 0.0001);
+    return min(BoxCoverage(position, radii, pixelWidth), HalfPlaneCoverage(distance, normal, pixelWidth));
+}
+
+float ContourCoverage(float2 position, int kind, float pixelWidth) {
+    float2 halfSize = float2(shapeWidth, shapeHeight) * 0.5;
+    float2 local = position - float2(shapeLeft, shapeTop) - halfSize;
+    float halfStroke = strokeWidth * 0.5;
+    float2 outer = halfSize + halfStroke;
+    float2 inner = halfSize - halfStroke;
+    bool hasInner = strokeMode > 0.5 && all(inner > 0);
+    float outerCoverage = 0.0;
+    float innerCoverage = 0.0;
+    if (kind == Ellipse) {
+        outerCoverage = EllipseCoverage(local, outer, pixelWidth);
+        if (hasInner) innerCoverage = EllipseCoverage(local, inner, pixelWidth);
+    } else {
+        // A zero radius keeps square miter corners. Otherwise the stroke offsets the radius, too.
+        float outerRadius = cornerRadius > 0 ? cornerRadius + halfStroke : 0;
+        outerCoverage = RoundedRectangleCoverage(local, outer, outerRadius, pixelWidth);
+        if (hasInner) innerCoverage = RoundedRectangleCoverage(local, inner, max(0, cornerRadius - halfStroke), pixelWidth);
+    }
+    return saturate(outerCoverage - innerCoverage);
+}
+
+float LineCoverage(float2 position, float2 start, float2 finish, bool roundCaps, float pixelWidth) {
+    float2 segment = finish - start;
+    float segmentLength = length(segment);
+    float2 axis = segmentLength > 0 ? segment / max(segmentLength, 0.000001) : float2(1.0, 0.0);
+    float2 normal = float2(-axis.y, axis.x);
+    float2 relative = position - start;
+    float along = dot(relative, axis);
+    float across = dot(relative, normal);
+    float halfStroke = strokeWidth * 0.5;
+    float side = ProjectedIntervalCoverage(across, -halfStroke, halfStroke, normal, pixelWidth);
+    if (!roundCaps) {
+        return side * ProjectedIntervalCoverage(along, 0.0, segmentLength, axis, pixelWidth);
+    }
+
+    float2 radial = relative - axis * clamp(along, 0.0, segmentLength);
+    float distance = length(radial);
+    float2 capNormal = distance > 0.0 ? radial / max(distance, 0.000001) : normal;
+    float cap = HalfPlaneCoverage(distance - halfStroke, capNormal, pixelWidth);
+    float endCoverage = ProjectedIntervalCoverage(along, -halfStroke, segmentLength + halfStroke, axis, pixelWidth);
+    return min(side, min(cap, endCoverage));
+}
 VSOut VSMain(VSIn input) { VSOut output; output.position = float4(input.position, 0.0, 1.0); output.coverage = input.coverage; return output; }
-float4 PSMain(VSOut input) : SV_Target { input.position.xy /= renderScale; if (arc.y > 0) {
+float4 PSMain(VSOut input) : SV_Target {
+    input.position.xy /= renderScale;
+    int kind = (int)geometryKind;
+    if (kind != 0) {
+        float pixelWidth = 1.0 / renderScale;
+        float alpha = 0.0;
+        if (kind == FlatLine || kind == RoundLine) {
+            alpha = startColor.a * LineCoverage(input.position.xy, lineStart, lineEnd, kind == RoundLine, pixelWidth);
+        } else if (kind == JoinedRoundLines) {
+            // Match the two consecutive Direct2D strokes with a single source-over result.
+            float first = startColor.a * LineCoverage(input.position.xy, lineStart, lineJoin, true, pixelWidth);
+            float last = startColor.a * LineCoverage(input.position.xy, lineJoin, lineEnd, true, pixelWidth);
+            alpha = last + first * (1.0 - last);
+        } else {
+            alpha = startColor.a * ContourCoverage(input.position.xy, kind, pixelWidth);
+        }
+        return float4(startColor.rgb * alpha, alpha);
+    }
+    if (arc.y > 0) {
         float2 p = input.position.xy - float2(shapeLeft + shapeWidth * 0.5, shapeTop + shapeHeight * 0.5);
         float phase = frac((atan2(p.y, p.x) - arc.x) / 6.283185307) * 6.283185307;
         float t = saturate(phase / arc.y);

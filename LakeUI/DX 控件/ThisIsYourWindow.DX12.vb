@@ -18,13 +18,39 @@ Partial Public Class ThisIsYourWindow
         End Sub
     End Class
 
+    Private Function GetCaptionBackdropRoot(state As PerFormState) As Control
+        Dim control = _标题栏绑定控件
+        If state Is Nothing OrElse control Is Nothing OrElse control.IsDisposed OrElse
+           state.HostForm IsNot _标题栏控件宿主窗体 OrElse control.Parent IsNot state.HostForm OrElse
+           state.CaptionControlRect.Width <= 0 OrElse state.CaptionControlRect.Height <= 0 Then Return Nothing
+        Return control
+    End Function
+
+    Private Function UsesCaptionBackdrop(state As PerFormState, consumer As Control) As Boolean
+        Dim root = GetCaptionBackdropRoot(state)
+        Return root IsNot Nothing AndAlso D3D_ControlTreeWalker.IsDescendantOrSelf(consumer, root)
+    End Function
+
+    Friend Shared Function UsesCaptionBackdrop12(form As Form, consumer As Control) As Boolean
+        Dim owner As ThisIsYourWindow = Nothing
+        Return TryGetAttached(form, owner) AndAlso owner.UsesCaptionBackdrop(owner.查找状态(form), consumer)
+    End Function
+
+    Private Shared Sub InvalidateCaptionBackdrop12(control As Control)
+        If RenderBackendStartup.Requested = RenderBackend.Direct3D12 AndAlso control IsNot Nothing AndAlso control.Visible Then
+            OuterToInnerRefreshScheduler.RequestFull(control, invalidateChildren:=True)
+        End If
+    End Sub
+
     Friend Shared Function StaticBackdropKey(form As Form, consumer As Control) As Object
         Dim owner As ThisIsYourWindow = Nothing
         If Not TryGetAttached(form, owner) Then Return Nothing
         Dim state = owner.查找状态(form)
         If state Is Nothing OrElse (owner.BackdropMode <> BackdropModeEnum.None AndAlso owner.BackdropMode <> BackdropModeEnum.Image) Then Return Nothing
         Dim offset = consumer.PointToClient(form.PointToScreen(Point.Empty))
-        Return (form, consumer.ClientSize, offset, 获取真实客户区尺寸(form), form.BackColor.ToArgb(),
+        Dim captionRevision As Long? = Nothing
+        If owner.UsesCaptionBackdrop(state, consumer) Then captionRevision = state.Dx12ChromeRevision
+        Return (form, consumer.ClientSize, offset, 获取真实客户区尺寸(form), form.BackColor.ToArgb(), captionRevision,
                 owner.毛玻璃允许用于窗体(state), owner.BackdropMode, owner.BackdropImage, owner.BackdropBlurRadius,
                 owner.BackdropBlurPasses, owner.BackdropDownsampleFactor, owner.BackdropNoiseScale, owner.BackdropNoiseOpacity,
                 owner.BackdropTintColor, owner.BackdropTintInactiveColor, 视觉上保持激活(form, state.Activated), D3D_HdrOutput.ImageRevision)
@@ -163,24 +189,9 @@ Partial Public Class ThisIsYourWindow
     End Sub
 
     Private Sub 绘制图标_DX12(context As D3D12_PaintContext, s As PerFormState)
-        If s Is Nothing OrElse s.HostForm Is Nothing OrElse Not s.HostForm.ShowIcon OrElse
-           _图标来源 = IconSourceEnum.None OrElse s.IconRect.IsEmpty Then Return
-
-        Dim img As Image = Nothing
-        If _图标来源 = IconSourceEnum.Custom Then
-            img = _自定义图标
-        ElseIf _图标来源 = IconSourceEnum.FormIcon AndAlso s.HostForm?.Icon IsNot Nothing Then
-            If s.CachedIconSource IsNot s.HostForm.Icon Then
-                s.CachedIconBitmap?.Dispose()
-                s.CachedIconBitmap = s.HostForm.Icon.ToBitmap()
-                s.CachedIconSource = s.HostForm.Icon
-            End If
-            img = s.CachedIconBitmap
-        End If
+        Dim img = 获取标题栏图标(s)
         If img Is Nothing Then Return
-
-        Dim r = s.IconRect
-        context.DrawImage(img, New RectangleF(r.X, r.Y, r.Width, r.Height))
+        context.DrawCubicImage(img, s.IconRect)
     End Sub
 
     Private Sub 绘制控制按钮_DX12(context As D3D12_PaintContext, s As PerFormState, rect As Rectangle, htValue As Integer)

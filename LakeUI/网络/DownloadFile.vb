@@ -15,6 +15,23 @@ Public Class DownloadFile
     Implements IDisposable
 
     Private Const ResumeRewindBytes As Long = 1024L * 1024L
+    Private ReadOnly _client As HttpClient
+    Private _lastError As Exception
+
+    Public Sub New()
+    End Sub
+
+    ''' <summary>Use the supplied client without taking ownership of it.</summary>
+    Public Sub New(client As HttpClient)
+        ArgumentNullException.ThrowIfNull(client)
+        _client = client
+    End Sub
+
+    Private ReadOnly Property Client As HttpClient
+        Get
+            Return If(_client, _sharedClient.Value)
+        End Get
+    End Property
 
 #Region "  共享 HttpClient  "
 
@@ -56,6 +73,19 @@ Public Class DownloadFile
 
     ''' <summary>保存到本地的完整路径。</summary>
     Public Property SavePath As String
+
+    ''' <summary>Exact payload length from an independent manifest. Uses a single stream,
+    ''' resumes contiguous partial files and enforces the length before writing bytes.</summary>
+    Public Property ExpectedLength As Long?
+
+    ''' <summary>Timeout waiting for headers or the next bytes in exact-length mode.</summary>
+    Public Property ReadIdleTimeout As TimeSpan = TimeSpan.FromSeconds(35)
+
+    Public ReadOnly Property LastError As Exception
+        Get
+            Return _lastError
+        End Get
+    End Property
 
     ''' <summary>线程数，默认 1（单线程）。仅当服务器支持 Range 时才会真正并行。</summary>
     Public Property ThreadCount As Integer = 1
@@ -182,6 +212,9 @@ Public Class DownloadFile
         If String.IsNullOrWhiteSpace(SavePath) Then Throw New InvalidOperationException("SavePath 不能为空。")
         If BufferSize <= 0 Then Throw New InvalidOperationException("BufferSize 必须大于 0。")
         If _state = DownloadState.Running Then Return _runTask
+        If ExpectedLength.HasValue AndAlso ExpectedLength.Value <= 0 Then Throw New ArgumentOutOfRangeException(NameOf(ExpectedLength))
+        If ReadIdleTimeout <= TimeSpan.Zero Then Throw New ArgumentOutOfRangeException(NameOf(ReadIdleTimeout))
+        _lastError = Nothing
         If expectedSha256 IsNot Nothing Then Me.ExpectedSha256 = expectedSha256
 
         ' 捕获调用线程上下文（UI 线程），用于事件回调
@@ -233,7 +266,11 @@ Public Class DownloadFile
 
             Dim sha256RetryUsed = False
             Do
-                Await DownloadToPartAsync(partPath, token).ConfigureAwait(False)
+                If ExpectedLength.HasValue Then
+                    Await DownloadExactLengthAsync(partPath, ExpectedLength.Value, token).ConfigureAwait(False)
+                Else
+                    Await DownloadToPartAsync(partPath, token).ConfigureAwait(False)
+                End If
                 token.ThrowIfCancellationRequested()
 
                 ValidateDownloadedFile(partPath)
@@ -242,7 +279,7 @@ Public Class DownloadFile
                     Dim actualSha256 = Await ComputeFileSha256Async(partPath, token).ConfigureAwait(False)
                     If Not actualSha256.Equals(_expectedSha256, StringComparison.OrdinalIgnoreCase) Then
                         TryDeleteDownloadState(partPath)
-                        If Not sha256RetryUsed Then
+                        If Not sha256RetryUsed AndAlso Not ExpectedLength.HasValue Then
                             sha256RetryUsed = True
                             ResetRuntimeProgress()
                             Continue Do
@@ -280,17 +317,84 @@ Public Class DownloadFile
         Catch ex As OperationCanceledException
             _stopwatch.Stop()
             _accumulatedElapsed += _stopwatch.Elapsed
+            _lastError = ex
             _state = DownloadState.Failed
             Try : SaveStateFile() : Catch : End Try
             RaiseOnContext(Sub() RaiseEvent DownloadFailed(Me, New DownloadFailedEventArgs(ex, "下载被异常中断。")))
         Catch ex As Exception
             _stopwatch.Stop()
             _accumulatedElapsed += _stopwatch.Elapsed
+            _lastError = ex
             _state = DownloadState.Failed
             ' 保存状态以便用户后续重试
             Try : SaveStateFile() : Catch : End Try
             RaiseOnContext(Sub() RaiseEvent DownloadFailed(Me, New DownloadFailedEventArgs(ex, ex.Message)))
         End Try
+    End Function
+
+    Private Async Function DownloadExactLengthAsync(partPath As String, length As Long, token As CancellationToken) As Task
+        _totalBytes = length
+        _supportsRange = False
+        _segments = Nothing
+        Dim existing = If(File.Exists(partPath), New FileInfo(partPath).Length, 0L)
+        If existing > length Then
+            File.Delete(partPath)
+            existing = 0
+        End If
+        Interlocked.Exchange(_bytesDownloaded, existing)
+        _lastTickBytes = existing
+        If existing = length Then Return
+
+        Using idle = CancellationTokenSource.CreateLinkedTokenSource(token)
+            idle.CancelAfter(ReadIdleTimeout)
+            Using req As New HttpRequestMessage(HttpMethod.Get, Url)
+                ApplyRequestHeaders(req)
+                If existing > 0 Then req.Headers.Range = New RangeHeaderValue(existing, Nothing)
+                Using resp = Await Client.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, idle.Token).ConfigureAwait(False)
+                    resp.EnsureSuccessStatusCode()
+                    Select Case resp.StatusCode
+                        Case HttpStatusCode.OK
+                            ' The server ignored Range. Start from zero after validating the response.
+                            existing = 0
+                        Case HttpStatusCode.PartialContent
+                            Dim range = resp.Content.Headers.ContentRange
+                            If existing <= 0 OrElse range Is Nothing OrElse Not range.HasLength OrElse range.Length.Value <> length OrElse
+                               Not String.Equals(range.Unit, "bytes", StringComparison.OrdinalIgnoreCase) Then
+                                Throw New InvalidDataException("Invalid Content-Range total for the manifest length.")
+                            End If
+                            ValidateContentRange(resp, existing, length - 1, length - existing)
+                        Case Else
+                            Throw New InvalidDataException("Unexpected response status for a complete file or resumed range.")
+                    End Select
+                    If resp.Content.Headers.ContentLength.HasValue AndAlso resp.Content.Headers.ContentLength.Value <> length - existing Then
+                        Throw New InvalidDataException($"Expected {length - existing} bytes, received a length of {resp.Content.Headers.ContentLength.Value}.")
+                    End If
+                    Interlocked.Exchange(_bytesDownloaded, existing)
+                    _lastTickBytes = existing
+                    Using input = Await resp.Content.ReadAsStreamAsync(idle.Token).ConfigureAwait(False)
+                        Using output As New FileStream(partPath, If(existing > 0, FileMode.Append, FileMode.Create),
+                            FileAccess.Write, FileShare.None, BufferSize, FileOptions.Asynchronous Or FileOptions.SequentialScan)
+                            Dim buffer(BufferSize - 1) As Byte
+                            While BytesDownloaded < length
+                                Dim count = CInt(Math.Min(buffer.Length, length - BytesDownloaded))
+                                idle.CancelAfter(ReadIdleTimeout)
+                                Dim received = Await input.ReadAsync(buffer.AsMemory(0, count), idle.Token).ConfigureAwait(False)
+                                If received = 0 Then Throw New EndOfStreamException($"Expected {length} bytes, received {BytesDownloaded}.")
+                                Await output.WriteAsync(buffer.AsMemory(0, received), token).ConfigureAwait(False)
+                                Interlocked.Add(_bytesDownloaded, received)
+                                ReportProgress()
+                            End While
+                            idle.CancelAfter(ReadIdleTimeout)
+                            If Await input.ReadAsync(buffer.AsMemory(0, 1), idle.Token).ConfigureAwait(False) <> 0 Then
+                                ' An oversized response must not turn into a resumable verified-length prefix.
+                                output.SetLength(existing)
+                                Throw New InvalidDataException($"Response exceeds the expected {length} bytes.")
+                            End If
+                        End Using
+                    End Using
+                End Using
+            End Using
+        End Using
     End Function
 
     Private Async Function DownloadToPartAsync(partPath As String, token As CancellationToken) As Task
@@ -342,7 +446,7 @@ Public Class DownloadFile
         Try
             Using req As New HttpRequestMessage(HttpMethod.Head, Url)
                 ApplyRequestHeaders(req)
-                Using resp = Await _sharedClient.Value.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, token).ConfigureAwait(False)
+                Using resp = Await Client.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, token).ConfigureAwait(False)
                     If resp.IsSuccessStatusCode Then
                         CaptureRemoteValidators(resp)
                         length = If(resp.Content.Headers.ContentLength, -1L)
@@ -358,7 +462,7 @@ Public Class DownloadFile
             Using req As New HttpRequestMessage(HttpMethod.Get, Url)
                 ApplyRequestHeaders(req)
                 req.Headers.Range = New RangeHeaderValue(0, 0)
-                Using resp = Await _sharedClient.Value.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, token).ConfigureAwait(False)
+                Using resp = Await Client.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, token).ConfigureAwait(False)
                     If resp.IsSuccessStatusCode OrElse resp.StatusCode = HttpStatusCode.PartialContent Then CaptureRemoteValidators(resp)
                     If resp.StatusCode = HttpStatusCode.PartialContent Then
                         acceptRange = True
@@ -420,7 +524,7 @@ Public Class DownloadFile
 
         Using req As New HttpRequestMessage(HttpMethod.Get, Url)
             ApplyRequestHeaders(req)
-            Using resp = Await _sharedClient.Value.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, token).ConfigureAwait(False)
+            Using resp = Await Client.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, token).ConfigureAwait(False)
                 resp.EnsureSuccessStatusCode()
                 ValidateRemoteValidators(resp)
                 If _totalBytes < 0 Then _totalBytes = If(resp.Content.Headers.ContentLength, -1L)
@@ -465,7 +569,7 @@ Public Class DownloadFile
             ApplyRequestHeaders(req)
             req.Headers.Range = New RangeHeaderValue(segStart, segEnd)
             ApplyIfRangeValidator(req)
-            Using resp = Await _sharedClient.Value.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, token).ConfigureAwait(False)
+            Using resp = Await Client.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, token).ConfigureAwait(False)
                 If resp.StatusCode <> HttpStatusCode.PartialContent Then
                     If resp.IsSuccessStatusCode Then
                         Throw New InvalidDataException("服务器未按 Range 请求返回 206 Partial Content，无法安全执行分段下载。")

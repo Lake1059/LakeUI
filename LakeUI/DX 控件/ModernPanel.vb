@@ -1635,7 +1635,14 @@ Public Class ModernPanel
 
     Protected Overrides Sub OnVisibleChanged(e As EventArgs)
         MyBase.OnVisibleChanged(e)
-        If Not Me.Visible Then 解除背景穿透消费者()
+        If Not Me.Visible Then
+            解除背景穿透消费者()
+        ElseIf UseNativeTransparentPresentation AndAlso RenderBackendStartup.Requested = RenderBackend.Direct3D12 Then
+            ' 面板自身不提交 GPU 帧，显示时仍要为可见子控件提交新内容。
+            For Each child In D3D_ControlTreeWalker.EnumerateGpuRenderables(Me)
+                If TypeOf child Is ID3D12Renderable Then D3D_V5Presentation.RequestRenderBatched(child, markSurfaceDirty:=False)
+            Next
+        End If
         更新图片动画运行状态()
     End Sub
 

@@ -1,4 +1,4 @@
-cbuffer Quad : register(b0) { float4 bounds; float2 surfaceSize; float opacity; float radius; float4 maskBox; float cornerBits; float sigma; float2 sampleStep; float4 uvRect; float renderScale; float resolveScale; float encodeSdr; float pointSample; float decodeSrgb; float glyphMask; float2 padding; float4 glyphInk; }
+cbuffer Quad : register(b0) { float4 bounds; float2 surfaceSize; float opacity; float radius; float4 maskBox; float cornerBits; float sigma; float2 sampleStep; float4 uvRect; float renderScale; float resolveScale; float encodeSdr; float pointSample; float decodeSrgb; float glyphMask; float cubicSampling; float padding; float4 glyphInk; }
 Texture2D<float4> sourceImage : register(t0);
 SamplerState imageSampler : register(s0);
 SamplerState repeatSampler : register(s1);
@@ -22,6 +22,49 @@ float4 TransferColor(float4 sampleColor) {
     }
     return sampleColor;
 }
+float CubicWeight(float distance) {
+    float x = abs(distance);
+    // Catmull-Rom with support over two texels on either side.
+    if (x < 1.0) return (1.5 * x - 2.5) * x * x + 1.0;
+    if (x < 2.0) return ((-0.5 * x + 2.5) * x - 4.0) * x + 2.0;
+    return 0.0;
+}
+
+float4 SampleCubic(float2 uv) {
+    uint width, height;
+    sourceImage.GetDimensions(width, height);
+    float2 dimensions = float2(width, height);
+    float2 texelsPerPixel = dimensions * abs(uvRect.zw) / ((bounds.zw - bounds.xy) * renderScale);
+
+    // Widen the kernel when shrinking. For large reductions, space linear samples out
+    // over the full footprint to bound the number of taps per axis.
+    float2 filterScale = max(1.0, texelsPerPixel);
+    float2 support = 2.0 * filterScale;
+    float2 spacing = max(1.0, filterScale * 0.5);
+    float2 texel = uv * dimensions - 0.5;
+    float2 first = ceil((texel - support) / spacing) * spacing;
+    int2 count = clamp((int2)ceil((texel + support - first) / spacing), 1, 8);
+    float4 sum = 0;
+    float accumulatedWeight = 0;
+    [loop]
+    for (int y = 0; y < count.y; ++y) {
+        float row = first.y + y * spacing.y;
+        float weightY = CubicWeight((texel.y - row) / filterScale.y);
+        [loop]
+        for (int x = 0; x < count.x; ++x) {
+            float column = first.x + x * spacing.x;
+            float weight = weightY * CubicWeight((texel.x - column) / filterScale.x);
+            sum += weight * sourceImage.SampleLevel(imageSampler, (float2(column, row) + 0.5) / dimensions, 0);
+            accumulatedWeight += weight;
+        }
+    }
+    float4 result = sum / max(accumulatedWeight, 0.0001);
+    result.a = saturate(result.a);
+    // Cubic lobes can overshoot. Keep the filtered SDR texel valid premultiplied color.
+    result.rgb = clamp(result.rgb, 0, result.a);
+    return result;
+}
+
 float4 PS(Vertex v) : SV_Target {
     v.position.xy /= renderScale;
     if (resolveScale > 0) {
@@ -67,6 +110,8 @@ float4 PS(Vertex v) : SV_Target {
         }
         return sum / total;
     }
+    [branch]
+    if (cubicSampling > 0) return TransferColor(SampleCubic(v.uv)) * (opacity * coverage);
     return TransferColor(sourceImage.Sample(imageSampler, v.uv)) * (opacity * coverage);
 }
 

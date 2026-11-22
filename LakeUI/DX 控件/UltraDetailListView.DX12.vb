@@ -456,36 +456,7 @@ Partial Public Class UltraDetailListView
     End Sub
 
     Private Sub 绘制复选框勾号_DX12(context As D3D12_PaintContext, 框区域 As RectangleF, progress As Single, s As Single, 当前勾号色 As Color)
-        If 当前勾号色.A <= 0 Then Return
-
-        Dim 内边距 As Single = 框内边距 * s + 框边框宽度 * s / 2.0F
-        Dim x1 As Single = 框区域.X + 内边距
-        Dim y1 As Single = 框区域.Y + 框区域.Height * 0.5F
-        Dim x2 As Single = 框区域.X + 框区域.Width * 0.4F
-        Dim y2 As Single = 框区域.Bottom - 内边距
-        Dim x3 As Single = 框区域.Right - 内边距
-        Dim y3 As Single = 框区域.Y + 内边距
-        Dim 段1长 As Single = CSng(Math.Sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1)))
-        Dim 段2长 As Single = CSng(Math.Sqrt((x3 - x2) * (x3 - x2) + (y3 - y2) * (y3 - y2)))
-        Dim 总长度 As Single = 段1长 + 段2长
-        If 总长度 < 0.01F Then Return
-
-        Dim 可见长度 As Single = 总长度 * progress
-        Dim strokeWidth = 勾号线宽 * s
-        If 可见长度 <= 段1长 Then
-            Dim t As Single = If(段1长 > 0, 可见长度 / 段1长, 0F)
-            context.DrawRoundLine(
-                New Vector2(x1, y1),
-                New Vector2(x1 + (x2 - x1) * t, y1 + (y2 - y1) * t),
-                当前勾号色, strokeWidth)
-        Else
-            context.DrawRoundLine(New Vector2(x1, y1), New Vector2(x2, y2), 当前勾号色, strokeWidth)
-            Dim 剩余 As Single = 可见长度 - 段1长
-            Dim t As Single = If(段2长 > 0, 剩余 / 段2长, 0F)
-            context.DrawRoundLine(
-                New Vector2(x2, y2),
-                New Vector2(x2 + (x3 - x2) * t, y2 + (y3 - y2) * t),
-                当前勾号色, strokeWidth)
-        End If
+        Dim inset = 框内边距 * s + 框边框宽度 * s / 2.0F
+        context.DrawAnimatedCheckMark(框区域, inset, progress, 当前勾号色, 勾号线宽 * s)
     End Sub
 End Class

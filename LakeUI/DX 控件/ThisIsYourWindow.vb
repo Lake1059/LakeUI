@@ -321,7 +321,6 @@ Public Class ThisIsYourWindow
         ' 上一次记录的最小化状态：用于在 WM_SIZE 中检测"从最小化恢复"事件并强制刷新毛玻璃。
         Public WasMinimized As Boolean = False
         Public OriginalOpacity As Double = 1.0
-        Public PendingFirstPaintRestore As Boolean = False
         Public IsFullScreen As Boolean = False
         Public FullScreenCaptionVisible As Boolean = False
         Public FullScreenCaptionHideTimer As Timer
@@ -382,20 +381,6 @@ Public Class ThisIsYourWindow
         End SyncLock
     End Function
 
-    Friend Shared Sub NotifyGpuFramePresented(form As Form)
-        If form Is Nothing Then Return
-        Dim owner As ThisIsYourWindow = Nothing
-        If Not TryGetAttached(form, owner) OrElse owner Is Nothing Then Return
-        owner.完成首帧还原(owner.查找状态(form))
-    End Sub
-
-    Friend Shared Sub NotifyGpuFrameNotPresented(form As Form)
-        If form Is Nothing Then Return
-        Dim owner As ThisIsYourWindow = Nothing
-        If Not TryGetAttached(form, owner) OrElse owner Is Nothing Then Return
-        owner.取消首帧等待(owner.查找状态(form))
-    End Sub
-
     Friend Shared Function TryRenderAttachedChrome(context As D3D_PaintContext, targetForm As Form) As Boolean
         If context Is Nothing OrElse targetForm Is Nothing OrElse targetForm.IsDisposed Then Return False
         Dim owner As ThisIsYourWindow = Nothing
@@ -412,7 +397,6 @@ Public Class ThisIsYourWindow
         Else
             D3D_RenderDiagnostics.V5ChromeOverlayDuplicateSuppressed()
         End If
-        owner.完成首帧还原(state)
         Return True
     End Function
 
@@ -703,6 +687,7 @@ Public Class ThisIsYourWindow
         Finally
             _正在同步标题栏控件 = False
         End Try
+        InvalidateCaptionBackdrop12(ctrl)
     End Sub
 
     Private Sub 解除标题栏控件绑定()
@@ -898,6 +883,7 @@ Public Class ThisIsYourWindow
         If 延迟配置更新(配置变更.绘制) OrElse (s IsNot Nothing AndAlso s.Initializing) Then Return
         If s Is Nothing OrElse s.HostForm Is Nothing OrElse s.HostForm.IsDisposed Then Return
         s.Dx12ChromeRevision += 1
+        InvalidateCaptionBackdrop12(GetCaptionBackdropRoot(s))
         If s.ChromeOverlayActive AndAlso s.ChromeOverlays IsNot Nothing Then
             If includeBorders Then
                 For Each overlay In s.ChromeOverlays
@@ -1092,41 +1078,21 @@ Public Class ThisIsYourWindow
 
     Private Sub 宿主窗口_Paint(sender As Object, e As PaintEventArgs)
         Dim frm = TryCast(sender, Form)
-        If frm Is Nothing Then Return
-        Dim s = 查找状态(frm)
-        If s IsNot Nothing AndAlso s.ChromeOverlayActive Then
-            完成首帧还原(s)
-            Return
-        End If
-        If TryPaintWindowChrome(e, frm) Then
-            完成首帧还原(s)
-        ElseIf s IsNot Nothing AndAlso s.PendingFirstPaintRestore Then
-            取消首帧等待(s)
-        End If
+        If frm IsNot Nothing Then TryPaintWindowChrome(e, frm)
     End Sub
 
-    Friend Sub 完成首帧还原(s As PerFormState)
-        If s Is Nothing OrElse Not s.PendingFirstPaintRestore Then Return
-        s.PendingFirstPaintRestore = False
-        If s.AnimatingShow Then
-            开始渐入动画(s)
-        ElseIf s.HostForm IsNot Nothing AndAlso Not s.HostForm.IsDisposed AndAlso s.HostForm.IsHandleCreated Then
-            Dim alphaByte As Byte = CByte(Math.Min(255, Math.Max(0, CInt(Math.Round(s.OriginalOpacity * 255)))))
-            SetLayeredWindowAttributes(s.HostForm.Handle, 0, alphaByte, LWA_ALPHA)
+    Private Sub 完成首帧显示(s As PerFormState, ready As Boolean)
+        Dim frm = s.HostForm
+        If 查找状态(frm) IsNot s OrElse frm.IsDisposed OrElse Not frm.Visible Then Return
+        If ready AndAlso _显示动画模式 = WindowShowAnimationMode.Win32 Then
+            Dim hwnd = frm.Handle
+            Dim exStyle = GetWindowLongPtr(hwnd, GWL_EXSTYLE).ToInt64()
+            s.OriginalOpacity = frm.Opacity
+            SetWindowLongPtr(hwnd, GWL_EXSTYLE, New IntPtr(exStyle Or WS_EX_LAYERED))
+            s.AnimatingShow = SetLayeredWindowAttributes(hwnd, 0, 0, LWA_ALPHA)
         End If
-    End Sub
-
-    Friend Sub 取消首帧等待(s As PerFormState)
-        If s Is Nothing OrElse Not s.PendingFirstPaintRestore Then Return
-        s.PendingFirstPaintRestore = False
-        s.AnimatingShow = False
-        If s.HostForm Is Nothing OrElse s.HostForm.IsDisposed OrElse Not s.HostForm.IsHandleCreated Then Return
-
-        Dim alphaByte As Byte = CByte(Math.Min(255, Math.Max(0, CInt(Math.Round(s.OriginalOpacity * 255)))))
-        SetLayeredWindowAttributes(s.HostForm.Handle, 0, alphaByte, LWA_ALPHA)
-        If _阴影模式 = ShadowModeEnum.Layer AndAlso s.ShadowForm IsNot Nothing Then
-            s.ShadowForm.SetGlobalAlpha(255)
-        End If
+        更新阴影(s)
+        If s.AnimatingShow Then 开始渐入动画(s)
     End Sub
 
     Private Sub 宿主窗口_FormClosed(sender As Object, e As FormClosedEventArgs)
@@ -2229,7 +2195,7 @@ Public Class ThisIsYourWindow
 
     Private Sub 更新阴影(s As PerFormState, boundsOverride As Rectangle, forceFullRender As Boolean)
         If 延迟配置更新(配置变更.阴影) OrElse (s IsNot Nothing AndAlso s.Initializing) Then Return
-        If s Is Nothing OrElse s.HostForm Is Nothing Then Return
+        If s Is Nothing OrElse s.HostForm Is Nothing OrElse WindowFirstFrame.IsPending(s.HostForm) Then Return
         ' 阴影显隐也以原生窗口状态为准，避免还原过渡期间误判为最大化。
         Dim zoomed As Boolean = 窗口当前已最大化(s.HostForm)
         Dim minimized As Boolean = (s.HostForm.WindowState = FormWindowState.Minimized)
@@ -3348,25 +3314,26 @@ Public Class ThisIsYourWindow
         End Using
     End Sub
 
-    Private Sub 绘制图标_GPU(context As D3D_PaintContext, s As PerFormState)
+    Private Function 获取标题栏图标(s As PerFormState) As Image
         If s Is Nothing OrElse s.HostForm Is Nothing OrElse Not s.HostForm.ShowIcon OrElse
-           _图标来源 = IconSourceEnum.None OrElse s.IconRect.IsEmpty Then Return
+           _图标来源 = IconSourceEnum.None OrElse s.IconRect.IsEmpty Then Return Nothing
+        If _图标来源 = IconSourceEnum.Custom Then Return _自定义图标
 
-        Dim img As Image = Nothing
-        If _图标来源 = IconSourceEnum.Custom Then
-            img = _自定义图标
-        ElseIf _图标来源 = IconSourceEnum.FormIcon AndAlso s.HostForm?.Icon IsNot Nothing Then
-            If s.CachedIconSource IsNot s.HostForm.Icon Then
-                s.CachedIconBitmap?.Dispose()
-                s.CachedIconBitmap = s.HostForm.Icon.ToBitmap()
-                s.CachedIconSource = s.HostForm.Icon
-            End If
-            img = s.CachedIconBitmap
+        Dim icon = s.HostForm.Icon
+        If _图标来源 <> IconSourceEnum.FormIcon OrElse icon Is Nothing Then Return Nothing
+        If s.CachedIconSource IsNot icon Then
+            Dim bitmap = icon.ToBitmap()
+            s.CachedIconBitmap?.Dispose()
+            s.CachedIconBitmap = bitmap
+            s.CachedIconSource = icon
         End If
-        If img Is Nothing Then Return
+        Return s.CachedIconBitmap
+    End Function
 
-        Dim r = s.IconRect
-        context.DrawImage(img, New RectangleF(r.X, r.Y, r.Width, r.Height), Nothing, 1.0F, 0, Vortice.Direct2D1.InterpolationMode.HighQualityCubic)
+    Private Sub 绘制图标_GPU(context As D3D_PaintContext, s As PerFormState)
+        Dim img = 获取标题栏图标(s)
+        If img Is Nothing Then Return
+        context.DrawImage(img, s.IconRect, interpolation:=Vortice.Direct2D1.InterpolationMode.HighQualityCubic)
     End Sub
 
     Private Sub 绘制控制按钮_GPU(context As D3D_PaintContext, s As PerFormState, rect As Rectangle, htValue As Integer)
@@ -3811,6 +3778,7 @@ Public Class ThisIsYourWindow
         Dim s = 查找状态(form)
         If s Is Nothing Then Return
         s.Dx12ChromeRevision += 1
+        InvalidateCaptionBackdrop12(GetCaptionBackdropRoot(s))
         Dim size = 获取真实客户区尺寸(form)
         Dim dirty As New Rectangle(0, 0, size.Width,
                                    Math.Min(size.Height, 取缩放标题栏总高度(form)))
@@ -4053,21 +4021,8 @@ Public Class ThisIsYourWindow
 
         Dim hWnd As IntPtr = targetForm.Handle
 
-        ' ── 第一步：记录透明度。仅 Win32 渐入需要先隐藏窗口；None 不再把窗口压到 0 alpha。 ──
-        ' Form.Opacity 会触发 AllowTransparency → UpdateStyles() →
-        ' SetWindowLong(GWL_STYLE, CreateParams.Style) 把 WS_CAPTION 写回，
-        ' 导致窗口以默认标题栏出现（白屏）。
-        ' 因此 Win32 渐入改用 SetLayeredWindowAttributes 直接设置 alpha=0。
-        s.OriginalOpacity = targetForm.Opacity
-        s.AnimatingShow = False
-        s.PendingFirstPaintRestore = False
-        If _显示动画模式 = WindowShowAnimationMode.Win32 Then
-            s.AnimatingShow = True
-            Dim exStyle As Long = GetWindowLongPtr(hWnd, GWL_EXSTYLE).ToInt64()
-            SetWindowLongPtr(hWnd, GWL_EXSTYLE, New IntPtr(exStyle Or WS_EX_LAYERED))
-            SetLayeredWindowAttributes(hWnd, 0, 0, LWA_ALPHA)
-            s.PendingFirstPaintRestore = True
-        End If
+        ' 隐藏首次合成期间的窗口和阴影，保留 WinForms 的可见性及 HWND 绘制生命周期。
+        WindowFirstFrame.Defer(targetForm, Sub(ready) 完成首帧显示(s, ready))
 
         ' ── 第二步：修改窗口样式 ──
         Dim style As Long = GetWindowLongPtr(hWnd, GWL_STYLE).ToInt64()
@@ -4547,7 +4502,6 @@ Public Class ThisIsYourWindow
                         Return
                     End If
                     MyBase.WndProc(m)
-                    If _state.PendingFirstPaintRestore Then _owner.取消首帧等待(_state)
                     Return
 
                 Case WM_ENTERSIZEMOVE
@@ -4687,25 +4641,7 @@ Public Class ThisIsYourWindow
                         Return
                     End If
 
-                    If m.WParam <> IntPtr.Zero AndAlso _state.PendingFirstPaintRestore Then
-                        ' 最终安全网：显示前确保窗口仍然处于完全透明状态且样式正确
-                        Dim hWnd = _state.HostForm.Handle
-                        Dim exStyle As Long = GetWindowLongPtr(hWnd, GWL_EXSTYLE).ToInt64()
-                        If (exStyle And WS_EX_LAYERED) = 0 Then
-                            SetWindowLongPtr(hWnd, GWL_EXSTYLE, New IntPtr(exStyle Or WS_EX_LAYERED))
-                        End If
-                        SetLayeredWindowAttributes(hWnd, 0, 0, LWA_ALPHA)
-                        If _owner._阴影模式 <> ShadowModeEnum.DWM Then
-                            Dim st As Long = GetWindowLongPtr(hWnd, GWL_STYLE).ToInt64()
-                            If (st And WS_CAPTION) = WS_CAPTION Then
-                                SetWindowLongPtr(hWnd, GWL_STYLE, New IntPtr(st And Not CLng(WS_CAPTION)))
-                            End If
-                        End If
-                    End If
                     MyBase.WndProc(m)
-                    If m.WParam <> IntPtr.Zero AndAlso _state.PendingFirstPaintRestore Then
-                        请求GPU渲染(_state.HostForm, ThisIsYourWindow.获取真实客户区矩形(_state.HostForm), True)
-                    End If
                     If m.WParam <> IntPtr.Zero AndAlso _owner._显示动画模式 <> WindowShowAnimationMode.DWM Then
                         Try
                             Dim enable As Integer = 0

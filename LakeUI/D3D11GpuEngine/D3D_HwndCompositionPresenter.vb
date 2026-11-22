@@ -266,6 +266,13 @@ Friend NotInheritable Class D3D_HwndCompositionPresenter
         _sdrColorTransform.Draw(bitmap, destination, sourceRegion, InterpolationMode.HighQualityCubic, linearOutput:=False)
     End Sub
 
+    Friend ReadOnly Property HasPublishedFrame As Boolean
+        Get
+            Return Not _disposed AndAlso _presentedSurfaceRevision <> 0 AndAlso _surface IsNot Nothing AndAlso
+                _handle = _owner.Handle AndAlso _size = _owner.ClientSize
+        End Get
+    End Property
+
     Friend Function HasPresented(surface As D3D_ControlSurface) As Boolean
         Return Not _disposed AndAlso surface IsNot Nothing AndAlso surface.Bitmap IsNot Nothing AndAlso
             _surface IsNot Nothing AndAlso _generation = surface.DeviceGeneration AndAlso

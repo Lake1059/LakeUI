@@ -13,6 +13,12 @@ internal static partial class Program
                 return 0;
             }
 
+            if (args is ["--first-display", var scenario])
+            {
+                FirstFrameDisplayTests.Run(scenario);
+                return 0;
+            }
+
             GlobalOptions.SetRenderBackendAsync(RenderBackend.Direct3D11).GetAwaiter().GetResult();
             UltraDetailListViewTests.Run();
             CheckModernPanelTransparentMode();

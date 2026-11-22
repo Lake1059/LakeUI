@@ -1,3 +1,4 @@
+Imports System.Numerics
 Imports System.Runtime.CompilerServices
 Imports Vortice.Mathematics
 
@@ -47,7 +48,7 @@ Public NotInheritable Class D3D12_PaintContext
     Public Sub FillRoundedRectangle(bounds As RectangleF, radius As Single, color As Drawing.Color)
         If presenter Is Nothing Then Throw New InvalidOperationException("Frame is closed.")
         If color.A = 0 Then Return
-        presenter.RenderRoundedRectangle(Rectangle.Round(Map(bounds)), radius, ToColor(color))
+        presenter.RenderRoundedRectangle(Map(bounds), radius, ToColor(color))
     End Sub
 
     Friend Sub FillShape(bounds As RectangleF, radius As Single, color As Drawing.Color, Optional last As Drawing.Color = Nothing,
@@ -64,27 +65,15 @@ Public NotInheritable Class D3D12_PaintContext
     Public Sub StrokeRoundedRectangle(bounds As RectangleF, radius As Single, color As Drawing.Color, width As Single)
         If presenter Is Nothing Then Throw New InvalidOperationException("Frame is closed.")
         If width <= 0 OrElse color.A = 0 Then Return
-        bounds.Inflate(width / 2, width / 2)
-        presenter.RenderRoundedRectangleStroke(Rectangle.Round(Map(bounds)), radius + width / 2, width, ToColor(color))
+        presenter.RenderRoundedRectangle(Map(bounds), radius, ToColor(color), width)
     End Sub
 
     Public Sub DrawRectangle(bounds As RectangleF, color As Drawing.Color, width As Single)
-        If width <= 0 Then Return
-        DrawPanelShape(bounds, 0, width, 0, color)
+        StrokeRoundedRectangle(bounds, 0, color, width)
     End Sub
 
     Public Sub DrawLine(start As System.Numerics.Vector2, finish As System.Numerics.Vector2, color As Drawing.Color, width As Single)
-        If presenter Is Nothing Then Throw New InvalidOperationException("Frame is closed.")
-        Dim translation As New System.Numerics.Vector2(origin.X, origin.Y)
-        start += translation
-        finish += translation
-        Dim delta = finish - start
-        Dim length = delta.Length()
-        If length <= 0 OrElse width <= 0 OrElse color.A = 0 Then Return
-        Dim normal As New System.Numerics.Vector2(-delta.Y, delta.X)
-        normal *= width / (2 * length)
-        presenter.RenderPolygon({New PointF(start.X + normal.X, start.Y + normal.Y), New PointF(finish.X + normal.X, finish.Y + normal.Y),
-                                 New PointF(finish.X - normal.X, finish.Y - normal.Y), New PointF(start.X - normal.X, start.Y - normal.Y)}, ToColor(color))
+        DrawLineCore(start, finish, color, width, roundCaps:=False)
     End Sub
 
     Friend Sub DrawArc(area As RectangleF, width As Single, start As Single, sweep As Single, color As Drawing.Color,
@@ -146,22 +135,51 @@ Public NotInheritable Class D3D12_PaintContext
     End Sub
 
     Friend Sub DrawRoundLine(a As System.Numerics.Vector2, b As System.Numerics.Vector2, color As Drawing.Color, width As Single)
-        DrawLine(a, b, color, width)
-        Dim half = width / 2
-        FillEllipse(New RectangleF(a.X - half, a.Y - half, width, width), color)
-        FillEllipse(New RectangleF(b.X - half, b.Y - half, width, width), color)
+        DrawLineCore(a, b, color, width, roundCaps:=True)
+    End Sub
+
+    Friend Sub DrawJoinedRoundLines(start As Vector2, joint As Vector2, finish As Vector2, color As Drawing.Color, width As Single)
+        If presenter Is Nothing Then Throw New InvalidOperationException("Frame is closed.")
+        If color.A = 0 OrElse width <= 0 Then Return
+        Dim offset As New Vector2(origin.X, origin.Y)
+        presenter.RenderJoinedRoundLines(start + offset, joint + offset, finish + offset, width, ToColor(color))
+    End Sub
+
+    Friend Sub DrawAnimatedCheckMark(bounds As RectangleF, inset As Single, progress As Single, color As Drawing.Color, width As Single)
+        If color.A = 0 OrElse width <= 0 Then Return
+        Dim start As New Vector2(bounds.Left + inset, bounds.Top + bounds.Height * 0.5F)
+        Dim joint As New Vector2(bounds.Left + bounds.Width * 0.4F, bounds.Bottom - inset)
+        Dim finish As New Vector2(bounds.Right - inset, bounds.Top + inset)
+        Dim firstLength = Vector2.Distance(start, joint)
+        Dim lastLength = Vector2.Distance(joint, finish)
+        Dim length = firstLength + lastLength
+        If length < 0.01F Then Return
+
+        Dim visibleLength = length * progress
+        If visibleLength <= firstLength Then
+            DrawRoundLine(start, Vector2.Lerp(start, joint, If(firstLength > 0, visibleLength / firstLength, 0.0F)), color, width)
+        Else
+            Dim fraction = If(lastLength > 0, (visibleLength - firstLength) / lastLength, 0.0F)
+            DrawJoinedRoundLines(start, joint, Vector2.Lerp(joint, finish, fraction), color, width)
+        End If
+    End Sub
+
+    Private Sub DrawLineCore(start As Vector2, finish As Vector2, color As Drawing.Color, width As Single, roundCaps As Boolean)
+        If presenter Is Nothing Then Throw New InvalidOperationException("Frame is closed.")
+        If width <= 0 OrElse color.A = 0 Then Return
+        Dim offset As New System.Numerics.Vector2(origin.X, origin.Y)
+        presenter.RenderLine(start + offset, finish + offset, width, ToColor(color), roundCaps)
     End Sub
 
     Public Sub FillEllipse(bounds As RectangleF, color As Drawing.Color)
         If presenter Is Nothing Then Throw New InvalidOperationException("Frame is closed.")
-        If color.A > 0 Then presenter.RenderEllipse(Rectangle.Round(Map(bounds)), ToColor(color), 0)
+        If color.A > 0 Then presenter.RenderEllipse(Map(bounds), ToColor(color), 0)
     End Sub
 
     Public Sub StrokeEllipse(bounds As RectangleF, color As Drawing.Color, width As Single)
         If presenter Is Nothing Then Throw New InvalidOperationException("Frame is closed.")
         If color.A = 0 OrElse width <= 0 Then Return
-        bounds.Inflate(width / 2, width / 2)
-        presenter.RenderEllipse(Rectangle.Round(Map(bounds)), ToColor(color), width)
+        presenter.RenderEllipse(Map(bounds), ToColor(color), width)
     End Sub
 
     Private Function ToColor(color As Drawing.Color) As Color4
@@ -219,6 +237,18 @@ Public NotInheritable Class D3D12_PaintContext
 
     Public Sub DrawImage(image As Image, destination As RectangleF)
         DrawMaskedImage(image, destination, Nothing, 0, 0)
+    End Sub
+
+    Friend Sub DrawCubicImage(image As Image, destination As RectangleF)
+        If presenter Is Nothing Then Throw New InvalidOperationException("Frame is closed.")
+        If image Is Nothing Then Return
+        Dim bounds = Map(destination)
+        If bounds.Width <= 0 OrElse bounds.Height <= 0 OrElse Not bounds.IntersectsWith(presenter.FrameClip) Then Return
+        Dim width = image.Width
+        Dim height = image.Height
+        Dim resize = width <> bounds.Width * presenter.SampleScale OrElse height <> bounds.Height * presenter.SampleScale
+        presenter.DrawLinearTile(width, height, Function() DecodeImage(image), bounds, Nothing, False, Nothing,
+                                 Vortice.DXGI.Format.B8G8R8A8_UNorm, cubicSampling:=resize)
     End Sub
 
     Private Shared ReadOnly immutableImageKeys As New ConditionalWeakTable(Of Image, Object)()
@@ -360,7 +390,8 @@ Public NotInheritable Class D3D12_PaintContext
         Dim provider = D3D12StartupDispatch.FindPresenter(source)
         D3D12_BackgroundDependencies.Sample(presenter.OwnerControl, source, If(provider?.RenderCount, 0L))
         If Not source.IsHandleCreated Then Return False
-        If TypeOf source Is Form AndAlso provider Is Nothing Then
+        Dim form = TryCast(source, Form)
+        If form IsNot Nothing AndAlso (provider Is Nothing OrElse ThisIsYourWindow.UsesCaptionBackdrop12(form, presenter.OwnerControl)) Then
             Dim owner = presenter.OwnerControl
             Dim offset = owner.PointToClient(source.PointToScreen(Point.Empty))
             Dim sourceBounds As New Rectangle(offset, source.ClientSize)
@@ -368,7 +399,7 @@ Public NotInheritable Class D3D12_PaintContext
             If paintBounds.Width <= 0 OrElse paintBounds.Height <= 0 Then Return False
             paintBounds.Offset(-origin.X, -origin.Y)
             Using PushClip(paintBounds)
-                Return ThisIsYourWindow.DrawFormSurface12(Me, DirectCast(source, Form), New Point(offset.X - origin.X, offset.Y - origin.Y))
+                Return ThisIsYourWindow.DrawFormSurface12(Me, form, New Point(offset.X - origin.X, offset.Y - origin.Y))
             End Using
         End If
         Return presenter.DrawSource(provider, clip)
@@ -474,11 +505,17 @@ Friend Module D3D12StartupDispatch
                 Dim opaque = opacity IsNot Nothing AndAlso opacity.IsBackgroundOpaque
                 If ancestor IsNot Nothing AndAlso Not opaque AndAlso Not (provider IsNot Nothing AndAlso provider.TryGetBackgroundSource(explicitSource) AndAlso explicitSource IsNot Nothing) Then
                     Dim parentPresenter = FindPresenter(ancestor)
-                    If parentPresenter IsNot Nothing Then
+                    Dim form = TryCast(ancestor, Form)
+                    ' CaptionControl is parented to the form, beside the chrome overlay. Its inherited
+                    ' background needs the chrome in form coordinates even before the overlay publishes.
+                    If form IsNot Nothing AndAlso ThisIsYourWindow.UsesCaptionBackdrop12(form, owner) Then
+                        Dim offset = owner.PointToClient(form.PointToScreen(Point.Empty))
+                        ThisIsYourWindow.DrawFormSurface12(context, form, offset)
+                    ElseIf parentPresenter IsNot Nothing Then
                         context.DrawPublishedSource(parentPresenter, owner.ClientRectangle)
-                    ElseIf TypeOf ancestor Is Form AndAlso Not TypeOf owner Is ThisIsYourWindow.ChromeOverlayControl AndAlso
-                           Not ThisIsYourWindow.DrawFormBackdrop12(context, DirectCast(ancestor, Form), owner) Then
-                        context.FillRectangle(owner.ClientRectangle, ancestor.BackColor)
+                    ElseIf form IsNot Nothing AndAlso Not TypeOf owner Is ThisIsYourWindow.ChromeOverlayControl AndAlso
+                           Not ThisIsYourWindow.DrawFormBackdrop12(context, form, owner) Then
+                        context.FillRectangle(owner.ClientRectangle, form.BackColor)
                     End If
                 End If
                 source.RenderGpu12(context)
@@ -544,7 +581,7 @@ Friend Module D3D12StartupDispatch
 
     Private Sub ReleaseFailedStartup()
         For Each pair In presenters.ToArray()
-            Detach(pair.Key, EventArgs.Empty)
+            ReleasePresenter(pair.Key)
         Next
         For Each atlas In atlases.Values.ToArray()
             atlas.Dispose()
@@ -565,7 +602,7 @@ Friend Module D3D12StartupDispatch
         Dim presenter As New D3D12_CompositionPresenter(owner, group, atlas)
         AddHandler owner.Invalidated, AddressOf InvalidatePaint
         AddHandler owner.VisibleChanged, AddressOf VisibilityChanged
-        AddHandler owner.HandleDestroyed, AddressOf Detach
+        AddHandler owner.HandleDestroyed, AddressOf HandleDestroyed
         Return presenter
     End Function
 
@@ -582,22 +619,29 @@ Friend Module D3D12StartupDispatch
         If owner.Visible AndAlso owner.IsHandleCreated AndAlso Not owner.IsDisposed Then D3D_V5Presentation.RequestRenderBatched(owner)
     End Sub
 
-    Private Sub Detach(sender As Object, e As EventArgs)
-        Dim owner = DirectCast(sender, Control)
+    Friend Sub SuspendPresentation(owner As Control)
+        If ReleasePresenter(owner) Then D3D12_BackgroundDependencies.Published(owner, 0)
+    End Sub
+
+    Private Sub HandleDestroyed(sender As Object, e As EventArgs)
+        ReleasePresenter(DirectCast(sender, Control))
+    End Sub
+
+    Private Function ReleasePresenter(owner As Control) As Boolean
+        Dim presenter As D3D12_CompositionPresenter = Nothing
+        If Not presenters.TryGetValue(owner, presenter) Then Return False
         D3D12_BackgroundDependencies.Remove(owner)
+        presenters.Remove(owner)
         RemoveHandler owner.Invalidated, AddressOf InvalidatePaint
         RemoveHandler owner.VisibleChanged, AddressOf VisibilityChanged
-        RemoveHandler owner.HandleDestroyed, AddressOf Detach
-        Dim presenter As D3D12_CompositionPresenter = Nothing
-        If presenters.TryGetValue(owner, presenter) Then
-            presenters.Remove(owner)
-            Dim atlas = presenter.Atlas
-            presenter.Dispose()
-            If atlas.Count = 0 Then
-                Dim root = atlases.First(Function(item) item.Value Is atlas).Key
-                atlases.Remove(root)
-                atlas.Dispose()
-            End If
+        RemoveHandler owner.HandleDestroyed, AddressOf HandleDestroyed
+        Dim atlas = presenter.Atlas
+        presenter.Dispose()
+        If atlas.Count = 0 Then
+            Dim root = atlases.First(Function(item) item.Value Is atlas).Key
+            atlases.Remove(root)
+            atlas.Dispose()
         End If
-    End Sub
+        Return True
+    End Function
 End Module

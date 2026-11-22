@@ -177,8 +177,7 @@ Partial Public Class ModernListBox
                     Dim p1 As New Vector2(x + inset, y + scaledSize * 0.5F)
                     Dim p2 As New Vector2(x + scaledSize * 0.4F, y + scaledSize - inset)
                     Dim p3 As New Vector2(x + scaledSize - inset, y + inset)
-                    context.DrawRoundLine(p1, p2, br, scaledMarkW)
-                    context.DrawRoundLine(p2, p3, br, scaledMarkW)
+                    context.DrawJoinedRoundLines(p1, p2, p3, br, scaledMarkW)
                 End If
             Case CheckStateEnum.Crossed
                 Dim br = 复选框叉选颜色

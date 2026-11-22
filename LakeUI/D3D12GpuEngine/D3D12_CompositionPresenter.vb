@@ -1,3 +1,4 @@
+Imports System.Numerics
 Imports Vortice.Direct3D12
 Imports Vortice.DXGI
 Imports Vortice.Mathematics
@@ -79,6 +80,7 @@ Friend NotInheritable Class D3D12_CompositionPresenter
     Friend Property InvalidationVersion As Long
     Friend Property ChromeKey As Object
     Private _renderCount As Long
+    Private _framePublishedToAtlas As Boolean
     Friend ReadOnly Atlas As D3D12_WindowAtlas
     Private slotIndex As Integer
     Friend Property SampleScale As Integer = 1
@@ -292,7 +294,15 @@ Friend NotInheritable Class D3D12_CompositionPresenter
         End Get
     End Property
 
+    Friend ReadOnly Property HasPublishedFrame As Boolean
+        Get
+            Return Not _disposed AndAlso _framePublishedToAtlas AndAlso _handle = _owner.Handle AndAlso
+                _size.Width = _owner.ClientSize.Width AndAlso _size.Height = _owner.ClientSize.Height
+        End Get
+    End Property
+
     Friend Sub AcknowledgeAtlasPublication()
+        _framePublishedToAtlas = True
         RenderBackendSwitching.ObservePublication(_owner)
         D3D12_BackgroundDependencies.Published(_owner, _renderCount)
     End Sub
@@ -397,7 +407,8 @@ Friend NotInheritable Class D3D12_CompositionPresenter
     End Sub
 
     Friend Sub DrawLinearTile(width As Integer, height As Integer, getPixels As Func(Of Byte()), dest As RectangleF,
-                              uv As RectangleF, nearest As Boolean, key As Object, Optional sourceFormat As Format = Format.R16G16B16A16_Float)
+                              uv As RectangleF, nearest As Boolean, key As Object, Optional sourceFormat As Format = Format.R16G16B16A16_Float,
+                              Optional cubicSampling As Boolean = False)
         If recordingFrame Is Nothing Then Throw New InvalidOperationException("Drawing requires an open frame.")
         If dest.Width <= 0 OrElse dest.Height <= 0 OrElse Not dest.IntersectsWith(FrameClip) Then Return
         If imagePipeline Is Nothing Then imagePipeline = _deviceManager.GetImages(FloatTarget)
@@ -430,7 +441,8 @@ Friend NotInheritable Class D3D12_CompositionPresenter
             recordingFrame.Uploads.Add(texture.QueryInterface(Of ID3D12Resource)())
         End If
         imagePipeline.DrawTexture(_commandList, recordingFrame.Uploads, recordingFrame.Rtv, texture, dest, _size, 1, FrameClip,
-                                  scale:=SampleScale, encode:=Not FloatTarget AndAlso sourceFormat = Format.R16G16B16A16_Float, uv:=uv, pointSample:=nearest, descriptorArena:=recordingFrame.DescriptorArena)
+                                  scale:=SampleScale, encode:=Not FloatTarget AndAlso sourceFormat = Format.R16G16B16A16_Float,
+                                  uv:=uv, pointSample:=nearest, descriptorArena:=recordingFrame.DescriptorArena, cubicSampling:=cubicSampling)
     End Sub
 
     Private Shared ReadOnly noisePixels As Byte() = MakeNoise()
@@ -554,27 +566,68 @@ Friend NotInheritable Class D3D12_CompositionPresenter
         RenderGeometry(bounds, startColor, endColor, bounds.Top, Math.Max(1, bounds.Height), 0, 0, False)
     End Sub
 
-    Friend Sub RenderRoundedRectangle(bounds As Rectangle, radius As Single, color As Color4)
-        Dim effectiveRadius = Math.Max(0.0F, Math.Min(radius, Math.Min(bounds.Width, bounds.Height) / 2.0F))
-        RenderGeometry(bounds, color, color, bounds.Top, Math.Max(1, bounds.Height), effectiveRadius, 0, False)
+    Friend Sub RenderRoundedRectangle(bounds As RectangleF, radius As Single, color As Color4, Optional stroke As Single = 0)
+        Dim effectiveRadius = Math.Clamp(radius, 0.0F, Math.Max(0.0F, Math.Min(bounds.Width, bounds.Height) / 2.0F))
+        RenderContour(bounds, color, effectiveRadius, stroke, D3D12_GeometryKind.RoundedRectangle)
     End Sub
 
-    Friend Sub RenderEllipse(bounds As Rectangle, color As Color4, stroke As Single)
-        RenderGeometry(bounds, color, color, bounds.Top, Math.Max(1, bounds.Height), -1, stroke, stroke > 0)
+    Friend Sub RenderEllipse(bounds As RectangleF, color As Color4, stroke As Single)
+        RenderContour(bounds, color, 0, stroke, D3D12_GeometryKind.Ellipse)
+    End Sub
+
+    Private Sub RenderContour(bounds As RectangleF, color As Color4, radius As Single, stroke As Single, kind As D3D12_GeometryKind)
+        If bounds.Width <= 0 OrElse bounds.Height <= 0 OrElse Not Single.IsFinite(stroke) Then Return
+        ' Keep the centreline exact. Only the drawing bounds include the outer stroke and AA fringe.
+        RenderGeometry(bounds, color, color, 0, 1, radius, stroke, stroke > 0,
+                       kind:=kind, coveragePadding:=stroke / 2.0F + 1.0F / SampleScale)
+    End Sub
+
+    Friend Sub RenderLine(start As Vector2, finish As Vector2, width As Single, color As Color4, roundCaps As Boolean)
+        Dim delta = finish - start
+        Dim length = delta.Length()
+        If Not Single.IsFinite(length) OrElse Not Single.IsFinite(width) OrElse width <= 0 Then Return
+        Dim half = width / 2.0F
+        If length = 0 Then
+            If roundCaps Then RenderEllipse(New RectangleF(start.X - half, start.Y - half, width, width), color, 0)
+            Return
+        End If
+
+        ' Limit shading to a quad around the segment, including the samples at its edges.
+        Dim fringe = 1.0F / SampleScale
+        Dim axis = delta / length
+        Dim side = New Vector2(-axis.Y, axis.X) * (half + fringe)
+        Dim cap = axis * (If(roundCaps, half, 0.0F) + fringe)
+        Dim a = start - cap + side
+        Dim b = finish + cap + side
+        Dim c = finish + cap - side
+        Dim d = start - cap - side
+        Dim p0 As New PointF(a.X, a.Y)
+        Dim p1 As New PointF(b.X, b.Y)
+        Dim p2 As New PointF(c.X, c.Y)
+        Dim p3 As New PointF(d.X, d.Y)
+        Dim bounds = RectangleF.FromLTRB(Math.Min(start.X, finish.X), Math.Min(start.Y, finish.Y),
+                                         Math.Max(start.X, finish.X), Math.Max(start.Y, finish.Y))
+        RenderGeometry(bounds, color, color, 0, 1, 0, width, False,
+                       triangleVertices:={p0, p1, p2, p0, p2, p3},
+                       kind:=If(roundCaps, D3D12_GeometryKind.RoundLine, D3D12_GeometryKind.FlatLine),
+                       linePoints:=New Vector4(start.X, start.Y, finish.X, finish.Y), coveragePadding:=half + fringe)
+    End Sub
+
+    Friend Sub RenderJoinedRoundLines(start As Vector2, joint As Vector2, finish As Vector2, width As Single, color As Color4)
+        If Not Single.IsFinite(width) OrElse width <= 0 Then Return
+        Dim low = Vector2.Min(Vector2.Min(start, joint), finish)
+        Dim high = Vector2.Max(Vector2.Max(start, joint), finish)
+        Dim bounds = RectangleF.FromLTRB(low.X, low.Y, high.X, high.Y)
+        RenderGeometry(bounds, color, color, 0, 1, 0, width, False,
+                       kind:=D3D12_GeometryKind.JoinedRoundLines,
+                       linePoints:=New Vector4(start.X, start.Y, finish.X, finish.Y), lineJoin:=joint,
+                       coveragePadding:=width / 2.0F + 1.0F / SampleScale)
     End Sub
 
     Friend Sub RenderRectangleStroke(bounds As Rectangle, strokeWidth As Single, color As Color4)
         If strokeWidth <= 0 OrElse bounds.Width <= 0 OrElse bounds.Height <= 0 Then Return
         Dim effectiveStroke = Math.Min(strokeWidth, Math.Min(bounds.Width, bounds.Height) / 2.0F)
         RenderGeometry(bounds, color, color, bounds.Top, Math.Max(1, bounds.Height), 0,
-            effectiveStroke, True)
-    End Sub
-
-    Friend Sub RenderRoundedRectangleStroke(bounds As Rectangle, radius As Single, strokeWidth As Single, color As Color4)
-        If strokeWidth <= 0 OrElse bounds.Width <= 0 OrElse bounds.Height <= 0 Then Return
-        Dim effectiveRadius = Math.Max(0.0F, Math.Min(radius, Math.Min(bounds.Width, bounds.Height) / 2.0F))
-        Dim effectiveStroke = Math.Min(strokeWidth, Math.Min(bounds.Width, bounds.Height) / 2.0F)
-        RenderGeometry(bounds, color, color, bounds.Top, Math.Max(1, bounds.Height), effectiveRadius,
             effectiveStroke, True)
     End Sub
 
@@ -600,7 +653,7 @@ Friend NotInheritable Class D3D12_CompositionPresenter
         RenderGeometry(bounds, color, color, 0, 1, radius, stroke, stroke > 0, cornerMask:=mask)
     End Sub
 
-    Private Sub RenderGeometry(bounds As Rectangle,
+    Private Sub RenderGeometry(bounds As RectangleF,
                                        startColor As Color4,
                                        endColor As Color4,
                                        gradientTop As Single,
@@ -612,14 +665,22 @@ Friend NotInheritable Class D3D12_CompositionPresenter
                                        Optional triangleCoverage As Single() = Nothing,
                                        Optional cornerMask As Integer = 15, Optional horizontal As Boolean = False,
                                        Optional maskRadius As Single = 0, Optional maskBox As RectangleF = Nothing,
-                                       Optional arc As System.Numerics.Vector4 = Nothing)
+                                       Optional arc As Vector4 = Nothing,
+                                        Optional kind As D3D12_GeometryKind = D3D12_GeometryKind.Legacy,
+                                        Optional linePoints As Vector4 = Nothing, Optional lineJoin As Vector2 = Nothing,
+                                        Optional coveragePadding As Single = 0)
         If _disposed Then Throw New ObjectDisposedException(NameOf(D3D12_CompositionPresenter))
         If _owner.IsDisposed OrElse Not _owner.IsHandleCreated OrElse _owner.Handle <> _handle Then
             Throw New InvalidOperationException("The target HWND changed during presenter lifetime.")
         End If
-        Dim clipped = Rectangle.Intersect(New Rectangle(0, 0, _size.Width, _size.Height), bounds)
-        If recordingFrame IsNot Nothing Then clipped = Rectangle.Intersect(FrameClip, clipped)
-        If clipped.Width <= 0 OrElse clipped.Height <= 0 Then Return
+        Dim drawBounds = bounds
+        drawBounds.Inflate(coveragePadding, coveragePadding)
+        Dim clip As New Rectangle(0, 0, _size.Width, _size.Height)
+        If recordingFrame IsNot Nothing Then clip.Intersect(FrameClip)
+        Dim intersection = RectangleF.Intersect(clip, drawBounds)
+        If intersection.Width <= 0 OrElse intersection.Height <= 0 Then Return
+        Dim clipped = Rectangle.FromLTRB(CInt(Math.Floor(intersection.Left)), CInt(Math.Floor(intersection.Top)),
+                                         CInt(Math.Ceiling(intersection.Right)), CInt(Math.Ceiling(intersection.Bottom)))
 
         Dim standalone = recordingFrame Is Nothing
         If standalone Then BeginRecording()
@@ -630,7 +691,8 @@ Friend NotInheritable Class D3D12_CompositionPresenter
                 _rectanglePipeline.RectangleVertices(vertexCount),
                 _rectanglePipeline.UploadTriangles(_size, triangleVertices, vertexCount, triangleCoverage, recordingFrame.UploadArena, recordingFrame.Uploads))
             _rectanglePipeline.RecordDraw(_commandList, upload, vertexCount, _size, clipped, bounds, recordingFrame.Rtv,
-                startColor, endColor, gradientTop, gradientHeight, cornerRadius, strokeWidth, strokeMode, cornerMask, horizontal, maskRadius, maskBox, arc, SampleScale)
+                startColor, endColor, gradientTop, gradientHeight, cornerRadius, strokeWidth, strokeMode, cornerMask,
+                horizontal, maskRadius, maskBox, arc, SampleScale, kind, linePoints, lineJoin)
             If standalone Then SubmitRecording()
         Catch
             CancelRecording()
@@ -952,6 +1014,7 @@ Friend NotInheritable Class D3D12_CompositionPresenter
     End Sub
 
     Private Sub ReleaseFrameResources()
+        _framePublishedToAtlas = False
         contentPublished = False
         resolved?.Dispose()
         resolved = Nothing

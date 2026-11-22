@@ -72,6 +72,14 @@ Friend NotInheritable Class D3D_V5Presentation
         Return presenter
     End Function
 
+    Friend Shared Function HasPublishedFrame(control As Control, backend As RenderBackend) As Boolean
+        If backend = RenderBackend.Direct3D12 Then
+            Return If(D3D12StartupDispatch.FindPresenter(control)?.HasPublishedFrame, False)
+        End If
+        Dim presenter As D3D_HwndCompositionPresenter = Nothing
+        Return _presenters.TryGetValue(control, presenter) AndAlso presenter.HasPublishedFrame
+    End Function
+
     Shared Sub New()
         AddHandler Application.ThreadExit, AddressOf UI线程退出时
         AddHandler D3D_RenderCore.DeviceManager.DeviceLost, AddressOf 设备丢失时
@@ -99,6 +107,7 @@ Friend NotInheritable Class D3D_V5Presentation
         End If
         移除批次请求(control)
         取消重试(control)
+        D3D12StartupDispatch.SuspendPresentation(control)
         D3D_ControlSurfaceRegistry.ReleaseSurfaceResources(control)
     End Sub
 
@@ -336,7 +345,7 @@ Friend NotInheritable Class D3D_V5Presentation
         Optional requestedDirty As Rectangle = Nothing,
         Optional prepareOnly As Boolean = False,
         Optional 准备耗时 As Dictionary(Of Control, Double) = Nothing)
-        If 控件 Is Nothing OrElse 可渲染对象 Is Nothing OrElse 控件.IsDisposed Then Return
+        If Not IsV5Control(控件) OrElse 可渲染对象 Is Nothing OrElse 控件.IsDisposed Then Return
         If Not 控件.IsHandleCreated OrElse 控件.ClientSize.Width <= 0 OrElse 控件.ClientSize.Height <= 0 Then Return
         RenderBackendStartup.ObserveHost(控件)
         Dim route = RenderBackendStartup.Requested
@@ -347,12 +356,23 @@ Friend NotInheritable Class D3D_V5Presentation
         End If
         RenderBackendStartup.TrackThread()
         If _renderDepth > 0 Then
-            控件.Invalidate()
+            If route.Value = RenderBackend.Direct3D12 Then
+                RequestRenderBatched(控件, requestedDirty)
+            Else
+                控件.Invalidate()
+            End If
             Return
         End If
 
         If route.Value = RenderBackend.Direct3D12 Then
-            If Not prepareOnly Then D3D12StartupDispatch.Render(控件, requestedDirty)
+            If prepareOnly Then Return
+            ' WinForms 的透明背景可能回调父控件 OnPaint，重入请求必须等本帧结束。
+            _renderDepth += 1
+            Try
+                D3D12StartupDispatch.Render(控件, requestedDirty)
+            Finally
+                _renderDepth -= 1
+            End Try
             Return
         End If
         Dim designerPreview = RenderBackendStartup.IsDesignerPreview

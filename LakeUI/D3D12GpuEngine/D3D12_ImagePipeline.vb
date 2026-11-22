@@ -96,7 +96,9 @@ Friend NotInheritable Class D3D12_ImagePipeline
                            Optional retained As GlyphBatch = Nothing, Optional maskBounds As Drawing.RectangleF = Nothing,
                     Optional radius As Single = 0, Optional corners As Integer = 0, Optional sigma As Single = 0,
                     Optional stepX As Single = 0, Optional stepY As Single = 0, Optional scale As Integer = 1, Optional resolve As Integer = 0, Optional encode As Boolean = False,
-                           Optional uv As Drawing.RectangleF = Nothing, Optional pointSample As Boolean = False, Optional glyphInk As Color4? = Nothing, Optional subpixel As Boolean = False, Optional descriptorArena As D3D12_DescriptorArena = Nothing)
+                           Optional uv As Drawing.RectangleF = Nothing, Optional pointSample As Boolean = False, Optional glyphInk As Color4? = Nothing,
+                           Optional subpixel As Boolean = False, Optional descriptorArena As D3D12_DescriptorArena = Nothing,
+                           Optional cubicSampling As Boolean = False)
         Dim heap As ID3D12DescriptorHeap
         Dim gpu As GpuDescriptorHandle
         If retained Is Nothing AndAlso descriptorArena IsNot Nothing Then
@@ -112,7 +114,9 @@ Friend NotInheritable Class D3D12_ImagePipeline
             retained.Runs.Add((heap, dest, uv, subpixel))
             retained.EstimatedBytes += 65536L + ((CLng(texture.Description.Width) * CLng(texture.Description.Height) * If(texture.Description.Format = Format.R8_UNorm, 1, 4) + 65535) \ 65536) * 65536
         End If
-        DrawDescriptor(list, rtv, heap, dest, surface, opacity, clip, maskBounds, radius, corners, sigma, stepX, stepY, uv, scale, resolve, encode, pointSample, texture.Description.Format <> Format.R16G16B16A16_Float, glyphInk, subpixel, gpu)
+        DrawDescriptor(list, rtv, heap, dest, surface, opacity, clip, maskBounds, radius, corners, sigma, stepX, stepY, uv,
+                       scale, resolve, encode, pointSample, texture.Description.Format <> Format.R16G16B16A16_Float,
+                       glyphInk, subpixel, gpu, cubicSampling)
     End Sub
 
     Friend NotInheritable Class GlyphBatch
@@ -133,7 +137,7 @@ Friend NotInheritable Class D3D12_ImagePipeline
                               Optional radius As Single = 0, Optional corners As Integer = 0, Optional sigma As Single = 0,
                     Optional stepX As Single = 0, Optional stepY As Single = 0, Optional uv As Drawing.RectangleF = Nothing, Optional scale As Integer = 1, Optional resolve As Integer = 0,
                               Optional encode As Boolean = False, Optional pointSample As Boolean = False, Optional sourceSrgb As Boolean = True, Optional glyphInk As Color4? = Nothing, Optional subpixel As Boolean = False,
-                              Optional descriptor As GpuDescriptorHandle = Nothing)
+                              Optional descriptor As GpuDescriptorHandle = Nothing, Optional cubicSampling As Boolean = False)
         If uv.IsEmpty Then uv = New Drawing.RectangleF(0, 0, 1, 1)
         Dim ink = glyphInk.GetValueOrDefault()
         If subpixel AndAlso subpixelState Is Nothing Then
@@ -144,7 +148,7 @@ Friend NotInheritable Class D3D12_ImagePipeline
         list.SetDescriptorHeaps(heap)
         list.SetGraphicsRootDescriptorTable(1, If(descriptor.Ptr = 0, heap.GetGPUDescriptorHandleForHeapStart(), descriptor))
         list.SetGraphicsRoot32BitConstants(0, New Single() {dest.Left, dest.Top, dest.Right, dest.Bottom, surface.Width, surface.Height, opacity, radius, maskBounds.Left, maskBounds.Top, maskBounds.Right, maskBounds.Bottom, corners, sigma, stepX, stepY, uv.X, uv.Y, uv.Width, uv.Height, scale, resolve, If(encode, 1, 0), If(pointSample, 1, 0), If(linearTarget AndAlso sourceSrgb, 1, 0),
-                                                       If(glyphInk.HasValue, 1, 0), 0, 0, ink.R, ink.G, ink.B, ink.A}, 0)
+                                                       If(glyphInk.HasValue, 1, 0), If(cubicSampling, 1, 0), 0, ink.R, ink.G, ink.B, ink.A}, 0)
         list.RSSetViewport(New Viewport(0, 0, surface.Width * scale, surface.Height * scale, 0, 1))
         list.RSSetScissorRect(New Vortice.RawRect(clip.Left * scale, clip.Top * scale, clip.Right * scale, clip.Bottom * scale))
         list.OMSetRenderTargets(rtv, Nothing)

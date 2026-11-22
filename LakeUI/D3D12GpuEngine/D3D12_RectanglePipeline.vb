@@ -1,6 +1,17 @@
+Imports System.Numerics
 Imports Vortice.Direct3D12
 Imports Vortice.DXGI
 Imports Vortice.Mathematics
+
+' Keep these values in sync with Geometry.hlsl.
+Friend Enum D3D12_GeometryKind
+    Legacy = 0
+    RoundedRectangle = 1
+    Ellipse = 2
+    FlatLine = 3
+    RoundLine = 4
+    JoinedRoundLines = 5
+End Enum
 
 ''' <summary>Native D3D12 triangle pipeline for solid-color rectangle geometry.</summary>
 Friend NotInheritable Class D3D12_RectanglePipeline
@@ -30,7 +41,7 @@ Friend NotInheritable Class D3D12_RectanglePipeline
 
     Private Sub CreatePipeline()
         Dim rootParameters As RootParameter() = {
-            New RootParameter(New RootConstants(0, 0, 29), ShaderVisibility.Pixel)
+            New RootParameter(New RootConstants(0, 0, 36), ShaderVisibility.Pixel)
         }
         Dim rootDescription As New RootSignatureDescription(RootSignatureFlags.AllowInputAssemblerInputLayout,
             rootParameters, Array.Empty(Of StaticSamplerDescription)())
@@ -131,7 +142,7 @@ Friend NotInheritable Class D3D12_RectanglePipeline
                           vertexCount As Integer,
                           size As Size,
                           scissor As Rectangle,
-                          shapeBounds As Rectangle,
+                          shapeBounds As RectangleF,
                           rtv As CpuDescriptorHandle,
                           startColor As Color4,
                           endColor As Color4,
@@ -139,7 +150,9 @@ Friend NotInheritable Class D3D12_RectanglePipeline
                           gradientHeight As Single,
                           cornerRadius As Single,
                           strokeWidth As Single,
-                          strokeMode As Boolean, cornerMask As Integer, horizontal As Boolean, maskRadius As Single, maskBox As RectangleF, arc As System.Numerics.Vector4, scale As Integer)
+                          strokeMode As Boolean, cornerMask As Integer, horizontal As Boolean, maskRadius As Single,
+                          maskBox As RectangleF, arc As Vector4, scale As Integer, kind As D3D12_GeometryKind,
+                          linePoints As Vector4, lineJoin As Vector2)
         If _disposed Then Throw New ObjectDisposedException(NameOf(D3D12_RectanglePipeline))
         If commandList Is Nothing Then Throw New ArgumentNullException(NameOf(commandList))
         commandList.SetGraphicsRootSignature(_rootSignature)
@@ -150,7 +163,8 @@ Friend NotInheritable Class D3D12_RectanglePipeline
             gradientTop, gradientHeight,
             shapeBounds.Left, shapeBounds.Top, shapeBounds.Width, shapeBounds.Height, cornerRadius,
             strokeWidth, If(strokeMode, 1.0F, 0.0F), cornerMask, If(horizontal, 1.0F, 0.0F), maskRadius,
-            maskBox.Left, maskBox.Top, maskBox.Right, maskBox.Bottom, arc.X, arc.Y, arc.Z, arc.W, scale
+            maskBox.Left, maskBox.Top, maskBox.Right, maskBox.Bottom, arc.X, arc.Y, arc.Z, arc.W, scale,
+            CSng(kind), linePoints.X, linePoints.Y, linePoints.Z, linePoints.W, lineJoin.X, lineJoin.Y
         }, 0)
         commandList.RSSetViewports(New Viewport() {New Viewport(0, 0, size.Width * scale, size.Height * scale, 0, 1)})
         commandList.RSSetScissorRects(New Vortice.RawRect() {

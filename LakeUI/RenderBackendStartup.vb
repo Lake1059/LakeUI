@@ -33,6 +33,12 @@ Partial Public Class GlobalOptions
         End Get
     End Property
 
+    ''' <summary>Defer the first display of a top-level form until its visible controls have published a frame. Call before showing the form.</summary>
+    ''' <returns>True when the frame is ready, or False if the form was already shown, closed, or presentation could not be completed.</returns>
+    Public Shared Function DeferWindowDisplayUntilFirstFrameAsync(form As Form, Optional fallbackToDx11 As Boolean = False) As Task(Of Boolean)
+        Return WindowFirstFrame.Defer(form, fallbackToDx11:=fallbackToDx11)
+    End Function
+
     Public Shared Function WaitForFirstFrameAsync() As Task(Of RenderBackend)
         Return RenderBackendStartup.FirstFrame
     End Function
