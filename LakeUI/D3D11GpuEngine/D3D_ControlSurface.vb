@@ -105,14 +105,14 @@ Friend NotInheritable Class D3D_ControlSurface
             ' 现行语义：可见控件表面属于当前显示工作集，只计入预算，
             ' 不参加主动 LRU 淘汰。释放可见 TabList 表面会留下纯色/黑色，
             ' 后续标题栏或窗口状态重绘还可能在无效表面上继续提交。
-            If D3D_ControlTreeWalker.IsEffectivelyVisible(_owner) Then Return Long.MaxValue
+            If D3D_ControlTreeWalker.IsEffectivelyVisible(_owner) OrElse D3D_ControlSurfaceRegistry.HasVisibleConsumers(_owner) Then Return Long.MaxValue
             Return If(_lastUsed <= 0, Long.MaxValue - 1, _lastUsed)
         End Get
     End Property
 
     Private Function TrimOldest() As Boolean Implements D3D_IRenderCacheOwner.TrimOldest
         If _drawing OrElse _resourceUseDepth > 0 OrElse _allocatedBytes <= 0 Then Return False
-        If D3D_ControlTreeWalker.IsEffectivelyVisible(_owner) Then Return False
+        If D3D_ControlTreeWalker.IsEffectivelyVisible(_owner) OrElse D3D_ControlSurfaceRegistry.HasVisibleConsumers(_owner) Then Return False
         ReleaseSurfaceResources()
         Return True
     End Function

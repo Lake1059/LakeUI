@@ -561,11 +561,11 @@ Friend Class D3D_AnimationHelper
                 For Each helper In _活动快照
                     If helper IsNot Nothing AndAlso helper.IsActive Then helper.Tick(nowTicks)
                 Next
-                FlushInvalidations()
+                FlushInvalidations(queueForAnimationFrame:=RenderBackendStartup.Requested = RenderBackend.Direct3D12)
                 ' 所有 helper 已采样同一时刻，再统一按外到内派发和提交。
                 ' 不跨第二个 WM_TIMER 等待，下一次 Tick 仍由高精度时钟唤醒。
                 If Not D3D_RenderUpdate.IsActive AndAlso Not D3D_V5Presentation.IsRendering Then
-                    OuterToInnerRefreshScheduler.FlushPendingRequests()
+                    OuterToInnerRefreshScheduler.FlushPendingRequests(stageDx12AnimationFrame:=True)
                     D3D_V5Presentation.FlushPendingFrame()
                 End If
                 UpdateTimerInterval(Stopwatch.GetTimestamp())
@@ -692,7 +692,7 @@ Friend Class D3D_AnimationHelper
             Return unionArea >= threshold OrElse totalArea >= threshold
         End Function
 
-        Private Sub FlushInvalidations()
+        Private Sub FlushInvalidations(Optional queueForAnimationFrame As Boolean = False)
             If _invalidations.Count = 0 OrElse _flushingInvalidations Then Return
             _flushingInvalidations = True
             Try
@@ -712,12 +712,12 @@ Friend Class D3D_AnimationHelper
                                 Continue For
                             End If
                             If bucket.Full Then
-                                D3D_InvalidationRouter.RequestRender(owner, New Rectangle(Point.Empty, owner.ClientSize))
+                                D3D_InvalidationRouter.RequestRender(owner, New Rectangle(Point.Empty, owner.ClientSize), queueForAnimationFrame)
                                 _flushedInvalidates += 1
                             Else
                                 For Each rect In bucket.Rectangles
                                     If rect.Width <= 0 OrElse rect.Height <= 0 Then Continue For
-                                    D3D_InvalidationRouter.RequestRender(owner, rect)
+                                    D3D_InvalidationRouter.RequestRender(owner, rect, queueForAnimationFrame)
                                     _flushedInvalidates += 1
                                 Next
                             End If

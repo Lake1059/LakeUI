@@ -19,6 +19,12 @@ internal static partial class Program
                 return 0;
             }
 
+            if (args is ["--tab-backdrop", var tabBackend])
+            {
+                TabBackdropRegressionTests.Run(tabBackend);
+                return 0;
+            }
+
             GlobalOptions.SetRenderBackendAsync(RenderBackend.Direct3D11).GetAwaiter().GetResult();
             UltraDetailListViewTests.Run();
             CheckModernPanelTransparentMode();

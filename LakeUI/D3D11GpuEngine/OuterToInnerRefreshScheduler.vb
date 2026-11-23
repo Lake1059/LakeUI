@@ -62,10 +62,20 @@ Public Module OuterToInnerRefreshScheduler
         Queue(control, Nothing, invalidateChildren, immediate)
     End Sub
 
-    Private Sub Queue(control As Control, rect As Rectangle?, invalidateChildren As Boolean, immediate As Boolean)
+    Friend Sub RequestAnimationFrame(control As Control, rect As Rectangle)
+        Queue(control, rect, invalidateChildren:=False, immediate:=False, queueForAnimationFrame:=True)
+    End Sub
+
+    Private Sub Queue(control As Control, rect As Rectangle?, invalidateChildren As Boolean, immediate As Boolean,
+                      Optional queueForAnimationFrame As Boolean = False)
         If control Is Nothing OrElse control.IsDisposed Then Return
         If ShouldSuppressRefresh(control, If(rect, Rectangle.Empty), Not rect.HasValue, invalidateChildren, False) Then Return
-        If Not GlobalOptions.OuterToInnerRefreshSchedulerEnabled AndAlso Not D3D_RenderUpdate.IsActive Then
+        ' WinForms may discard native paint damage for a hidden window. Preserve the
+        ' content change independently so a cached bound page can refresh on reveal.
+        If Not control.Visible AndAlso D3D_V5Presentation.IsV5Control(control) Then
+            D3D_V5Presentation.RequestRenderBatched(control, If(rect, control.ClientRectangle))
+        End If
+        If Not GlobalOptions.OuterToInnerRefreshSchedulerEnabled AndAlso Not D3D_RenderUpdate.IsActive AndAlso Not queueForAnimationFrame Then
             DirectInvalidate(control, rect, invalidateChildren, immediate)
             Return
         End If
@@ -181,7 +191,7 @@ Public Module OuterToInnerRefreshScheduler
         Return Nothing
     End Function
 
-    Private Sub FlushPending()
+    Private Sub FlushPending(Optional stageDx12AnimationFrame As Boolean = False)
         SyncLock _lock
             If D3D_RenderUpdate.IsActive Then
                 _flushScheduled = False
@@ -197,6 +207,7 @@ Public Module OuterToInnerRefreshScheduler
         End SyncLock
 
         Try
+            Dim stageDx12 = stageDx12AnimationFrame AndAlso RenderBackendStartup.Requested = RenderBackend.Direct3D12
             Do
                 Dim batch As Dictionary(Of Control, PendingEntry) = Nothing
                 SyncLock _lock
@@ -241,11 +252,11 @@ Public Module OuterToInnerRefreshScheduler
 
                     Try
                         ctrl.Invalidate(rect, False)
-                        ' 仅刷新事务提交时直接收集 V5 表面，避免依赖多个 WM_PAINT 逐个到达。
-                        ' 普通动画帧只走 Invalidate/OnPaint，不能同时再排一个 V5 批次。
-                        If D3D_RenderUpdate.IsCommitting AndAlso D3D_V5Presentation.IsV5Control(ctrl) AndAlso
+                        ' DX12 动画与刷新事务在当前批次收集表面。多表面窗口不必等 WM_PAINT
+                        ' 到达后再由低优先级的 WM_TIMER 提交，随后到达的 Paint 会复用当前表面。
+                        If (stageDx12 OrElse D3D_RenderUpdate.IsCommitting) AndAlso D3D_V5Presentation.IsV5Control(ctrl) AndAlso
                            Not D3D_PaintBridge.IsDesignTimeControl(ctrl) Then
-                            D3D_ControlSurfaceRegistry.MarkDirty(ctrl, rect, requestConsumers:=False)
+                            If Not stageDx12 Then D3D_ControlSurfaceRegistry.MarkDirty(ctrl, rect, requestConsumers:=False)
                             D3D_V5Presentation.RequestRenderBatched(ctrl, rect)
                         End If
                         RemovePendingRequestCoveredByCurrentDispatch(ctrl, rect, entry)
@@ -273,12 +284,12 @@ Public Module OuterToInnerRefreshScheduler
     End Sub
 
     ''' <summary>UI 线程上的动画采样结束后，仍按原有深度规则派发已合并请求。</summary>
-    Friend Sub FlushPendingRequests()
+    Friend Sub FlushPendingRequests(Optional stageDx12AnimationFrame As Boolean = False)
         If D3D_RenderUpdate.IsActive Then Return
         SyncLock _lock
             If _isFlushing OrElse _pending.Count = 0 Then Return
         End SyncLock
-        FlushPending()
+        FlushPending(stageDx12AnimationFrame)
     End Sub
 
     Private Sub RemovePendingRequestCoveredByCurrentDispatch(control As Control,

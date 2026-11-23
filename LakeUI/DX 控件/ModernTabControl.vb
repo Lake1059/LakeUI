@@ -12,7 +12,7 @@ Imports Vortice.DirectWrite
 ''' </summary>
 <DefaultEvent("SelectedIndexChanged")>
 Public Class ModernTabControl
-    Implements IOuterToInnerRefreshFilter, D3D_IGpuRenderable, D3D_IGpuInvalidationSource, D3D_ISuperSamplingSource, D3D_IBackgroundSourceProvider, V5_IGpuPresentationSource
+    Implements IOuterToInnerRefreshFilter, D3D_IGpuRenderable, D3D_IGpuInvalidationSource, D3D_ISuperSamplingSource, D3D_IBackgroundSourceProvider, V5_IGpuPresentationSource, D3D_IGpuDirtyRegionCoverage
 
 #Region "内部类型"
     ''' <summary>
@@ -220,10 +220,16 @@ Public Class ModernTabControl
     ''' </summary>
     Private Class 透明内容面板
         Inherits Panel
-        Implements IOuterToInnerRefreshFilter, D3D_IGpuRenderable, D3D_IGpuInvalidationSource, D3D_ISuperSamplingSource, D3D_IBackgroundSourceProvider, V5_IGpuPresentationSource
+        Implements IOuterToInnerRefreshFilter, D3D_IGpuRenderable, D3D_IGpuInvalidationSource, D3D_ISuperSamplingSource, D3D_IBackgroundSourceProvider, V5_IGpuPresentationSource, D3D_IBackgroundOpacitySource
 
         Private _ownerControl As ModernTabControl
         Private _backgroundSource As Control
+
+        Private ReadOnly Property IsBackgroundOpaque As Boolean Implements D3D_IBackgroundOpacitySource.IsBackgroundOpaque
+            Get
+                Return _backgroundSource Is Nothing AndAlso BackColor.A = 255
+            End Get
+        End Property
 
         Public Sub New()
             SetStyle(ControlStyles.SupportsTransparentBackColor Or
@@ -608,9 +614,9 @@ Public Class ModernTabControl
         Dim bound = 查找绑定页控件(target)
         If bound Is Nothing Then Return False
 
+        ' A direct request is real content damage, even on a hidden page.
+        If Not fromChildrenExpansion Then Return False
         If bound IsNot _当前绑定控件 Then Return True
-        If _切页刷新过滤深度 = 0 AndAlso Not fromChildrenExpansion Then Return False
-        If Not hasFull AndAlso Not fromChildrenExpansion AndAlso Not invalidateChildren Then Return False
 
         Dim state As BoundPageState = Nothing
         If Not _绑定页状态.TryGetValue(bound, state) Then Return False
@@ -620,7 +626,6 @@ Public Class ModernTabControl
 
     Private Sub 解除切页背景源订阅()
         If _背景源已订阅 Is Nothing Then Return
-        Try : RemoveHandler _背景源已订阅.Invalidated, AddressOf 切页背景源已失效 : Catch : End Try
         Try : RemoveHandler _背景源已订阅.Resize, AddressOf 切页背景源已改变 : Catch : End Try
         Try : RemoveHandler _背景源已订阅.Disposed, AddressOf 切页背景源已释放 : Catch : End Try
         _背景源已订阅 = Nothing
@@ -633,7 +638,6 @@ Public Class ModernTabControl
         解除切页背景源订阅()
         _背景源已订阅 = newSource
         If _背景源已订阅 IsNot Nothing Then
-            Try : AddHandler _背景源已订阅.Invalidated, AddressOf 切页背景源已失效 : Catch : End Try
             Try : AddHandler _背景源已订阅.Resize, AddressOf 切页背景源已改变 : Catch : End Try
             Try : AddHandler _背景源已订阅.Disposed, AddressOf 切页背景源已释放 : Catch : End Try
         End If
@@ -642,28 +646,6 @@ Public Class ModernTabControl
 
     Private Sub 推进切页背景版本()
         _背景刷新版本 += 1
-    End Sub
-
-    Private Function 切页背景脏区影响内容区(source As Control, dirtyRect As Rectangle) As Boolean
-        If source Is Nothing Then Return True
-        If dirtyRect.Width <= 0 OrElse dirtyRect.Height <= 0 Then Return True
-        If _内容面板 Is Nothing OrElse _内容面板.IsDisposed Then Return True
-        If _内容面板.Width <= 0 OrElse _内容面板.Height <= 0 Then Return False
-
-        Try
-            Dim origin As Point = source.PointToClient(_内容面板.PointToScreen(Point.Empty))
-            Dim contentRectInSource As New Rectangle(origin, _内容面板.ClientSize)
-            Return contentRectInSource.IntersectsWith(dirtyRect)
-        Catch
-            Return True
-        End Try
-    End Function
-
-    Private Sub 切页背景源已失效(sender As Object, e As InvalidateEventArgs)
-        Dim source = TryCast(sender, Control)
-        Dim dirtyRect As Rectangle = If(e IsNot Nothing, e.InvalidRect, Rectangle.Empty)
-        If Not 切页背景脏区影响内容区(source, dirtyRect) Then Return
-        推进切页背景版本()
     End Sub
 
     Private Sub 切页背景源已改变(sender As Object, e As EventArgs)
@@ -681,12 +663,12 @@ Public Class ModernTabControl
 
     Private Sub 隐藏绑定控件(ctrl As Control)
         If ctrl Is Nothing Then Return
-        解除绑定页背景穿透消费者(ctrl)
-        Try
-            ctrl.Visible = False
-        Catch
-        End Try
-        D3D_V5Presentation.ReleaseHiddenSubtreeResources(ctrl)
+        Dim keepPage = _切换页抑制刷新
+        If Not keepPage Then 解除绑定页背景穿透消费者(ctrl)
+        Using D3D_V5Presentation.BeginBoundPageVisibilityChange(ctrl, keepPage)
+            Try : ctrl.Visible = False : Catch : End Try
+        End Using
+        D3D_V5Presentation.ReleaseHiddenSubtreeResources(ctrl, keepPage)
     End Sub
 
     Private Sub 移除绑定控件(ctrl As Control)
@@ -729,20 +711,18 @@ Public Class ModernTabControl
         Try : ctrl.CreateControl() : Catch : End Try
     End Sub
 
-    Private Sub 提交绑定页切换首帧()
-        If Me.IsDisposed Then Return
-        请求GPU渲染()
-        If _内容面板 IsNot Nothing AndAlso Not _内容面板.IsDisposed AndAlso _内容面板.Width > 0 AndAlso _内容面板.Height > 0 Then
-            D3D_InvalidationRouter.RequestRender(_内容面板, New Rectangle(Point.Empty, _内容面板.Size))
+    Private Sub 提交绑定页切换首帧(ctrl As Control, needsRefresh As Boolean)
+        If needsRefresh Then
+            请求GPU渲染()
+            D3D_InvalidationRouter.RequestRender(_内容面板, _内容面板.ClientRectangle)
+            OuterToInnerRefreshScheduler.RequestFull(ctrl, invalidateChildren:=True)
         End If
-        If _当前绑定控件 IsNot Nothing AndAlso Not _当前绑定控件.IsDisposed Then
-            请求绑定页渲染(_当前绑定控件)
-        End If
+        D3D_V5Presentation.RequestPresentationTree(ctrl)
     End Sub
 
     Private Sub 显示绑定控件(ctrl As Control)
         If ctrl Is Nothing Then Return
-        Using D3D_PaintBridge.BeginRenderUpdate(Me)
+        Using D3D_RenderUpdate.Begin(Me, invalidateSubtree:=False)
             显示绑定控件核心(ctrl)
         End Using
     End Sub
@@ -766,13 +746,13 @@ Public Class ModernTabControl
             Try : ctrl.Visible = False : Catch : End Try
         End If
 
-        Dim panelWasVisible As Boolean = _内容面板.Visible
         Dim desiredPanelVisible As Boolean = 内容面板应显示()
-        ctrl.Visible = True
-        If _内容面板.Visible <> desiredPanelVisible Then _内容面板.Visible = desiredPanelVisible
-        If _transitionCover IsNot Nothing AndAlso Not _transitionCover.IsDisposed Then _transitionCover.BringToFront()
-        If _transitionCover Is Nothing AndAlso desiredPanelVisible AndAlso _内容面板.Controls.GetChildIndex(ctrl) <> 0 Then ctrl.BringToFront()
-        If desiredPanelVisible Then 准备绑定页渲染边界(ctrl)
+        Using D3D_V5Presentation.BeginBoundPageVisibilityChange(ctrl, _切换页抑制刷新)
+            ctrl.Visible = True
+            If _内容面板.Visible <> desiredPanelVisible Then _内容面板.Visible = desiredPanelVisible
+            If _transitionCover IsNot Nothing AndAlso Not _transitionCover.IsDisposed Then _transitionCover.BringToFront()
+            If _transitionCover Is Nothing AndAlso desiredPanelVisible AndAlso _内容面板.Controls.GetChildIndex(ctrl) <> 0 Then ctrl.BringToFront()
+        End Using
 
         Dim backgroundChanged As Boolean = state Is Nothing OrElse
                                            Not state.HasBeenShown OrElse
@@ -785,13 +765,14 @@ Public Class ModernTabControl
                                       (Not _切换页抑制刷新 OrElse
                                        parentChanged OrElse
                                        dockChanged OrElse
-                                       Not panelWasVisible OrElse
                                        backgroundChanged OrElse
                                        panelChanged OrElse
                                       sizeChanged)
         If state IsNot Nothing Then state.ForceRefreshDuringSwitch = needsRefresh AndAlso 正在切页刷新过滤期()
-        If desiredPanelVisible Then 请求绑定页渲染(ctrl)
-        If desiredPanelVisible Then 提交绑定页切换首帧()
+        If desiredPanelVisible Then
+            If needsRefresh OrElse Not ctrl.IsHandleCreated Then 准备绑定页渲染边界(ctrl)
+            提交绑定页切换首帧(ctrl, needsRefresh)
+        End If
         If state IsNot Nothing AndAlso desiredPanelVisible Then
             state.HasBeenShown = True
             state.LastShownSize = ctrl.ClientSize
@@ -887,7 +868,7 @@ Public Class ModernTabControl
 
     Private Sub 切换绑定控件()
         Dim previous = _当前绑定控件
-        Using D3D_PaintBridge.BeginRenderUpdate(Me)
+        Using D3D_RenderUpdate.Begin(Me, invalidateSubtree:=False)
             _transitionCover = If(previous IsNot Nothing AndAlso Not previous.IsDisposed AndAlso previous.Visible, previous, Nothing)
             Try
                 切换绑定控件核心()
@@ -895,7 +876,11 @@ Public Class ModernTabControl
                 D3D_RenderUpdate.AfterCommit(
                     Sub()
                         If IsDisposed Then Return
-                        If nextPage IsNot Nothing AndAlso Not nextPage.IsDisposed AndAlso _当前绑定控件 Is nextPage Then nextPage.BringToFront()
+                        If nextPage IsNot Nothing AndAlso Not nextPage.IsDisposed AndAlso _当前绑定控件 Is nextPage Then
+                            Using D3D_V5Presentation.BeginBoundPageVisibilityChange(nextPage, _切换页抑制刷新)
+                                nextPage.BringToFront()
+                            End Using
+                        End If
                         If previous IsNot Nothing AndAlso Not previous.IsDisposed AndAlso _当前绑定控件 IsNot previous Then 隐藏绑定控件(previous)
                     End Sub)
             Finally
@@ -1027,10 +1012,10 @@ Public Class ModernTabControl
         D3D_InvalidationRouter.RequestRender(Me, dirtyRect)
     End Sub
 
-    Private Sub 请求绑定页渲染(ctrl As Control)
-        If ctrl Is Nothing OrElse ctrl.IsDisposed Then Return
-        D3D_InvalidationRouter.RequestRender(ctrl, New Rectangle(Point.Empty, ctrl.Size))
-    End Sub
+    Private Function CoversDirtyRegion(dirtyRegion As Rectangle) As Boolean Implements D3D_IGpuDirtyRegionCoverage.CoversDirtyRegion
+        ' The same background and foreground are replayed inside the requested clip.
+        Return ClientRectangle.Contains(dirtyRegion)
+    End Function
 
     Private Sub 绘制图形内容_GPU(context As D3D_PaintContext)
         Dim contentRect = 获取内容区域矩形()

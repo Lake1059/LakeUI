@@ -26,7 +26,6 @@ Friend NotInheritable Class D3D12_CompositionPresenter
         Public BackdropKey As Object
         Public Backdrop As ID3D12Resource
         Public Resource As ID3D12Resource
-        Public Allocator As ID3D12CommandAllocator
         Public Rtv As CpuDescriptorHandle
         Public FenceValue As Long
         Public ReadOnly Uploads As New List(Of IDisposable)()
@@ -48,6 +47,7 @@ Friend NotInheritable Class D3D12_CompositionPresenter
     Private Const BufferCount As Integer = 2
     Private ReadOnly _owner As Control
     Private ReadOnly _deviceManager As D3D12_DeviceManager
+    Private _recordingAllocator As ID3D12CommandAllocator
     Private _rtvHeap As ID3D12DescriptorHeap
     Private _commandList As ID3D12GraphicsCommandList
     Private imagePipeline As D3D12_ImagePipeline
@@ -76,12 +76,14 @@ Friend NotInheritable Class D3D12_CompositionPresenter
     Private _handle As IntPtr
     Private _size As Size
     Private _disposed As Boolean
-    Friend Property PaintAlreadyRecorded As Boolean
-    Friend Property InvalidationVersion As Long
+    Friend Property PendingDamage As Rectangle
+    Friend Property ParkedNode As LinkedListNode(Of D3D12_CompositionPresenter)
+    Friend Property ParkedBytes As Long
+    Private parkedContent As ID3D12Resource
     Friend Property ChromeKey As Object
     Private _renderCount As Long
     Private _framePublishedToAtlas As Boolean
-    Friend ReadOnly Atlas As D3D12_WindowAtlas
+    Friend Property Atlas As D3D12_WindowAtlas
     Private slotIndex As Integer
     Friend Property SampleScale As Integer = 1
     Friend Property FloatTarget As Boolean
@@ -125,51 +127,54 @@ Friend NotInheritable Class D3D12_CompositionPresenter
         End Get
     End Property
 
-    Friend Sub New(owner As Control, deviceManager As D3D12_DeviceManager, atlas As D3D12_WindowAtlas)
-        ArgumentNullException.ThrowIfNull(atlas)
-        Me.Atlas = atlas
-        If owner Is Nothing Then Throw New ArgumentNullException(NameOf(owner))
-        If deviceManager Is Nothing Then Throw New ArgumentNullException(NameOf(deviceManager))
-        If owner.IsDisposed Then Throw New ObjectDisposedException(owner.GetType().Name)
-        If Not owner.IsHandleCreated Then Throw New InvalidOperationException("The target HWND must exist before presenter creation.")
-
+    Friend Sub New(owner As Control, deviceManager As D3D12_DeviceManager)
         _owner = owner
         _deviceManager = deviceManager
         _handle = owner.Handle
-        _size = New Size(Math.Max(1, owner.ClientSize.Width), Math.Max(1, owner.ClientSize.Height))
-        _deviceManager.EnsureCreated()
-
-        Try
-            SampleScale = RequestedScale()
-            FloatTarget = RequestedFloat()
-            FloatOutput = RequestedFloatOutput()
-            CreateFrameResources()
-            atlas.Attach(Me)
-        Catch
-            ReleaseResources()
-            Throw
-        End Try
-    End Sub
-
-    Friend Sub Resize(width As Integer, height As Integer)
-        If _disposed Then Throw New ObjectDisposedException(NameOf(D3D12_CompositionPresenter))
-        If width <= 0 OrElse height <= 0 Then Return
-        If _owner.IsDisposed OrElse Not _owner.IsHandleCreated OrElse _owner.Handle <> _handle Then
-            Throw New InvalidOperationException("The target HWND changed during presenter lifetime.")
-        End If
-        If _size = New Size(width, height) AndAlso SampleScale = RequestedScale() AndAlso FloatTarget = RequestedFloat() AndAlso FloatOutput = RequestedFloatOutput() Then Return
-        If Not _deviceManager.WaitForIdle(TimeSpan.FromSeconds(2)) Then
-            Throw New TimeoutException("DX12 queue did not drain before swap-chain resize.")
-        End If
-
-        ReleaseFrameResources()
+        _size = New Size(owner.ClientSize.Width, owner.ClientSize.Height)
         SampleScale = RequestedScale()
         FloatTarget = RequestedFloat()
         FloatOutput = RequestedFloatOutput()
-        _rectanglePipeline = Nothing
-        imagePipeline = Nothing
-        _size = New Size(width, height)
-        CreateFrameResources()
+    End Sub
+
+    Friend Function MatchesOwner() As Boolean
+        Return _size = New Size(_owner.ClientSize.Width, _owner.ClientSize.Height) AndAlso SampleScale = RequestedScale() AndAlso
+            FloatTarget = RequestedFloat() AndAlso FloatOutput = RequestedFloatOutput()
+    End Function
+
+    Friend Sub Resize()
+        If MatchesOwner() Then Return
+        If _frames IsNot Nothing Then
+            If Not _deviceManager.WaitForIdle(TimeSpan.FromSeconds(2)) Then
+                Throw New TimeoutException("DX12 queue did not drain before resizing the control surface.")
+            End If
+            Dim release = TakeFrameResources()
+            release()
+        End If
+        ReleaseParkedContent()
+        _framePublishedToAtlas = False
+        SampleScale = RequestedScale()
+        FloatTarget = RequestedFloat()
+        FloatOutput = RequestedFloatOutput()
+        _size = New Size(_owner.ClientSize.Width, _owner.ClientSize.Height)
+    End Sub
+
+    Friend Sub Park(retirements As List(Of Action))
+        _framePublishedToAtlas = False
+        If _frames Is Nothing Then Return ' Already snapshot-only (or never drew).
+        If contentPublished Then parkedContent = RetainedContent.QueryInterface(Of ID3D12Resource)()
+        retirements.Add(TakeFrameResources())
+    End Sub
+
+    Friend Sub StageRetainedContent()
+        Atlas.Stage(Me, New Rectangle(Point.Empty, New Drawing.Size(_size.Width, _size.Height)))
+    End Sub
+
+    Private Sub ReleaseParkedContent()
+        Dim texture = parkedContent
+        If texture Is Nothing Then Return
+        parkedContent = Nothing
+        _deviceManager.RetireAfterGpu(AddressOf texture.Dispose)
     End Sub
 
     Private Sub RenderClearRegion(color As Color4, requestedRegion As Rectangle)
@@ -198,21 +203,24 @@ Friend NotInheritable Class D3D12_CompositionPresenter
     Friend Sub RenderFrame(draw As Action(Of D3D12_PaintContext), Optional dirty As Rectangle = Nothing)
         ArgumentNullException.ThrowIfNull(draw)
         BeginRecording()
-        Dim context As New D3D12_PaintContext(Me)
+        Dim context As D3D12_PaintContext = Nothing
+        Dim success As Boolean
         Try
             If contentPublished AndAlso SampleScale = 1 AndAlso Not FloatTarget AndAlso Not dirty.IsEmpty Then
                 Dim clippedDirty = Rectangle.Intersect(FrameClip, dirty)
                 If clippedDirty.Width > 0 AndAlso clippedDirty.Height > 0 Then FrameClip = clippedDirty
             End If
             recordedRegion = FrameClip
+            context = New D3D12_PaintContext(Me)
             RenderClearRegion(New Color4(0, 0, 0, 0), recordedRegion)
             draw(context)
             SubmitRecording()
+            success = True
         Catch
             CancelRecording()
             Throw
         Finally
-            context.EndFrame()
+            context?.EndFrame(success)
         End Try
     End Sub
 
@@ -220,23 +228,40 @@ Friend NotInheritable Class D3D12_CompositionPresenter
         ObjectDisposedException.ThrowIf(_disposed, Me)
         If recordingFrame IsNot Nothing Then Throw New InvalidOperationException("Nested DX12 frames are not supported.")
         If Not _owner.IsHandleCreated OrElse _owner.Handle <> _handle Then Throw New InvalidOperationException("Target HWND changed.")
+        If _frames Is Nothing Then CreateFrameResources()
         Dim frame = _frames(slotIndex)
         If Not _deviceManager.WaitForFence(frame.FenceValue, TimeSpan.FromSeconds(2)) Then Throw New TimeoutException("Back buffer is busy.")
         ReleaseFrameUpload(frame)
         frame.UploadArena.Reset()
         frame.DescriptorArena.Reset()
         If frame.GlyphBytes >= 12 * 1024 * 1024 OrElse frame.Glyphs.Count >= 768 Then frame.ClearGlyphs()
-        frame.Allocator.Reset()
-        _commandList.Reset(frame.Allocator, Nothing)
+        _recordingAllocator = _deviceManager.AcquireCommandAllocator()
+        Try
+            _commandList.Reset(_recordingAllocator, Nothing)
+        Catch
+            _deviceManager.CancelCommandAllocator()
+            _recordingAllocator = Nothing
+            Throw
+        End Try
+        recordingFrame = frame
         _commandList.ResourceBarrierTransition(frame.Resource, ResourceStates.PixelShaderResource, ResourceStates.RenderTarget)
         FrameClip = _owner.ClientRectangle
         recordedRegion = FrameClip
-        recordingFrame = frame
     End Sub
 
     Private Sub CancelRecording()
-        If recordingFrame Is Nothing Then Return
+        If recordingFrame Is Nothing Then
+            If _recordingAllocator IsNot Nothing Then
+                _deviceManager.CancelCommandAllocator()
+                _recordingAllocator = Nothing
+            End If
+            Return
+        End If
         _commandList.Close()
+        If _recordingAllocator IsNot Nothing Then
+            _deviceManager.CancelCommandAllocator()
+            _recordingAllocator = Nothing
+        End If
         recordingFrame.Backdrop?.Dispose()
         recordingFrame.Backdrop = Nothing
         recordingFrame.BackdropKey = Nothing
@@ -262,12 +287,18 @@ Friend NotInheritable Class D3D12_CompositionPresenter
         _deviceManager.DirectQueue.ExecuteCommandLists(New ID3D12CommandList() {_commandList})
         ' The allocator and uploads must remain alive even when publication fails.
         frame.FenceValue = _deviceManager.Signal()
+        _deviceManager.CompleteCommandAllocator(frame.FenceValue)
+        _recordingAllocator = Nothing
         newTiles.Clear()
         _deviceManager.CacheSubmittedBackdrop(frame.BackdropKey, frame.Backdrop)
         contentPublished = True
+        ReleaseParkedContent()
         slotIndex = 1 - slotIndex
         _renderCount += 1
-        Atlas.Stage(Me, recordedRegion)
+        Atlas?.Stage(Me, recordedRegion)
+        ' All copies and draws share the direct queue. Subsequent members of a batch
+        ' can sample this revision before the atlas is presented, without a GPU wait.
+        D3D12_BackgroundDependencies.SourceChanged(_owner, recordedRegion)
     End Sub
 
     Private Sub ResolveFrame(frame As BackBufferFrame)
@@ -289,14 +320,14 @@ Friend NotInheritable Class D3D12_CompositionPresenter
 
     Friend ReadOnly Property RetainedContent As ID3D12Resource
         Get
-            If Not contentPublished Then Return Nothing
+            If Not contentPublished Then Return parkedContent
             Return If(resolved, _frames(0).Resource)
         End Get
     End Property
 
     Friend ReadOnly Property HasPublishedFrame As Boolean
         Get
-            Return Not _disposed AndAlso _framePublishedToAtlas AndAlso _handle = _owner.Handle AndAlso
+            Return Not _disposed AndAlso _framePublishedToAtlas AndAlso _owner.IsHandleCreated AndAlso _handle = _owner.Handle AndAlso
                 _size.Width = _owner.ClientSize.Width AndAlso _size.Height = _owner.ClientSize.Height
         End Get
     End Property
@@ -304,24 +335,19 @@ Friend NotInheritable Class D3D12_CompositionPresenter
     Friend Sub AcknowledgeAtlasPublication()
         _framePublishedToAtlas = True
         RenderBackendSwitching.ObservePublication(_owner)
-        D3D12_BackgroundDependencies.Published(_owner, _renderCount)
     End Sub
 
-    Friend Function DrawSource(source As D3D12_CompositionPresenter, clip As Drawing.Rectangle) As Boolean
+    Friend Sub DrawSource(source As D3D12_CompositionPresenter, dest As Rectangle, clip As Rectangle)
         If recordingFrame Is Nothing Then Throw New InvalidOperationException("Drawing requires an open frame.")
-        If source Is Nothing OrElse source Is Me OrElse source._deviceManager IsNot _deviceManager OrElse
-           Not source.contentPublished OrElse source.recordingFrame IsNot Nothing Then Return False
-        Dim origin = _owner.PointToClient(source._owner.PointToScreen(Drawing.Point.Empty))
-        Dim dest As New Rectangle(origin.X, origin.Y, source._size.Width, source._size.Height)
-        clip = Rectangle.Intersect(clip, Rectangle.Intersect(dest, FrameClip))
-        If clip.IsEmpty OrElse clip.Width <= 0 OrElse clip.Height <= 0 Then Return False
+        If source._deviceManager IsNot _deviceManager OrElse source.recordingFrame IsNot Nothing Then Return
+        clip = Rectangle.Intersect(clip, FrameClip)
+        If clip.Width <= 0 OrElse clip.Height <= 0 Then Return
         Dim texture = source.RetainedContent.QueryInterface(Of ID3D12Resource)()
         recordingFrame.Uploads.Add(texture)
         If imagePipeline Is Nothing Then imagePipeline = _deviceManager.GetImages(FloatTarget)
         imagePipeline.DrawTexture(_commandList, recordingFrame.Uploads, recordingFrame.Rtv, texture, dest, _size, 1.0F, clip, scale:=SampleScale,
                                   encode:=Not FloatTarget AndAlso texture.Description.Format = Format.R16G16B16A16_Float, descriptorArena:=recordingFrame.DescriptorArena)
-        Return True
-    End Function
+    End Sub
 
     Friend Sub DrawPremultipliedImage(width As Integer, height As Integer, bgra As Byte(), dest As RectangleF, opacity As Single,
                                      Optional maskBounds As RectangleF = Nothing, Optional radius As Single = 0, Optional corners As Integer = 0,
@@ -1001,69 +1027,72 @@ Friend NotInheritable Class D3D12_CompositionPresenter
         For i = 0 To BufferCount - 1
             Dim frame As New BackBufferFrame With {
                 .Resource = AcquireFrameTarget(i),
-                .Allocator = _deviceManager.Device.CreateCommandAllocator(Of ID3D12CommandAllocator)(CommandListType.Direct),
                 .Rtv = handle
             }
             _deviceManager.Device.CreateRenderTargetView(frame.Resource, Nothing, frame.Rtv)
             _frames(i) = frame
             handle.Ptr = New UIntPtr(handle.Ptr.ToUInt64() + CULng(_rtvIncrement))
         Next
-        _commandList = _deviceManager.Device.CreateCommandList(Of ID3D12GraphicsCommandList)(
-            0, CommandListType.Direct, _frames(0).Allocator, Nothing)
-        _commandList.Close()
-    End Sub
-
-    Private Sub ReleaseFrameResources()
-        _framePublishedToAtlas = False
-        contentPublished = False
-        resolved?.Dispose()
-        resolved = Nothing
-        resolveHeap?.Dispose()
-        resolveHeap = Nothing
-        _commandList?.Dispose()
-        _commandList = Nothing
-        If _frames IsNot Nothing Then
-            For Each frame In _frames
-                If frame Is Nothing Then Continue For
-                ReleaseFrameUpload(frame)
-                frame.Backdrop?.Dispose()
-                frame.UploadArena.Dispose()
-                frame.DescriptorArena.Dispose()
-                frame.ClearGlyphs()
-                frame.Resource?.Dispose()
-                frame.Allocator?.Dispose()
-            Next
-        End If
-        _frames = Nothing
-        _rtvHeap?.Dispose()
-        _rtvHeap = Nothing
-    End Sub
-
-    Private Sub ReleaseResources()
+        Dim allocator = _deviceManager.AcquireCommandAllocator()
         Try
-            Atlas.Detach(Me)
+            _commandList = _deviceManager.Device.CreateCommandList(Of ID3D12GraphicsCommandList)(
+                0, CommandListType.Direct, allocator, Nothing)
+            _commandList.Close()
         Finally
-            _deviceManager.RetireAfterGpu(AddressOf ReleaseGpuResources)
+            _deviceManager.CancelCommandAllocator()
         End Try
-        _handle = IntPtr.Zero
-        _size = Size.Empty
     End Sub
 
-    Private Sub ReleaseGpuResources()
-        ReleaseFrameResources()
-        For Each entry In linearTiles.Values
-            entry.Texture.Dispose()
-        Next
+    Private Function TakeFrameResources() As Action
+        Dim frames = _frames
+        Dim list = _commandList
+        Dim rtv = _rtvHeap
+        Dim resolveRtv = resolveHeap
+        Dim resolvedTexture = resolved
+        Dim tiles = linearTiles.Values.ToArray()
+        _frames = Nothing
+        _commandList = Nothing
+        _rtvHeap = Nothing
+        resolveHeap = Nothing
+        resolved = Nothing
+        contentPublished = False
+        slotIndex = 0
         linearTiles.Clear()
         linearTileBytes = 0
         imagePipeline = Nothing
         _rectanglePipeline = Nothing
-    End Sub
+        coverageCache.Clear()
+        glyphCoverageOrder.Clear()
+        glyphCoverageBytes = 0
+        Return Sub()
+                   list?.Dispose()
+                   If frames IsNot Nothing Then
+                       For Each frame In frames
+                           If frame Is Nothing Then Continue For
+                           ReleaseFrameUpload(frame)
+                           frame.Backdrop?.Dispose()
+                           frame.UploadArena.Dispose()
+                           frame.DescriptorArena.Dispose()
+                           frame.ClearGlyphs()
+                           frame.Resource?.Dispose()
+                       Next
+                   End If
+                   For Each tile In tiles
+                       tile.Texture.Dispose()
+                   Next
+                   resolveRtv?.Dispose()
+                   resolvedTexture?.Dispose()
+                   rtv?.Dispose()
+               End Sub
+    End Function
 
     Public Sub Dispose() Implements IDisposable.Dispose
         If _disposed Then Return
         _disposed = True
-        ReleaseResources()
+        _framePublishedToAtlas = False
+        If _frames IsNot Nothing OrElse _commandList IsNot Nothing Then _deviceManager.RetireAfterGpu(TakeFrameResources())
+        ReleaseParkedContent()
+        _handle = IntPtr.Zero
         GC.SuppressFinalize(Me)
     End Sub
 End Class

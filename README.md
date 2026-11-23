@@ -2,13 +2,22 @@
 
 ![](https://img.shields.io/github/stars/Lake1059/LakeUI?label=星标) ![GitHub License](https://img.shields.io/github/license/Lake1059/LakeUI?label=许可证) ![](https://img.shields.io/github/downloads/Lake1059/LakeUI/total?label=Github%20下载量) ![](https://img.shields.io/nuget/dt/LakeUI?label=NuGet%20下载量)
 
-> 从 5.301 版本开始仅支持 .NET 11
-> 5.201 版本仅支持 .NET 10
-> 之前的版本还支持 .NET 8/9/10
+| 重大变更版本 | 渲染 API | 目标 .NET |
+| --- | --- | --- |
+| 5.501 (261123) | DX11 / DX12 | .NET 11 |
+| [5.301](https://github.com/Lake1059/LakeUI/releases/tag/5.301) | DX11 | .NET 11 |
+| [5.201](https://github.com/Lake1059/LakeUI/releases/tag/5.201) | DX11 | .NET 10 |
+| [5.100](https://github.com/Lake1059/LakeUI/releases/tag/5.100) ~ [5.117](https://github.com/Lake1059/LakeUI/releases/tag/5.117) | DX11 | .NET 8 / 9 / 10 |
+| [5.0](https://github.com/Lake1059/LakeUI/releases/tag/5.0) ~ [5.12](https://github.com/Lake1059/LakeUI/releases/tag/5.12) | DX11 | .NET 8 / 9 / 10 |
+| [3.0](https://github.com/Lake1059/LakeUI/releases/tag/3.0) ~ [3.31](https://github.com/Lake1059/LakeUI/releases/tag/3.31) | DX11 兼容 GDI+ | .NET 8 / 9 / 10 |
+| [2.0.0](https://github.com/Lake1059/LakeUI/releases/tag/2.0.0) ~ [2.101](https://github.com/Lake1059/LakeUI/releases/tag/2.101) | DX11 兼容 GDI+ | .NET 8 / 9 / 10 |
+| [1.0](https://github.com/Lake1059/LakeUI/releases/tag/1.0) ~ [1.3.0](https://github.com/Lake1059/LakeUI/releases/tag/1.3.0) | GDI+ | .NET 5 ~ 10 |
 
-> 让 WinForms 再次伟大！
+**不兼容 GDI+ 的影响？** 这意味着如果与原版或其他三方控件一起使用时不能将那些控件的背景设为透明，否则会让那些控件形成一种递归的自照，导致乱绘制；LakeUI 从 5.0 开始为了真正发挥 GPU 的实力砍掉了 CPU 纹理层，包括在设计器中也由 GPU 全量绘制。
 
-LakeUI 全球首创在 WinForms 上的全 GPU 链路渲染管线，让这个传统的框架迈入 WinUI + GPU 时代，基于  [Vortice.Windows](https://github.com/amerkoleci/Vortice.Windows)，使用 Direct2D1、Direct3D11、DirectWrite 呈现。
+### 让 WinForms 再次伟大！
+
+LakeUI 全球首创在 WinForms 上的全 GPU 链路渲染管线，让这个传统的框架迈入 WinUI + GPU 时代，基于  [Vortice.Windows](https://github.com/amerkoleci/Vortice.Windows)，使用 Direct2D1、Direct3D11、Direct3D12、DirectWrite 呈现。
 
 LakeUI 并非为了还原 WinUI 风格，而是针对 WinForms 的实际需求和自由度从头设计的一套交互视觉，充分发挥窗体设计器的便捷优势，减少空间浪费和提高生产效率。还同时引入了一系列在 WinForms 历史上想都不敢想的设计（见下方无序列表）。同时由于引擎实现与游戏引擎相似，在全量重载和全屏缩放的时候容易触发显卡驱动的游戏识别，比如 NVIDIA APP 的信息浮窗提示。
 
@@ -20,6 +29,8 @@ LakeUI 并非为了还原 WinUI 风格，而是针对 WinForms 的实际需求�
 - SSAA 超采样抗锯齿
 - 真实 HDR 映射输出
 
+**在窗体设计器中使用 DX12 的方法：**（5.501+）将 <LakeUIDesignerBackend> 元素添加到你的项目 PROJ XML 结构中，支持的值：DX11 \ DX12，需要重启 Visual Studio 来让变更完全生效。
+
 LakeUI 的控件数量并不多，目前不到 50 个，但设计方向不在用数量取胜，而是每个控件的多用途。通过更多和更强的功能来减少实际开发中的控件数量以提升维护性，Visual Studio 的窗体设计器在过去的几十年中的性能改进并不大，甚至还在新 .NET 时代开倒车，因此减少每个页面的控件数量是十分有效的优化办法。以下是最值得一试的控件，极高的封装程度能节约大量控件浪费。
 
 - 超多可定制内容的窗口样式定制器
@@ -29,8 +40,6 @@ LakeUI 的控件数量并不多，目前不到 50 个，但设计方向不在用
 - 支持语法高亮的全自绘文本框
 - 支持基础 HTML 语法和工具提示的标签
 - 以及更多全新制作的强化原版控件
-
-**限制与取舍**：LakeUI v5 没有 CPU 纹理层，原版控件无法再通过设置背景透明的方式来兼容背景映射，并且还会导致自照乱渲染的问题，所以如果要和原版控件一起用的话原版控件不能设置为透明；其次设计器中的焦点和手柄是走 CPU 渲染的，v5 控件不会渲染这个，取而代之的是 LakeUI 自行绘制的焦点框和手柄，当然手柄的实际功能是设计器原生提供的，所以手柄的绘制位置会与实际响应的位置有些差异，毕竟控件自绘没法画到外边去，这个知道一下就行了而且也修不了，反正不怎么影响设计器体验。
 
 NuGet：https://www.nuget.org/packages/LakeUI <br>
 官网：https://lakeui.top <br>

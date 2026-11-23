@@ -119,7 +119,6 @@ Public Class ModernPanel
                 D3D_V5Presentation.SuspendPresentation(Me)
                 D3D_RenderCore.UnregisterBackgroundConsumer(Me)
             End If
-            D3D_BackgroundPenetration.InvalidateForwarderTopology(Me)
             D3D_ControlSurfaceRegistry.PresentationModeChanged(Me)
             If IsHandleCreated Then UpdateStyles()
             Parent?.Invalidate(Bounds, True)
@@ -824,6 +823,7 @@ Public Class ModernPanel
             If _backgroundSource IsNot value Then
                 If UseNativeTransparentPresentation Then
                     _backgroundSource = value
+                    D3D_BackgroundPenetration.InvalidateForwarderTopology(Me)
                 Else
                     _backgroundSource = D3D_BackgroundPenetration.SetBackgroundSource(Me, _backgroundSource, value)
                     D3D_BackgroundPenetration.InvalidateForwarderTopology(Me)
@@ -841,18 +841,6 @@ Public Class ModernPanel
     Private Sub 解除背景穿透消费者()
         Try : D3D_RenderCore.UnregisterBackgroundConsumer(Me, recursive:=True) : Catch : End Try
     End Sub
-
-    Friend Function TryGetTransparentBackgroundForward(ByRef source As Control) As Boolean
-        source = Nothing
-        If _backgroundSource Is Nothing Then Return False
-        If _image IsNot Nothing Then Return False
-        If MyBase.BackColor.A <> 0 OrElse 背景颜色.A <> 0 Then Return False
-        If 遮罩颜色.A <> 0 Then Return False
-        If 边框宽度 <> 0 OrElse 边框圆角半径 <> 0 Then Return False
-        If _showVScroll OrElse _showHScroll Then Return False
-        source = _backgroundSource
-        Return True
-    End Function
 
 #End Region
 
@@ -1638,10 +1626,8 @@ Public Class ModernPanel
         If Not Me.Visible Then
             解除背景穿透消费者()
         ElseIf UseNativeTransparentPresentation AndAlso RenderBackendStartup.Requested = RenderBackend.Direct3D12 Then
-            ' 面板自身不提交 GPU 帧，显示时仍要为可见子控件提交新内容。
-            For Each child In D3D_ControlTreeWalker.EnumerateGpuRenderables(Me)
-                If TypeOf child Is ID3D12Renderable Then D3D_V5Presentation.RequestRenderBatched(child, markSurfaceDirty:=False)
-            Next
+            ' 无自绘面板只恢复子控件的呈现，未失效的子表面可以直接复用。
+            D3D_V5Presentation.RequestPresentationTree(Me)
         End If
         更新图片动画运行状态()
     End Sub

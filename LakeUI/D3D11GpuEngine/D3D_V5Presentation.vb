@@ -111,24 +111,67 @@ Friend NotInheritable Class D3D_V5Presentation
         D3D_ControlSurfaceRegistry.ReleaseSurfaceResources(control)
     End Sub
 
+    <ThreadStatic>
+    Private Shared _boundPageVisibility As List(Of Control)
+
+    Private NotInheritable Class BoundPageVisibilityScope
+        Implements IDisposable
+
+        Public Sub New(root As Control)
+            If _boundPageVisibility Is Nothing Then _boundPageVisibility = New List(Of Control)()
+            _boundPageVisibility.Add(root)
+        End Sub
+
+        Public Sub Dispose() Implements IDisposable.Dispose
+            _boundPageVisibility.RemoveAt(_boundPageVisibility.Count - 1)
+        End Sub
+    End Class
+
+    Friend Shared Function BeginBoundPageVisibilityChange(root As Control, keepPage As Boolean) As IDisposable
+        Return If(keepPage, New BoundPageVisibilityScope(root), Nothing)
+    End Function
+
+    Friend Shared Function IsChangingBoundPageVisibility(control As Control) As Boolean
+        If _boundPageVisibility Is Nothing OrElse _boundPageVisibility.Count = 0 Then Return False
+        While control IsNot Nothing
+            If _boundPageVisibility.Contains(control) Then Return True
+            control = control.Parent
+        End While
+        Return False
+    End Function
+
+    Private Shared Function CanRenderOwner(control As Control) As Boolean
+        Return control.IsHandleCreated AndAlso (D3D_ControlTreeWalker.IsEffectivelyVisible(control) OrElse
+            (RenderBackendStartup.Requested = RenderBackend.Direct3D12 AndAlso D3D12_BackgroundDependencies.HasVisibleConsumers(control)))
+    End Function
+
+    Friend Shared Sub RequestPresentationTree(root As Control)
+        If root Is Nothing OrElse root.IsDisposed OrElse Not root.Visible Then Return
+        If IsV5Control(root) Then
+            If RenderBackendStartup.Requested = RenderBackend.Direct3D12 Then
+                D3D12StartupDispatch.RequestPresentation(root)
+            ElseIf Not HasPublishedFrame(root, RenderBackend.Direct3D11) OrElse Not D3D_ControlSurfaceRegistry.HasCurrentSurface(root) Then
+                RequestRenderBatched(root, markSurfaceDirty:=False)
+            End If
+        End If
+        For Each child As Control In root.Controls
+            RequestPresentationTree(child)
+        Next
+    End Sub
+
     Friend Shared Function Paint(control As Control, renderable As D3D_IGpuRenderable,
                                  Optional dirtyRect As Rectangle = Nothing) As Boolean
         If Not IsV5Control(control) Then Return False
         禁用WinForms双缓冲(control)
-        If D3D_RenderUpdate.IsActive OrElse D3D_RenderUpdate.IsCommitting Then
-            RequestRenderBatched(control, dirtyRect)
+        Dim dx12 = RenderBackendStartup.Requested = RenderBackend.Direct3D12
+        ' Exposure alone does not damage a retained GPU surface. Invalidated and explicit
+        ' render requests track content damage even while a page has no visible HWND.
+        If dx12 AndAlso Not D3D12StartupDispatch.NeedsPresentation(control) Then Return True
+        If D3D_RenderUpdate.IsActive OrElse D3D_RenderUpdate.IsCommitting OrElse
+           (dx12 AndAlso If(D3D12StartupDispatch.FindPresenter(control)?.Atlas?.Count, 0) > 1) Then
+            RequestRenderBatched(control, dirtyRect, markSurfaceDirty:=Not dx12 AndAlso Not IsChangingBoundPageVisibility(control))
             Return True
         End If
-        ' WM_PAINT 可能在同一消息循环内先于已排队的内部传播请求到达。
-        ' 当前同步绘制会消费 registry 中的合并脏区；只撤销尚未开始的批次项，
-        ' RenderGpu 期间新产生的请求仍会进入下一批。
-        If RenderBackendStartup.Requested = RenderBackend.Direct3D12 AndAlso D3D12StartupDispatch.ConsumeCoveredPaint(control) Then Return True
-        If RenderBackendStartup.Requested = RenderBackend.Direct3D12 AndAlso
-           If(D3D12StartupDispatch.FindPresenter(control)?.Atlas.Count, 0) > 1 Then
-            RequestRenderBatched(control, dirtyRect)
-            Return True
-        End If
-        If RenderBackendStartup.Requested = RenderBackend.Direct3D12 Then dirtyRect = MergePendingDx12Region(control, dirtyRect)
         移除批次请求(control)
         立即渲染(control, renderable, dirtyRect)
         ' V5 明确禁止失败后回落到 HDC；即使设备正在重建，也由下一帧 GPU 重试。
@@ -147,27 +190,20 @@ Friend NotInheritable Class D3D_V5Presentation
         If 有效区域.Width <= 0 OrElse 有效区域.Height <= 0 Then 有效区域 = New Rectangle(Point.Empty, control.Size)
         有效区域 = Rectangle.Intersect(New Rectangle(Point.Empty, control.Size), 有效区域)
         If 有效区域.Width <= 0 OrElse 有效区域.Height <= 0 Then Return
-        If Not control.IsHandleCreated OrElse Not D3D_ControlTreeWalker.IsEffectivelyVisible(control) Then
-            D3D_ControlSurfaceRegistry.MarkDirty(control, 有效区域, requestConsumers:=False)
-            D3D_RenderDiagnostics.V5InvisibleSkip()
-            Return
-        End If
         If control.InvokeRequired Then
             Try : control.BeginInvoke(Sub() RequestRender(control, 有效区域)) : Catch : End Try
             Return
         End If
-        D3D_ControlSurfaceRegistry.MarkDirty(control, 有效区域, requestConsumers:=False)
+        MarkSurfaceDirty(control, 有效区域)
+        If Not CanRenderOwner(control) Then
+            D3D_RenderDiagnostics.V5InvisibleSkip()
+            Return
+        End If
         D3D_RenderDiagnostics.V5DirtyRequested(CLng(有效区域.Width) * CLng(有效区域.Height),
                                                CLng(Math.Max(0, control.Width)) * CLng(Math.Max(0, control.Height)))
         ' 内部传播请求统一走 RequestRenderBatched；显式 RequestRender 保持同步。
-        If RenderBackendStartup.Requested = RenderBackend.Direct3D12 Then
-            有效区域 = MergePendingDx12Region(control, 有效区域)
-            移除批次请求(control)
-            立即渲染(control, TryCast(control, D3D_IGpuRenderable), requestedDirty:=有效区域)
-            Return
-        End If
         移除批次请求(control)
-        立即渲染(control, TryCast(control, D3D_IGpuRenderable))
+        立即渲染(control, TryCast(control, D3D_IGpuRenderable), requestedDirty:=有效区域)
     End Sub
 
     ''' <summary>
@@ -193,11 +229,11 @@ Friend NotInheritable Class D3D_V5Presentation
         End If
 
         If markSurfaceDirty Then
-            D3D_ControlSurfaceRegistry.MarkDirty(control, 有效区域, requestConsumers:=False)
+            D3D_V5Presentation.MarkSurfaceDirty(control, 有效区域)
             D3D_RenderDiagnostics.V5DirtyRequested(CLng(有效区域.Width) * CLng(有效区域.Height),
                                                    CLng(Math.Max(0, control.Width)) * CLng(Math.Max(0, control.Height)))
         End If
-        If Not control.IsHandleCreated OrElse Not D3D_ControlTreeWalker.IsEffectivelyVisible(control) Then
+        If Not CanRenderOwner(control) Then
             D3D_RenderDiagnostics.V5InvisibleSkip()
             Return
         End If
@@ -282,7 +318,7 @@ Friend NotInheritable Class D3D_V5Presentation
                     If state.Disposed Then Exit For
                     Dim 控件 = item.Key
                     If 控件 Is Nothing OrElse 控件.IsDisposed OrElse
-                       Not 控件.IsHandleCreated OrElse Not D3D_ControlTreeWalker.IsEffectivelyVisible(控件) Then Continue For
+                       Not CanRenderOwner(控件) Then Continue For
                     立即渲染(控件,
                             TryCast(控件, D3D_IGpuRenderable),
                             requestedDirty:=item.Value.Rect, 准备耗时:=准备耗时)
@@ -308,6 +344,14 @@ Friend NotInheritable Class D3D_V5Presentation
 
     Friend Shared Sub ResumeAfterRenderUpdate()
         FlushPendingFrame(prepareSurfaces:=True)
+        If RenderBackendStartup.Requested <> RenderBackend.Direct3D12 Then Return
+        ' Explicit sources can publish after their consumers when they live on a
+        ' different branch. Settle the resulting damage before uncovering the page.
+        ' Bound the synchronous work in case a custom renderer keeps invalidating.
+        For pass = 1 To 3
+            If _renderBatch Is Nothing OrElse _renderBatch.Pending.Count = 0 Then Exit For
+            FlushPendingFrame()
+        Next
     End Sub
 
     ''' <summary>在共享动画 Tick 完成后消费已排序批次，不再等待第二个计时器。</summary>
@@ -324,12 +368,13 @@ Friend NotInheritable Class D3D_V5Presentation
         FlushBatchedRenders(state, prepareSurfaces)
     End Sub
 
-    Private Shared Function MergePendingDx12Region(control As Control, dirty As Rectangle) As Rectangle
-        If dirty.IsEmpty OrElse _renderBatch Is Nothing Then Return dirty
-        Dim entry As BatchedRenderEntry
-        If _renderBatch.Pending.TryGetValue(control, entry) Then Return Rectangle.Union(dirty, entry.Rect)
-        Return dirty
-    End Function
+    Private Shared Sub MarkSurfaceDirty(control As Control, dirty As Rectangle)
+        If RenderBackendStartup.Requested = RenderBackend.Direct3D12 Then
+            D3D12StartupDispatch.MarkDirty(control, dirty)
+        Else
+            D3D_ControlSurfaceRegistry.MarkDirty(control, dirty, requestConsumers:=False)
+        End If
+    End Sub
 
     Private Shared Sub 移除批次请求(control As Control)
         If control Is Nothing OrElse _renderBatch Is Nothing Then Return
@@ -350,7 +395,7 @@ Friend NotInheritable Class D3D_V5Presentation
         RenderBackendStartup.ObserveHost(控件)
         Dim route = RenderBackendStartup.Requested
         If Not route.HasValue Then Return
-        If Not D3D_ControlTreeWalker.IsEffectivelyVisible(控件) Then
+        If Not CanRenderOwner(控件) Then
             D3D_RenderDiagnostics.V5InvisibleSkip()
             Return
         End If
@@ -369,7 +414,7 @@ Friend NotInheritable Class D3D_V5Presentation
             ' WinForms 的透明背景可能回调父控件 OnPaint，重入请求必须等本帧结束。
             _renderDepth += 1
             Try
-                D3D12StartupDispatch.Render(控件, requestedDirty)
+                D3D12StartupDispatch.Render(控件)
             Finally
                 _renderDepth -= 1
             End Try
@@ -457,7 +502,7 @@ Friend NotInheritable Class D3D_V5Presentation
         AddHandler 控件.SizeChanged, AddressOf 控件几何变化时
         AddHandler 控件.LocationChanged, AddressOf 控件几何变化时
         AddHandler 控件.ParentChanged, AddressOf 控件几何变化时
-        AddHandler 控件.VisibleChanged, AddressOf 控件几何变化时
+        AddHandler 控件.VisibleChanged, AddressOf 控件可见性变化时
         AddHandler 控件.Disposed, AddressOf 控件释放时
         Return 呈现器
     End Function
@@ -623,7 +668,7 @@ Friend NotInheritable Class D3D_V5Presentation
                 RemoveHandler 控件.SizeChanged, AddressOf 控件几何变化时
                 RemoveHandler 控件.LocationChanged, AddressOf 控件几何变化时
                 RemoveHandler 控件.ParentChanged, AddressOf 控件几何变化时
-                RemoveHandler 控件.VisibleChanged, AddressOf 控件几何变化时
+                RemoveHandler 控件.VisibleChanged, AddressOf 控件可见性变化时
                 RemoveHandler 控件.Disposed, AddressOf 控件释放时
             End If
             _bufferingDisabled.Remove(控件)
@@ -651,12 +696,16 @@ Friend NotInheritable Class D3D_V5Presentation
         RequestRenderBatched(控件)
     End Sub
 
-    ''' <summary>
-    ''' 页面隐藏时立即释放其后代的合成目标和表面；重新显示后由正常渲染路径重建。
-    ''' </summary>
-    Friend Shared Sub ReleaseHiddenSubtreeResources(root As Control)
-        If root Is Nothing OrElse IsRendering Then Return
+    Private Shared Sub 控件可见性变化时(发送者 As Object, 事件参数 As EventArgs)
+        Dim control = DirectCast(发送者, Control)
+        If Not IsChangingBoundPageVisibility(control) Then 控件几何变化时(发送者, 事件参数)
+    End Sub
 
+    ''' <summary>释放隐藏 HWND 的呈现资源；已访问的绑定页只保留预算内的最终表面。</summary>
+    Friend Shared Sub ReleaseHiddenSubtreeResources(root As Control, Optional keepPage As Boolean = False)
+        If root Is Nothing OrElse IsRendering OrElse IsChangingBoundPageVisibility(root) Then Return
+
+        D3D12StartupDispatch.ReleaseHiddenSubtreeResources(root, keepPage)
         For Each control In _presenters.Keys.ToArray()
             If control Is Nothing OrElse control.IsDisposed OrElse
                Not D3D_ControlTreeWalker.IsDescendantOrSelf(control, root) OrElse
@@ -671,7 +720,11 @@ Friend NotInheritable Class D3D_V5Presentation
             移除批次请求(control)
         Next
 
-        D3D_ControlSurfaceRegistry.ReleaseUnreferencedSubtree(root)
+        If keepPage Then
+            If RenderBackendStartup.Requested <> RenderBackend.Direct3D12 Then D3D_GpuCache.TrimToBudget(immediate:=True)
+        Else
+            D3D_ControlSurfaceRegistry.ReleaseUnreferencedSubtree(root)
+        End If
     End Sub
 
     Private Shared Sub 显示设置变化时(发送者 As Object, 事件参数 As EventArgs)

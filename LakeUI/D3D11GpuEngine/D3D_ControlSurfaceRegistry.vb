@@ -77,12 +77,21 @@ Friend NotInheritable Class D3D_ControlSurfaceRegistry
                                              Optional registerDependency As Boolean = True) As Boolean
         If consumer Is Nothing OrElse source Is Nothing OrElse context Is Nothing Then Return False
         If consumer.IsDisposed OrElse source.IsDisposed Then Return False
-        Dim 无渲染来源 = TryCast(source, D3D_INativeTransparentPresentationSource)
-        If 无渲染来源 IsNot Nothing AndAlso 无渲染来源.UseNativeTransparentPresentation Then
-            Dim 祖先来源 = 查找最近GPU祖先(source)
-            If 祖先来源 Is Nothing Then Return False
-            Return TryDrawBackground(consumer, 祖先来源, context, destination, renderSourceIfDirty, registerDependency)
-        End If
+        Dim forwarded As HashSet(Of Control) = Nothing
+        While TryCast(source, D3D_INativeTransparentPresentationSource)?.UseNativeTransparentPresentation = True
+            If source Is consumer Then Return False
+            If forwarded Is Nothing Then forwarded = New HashSet(Of Control)()
+            If Not forwarded.Add(source) Then Return False
+            Dim provider = TryCast(source, D3D_IBackgroundSourceProvider)
+            Dim explicitSource As Control = Nothing
+            If registerDependency Then 注册依赖(consumer, source, RectangleF.Empty)
+            If provider IsNot Nothing AndAlso provider.TryGetBackgroundSource(explicitSource) AndAlso explicitSource IsNot Nothing AndAlso Not explicitSource.IsDisposed Then
+                source = explicitSource
+            Else
+                source = 查找最近GPU祖先(source)
+            End If
+            If source Is Nothing Then Return False
+        End While
         ' 强制约束：背景来源只能是外层容器已经完成或正在按外到内顺序准备的表面。
         ' 禁止在子控件绘制阶段反向遍历兄弟树或重新提交当前容器。
         D3D_RenderDiagnostics.V5BackdropAttempt()
@@ -288,6 +297,12 @@ Friend NotInheritable Class D3D_ControlSurfaceRegistry
         End If
         If Not requestConsumers Then Return
 
+        If RenderBackendStartup.Requested = RenderBackend.Direct3D12 Then
+            D3D12StartupDispatch.MarkDirty(control, 规范脏区)
+            ' Native Forms synthesize their backgrounds in the consumer, not in an atlas slot.
+            If TypeOf control Is Form Then D3D12_BackgroundDependencies.SourceChanged(control, 规范脏区)
+            Return
+        End If
         请求依赖消费者(control, 规范脏区)
     End Sub
 
@@ -357,6 +372,10 @@ Friend NotInheritable Class D3D_ControlSurfaceRegistry
         If consumer Is Nothing Then Return
         分离消费者依赖(consumer)
         MarkDirty(consumer, requestConsumers:=False)
+        If RenderBackendStartup.Requested = RenderBackend.Direct3D12 Then
+            D3D12_BackgroundDependencies.Remove(consumer)
+            D3D12StartupDispatch.MarkDirty(consumer, Rectangle.Empty)
+        End If
         ' SetBackgroundSource 返回时后备字段尚未接收新值。
         ' 等新来源完成赋值并允许所有者先渲染新修订后，在下一次 UI 调度中刷新依赖项。
         If consumer.IsHandleCreated AndAlso Not consumer.IsDisposed Then
@@ -365,7 +384,9 @@ Friend NotInheritable Class D3D_ControlSurfaceRegistry
                     Sub()
                         If consumer.IsDisposed Then Return
                         D3D_V5Presentation.RequestRenderBatched(consumer)
-                        请求依赖消费者(consumer, New Rectangle(Point.Empty, consumer.Size))
+                        If RenderBackendStartup.Requested <> RenderBackend.Direct3D12 Then
+                            请求依赖消费者(consumer, New Rectangle(Point.Empty, consumer.Size))
+                        End If
                     End Sub, Action))
             Catch
             End Try
@@ -373,6 +394,10 @@ Friend NotInheritable Class D3D_ControlSurfaceRegistry
     End Sub
 
     Friend Shared Sub PresentationModeChanged(control As Control)
+        If RenderBackendStartup.Requested = RenderBackend.Direct3D12 Then
+            D3D12_BackgroundDependencies.SourceChanged(control)
+            Return
+        End If
         Dim 消费者集合 As HashSet(Of Control) = Nothing
         If _consumers.TryGetValue(control, 消费者集合) Then
             For Each 消费者 In 消费者集合.ToArray()
@@ -383,7 +408,7 @@ Friend NotInheritable Class D3D_ControlSurfaceRegistry
     End Sub
 
     Friend Shared Sub UnregisterConsumer(consumer As Control, Optional source As Control = Nothing)
-        If consumer Is Nothing Then Return
+        If consumer Is Nothing OrElse D3D_V5Presentation.IsChangingBoundPageVisibility(consumer) Then Return
         If source Is Nothing Then
             分离消费者依赖(consumer)
         Else
@@ -538,7 +563,7 @@ Friend NotInheritable Class D3D_ControlSurfaceRegistry
                     _coordinateConsumers(当前控件) = 目标集合
                     AddHandler 当前控件.LocationChanged, AddressOf 坐标空间已变化
                     AddHandler 当前控件.ParentChanged, AddressOf 坐标空间已变化
-                    AddHandler 当前控件.VisibleChanged, AddressOf 坐标空间已变化
+                    AddHandler 当前控件.VisibleChanged, AddressOf 坐标可见性已变化
                     AddHandler 当前控件.Layout, AddressOf 坐标空间已变化
                     AddHandler 当前控件.Disposed, AddressOf 坐标控件已释放
                 End If
@@ -599,7 +624,7 @@ Friend NotInheritable Class D3D_ControlSurfaceRegistry
                 _coordinateConsumers.Remove(坐标控件)
                 RemoveHandler 坐标控件.LocationChanged, AddressOf 坐标空间已变化
                 RemoveHandler 坐标控件.ParentChanged, AddressOf 坐标空间已变化
-                RemoveHandler 坐标控件.VisibleChanged, AddressOf 坐标空间已变化
+                RemoveHandler 坐标控件.VisibleChanged, AddressOf 坐标可见性已变化
                 RemoveHandler 坐标控件.Layout, AddressOf 坐标空间已变化
                 RemoveHandler 坐标控件.Disposed, AddressOf 坐标控件已释放
             End If
@@ -607,7 +632,13 @@ Friend NotInheritable Class D3D_ControlSurfaceRegistry
         _consumerCoordinateControls.Remove(消费者)
     End Sub
 
+    Private Shared Sub 坐标可见性已变化(发送者 As Object, 事件参数 As EventArgs)
+        If Not D3D_V5Presentation.IsChangingBoundPageVisibility(TryCast(发送者, Control)) Then 坐标空间已变化(发送者, 事件参数)
+    End Sub
+
     Private Shared Sub 坐标空间已变化(发送者 As Object, 事件参数 As EventArgs)
+        Dim layout = TryCast(事件参数, LayoutEventArgs)
+        If layout IsNot Nothing AndAlso D3D_V5Presentation.IsChangingBoundPageVisibility(layout.AffectedControl) Then Return
         Dim 坐标控件 = TryCast(发送者, Control)
         Dim 目标集合 As HashSet(Of Control) = Nothing
         If 坐标控件 Is Nothing OrElse Not _coordinateConsumers.TryGetValue(坐标控件, 目标集合) Then Return
@@ -654,6 +685,7 @@ Friend NotInheritable Class D3D_ControlSurfaceRegistry
 
     Private Shared Sub 控件可见性已变化(发送者 As Object, 事件参数 As EventArgs)
         Dim 控件 = TryCast(发送者, Control)
+        If D3D_V5Presentation.IsChangingBoundPageVisibility(控件) Then Return
         MarkDirty(控件, requestConsumers:=True)
         If 控件 IsNot Nothing AndAlso Not D3D_ControlTreeWalker.IsEffectivelyVisible(控件) Then
             D3D_V5Presentation.ReleaseHiddenSubtreeResources(控件)
@@ -741,6 +773,15 @@ Friend NotInheritable Class D3D_ControlSurfaceRegistry
         项目.Dirty = True
         项目.PendingDirty = New Rectangle(Point.Empty, control.Size)
     End Sub
+
+    Friend Shared Function HasVisibleConsumers(control As Control) As Boolean
+        Dim consumers As HashSet(Of Control) = Nothing
+        If Not _consumers.TryGetValue(control, consumers) Then Return False
+        For Each consumer In consumers
+            If Not consumer.IsDisposed AndAlso consumer.Visible Then Return True
+        Next
+        Return False
+    End Function
 
     Friend Shared Sub ReleaseUnreferencedSurface(control As Control)
         Dim 项目 As Entry = Nothing

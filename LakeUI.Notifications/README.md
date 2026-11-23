@@ -47,7 +47,7 @@
 </Project>
 ```
 
-本包会自动导入 `buildTransitive\LakeUI.Notifications.props`，为 VB/WinForms 主项目关闭 Windows App SDK 的自动初始化和自动生成内容：
+NuGet 会自动导入包内的 `buildTransitive\LakeUI.Notifications.props`，为 VB/WinForms 主项目关闭 Windows App SDK 的自动初始化和自动生成内容。源码文件位于本项目的 `Build\LakeUI.Notifications.props`。
 
 ```xml
 <WindowsAppSdkBootstrapInitialize>false</WindowsAppSdkBootstrapInitialize>

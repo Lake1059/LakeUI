@@ -5,7 +5,6 @@
 Public Module D3D_BackgroundPenetration
     ''' <summary>记录控件的显式背景来源并使控件表面失效。</summary>
     Public Function SetBackgroundSource(owner As Control, oldSource As Control, newSource As Control) As Control
-        If owner IsNot Nothing AndAlso RenderBackendStartup.Requested = RenderBackend.Direct3D12 Then D3D12_BackgroundDependencies.Remove(owner)
         If owner IsNot Nothing Then D3D_ControlSurfaceRegistry.BackgroundSourceChanged(owner)
         Return newSource
     End Function
@@ -28,7 +27,12 @@ Public Module D3D_BackgroundPenetration
 
     ''' <summary>背景转发拓扑变化时使控件重新解析来源。</summary>
     Public Sub InvalidateForwarderTopology(forwarder As Control)
-        D3D_ControlSurfaceRegistry.MarkDirty(forwarder)
+        If forwarder Is Nothing Then Return
+        If RenderBackendStartup.Requested = RenderBackend.Direct3D12 Then
+            D3D12_BackgroundDependencies.SourceChanged(forwarder)
+        Else
+            D3D_ControlSurfaceRegistry.PresentationModeChanged(forwarder)
+        End If
     End Sub
 
     ''' <summary>移除控件的背景依赖；V5 注册表会在下次绘制时按现状重建依赖。</summary>

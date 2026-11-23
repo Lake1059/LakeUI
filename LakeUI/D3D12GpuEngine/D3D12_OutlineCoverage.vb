@@ -55,6 +55,21 @@ Friend NotInheritable Class D3D12_OutlineCoverage
         End Using
     End Function
 
+    Friend Shared Function RasterizePolygon(points As PointF(), bounds As Rectangle) As Byte()
+        Using raster As New D3D12_OutlineCoverage(bounds)
+            Try
+                Dim previous = points(points.Length - 1)
+                For Each point In points
+                    raster.AddEdge(New Vector2(previous.X, previous.Y), New Vector2(point.X, point.Y))
+                    previous = point
+                Next
+                Return raster.MakeCoverage()
+            Finally
+                If raster.crossingDeltas IsNot Nothing Then ArrayPool(Of Integer).Shared.Return(raster.crossingDeltas)
+            End Try
+        End Using
+    End Function
+
     Private Sub SetFillMode(mode As FillMode) Implements ID2D1SimplifiedGeometrySink.SetFillMode
         winding = mode = FillMode.Winding
     End Sub

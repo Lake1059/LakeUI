@@ -69,6 +69,6 @@
     </None>
   </ItemGroup>
 
-  <Import Project="..\LakeUI\buildTransitive\LakeUI.targets" />
+  <Import Project="..\LakeUI\Build\LakeUI.targets" />
 
 </Project>

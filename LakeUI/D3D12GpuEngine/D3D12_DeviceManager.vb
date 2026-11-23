@@ -10,8 +10,19 @@ Imports Vortice.DXGI
 Friend NotInheritable Class D3D12_DeviceManager
     Implements IDisposable
 
+    Private NotInheritable Class CommandAllocatorSlot
+        Public Allocator As ID3D12CommandAllocator
+        Public LastFence As Long
+    End Class
+
+    ' Bound command allocator residency while keeping a useful number of frames in flight.
+    Private Const MaxInFlightCommandAllocators As Integer = 32
     Private ReadOnly _syncRoot As New Object()
+    Private ReadOnly _allocatorPoolLock As New Object()
+    Private ReadOnly _allocatorPool As New List(Of CommandAllocatorSlot)()
     Private ReadOnly _requestedAdapterLuid As Nullable(Of Vortice.Luid)
+    Private _allocatorPoolCursor As Integer
+    Private _activeAllocator As CommandAllocatorSlot
     Private _factory As IDXGIFactory4
     Private _adapter As IDXGIAdapter1
     Private _device As ID3D12Device
@@ -131,6 +142,62 @@ Friend NotInheritable Class D3D12_DeviceManager
         Return WaitForFence(Signal(), timeout)
     End Function
 
+    Friend Function AcquireCommandAllocator() As ID3D12CommandAllocator
+        EnsureCreated()
+        Dim slot As CommandAllocatorSlot = Nothing
+        SyncLock _allocatorPoolLock
+            If _activeAllocator IsNot Nothing Then Throw New InvalidOperationException("A DX12 command allocator is already recording.")
+            Dim completedFence = _fence.CompletedValue
+            For offset = 0 To _allocatorPool.Count - 1
+                Dim index = (_allocatorPoolCursor + offset) Mod _allocatorPool.Count
+                Dim candidate = _allocatorPool(index)
+                If candidate.LastFence = 0 OrElse CULng(candidate.LastFence) <= completedFence Then
+                    slot = candidate
+                    _allocatorPoolCursor = (index + 1) Mod _allocatorPool.Count
+                    Exit For
+                End If
+            Next
+            If slot Is Nothing Then
+                If _allocatorPool.Count < MaxInFlightCommandAllocators Then
+                    slot = New CommandAllocatorSlot With {
+                        .Allocator = _device.CreateCommandAllocator(Of ID3D12CommandAllocator)(CommandListType.Direct)
+                    }
+                    _allocatorPool.Add(slot)
+                    _allocatorPoolCursor = _allocatorPool.Count Mod MaxInFlightCommandAllocators
+                Else
+                    slot = _allocatorPool(_allocatorPoolCursor)
+                    _allocatorPoolCursor = (_allocatorPoolCursor + 1) Mod MaxInFlightCommandAllocators
+                End If
+            End If
+            _activeAllocator = slot
+        End SyncLock
+
+        Try
+            If Not WaitForFence(slot.LastFence, TimeSpan.FromSeconds(2)) Then Throw New TimeoutException("A shared DX12 command allocator is still in flight.")
+            slot.Allocator.Reset()
+            slot.LastFence = 0
+            Return slot.Allocator
+        Catch
+            CancelCommandAllocator()
+            Throw
+        End Try
+    End Function
+
+    Friend Sub CompleteCommandAllocator(fenceValue As Long)
+        SyncLock _allocatorPoolLock
+            If _activeAllocator Is Nothing Then Throw New InvalidOperationException("No DX12 command allocator is recording.")
+            _activeAllocator.LastFence = fenceValue
+            _activeAllocator = Nothing
+        End SyncLock
+    End Sub
+
+    Friend Sub CancelCommandAllocator()
+        SyncLock _allocatorPoolLock
+            If _activeAllocator Is Nothing Then Return
+            _activeAllocator = Nothing
+        End SyncLock
+    End Sub
+
     ' The queue and fence references also keep the retired generation alive after a backend switch.
     Friend Sub RetireAfterGpu(release As Action)
         If _device Is Nothing OrElse _directQueue Is Nothing OrElse _fence Is Nothing OrElse IsDeviceRemoved Then
@@ -201,12 +268,26 @@ Friend NotInheritable Class D3D12_DeviceManager
     End Sub
 
     Private Sub ReleaseResourcesNoLock()
-        Dim retired As IDisposable() = {floatShapes, floatImages, shapes, images, sharedBackdrop}
+        Dim retired As New List(Of IDisposable)()
+        For Each resource In New IDisposable() {floatShapes, floatImages, shapes, images, sharedBackdrop}
+            If resource IsNot Nothing Then retired.Add(resource)
+        Next
+        SyncLock _allocatorPoolLock
+            For Each slot In _allocatorPool
+                If slot.Allocator IsNot Nothing Then retired.Add(slot.Allocator)
+            Next
+        End SyncLock
+        Dim retiredResources = retired.ToArray()
         RetireAfterGpu(Sub()
-                           For Each resource In retired
-                               resource?.Dispose()
+                           For Each resource In retiredResources
+                               resource.Dispose()
                            Next
                        End Sub)
+        SyncLock _allocatorPoolLock
+            _allocatorPool.Clear()
+            _activeAllocator = Nothing
+            _allocatorPoolCursor = 0
+        End SyncLock
         floatShapes = Nothing
         floatImages = Nothing
         shapes = Nothing

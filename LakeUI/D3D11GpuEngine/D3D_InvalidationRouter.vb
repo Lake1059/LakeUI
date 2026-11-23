@@ -9,7 +9,7 @@ Friend NotInheritable Class D3D_InvalidationRouter
     ''' <summary>
     ''' 控件状态变化时调用。这里不立即绘制，只合并到统一的外到内失效队列。
     ''' </summary>
-    Public Shared Sub RequestRender(control As Control, dirtyRect As Rectangle)
+    Public Shared Sub RequestRender(control As Control, dirtyRect As Rectangle, Optional queueForAnimationFrame As Boolean = False)
         If control Is Nothing OrElse control.IsDisposed Then Return
 
         ' V5 控件也必须进入统一的外到内调度批次。直接同步提交会让绑定页
@@ -24,6 +24,10 @@ Friend NotInheritable Class D3D_InvalidationRouter
         bounds = Rectangle.Intersect(New Rectangle(Point.Empty, control.Size), bounds)
         If bounds.Width <= 0 OrElse bounds.Height <= 0 Then Return
 
-        OuterToInnerRefreshScheduler.Request(control, bounds)
+        If queueForAnimationFrame AndAlso D3D_V5Presentation.IsV5Control(control) Then
+            OuterToInnerRefreshScheduler.RequestAnimationFrame(control, bounds)
+        Else
+            OuterToInnerRefreshScheduler.Request(control, bounds)
+        End If
     End Sub
 End Class

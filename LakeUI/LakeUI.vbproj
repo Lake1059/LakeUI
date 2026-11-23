@@ -7,7 +7,7 @@
     <Title>LakeUI</Title>
     <Authors>1059 Studio</Authors>
     <GeneratePackageOnBuild>True</GeneratePackageOnBuild>
-    <Description>湖界 LakeUI 使用 D3D11/D2D1.1 来将全量 GPU 加速带入 WinForms，独特超容器背景映射、可调毛玻璃、高精计时器动画、高 DPI 内部自适应、HDR 等现代化视觉效果让 WinForms 在堆控件的基础上与主流 UI 框架上桌打牌；封装程度极高，像原生控件一样添加，没有复杂的名称和机制，以最低的成本迁移您的 WinForms 项目；价格亲民，买断制永久许可。</Description>
+    <Description>湖界 LakeUI 使用 D3D12/D3D11/D2D1.1 来将全量 GPU 加速带入 WinForms，独特超容器背景映射、可调毛玻璃、高精计时器动画、高 DPI 内部自适应、HDR 等现代化视觉效果让 WinForms 在堆控件的基础上与主流 UI 框架上桌打牌；封装程度极高，像原生控件一样添加，没有复杂的名称和机制，以最低的成本迁移您的 WinForms 项目；价格亲民，买断制永久许可。</Description>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <AssemblyVersion>5.501</AssemblyVersion>
     <FileVersion>5.501</FileVersion>
@@ -45,7 +45,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Update="buildTransitive/LakeUI.targets" Pack="true" PackagePath="buildTransitive/LakeUI.targets" />
+    <None Update="Build/LakeUI.targets" Pack="true" PackagePath="buildTransitive/LakeUI.targets" />
     <None Include="LakeUI.png">
       <Pack>True</Pack>
       <PackagePath>\</PackagePath>

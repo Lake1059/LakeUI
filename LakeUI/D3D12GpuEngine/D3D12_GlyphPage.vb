@@ -4,13 +4,15 @@ Imports Vortice.DXGI
 ' A frame slot is recycled only after its fence. All packed runs share one texture and SRV.
 Friend NotInheritable Class D3D12_GlyphPage
     Implements IDisposable
-    Friend Const GrayWidth As Integer = 2048
+    ' These pages are per control and per frame slot. Keep the common text atlas compact;
+    ' wide or tall glyphs spill into additional pages only when the text actually needs them.
+    Friend Const GrayWidth As Integer = 512
     Friend ReadOnly Subpixel As Boolean
     Private ReadOnly pageWidth As Integer
-    Friend Const InitialHeight As Integer = 128
+    Friend Const InitialHeight As Integer = 64
     Friend Const MaxHeight As Integer = 512
     Friend ReadOnly Height As Integer
-    Friend Const SubpixelWidth As Integer = 512
+    Friend Const SubpixelWidth As Integer = 256
     Private ReadOnly bytesPerPixel As Integer
     Private ReadOnly rowPitch As Integer
     Private texture As ID3D12Resource

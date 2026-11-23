@@ -1,4 +1,3 @@
-Imports System.Numerics
 Imports Vortice.DirectWrite
 
 Partial Public Class UltraDetailListView
@@ -121,20 +120,22 @@ Partial Public Class UltraDetailListView
         Dim arrowY As Integer = rect.Y + (rect.Height - arrowSize) \ 2
         Dim effectiveColor As Color = If(grp.ForeColor <> Color.Empty, grp.ForeColor, 分组文字颜色)
         If effectiveColor.A > 0 Then
-            Dim width As Single = arrowSize
-            Dim points As Vector2()
-            If grp.IsCollapsed Then
-                points = {New Vector2(arrowX + width / 4, arrowY + width / 8), New Vector2(arrowX + width * 3 / 4, arrowY + width / 2),
-                          New Vector2(arrowX + width / 4, arrowY + width * 7 / 8)}
-            Else
-                points = {New Vector2(arrowX + width / 8, arrowY + width / 4), New Vector2(arrowX + width * 7 / 8, arrowY + width / 4),
-                          New Vector2(arrowX + width / 2, arrowY + width * 3 / 4)}
-            End If
-            context.FillRoundedTriangle(points, Math.Max(1, width / 6), effectiveColor)
+            Dim collapsed = grp.IsCollapsed
+            context.FillCoverageMask(New Rectangle(arrowX, arrowY, arrowSize, arrowSize), effectiveColor,
+                                     ("udlv:groupArrow", arrowSize, collapsed),
+                                     Function(scale) 创建分组箭头覆盖_DX12(arrowSize * scale, collapsed))
         End If
 
         绘制水平线_DX12(context, rect.X, rect.Right, rect.Bottom - 1, 分组分隔线颜色, 1.0F)
     End Sub
+
+    Private Function 创建分组箭头覆盖_DX12(size As Integer, collapsed As Boolean) As Byte()
+        ' 使用 DX11 的贝塞尔轮廓，在实际采样倍率下生成覆盖率，按尺寸和朝向复用。
+        Using path = 创建圆角箭头路径(0, 0, size, collapsed)
+            path.Flatten(Nothing, 0.0625F)
+            Return D3D12_OutlineCoverage.RasterizePolygon(path.PathPoints, New Rectangle(0, 0, size, size))
+        End Using
+    End Function
 
     Private Sub 绘制拖选框_DX12(context As D3D12_PaintContext)
         If Not _isDragSelecting Then Return

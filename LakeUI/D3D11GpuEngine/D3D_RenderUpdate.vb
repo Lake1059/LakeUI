@@ -34,13 +34,17 @@ Friend NotInheritable Class D3D_RenderUpdate
         End Get
     End Property
 
-    Friend Shared Function Begin(root As Control) As IDisposable
+    ' Tab switches batch only explicit damage and restore retained surfaces; general
+    ' initialization still expands the whole subtree atomically at commit.
+    Friend Shared Function Begin(root As Control, Optional invalidateSubtree As Boolean = True) As IDisposable
         ArgumentNullException.ThrowIfNull(root)
         If root.IsDisposed Then Throw New ObjectDisposedException(root.Name)
         If root.InvokeRequired Then Throw New InvalidOperationException("Render updates must run on the owning UI thread.")
         RenderBackendStartup.ObserveHost(root)
-        If _roots Is Nothing Then _roots = New HashSet(Of Control)()
-        _roots.Add(root)
+        If invalidateSubtree Then
+            If _roots Is Nothing Then _roots = New HashSet(Of Control)()
+            _roots.Add(root)
+        End If
         _depth += 1
         Return New UpdateScope()
     End Function
@@ -58,8 +62,8 @@ Friend NotInheritable Class D3D_RenderUpdate
             D3D_RefreshDiagnostics.Record(_started, "UpdateScope")
             _depth -= 1
             If _depth <> 0 Then Return
-            Dim 根控件集合 = _roots.ToArray()
-            _roots.Clear()
+            Dim 根控件集合 = If(_roots?.ToArray(), Array.Empty(Of Control)())
+            _roots?.Clear()
             Dim 完成回调 = If(_completed?.ToArray(), Array.Empty(Of Action)())
             _completed?.Clear()
             _committing = True

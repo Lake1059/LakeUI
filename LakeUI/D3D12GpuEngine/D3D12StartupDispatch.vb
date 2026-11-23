@@ -9,8 +9,15 @@ End Interface
 Public NotInheritable Class D3D12_PaintContext
     Private presenter As D3D12_CompositionPresenter
 
+    Private ReadOnly backgroundFrame As Long
+    Private ReadOnly completeFrame As Boolean
+    Private backdropClip As Rectangle
+
     Friend Sub New(target As D3D12_CompositionPresenter)
         presenter = target
+        backgroundFrame = D3D12_BackgroundDependencies.NextFrame()
+        backdropClip = target.OwnerControl.ClientRectangle
+        completeFrame = target.FrameClip = backdropClip
     End Sub
 
     Private origin As Point
@@ -195,7 +202,7 @@ Public NotInheritable Class D3D12_PaintContext
 
     Public Function PushClip(bounds As RectangleF) As IDisposable
         If presenter Is Nothing Then Throw New InvalidOperationException("Frame is closed.")
-        Return New ClipScope(presenter, Rectangle.Round(Map(bounds)))
+        Return New ClipScope(Me, Rectangle.Round(Map(bounds)))
     End Function
 
     Friend ReadOnly Property DirtyRectangle As Rectangle
@@ -212,16 +219,20 @@ Public NotInheritable Class D3D12_PaintContext
 
     Private NotInheritable Class ClipScope
         Implements IDisposable
-        Private target As D3D12_CompositionPresenter
+        Private target As D3D12_PaintContext
         Private ReadOnly previous As Rectangle
-        Friend Sub New(presenter As D3D12_CompositionPresenter, bounds As Rectangle)
-            target = presenter
-            previous = target.FrameClip
-            target.FrameClip = Rectangle.Intersect(previous, bounds)
+        Private ReadOnly previousBackdrop As Rectangle
+        Friend Sub New(context As D3D12_PaintContext, bounds As Rectangle)
+            target = context
+            previous = target.presenter.FrameClip
+            previousBackdrop = target.backdropClip
+            target.presenter.FrameClip = Rectangle.Intersect(previous, bounds)
+            target.backdropClip = Rectangle.Intersect(previousBackdrop, bounds)
         End Sub
         Public Sub Dispose() Implements IDisposable.Dispose
             If target Is Nothing Then Return
-            target.FrameClip = previous
+            target.presenter.FrameClip = previous
+            target.backdropClip = previousBackdrop
             target = Nothing
         End Sub
     End Class
@@ -318,6 +329,17 @@ Public NotInheritable Class D3D12_PaintContext
         presenter.DrawLinearTile(width, height, getPixels, Map(dest), uv, nearest, key)
     End Sub
 
+    Friend Sub FillCoverageMask(bounds As Rectangle, color As Drawing.Color, key As Object, rasterize As Func(Of Integer, Byte()))
+        If color.A = 0 OrElse bounds.Width <= 0 OrElse bounds.Height <= 0 Then Return
+        bounds.Offset(origin)
+        If Not bounds.IntersectsWith(presenter.FrameClip) Then Return
+        Dim scale = presenter.SampleScale
+        Dim ink = ToColor(color)
+        presenter.DrawGlyphBatch(key, ink,
+                                 Sub() presenter.DrawGlyphCoverage(bounds.Width * scale, bounds.Height * scale, rasterize(scale), bounds, ink),
+                                 bounds.Location)
+    End Sub
+
     Public Sub DrawText(text As String, font As Font, color As Drawing.Color, bounds As RectangleF, dpiScale As Single,
                         Optional alignment As Vortice.DirectWrite.TextAlignment = Vortice.DirectWrite.TextAlignment.Leading,
                         Optional vertical As Vortice.DirectWrite.ParagraphAlignment = Vortice.DirectWrite.ParagraphAlignment.Near,
@@ -386,30 +408,149 @@ Public NotInheritable Class D3D12_PaintContext
 
     Public Function DrawBackgroundSource(source As Control, clip As Drawing.Rectangle) As Boolean
         If presenter Is Nothing Then Throw New InvalidOperationException("Frame is closed.")
-        If Not D3D12_BackgroundDependencies.Accept(presenter.OwnerControl, source) Then Return False
-        Dim provider = D3D12StartupDispatch.FindPresenter(source)
-        D3D12_BackgroundDependencies.Sample(presenter.OwnerControl, source, If(provider?.RenderCount, 0L))
-        If Not source.IsHandleCreated Then Return False
-        Dim form = TryCast(source, Form)
-        If form IsNot Nothing AndAlso (provider Is Nothing OrElse ThisIsYourWindow.UsesCaptionBackdrop12(form, presenter.OwnerControl)) Then
-            Dim owner = presenter.OwnerControl
-            Dim offset = owner.PointToClient(source.PointToScreen(Point.Empty))
-            Dim sourceBounds As New Rectangle(offset, source.ClientSize)
-            Dim paintBounds = Rectangle.Intersect(Rectangle.Intersect(Rectangle.Round(Map(clip)), sourceBounds), presenter.FrameClip)
-            If paintBounds.Width <= 0 OrElse paintBounds.Height <= 0 Then Return False
-            paintBounds.Offset(-origin.X, -origin.Y)
-            Using PushClip(paintBounds)
-                Return ThisIsYourWindow.DrawFormSurface12(Me, form, New Point(offset.X - origin.X, offset.Y - origin.Y))
-            End Using
+        Dim owner = presenter.OwnerControl
+        If clip.Width <= 0 OrElse clip.Height <= 0 Then clip = owner.ClientRectangle
+        clip.Offset(origin)
+        clip = Rectangle.Intersect(clip, backdropClip)
+        If clip.Width <= 0 OrElse clip.Height <= 0 Then Return False
+
+        ' A native-transparent panel contributes no pixels. Walk out to the first surface
+        ' just as the automatic path does, but keep watching the original source's topology.
+        Dim resolved = source
+        Dim forwarders As HashSet(Of Control) = Nothing
+        While resolved IsNot Nothing AndAlso Not resolved.IsDisposed AndAlso resolved IsNot owner AndAlso
+              TryCast(resolved, D3D_INativeTransparentPresentationSource)?.UseNativeTransparentPresentation = True
+            If forwarders Is Nothing Then forwarders = New HashSet(Of Control)()
+            If Not forwarders.Add(resolved) Then
+                resolved = Nothing
+                Exit While
+            End If
+            WatchSource(resolved)
+            Dim nextSource As Control = Nothing
+            Dim provider = TryCast(resolved, D3D_IBackgroundSourceProvider)
+            If provider IsNot Nothing AndAlso provider.TryGetBackgroundSource(nextSource) AndAlso nextSource IsNot Nothing AndAlso Not nextSource.IsDisposed Then
+                resolved = nextSource
+            Else
+                resolved = resolved.Parent
+                While resolved IsNot Nothing AndAlso Not D3D12_BackgroundDependencies.IsSurfaceSource(resolved)
+                    Dim transparent = TryCast(resolved, D3D_INativeTransparentPresentationSource)
+                    If transparent IsNot Nothing AndAlso Not resolved.IsDisposed Then Exit While
+                    resolved = resolved.Parent
+                End While
+            End If
+        End While
+        Dim covered = DrawBackdrop(resolved, clip, explicitSource:=True)
+        If Not covered.IsEmpty Then Return True
+        Return DrawInherited(clip, owner.Parent, resolved, fillOwnerColor:=True)
+    End Function
+
+    Friend Sub DrawInheritedBackdrop()
+        Dim owner = presenter.OwnerControl
+        DrawInherited(backdropClip, owner.Parent, Nothing, fillOwnerColor:=False)
+    End Sub
+
+    Private Function DrawInherited(clip As Rectangle, ancestor As Control, skip As Control, fillOwnerColor As Boolean) As Boolean
+        While ancestor IsNot Nothing
+            If ancestor IsNot skip Then
+                Dim covered = DrawBackdrop(ancestor, clip, explicitSource:=False)
+                If Not covered.IsEmpty Then
+                    DrawUncovered(clip, covered, ancestor.Parent, skip, fillOwnerColor)
+                    Return True
+                End If
+            End If
+            ancestor = ancestor.Parent
+        End While
+        If Not fillOwnerColor OrElse presenter.OwnerControl.BackColor.A = 0 Then Return False
+        clip.Offset(-origin.X, -origin.Y)
+        FillRectangle(clip, presenter.OwnerControl.BackColor)
+        Return True
+    End Function
+
+    Private Function DrawUncovered(clip As Rectangle, covered As Rectangle, ancestor As Control, skip As Control, fillOwnerColor As Boolean) As Boolean
+        If covered.IsEmpty Then Return DrawInherited(clip, ancestor, skip, fillOwnerColor)
+        If clip = covered Then Return False
+        ' Fill only the remainder, not the area already composited with the explicit surface.
+        DrawInheritedPart(Rectangle.FromLTRB(clip.Left, clip.Top, clip.Right, covered.Top), ancestor, skip, fillOwnerColor)
+        DrawInheritedPart(Rectangle.FromLTRB(clip.Left, covered.Bottom, clip.Right, clip.Bottom), ancestor, skip, fillOwnerColor)
+        DrawInheritedPart(Rectangle.FromLTRB(clip.Left, covered.Top, covered.Left, covered.Bottom), ancestor, skip, fillOwnerColor)
+        DrawInheritedPart(Rectangle.FromLTRB(covered.Right, covered.Top, clip.Right, covered.Bottom), ancestor, skip, fillOwnerColor)
+        Return True
+    End Function
+
+    Private Sub DrawInheritedPart(clip As Rectangle, ancestor As Control, skip As Control, fillOwnerColor As Boolean)
+        If clip.Width > 0 AndAlso clip.Height > 0 Then DrawInherited(clip, ancestor, skip, fillOwnerColor)
+    End Sub
+
+    Private Sub WatchSource(source As Control)
+        D3D12_BackgroundDependencies.Sample(presenter.OwnerControl, source, backgroundFrame, Rectangle.Empty, Nothing, completeFrame)
+    End Sub
+
+    Private Function DrawBackdrop(source As Control, clip As Rectangle, explicitSource As Boolean) As Rectangle
+        Dim owner = presenter.OwnerControl
+        If source Is Nothing OrElse source Is owner OrElse source.IsDisposed Then Return Rectangle.Empty
+        If Not D3D12_BackgroundDependencies.IsSurfaceSource(source) Then
+            If TypeOf source Is D3D_INativeTransparentPresentationSource Then WatchSource(source)
+            Return Rectangle.Empty
         End If
-        Return presenter.DrawSource(provider, clip)
+        If Not D3D12_BackgroundDependencies.Accept(owner, source) Then Return Rectangle.Empty
+        If Not source.IsHandleCreated Then
+            WatchSource(source)
+            Return Rectangle.Empty
+        End If
+        Dim offset = owner.PointToClient(source.PointToScreen(Point.Empty))
+        Dim mapped = Rectangle.Intersect(clip, New Rectangle(offset, source.ClientSize))
+        Dim form = TryCast(source, Form)
+        If form IsNot Nothing AndAlso Not explicitSource AndAlso TypeOf owner Is ThisIsYourWindow.ChromeOverlayControl Then Return Rectangle.Empty
+        If mapped.Width <= 0 OrElse mapped.Height <= 0 Then
+            WatchSource(source)
+            Return Rectangle.Empty
+        End If
+        Dim region = mapped
+        region.Offset(-offset.X, -offset.Y)
+        D3D12_BackgroundDependencies.Sample(owner, source, backgroundFrame, region, offset, completeFrame)
+
+        Dim sourcePresenter = D3D12StartupDispatch.FindPresenter(source)
+        Dim caption = form IsNot Nothing AndAlso ThisIsYourWindow.UsesCaptionBackdrop12(form, owner)
+        If form IsNot Nothing AndAlso (caption OrElse Not D3D_V5Presentation.IsV5Control(form) OrElse Not TypeOf form Is ID3D12Renderable) Then
+            DrawExplicitFallback(source, clip, mapped, explicitSource)
+            If mapped.IntersectsWith(presenter.FrameClip) Then
+                Dim local = mapped
+                local.Offset(-origin.X, -origin.Y)
+                Using PushClip(local)
+                    If explicitSource OrElse caption Then
+                        ThisIsYourWindow.DrawFormSurface12(Me, form, New Point(offset.X - origin.X, offset.Y - origin.Y))
+                    ElseIf Not ThisIsYourWindow.DrawFormBackdrop12(Me, form, owner, New Point(offset.X - origin.X, offset.Y - origin.Y)) Then
+                        FillRectangle(local, form.BackColor)
+                    End If
+                End Using
+            End If
+            Return mapped
+        End If
+        If sourcePresenter?.RetainedContent Is Nothing OrElse Not sourcePresenter.PendingDamage.IsEmpty OrElse Not sourcePresenter.MatchesOwner() Then
+            ' The dependency is recorded before requesting this producer. A producer
+            ' in another branch can finish later in the current or next batch.
+            D3D_V5Presentation.RequestRenderBatched(source, markSurfaceDirty:=False)
+        End If
+        If sourcePresenter?.RetainedContent Is Nothing OrElse sourcePresenter.BufferSize.Width <> source.ClientSize.Width OrElse
+           sourcePresenter.BufferSize.Height <> source.ClientSize.Height Then
+            Return Rectangle.Empty
+        End If
+        DrawExplicitFallback(source, clip, mapped, explicitSource)
+        If mapped.IntersectsWith(presenter.FrameClip) Then
+            presenter.DrawSource(sourcePresenter, New Rectangle(offset, source.ClientSize), mapped)
+        End If
+        Return mapped
     End Function
 
-    Friend Function DrawPublishedSource(source As D3D12_CompositionPresenter, clip As Drawing.Rectangle) As Boolean
-        Return presenter.DrawSource(source, clip)
-    End Function
+    Private Sub DrawExplicitFallback(source As Control, clip As Rectangle, mapped As Rectangle, explicitSource As Boolean)
+        If Not explicitSource OrElse mapped = clip Then Return
+        ' Lay down the fallback first so premultiplied pixels on the explicit surface
+        ' also blend correctly where a partially overlapping source is translucent.
+        DrawInherited(clip, presenter.OwnerControl.Parent, source, fillOwnerColor:=True)
+    End Sub
 
-    Friend Sub EndFrame()
+    Friend Sub EndFrame(success As Boolean)
+        If success Then D3D12_BackgroundDependencies.EndFrame(presenter.OwnerControl, backgroundFrame, completeFrame)
         presenter = Nothing
     End Sub
 End Class
@@ -421,6 +562,9 @@ Friend Module D3D12StartupDispatch
     Private ReadOnly presenters As New ConditionalWeakTable(Of Control, D3D12_CompositionPresenter)()
 
     Private ReadOnly atlases As New Dictionary(Of Control, D3D12_WindowAtlas)()
+    Private ReadOnly parked As New LinkedList(Of D3D12_CompositionPresenter)()
+    Private Const ParkedBudget As Long = 48L * 1024 * 1024
+    Private parkedBytes As Long
     Private batchDepth As Integer
 
     Friend Sub BeginBatch()
@@ -439,16 +583,23 @@ Friend Module D3D12StartupDispatch
         End Try
     End Sub
 
-    <Runtime.InteropServices.DllImport("user32.dll")>
-    Private Function GetUpdateRect(hwnd As IntPtr, rect As IntPtr, eraseBackground As Boolean) As Boolean
+    Friend Function NeedsPresentation(owner As Control) As Boolean
+        If RenderBackendStartup.IsDesignerPreview Then Return True
+        Dim presenter = FindPresenter(owner)
+        Return presenter Is Nothing OrElse Not presenter.PendingDamage.IsEmpty OrElse
+            Not presenter.HasPublishedFrame OrElse Not presenter.MatchesOwner()
     End Function
 
-    Friend Function ConsumeCoveredPaint(owner As Control) As Boolean
+    Friend Sub RequestPresentation(owner As Control)
+        If NeedsPresentation(owner) Then D3D_V5Presentation.RequestRenderBatched(owner, markSurfaceDirty:=False)
+    End Sub
+
+    Friend Sub MarkDirty(owner As Control, dirty As Rectangle)
         Dim presenter = FindPresenter(owner)
-        If presenter Is Nothing OrElse Not presenter.PaintAlreadyRecorded Then Return False
-        presenter.PaintAlreadyRecorded = False
-        Return True
-    End Function
+        If presenter Is Nothing Then Return
+        If dirty.Width <= 0 OrElse dirty.Height <= 0 Then dirty = owner.ClientRectangle
+        presenter.PendingDamage = If(presenter.PendingDamage.IsEmpty, dirty, Rectangle.Union(presenter.PendingDamage, dirty))
+    End Sub
 
     Friend Function FindPresenter(owner As Control) As D3D12_CompositionPresenter
         Dim result As D3D12_CompositionPresenter = Nothing
@@ -468,7 +619,7 @@ Friend Module D3D12StartupDispatch
         End If
     End Sub
 
-    Friend Sub Render(owner As Control, Optional dirty As Rectangle = Nothing)
+    Friend Sub Render(owner As Control)
         If RenderBackendStartup.Failure IsNot Nothing OrElse recovering Then Return
         Dim designerPreview = RenderBackendStartup.IsDesignerPreview
         Dim source = TryCast(owner, ID3D12Renderable)
@@ -482,48 +633,45 @@ Friend Module D3D12StartupDispatch
             If source Is Nothing Then Throw New NotSupportedException($"Missing native DX12 renderer for {owner.GetType().FullName}.")
             If group Is Nothing Then group = New D3D12_DeviceManager()
             Dim presenter = presenters.GetValue(owner, AddressOf Attach)
-            presenter.Resize(owner.ClientSize.Width, owner.ClientSize.Height)
+            Unpark(presenter)
+            presenter.Resize()
+            Dim visible = D3D_ControlTreeWalker.IsEffectivelyVisible(owner)
+            If visible AndAlso presenter.Atlas Is Nothing Then AttachAtlas(presenter)
             Dim chromeKey = TryCast(owner, ThisIsYourWindow.ChromeOverlayControl)?.ChromeCacheKey()
-            Dim panel = TryCast(owner, ModernPanel)
-            If panel IsNot Nothing Then
-                Dim forwarded As Control = Nothing
-                If panel.TryGetTransparentBackgroundForward(forwarded) AndAlso TypeOf forwarded Is Form AndAlso forwarded.IsHandleCreated Then
-                    chromeKey = ThisIsYourWindow.StaticBackdropKey(DirectCast(forwarded, Form), owner)
-                End If
+            Dim damage = presenter.PendingDamage
+            presenter.PendingDamage = Rectangle.Empty
+            If Not designerPreview AndAlso presenter.RetainedContent IsNot Nothing AndAlso
+               (damage.IsEmpty OrElse (chromeKey IsNot Nothing AndAlso Equals(chromeKey, presenter.ChromeKey))) Then
+                If visible AndAlso Not presenter.HasPublishedFrame Then presenter.StageRetainedContent()
+            Else
+                Dim coverage = TryCast(owner, D3D_IGpuDirtyRegionCoverage)
+                If designerPreview OrElse coverage Is Nothing OrElse Not coverage.CoversDirtyRegion(damage) Then damage = Rectangle.Empty
+                Try
+                    presenter.RenderFrame(Sub(context)
+                        Dim opacity = TryCast(owner, D3D_IBackgroundOpacitySource)
+                        Dim provider = TryCast(owner, D3D_IBackgroundSourceProvider)
+                        Dim explicitSource As Control = Nothing
+                        If Not If(opacity?.IsBackgroundOpaque, False) AndAlso
+                           Not (provider IsNot Nothing AndAlso provider.TryGetBackgroundSource(explicitSource) AndAlso explicitSource IsNot Nothing) Then
+                            context.DrawInheritedBackdrop()
+                        End If
+                        source.RenderGpu12(context)
+                        If designerPreview Then D3D_PaintBridge.绘制设计时选择装饰(context, owner)
+                    End Sub, damage)
+                Catch
+                    MarkDirty(owner, Rectangle.Empty)
+                    Throw
+                End Try
+                presenter.ChromeKey = chromeKey
             End If
-            If Not designerPreview AndAlso chromeKey IsNot Nothing AndAlso Equals(chromeKey, presenter.ChromeKey) AndAlso presenter.RetainedContent IsNot Nothing Then Return
-            Dim invalidation = presenter.InvalidationVersion
-            ' WM_PAINT can carry a designer selection change after a queued frame.
-            Dim coveredPaint = Not designerPreview AndAlso batchDepth > 0 AndAlso GetUpdateRect(owner.Handle, IntPtr.Zero, False)
-            Dim coverage = TryCast(owner, D3D_IGpuDirtyRegionCoverage)
-            If designerPreview OrElse coverage Is Nothing OrElse Not coverage.CoversDirtyRegion(dirty) Then dirty = Rectangle.Empty
-            presenter.RenderFrame(Sub(context)
-                Dim ancestor = D3D_ControlSurfaceRegistry.ResolveNearestGpuAncestor(owner)
-                Dim opacity = TryCast(owner, D3D_IBackgroundOpacitySource)
-                Dim provider = TryCast(owner, D3D_IBackgroundSourceProvider)
-                Dim explicitSource As Control = Nothing
-                Dim opaque = opacity IsNot Nothing AndAlso opacity.IsBackgroundOpaque
-                If ancestor IsNot Nothing AndAlso Not opaque AndAlso Not (provider IsNot Nothing AndAlso provider.TryGetBackgroundSource(explicitSource) AndAlso explicitSource IsNot Nothing) Then
-                    Dim parentPresenter = FindPresenter(ancestor)
-                    Dim form = TryCast(ancestor, Form)
-                    ' CaptionControl is parented to the form, beside the chrome overlay. Its inherited
-                    ' background needs the chrome in form coordinates even before the overlay publishes.
-                    If form IsNot Nothing AndAlso ThisIsYourWindow.UsesCaptionBackdrop12(form, owner) Then
-                        Dim offset = owner.PointToClient(form.PointToScreen(Point.Empty))
-                        ThisIsYourWindow.DrawFormSurface12(context, form, offset)
-                    ElseIf parentPresenter IsNot Nothing Then
-                        context.DrawPublishedSource(parentPresenter, owner.ClientRectangle)
-                    ElseIf form IsNot Nothing AndAlso Not TypeOf owner Is ThisIsYourWindow.ChromeOverlayControl AndAlso
-                           Not ThisIsYourWindow.DrawFormBackdrop12(context, form, owner) Then
-                        context.FillRectangle(owner.ClientRectangle, form.BackColor)
-                    End If
-                End If
-                source.RenderGpu12(context)
-                If designerPreview Then D3D_PaintBridge.绘制设计时选择装饰(context, owner)
-            End Sub, dirty)
-            presenter.PaintAlreadyRecorded = coveredPaint AndAlso invalidation = presenter.InvalidationVersion
-            presenter.ChromeKey = chromeKey
-            If batchDepth = 0 Then presenter.Atlas.Flush()
+            If Not visible Then
+                Dim retirements As New List(Of Action)()
+                ParkPresenter(presenter, retirements)
+                RetireFrameResources(retirements)
+                TrimParkedSurfaces()
+            ElseIf batchDepth = 0 Then
+                presenter.Atlas.Flush()
+            End If
         Catch ex As Exception
             If ScheduleDeviceRecovery(ex) Then Return
             If RenderBackendStartup.Active Is Nothing AndAlso ownerThread = Environment.CurrentManagedThreadId Then
@@ -581,7 +729,7 @@ Friend Module D3D12StartupDispatch
 
     Private Sub ReleaseFailedStartup()
         For Each pair In presenters.ToArray()
-            ReleasePresenter(pair.Key)
+            ReleasePresenter(pair.Key, notifyConsumers:=False)
         Next
         For Each atlas In atlases.Values.ToArray()
             atlas.Dispose()
@@ -590,7 +738,15 @@ Friend Module D3D12StartupDispatch
     End Sub
 
     Private Function Attach(owner As Control) As D3D12_CompositionPresenter
-        Dim root As Control = owner
+        Dim presenter As New D3D12_CompositionPresenter(owner, group)
+        AddHandler owner.Invalidated, AddressOf InvalidatePaint
+        AddHandler owner.VisibleChanged, AddressOf VisibilityChanged
+        AddHandler owner.HandleDestroyed, AddressOf HandleDestroyed
+        Return presenter
+    End Function
+
+    Private Sub AttachAtlas(presenter As D3D12_CompositionPresenter)
+        Dim root = presenter.OwnerControl
         While root.Parent IsNot Nothing
             root = root.Parent
         End While
@@ -599,49 +755,108 @@ Friend Module D3D12StartupDispatch
             atlas = New D3D12_WindowAtlas(group)
             atlases.Add(root, atlas)
         End If
-        Dim presenter As New D3D12_CompositionPresenter(owner, group, atlas)
-        AddHandler owner.Invalidated, AddressOf InvalidatePaint
-        AddHandler owner.VisibleChanged, AddressOf VisibilityChanged
-        AddHandler owner.HandleDestroyed, AddressOf HandleDestroyed
-        Return presenter
-    End Function
+        atlas.Attach(presenter)
+        presenter.Atlas = atlas
+    End Sub
+
+    Private Sub DetachAtlas(presenter As D3D12_CompositionPresenter)
+        Dim atlas = presenter.Atlas
+        If atlas Is Nothing Then Return
+        presenter.Atlas = Nothing
+        atlas.Detach(presenter)
+        If atlas.Count = 0 Then
+            Dim root = atlases.First(Function(item) item.Value Is atlas).Key
+            atlases.Remove(root)
+            atlas.Dispose()
+        End If
+    End Sub
 
     Private Sub InvalidatePaint(sender As Object, e As InvalidateEventArgs)
-        Dim p = FindPresenter(DirectCast(sender, Control))
-        If p IsNot Nothing Then
-            p.InvalidationVersion += 1
-            p.PaintAlreadyRecorded = False
-        End If
+        Dim owner = DirectCast(sender, Control)
+        MarkDirty(owner, e.InvalidRect)
+        If Not owner.Visible AndAlso D3D12_BackgroundDependencies.HasVisibleConsumers(owner) Then RequestPresentation(owner)
     End Sub
 
     Private Sub VisibilityChanged(sender As Object, e As EventArgs)
         Dim owner = DirectCast(sender, Control)
-        If owner.Visible AndAlso owner.IsHandleCreated AndAlso Not owner.IsDisposed Then D3D_V5Presentation.RequestRenderBatched(owner)
+        If owner.Visible AndAlso owner.IsHandleCreated AndAlso Not owner.IsDisposed Then RequestPresentation(owner)
+    End Sub
+
+    Friend Sub ReleaseHiddenSubtreeResources(root As Control, keepPage As Boolean)
+        If root Is Nothing OrElse group Is Nothing OrElse D3D_V5Presentation.IsRendering Then Return
+        Dim retirements As New List(Of Action)()
+        For Each pair In presenters.ToArray()
+            Dim owner = pair.Key
+            If owner.Visible OrElse owner.IsDisposed OrElse Not D3D_ControlTreeWalker.IsDescendantOrSelf(owner, root) Then Continue For
+            Dim presenter = pair.Value
+            If presenter.RetainedContent IsNot Nothing AndAlso (keepPage OrElse D3D12_BackgroundDependencies.HasVisibleConsumers(owner)) Then
+                ParkPresenter(presenter, retirements)
+            Else
+                ReleasePresenter(owner)
+            End If
+        Next
+        RetireFrameResources(retirements)
+        TrimParkedSurfaces()
+    End Sub
+
+    Private Sub ParkPresenter(presenter As D3D12_CompositionPresenter, retirements As List(Of Action))
+        DetachAtlas(presenter)
+        presenter.Park(retirements)
+        If presenter.ParkedNode IsNot Nothing OrElse presenter.RetainedContent Is Nothing Then Return
+        Dim allocation = group.Device.GetResourceAllocationInfo(0UI, presenter.RetainedContent.Description)
+        presenter.ParkedBytes = CLng(allocation.SizeInBytes)
+        presenter.ParkedNode = parked.AddLast(presenter)
+        parkedBytes += presenter.ParkedBytes
+    End Sub
+
+    Private Sub RetireFrameResources(retirements As List(Of Action))
+        If retirements.Count = 0 Then Return
+        group.RetireAfterGpu(Sub()
+                                 For Each release In retirements
+                                     release()
+                                 Next
+                             End Sub)
+    End Sub
+
+    Friend Sub TrimParkedSurfaces()
+        ' A hidden surface with a live consumer is still part of the display working set.
+        Dim limit = Math.Min(ParkedBudget, GlobalOptions.GpuCacheBudgetBytes \ 4)
+        Dim node = parked.First
+        While node IsNot Nothing AndAlso parkedBytes > limit
+            Dim following = node.Next
+            Dim owner = node.Value.OwnerControl
+            If Not D3D12_BackgroundDependencies.HasVisibleConsumers(owner) Then ReleasePresenter(owner)
+            node = following
+        End While
+    End Sub
+
+    Private Sub Unpark(presenter As D3D12_CompositionPresenter)
+        If presenter.ParkedNode Is Nothing Then Return
+        parked.Remove(presenter.ParkedNode)
+        parkedBytes -= presenter.ParkedBytes
+        presenter.ParkedNode = Nothing
+        presenter.ParkedBytes = 0
     End Sub
 
     Friend Sub SuspendPresentation(owner As Control)
-        If ReleasePresenter(owner) Then D3D12_BackgroundDependencies.Published(owner, 0)
+        ReleasePresenter(owner)
     End Sub
 
     Private Sub HandleDestroyed(sender As Object, e As EventArgs)
         ReleasePresenter(DirectCast(sender, Control))
     End Sub
 
-    Private Function ReleasePresenter(owner As Control) As Boolean
-        Dim presenter As D3D12_CompositionPresenter = Nothing
-        If Not presenters.TryGetValue(owner, presenter) Then Return False
+    Private Sub ReleasePresenter(owner As Control, Optional notifyConsumers As Boolean = True)
+        Dim presenter = FindPresenter(owner)
+        If presenter Is Nothing Then Return
         D3D12_BackgroundDependencies.Remove(owner)
         presenters.Remove(owner)
         RemoveHandler owner.Invalidated, AddressOf InvalidatePaint
         RemoveHandler owner.VisibleChanged, AddressOf VisibilityChanged
         RemoveHandler owner.HandleDestroyed, AddressOf HandleDestroyed
-        Dim atlas = presenter.Atlas
+        Unpark(presenter)
+        DetachAtlas(presenter)
         presenter.Dispose()
-        If atlas.Count = 0 Then
-            Dim root = atlases.First(Function(item) item.Value Is atlas).Key
-            atlases.Remove(root)
-            atlas.Dispose()
-        End If
-        Return True
-    End Function
+        If notifyConsumers Then D3D12_BackgroundDependencies.SourceChanged(owner)
+    End Sub
 End Module

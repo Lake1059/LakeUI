@@ -15,6 +15,14 @@ foreach ($backend in 'default', 'DX11', 'DX12', 'runtime') {
 }
 ```
 
+切页和背景回归用实际渲染次数检查横向、纵向和嵌套标签页的缓存复用，并以 GPU 像素回读验证透明容器转发、跨窗采样、局部失效和窗口毛玻璃更新。两个后端需要各自启动进程。
+
+```powershell
+foreach ($backend in 'DX11', 'DX12') {
+    dotnet run --project LakeUI.Tests --no-build -- --tab-backdrop $backend
+}
+```
+
 项目需要 Windows 和 .NET 11 SDK。
 
 ```powershell

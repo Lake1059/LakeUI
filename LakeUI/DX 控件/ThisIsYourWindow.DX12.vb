@@ -42,20 +42,6 @@ Partial Public Class ThisIsYourWindow
         End If
     End Sub
 
-    Friend Shared Function StaticBackdropKey(form As Form, consumer As Control) As Object
-        Dim owner As ThisIsYourWindow = Nothing
-        If Not TryGetAttached(form, owner) Then Return Nothing
-        Dim state = owner.查找状态(form)
-        If state Is Nothing OrElse (owner.BackdropMode <> BackdropModeEnum.None AndAlso owner.BackdropMode <> BackdropModeEnum.Image) Then Return Nothing
-        Dim offset = consumer.PointToClient(form.PointToScreen(Point.Empty))
-        Dim captionRevision As Long? = Nothing
-        If owner.UsesCaptionBackdrop(state, consumer) Then captionRevision = state.Dx12ChromeRevision
-        Return (form, consumer.ClientSize, offset, 获取真实客户区尺寸(form), form.BackColor.ToArgb(), captionRevision,
-                owner.毛玻璃允许用于窗体(state), owner.BackdropMode, owner.BackdropImage, owner.BackdropBlurRadius,
-                owner.BackdropBlurPasses, owner.BackdropDownsampleFactor, owner.BackdropNoiseScale, owner.BackdropNoiseOpacity,
-                owner.BackdropTintColor, owner.BackdropTintInactiveColor, 视觉上保持激活(form, state.Activated), D3D_HdrOutput.ImageRevision)
-    End Function
-
     Friend Shared Function DrawFormSurface12(context As D3D12_PaintContext, form As Form, offset As Point) As Boolean
         Dim owner As ThisIsYourWindow = Nothing
         Dim state = If(TryGetAttached(form, owner), owner.查找状态(form), Nothing)
@@ -68,14 +54,15 @@ Partial Public Class ThisIsYourWindow
         Return True
     End Function
 
-    Friend Shared Function DrawFormBackdrop12(context As D3D12_PaintContext, form As Form, consumer As Control) As Boolean
+    Friend Shared Function DrawFormBackdrop12(context As D3D12_PaintContext, form As Form, consumer As Control,
+                                                Optional drawOffset As Point? = Nothing) As Boolean
         Dim owner As ThisIsYourWindow = Nothing
         If Not TryGetAttached(form, owner) Then Return False
         Dim state = owner.查找状态(form)
         If state Is Nothing Then Return False
         Dim size = 获取真实客户区尺寸(form)
         If size.Width <= 0 OrElse size.Height <= 0 Then Return False
-        Dim offset = consumer.PointToClient(form.PointToScreen(Point.Empty))
+        Dim offset = If(drawOffset, consumer.PointToClient(form.PointToScreen(Point.Empty)))
         Dim full As New RectangleF(0, 0, size.Width, size.Height)
         Dim caption = owner.获取标题栏内容矩形(form, size.Width, size.Height)
         context.AtOffset(offset, Sub()
