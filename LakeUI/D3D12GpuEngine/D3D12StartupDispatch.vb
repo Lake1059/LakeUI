@@ -623,8 +623,15 @@ Friend Module D3D12StartupDispatch
         If RenderBackendStartup.Failure IsNot Nothing OrElse recovering Then Return
         Dim designerPreview = RenderBackendStartup.IsDesignerPreview
         Dim source = TryCast(owner, ID3D12Renderable)
-        ' A legacy custom control in the designer must not block other controls' previews.
-        If designerPreview AndAlso source Is Nothing Then Return
+        If source Is Nothing Then
+            If designerPreview Then Return
+            If RenderBackendStartup.Active = RenderBackend.Direct3D12 Then
+                Dim host = D3D_RenderCore.ResolveCompositorForm(owner)
+                ' A DX12 frame can publish while a window is still waiting for its first display.
+                ' Keep first-display fallback available and isolate failures in the running window.
+                If host Is Nothing OrElse Not WindowFirstFrame.IsPending(host) Then Return
+            End If
+        End If
         Try
             Dim current = Environment.CurrentManagedThreadId
             Dim previous = Threading.Interlocked.CompareExchange(ownerThread, current, 0)

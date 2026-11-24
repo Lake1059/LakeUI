@@ -20,7 +20,7 @@ internal static class FirstFrameDisplayTests
         using var panel = new Panel { Dock = DockStyle.Fill };
         using var first = new FrameControl(form) { Bounds = new Rectangle(8, 8, 90, 40) };
         using var second = new FrameControl(form) { Bounds = new Rectangle(8, 60, 90, 40) };
-        using var hidden = new LegacyControl(form) { Size = new Size(80, 80), Visible = false };
+        using var hidden = new LegacyControl(form) { Bounds = new Rectangle(110, 10, 80, 80), Visible = false };
         using var unsupported = new LegacyControl(form) { Bounds = new Rectangle(110, 10, 90, 40) };
         var nativePainted = false;
         panel.Paint += (_, _) => nativePainted = true;
@@ -64,8 +64,25 @@ internal static class FirstFrameDisplayTests
                     form.Handle == hwnd && !IsAppCloaked(form),
                     $"Switch to {target} did not publish in the existing HWND. {result}: {GlobalOptions.LastBackendSwitch?.Cause}");
             }
+            CheckRevealLegacyControl(hidden, first);
         }
         Console.WriteLine($"First display ({scenario}) passed with {expected}.");
+    }
+
+    private static void CheckRevealLegacyControl(LegacyControl hidden, FrameControl healthy)
+    {
+        var presenter = D3D12StartupDispatch.FindPresenter(healthy)!;
+        var frames = presenter.RenderCount;
+        hidden.Show();
+        D3D_V5Presentation.RequestRenderBatched(hidden);
+        D3D_V5Presentation.RequestRenderBatched(healthy);
+        D3D_V5Presentation.FlushPendingFrame();
+
+        RenderingRegression.Require(GlobalOptions.ActiveBackend == RenderBackend.Direct3D12 && GlobalOptions.BackendStartupError is null,
+            $"Revealing a DX11-only control after startup must keep DX12 running. {GlobalOptions.BackendStartupError}");
+        RenderingRegression.Require(hidden.DrawCount == 0 && D3D12StartupDispatch.FindPresenter(hidden) is null &&
+            presenter.RenderCount > frames && presenter.HasPublishedFrame,
+            "The same batch must continue publishing supported controls.");
     }
 
     private static T AwaitOnUiThread<T>(Task<T> task)
