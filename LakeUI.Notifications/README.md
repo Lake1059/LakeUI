@@ -556,4 +556,10 @@ LakeNotificationManager.Show(request);
 <WindowsAppSdkUndockedRegFreeWinRTInitialize>false</WindowsAppSdkUndockedRegFreeWinRTInitialize>
 ```
 
+### 单文件发布
+
+把引用本包的项目发布为单文件（`PublishSingleFile=true`）时，Windows App SDK 的 PRI 合并会按 `<rid>` 子目录收集引用项目的 `.pri`。`dotnet publish` 的 `RuntimeIdentifier` 不会传给 `ProjectReference`，在 `ProjectReference` 上写 `AdditionalProperties` 也会被 SDK 的全局属性剥离，结果是发布末尾报 `PRI175` / `PRI252`（找不到 `win-x64\LakeUI.Notifications.pri`），参见 [WindowsAppSDK#6439](https://github.com/microsoft/WindowsAppSDK/issues/6439)。
+
+本包已在项目文件内置处理：单文件发布时给自身补 `RuntimeIdentifier=win-x64`，让 `.pri` 落到 MakePri 期望的路径；日常 `build` / `pack` 不受影响。发布其他架构时请把 `win-x64` 换成对应 RID（如 `win-arm64`）。
+
 当前版本没有封装计划通知或定时通知 API。如需延时显示，请在主程序中用计时器、任务计划或后台逻辑到期后调用 `Show`。

@@ -47,4 +47,14 @@
     <None Include="README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 
+  <!-- WinAppSDK 的 MakePri 按 <rid> 子目录收集引用项目的 .pri，而 dotnet publish 的
+       RuntimeIdentifier 不会传给 ProjectReference（附加到 ProjectReference 的
+       AdditionalProperties 也会被 SDK 的全局属性剥离），类库仍输出到无 RID 的
+       bin\<tfm>\，于是 WINAPPSDKGENERATEPROJECTPRIFILE 报 PRI175/PRI252。
+       见 microsoft/WindowsAppSDK#6439。仅在单文件发布时让本库跟随 RID 输出，
+       日常 build/pack 行为不变。发布其他架构时把 win-x64 换成对应 RID。 -->
+  <PropertyGroup Condition="'$(PublishSingleFile)' == 'true' and '$(RuntimeIdentifier)' == ''">
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+  </PropertyGroup>
+
 </Project>
